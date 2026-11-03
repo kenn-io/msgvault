@@ -402,6 +402,14 @@ func (u UnlinkMessageTaskPath) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
+type GetBroadcastPath struct {
+	ID string `json:"id" validate:"required"`
+}
+
+func (g GetBroadcastPath) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(g))
+}
+
 type GetOperationRunPath struct {
 	// ID Opaque archive-bound operation run ID
 	ID string `json:"id" validate:"required"`

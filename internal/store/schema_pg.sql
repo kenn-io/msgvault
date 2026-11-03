@@ -4288,3 +4288,62 @@ CREATE TABLE IF NOT EXISTS document_extraction_ranges (
     char_count BIGINT NOT NULL CHECK (char_count >= 0),
     PRIMARY KEY (extraction_id, first_page)
 );
+
+-- Messenger marketing consent and list walks (broadcasts).
+CREATE TABLE IF NOT EXISTS meta_marketing_list_walks (
+ id BIGSERIAL PRIMARY KEY,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ state TEXT NOT NULL CHECK (state IN ('running','complete','partial','abandoned')),
+ started_at TIMESTAMPTZ NOT NULL, finished_at TIMESTAMPTZ,
+ requests INTEGER NOT NULL DEFAULT 0, listed INTEGER NOT NULL DEFAULT 0,
+ error_category TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_marketing_walk_running ON meta_marketing_list_walks(source_id) WHERE state='running';
+CREATE TABLE IF NOT EXISTS meta_marketing_subscriptions (
+ id BIGSERIAL PRIMARY KEY,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ participant_id BIGINT REFERENCES participants(id), psid TEXT,
+ token TEXT NOT NULL, token_fingerprint TEXT NOT NULL,
+ topic_title TEXT NOT NULL DEFAULT '', timezone TEXT NOT NULL DEFAULT '',
+ status TEXT NOT NULL CHECK (status IN ('active','stopped','unsubscribed','absent')),
+ reoptin TEXT NOT NULL DEFAULT '', token_expiry_at TIMESTAMPTZ, next_eligible_at TIMESTAMPTZ,
+ opted_in_at TIMESTAMPTZ, last_confirmed_at TIMESTAMPTZ,
+ last_list_walk_id BIGINT REFERENCES meta_marketing_list_walks(id) ON DELETE SET NULL,
+ created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL,
+ UNIQUE(source_id,token_fingerprint)
+);
+CREATE INDEX IF NOT EXISTS idx_marketing_subscription_participant ON meta_marketing_subscriptions(source_id,participant_id);
+CREATE INDEX IF NOT EXISTS idx_marketing_subscription_psid ON meta_marketing_subscriptions(source_id,psid);
+CREATE TABLE IF NOT EXISTS meta_marketing_consent_events (
+ id BIGSERIAL PRIMARY KEY,
+ subscription_id BIGINT NOT NULL REFERENCES meta_marketing_subscriptions(id) ON DELETE CASCADE,
+ kind TEXT NOT NULL, occurred_at TIMESTAMPTZ NOT NULL,
+ evidence_source TEXT NOT NULL, evidence_ref TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '{}',
+ UNIQUE(subscription_id,kind,evidence_ref)
+);
+
+-- Messenger broadcast drafts and recipient receipts (same PR schema bump).
+CREATE TABLE IF NOT EXISTS meta_broadcasts (
+ id TEXT PRIMARY KEY, source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ ad_account_id TEXT NOT NULL, name TEXT NOT NULL, message_json TEXT NOT NULL,
+ message_sha256 TEXT NOT NULL, revision INTEGER NOT NULL,
+ daily_budget_cents INTEGER NOT NULL CHECK(daily_budget_cents>0),
+ campaign_days INTEGER NOT NULL CHECK(campaign_days BETWEEN 1 AND 30),
+ min_conversation_gap_seconds INTEGER NOT NULL DEFAULT 0,
+ state TEXT NOT NULL CHECK(state IN ('draft','planned','campaign_pending','campaign_unknown','ready','sending','paused','complete','cancelled')),
+ campaign_id TEXT, campaign_ready_at TIMESTAMPTZ, campaign_ends_at TIMESTAMPTZ,
+ budget_warning BOOLEAN NOT NULL DEFAULT FALSE, plan_digest TEXT NOT NULL DEFAULT '', last_error TEXT NOT NULL DEFAULT '',
+ created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE TABLE IF NOT EXISTS meta_broadcast_recipients (
+ broadcast_id TEXT NOT NULL REFERENCES meta_broadcasts(id) ON DELETE CASCADE,
+ subscription_id BIGINT NOT NULL REFERENCES meta_marketing_subscriptions(id) ON DELETE CASCADE,
+ participant_id BIGINT REFERENCES participants(id),
+ state TEXT NOT NULL CHECK(state IN ('planned','refused','dispatching','accepted','remote_unknown','failed','delivered','read','delivery_failed','cancelled')),
+ reason TEXT NOT NULL DEFAULT '', error_code TEXT NOT NULL DEFAULT '',
+ tracking_id TEXT, mid TEXT, message_id BIGINT REFERENCES messages(id),
+ attempted_at TIMESTAMPTZ, updated_at TIMESTAMPTZ NOT NULL, row_revision INTEGER NOT NULL DEFAULT 1,
+ PRIMARY KEY(broadcast_id,subscription_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_broadcast_tracking ON meta_broadcast_recipients(tracking_id) WHERE tracking_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_broadcast_mid ON meta_broadcast_recipients(mid) WHERE mid IS NOT NULL;

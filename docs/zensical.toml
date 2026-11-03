@@ -45,6 +45,7 @@ nav = [
     {"Meta Webhooks" = "usage/meta-webhooks.md"},
     {"Instagram Comments" = "usage/instagram-comments.md"},
     {"Messenger Inbox" = "usage/facebook-messages.md"},
+    {"Messenger Broadcasts" = "usage/messenger-broadcasts.md"},
     {"Instagram Inbox" = "usage/instagram-messages.md"},
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},

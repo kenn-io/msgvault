@@ -54,6 +54,7 @@ type SerialOperationGate struct {
 
 	holderLabel    string
 	holderSince    time.Time
+	holderReleased bool
 	requestWaiters int
 	requestsDone   chan struct{}
 }
@@ -171,22 +172,61 @@ func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label
 		g.active++
 		g.holderLabel = label
 		g.holderSince = time.Now()
+		g.holderReleased = false
 		g.mu.Unlock()
 		break
 	}
+	return g.releaseWork(true), true
+}
+
+// beginConcurrentBroadcastSendWorkContext shares an active broadcast-send
+// lease. The semaphore stays held until both operations finish, so backup
+// freezes, shutdown and unrelated mutations still wait for all archive writes.
+func (g *SerialOperationGate) beginConcurrentBroadcastSendWorkContext(ctx context.Context) (func(), bool) {
+	if g == nil || ctx == nil || ctx.Err() != nil {
+		return func() {}, false
+	}
+	g.mu.Lock()
+	if g.draining || g.active == 0 || g.holderReleased || g.holderLabel != "msgvault broadcast send" {
+		g.mu.Unlock()
+		return func() {}, false
+	}
+	g.active++
+	g.mu.Unlock()
+	return g.releaseWork(false), true
+}
+
+// BeginBroadcastConsentWorkContext lets signed consent updates join an active
+// broadcast send. A STOP webhook must update consent before the send can move
+// to another recipient, while the shared lease still blocks backups and
+// shutdown until both writers finish.
+func (g *SerialOperationGate) BeginBroadcastConsentWorkContext(ctx context.Context) (func(), bool) {
+	if done, ok := g.beginConcurrentBroadcastSendWorkContext(ctx); ok {
+		return done, true
+	}
+	return g.BeginLabeledWorkContext(ctx, "msgvault broadcast consent")
+}
+
+func (g *SerialOperationGate) releaseWork(holder bool) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			g.mu.Lock()
-			if g.active > 0 {
-				g.active--
+			if holder {
+				g.holderReleased = true
 			}
-			g.holderLabel = ""
-			g.holderSince = time.Time{}
+			g.active--
+			last := g.active == 0
+			if last {
+				g.holderLabel = ""
+				g.holderSince = time.Time{}
+			}
 			g.mu.Unlock()
-			<-sem
+			if last {
+				<-g.sem
+			}
 		})
-	}, true
+	}
 }
 
 // Holder reports what currently holds the gate, if anything.
@@ -302,6 +342,20 @@ func operationGateMiddleware(gate OperationGate, authorized func(*http.Request) 
 			if !shouldGate {
 				next.ServeHTTP(w, r)
 				return
+			}
+			// Only fully parsed cancellation and unsubscribe requests receive
+			// these labels. Share an active send's lease, never a backup freeze
+			// or another operation's lease. The handler still authorizes owners.
+			if label == "msgvault broadcast cancel" || label == "msgvault broadcast unsubscribe" {
+				if concurrent, ok := gate.(interface {
+					beginConcurrentBroadcastSendWorkContext(ctx context.Context) (func(), bool)
+				}); ok {
+					if done, ok := concurrent.beginConcurrentBroadcastSendWorkContext(r.Context()); ok {
+						defer done()
+						next.ServeHTTP(w, r)
+						return
+					}
+				}
 			}
 			done, ok := beginGateWorkBounded(r.Context(), gate, label)
 			if !ok {
@@ -657,14 +711,20 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 
 	// An unparseable body stays gated with a generic label; the handler
 	// produces the real decode error for the client.
-	var req struct {
-		Args []string `json:"args"`
-	}
+	var req CLIRunRequest
 	if json.Unmarshal(body, &req) == nil && len(req.Args) > 0 {
 		// Delegated callers are admitted by the same command and permission
 		// predicate as the handler, so rejected work never takes a gate slot.
 		if auth.Mode == AuthModeDelegated && !delegatedCLIRunAdmitted(req.Args, auth.Grant) {
 			return "", true, nil
+		}
+		if len(req.Args) > 0 && req.Args[0] == "broadcast" {
+			if in, err := ParseCLIRunBroadcast(req); err == nil {
+				switch in.Sub {
+				case "send", "cancel", "unsubscribe":
+					return "msgvault broadcast " + in.Sub, false, nil
+				}
+			}
 		}
 		command := cliRunCommandWords(req.Args)
 		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) {

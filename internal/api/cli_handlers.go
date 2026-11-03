@@ -1716,6 +1716,10 @@ func cliRunCommandAllowed(args []string) bool {
 		return len(args) >= 2 && (args[1] == "subscribe" || args[1] == "status" || args[1] == "replay")
 	}
 
+	if args[0] == "broadcast" {
+		_, err := ParseCLIRunBroadcast(CLIRunRequest{Args: args})
+		return err == nil
+	}
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}

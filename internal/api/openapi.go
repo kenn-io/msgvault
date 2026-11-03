@@ -389,7 +389,8 @@ import (
 // 3.35.0 adds archived calendar occurrence listing.
 // 3.36.0 adds stored plaintext range counts to document indexing status.
 // 3.37.0 omits first_at and last_at on person summaries with no sent or received messages, and returns participants with no sent or received messages instead of 404.
-const APISchemaVersion = "3.37.0"
+// 3.38.0 adds owner-only Messenger broadcast and subscription reads.
+const APISchemaVersion = "3.38.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1196,6 +1197,16 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")
+	for _, name := range []string{"BroadcastSummary", "BroadcastDetail"} {
+		if schema := schemas[name]; schema != nil {
+			if message := schema.Properties["message_json"]; message != nil {
+				message.Type = huma.TypeObject
+				message.Format = ""
+				message.Items = nil
+				message.Extensions = map[string]any{"x-go-type": "jsontext.Value", "x-go-type-import": map[string]any{pathKey: "encoding/json/jsontext"}}
+			}
+		}
+	}
 	// Read responses preserve definitions from any stored schema version.
 	if view := schemas["SavedView"]; view != nil {
 		state := view.Properties["canonical_state"]

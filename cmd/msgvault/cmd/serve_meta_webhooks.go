@@ -211,6 +211,7 @@ func (r *metaWebhookRuntime) Shutdown(ctx context.Context) error {
 
 func registerMetaWebhookHandlers(reg *metawebhook.Registry, cfg *config.Config, st *store.Store) {
 	registerDMWebhookHandlers(reg, cfg, st)
+	registerBroadcastWebhookHandlers(reg, cfg, st)
 	reg.Register("page", "feed", feedHandler(cfg, st, func(token string) (meta.ObjectReader, error) { return meta.NewClient(token) }))
 }
 

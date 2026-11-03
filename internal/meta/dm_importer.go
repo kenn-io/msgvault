@@ -285,7 +285,7 @@ func (imp *DMImporter) Import(ctx context.Context, src DMSource, opts ImportOpti
 						}
 					}
 				}
-				id, added, err = writer.persist(ctx, rec)
+				id, added, err = writer.persistProviderSnapshot(ctx, rec)
 				if err != nil {
 					return sum, err
 				}

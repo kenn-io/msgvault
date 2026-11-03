@@ -6516,6 +6516,138 @@ func (o *UnlinkMessageTaskRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// ListBroadcastSubscriptionsRequestOptions is the options needed to make a request to ListBroadcastSubscriptions.
+type ListBroadcastSubscriptionsRequestOptions struct {
+	Query *ListBroadcastSubscriptionsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListBroadcastSubscriptionsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListBroadcastSubscriptionsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListBroadcastSubscriptionsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListBroadcastSubscriptionsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListBroadcastSubscriptionsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ListBroadcastsRequestOptions is the options needed to make a request to ListBroadcasts.
+type ListBroadcastsRequestOptions struct {
+	Query *ListBroadcastsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ListBroadcastsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ListBroadcastsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ListBroadcastsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ListBroadcastsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ListBroadcastsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetBroadcastRequestOptions is the options needed to make a request to GetBroadcast.
+type GetBroadcastRequestOptions struct {
+	PathParams *GetBroadcastPath
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetBroadcastRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.PathParams != nil {
+		if v, ok := any(o.PathParams).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PathParams", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetBroadcastRequestOptions) GetPathParams() (map[string]any, error) {
+	return runtime.AsMap[any](o.PathParams)
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetBroadcastRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetBroadcastRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetBroadcastRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // StartVisualAttachmentBuildRequestOptions is the options needed to make a request to StartVisualAttachmentBuild.
 type StartVisualAttachmentBuildRequestOptions struct {
 	Body *StartVisualAttachmentBuildBody

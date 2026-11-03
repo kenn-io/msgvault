@@ -19,6 +19,9 @@ import type {
   BackupFreezeBeginResponse,
   BackupFreezeEndRequest,
   BackupFreezeEndResponse,
+  BroadcastDetail,
+  BroadcastListResponse,
+  BroadcastSubscriptionsResponse,
   BuildCLICacheParams,
   CLIAddCalendarPlanRequest,
   CLIAddCalendarPlanResponse,
@@ -143,6 +146,7 @@ import type {
   GetAttachmentContentPathParameters,
   GetAttachmentPathParameters,
   GetAttributeDefinitionPathParameters,
+  GetBroadcastPathParameters,
   GetCLIAttachmentParams,
   GetCLICollectionParams,
   GetCLIMessageOriginalParams,
@@ -226,6 +230,8 @@ import type {
   LinkKataEvidencePathParameters,
   LinkPersonAgendaItemPathParameters,
   ListAttributeDefinitionsParams,
+  ListBroadcastSubscriptionsParams,
+  ListBroadcastsParams,
   ListCardDAVBooksParams,
   ListCardDAVRunsParams,
   ListChangedMessagesParams,
@@ -2418,6 +2424,45 @@ export const unlinkMessageTask = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}/tasks/${encodeURIComponent(String(taskId))}`,
       method: "DELETE",
+    },
+    options,
+  );
+};
+/**
+ * @summary List subscription consent with token fingerprints
+ */
+export const listBroadcastSubscriptions = (
+  params: ListBroadcastSubscriptionsParams,
+  options?: SecondParameter<typeof orvalFetch<BroadcastSubscriptionsResponse>>,
+) => {
+  return orvalFetch<BroadcastSubscriptionsResponse>(
+    { url: `/api/v1/meta/broadcast-subscriptions`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary List a profile's Messenger broadcasts
+ */
+export const listBroadcasts = (
+  params: ListBroadcastsParams,
+  options?: SecondParameter<typeof orvalFetch<BroadcastListResponse>>,
+) => {
+  return orvalFetch<BroadcastListResponse>(
+    { url: `/api/v1/meta/broadcasts`, method: "GET", params },
+    options,
+  );
+};
+/**
+ * @summary Get a broadcast and recipient receipts
+ */
+export const getBroadcast = (
+  { id }: GetBroadcastPathParameters,
+  options?: SecondParameter<typeof orvalFetch<BroadcastDetail>>,
+) => {
+  return orvalFetch<BroadcastDetail>(
+    {
+      url: `/api/v1/meta/broadcasts/${encodeURIComponent(String(id))}`,
+      method: "GET",
     },
     options,
   );

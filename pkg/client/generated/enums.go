@@ -2937,6 +2937,25 @@ func (t TelemetryEventResponseStatus) Validate() error {
 	}
 }
 
+type ListBroadcastSubscriptionsQueryStatus string
+
+const (
+	Absent                                      ListBroadcastSubscriptionsQueryStatus = "absent"
+	ListBroadcastSubscriptionsQueryStatusActive ListBroadcastSubscriptionsQueryStatus = "active"
+	Stopped                                     ListBroadcastSubscriptionsQueryStatus = "stopped"
+	Unsubscribed                                ListBroadcastSubscriptionsQueryStatus = "unsubscribed"
+)
+
+// Validate checks if the ListBroadcastSubscriptionsQueryStatus value is valid
+func (l ListBroadcastSubscriptionsQueryStatus) Validate() error {
+	switch l {
+	case Absent, ListBroadcastSubscriptionsQueryStatusActive, Stopped, Unsubscribed:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListBroadcastSubscriptionsQueryStatus value, got: %v", l))
+	}
+}
+
 type ListOperationRunsQueryKind string
 
 const (

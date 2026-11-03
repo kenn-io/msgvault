@@ -190,7 +190,19 @@ func recordFromEvent(src DMSource, e messagingEvent) (dmRecord, error) {
 	return rec, nil
 }
 
+// persist applies webhook messages without allowing replayed snapshots to
+// replace content already updated by a message-edit event.
 func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, error) {
+	return w.persistRecord(ctx, rec, false)
+}
+
+// persistProviderSnapshot applies message content from a fresh Graph read.
+// Polling can then repair text when an edit webhook was missed.
+func (w *dmWriter) persistProviderSnapshot(ctx context.Context, rec dmRecord) (int64, bool, error) {
+	return w.persistRecord(ctx, rec, true)
+}
+
+func (w *dmWriter) persistRecord(ctx context.Context, rec dmRecord, freshProviderRead bool) (int64, bool, error) {
 	if !safeObjectID(rec.Mid) || !ValidAccountID(rec.CustomerID) || rec.CustomerID == dmOwner(w.src) || (rec.ReplyToMid != "" && (!safeObjectID(rec.ReplyToMid) || rec.ReplyToMid == rec.Mid)) {
 		return 0, false, errors.New("invalid direct message identity")
 	}
@@ -291,7 +303,7 @@ func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, erro
 		if existing.SourceIsFromMe.Valid {
 			rec.FromMe = existing.SourceIsFromMe.Bool
 		}
-		if old.EditCount > 0 {
+		if old.EditCount > 0 && !freshProviderRead {
 			rec.Text, _, err = w.store.GetMessageBodyAndRawContext(ctx, existing.ID)
 			if err != nil {
 				return 0, false, err

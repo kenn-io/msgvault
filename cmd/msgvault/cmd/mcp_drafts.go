@@ -85,3 +85,15 @@ func (r daemonMCPDraftRunner) RunDraftCommand(ctx context.Context, request mcpse
 	}
 	return result, err
 }
+
+func init() {
+	for _, sub := range []string{"create", "plan", "send", "cancel", "unsubscribe"} {
+		mcpDraftCommandConstructors["broadcast-"+sub] = func() *cobra.Command {
+			root := &cobra.Command{Use: "msgvault"}
+			group := newBroadcastCommand()
+			root.AddCommand(group)
+			command, _, _ := group.Find([]string{sub})
+			return command
+		}
+	}
+}

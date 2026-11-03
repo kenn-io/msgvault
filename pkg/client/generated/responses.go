@@ -2061,6 +2061,40 @@ type UnlinkMessageTaskResponse = TaskLinkMutationResponse
 
 type UnlinkMessageTaskErrorResponse = ErrorResponse
 
+type ListBroadcastSubscriptionsResponse = BroadcastSubscriptionsResponse
+
+type ListBroadcastSubscriptionsErrorResponse = ErrorResponse
+
+type ListBroadcastSubscriptionsErrorResponseJSON = ErrorResponse
+
+type ListBroadcastSubscriptionsErrorResponseJSON404 = ErrorResponse
+
+type ListBroadcastSubscriptionsErrorResponseJSON503 = ErrorResponse
+
+type ListBroadcastSubscriptionsErrorResponseJSONDefault = ErrorResponse
+
+type ListBroadcastsResponse = BroadcastListResponse
+
+type ListBroadcastsErrorResponse = ErrorResponse
+
+type ListBroadcastsErrorResponseJSON = ErrorResponse
+
+type ListBroadcastsErrorResponseJSON404 = ErrorResponse
+
+type ListBroadcastsErrorResponseJSON503 = ErrorResponse
+
+type ListBroadcastsErrorResponseJSONDefault = ErrorResponse
+
+type GetBroadcastResponse = BroadcastDetail
+
+type GetBroadcastErrorResponse = ErrorResponse
+
+type GetBroadcastErrorResponseJSON = ErrorResponse
+
+type GetBroadcastErrorResponseJSON503 = ErrorResponse
+
+type GetBroadcastErrorResponseJSONDefault = ErrorResponse
+
 type StartVisualAttachmentBuildResponse = Status
 
 type StartVisualAttachmentBuildErrorResponse = ErrorResponse
@@ -5929,6 +5963,41 @@ type UnlinkMessageTaskResp struct {
 	StatusCode   int
 	JSON200      *UnlinkMessageTaskResponse
 	JSONDefault  *UnlinkMessageTaskErrorResponse
+}
+
+type ListBroadcastSubscriptionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListBroadcastSubscriptionsResponse
+	JSON400      *ListBroadcastSubscriptionsErrorResponse
+	JSON403      *ListBroadcastSubscriptionsErrorResponseJSON
+	JSON404      *ListBroadcastSubscriptionsErrorResponseJSON404
+	JSON503      *ListBroadcastSubscriptionsErrorResponseJSON503
+	JSONDefault  *ListBroadcastSubscriptionsErrorResponseJSONDefault
+}
+
+type ListBroadcastsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListBroadcastsResponse
+	JSON400      *ListBroadcastsErrorResponse
+	JSON403      *ListBroadcastsErrorResponseJSON
+	JSON404      *ListBroadcastsErrorResponseJSON404
+	JSON503      *ListBroadcastsErrorResponseJSON503
+	JSONDefault  *ListBroadcastsErrorResponseJSONDefault
+}
+
+type GetBroadcastResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetBroadcastResponse
+	JSON403      *GetBroadcastErrorResponse
+	JSON404      *GetBroadcastErrorResponseJSON
+	JSON503      *GetBroadcastErrorResponseJSON503
+	JSONDefault  *GetBroadcastErrorResponseJSONDefault
 }
 
 type StartVisualAttachmentBuildResp struct {

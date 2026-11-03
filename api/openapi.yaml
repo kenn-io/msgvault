@@ -827,6 +827,260 @@ components:
       required:
         - message_id
       type: object
+    BroadcastDetail:
+      additionalProperties: true
+      properties:
+        ad_account_id:
+          type: string
+        budget_warning:
+          type: boolean
+        campaign_days:
+          format: int64
+          type: integer
+        campaign_ends_at:
+          format: date-time
+          type: string
+        campaign_id:
+          type: string
+        campaign_ready_at:
+          format: date-time
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        daily_budget_cents:
+          format: int64
+          type: integer
+        id:
+          type: string
+        last_error:
+          type: string
+        message_json: {}
+        min_conversation_gap_seconds:
+          format: int64
+          type: integer
+        name:
+          type: string
+        page_id:
+          type: string
+        plan_digest:
+          type: string
+        recipients:
+          items:
+            $ref: "#/components/schemas/BroadcastRecipientView"
+          type: array
+        revision:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        worst_daily_cents:
+          format: double
+          type: number
+        worst_weekly_cents:
+          format: double
+          type: number
+      required:
+        - recipients
+        - id
+        - source_id
+        - page_id
+        - ad_account_id
+        - name
+        - message_json
+        - revision
+        - daily_budget_cents
+        - worst_daily_cents
+        - worst_weekly_cents
+        - campaign_days
+        - min_conversation_gap_seconds
+        - state
+        - campaign_id
+        - plan_digest
+        - last_error
+        - budget_warning
+        - created_at
+        - updated_at
+      type: object
+    BroadcastListResponse:
+      additionalProperties: true
+      properties:
+        broadcasts:
+          items:
+            $ref: "#/components/schemas/BroadcastSummary"
+          type: array
+      required:
+        - broadcasts
+      type: object
+    BroadcastRecipientView:
+      additionalProperties: true
+      properties:
+        attempted_at:
+          format: date-time
+          type: string
+        error_code:
+          type: string
+        message_id:
+          format: int64
+          type: integer
+        mid:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        row_revision:
+          format: int64
+          type: integer
+        state:
+          type: string
+        subscription_id:
+          format: int64
+          type: integer
+        tracking_id:
+          type: string
+      required:
+        - subscription_id
+        - state
+        - reason
+        - error_code
+        - tracking_id
+        - mid
+        - row_revision
+      type: object
+    BroadcastSubscriptionView:
+      additionalProperties: true
+      properties:
+        id:
+          format: int64
+          type: integer
+        last_confirmed_at:
+          format: date-time
+          type: string
+        next_eligible_at:
+          format: date-time
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+        reoptin:
+          type: string
+        source_id:
+          format: int64
+          type: integer
+        status:
+          type: string
+        timezone:
+          type: string
+        token_expiry_at:
+          format: date-time
+          type: string
+        token_fingerprint:
+          type: string
+        topic_title:
+          type: string
+      required:
+        - id
+        - source_id
+        - token_fingerprint
+        - topic_title
+        - timezone
+        - status
+        - reoptin
+      type: object
+    BroadcastSubscriptionsResponse:
+      additionalProperties: true
+      properties:
+        subscriptions:
+          items:
+            $ref: "#/components/schemas/BroadcastSubscriptionView"
+          type: array
+      required:
+        - subscriptions
+      type: object
+    BroadcastSummary:
+      additionalProperties: true
+      properties:
+        ad_account_id:
+          type: string
+        budget_warning:
+          type: boolean
+        campaign_days:
+          format: int64
+          type: integer
+        campaign_ends_at:
+          format: date-time
+          type: string
+        campaign_id:
+          type: string
+        campaign_ready_at:
+          format: date-time
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        daily_budget_cents:
+          format: int64
+          type: integer
+        id:
+          type: string
+        last_error:
+          type: string
+        message_json: {}
+        min_conversation_gap_seconds:
+          format: int64
+          type: integer
+        name:
+          type: string
+        page_id:
+          type: string
+        plan_digest:
+          type: string
+        revision:
+          format: int64
+          type: integer
+        source_id:
+          format: int64
+          type: integer
+        state:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        worst_daily_cents:
+          format: double
+          type: number
+        worst_weekly_cents:
+          format: double
+          type: number
+      required:
+        - id
+        - source_id
+        - page_id
+        - ad_account_id
+        - name
+        - message_json
+        - revision
+        - daily_budget_cents
+        - worst_daily_cents
+        - worst_weekly_cents
+        - campaign_days
+        - min_conversation_gap_seconds
+        - state
+        - campaign_id
+        - plan_digest
+        - last_error
+        - budget_warning
+        - created_at
+        - updated_at
+      type: object
     BuildingSummary:
       additionalProperties: true
       properties:
@@ -17032,7 +17286,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.37.0
+  version: 3.38.0
 openapi: 3.1.0
 paths:
   /api/ping:
@@ -25502,6 +25756,167 @@ paths:
       security:
         - apiKey: []
       summary: Unlink a task from an archived email
+      tags:
+        - API
+  /api/v1/meta/broadcast-subscriptions:
+    get:
+      operationId: listBroadcastSubscriptions
+      parameters:
+        - in: query
+          name: profile
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: participant
+          schema:
+            format: int64
+            type: integer
+        - in: query
+          name: status
+          schema:
+            enum:
+              - active
+              - stopped
+              - unsubscribed
+              - absent
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BroadcastSubscriptionsResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List subscription consent with token fingerprints
+      tags:
+        - API
+  /api/v1/meta/broadcasts:
+    get:
+      operationId: listBroadcasts
+      parameters:
+        - in: query
+          name: profile
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BroadcastListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List a profile's Messenger broadcasts
+      tags:
+        - API
+  /api/v1/meta/broadcasts/{id}:
+    get:
+      operationId: getBroadcast
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BroadcastDetail"
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get a broadcast and recipient receipts
       tags:
         - API
   /api/v1/multimodal/build:

@@ -196,8 +196,10 @@ type ServeOptions struct {
 	// recorded through the CLI/API, never by an MCP tool.
 	IdentityScoring IdentityScoringBackend
 	// Drafts runs managed draft commands with the caller's credential.
-	Drafts        DraftRunner
-	DraftCommands []string
+	Drafts                    DraftRunner
+	DraftCommands             []string
+	Broadcasts                BroadcastBackend
+	BroadcastAPISchemaVersion string
 }
 
 type HTTPOptions struct {
@@ -408,6 +410,7 @@ func newMCPServerWithPolicy(
 		messageTags:          opts.MessageTags,
 		identityScoring:      opts.IdentityScoring,
 		drafts:               opts.Drafts,
+		broadcasts:           opts.Broadcasts,
 		contactRoutesBackend: opts.ContactRoutesBackend,
 		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
 	}

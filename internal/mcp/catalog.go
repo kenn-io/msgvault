@@ -195,6 +195,13 @@ func operationCatalog(opts ServeOptions, _ *handlers) []toolDefinition {
 			}
 		}
 	}
+	if !opts.DelegatedOnly && opts.Broadcasts != nil && daemonclient.APISchemaVersionAtLeast(opts.BroadcastAPISchemaVersion, BroadcastMinAPISchemaVersion) {
+		for _, definition := range stableBroadcastDefinitions {
+			if definition.security == toolSecurityRead || opts.Drafts != nil {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
 	if opts.Calendar != nil {
 		definitions = append(definitions, stableCalendarTools()...)
 	}

@@ -30,7 +30,7 @@ type Registry struct{ handlers map[string]ItemHandler }
 func NewRegistry() *Registry { return &Registry{handlers: map[string]ItemHandler{}} }
 
 var fieldAllowlist = map[string]string{
-	"page":      " feed mention messages message_echoes message_reactions message_edits message_reads message_deliveries messaging_postbacks messaging_referrals messaging_optins messaging_handovers standby messaging_unknown ",
+	"page":      " feed mention messages message_echoes message_reactions message_edits message_reads message_deliveries messaging_postbacks messaging_referrals messaging_optins marketing_message_echoes marketing_message_deliveries marketing_message_reads marketing_message_clicks marketing_message_delivery_failed messaging_handovers standby messaging_unknown ",
 	"instagram": " comments live_comments mentions messages message_reactions messaging_postbacks messaging_referral messaging_seen messaging_unknown ",
 }
 

@@ -563,55 +563,56 @@ func (b *BackupConfig) Validate() error {
 }
 
 type Config struct {
-	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
-	Data               DataConfig                      `toml:"data"`
-	Log                LogConfig                       `toml:"log"`
-	OAuth              OAuthConfig                     `toml:"oauth"`
-	Microsoft          MicrosoftConfig                 `toml:"microsoft"`
-	Sync               SyncConfig                      `toml:"sync"`
-	Chat               ChatConfig                      `toml:"chat"`
-	Server             ServerConfig                    `toml:"server"`
-	Analytics          AnalyticsConfig                 `toml:"analytics"`
-	Web                WebConfig                       `toml:"web"`
-	Integrations       IntegrationsConfig              `toml:"integrations"`
-	Remote             RemoteConfig                    `toml:"remote"`
-	Vector             vector.Config                   `toml:"vector"`
-	Identity           IdentityConfig                  `toml:"identity"`
-	Fastmail           []FastmailSource                `toml:"fastmail"`
-	CardDAV            CardDAVConfig                   `toml:"carddav"`
-	CardDAVConnections map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
-	Accounts           []AccountSchedule               `toml:"accounts"`
-	SynctechSMS        SynctechSMSConfig               `toml:"synctech_sms"`
-	GCal               []GCalSource                    `toml:"gcal"`
-	Beeper             BeeperConfig                    `toml:"beeper"`
-	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
-	MetaWebhooks       MetaWebhooksConfig              `toml:"meta_webhooks"`
-	FacebookMessages   []MetaMessagesSource            `toml:"facebook_messages"`
-	InstagramMessages  []MetaMessagesSource            `toml:"instagram_messages"`
-	FacebookComments   []FacebookCommentsSource        `toml:"facebook_comments"`
-	InstagramComments  []InstagramCommentsSource       `toml:"instagram_comments"`
-	Matrix             MatrixConfig                    `toml:"matrix"`
-	Slack              SlackConfig                     `toml:"slack"`
-	Inline             InlineConfig                    `toml:"inline"`
-	Omi                []OmiSource                     `toml:"omi"`
-	Granola            []GranolaSource                 `toml:"granola"`
-	Plaud              []PlaudSource                   `toml:"plaud"`
-	Circleback         []CirclebackSource              `toml:"circleback"`
-	Pocket             []PocketSource                  `toml:"pocket"`
-	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
-	Twilio             []TwilioSource                  `toml:"twilio"`
-	Muesli             []MuesliSource                  `toml:"muesli"`
-	Twenty             []TwentySource                  `toml:"twenty"`
-	Backup             BackupConfig                    `toml:"backup"`
-	Discord            DiscordConfig                   `toml:"discord"`
-	Attachments        documentindex.AttachmentsConfig `toml:"attachments"`
-	Activity           ActivityConfig                  `toml:"activity"`
-	People             PeopleConfig                    `toml:"people"`
-	Teams              TeamsConfig                     `toml:"teams"`
-	Deletion           DeletionConfig                  `toml:"deletion"`
-	IMAP               IMAPConfig                      `toml:"imap"`
-	Gmail              GmailConfig                     `toml:"gmail"`
-	Telemetry          TelemetryConfig                 `toml:"telemetry"`
+	ConversationPolicy  ConversationPolicyConfig        `toml:"conversation_policy"`
+	Data                DataConfig                      `toml:"data"`
+	Log                 LogConfig                       `toml:"log"`
+	OAuth               OAuthConfig                     `toml:"oauth"`
+	Microsoft           MicrosoftConfig                 `toml:"microsoft"`
+	Sync                SyncConfig                      `toml:"sync"`
+	Chat                ChatConfig                      `toml:"chat"`
+	Server              ServerConfig                    `toml:"server"`
+	Analytics           AnalyticsConfig                 `toml:"analytics"`
+	Web                 WebConfig                       `toml:"web"`
+	Integrations        IntegrationsConfig              `toml:"integrations"`
+	Remote              RemoteConfig                    `toml:"remote"`
+	Vector              vector.Config                   `toml:"vector"`
+	Identity            IdentityConfig                  `toml:"identity"`
+	Fastmail            []FastmailSource                `toml:"fastmail"`
+	CardDAV             CardDAVConfig                   `toml:"carddav"`
+	CardDAVConnections  map[string]CardDAVConfig        `toml:"carddav_connections,omitempty"`
+	Accounts            []AccountSchedule               `toml:"accounts"`
+	SynctechSMS         SynctechSMSConfig               `toml:"synctech_sms"`
+	GCal                []GCalSource                    `toml:"gcal"`
+	Beeper              BeeperConfig                    `toml:"beeper"`
+	Chatwoot            []ChatwootSource                `toml:"chatwoot"`
+	MetaWebhooks        MetaWebhooksConfig              `toml:"meta_webhooks"`
+	FacebookMessages    []MetaMessagesSource            `toml:"facebook_messages"`
+	InstagramMessages   []MetaMessagesSource            `toml:"instagram_messages"`
+	MessengerBroadcasts []MessengerBroadcastProfile     `toml:"messenger_broadcasts"`
+	FacebookComments    []FacebookCommentsSource        `toml:"facebook_comments"`
+	InstagramComments   []InstagramCommentsSource       `toml:"instagram_comments"`
+	Matrix              MatrixConfig                    `toml:"matrix"`
+	Slack               SlackConfig                     `toml:"slack"`
+	Inline              InlineConfig                    `toml:"inline"`
+	Omi                 []OmiSource                     `toml:"omi"`
+	Granola             []GranolaSource                 `toml:"granola"`
+	Plaud               []PlaudSource                   `toml:"plaud"`
+	Circleback          []CirclebackSource              `toml:"circleback"`
+	Pocket              []PocketSource                  `toml:"pocket"`
+	NotionMeetings      []NotionMeetingsSource          `toml:"notion_meetings"`
+	Twilio              []TwilioSource                  `toml:"twilio"`
+	Muesli              []MuesliSource                  `toml:"muesli"`
+	Twenty              []TwentySource                  `toml:"twenty"`
+	Backup              BackupConfig                    `toml:"backup"`
+	Discord             DiscordConfig                   `toml:"discord"`
+	Attachments         documentindex.AttachmentsConfig `toml:"attachments"`
+	Activity            ActivityConfig                  `toml:"activity"`
+	People              PeopleConfig                    `toml:"people"`
+	Teams               TeamsConfig                     `toml:"teams"`
+	Deletion            DeletionConfig                  `toml:"deletion"`
+	IMAP                IMAPConfig                      `toml:"imap"`
+	Gmail               GmailConfig                     `toml:"gmail"`
+	Telemetry           TelemetryConfig                 `toml:"telemetry"`
 
 	// Computed paths (not from config file)
 	HomeDir            string `toml:"-"`
@@ -1127,9 +1128,15 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.deferDaemonError(errors.New("people.identity_scoring.batch_size must be between 1 and 100"))
 	}
 	cfg.People.Sweep.ApplyDefaults()
+	if err := cfg.applyMessengerBroadcastDefaults(content); err != nil {
+		return nil, err
+	}
 	for _, key := range metadata.Undecoded() {
 		if len(key) > 0 && key[0] == "meta_webhooks" {
 			return nil, fmt.Errorf("unknown Meta webhooks config key %q", key.String())
+		}
+		if len(key) > 0 && key[0] == "messenger_broadcasts" {
+			return nil, fmt.Errorf("unknown Messenger broadcast config key %q", key.String())
 		}
 		if len(key) > 0 && (key[0] == "facebook_messages" || key[0] == "instagram_messages") {
 			return nil, fmt.Errorf("unknown Meta messages config key %q", key.String())
@@ -1307,6 +1314,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateInstagramCommentsSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateMessengerBroadcastProfiles(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()

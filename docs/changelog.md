@@ -9,6 +9,11 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed comments, with owner subscription, status, and replay commands. Other fields are held for a future release.
+- Plan [Messenger marketing broadcasts](usage/messenger-broadcasts.md) for
+  explicitly selected, opted-in subscribers, then send a confirmed revision
+  with consent checks, spend limits and recipient receipts. Sends are off by
+  default and require eligible Meta access. The CLI, owner-only HTTP reads and
+  confirmation-gated MCP tools expose fingerprints instead of raw tokens.
 - Archive recent [Messenger](usage/facebook-messages.md) and [Instagram inbox](usage/instagram-messages.md)
   messages as searchable chats, and link their participants manually.
   Backfill is capped at 20 messages per thread; the Meta webhook receiver adds
