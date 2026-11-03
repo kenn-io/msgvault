@@ -131,8 +131,10 @@ func TestUnlisted(t *testing.T) {}
 `), 0o600))
 	for _, backend := range []string{"postgres", "postgresql", "sqlite", "other", "postgres-stale"} {
 		t.Run(backend, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			if backend == "postgres-stale" {
-				require.NoError(t, os.WriteFile(filepath.Join(dir, "testdata", "shard-weights-postgres.txt"), []byte("--- PASS: TestRemoved (100.00s)\n"), 0o600))
+				require.NoError(os.WriteFile(filepath.Join(dir, "testdata", "shard-weights-postgres.txt"), []byte("--- PASS: TestRemoved (100.00s)\n"), 0o600))
 			}
 			switch backend {
 			case "postgres", "postgres-stale":
@@ -143,17 +145,17 @@ func TestUnlisted(t *testing.T) {}
 				t.Setenv("MSGVAULT_TEST_DB", "unused")
 			}
 			result, err := run(t)
-			require.NoError(t, err, result)
+			require.NoError(err, result)
 			blocks := regexp.MustCompile(`(?m)^ok  \texample\.com/shardfixture\t\d+\.\d{3}s\n`).Split(result, -1)
-			require.Len(t, blocks, 3, result)
+			require.Len(blocks, 3, result)
 			want := [][]string{{"TestHeavy", "TestUnlisted"}, {"TestA", "TestB", "TestC", "TestD"}}
 			if backend != "postgres" && backend != "postgresql" {
 				want = [][]string{{"TestHeavy", "TestB", "TestD"}, {"TestA", "TestC", "TestUnlisted"}}
 			}
 			for i, names := range want {
 				for _, name := range names {
-					assert.Contains(t, blocks[i], "--- PASS: "+name+" (")
-					assert.NotContains(t, blocks[1-i], "--- PASS: "+name+" (")
+					assert.Contains(blocks[i], "--- PASS: "+name+" (")
+					assert.NotContains(blocks[1-i], "--- PASS: "+name+" (")
 				}
 			}
 		})
