@@ -166,8 +166,12 @@ func draftSensitiveFindings(args map[string]any) []draftFinding {
 	body := stringArgument(args, "body")
 	masked := preprocess.MaskReplyQuotes(body)
 	for _, finding := range sensitive.Scan(body) {
-		span := masked[finding.Start:finding.End]
-		findings = append(findings, draftFinding{Finding: finding, Quoted: strings.TrimSpace(span) == "" && span != body[finding.Start:finding.End]})
+		start := strings.LastIndexByte(body[:finding.Start], '\n') + 1
+		end := len(body)
+		if newline := strings.IndexByte(body[finding.End:], '\n'); newline >= 0 {
+			end = finding.End + newline
+		}
+		findings = append(findings, draftFinding{Finding: finding, Quoted: strings.TrimSpace(masked[start:end]) == "" && strings.TrimSpace(body[start:end]) != ""})
 	}
 	return findings
 }
