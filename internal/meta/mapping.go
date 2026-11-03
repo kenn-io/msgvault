@@ -47,7 +47,22 @@ func (r *importRun) objectFormat() string {
 	return rawFormat
 }
 
-func (r *importRun) persist(ctx context.Context, obj Object, root, parent string, edge PostEdge) error {
+// persistOptions projects another public-comment surface through the same
+// parent checks, actor handling and archive write as Facebook and Instagram.
+type persistOptions struct {
+	SourceType, RawFormat, Title, FromAddr, Subject string
+	Raw                                             any
+	Metadata                                        func(context.Context, int64, string, string) ([]byte, error)
+	MessageID                                       int64
+}
+
+func (r *importRun) persist(ctx context.Context, obj Object, root, parent string, edge PostEdge, projection ...*persistOptions) error {
+	var custom *persistOptions
+	kind, format := r.imp.sourceType(), r.objectFormat()
+	if len(projection) > 0 {
+		custom = projection[0]
+		kind, format = custom.SourceType, custom.RawFormat
+	}
 	if r.imp.instagram != "" && obj.InstagramMedia != nil && obj.InstagramMedia.Owner != nil {
 		if owner := obj.InstagramMedia.Owner.ID; owner != "" && owner != r.imp.instagram {
 			return errors.New("instagram media owner mismatch")
@@ -62,7 +77,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	if parent == obj.ID {
 		return errors.New("comment cannot parent itself")
 	}
-	existing, err := r.imp.store.StoredMessagesContext(ctx, r.source.ID, r.objectFormat(), []string{obj.ID, parent, root})
+	existing, err := r.imp.store.StoredMessagesContext(ctx, r.source.ID, format, []string{obj.ID, parent, root})
 	if err != nil {
 		return err
 	}
@@ -73,7 +88,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	}
 	var previousMetadata []byte
 	read := responseRead{SyncID: r.readSyncID, Request: r.readRequest}
-	if exists {
+	if exists && custom == nil {
 		savedMeta, err := r.imp.store.GetMessageMetadataContext(ctx, prior.ID)
 		if err != nil {
 			return err
@@ -127,28 +142,34 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		if rootRow.ConversationID != parentRow.ConversationID || (exists && prior.ConversationID != parentRow.ConversationID) {
 			return errors.New("comment parent belongs to a different conversation")
 		}
-		savedRoot, err := r.imp.store.GetMessageMetadataContext(ctx, rootRow.ID)
-		if err != nil {
-			return err
-		}
-		var rootMeta objectMetadata
-		if !savedRoot.Valid || json.Unmarshal([]byte(savedRoot.String), &rootMeta) != nil || !rootMeta.matches(r.app, r.page, r.imp.instagram, root) || rootMeta.ParentID != "" {
-			return errors.New("comment root belongs to a different context or has a parent")
-		}
-		if rootMeta.Version != objectMetadataVersion {
-			return errors.New("unsupported comment root metadata version")
-		}
-		if parent != root {
-			saved, err := r.imp.store.GetMessageMetadataContext(ctx, parentRow.ID)
+		if custom != nil {
+			if _, err := custom.Metadata(ctx, rootRow.ID, root, ""); err != nil {
+				return err
+			}
+		} else {
+			savedRoot, err := r.imp.store.GetMessageMetadataContext(ctx, rootRow.ID)
 			if err != nil {
 				return err
 			}
-			var parentMeta objectMetadata
-			if !saved.Valid || json.Unmarshal([]byte(saved.String), &parentMeta) != nil || !parentMeta.matches(r.app, r.page, r.imp.instagram, root) {
-				return errors.New("comment parent belongs to a different conversation")
+			var rootMeta objectMetadata
+			if !savedRoot.Valid || json.Unmarshal([]byte(savedRoot.String), &rootMeta) != nil || !rootMeta.matches(r.app, r.page, r.imp.instagram, root) || rootMeta.ParentID != "" {
+				return errors.New("comment root belongs to a different context or has a parent")
 			}
-			if parentMeta.Version != objectMetadataVersion {
-				return errors.New("unsupported comment parent metadata version")
+			if rootMeta.Version != objectMetadataVersion {
+				return errors.New("unsupported comment root metadata version")
+			}
+			if parent != root {
+				saved, err := r.imp.store.GetMessageMetadataContext(ctx, parentRow.ID)
+				if err != nil {
+					return err
+				}
+				var parentMeta objectMetadata
+				if !saved.Valid || json.Unmarshal([]byte(saved.String), &parentMeta) != nil || !parentMeta.matches(r.app, r.page, r.imp.instagram, root) {
+					return errors.New("comment parent belongs to a different conversation")
+				}
+				if parentMeta.Version != objectMetadataVersion {
+					return errors.New("unsupported comment parent metadata version")
+				}
 			}
 		}
 		reply = sql.NullInt64{Int64: parentRow.ID, Valid: true}
@@ -193,6 +214,10 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		sent = prior.SentAt
 	}
 	metadata, err := json.Marshal(meta)
+	if custom != nil {
+		metadata, err = custom.Metadata(ctx, prior.ID, obj.ID, parent)
+		fromName = custom.FromAddr
+	}
 	if err != nil {
 		return err
 	}
@@ -201,6 +226,9 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		original = obj.InstagramMedia
 	} else if obj.InstagramComment != nil {
 		original = obj.InstagramComment
+	}
+	if custom != nil {
+		original = custom.Raw
 	}
 	raw, err := json.Marshal(original)
 	if err != nil {
@@ -216,15 +244,21 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 			}
 		}
 	}
-	msg := &store.Message{SourceID: r.source.ID, SourceMessageID: obj.ID, MessageType: r.imp.sourceType(),
+	if custom != nil {
+		title = custom.Title
+	}
+	msg := &store.Message{SourceID: r.source.ID, SourceMessageID: obj.ID, MessageType: kind,
 		SentAt: sent, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: self,
 		ReplyToMessageID: reply, Snippet: sql.NullString{String: obj.Message, Valid: true}, SizeEstimate: int64(len(obj.Message)),
+	}
+	if custom != nil && custom.Subject != "" {
+		msg.Subject = sql.NullString{String: custom.Subject, Valid: true}
 	}
 	data := &store.MessagePersistData{
 		Message: msg, Conversation: &store.ConversationPersistData{SourceConversationID: root, ConversationType: "public_comments", Title: title, Participants: participants, PreserveExistingParticipants: true},
 		Metadata: &sql.NullString{String: string(metadata), Valid: true}, BodyText: sql.NullString{String: obj.Message, Valid: true},
-		RawMIME: raw, RawFormat: r.objectFormat(), Recipients: recipients, PreserveLabels: true,
-		FTS: &store.FTSDoc{Body: obj.Message, FromAddr: fromName},
+		RawMIME: raw, RawFormat: format, Recipients: recipients, PreserveLabels: true,
+		FTS: &store.FTSDoc{Subject: msg.Subject.String, Body: obj.Message, FromAddr: fromName},
 	}
 	if exists {
 		unchanged, err := r.snapshotMatches(ctx, prior, data)
@@ -249,6 +283,9 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 			if err = r.saveResponseRead(ctx, obj.ID, read); err != nil {
 				return err
 			}
+			if custom != nil {
+				custom.MessageID = prior.ID
+			}
 			// Receipt ordering and node freshness remain durable even when the
 			// provider returns the same body and author snapshot.
 			if !bytes.Equal(previousMetadata, metadata) {
@@ -265,9 +302,12 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	if err = r.saveResponseRead(ctx, obj.ID, read); err != nil {
 		return err
 	}
-	_, err = r.imp.store.PersistMessageContext(ctx, data)
+	id, err := r.imp.store.PersistMessageContext(ctx, data)
 	if err != nil {
 		return err
+	}
+	if custom != nil {
+		custom.MessageID = id
 	}
 	r.sum.MessagesProcessed++
 	if !exists {

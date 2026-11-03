@@ -79,6 +79,7 @@ type InstagramCommentsSource struct {
 	AppID              string `toml:"app_id"`
 	PageID             string `toml:"page_id"`
 	InstagramAccountID string `toml:"instagram_account_id"`
+	Mentions           bool   `toml:"mentions"`
 	TokenEnv           string `toml:"token_env"`
 	Enabled            bool   `toml:"enabled"`
 	Schedule           string `toml:"schedule"`
@@ -97,6 +98,16 @@ func (c *Config) ScheduledInstagramCommentsSources() []InstagramCommentsSource {
 	var sources []InstagramCommentsSource
 	for _, source := range c.InstagramComments {
 		if source.Enabled && source.Schedule != "" {
+			sources = append(sources, source)
+		}
+	}
+	return sources
+}
+
+func (c *Config) ScheduledInstagramMentionsSources() []InstagramCommentsSource {
+	var sources []InstagramCommentsSource
+	for _, source := range c.ScheduledInstagramCommentsSources() {
+		if source.Mentions {
 			sources = append(sources, source)
 		}
 	}

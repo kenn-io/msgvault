@@ -1754,6 +1754,13 @@ The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
 
+`mentions = true` opts this profile into a separate `instagram_mentions` source
+(default `false`). Register it with `source instagram-mentions add`; tags use
+`source instagram-mentions sync` or, when enabled and scheduled, the independent job
+`instagram_mentions:<source-identifier>`. It reuses `token_env` with no fallback.
+See [Mentions and tags](usage/instagram-comments.md#mentions-and-tags) for
+coverage, pending webhook integration, and live-access prerequisites.
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a

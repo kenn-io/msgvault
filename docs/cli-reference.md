@@ -1600,6 +1600,33 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
+## source instagram-mentions add
+
+Register a separate mentions source for `[[instagram_comments]]` profiles with
+`mentions = true` (unreleased). No identifier selects all opted-in profiles.
+An explicit profile without the opt-in is refused before any provider call.
+The daemon verifies the configured Page and linked account with `token_env`.
+
+```bash
+msgvault source instagram-mentions add [identifier]
+```
+
+## source instagram-mentions sync
+
+Poll tagged media for registered profiles with `mentions = true` (unreleased).
+No identifier selects all opted-in profiles. The positive request budget
+(default 1,000) includes two verification reads. Partial progress resumes next
+time; `--full` restarts tags cursors while preserving archived rows. These
+commands use the shared [manual cache controls](#sync).
+
+```bash
+msgvault source instagram-mentions sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Mentions and tags](usage/instagram-comments.md#mentions-and-tags) for
+coverage and access prerequisites. Caption/comment webhook discovery and
+public replies are pending.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.
