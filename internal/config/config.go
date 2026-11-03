@@ -896,6 +896,9 @@ type SyncConfig struct {
 	// IMAPSkipFolders maps exact source identifiers from list-accounts to
 	// folders excluded from sync unless command folder flags override them.
 	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
+	// IMAPReconcileFilteredDeletions opts exact source identifiers into source
+	// deletion tracking in fully scanned folders, even when others are excluded.
+	IMAPReconcileFilteredDeletions map[string]bool `toml:"imap_reconcile_filtered_deletions"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
 	// ACCOUNT value printed by `msgvault list-accounts`, e.g.
 	// "imaps://user@example.com@imap.example.com:993") to that source's

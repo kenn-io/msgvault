@@ -566,7 +566,7 @@ func TestApplyIMAPMailboxDeltas_ConvertsObservationsAndVanishedUIDs(t *testing.T
 		Mailbox: "INBOX", UIDValidity: 17, UID: 3,
 		SourceMessageID: "INBOX|3", RFC822MessageID: "added@example.com",
 		Flags: []string{"\\Flagged"},
-	}})
+	}}, false)
 	require.NoError(err)
 
 	known, err := st.GetIMAPKnownUIDs(src.ID)
@@ -750,4 +750,132 @@ func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.
 		"the next run must read the mailbox again and restore the membership")
 	assert.Zero(imapTombstonedMessageCount(t, st, src.ID),
 		"a message that regains a mailbox must lose its tombstone")
+}
+
+func TestSaveIMAPFolderStates_FilteredReconciliation(t *testing.T) {
+	for _, name := range []string{"enabled", "default", "other account", "date", "errors", "interrupted", "resumed", "limited"} {
+		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://user@example.com")
+			require.NoError(err)
+			first, _ := syncedIMAPClient(t, addr)
+			seedObservedIMAPMessages(t, st, src, first)
+			require.NoError(saveIMAPFolderStates(t.Context(), st, src, first, completedIMAPSyncSummary(t, st, src), 0))
+			require.NoError(first.Close())
+			before, err := loadIMAPFolderStates(st, src.ID)
+			require.NoError(err)
+			// Even a skipped folder whose remote contents changed retains its epoch,
+			// memberships and old tombstone until an authoritative scan includes it.
+			_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE source_id = ? AND source_message_id = 'Trash|1'`), src.ID)
+			require.NoError(err)
+			testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+			testutil.ExpungeIMAPMessage(t, addr, "Trash", 1)
+			cfg := testConfigValue()
+			if name != "default" {
+				key := src.Identifier
+				if name == "other account" {
+					key = "user@example.com"
+				}
+				cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{key: true}
+			}
+			opts := append(imapFolderStateOptions(st, src, false, cfg, testDiscardLogger()), imaplib.WithFolderFilter(nil, []string{"Trash"}))
+			if name == "date" {
+				opts = append(opts, imaplib.WithDateFilter(time.Now().AddDate(-1, 0, 0), time.Time{}))
+			}
+			second, _ := syncedIMAPClient(t, addr, opts...)
+			summary := completedIMAPSyncSummary(t, st, src)
+			ctx := t.Context()
+			limit := 0
+			switch name {
+			case "errors":
+				summary.Errors = 1
+			case "interrupted":
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithCancel(ctx)
+				cancel()
+			case "resumed":
+				summary.WasResumed = true
+			case "limited":
+				limit = 1
+			}
+			require.NoError(saveIMAPFolderStates(ctx, st, src, second, summary, limit))
+			after, err := loadIMAPFolderStates(st, src.ID)
+			require.NoError(err)
+			assert.Equal(before["Trash"], after["Trash"])
+			if name == "enabled" {
+				assert.Equal(2, imapTombstonedMessageCount(t, st, src.ID))
+				assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
+				assert.Empty(after["INBOX"].KnownUIDs)
+			} else {
+				assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
+				assert.Equal(before, after)
+				assert.Equal(2, imapMembershipRowCount(t, st, src.ID))
+			}
+		})
+	}
+}
+
+func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(err)
+	imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+	require.NoError(err)
+	configJSON, err := imapCfg.ToJSON()
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
+	src, err = st.GetSourceByID(src.ID)
+	require.NoError(err)
+	home := t.TempDir()
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Sync: config.SyncConfig{
+		IMAPSkipFolders:                map[string][]string{src.Identifier: {"Trash"}},
+		IMAPReconcileFilteredDeletions: map[string]bool{src.Identifier: true},
+	}}
+	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+	require.NoError(err)
+	require.Zero(summary.Errors)
+	require.Equal(1, imapMembershipRowCount(t, st, src.ID))
+	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+	summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+	require.NoError(err)
+	assert.Zero(summary.Errors)
+	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
+	assert.Zero(imapMembershipRowCount(t, st, src.ID))
+	states, err := loadIMAPFolderStates(st, src.ID)
+	require.NoError(err)
+	assert.NotContains(states, "Trash")
+}
+
+func TestSaveIMAPFolderStates_FilteredReconciliationLegacyLabels(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 0})
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://user@example.com")
+	require.NoError(err)
+	cfg := testConfigValue()
+	cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{src.Identifier: true}
+	opts := append(imapFolderStateOptions(st, src, false, cfg, testDiscardLogger()), imaplib.WithFolderFilter(nil, []string{"Trash"}))
+	client, _ := syncedIMAPClient(t, addr, opts...)
+	seedObservedIMAPMessages(t, st, src, client)
+	seedIMAPMessage(t, st, src, "Trash|9", "")
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'INBOX|1'`), src.ID).Scan(&id))
+	label, err := st.EnsureLabel(src.ID, "Trash", "Trash", "user")
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageLabels(id, []int64{label}))
+	require.NoError(saveIMAPFolderStates(t.Context(), st, src, client, completedIMAPSyncSummary(t, st, src), 0))
+	message, err := st.GetMessage(id)
+	require.NoError(err)
+	assert.Equal([]string{"INBOX"}, message.Labels, "legacy labels alone cannot prove skipped membership")
+	assert.Zero(imapTombstonedMessageCount(t, st, src.ID), "unseen legacy rows have no authoritative absence evidence")
+	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
 }

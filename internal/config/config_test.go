@@ -2629,3 +2629,19 @@ func TestLoadApplePhonePrefix(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadIMAPReconcileFilteredDeletions(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	const account = "imaps://user@example.com@imap.example.com:993"
+	for _, content := range []string{"", `[sync]
+imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true, "other@example.com" = false }
+`} {
+		path := filepath.Join(t.TempDir(), "config.toml")
+		require.NoError(os.WriteFile(path, []byte(content), 0o600))
+		cfg, err := Load(path, "")
+		require.NoError(err)
+		assert.Equal(content != "", cfg.Sync.IMAPReconcileFilteredDeletions[account])
+		assert.False(cfg.Sync.IMAPReconcileFilteredDeletions["user@example.com"])
+		assert.False(cfg.Sync.IMAPReconcileFilteredDeletions["other@example.com"])
+	}
+}

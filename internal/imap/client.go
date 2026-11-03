@@ -147,6 +147,8 @@ type Client struct {
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
 
+	reconcileFilteredDeletions bool
+
 	forceFullEnumeration  bool
 	priorFolderStates     map[string]FolderState // saved states from the last completed sync
 	observedFolderStates  map[string]FolderState // states captured during this session's listing
@@ -1334,10 +1336,12 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			return c.finalizeMessageListLocked(ctx, allMailboxes, qresyncMessages)
 		}
 	}
-	if trackFolders && !c.labelsSnapshotFilteredLocked() {
-		// A clean full scan publishes the complete current topology. Keep a
-		// non-nil empty slice so zero current mailboxes still reaches the
-		// authoritative store apply and retires the prior topology.
+	scopedSnapshot := c.scannedMailboxSnapshotLocked()
+	authoritativeSnapshot := trackFolders && (!c.labelsSnapshotFilteredLocked() || scopedSnapshot)
+	if authoritativeSnapshot {
+		// Publish every selected mailbox, including a non-nil empty set. The
+		// caller distinguishes full topology from scoped reconciliation; only
+		// the full-topology store path retires absent mailboxes.
 		c.observedMailboxDeltas = make([]MailboxDelta, 0, len(allMailboxes))
 	}
 
@@ -1356,13 +1360,14 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		len(c.config.Folders) == 0 &&
 		len(c.folderFilterInclude) == 0 &&
 		len(c.folderFilterExclude) == 0
-	buildMembershipMap := c.allMailFolder != "" || fullScanWithoutAll
+	buildMembershipMap := c.allMailFolder != "" || fullScanWithoutAll || scopedSnapshot
 
 	// Resolve every mailbox's enumeration plan up front so the label map and
 	// the listing below agree. Only the no-\All path takes shortcuts; with an
-	// \All mailbox both consumers keep their previous behaviour.
+	// \All mailbox both consumers keep their previous behaviour. Scoped scans
+	// also enumerate fully so skipped mailboxes never supply missing evidence.
 	var scans map[string]mailboxScan
-	if trackFolders && c.allMailFolder == "" {
+	if trackFolders && c.allMailFolder == "" && !scopedSnapshot {
 		scans = c.planMailboxScans(ctx, allMailboxes, folderStatuses)
 	}
 	labelMapComplete := false
@@ -1520,7 +1525,6 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		}
 	}
 	statusesComplete := folderStatusesCoverMailboxes(allMailboxes, folderStatuses)
-	authoritativeSnapshot := trackFolders && !c.labelsSnapshotFilteredLocked()
 	if authoritativeSnapshot && (!statusesComplete || !labelMapComplete || !enumerationComplete) {
 		labelMapComplete = false
 		c.observedFolderStates = nil

@@ -990,6 +990,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 | `imap_max_commands_per_minute` | `0` | Evenly spaces each IMAP client's explicit sync read commands and authentication attempts. `0` disables pacing; negative values are invalid. Applies to manual and scheduled syncs. Retries wait for the full delay requested by the server, with at most three retries per command. See [IMAP command limits](usage/imap.md#handle-server-command-limits) for retry behavior and scope. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
 | `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
+| `imap_reconcile_filtered_deletions` | `{}` | Per-IMAP-account opt-in to deletion tracking within fully scanned folders during folder-filtered syncs; off by default |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
 
 To skip folders on every sync, key `imap_skip_folders` by the exact `ACCOUNT`
@@ -1006,6 +1007,18 @@ Either `--folder` or `--skip-folder` replaces the saved filter for one run.
 Sync warns when an account key matches no stored IMAP source or a folder name
 matches no selectable mailbox. Unmatched folders stay configured and will be
 excluded if created later. Blank saved folder names prevent daemon startup.
+
+To track source deletions in scanned folders while others stay excluded, opt in
+with the same exact `ACCOUNT` key:
+
+```toml
+[sync]
+imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
+```
+
+This setting applies to scheduled and manual syncs, including one-off folder
+flags. It has no effect on date-filtered runs. A move into any unscanned folder
+can make a message eligible for `gc` when no stored membership remains.
 See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
 on archive membership, deletion tracking, cursor advancement, and `gc`.
 

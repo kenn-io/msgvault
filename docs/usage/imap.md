@@ -178,16 +178,39 @@ A folder filter limits which remote IMAP folders msgvault scans during that
 run. It does not delete messages from the server or remove messages already in
 the local archive.
 
-An email can appear in more than one IMAP folder. During a filtered scan,
-msgvault keeps the stable identity and folder labels learned by earlier,
-broader scans while adding information from the selected folders. A later sync
-with no folder filters scans the complete account again. Filtered scans preserve
-existing archive membership and leave messages' source-deleted status unchanged.
-Saved exclusions pause deletion tracking even in the folders still being scanned,
-and pause folder cursor advancement. Expunged messages keep their prior deletion
-markers. Messages previously marked present remain ineligible for `gc` until
-you remove the exclusions and a complete sync resumes tracking. Changed mailboxes
-can be listed again on later runs while exclusions remain active.
+An email can appear in more than one IMAP folder. By default, a filtered scan
+keeps the stable identity and folder labels learned by earlier, broader scans
+while adding information from selected folders. It preserves saved membership,
+source-deletion markers and folder cursors. Saved exclusions therefore pause
+deletion tracking even in folders still being scanned. Messages previously
+marked present remain ineligible for `gc` until a complete sync resumes tracking
+or you opt in below.
+
+To reconcile deletions within scanned folders, enable the setting for the exact
+`ACCOUNT` value from `msgvault list-accounts`:
+
+```toml
+[sync]
+imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
+```
+
+Restart the daemon after editing the file. This opt-in applies to scheduled and
+manual syncs, including `--folder` and `--skip-folder` overrides and stored folder
+allow lists. After a clean, complete run, msgvault advances cursors and replaces
+memberships only for scanned folders. Date-filtered, limited, resumed, failed or
+interrupted runs do not commit this reconciliation.
+
+A message is marked deleted from its source only when no stored folder membership
+remains. Moving it into any unscanned folder can therefore make it eligible for
+`gc`, even if it still exists on the server. Stored memberships in skipped folders
+remain unchanged and can keep messages live indefinitely, until those folders are
+scanned again. Skipped-only messages keep their labels and deletion markers.
+
+Older imports without stored memberships remain unreconciled if absent from the
+first opted-in scan. Once observed in a scanned folder, their folder labels are
+rebuilt from stored memberships; a legacy label for a skipped folder alone does
+not prove membership and may disappear. A later sync without folder filters
+reconciles the full account again.
 
 Folder filtering works the same whether the CLI uses a local daemon or a
 configured remote msgvault server.

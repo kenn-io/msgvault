@@ -427,7 +427,9 @@ func imapFolderStateOptions(
 		return nil
 	}
 
-	var opts []imaplib.Option
+	opts := []imaplib.Option{imaplib.WithFilteredDeletionReconciliation(
+		cfg != nil && cfg.Sync.IMAPReconcileFilteredDeletions[src.Identifier],
+	)}
 	states, err := loadIMAPFolderStates(s, src.ID)
 	if err != nil {
 		repairLogger(logger).Warn("failed to load IMAP folder states", "source", src.Identifier, "error", err)
@@ -470,6 +472,7 @@ func applyIMAPMailboxDeltas(
 	syncRunID int64,
 	deltas []imaplib.MailboxDelta,
 	observations []imaplib.MembershipObservation,
+	scannedOnly bool,
 ) error {
 	type membershipKey struct {
 		mailbox     string
@@ -544,6 +547,9 @@ func applyIMAPMailboxDeltas(
 	for mailbox := range byMailbox {
 		return fmt.Errorf("IMAP membership observation for mailbox %q has no mailbox delta", mailbox)
 	}
+	if scannedOnly {
+		return s.ApplyIMAPScannedMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
+	}
 	return s.ApplyIMAPMailboxDeltasForSyncContext(ctx, src.ID, syncRunID, storeDeltas)
 }
 
@@ -556,7 +562,7 @@ func imapSyncCanCommit(ctx context.Context, summary *gmail.SyncSummary, limit in
 }
 
 // saveIMAPFolderStates atomically persists mailbox membership and cursor
-// observations only after a clean, unlimited, unfiltered sync.
+// observations only after a clean, unlimited sync with complete mailbox evidence.
 func saveIMAPFolderStates(
 	ctx context.Context,
 	s *store.Store,
@@ -569,7 +575,8 @@ func saveIMAPFolderStates(
 	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
 		return nil
 	}
-	if imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete() {
+	scannedOnly := imapClient.ScannedMailboxSnapshotComplete()
+	if !scannedOnly && (imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete()) {
 		return nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()
@@ -577,7 +584,7 @@ func saveIMAPFolderStates(
 		return nil
 	}
 	if err := applyIMAPMailboxDeltas(
-		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(),
+		ctx, s, src, summary.SyncRunID, deltas, imapClient.ObservedMemberships(), scannedOnly,
 	); err != nil {
 		return fmt.Errorf("apply IMAP mailbox deltas: %w", err)
 	}

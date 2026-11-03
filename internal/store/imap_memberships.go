@@ -155,11 +155,11 @@ func (s *Store) readIMAPMessageAliases(
 // An observed live source-key holder survives a generation change unless
 // independent identity evidence resolves the observation to another message.
 func (s *Store) ApplyIMAPMailboxDeltas(sourceID int64, deltas []IMAPMailboxDelta) error {
-	return s.applyIMAPMailboxDeltas(context.Background(), sourceID, 0, deltas)
+	return s.applyIMAPMailboxDeltas(context.Background(), sourceID, 0, deltas, true)
 }
 
 // ApplyIMAPMailboxDeltasForSyncContext applies an authoritative topology only
-// if syncRunID is still the latest completed generation for sourceID. The
+// if syncRunID is still the latest generation for sourceID and is completed. The
 // generation check and topology replacement share one transaction and source
 // lock, so a newer StartSync cannot interleave between them.
 func (s *Store) ApplyIMAPMailboxDeltasForSyncContext(
@@ -171,7 +171,23 @@ func (s *Store) ApplyIMAPMailboxDeltasForSyncContext(
 	if syncRunID <= 0 {
 		return fmt.Errorf("apply IMAP mailbox deltas: invalid sync generation %d", syncRunID)
 	}
-	return s.applyIMAPMailboxDeltas(ctx, sourceID, syncRunID, deltas)
+	return s.applyIMAPMailboxDeltas(ctx, sourceID, syncRunID, deltas, true)
+}
+
+// ApplyIMAPScannedMailboxDeltasForSyncContext reconciles only the mailboxes
+// named by deltas, preserving the saved topology of every other mailbox.
+// Callers must supply complete observations for each scanned mailbox and the
+// latest source generation, whose status must be completed.
+func (s *Store) ApplyIMAPScannedMailboxDeltasForSyncContext(
+	ctx context.Context,
+	sourceID int64,
+	syncRunID int64,
+	deltas []IMAPMailboxDelta,
+) error {
+	if syncRunID <= 0 {
+		return errors.New("apply scanned IMAP mailbox deltas: sync run ID is required")
+	}
+	return s.applyIMAPMailboxDeltas(ctx, sourceID, syncRunID, deltas, false)
 }
 
 func (s *Store) applyIMAPMailboxDeltas(
@@ -179,6 +195,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 	sourceID int64,
 	syncRunID int64,
 	deltas []IMAPMailboxDelta,
+	fullTopology bool,
 ) error {
 	if deltas == nil {
 		return errors.New("apply IMAP mailbox deltas: nil authoritative topology")
@@ -203,22 +220,26 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
-		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations); err != nil {
+		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations, fullTopology); err != nil {
 			return err
 		}
 
 		affected := make(map[int64]struct{})
-		if err := s.captureUntrackedIMAPMessageIDs(tx, sourceID, len(generations) != 0, affected); err != nil {
-			return err
-		}
-		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
-		for _, normalized := range normalizedDeltas {
-			currentMailboxes[normalized.mailbox] = struct{}{}
-		}
-		if err := retireAbsentIMAPMailboxes(
-			tx, sourceID, currentMailboxes, generations, affected,
-		); err != nil {
-			return err
+		// Only a complete account scan can infer absence outside the supplied
+		// mailboxes. A scoped scan has no evidence about skipped or legacy rows.
+		if fullTopology {
+			if err := s.captureUntrackedIMAPMessageIDs(tx, sourceID, len(generations) != 0, affected); err != nil {
+				return err
+			}
+			currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
+			for _, normalized := range normalizedDeltas {
+				currentMailboxes[normalized.mailbox] = struct{}{}
+			}
+			if err := retireAbsentIMAPMailboxes(
+				tx, sourceID, currentMailboxes, generations, affected,
+			); err != nil {
+				return err
+			}
 		}
 		for _, normalized := range normalizedDeltas {
 			delta := normalized.delta
@@ -769,7 +790,7 @@ type imapMembershipResolver struct {
 	legacyMessages    map[string]int64
 }
 
-func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration) error {
+func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration, fullTopology bool) error {
 	current := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
 	for _, delta := range deltas {
 		current[delta.mailbox] = delta
@@ -812,6 +833,9 @@ func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailb
 	}
 	for mailbox, generation := range previous {
 		delta, present := current[mailbox]
+		if !fullTopology && !present {
+			continue
+		}
 		if present && generation == delta.uidValidity && !staleMemberships[mailbox] {
 			continue
 		}

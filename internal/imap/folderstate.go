@@ -350,3 +350,21 @@ func (c *Client) statusFolder(ctx context.Context, mailbox string) (FolderState,
 		NumMessages:   data.NumMessages,
 	}, nil
 }
+
+// WithFilteredDeletionReconciliation opts folder-filtered sessions into complete
+// membership observations for the selected mailboxes. Date filters remain excluded.
+func WithFilteredDeletionReconciliation(enabled bool) Option {
+	return func(c *Client) { c.reconcileFilteredDeletions = enabled }
+}
+
+// ScannedMailboxSnapshotComplete reports complete selected-mailbox observations.
+func (c *Client) ScannedMailboxSnapshotComplete() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.scannedMailboxSnapshotLocked() && c.labelMapComplete && c.observedMailboxDeltas != nil
+}
+
+func (c *Client) scannedMailboxSnapshotLocked() bool {
+	return c.reconcileFilteredDeletions && c.since.IsZero() && c.before.IsZero() &&
+		c.labelsSnapshotFilteredLocked()
+}
