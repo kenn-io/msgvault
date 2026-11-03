@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -57,17 +58,26 @@ func TestMetadataSearchSQLiteOptionalStats(t *testing.T) {
 	}
 }
 
-func TestMetadataSearchSQLiteCountCancellationStopsStats(t *testing.T) {
+func TestMetadataSearchSQLiteCountCancellationStopsRemainingWork(t *testing.T) {
 	t.Parallel()
 	engine, observer := observedSearchEngine(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	observer.BeforeQuery = func(_ context.Context, sql string) {
+	var mu sync.Mutex
+	var afterCancel []string
+	observer.BeforeQuery = func(queryCtx context.Context, sql string) {
+		mu.Lock()
+		defer mu.Unlock()
+		if queryCtx.Err() != nil {
+			afterCancel = append(afterCancel, sql)
+		}
 		if strings.Contains(sql, "COUNT(DISTINCT m.id)") {
 			cancel()
 		}
 	}
 	_, err := engine.SearchFastWithStats(ctx, search.Parse("after:2024-01-01"), "after:2024-01-01", MessageFilter{}, ViewSenders, 2, 0)
 	require.ErrorIs(t, err, context.Canceled)
-	assert.Len(t, observer.Statements(), 3, "page, labels and canceled count only")
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Empty(t, afterCancel, "no statement may start after the count cancels the request")
 }

@@ -326,8 +326,7 @@ export class PersonBriefController {
       this.runOutcome = `Brief version ${run.brief_version} generated.`;
       this.announcement = this.runOutcome;
       this.endMutation(context, mutation, personID, abort);
-      await this.loadBrief(personID);
-      await this.refreshVersions(personID);
+      await Promise.all([this.loadBrief(personID), this.refreshVersions(personID)]);
       return confirmed;
     } catch {
       if (!this.currentMutation(context, mutation, personID, abort.signal)) return ignored;

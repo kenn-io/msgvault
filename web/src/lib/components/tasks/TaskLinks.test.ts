@@ -172,6 +172,25 @@ describe('TaskLinks', () => {
     expect(screen.queryByText('No linked tasks.')).toBeNull();
   });
 
+  it('requests linked tasks without waiting for integration status', async () => {
+    let resolveStatus!: (response: Response) => void;
+    const requested: string[] = [];
+    const fetchFn = vi.fn<typeof fetch>((input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.url.endsWith('/integrations/tasks/status')) {
+        requested.push('status');
+        return new Promise((done) => { resolveStatus = done; });
+      }
+      requested.push('tasks');
+      return Promise.resolve(Response.json({ state: 'ready', complete: true, tasks: [{ id: 'task-1', title: 'Parallel task' }] }));
+    });
+    render(TaskLinks, { client: createAPIClient(fetchFn), messageId: 42, title: 'Synthetic' });
+    await waitFor(() => expect(requested).toEqual(['status', 'tasks']));
+    expect(screen.queryByText('Parallel task')).toBeNull();
+    resolveStatus(Response.json({ state: 'ready', project: 'project', message: 'Ready' }));
+    expect(await screen.findByText('Parallel task')).toBeDefined();
+  });
+
   it('loads last-good cached links even when the integration status request fails', async () => {
     render(TaskLinks, { client: createAPIClient(vi.fn(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
