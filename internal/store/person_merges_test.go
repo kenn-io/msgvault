@@ -194,17 +194,23 @@ func TestMergePersons_PrefersLaterOwnerProposalAfterFractionalConfirmation(t *te
 	survivor := mustPromotedPerson(t, f.Store, "merge-decision-survivor@example.com", "Survivor")
 	absorbed := mustPromotedPerson(t, f.Store, "merge-decision-absorbed@example.com", "Absorbed")
 
-	confirmedID := insertTestPersonInstruction(t, f.Store, survivor.ID, personfacts.InstructionKindAddressAs, "Vee", "call me Vee", personfacts.InstructionStatusProposed)
+	confirmedInstruction := addTestInstruction(t, f.Store, survivor.ID, "Vee")
+	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(
+		`UPDATE person_instructions SET review_state=? WHERE id=?`,
+	), personfacts.InstructionReviewUnsure, confirmedInstruction.ID)
+	require.NoError(err)
 	confirmed, err := f.Store.DecidePersonInstructionContext(ctx, store.PersonInstructionDecision{
-		InstructionID: confirmedID, ExpectedRevision: 1,
+		InstructionID: confirmedInstruction.ID, ExpectedRevision: confirmedInstruction.Revision,
 		Action: personfacts.InstructionActionConfirm, Actor: "owner",
 	})
 	require.NoError(err)
+	assert.Equal(personfacts.InstructionOriginOwner, confirmed.Instruction.Origin)
 	proposal, err := f.Store.AddPersonInstructionContext(ctx, store.PersonInstructionInput{
 		PersonID: absorbed.ID, Kind: personfacts.InstructionKindAddressAs,
 		ValueText: "VEE", Text: "call me VEE", Actor: "owner",
 	})
 	require.NoError(err)
+	assert.Equal(personfacts.InstructionOriginOwner, proposal.Origin)
 	assert.Equal(confirmed.Instruction.InstructionKey, proposal.InstructionKey)
 	proposalAt := proposal.UpdatedAt
 	var proposalEventAt time.Time
@@ -221,9 +227,9 @@ func TestMergePersons_PrefersLaterOwnerProposalAfterFractionalConfirmation(t *te
 	assert.Equal(proposalAt.Truncate(time.Second), priorConfirmationAt.Truncate(time.Second))
 	assert.True(priorConfirmationAt.After(proposalAt.Truncate(time.Second)))
 	assert.True(priorConfirmationAt.Before(proposalAt))
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_instructions SET confirmed_at=?,updated_at=? WHERE id=?`), priorConfirmationAt, priorConfirmationAt, confirmedID)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_instructions SET confirmed_at=?,updated_at=? WHERE id=?`), priorConfirmationAt, priorConfirmationAt, confirmedInstruction.ID)
 	require.NoError(err)
-	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_instruction_events SET created_at=? WHERE instruction_id=? AND action='confirm'`), priorConfirmationAt, confirmedID)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_instruction_events SET created_at=? WHERE instruction_id=? AND action='confirm'`), priorConfirmationAt, confirmedInstruction.ID)
 	require.NoError(err)
 
 	survivor, err = f.Store.GetPersonContext(ctx, survivor.ID)

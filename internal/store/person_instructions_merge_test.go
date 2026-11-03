@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -269,7 +270,15 @@ func testInstructionCollision(t *testing.T, mode string) {
 	assert.Equal(t, survivor.InstructionKey, got.InstructionKey)
 	var detail string
 	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT detail_json FROM person_instruction_events WHERE instruction_id=? AND action='merge_moved'`), got.ID).Scan(&detail))
-	assert.JSONEq(t, fmt.Sprintf(`{"absorbed_instruction_id":%d,"collision":true,"lifecycle_source":%q}`, absorbed.ID, sourceName), detail)
+	var detailFields struct {
+		AbsorbedInstructionID int64  `json:"absorbed_instruction_id"`
+		Collision             bool   `json:"collision"`
+		LifecycleSource       string `json:"lifecycle_source"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(detail), &detailFields))
+	assert.Equal(t, absorbed.ID, detailFields.AbsorbedInstructionID)
+	assert.True(t, detailFields.Collision)
+	assert.Equal(t, sourceName, detailFields.LifecycleSource)
 	split := splitInstructionMerge(t, st, merged, bob.ParticipantIDs)
 	require.True(t, split.ExactReversal)
 	restoredSurvivor := testInstruction(t, st, survivor.ID)
@@ -1534,6 +1543,175 @@ func TestNestedMergesPreferLatestOwnerProposalAfterSplit(t *testing.T) {
 	assert.Equal(carolInstruction.ValidUntil, current.ValidUntil)
 }
 
+func TestMergeSplitMergeRestoresDecisionOrderForBothInstructions(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	carol := mustPromotedPerson(t, st, "carol@example.com", "carol")
+
+	aliceInstruction := addTestInstruction(t, st, alice.ID, "iPhone")
+	carolInstruction := addTestInstruction(t, st, carol.ID, "IPHONE")
+	bobInstruction := addTestInstruction(t, st, bob.ID, "iphone")
+	assert.Equal(aliceInstruction.InstructionKey, carolInstruction.InstructionKey)
+	assert.Equal(aliceInstruction.InstructionKey, bobInstruction.InstructionKey)
+
+	base := time.Now().UTC().Add(-4 * time.Hour).Truncate(time.Microsecond)
+	setInstructionEventCreatedAt(t, st, aliceInstruction.ID, "propose", base)
+	setInstructionEventCreatedAt(t, st, carolInstruction.ID, "propose", base.Add(time.Hour))
+	setInstructionEventCreatedAt(t, st, bobInstruction.ID, "propose", base.Add(2*time.Hour))
+	aliceValidUntil := base.Add(24 * time.Hour)
+	carolValidUntil := base.Add(48 * time.Hour)
+	bobValidUntil := base.Add(72 * time.Hour)
+	for _, instruction := range []struct {
+		id         int64
+		validUntil time.Time
+	}{
+		{aliceInstruction.ID, aliceValidUntil},
+		{carolInstruction.ID, carolValidUntil},
+		{bobInstruction.ID, bobValidUntil},
+	} {
+		_, err := st.DB().ExecContext(ctx, st.Rebind(
+			`UPDATE person_instructions SET valid_from=?,valid_until=? WHERE id=?`,
+		), base.Add(-time.Hour), instruction.validUntil, instruction.id)
+		require.NoError(err)
+	}
+
+	firstMerge, err := mergeInstructionPeople(ctx, t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	mergedInstruction := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal("call me iphone", mergedInstruction.Text)
+	require.NotNil(mergedInstruction.ValidUntil)
+	assert.Equal(bobValidUntil, mergedInstruction.ValidUntil.UTC())
+
+	split := splitInstructionMerge(t, st, firstMerge, bob.ParticipantIDs)
+	require.True(split.ExactReversal)
+	restoredAlice := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal("call me iPhone", restoredAlice.Text)
+	require.NotNil(restoredAlice.ValidUntil)
+	assert.Equal(aliceValidUntil, restoredAlice.ValidUntil.UTC())
+	restoredBob := testInstruction(t, st, bobInstruction.ID)
+	assert.Equal(split.NewPerson.ID, restoredBob.PersonID)
+	assert.Equal("call me iphone", restoredBob.Text)
+	require.NotNil(restoredBob.ValidUntil)
+	assert.Equal(bobValidUntil, restoredBob.ValidUntil.UTC())
+
+	_, err = mergeInstructionPeople(ctx, t, st, alice.ID, carol.ID)
+	require.NoError(err)
+	winner := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal("call me IPHONE", winner.Text)
+	assert.Equal("IPHONE", winner.ValueText)
+	require.NotNil(winner.ValidUntil)
+	assert.Equal(carolValidUntil, winner.ValidUntil.UTC())
+
+	_, err = mergeInstructionPeople(ctx, t, st, alice.ID, split.NewPerson.ID)
+	require.NoError(err)
+	winner = testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal("call me iphone", winner.Text)
+	assert.Equal("iphone", winner.ValueText)
+	require.NotNil(winner.ValidUntil)
+	assert.Equal(bobValidUntil, winner.ValidUntil.UTC())
+}
+
+func TestSplitEarlierNestedMergePreservesLaterInstructionDecisionOrder(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	carol := mustPromotedPerson(t, st, "carol@example.com", "carol")
+
+	aliceInstruction := addTestInstruction(t, st, alice.ID, "iPhone")
+	bobInstruction := addTestInstruction(t, st, bob.ID, "iphone")
+	carolInstruction := addTestInstruction(t, st, carol.ID, "IPHONE")
+	assert.Equal(aliceInstruction.InstructionKey, bobInstruction.InstructionKey)
+	assert.Equal(aliceInstruction.InstructionKey, carolInstruction.InstructionKey)
+
+	base := time.Now().UTC().Add(-4 * time.Hour).Truncate(time.Microsecond)
+	setInstructionEventCreatedAt(t, st, aliceInstruction.ID, "propose", base)
+	setInstructionEventCreatedAt(t, st, bobInstruction.ID, "propose", base.Add(time.Hour))
+	setInstructionEventCreatedAt(t, st, carolInstruction.ID, "propose", base.Add(2*time.Hour))
+
+	firstMerge, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	assert.Equal(bobInstruction.Text, testInstruction(t, st, aliceInstruction.ID).Text)
+
+	_, err = mergeInstructionPeople(t.Context(), t, st, alice.ID, carol.ID)
+	require.NoError(err)
+	assert.Equal(carolInstruction.Text, testInstruction(t, st, aliceInstruction.ID).Text)
+
+	current, err := st.GetPersonContext(t.Context(), alice.ID)
+	require.NoError(err)
+	split, err := st.SplitPersonMergeContext(t.Context(), store.PersonSplitRequest{
+		SourcePersonID: alice.ID, MergeID: firstMerge.Merge.ID,
+		ParticipantIDs: bob.ParticipantIDs, ExpectedSourceRevision: current.Revision,
+		IdempotencyKey: "instruction-split-earlier-nested-merge", Actor: "owner",
+	})
+	require.NoError(err)
+	require.True(split.ExactReversal)
+	assert.Equal(carolInstruction.Text, testInstruction(t, st, aliceInstruction.ID).Text)
+	restoredBob := testInstruction(t, st, bobInstruction.ID)
+	assert.Equal(split.NewPerson.ID, restoredBob.PersonID)
+	assert.Equal(bobInstruction.Text, restoredBob.Text)
+
+	_, err = mergeInstructionPeople(t.Context(), t, st, alice.ID, split.NewPerson.ID)
+	require.NoError(err)
+	winner := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal(carolInstruction.Text, winner.Text)
+	assert.Equal(carolInstruction.ValueText, winner.ValueText)
+}
+
+func TestNestedMergeUsesSelectedLifecycleOrderAfterExtractionCollision(t *testing.T) {
+	ownerDecisionAt := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	assertNestedMergeUsesSelectedLifecycleOrderAfterExtractionCollision(
+		t, ownerDecisionAt, ownerDecisionAt.Add(time.Hour), ownerDecisionAt.Add(2*time.Hour),
+	)
+}
+
+func assertNestedMergeUsesSelectedLifecycleOrderAfterExtractionCollision(
+	t *testing.T, ownerDecisionAt, newerOwnerDecisionAt, extractionAt time.Time,
+) {
+	t.Helper()
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	carol := mustPromotedPerson(t, st, "carol@example.com", "carol")
+
+	ownerInstruction := addTestInstruction(t, st, alice.ID, "iPhone")
+	extractionID := insertTestPersonInstruction(t, st, bob.ID,
+		personfacts.InstructionKindAddressAs, "iphone", "call me iphone", personfacts.InstructionStatusActive)
+	extraction := testInstruction(t, st, extractionID)
+	newerOwnerInstruction := addTestInstruction(t, st, carol.ID, "IPHONE")
+	assert.Equal(ownerInstruction.InstructionKey, extraction.InstructionKey)
+	assert.Equal(ownerInstruction.InstructionKey, newerOwnerInstruction.InstructionKey)
+
+	require.True(ownerDecisionAt.Before(newerOwnerDecisionAt))
+	require.True(newerOwnerDecisionAt.Before(extractionAt))
+	setInstructionEventCreatedAt(t, st, ownerInstruction.ID, "propose", ownerDecisionAt)
+	setInstructionEventCreatedAt(t, st, newerOwnerInstruction.ID, "propose", newerOwnerDecisionAt)
+	_, err := st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO person_instruction_events
+		(person_id,instruction_id,instruction_key,action,actor,detail_json,created_at)
+		VALUES (?,?,?,'propose','extractor','{}',?)`),
+		extraction.PersonID, extraction.ID, extraction.InstructionKey, extractionAt)
+	require.NoError(err)
+
+	firstMerge, err := mergeInstructionPeople(ctx, t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	current := testInstruction(t, st, ownerInstruction.ID)
+	assert.Equal(ownerInstruction.Text, current.Text)
+
+	_, err = mergeInstructionPeople(ctx, t, st, firstMerge.Person.ID, carol.ID)
+	require.NoError(err)
+	winner := testInstruction(t, st, ownerInstruction.ID)
+	assert.Equal(newerOwnerInstruction.Text, winner.Text)
+	assert.Equal(newerOwnerInstruction.ValueText, winner.ValueText)
+}
+
 func instructionProposalTime(t *testing.T, st *store.Store, instructionID int64) time.Time {
 	t.Helper()
 	var createdAt time.Time
@@ -2035,4 +2213,82 @@ func TestMergeCollisionUsesLatestEventIDWhenDecisionTimesTie(t *testing.T) {
 	winner := testInstruction(t, st, survivor.ID)
 	assert.Equal("call me iphone", winner.Text)
 	assert.Equal("iphone", winner.ValueText)
+}
+
+func TestNestedSplitReversalsIgnoreReversedDecisionMarkers(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	diana := mustPromotedPerson(t, st, "diana@example.com", "diana")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	carol := mustPromotedPerson(t, st, "carol@example.com", "carol")
+
+	aliceInstruction := addTestInstruction(t, st, alice.ID, "iPhone")
+	dianaInstruction := addTestInstruction(t, st, diana.ID, "IPHONE")
+	bobInstruction := addTestInstruction(t, st, bob.ID, "iphone")
+	carolInstruction := addTestInstruction(t, st, carol.ID, "IPHONe")
+	for _, instruction := range []*store.PersonInstruction{aliceInstruction, dianaInstruction, bobInstruction, carolInstruction} {
+		assert.Equal(aliceInstruction.InstructionKey, instruction.InstructionKey)
+	}
+
+	base := time.Now().UTC().Add(-4 * time.Hour).Truncate(time.Microsecond)
+	aliceValidUntil := base.Add(24 * time.Hour)
+	dianaValidUntil := base.Add(48 * time.Hour)
+	bobValidUntil := base.Add(72 * time.Hour)
+	carolValidUntil := base.Add(96 * time.Hour)
+	ordered := []struct {
+		instruction *store.PersonInstruction
+		decisionAt  time.Time
+		validUntil  time.Time
+	}{
+		{aliceInstruction, base, aliceValidUntil},
+		{dianaInstruction, base.Add(time.Hour), dianaValidUntil},
+		{bobInstruction, base.Add(2 * time.Hour), bobValidUntil},
+		{carolInstruction, base.Add(3 * time.Hour), carolValidUntil},
+	}
+	for _, item := range ordered {
+		setInstructionEventCreatedAt(t, st, item.instruction.ID, "propose", item.decisionAt)
+		_, err := st.DB().ExecContext(ctx, st.Rebind(
+			`UPDATE person_instructions SET valid_from=?,valid_until=? WHERE id=?`,
+		), base.Add(-time.Hour), item.validUntil, item.instruction.ID)
+		require.NoError(err)
+	}
+
+	firstMerge, err := mergeInstructionPeople(ctx, t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	secondMerge, err := mergeInstructionPeople(ctx, t, st, alice.ID, carol.ID)
+	require.NoError(err)
+	merged := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal(carolInstruction.Text, merged.Text)
+	require.NotNil(merged.ValidUntil)
+	assert.Equal(carolValidUntil, merged.ValidUntil.UTC())
+
+	split := splitInstructionMerge(t, st, secondMerge, carol.ParticipantIDs)
+	require.True(split.ExactReversal)
+	current, err := st.GetPersonContext(ctx, alice.ID)
+	require.NoError(err)
+	firstSplit, err := st.SplitPersonMergeContext(ctx, store.PersonSplitRequest{
+		SourcePersonID: alice.ID, MergeID: firstMerge.Merge.ID,
+		ParticipantIDs: bob.ParticipantIDs, ExpectedSourceRevision: current.Revision,
+		IdempotencyKey: "instruction-split-b-after-c", Actor: "owner",
+	})
+	require.NoError(err)
+	require.True(firstSplit.ExactReversal)
+
+	restoredAlice := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal(aliceInstruction.Text, restoredAlice.Text)
+	require.NotNil(restoredAlice.ValidUntil)
+	assert.Equal(aliceValidUntil, restoredAlice.ValidUntil.UTC())
+	assert.Equal(firstSplit.NewPerson.ID, testInstruction(t, st, bobInstruction.ID).PersonID)
+	assert.Equal(split.NewPerson.ID, testInstruction(t, st, carolInstruction.ID).PersonID)
+
+	_, err = mergeInstructionPeople(ctx, t, st, alice.ID, diana.ID)
+	require.NoError(err)
+	winner := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal(dianaInstruction.Text, winner.Text)
+	assert.Equal(dianaInstruction.ValueText, winner.ValueText)
+	require.NotNil(winner.ValidUntil)
+	assert.Equal(dianaValidUntil, winner.ValidUntil.UTC())
 }

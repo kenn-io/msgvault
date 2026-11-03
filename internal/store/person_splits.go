@@ -283,6 +283,24 @@ func (s *Store) splitPersonMergeOnce(
 				return err
 			}
 		}
+		if selection.exact && len(unrestored) == 0 {
+			orderAt := personFactPortableTime(time.Now().UTC())
+			if err := s.restorePersonInstructionDecisionOrdersAfterSplitTx(
+				ctx, tx, request.MergeID, request.SourcePersonID, newPersonID, orderAt,
+			); err != nil {
+				return err
+			}
+			for _, ancestor := range ancestorRestorations {
+				if !ancestor.selection.exact {
+					continue
+				}
+				if err := s.restorePersonInstructionDecisionOrdersAfterSplitTx(
+					ctx, tx, ancestor.merge.ID, request.SourcePersonID, newPersonID, orderAt,
+				); err != nil {
+					return err
+				}
+			}
+		}
 		if err := s.markSplitPersonInstructionsTx(ctx, tx, newPersonID); err != nil {
 			return err
 		}
@@ -2809,6 +2827,171 @@ func (s *Store) markSplitPersonInstructionsTx(ctx context.Context, tx *loggedTx,
 		}
 	}
 	return nil
+}
+
+func (s *Store) restorePersonInstructionDecisionOrdersAfterSplitTx(
+	ctx context.Context,
+	tx *loggedTx,
+	mergeID, sourcePersonID, newPersonID int64,
+	at time.Time,
+) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id,instruction_id,detail_json
+		FROM person_instruction_events
+		WHERE person_id=? AND action='merge_moved' AND instruction_id IS NOT NULL
+		ORDER BY id DESC`, sourcePersonID)
+	if err != nil {
+		return fmt.Errorf("load split instruction decision-order snapshots: %w", err)
+	}
+	type collisionEvent struct {
+		eventID               int64
+		survivorInstructionID int64
+		detail                personInstructionMergeEventDetail
+	}
+	collisions := make([]collisionEvent, 0)
+	for rows.Next() {
+		var event collisionEvent
+		var detailJSON string
+		if err := rows.Scan(&event.eventID, &event.survivorInstructionID, &detailJSON); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan split instruction decision-order snapshot: %w", err)
+		}
+		if err := json.Unmarshal([]byte(detailJSON), &event.detail); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("decode split instruction decision-order snapshot: %w", err)
+		}
+		if event.detail.MergeID != mergeID || !event.detail.Collision ||
+			event.detail.AbsorbedInstructionID <= 0 ||
+			event.detail.SurvivorDecisionOrder == nil ||
+			event.detail.AbsorbedDecisionOrder == nil {
+			continue
+		}
+		collisions = append(collisions, event)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate split instruction decision-order snapshots: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close split instruction decision-order snapshots: %w", err)
+	}
+
+	seen := make(map[int64]struct{}, len(collisions))
+	for _, collision := range collisions {
+		if _, ok := seen[collision.survivorInstructionID]; ok {
+			continue
+		}
+		seen[collision.survivorInstructionID] = struct{}{}
+		for _, instruction := range []struct {
+			id    int64
+			order *personInstructionOwnerDecisionOrderSnapshot
+		}{
+			{collision.survivorInstructionID, collision.detail.SurvivorDecisionOrder},
+			{collision.detail.AbsorbedInstructionID, collision.detail.AbsorbedDecisionOrder},
+		} {
+			var restored PersonInstruction
+			var confirmedAt sql.NullTime
+			if err := tx.QueryRowContext(ctx, `SELECT id,person_id,instruction_key,confirmed_at
+				FROM person_instructions WHERE id=?`, instruction.id).Scan(
+				&restored.ID, &restored.PersonID, &restored.InstructionKey, &confirmedAt,
+			); err != nil {
+				if errors.Is(err, sql.ErrNoRows) {
+					continue
+				}
+				return fmt.Errorf("load restored split instruction decision order: %w", err)
+			}
+			if restored.PersonID != sourcePersonID && restored.PersonID != newPersonID {
+				continue
+			}
+			if confirmedAt.Valid {
+				restored.ConfirmedAt = &confirmedAt.Time
+			}
+			order := instruction.order
+			if instruction.id == collision.survivorInstructionID {
+				laterDecision, err := personInstructionHasDecisionAfterEventTx(
+					ctx, tx, instruction.id, collision.eventID,
+				)
+				if err != nil {
+					return fmt.Errorf("check later instruction decisions after split target: %w", err)
+				}
+				if laterDecision {
+					effectiveOrder, err := personInstructionOwnerDecisionOrderTx(ctx, tx, restored)
+					if err != nil {
+						return fmt.Errorf("load effective instruction decision order after split: %w", err)
+					}
+					order = &personInstructionOwnerDecisionOrderSnapshot{
+						DecidedAt: effectiveOrder.decidedAt,
+						EventID:   effectiveOrder.eventID,
+					}
+				}
+			}
+			detail := map[string]any{
+				"collision":                true,
+				"merge_id":                 mergeID,
+				"lifecycle_decision_order": order,
+			}
+			if err := appendPersonInstructionEventTx(
+				ctx, tx, &restored, personfacts.InstructionActionSplitMoved,
+				"system", at, detail,
+			); err != nil {
+				return fmt.Errorf("restore split instruction decision order: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+func personInstructionHasDecisionAfterEventTx(
+	ctx context.Context, tx *loggedTx, instructionID, eventID int64,
+) (bool, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT action,detail_json
+		FROM person_instruction_events
+		WHERE instruction_id=? AND id>? AND action IN
+			('propose','edit','confirm','unsure','adopt','merge_moved','split_moved')
+		ORDER BY id`, instructionID, eventID)
+	if err != nil {
+		return false, fmt.Errorf("load later person instruction decisions: %w", err)
+	}
+	type decisionEvent struct {
+		action string
+		detail string
+	}
+	events := make([]decisionEvent, 0)
+	for rows.Next() {
+		var event decisionEvent
+		if err := rows.Scan(&event.action, &event.detail); err != nil {
+			_ = rows.Close()
+			return false, fmt.Errorf("scan later person instruction decision: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return false, fmt.Errorf("iterate later person instruction decisions: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close later person instruction decisions: %w", err)
+	}
+	for _, event := range events {
+		if event.action != string(personfacts.InstructionActionMergeMoved) &&
+			event.action != string(personfacts.InstructionActionSplitMoved) {
+			return true, nil
+		}
+		var detail personInstructionMergeEventDetail
+		if err := json.Unmarshal([]byte(event.detail), &detail); err != nil {
+			return false, fmt.Errorf("decode later person instruction move decision: %w", err)
+		}
+		if detail.Collision && detail.LifecycleDecisionOrder != nil {
+			reversed, err := personInstructionMoveMarkerReversedTx(ctx, tx, instructionID, detail)
+			if err != nil {
+				return false, fmt.Errorf("check later person instruction move marker reversal: %w", err)
+			}
+			if reversed {
+				continue
+			}
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Store) reconcilePersonSplitInstructionConflictsTx(

@@ -2591,28 +2591,113 @@ type personInstructionOwnerDecisionOrder struct {
 	eventID   int64
 }
 
+type personInstructionOwnerDecisionOrderSnapshot struct {
+	DecidedAt time.Time `json:"decided_at"`
+	EventID   int64     `json:"event_id"`
+}
+
+type personInstructionMergeEventDetail struct {
+	Collision              bool                                         `json:"collision"`
+	MergeID                int64                                        `json:"merge_id"`
+	AbsorbedInstructionID  int64                                        `json:"absorbed_instruction_id"`
+	LifecycleDecisionOrder *personInstructionOwnerDecisionOrderSnapshot `json:"lifecycle_decision_order"`
+	SurvivorDecisionOrder  *personInstructionOwnerDecisionOrderSnapshot `json:"survivor_decision_order"`
+	AbsorbedDecisionOrder  *personInstructionOwnerDecisionOrderSnapshot `json:"absorbed_decision_order"`
+}
+
+func personInstructionOwnerDecisionOrderAfter(a, b personInstructionOwnerDecisionOrder) bool {
+	return a.decidedAt.After(b.decidedAt) ||
+		(a.decidedAt.Equal(b.decidedAt) && a.eventID > b.eventID)
+}
+
+func personInstructionMoveMarkerReversedTx(
+	ctx context.Context, tx *loggedTx, instructionID int64, detail personInstructionMergeEventDetail,
+) (bool, error) {
+	if detail.MergeID <= 0 || instructionID <= 0 {
+		return false, nil
+	}
+	var reversed bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM person_merge_rows
+		WHERE merge_id=? AND table_name=? AND split_id IS NOT NULL
+		  AND (original_row_id=? OR current_row_id=?)
+	)`, detail.MergeID, personInstructionsTableName, instructionID, instructionID).Scan(&reversed); err != nil {
+		return false, fmt.Errorf("check person instruction move marker reversal: %w", err)
+	}
+	return reversed, nil
+}
+
 func personInstructionOwnerDecisionOrderTx(
 	ctx context.Context, tx *loggedTx, instruction PersonInstruction,
 ) (personInstructionOwnerDecisionOrder, error) {
 	var order personInstructionOwnerDecisionOrder
-	var decidedAt sql.NullTime
-	var eventID sql.NullInt64
-	err := tx.QueryRowContext(ctx, `SELECT id,created_at FROM person_instruction_events
-		WHERE instruction_id=? AND action IN ('propose','edit','confirm','unsure','adopt')
-		ORDER BY created_at DESC,id DESC LIMIT 1`, instruction.ID).Scan(&eventID, &decidedAt)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	hasOrder := false
+	rows, err := tx.QueryContext(ctx, `SELECT id,action,created_at,detail_json
+		FROM person_instruction_events
+		WHERE instruction_id=? AND action IN ('propose','edit','confirm','unsure','adopt','merge_moved','split_moved')
+		ORDER BY id DESC`, instruction.ID)
+	if err != nil {
 		return order, fmt.Errorf("read person instruction owner decision order: %w", err)
 	}
-	if decidedAt.Valid {
-		order.decidedAt = decidedAt.Time
+	type decisionEvent struct {
+		id        int64
+		action    string
+		createdAt time.Time
+		detail    string
 	}
-	if eventID.Valid {
-		order.eventID = eventID.Int64
+	events := make([]decisionEvent, 0)
+	for rows.Next() {
+		var event decisionEvent
+		if err := rows.Scan(&event.id, &event.action, &event.createdAt, &event.detail); err != nil {
+			_ = rows.Close()
+			return order, fmt.Errorf("scan person instruction decision history: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return order, fmt.Errorf("iterate person instruction decision history: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return order, fmt.Errorf("close person instruction decision history: %w", err)
+	}
+	for _, event := range events {
+		if event.action == string(personfacts.InstructionActionMergeMoved) ||
+			event.action == string(personfacts.InstructionActionSplitMoved) {
+			var mergeDetail personInstructionMergeEventDetail
+			if err := json.Unmarshal([]byte(event.detail), &mergeDetail); err != nil {
+				return order, fmt.Errorf("decode person instruction move decision history: %w", err)
+			}
+			if mergeDetail.Collision && mergeDetail.LifecycleDecisionOrder != nil {
+				reversed, err := personInstructionMoveMarkerReversedTx(ctx, tx, instruction.ID, mergeDetail)
+				if err != nil {
+					return order, fmt.Errorf("check person instruction decision marker reversal: %w", err)
+				}
+				if reversed {
+					continue
+				}
+				snapshot := personInstructionOwnerDecisionOrder{
+					decidedAt: mergeDetail.LifecycleDecisionOrder.DecidedAt,
+					eventID:   mergeDetail.LifecycleDecisionOrder.EventID,
+				}
+				if !hasOrder || personInstructionOwnerDecisionOrderAfter(snapshot, order) {
+					order = snapshot
+				}
+				hasOrder = true
+				break
+			}
+			continue
+		}
+		candidate := personInstructionOwnerDecisionOrder{decidedAt: event.createdAt, eventID: event.id}
+		if !hasOrder || personInstructionOwnerDecisionOrderAfter(candidate, order) {
+			order = candidate
+			hasOrder = true
+		}
 	}
 	// Exact splits can restore confirmed_at to an instruction while its
 	// confirmation event remains with the surviving instruction. Keep that
 	// owner decision in the ordering even when this row has only older events.
-	if instruction.ConfirmedAt != nil && instruction.ConfirmedAt.After(order.decidedAt) {
+	if instruction.ConfirmedAt != nil && (!hasOrder || instruction.ConfirmedAt.After(order.decidedAt)) {
 		order.decidedAt = *instruction.ConfirmedAt
 	}
 	return order, nil
@@ -2688,6 +2773,23 @@ func (s *Store) movePersonInstructionsTx(ctx context.Context, tx *loggedTx, merg
 							(row.CreatedAt.After(existing.CreatedAt) ||
 								(row.CreatedAt.Equal(existing.CreatedAt) && row.ID > existing.ID))))))) {
 				source, sourceName = row, "absorbed"
+			}
+			selectedDecision := survivorDecision
+			if sourceName == "absorbed" {
+				selectedDecision = absorbedDecision
+			}
+			detail["merge_id"] = mergeID
+			detail["survivor_decision_order"] = personInstructionOwnerDecisionOrderSnapshot{
+				DecidedAt: survivorDecision.decidedAt,
+				EventID:   survivorDecision.eventID,
+			}
+			detail["absorbed_decision_order"] = personInstructionOwnerDecisionOrderSnapshot{
+				DecidedAt: absorbedDecision.decidedAt,
+				EventID:   absorbedDecision.eventID,
+			}
+			detail["lifecycle_decision_order"] = personInstructionOwnerDecisionOrderSnapshot{
+				DecidedAt: selectedDecision.decidedAt,
+				EventID:   selectedDecision.eventID,
 			}
 			spec := personMergeTableRegistry[personInstructionsTableName]
 			beforeRows, err := s.capturePersonMergeQueryTx(ctx, tx, spec,
