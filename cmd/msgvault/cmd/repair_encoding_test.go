@@ -1,15 +1,21 @@
 package cmd
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gcal"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -517,4 +523,81 @@ func TestRepairOtherStrings_RefreshesOwnershipAtomicallyPerBatch(t *testing.T) {
 		 WHERE email_address LIKE '%' || CAST(x'FE' AS TEXT) || '%'`,
 	).Scan(&stillBroken))
 	assert.Zero(stillBroken, "every seeded email must be repaired")
+}
+
+// cancelOnWarnHandler cancels the run at the first warning it receives.
+type cancelOnWarnHandler struct{ cancel context.CancelFunc }
+
+func (h cancelOnWarnHandler) Enabled(_ context.Context, level slog.Level) bool {
+	return level >= slog.LevelWarn
+}
+
+func (h cancelOnWarnHandler) Handle(context.Context, slog.Record) error {
+	h.cancel()
+	return nil
+}
+
+func (h cancelOnWarnHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h cancelOnWarnHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestRepairEncodingCancelledAfterCommittedBatchResetsEmbeddings(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	tmpDir := t.TempDir()
+	cfg := &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
+	dbPath := cfg.DatabaseDSN()
+	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+	db := st.DB()
+	_, err := db.ExecContext(t.Context(), `INSERT INTO sources (id, source_type, identifier, created_at, updated_at)
+		VALUES (1, 'test', 'owner@example.com', datetime('now'), datetime('now'))`)
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO conversations
+		(id, source_id, source_conversation_id, conversation_type, title, created_at, updated_at)
+		VALUES (1, 1, 'conv-1', 'email_thread', 'title', datetime('now'), datetime('now'))`)
+	require.NoError(err)
+	// Messages 1-1000 fill one repair batch, which commits before the
+	// message pass ends.
+	_, err = db.ExecContext(t.Context(), `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000)
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id,
+			message_type, subject, sent_at, size_estimate, embed_gen)
+		SELECT i, 1, 1, 'src-' || i, 'email', ?, datetime('now'), 1000, 1 FROM n`, "subj\x80bad")
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO messages (id, conversation_id, source_id, source_message_id,
+			message_type, subject, sent_at, size_estimate, embed_gen)
+		VALUES (1001, 1, 1, 'src-1001', 'email', 'clean subject', datetime('now'), 1000, 1)`)
+	require.NoError(err)
+	// A label id that cannot scan into int64 makes the later label pass log a
+	// warning, and the test's logger cancels the run there.
+	_, err = db.ExecContext(t.Context(), "PRAGMA foreign_keys = OFF")
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(), "DROP TABLE labels")
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(), `CREATE TABLE labels (
+		id TEXT, source_id INTEGER, source_label_id TEXT,
+		name TEXT NOT NULL, label_type TEXT, color TEXT
+	)`)
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(), `INSERT INTO labels (id, source_id, source_label_id, name, label_type)
+		VALUES ('not-a-number', 1, 'lbl1', 'Label', 'user')`)
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	state := newInvocation()
+	state.cfg = cfg
+	state.logger = slog.New(cancelOnWarnHandler{cancel: cancel})
+	cmd := &cobra.Command{}
+	cmd.SetContext(withInvocation(ctx, state))
+	require.ErrorIs(runRepairEncodingLocal(cmd), context.Canceled)
+
+	st, err = store.Open(dbPath)
+	require.NoError(err)
+	defer func() { assert.NoError(st.Close()) }()
+	var repairedStillEmbedded int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM messages
+		WHERE id <= 1000 AND embed_gen IS NOT NULL`).Scan(&repairedStillEmbedded))
+	assert.Zero(repairedStillEmbedded, "committed repairs must be marked for re-embedding")
+	var unrepairedGen sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT embed_gen FROM messages WHERE id = 1001`).Scan(&unrepairedGen))
+	assert.Equal(sql.NullInt64{Int64: 1, Valid: true}, unrepairedGen, "an unrepaired message keeps its embedding")
 }

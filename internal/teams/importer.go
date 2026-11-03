@@ -316,6 +316,11 @@ func (imp *Importer) syncChats(ctx context.Context, sourceID, syncID int64, opts
 				maxTime = t
 			}
 		}
+		// A canceled auxiliary write only counts as an item error, so stop
+		// before the cursor moves past the message that missed it.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		truncated := pageTruncated || (opts.Limit > 0 && convCount < len(msgs))
 		if chatComplete && !truncated && !maxTime.IsZero() {
 			state.SetChatCursor(ch.ID, maxTime.Format(time.RFC3339Nano))
@@ -629,15 +634,16 @@ func (imp *Importer) syncChannels(ctx context.Context, sourceID, syncID int64, o
 				if serr := imp.store.SetReplyToContext(ctx, sourceID,
 					channelSourceMessageID(team.ID, ch.ID, toLink[i].ID),
 					channelSourceMessageID(team.ID, ch.ID, toLink[i].ReplyToID)); serr != nil {
-					// Stop before the delta advances: a checkpoint past
-					// unlinked replies would never re-collect them.
-					if cerr := ctx.Err(); cerr != nil {
-						return cerr
-					}
 					sum.Errors++
 				}
 			}
 
+			// A canceled reply link or auxiliary write only counts as an
+			// item error. Stop before the delta advances: a checkpoint past
+			// those messages would never re-collect them.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			truncated := channelTruncated || (opts.Limit > 0 && convCount < len(collected))
 			if !truncated && newDelta != "" {
 				state.SetChannelDelta(key, newDelta)

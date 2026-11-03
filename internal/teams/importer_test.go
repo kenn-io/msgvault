@@ -3349,3 +3349,86 @@ func TestChannelReplyLinkCancellationRelinksOnResume(t *testing.T) {
 	).Scan(&rootID))
 	assert.Equal(sql.NullInt64{Int64: rootID.Int64, Valid: true}, replyTo)
 }
+
+// A cancellation that lands while the last collected message's reactions are
+// written must leave the conversation's resume position where it was. The
+// failed write is only counted as an item error, so a checkpoint past it
+// would leave the resumed run nothing to re-collect.
+func TestAuxiliaryWriteCancellationRewritesOnResume(t *testing.T) {
+	const message = `{"id":"m1","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z","body":{"contentType":"text","content":"hello"},
+	  "reactions":[{"reactionType":"like","createdDateTime":"2025-02-01T00:00:02Z","user":{"user":{"id":"reactor","displayName":"Reactor","userIdentityType":"aadUser"}}}]}`
+	tests := []struct {
+		name            string
+		includeChannels bool
+		sourceMessageID string
+	}{
+		{name: "chat cursor", sourceMessageID: chatSourceMessageID("19:aux@thread.v2", "m1")},
+		{name: "channel delta", includeChannels: true, sourceMessageID: channelSourceMessageID("team1", "chanA", "m1")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+
+			serverURL := ""
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if selfChatAbsent(w, r) {
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch {
+				case r.URL.Path == "/me/chats" && tt.includeChannels:
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case r.URL.Path == "/me/chats":
+					_, _ = w.Write([]byte(`{"value":[{"id":"19:aux@thread.v2","chatType":"group","topic":"Chat"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/members"):
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case strings.HasPrefix(r.URL.Path, "/me/chats/") && strings.HasSuffix(r.URL.Path, "/messages"):
+					// An advanced cursor filters out the message, as Graph does.
+					if r.URL.Query().Get("$filter") != "" {
+						_, _ = w.Write([]byte(`{"value":[]}`))
+						return
+					}
+					_, _ = w.Write([]byte(`{"value":[` + message + `]}`))
+				case r.URL.Path == "/me/joinedTeams":
+					_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/channels"):
+					_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General"}]}`))
+				case strings.HasSuffix(r.URL.Path, "/channels/chanA/messages"):
+					_, _ = w.Write([]byte(`{"value":[` + message + `]}`))
+				case strings.Contains(r.URL.Path, "/replies"):
+					_, _ = w.Write([]byte(`{"value":[]}`))
+				case strings.HasSuffix(r.URL.Path, "/messages/delta"):
+					// The stored delta returns no changes, as Graph does.
+					_, _ = w.Write([]byte(`{"value":[],"@odata.deltaLink":"` + serverURL + `/teams/team1/channels/chanA/messages/delta?token=next"}`))
+				case r.URL.Path == "/users/reactor":
+					// The reactor is resolved after every other write of the
+					// last collected message, just before its reactions.
+					cancel()
+					http.Error(w, "404", http.StatusNotFound)
+				default:
+					http.Error(w, "404", http.StatusNotFound)
+				}
+			}))
+			serverURL = srv.URL
+			defer srv.Close()
+			st := testutil.NewTestStore(t)
+			opts := ImportOptions{Email: "me@example.com", IncludeChannels: tt.includeChannels}
+
+			_, firstErr := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(ctx, opts)
+			_, err := NewImporter(st, NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)).Import(t.Context(), opts)
+			require.NoError(err)
+
+			var reactions int
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+				SELECT COUNT(*) FROM reactions
+				WHERE message_id = (SELECT id FROM messages WHERE source_message_id = ?)`),
+				tt.sourceMessageID,
+			).Scan(&reactions))
+			assert.Equal(1, reactions, "the resumed run must write the reaction the canceled run missed")
+			assert.ErrorIs(firstErr, context.Canceled)
+		})
+	}
+}

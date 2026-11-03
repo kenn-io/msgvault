@@ -328,16 +328,21 @@ func ImportMbox(
 			log.Warn("existence check failed (any)", "error", err)
 		}
 
+		// stopCancelled saves the last safe offset and reports the stop.
+		stopCancelled := func() bool {
+			summary.FinalOffset = lastCheckpointOffset
+			summary.Duration = time.Since(start)
+			if err := saveMboxCheckpoint(st, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
+				cp.ErrorsCount++
+				summary.Errors++
+				log.Warn("failed to save checkpoint", "error", err)
+			}
+			return true
+		}
+
 		for _, p := range pending {
-			if err := ctx.Err(); err != nil {
-				summary.FinalOffset = lastCheckpointOffset
-				summary.Duration = time.Since(start)
-				if err := saveMboxCheckpoint(st, syncID, cpFile, lastCheckpointOffset, lastCheckpointSeq, &cp); err != nil {
-					cp.ErrorsCount++
-					summary.Errors++
-					log.Warn("failed to save checkpoint", "error", err)
-				}
-				return true
+			if ctx.Err() != nil {
+				return stopCancelled()
 			}
 
 			cp.MessagesProcessed++
@@ -397,6 +402,11 @@ func ImportMbox(
 				if len(messageLabelIDs) > 0 {
 					if msgID, ok := existingWithRaw[p.SourceMsg]; ok && msgID > 0 {
 						if err := st.AddMessageLabels(ctx, msgID, messageLabelIDs); err != nil {
+							// A cancelled label write must not move the offset
+							// past this message; the next run retries it.
+							if ctx.Err() != nil {
+								return stopCancelled()
+							}
 							log.Warn("failed to add labels to existing message",
 								"source_message_id", p.SourceMsg, "error", err)
 						} else {

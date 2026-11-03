@@ -193,6 +193,10 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 // generated chat titles, and rebuilds the analytics cache when those changes
 // affect existing rows inside the published message boundary.
 func finishImessageImport(ctx context.Context, s *store.Store, state *invocation, summary *imessage.ImportSummary) error {
+	// An interrupted import still committed rows; finish the name backfill,
+	// retitling, and cache refresh for them instead of failing on the
+	// cancelled context.
+	ctx = context.WithoutCancel(ctx)
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"database/sql"
 	"math"
 	"path/filepath"
@@ -129,7 +130,11 @@ func TestReimportClearedIMessageDateRebuildsExistingCache(t *testing.T) {
 
 	state := &invocation{cfg: cfg}
 	require.Equal(1, summary.DatesCleared)
-	require.NoError(finishImessageImport(t.Context(), st, state, summary))
+	// An interrupted import reaches finishImessageImport with its context
+	// already cancelled; the cache refresh must still run.
+	interrupted, cancel := context.WithCancel(t.Context())
+	cancel()
+	require.NoError(finishImessageImport(interrupted, st, state, summary))
 	assert.Equal(0, cachedMessages("1"), "the cache must drop the message whose date was cleared")
 }
 

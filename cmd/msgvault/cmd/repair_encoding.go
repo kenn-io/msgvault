@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -94,6 +95,9 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 
 	reembedNeededIDs, err := repairEncoding(ctx, s, logger)
 	if err != nil {
+		if len(reembedNeededIDs) > 0 {
+			err = errors.Join(err, resetEmbeddingsAfterFailedRepair(ctx, s, reembedNeededIDs, cfg))
+		}
 		return err
 	}
 
@@ -133,6 +137,24 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 	}
 	fmt.Println("\nAnalytics cache rebuilt.")
 	return nil
+}
+
+// repairResetAfterFailureTimeout bounds the embedding reset that runs after a
+// failed or cancelled repair, which can wait on a remote PostgreSQL server.
+const repairResetAfterFailureTimeout = time.Minute
+
+// resetEmbeddingsAfterFailedRepair marks the messages from committed repair
+// batches for re-embedding after a later batch or pass failed. It ignores the
+// caller's cancellation: those repairs are already committed, and skipping the
+// reset would leave their embeddings stale against the new text.
+func resetEmbeddingsAfterFailedRepair(ctx context.Context, s *store.Store, reembedNeededIDs []int64, cfg *config.Config) error {
+	ctx = context.WithoutCancel(ctx)
+	if s.IsPostgreSQL() {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, repairResetAfterFailureTimeout)
+		defer cancel()
+	}
+	return repairResetEmbeddings(ctx, s, reembedNeededIDs, cfg)
 }
 
 // repairResetEmbeddings marks the repaired messages for re-embedding and lowers
@@ -219,7 +241,8 @@ func repairLogger(logger *slog.Logger) *slog.Logger {
 // were modified. Callers reset embed_gen to NULL (via s.ResetEmbedGen) on
 // those ids so the scan-and-fill worker re-embeds them and semantic search
 // results don't stay stale against the repaired text. Snippet-only repairs
-// are NOT included because the embedder doesn't read snippet.
+// are NOT included because the embedder doesn't read snippet. On error it
+// still returns the IDs from repair batches that committed before the failure.
 func repairEncoding(ctx context.Context, s *store.Store, logger *slog.Logger) (reembedNeededIDs []int64, err error) {
 	logger = repairLogger(logger)
 	stats := &repairStats{}
@@ -227,24 +250,24 @@ func repairEncoding(ctx context.Context, s *store.Store, logger *slog.Logger) (r
 	// Repair message text fields
 	reembedNeededIDs, err = repairMessageFields(ctx, s, stats, logger)
 	if err != nil {
-		return nil, err
+		return reembedNeededIDs, err
 	}
 
 	// Repair denormalized conversation previews after all message snippets so
 	// each preview is derived once from the final message state. This also
 	// catches previews stranded by a repair run from an older version.
 	if err := repairConversationPreviews(ctx, s, stats, logger); err != nil {
-		return nil, err
+		return reembedNeededIDs, err
 	}
 
 	// Repair display names in participants and message_recipients
 	if err := repairDisplayNames(ctx, s, stats, logger); err != nil {
-		return nil, err
+		return reembedNeededIDs, err
 	}
 
 	// Repair other string fields that could have encoding issues
 	if err := repairOtherStrings(ctx, s, stats, logger); err != nil {
-		return nil, err
+		return reembedNeededIDs, err
 	}
 
 	// Summary
@@ -344,6 +367,9 @@ func repairMessageFields(ctx context.Context, s *store.Store, stats *repairStats
 			return fmt.Errorf("begin transaction: %w", err)
 		}
 
+		// Only committed repairs need re-embedding, so this batch's IDs join
+		// reembedNeededIDs after the commit succeeds.
+		var batchReembedIDs []int64
 		for _, r := range repairs {
 			// Update messages table (subject, snippet)
 			var msgUpdates []string
@@ -400,13 +426,14 @@ func repairMessageFields(ctx context.Context, s *store.Store, stats *repairStats
 			// the scan-and-fill worker re-embeds them. Snippet is not
 			// embedded, so snippet-only repairs are excluded.
 			if r.newSubject.Valid || r.newBody.Valid || r.newHTML.Valid {
-				reembedNeededIDs = append(reembedNeededIDs, r.id)
+				batchReembedIDs = append(batchReembedIDs, r.id)
 			}
 		}
 
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("commit: %w", err)
 		}
+		reembedNeededIDs = append(reembedNeededIDs, batchReembedIDs...)
 
 		totalRepaired += len(repairs)
 		repairs = repairs[:0] // Clear slice, keep capacity
@@ -506,19 +533,19 @@ func repairMessageFields(ctx context.Context, s *store.Store, stats *repairStats
 			// Apply batch when full
 			if len(repairs) >= batchSize {
 				if err := applyBatch(); err != nil {
-					return nil, err
+					return reembedNeededIDs, err
 				}
 			}
 		}
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate messages: %w", err)
+		return reembedNeededIDs, fmt.Errorf("iterate messages: %w", err)
 	}
 
 	// Apply remaining repairs
 	if err := applyBatch(); err != nil {
-		return nil, err
+		return reembedNeededIDs, err
 	}
 
 	if totalRepaired > 0 {

@@ -307,6 +307,11 @@ func (s *Syncer) syncCalendarFull(
 			}
 		}
 
+		// persistOne logs a failed index write, so a cancellation may have
+		// skipped one; stop before the checkpoint moves past this page.
+		if err := ctx.Err(); err != nil {
+			return fail(err)
+		}
 		if page.NextSyncToken != "" {
 			finalToken = page.NextSyncToken
 		}

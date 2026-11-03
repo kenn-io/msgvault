@@ -1368,6 +1368,11 @@ func (imp *Importer) backfillChat(ctx context.Context, cc *chatScope, state *Syn
 				return nil
 			}
 		}
+		// A canceled auxiliary write only counts as an item error, so stop
+		// before the resume cursor moves past the item that missed it.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		cc.chargeBudget(newItems)
 		recent.add(pageIDs)
 		armAnchorFromPage(state, cc.chatID, page.Items)
@@ -1443,6 +1448,11 @@ func (imp *Importer) incrementalChat(ctx context.Context, cc *chatScope, sum *Im
 				return nil
 			}
 			processed++
+		}
+		// A canceled auxiliary write only counts as an item error, so stop
+		// before the cursor moves past the item that missed it.
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		cc.chargeBudget(processed)
 		// A non-advancing cursor means the API is re-serving the same page

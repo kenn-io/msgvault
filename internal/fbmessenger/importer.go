@@ -785,7 +785,9 @@ func writeThreadToStore(
 			_ = saveFbmessengerCheckpoint(st, syncID, absRoot, threadIdx, m.Index, cp, summary)
 		}
 	}
-	return nil
+	// The writes above log and skip failures, so a cancellation may have
+	// skipped one; report it so ImportDYI does not checkpoint past this thread.
+	return ctx.Err()
 }
 
 // saveFbmessengerCheckpoint marshals a fbmessengerCheckpoint JSON blob

@@ -423,3 +423,126 @@ func TestFlushRepliesCancellationKeepsPendingReplies(t *testing.T) {
 		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "f2").Scan(&linked))
 	require.Equal(sql.NullInt64{Int64: parentID, Valid: true}, linked)
 }
+
+// A stop that cancels the tombstone write of a backfill page's last item must
+// leave the chat's resume cursor on that page. The failed write is only
+// counted as an item error, so a checkpoint past the page would leave the
+// resumed backfill nothing to revisit.
+func TestBackfillAuxiliaryWriteCancellationRetriesPage(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-90 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!tombstone:beeper.local", AccountID: "signal", Network: "Signal", Title: "Tombstone", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+		Msgs: []fakeMsg{{
+			ID: "d0", Timestamp: base, IsDeleted: true,
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+		LastActivity: base,
+	}
+	f.addChat(ch)
+
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+
+	// An earlier archive holds the message Beeper now reports deleted.
+	sourceID := newBeeperTestSource(t, st, "signal")
+	convID, err := st.EnsureConversationWithType(sourceID, ch.ID, "single", ch.Title)
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: convID, SourceMessageID: "d0", MessageType: "beeper",
+	})
+	require.NoError(err)
+
+	// The page's only item is the tombstone, so the first transaction after
+	// the page is served is its write. A stop request cancels the run as that
+	// transaction begins.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var walked atomic.Bool
+	f.cancelAfterPages = 1
+	f.cancelFn = func() { walked.Store(true) }
+	handler := installCancelOnLog(t, cancel, 1, func(record slog.Record) bool {
+		return record.Message == "sql tx begin" && walked.Load()
+	})
+
+	_, firstErr := imp.Import(ctx, ImportOptions{AccountID: "signal", ShouldStop: walked.Load})
+	require.True(handler.canceled, "the stop must cancel the tombstone write")
+
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var deletedFromSourceAt sql.NullTime
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT deleted_from_source_at FROM messages
+		WHERE source_id = ? AND source_message_id = ?`), sourceID, "d0",
+	).Scan(&deletedFromSourceAt))
+	assert.True(deletedFromSourceAt.Valid, "the resumed backfill must apply the tombstone the stopped run missed")
+	assert.ErrorIs(firstErr, context.Canceled)
+}
+
+// The incremental walk has the same gap: a stop that cancels the tombstone
+// write of a head page's last item must leave the chat's forward cursor before
+// that page, so the next run re-reads it.
+func TestIncrementalAuxiliaryWriteCancellationRetriesPage(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+
+	f := newFakeBeeper(t)
+	base := time.Now().Add(-90 * 24 * time.Hour).UTC().Truncate(time.Second)
+	ch := &fakeChat{
+		ID: "!headtombstone:beeper.local", AccountID: "signal", Network: "Signal", Title: "Head", Type: "single",
+		Participants: []map[string]any{
+			{"id": "@me:beeper.local", "fullName": "Test User", "isSelf": true},
+			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
+		},
+		Msgs: []fakeMsg{{
+			ID: "h0", Timestamp: base, Text: "soon deleted",
+			SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+		}},
+		LastActivity: base,
+	}
+	f.addChat(ch)
+
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	require.True(latestBeeperState(t, imp).Chats[ch.ID].Done)
+
+	// Beeper now reports the archived message deleted at the head of the
+	// chat, outside the reconciliation window.
+	f.mu.Lock()
+	ch.Msgs = append(ch.Msgs, fakeMsg{
+		ID: "h0", SortKey: 1, Timestamp: base, IsDeleted: true,
+		SenderID: "@signal_ann:beeper.local", SenderName: "Ann",
+	})
+	ch.LastActivity = time.Now().UTC()
+	f.mu.Unlock()
+
+	// The head page's only item is the tombstone, so the first transaction
+	// after the page is served is its write. A stop request cancels the run
+	// as that transaction begins.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	var walked atomic.Bool
+	f.cancelMessageListFor(ch.ID, func() { walked.Store(true) })
+	handler := installCancelOnLog(t, cancel, 1, func(record slog.Record) bool {
+		return record.Message == "sql tx begin" && walked.Load()
+	})
+
+	_, firstErr := imp.Import(ctx, ImportOptions{AccountID: "signal", ShouldStop: walked.Load})
+	require.True(handler.canceled, "the stop must cancel the tombstone write")
+
+	_, err = imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	var deletedFromSourceAt sql.NullTime
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`
+		SELECT deleted_from_source_at FROM messages WHERE source_message_id = ?`), "h0",
+	).Scan(&deletedFromSourceAt))
+	assert.True(deletedFromSourceAt.Valid, "the resumed walk must apply the tombstone the stopped run missed")
+	assert.ErrorIs(firstErr, context.Canceled)
+}
