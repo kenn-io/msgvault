@@ -19,6 +19,7 @@ import (
 )
 
 func TestVisualBackendPublishesOnlyCurrentLiveTokens(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(t, err)
@@ -84,6 +85,7 @@ func TestVisualBackendPublishesOnlyCurrentLiveTokens(t *testing.T) {
 }
 
 func TestVisualBackendRejectsWrongDimension(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	backend, err := Open(t.Context(), Options{Path: filepath.Join(t.TempDir(), "vectors.db"), Dimension: 768})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = backend.Close() })
@@ -127,6 +129,7 @@ func publishVisualVectorOwner(t *testing.T, f *storetest.Fixture) (store.VisualG
 }
 
 func TestOpenWithoutTextDimensionSupportsMultimodalOnly(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(t, err)
@@ -162,6 +165,7 @@ func TestOpenWithoutTextDimensionSupportsMultimodalOnly(t *testing.T) {
 }
 
 func TestVisualSearchWidensPastDeadVectorClusters(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(t, err)
@@ -207,6 +211,7 @@ func TestVisualSearchWidensPastDeadVectorClusters(t *testing.T) {
 }
 
 func TestVisualPersonFilterCoversLegacyFromRecipientSenders(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	st := testutil.NewSQLiteTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "test@example.com")
 	require.NoError(t, err)

@@ -11,6 +11,7 @@ import (
 )
 
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -61,6 +62,7 @@ func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t 
 // list. An entry naming several members counts once, and unlinked
 // participants are unaffected.
 func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, _, alicePrimary, aliceAlias, bob, start := linkedPeopleFixture(t)
@@ -106,6 +108,7 @@ func TestSearchPeopleAggregatesLinkedIdentitiesAsOneCanonicalRow(t *testing.T) {
 }
 
 func TestPeopleAndDomainsExcludeUnsentActivity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, source, alicePrimary, aliceAlias, _, start := linkedPeopleFixture(t)
@@ -182,6 +185,7 @@ func TestGetPersonDraftOnlyLinkedAlias(t *testing.T) {
 }
 
 func TestGetPersonDoesNotJoinChatThroughUnsentRecipient(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -254,6 +258,7 @@ func linkedPeopleFixture(t *testing.T) (*TestDataBuilder, int64, int64, int64, i
 }
 
 func TestGetPersonUsesLiveMembershipAfterUnlinkWithRetainedCache(t *testing.T) {
+	t.Parallel()
 	b, source, primary, alias, _, start := linkedPeopleFixture(t)
 	draft := b.AddMessage(MessageOpt{SourceID: source, Subject: "Unsent", SentAt: start.Add(3 * time.Hour)})
 	b.AddFrom(draft, primary, "Alice Example")
@@ -301,6 +306,7 @@ func TestGetPersonUsesLiveMembershipAfterUnlinkWithRetainedCache(t *testing.T) {
 }
 
 func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -319,6 +325,7 @@ func TestSearchPeopleShowsPartialIdentityLabelsHonestly(t *testing.T) {
 }
 
 func TestSearchDomainsSpansSourcesAndModalitiesWithoutOrganizationClaims(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -355,6 +362,7 @@ func TestSearchDomainsSpansSourcesAndModalitiesWithoutOrganizationClaims(t *test
 // People and Relationships views — while unlinked participants still count
 // individually and per-entry metrics stay per-entry.
 func TestSearchDomainsCountsLinkedAliasesAsOnePerson(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -385,6 +393,7 @@ func TestSearchDomainsCountsLinkedAliasesAsOnePerson(t *testing.T) {
 // on ANOTHER domain still counts on this domain, because membership is the
 // participant's own address — canonical resolution must never drop it.
 func TestSearchDomainsCountsClusterWithCanonicalOnAnotherDomain(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -412,6 +421,7 @@ func TestSearchDomainsCountsClusterWithCanonicalOnAnotherDomain(t *testing.T) {
 }
 
 func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -442,6 +452,7 @@ func TestGetPersonAndDomainAreExactAndBounded(t *testing.T) {
 }
 
 func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -469,6 +480,7 @@ func TestPersonSummaryCountsMeetingTranscriptsWithoutLoadingMeetingRows(t *testi
 }
 
 func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -540,6 +552,7 @@ func TestGetPersonWithClusterMemberIDsSpansIdentifiersAndMetricsAcrossCluster(t 
 // with no named member the requested row's identifier fallback is unchanged;
 // an unlinked participant is unaffected.
 func TestGetPersonClusterLabelPrefersNamedMember(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -589,6 +602,7 @@ func TestGetPersonClusterLabelPrefersNamedMember(t *testing.T) {
 }
 
 func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -634,6 +648,7 @@ func TestContextualPersonAndDomainSummariesUseTheExactCanonicalPopulation(t *tes
 // Without cluster member IDs the summary stays scoped to the requested
 // participant alone, matching pre-cluster-aware behavior.
 func TestGetPersonSummaryWithClusterMemberIDsCountsAliasOnlyActivity(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -680,6 +695,7 @@ func TestGetPersonSummaryWithClusterMemberIDsCountsAliasOnlyActivity(t *testing.
 }
 
 func TestPeopleAndDomainSearchRejectUnboundedOrUnknownSorts(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	engine := NewTestDataBuilder(t).BuildEngine()
 	_, err := engine.SearchPeople(context.Background(), PersonSearchRequest{Page: PageSpec{Limit: 501}})
@@ -689,6 +705,7 @@ func TestPeopleAndDomainSearchRejectUnboundedOrUnknownSorts(t *testing.T) {
 }
 
 func TestSearchPeopleProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -732,6 +749,7 @@ func TestSearchPeopleProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 }
 
 func TestSearchDomainsProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -760,6 +778,7 @@ func TestSearchDomainsProjectsResolvedCanonicalSearchCandidates(t *testing.T) {
 // canonical ID and by its alias ID must agree and both include alias-owned
 // entries, matching Explore/Files.
 func TestGetPersonSummarySecondaryParticipantFilterExpandsClusters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -803,6 +822,7 @@ func TestGetPersonSummarySecondaryParticipantFilterExpandsClusters(t *testing.T)
 // not appear in the count — opening a domain from the list must never change
 // its displayed person count.
 func TestGetDomainSummaryMatchesDomainListPersonCount(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -840,6 +860,7 @@ func TestGetDomainSummaryMatchesDomainListPersonCount(t *testing.T) {
 // member. Filtering by the counterpart's canonical ID and by its alias ID
 // must agree and both include alias-owned entries, matching Explore/Files.
 func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -877,6 +898,7 @@ func TestGetDomainSummaryParticipantFilterExpandsClusters(t *testing.T) {
 }
 
 func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
@@ -937,6 +959,7 @@ func TestSearchPeopleHonorsRequestedSortAndDefaultRelevance(t *testing.T) {
 }
 
 func TestGetPersonByAliasUsesCanonicalRelationshipTemperature(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)

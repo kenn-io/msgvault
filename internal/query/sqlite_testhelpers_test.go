@@ -22,6 +22,7 @@ type testEnv struct {
 // newTestEnv creates a test environment with an in-memory SQLite database and test data.
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	tdb.SeedStandardDataSet()
 	return &testEnv{

@@ -16,6 +16,7 @@ import (
 )
 
 func TestIngestRawMessage_DeclaredUTF8HTML(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.New(t)
 
