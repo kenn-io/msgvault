@@ -14,7 +14,7 @@ describe('source labels', () => {
     ['plaud', 'Plaud'], ['muesli', 'Muesli'], ['granola', 'Granola'], ['notion_meetings', 'Notion meetings'], ['twilio', 'Twilio'], ['twenty', 'Twenty'],
     ['pst', 'PST import'], ['apple-mail', 'Apple Mail'], ['mbox', 'Mbox import'],
     ['beeper', 'Beeper'], ['slack', 'Slack'], ['matrix', 'Matrix'], ['eml', 'EML import'], ['maildir', 'Maildir import'],
-    ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
+    ['whatsapp', 'WhatsApp'], ['signal', 'Signal'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
   ])('names source type %j', (code, want) => {
