@@ -122,7 +122,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 			}
 		}
 		findings := draftSensitiveFindings(args)
-		if h.confirmSensitiveDrafts && len(findings) > 0 {
+		if h.sensitiveConfirm && len(findings) > 0 {
 			if err := req.confirmUserAction(ctx, sensitiveDraftConfirmationMessage(req.toolName, findings)); err != nil {
 				return confirmationToolError(err)
 			}
@@ -156,12 +156,9 @@ func draftSensitiveFindings(args map[string]any) []sensitive.Finding {
 	return append(sensitive.Scan(stringArgument(args, "subject")), sensitive.Scan(stringArgument(args, "body"))...)
 }
 
-// Prompts contain fixed category labels, never submitted draft text.
+// Prompts contain category labels and masked hints, never full sensitive values.
 func sensitiveDraftConfirmationMessage(toolName string, findings []sensitive.Finding) string {
 	seen := make(map[string]bool)
-	for _, finding := range findings {
-		seen[finding.Kind] = true
-	}
 	var labels []string
 	for _, category := range []struct{ kind, label string }{
 		{"payment_card", "a payment card number"},
@@ -170,8 +167,18 @@ func sensitiveDraftConfirmationMessage(toolName string, findings []sensitive.Fin
 		{"api_key", "an API key or private key"},
 		{"password", "a password"},
 	} {
-		if seen[category.kind] {
-			labels = append(labels, category.label)
+		for _, finding := range findings {
+			if finding.Kind != category.kind {
+				continue
+			}
+			label := category.label
+			if finding.Hint != "" {
+				label += " " + finding.Hint
+			}
+			if !seen[label] {
+				labels = append(labels, label)
+				seen[label] = true
+			}
 		}
 	}
 	return "Approve " + toolName + "? The draft's subject or body may contain " + strings.Join(labels, ", ") + ". Approving creates or edits the draft; msgvault never sends."

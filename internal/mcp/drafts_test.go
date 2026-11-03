@@ -188,7 +188,7 @@ func TestSensitiveDraftConfirmation(t *testing.T) {
 			assert.Zero(runner.calls)
 			prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
 			require.True(ok)
-			assert.Equal("Approve "+name+"? The draft's subject or body may contain a payment card number, a password. Approving creates or edits the draft; msgvault never sends.", prompt.Message)
+			assert.Equal("Approve "+name+"? The draft's subject or body may contain a payment card number ending 1111, a password. Approving creates or edits the draft; msgvault never sends.", prompt.Message)
 			for _, response := range []*sdkmcp.ElicitResult{{Action: "decline"}, {Action: "accept", Content: map[string]any{"confirm": false}}} {
 				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: tc.args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": response}})
 				require.NoError(err)
@@ -210,6 +210,30 @@ func TestSensitiveDraftConfirmation(t *testing.T) {
 			assert.False(result.NeedsInput())
 			assert.False(result.IsError)
 			assert.Equal(2, runner.calls)
+		})
+	}
+}
+
+func TestSensitiveDraftConfirmationHints(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, labels string
+	}{
+		{"different cards", "4242424242424242\n4111111111111111", "a payment card number ending 4242, a payment card number ending 1111"},
+		{"IBAN", "GB82 WEST 1234 5698 7654 32", "an IBAN ending 5432"},
+		{"API key", "sk_" + "live_" + "abcdefghijklmnopqrstuvwx", "an API key or private key starts sk_l"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			runner := &draftTestRunner{}
+			session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}, ConfirmSensitiveDrafts: true})
+			pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: map[string]any{"body": tc.body}})
+			require.NoError(err)
+			require.True(pending.NeedsInput())
+			prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
+			require.True(ok)
+			assert.Equal("Approve draft_compose? The draft's subject or body may contain "+tc.labels+". Approving creates or edits the draft; msgvault never sends.", prompt.Message)
+			assert.Zero(runner.calls)
 		})
 	}
 }
