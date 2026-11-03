@@ -202,7 +202,7 @@ export class DirectoryReviewController {
     await this.loadPageAfterSettlement(Math.max(0, this.offset - IDENTITY_REVIEW_PAGE_LIMIT));
   }
   async retryPage(targetOffset = this.retryOffset ?? this.offset): Promise<void> {
-    await this.loadPageAfterSettlement(targetOffset);
+    await this.loadPageAfterSettlement(targetOffset, targetOffset > this.offset ? this.rows.filter(row => this.hidden.has(row.id)).length : 0);
   }
   /** A page move made before a decision settles yields to any newer review context. */
   private async loadPageAfterSettlement(targetOffset: number, hiddenRows = 0): Promise<void> {

@@ -87,6 +87,48 @@ describe('DirectoryReviewController', () => {
     expect(controller.hasNextPage).toBe(direction === 'previous');
   });
 
+  it('keeps the first unseen candidate when a queued decision removes a row before a forward retry', async () => {
+    let candidates = Array.from({ length: 21 }, (_, index) => candidate(index + 1));
+    const offsets: number[] = [];
+    let failNextPage = true;
+    const controller = new DirectoryReviewController(createAPIClient(async input => {
+      const request = requestOf(input);
+      const url = new URL(request.url);
+      if (url.pathname.includes('/participants/')) return Response.json({
+        id: Number(url.pathname.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 1
+      });
+      if (request.method === 'POST') {
+        expect(url.pathname).toBe('/api/v1/identity/match-candidates/1/review/reject');
+        candidates = candidates.filter(row => row.id !== 1);
+        return Response.json({ candidate: candidate(1, 'rejected'), cache_state: 'ready' });
+      }
+      const offset = Number(url.searchParams.get('offset'));
+      offsets.push(offset);
+      if (offset === 10 && failNextPage) {
+        failNextPage = false;
+        return Response.json({ message: 'Queue unavailable' }, { status: 503 });
+      }
+      const limit = Number(url.searchParams.get('limit'));
+      return page(candidates.slice(offset, offset + limit), offset);
+    }));
+    try {
+      await controller.loadIdentityPage();
+      await controller.loadNextPage();
+      expect(controller.pageError).toBe('Queue unavailable');
+      await controller.queueDecision(controller.rows[0]!, 'reject');
+
+      await controller.retryPage();
+
+      expect(offsets).toEqual([0, 10, 0, 9]);
+      expect(controller.rows.map(row => row.id)).toEqual([11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
+      expect(controller.offset).toBe(9);
+      expect(controller.pageError).toBeNull();
+      expect(controller.hasNextPage).toBe(true);
+      await controller.loadNextPage();
+      expect(controller.rows.map(row => row.id)).toEqual([21]);
+    } finally { controller.destroy(); }
+  });
+
   it.each(['restoration', 'History'] as const)('resets the offset synchronously before a failed %s load', async entry => {
     const restored = deferredResponse();
     let restoredAttempts = 0;
@@ -409,7 +451,7 @@ it.each([
   { direction: 'next', failed: true },
 ] as const)('settles its queued decision before $direction navigation, failed=$failed', async ({ direction, failed }) => {
   const decision = deferredResponse(), destination = deferredResponse();
-  const target = direction === 'invalidate' ? 0 : direction === 'next' && !failed ? 9 : 10;
+  const target = direction === 'invalidate' ? 0 : failed ? 10 : 9;
   const order: string[] = [];
   let reads = 0;
   let moving = false, decided = false, posted = false, destinationRead = false;
@@ -420,7 +462,7 @@ it.each([
     if (request.method === 'POST') { posted = true; const response = await decision.promise; decided = !failed; order.push('POST resolved'); return response; }
     if (direction === 'invalidate') return page([candidate(++reads)]);
     const offset = Number(new URL(request.url).searchParams.get('offset'));
-    if (!moving && offset === target && direction === 'retry') return Response.json({ message: 'Queue unavailable' }, { status: 503 });
+    if (!moving && offset === 10 && direction === 'retry') return Response.json({ message: 'Queue unavailable' }, { status: 503 });
     if (moving && offset === target) { destinationRead = true; return destination.promise; }
     return page(decided ? rows.slice(1) : rows, offset);
   }));
