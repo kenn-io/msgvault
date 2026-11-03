@@ -143,8 +143,8 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		// DateEvent below applies the exact archive-zone civil-date boundary.
 		from, _ := time.Parse(time.DateOnly, q.FromDate)
 		to, _ := time.Parse(time.DateOnly, q.ToDate)
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=? AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, from.Add(-24*time.Hour), to.Add(48*time.Hour))
+		where += ` AND ` + instantExpr + `>=? AND ` + instantExpr + `<?`
+		args = append(args, instantParam(from.Add(-24*time.Hour)), instantParam(to.Add(48*time.Hour)))
 	}
 	channel := `CASE WHEN m.message_type IN ('calendar_event','meeting_transcript') THEN 'meeting' WHEN m.message_type='call_record' THEN 'chat' WHEN c.conversation_type='email_thread' THEN 'email' WHEN c.conversation_type IN ('chat','group_chat','direct_chat','channel') THEN 'chat' ELSE 'other' END`
 	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")

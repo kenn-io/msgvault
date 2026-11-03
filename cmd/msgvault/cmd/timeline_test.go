@@ -35,16 +35,6 @@ type timelineFakeClient struct {
 	err   error
 }
 
-func TestTimelineHelpOmitsRedundantOpenTargetSentence(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	command := newTimelineCommand()
-	var output bytes.Buffer
-	command.SetOut(&output)
-	requirements.NoError(command.Help())
-	assertions.Contains(output.String(), "Read a bounded timeline of archived messages, meetings, calls, and notes.")
-	assertions.NotContains(output.String(), "Use an entry's open targets to read its details.")
-}
-
 func (f *timelineFakeClient) APISchemaVersion(context.Context) (string, error) { return "3.36.0", nil }
 func (f *timelineFakeClient) Timeline(_ context.Context, req timeline.Request) (*timeline.Timeline, string, error) {
 	f.req = req

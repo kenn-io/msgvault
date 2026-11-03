@@ -374,12 +374,32 @@ func (c *composer) collectLoops(personID int64, participantIDs []int64) readResu
 	if personID == 0 {
 		options.ParticipantIDs = slices.Clone(participantIDs)
 	}
+	var filterState *composer
 	if len(c.req.Tiers) > 0 {
-		options.Filter = c.filterLoopTiers
+		// A loop reader can outlive readWithin's deadline. Keep its filter's
+		// mutable cache and diagnostics private until the read completes.
+		filterState = &composer{
+			ctx: c.ctx,
+			src: c.src,
+			req: c.req,
+			t:   &Timeline{Now: c.t.Now},
+			loc: c.loc,
+		}
+		options.Filter = filterState.filterLoopTiers
 	}
-	return readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
+	result := readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
 		return c.src.Loops.List(ctx, options, c.t.Now)
 	})
+	if result.err == nil && filterState != nil {
+		if len(filterState.tiers) > 0 {
+			if c.tiers == nil {
+				c.tiers = map[int64]store.PersonTier{}
+			}
+			maps.Copy(c.tiers, filterState.tiers)
+		}
+		c.t.Gaps = append(c.t.Gaps, filterState.t.Gaps...)
+	}
+	return result
 }
 func (c *composer) filterLoopTiers(ctx context.Context, candidates []loops.Loop) ([]loops.Loop, error) {
 	ids := make([]int64, 0, len(candidates))

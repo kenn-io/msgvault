@@ -35,6 +35,8 @@ func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", event), entries[0].AnchorRef)
 	assertions.True(entries[0].Meeting.Attended)
 	assertions.Equal([]int64{note}, entries[0].Meeting.LinkedTranscriptIDs)
+	assertions.Equal(1, entries[0].Meeting.AttendeeCount)
+	assertions.Equal(1, entries[0].Meeting.PeopleCount)
 	assertions.Equal("Planning", entries[0].Meeting.Title.Text)
 	requirements.NoError(entries[0].Validate())
 }
@@ -166,6 +168,64 @@ func TestBuildDayLoopsTimeoutIsRetryableGap(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, got.Gaps, Gap{Section: "loops", Code: "timeout", Retryable: true})
 	assert.Len(t, allDayEntries(got), 1)
+}
+
+type lateFilterLoops struct {
+	started  chan struct{}
+	resume   chan struct{}
+	finished chan struct{}
+}
+
+func (s lateFilterLoops) List(ctx context.Context, opts loops.Options, _ time.Time) (loops.Result, error) {
+	close(s.started)
+	<-s.resume
+	defer close(s.finished)
+	selected, err := opts.Filter(ctx, []loops.Loop{{Counterparty: store.LoopParticipant{PersonID: 41}}})
+	return loops.Result{Loops: selected}, err
+}
+
+type failedTierPeople struct{}
+
+func (failedTierPeople) ResolvePersonReferenceContext(context.Context, store.PersonRefKind, string, []int64, int) ([]store.PersonCandidate, error) {
+	return nil, nil
+}
+
+func (failedTierPeople) PersonTiersContext(ctx context.Context, _ []int64, _ store.PersonTierOptions) (map[int64]store.PersonTier, error) {
+	return nil, ctx.Err()
+}
+
+func TestCollectLoopsTimeoutDoesNotShareLateTierFilterState(t *testing.T) {
+	started, resume, finished := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	c := composer{
+		ctx: ctx,
+		src: Sources{Loops: lateFilterLoops{started: started, resume: resume, finished: finished}, People: failedTierPeople{}},
+		req: Request{Tiers: []int{1}},
+		t:   &Timeline{Now: time.Unix(0, 0)},
+	}
+	defer func() {
+		select {
+		case <-resume:
+		default:
+			close(resume)
+		}
+		<-finished
+	}()
+
+	resultCh := make(chan readResult[loops.Result], 1)
+	go func() { resultCh <- c.collectLoops(0, nil) }()
+	<-started
+	cancel()
+	result := <-resultCh
+	require.ErrorIs(t, result.err, context.Canceled)
+	assert.Nil(t, c.tiers)
+	assert.Empty(t, c.t.Gaps)
+
+	close(resume)
+	<-finished
+	assert.Nil(t, c.tiers)
+	assert.Empty(t, c.t.Gaps)
 }
 func TestBuildDayIncludeColdMergesByMessageID(t *testing.T) {
 	assertions := assert.New(t)

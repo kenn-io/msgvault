@@ -701,6 +701,26 @@ func TestColdAdapterUsesUTCWindowBounds(t *testing.T) {
 	}
 }
 
+func TestColdAdapterDateWindowIncludesOffsetTimestampOnRequestedDate(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	f := newTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "offset-date-window")
+	id := f.add(t, room, f.Source.ID, time.Date(2026, 10, 22, 0, 30, 0, 0, time.UTC), false, "")
+	projectColdTimeline(t, f, "UTC")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2026-10-21 20:30:00-04:00", id)
+	requirements.NoError(err)
+	retractTimelineActivity(t, f, id)
+
+	page, err := f.Store.ListColdActivityBurstsContext(t.Context(), store.BurstQuery{
+		FromDate: "2026-10-22", ToDate: "2026-10-22", Limit: 10,
+		Filters: store.ActivityFilters{IncludeNoise: true},
+	})
+	requirements.NoError(err)
+	requirements.Len(page.Bursts, 1)
+	assertions.Equal([]int64{id}, page.Bursts[0].LatestMessageIDs)
+	assertions.Equal(time.Date(2026, 10, 22, 0, 30, 0, 0, time.UTC), page.Bursts[0].FirstAt)
+}
+
 func TestColdEmailCopiesCanonicalMessageIDs(t *testing.T) {
 	for _, tc := range []struct {
 		name, first, second string

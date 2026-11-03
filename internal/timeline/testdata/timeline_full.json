@@ -163,6 +163,7 @@
 				"start": "2026-10-22T13:30:00Z",
 				"end": "2026-10-22T14:30:00Z",
 				"all_day": false,
+				"deleted_from_source": false,
 				"attendees": [
 					{
 						"tier_source": "applied",
@@ -215,6 +216,7 @@
 						"start": "2026-10-22T13:30:00Z",
 						"end": "2026-10-22T14:30:00Z",
 						"all_day": false,
+						"deleted_from_source": false,
 						"attendees": [
 							{
 								"tier_source": "applied",
@@ -261,6 +263,7 @@
 						},
 						"time": "2026-10-22T13:30:00Z",
 						"all_day": false,
+						"deleted_from_source": false,
 						"people": [
 							{
 								"tier_source": "applied",
@@ -481,6 +484,7 @@
 				"start": "2026-10-22T13:30:00Z",
 				"end": "2026-10-22T14:30:00Z",
 				"all_day": false,
+				"deleted_from_source": false,
 				"attendees": [
 					{
 						"tier_source": "applied",
@@ -527,6 +531,7 @@
 				},
 				"time": "2026-10-22T13:30:00Z",
 				"all_day": false,
+				"deleted_from_source": false,
 				"people": [
 					{
 						"tier_source": "applied",

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"time"
+
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 type ActivityMessage struct {
@@ -111,9 +113,13 @@ func (s *Store) latestEligibleMessageContext(ctx context.Context, conversationID
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	args = append([]any{conversationID}, args...)
 	var id int64
+	instantExpr := `COALESCE(m.sent_at,m.received_at,m.internal_date)`
+	if !s.IsPostgreSQL() {
+		instantExpr = sqliteutil.TimestampKeyFunction + `(` + instantExpr + `)`
+	}
 	query := `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id
  WHERE m.conversation_id=? AND COALESCE(m.message_type,'')<>'call_record' AND ` + s.activityLiveEligibleSQL() + scope + `
- ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC,m.id DESC LIMIT 1`
+ ORDER BY ` + instantExpr + ` DESC,m.id DESC LIMIT 1`
 	if !includeCold {
 		query = `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id JOIN activity_events ae ON ae.message_id=m.id
  WHERE m.conversation_id=? AND COALESCE(m.message_type,'')<>'call_record' AND ` + s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae") + scope + `

@@ -50,6 +50,34 @@ func TestRelationshipMeetingOnlyContactDeduplicatesNotes(t *testing.T) {
 	assertions.Equal(10, got.Person.FirstAt.Hour())
 }
 
+func TestRelationshipMeetingIncludesLinkedTranscriptParticipants(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	bobParticipant := f.EnsureParticipant("bob@example.test", "Bob", "example.test")
+	bob, _, err := f.Store.CreatePersonFromParticipant(bobParticipant)
+	requirements.NoError(err)
+	event := f.calendar("event", singleDayEvent)
+	note := f.transcript("notes", "planning@example.com", f.now.Add(-time.Hour))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", []int64{bobParticipant}, nil))
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", bob.ID)))
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	meeting := got.History[0].Meeting
+	requirements.NotNil(meeting)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), got.History[0].Ref)
+	assertions.Equal(1, meeting.AttendeeCount)
+	requirements.Len(meeting.Attendees, 1)
+	assertions.Equal("Alice", meeting.Attendees[0].Name)
+	assertions.Equal(2, meeting.PeopleCount)
+	participantIDs := make([]int64, 0, len(meeting.People))
+	for _, person := range meeting.People {
+		participantIDs = append(participantIDs, person.ParticipantID)
+	}
+	assertions.ElementsMatch([]int64{f.peer, bobParticipant}, participantIDs)
+}
+
 func TestRelationshipLoadsEveryDistinctManualMeetingOccurrence(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)

@@ -63,3 +63,20 @@ func TestLatestEligibleMessageIncludingColdDoesNotRequireActivityEvent(t *testin
 	require.NoError(t, err)
 	assert.Equal(t, want, cold)
 }
+
+func TestLatestEligibleMessageIncludingColdOrdersMixedOffsets(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "offset-anchor")
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	older := f.add(t, room, f.Source.ID, at, false, "")
+	newer := f.add(t, room, f.Source.ID, at.Add(time.Minute), false, "")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2026-10-22 16:00:00+09:00", older)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2026-10-22 10:00:00-07:00", newer)
+	requirements.NoError(err)
+
+	got, err := f.Store.LatestEligibleMessageIncludingColdContext(t.Context(), room)
+	requirements.NoError(err)
+	assert.Equal(t, newer, got)
+}

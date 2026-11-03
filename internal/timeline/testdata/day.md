@@ -3,9 +3,8 @@
 ⚠ activity reconciling
 ⚠ incomplete
 
-Open (1)
+Open
 - owed Alice T1 4d · #51
-more available
 coverage incomplete
 1 unparseable
 

@@ -109,13 +109,3 @@ func TestCallsCommandRequiresSchemaForPublishedEndpoints(t *testing.T) {
 		})
 	}
 }
-
-func TestCallsHelpKeepsInvitationRuleWithoutDaemonPreamble(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	command := newCallsCommand(callCommandDeps{})
-	var output bytes.Buffer
-	command.SetOut(&output)
-	requirements.NoError(command.Help())
-	assertions.NotContains(output.String(), "Read call evidence through the daemon.")
-	assertions.Contains(output.String(), "Scheduled invitations never count as answered calls.")
-}

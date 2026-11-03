@@ -81,11 +81,8 @@ func Markdown(t *Timeline) string {
 		}
 	}
 	if t.OpenLoops != nil {
-		fmt.Fprintf(&b, "\nOpen (%d)\n", len(t.OpenLoops.Items))
+		b.WriteString("\nOpen\n")
 		rows(t.OpenLoops.Items)
-		if t.OpenLoops.Truncated {
-			b.WriteString("more available\n")
-		}
 		if t.OpenLoops.CoverageIncomplete {
 			b.WriteString("coverage incomplete\n")
 		}

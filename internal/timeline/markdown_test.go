@@ -49,6 +49,11 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 	v.Gaps = nil
 	assert.NotContains(t, Markdown(v), "retry:")
 }
+func TestMarkdownReportsOpenLoopTruncationOnlyInOmissionFooter(t *testing.T) {
+	got := Markdown(sampleTimeline())
+	assert.NotContains(t, got, "more available")
+	assert.Equal(t, 1, strings.Count(got, "open_loops more"))
+}
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline()
 	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}

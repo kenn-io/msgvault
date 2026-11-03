@@ -293,6 +293,10 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		personIDs = append(personIDs, note.PersonIDs...)
 	}
 	c.loadTiers(personIDs)
+	meetingMessages := make(map[int64]store.ActivityMessage, len(messages))
+	for _, message := range messages {
+		meetingMessages[message.MessageID] = message
+	}
 	entries := []Entry{}
 	upcoming := []Entry{}
 	for _, b := range bursts {
@@ -330,19 +334,24 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		seen[key] = true
-		people := c.occurrencePeople(o)
-		if !c.admitTier(people) {
-			continue
-		}
+		attendees := c.occurrencePeople(o)
 		linked := []int64{}
+		transcriptPeople := []Person{}
 		hidden := display[o.MessageID].HiddenText
 		count := 0
 		for _, id := range info.LinkedTranscriptIDs {
 			if d, ok := display[id]; ok {
 				linked = append(linked, id)
+				if message, ok := meetingMessages[id]; ok {
+					transcriptPeople = append(transcriptPeople, counterpartPeople(message.Counterparts)...)
+				}
 				hidden = hidden || d.HiddenText
 				count += actions[id]
 			}
+		}
+		people := c.tierPeople(mergeMeetingPeople(attendees, transcriptPeople))
+		if !c.admitTier(people) {
+			continue
 		}
 		title := o.Subject
 		if hidden {
@@ -356,7 +365,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if at.IsZero() {
 			continue
 		}
-		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, AllDay: o.AllDay, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
+		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, AllDay: o.AllDay, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: attendees, AttendeeCount: len(attendees), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
 		if len(linked) > 0 {
 			e.Open = append(e.Open, c.open("get_meeting_context", map[string]any{"message_ids": linked})...)
 		}
@@ -519,6 +528,53 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	}
 	return c.tierPeople(people)
 }
+
+func mergeMeetingPeople(attendees, transcriptPeople []Person) []Person {
+	people := make([]Person, 0, len(attendees)+len(transcriptPeople))
+	byPerson := map[int64]int{}
+	byParticipant := map[int64]int{}
+	byName := map[string]int{}
+	for _, person := range append(slices.Clone(attendees), transcriptPeople...) {
+		index, found := 0, false
+		if person.PersonID > 0 {
+			index, found = byPerson[person.PersonID]
+		}
+		if !found && person.ParticipantID > 0 {
+			index, found = byParticipant[person.ParticipantID]
+		}
+		nameKey := strings.ToLower(strings.TrimSpace(person.Name))
+		if !found && person.PersonID == 0 && person.ParticipantID == 0 && nameKey != "" {
+			index, found = byName[nameKey]
+		}
+		if found {
+			if people[index].PersonID == 0 && person.PersonID > 0 {
+				people[index].PersonID = person.PersonID
+				byPerson[person.PersonID] = index
+			}
+			if people[index].ParticipantID == 0 && person.ParticipantID > 0 {
+				people[index].ParticipantID = person.ParticipantID
+				byParticipant[person.ParticipantID] = index
+			}
+			if people[index].Name == "" {
+				people[index].Name = person.Name
+			}
+			continue
+		}
+		index = len(people)
+		people = append(people, person)
+		if person.PersonID > 0 {
+			byPerson[person.PersonID] = index
+		}
+		if person.ParticipantID > 0 {
+			byParticipant[person.ParticipantID] = index
+		}
+		if person.PersonID == 0 && person.ParticipantID == 0 && nameKey != "" {
+			byName[nameKey] = index
+		}
+	}
+	return people
+}
+
 func (c *composer) participantPerson(participant, person int64) Person {
 	p := Person{PersonID: person, ParticipantID: participant, TierSource: "none"}
 	if c.src.People != nil {
