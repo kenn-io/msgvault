@@ -437,6 +437,7 @@ var readOnlyPostRoutePatterns = []string{
 	cardDAVAccountTestPath,
 	kataEvidencePreparePath,
 	"/api/v1/messages/{id}/tags",
+	"/api/v1/messages/{id}/comment-actions",
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",
@@ -548,6 +549,9 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 	if readOnlyPostRouteRequest(r) {
 		return false, "", nil
 	}
+	if commentTriageRouteRequest(r) {
+		return false, "", nil
+	}
 	if genericSyncTriggerRequest(r) {
 		return false, "", nil
 	}
@@ -608,14 +612,15 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
-	"draft-get":         true,
-	"draft-send-as":     true,
-	"logs":              true,
-	"list-deletions":    true,
-	"show-deletion":     true,
-	"embeddings list":   true,
-	"embeddings status": true,
-	"documents search":  true,
+	"meta-webhooks status": true,
+	"draft-get":            true,
+	"draft-send-as":        true,
+	"logs":                 true,
+	"list-deletions":       true,
+	"show-deletion":        true,
+	"embeddings list":      true,
+	"embeddings status":    true,
+	"documents search":     true,
 	// Tier previews only read.
 	"person tiers preview": true,
 	"person tiers explain": true,
@@ -629,6 +634,8 @@ var cliRunReadOnlyCommands = map[string]bool{
 // Embeddings optimize coordinates its own gate leases between copy batches.
 var cliRunSelfGatedCommands = map[string]bool{
 	"backup create": true,
+	// Replay only submits filesystem control requests; the worker gates archive writes.
+	"meta-webhooks replay": true,
 }
 
 // IsCLIRunEmbeddingsOptimize identifies the optimize command path using the
@@ -681,9 +688,10 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 // cliRunCommandGroups are proxied parent commands whose second arg is a
 // subcommand name rather than a positional value.
 var cliRunCommandGroups = map[string]bool{
-	"embeddings": true,
-	"backup":     true,
-	"documents":  true,
+	"meta-webhooks": true,
+	"embeddings":    true,
+	"backup":        true,
+	"documents":     true,
 }
 
 // cliRunCommandWords extracts the command path while consuming supported flags and their values.

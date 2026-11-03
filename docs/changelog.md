@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-03
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,31 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed and Instagram comments, with owner subscription, status, and replay commands. Other fields stay held until their handlers are installed and configured.
+- [Instagram mentions and tags](usage/instagram-comments.md#mentions-and-tags) adds opt-in, resumable tag polling and caption/comment mention webhooks as searchable conversations, with confirmed public replies to caption and comment mentions.
+- [Instagram comment actions](usage/instagram-comments.md#reply-and-moderate)
+  reply to, hide, unhide, or delete archived comments on the selected account's
+  media with explicit opt-ins, confirmation, and receipts. The comment queue
+  now includes Instagram. Public reply archive evidence completes after sync.
+
+- [Facebook comment replies](usage/facebook-comments.md#public-and-private-replies)
+  send public replies or one private message within seven days through the CLI,
+  HTTP API, and MCP after explicit opt-in and confirmation. Receipts prevent
+  duplicate sends and preserve uncertain outcomes for manual resolution.
+
+- [Facebook comment actions](usage/facebook-comments.md#comment-actions) hide,
+  unhide, or delete archived comments through owner-only CLI, HTTP API, and MCP
+  tools after explicit profile opt-in. Delete keeps archive history; receipts
+  preserve uncertain outcomes. Local triage labels and a comment queue help
+  track work without changing Facebook. Requires daemon API schema 3.38.0.
+
+- [Instagram comment sync](usage/instagram-comments.md) archives linked professional
+  account media comments and replies for search and existing person linking.
+  Ad-only discovery is not included.
+- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
+  nested replies on organic, visitor, and ad posts returned for a selected Page.
+  Search the archive and link commenters through existing people tools. This
+  does not send messages or include Instagram or ad-creative discovery.
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.

@@ -701,6 +701,28 @@ type VerifyCLIResponse = []byte
 
 type VerifyCLIErrorResponse = ErrorResponse
 
+type ListCommentQueueResponse = CommentQueueResponse
+
+type ListCommentQueueErrorResponse = ActionError
+
+type ListCommentQueueErrorResponseJSON = ActionError
+
+type ListCommentQueueErrorResponseJSON403 = ActionError
+
+type ListCommentQueueErrorResponseJSON404 = ActionError
+
+type ListCommentQueueErrorResponseJSON409 = ActionError
+
+type ListCommentQueueErrorResponseJSON429 = ActionError
+
+type ListCommentQueueErrorResponseJSON500 = ActionError
+
+type ListCommentQueueErrorResponseJSON502 = ActionError
+
+type ListCommentQueueErrorResponseJSON503 = ActionError
+
+type ListCommentQueueErrorResponseJSONDefault = ErrorResponse
+
 type ListCommunicationServicesResponse = CommunicationServicesResponse
 
 type ListCommunicationServicesErrorResponse = ErrorResponse
@@ -1986,6 +2008,72 @@ type GetGmailIDsByFilterErrorResponse = ErrorResponse
 type GetMessageResponse = MessageDetail
 
 type GetMessageErrorResponse = ErrorResponse
+
+type ListCommentActionsResponse []Receipt
+
+type ListCommentActionsErrorResponse = ActionError
+
+type ListCommentActionsErrorResponseJSON = ActionError
+
+type ListCommentActionsErrorResponseJSON403 = ActionError
+
+type ListCommentActionsErrorResponseJSON404 = ActionError
+
+type ListCommentActionsErrorResponseJSON409 = ActionError
+
+type ListCommentActionsErrorResponseJSON429 = ActionError
+
+type ListCommentActionsErrorResponseJSON500 = ActionError
+
+type ListCommentActionsErrorResponseJSON502 = ActionError
+
+type ListCommentActionsErrorResponseJSON503 = ActionError
+
+type ListCommentActionsErrorResponseJSONDefault = ErrorResponse
+
+type RunCommentActionResponse = ActionResult
+
+type RunCommentActionErrorResponse = ActionError
+
+type RunCommentActionErrorResponseJSON = ActionError
+
+type RunCommentActionErrorResponseJSON403 = ActionError
+
+type RunCommentActionErrorResponseJSON404 = ActionError
+
+type RunCommentActionErrorResponseJSON409 = ActionError
+
+type RunCommentActionErrorResponseJSON429 = ActionError
+
+type RunCommentActionErrorResponseJSON500 = ActionError
+
+type RunCommentActionErrorResponseJSON502 = ActionError
+
+type RunCommentActionErrorResponseJSON503 = ActionError
+
+type RunCommentActionErrorResponseJSONDefault = ErrorResponse
+
+type UpdateCommentTriageResponse = CommentTriageResponse
+
+type UpdateCommentTriageErrorResponse = ActionError
+
+type UpdateCommentTriageErrorResponseJSON = ActionError
+
+type UpdateCommentTriageErrorResponseJSON403 = ActionError
+
+type UpdateCommentTriageErrorResponseJSON404 = ActionError
+
+type UpdateCommentTriageErrorResponseJSON409 = ActionError
+
+type UpdateCommentTriageErrorResponseJSON429 = ActionError
+
+type UpdateCommentTriageErrorResponseJSON500 = ActionError
+
+type UpdateCommentTriageErrorResponseJSON502 = ActionError
+
+type UpdateCommentTriageErrorResponseJSON503 = ActionError
+
+type UpdateCommentTriageErrorResponseJSONDefault = ErrorResponse
 
 type GetMessageInlinePartResponse = runtime.File
 
@@ -4974,6 +5062,23 @@ type VerifyCLIResp struct {
 	JSONDefault  *VerifyCLIErrorResponse
 }
 
+type ListCommentQueueResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCommentQueueResponse
+	JSON400      *ListCommentQueueErrorResponse
+	JSON401      *ListCommentQueueErrorResponseJSON
+	JSON403      *ListCommentQueueErrorResponseJSON403
+	JSON404      *ListCommentQueueErrorResponseJSON404
+	JSON409      *ListCommentQueueErrorResponseJSON409
+	JSON429      *ListCommentQueueErrorResponseJSON429
+	JSON500      *ListCommentQueueErrorResponseJSON500
+	JSON502      *ListCommentQueueErrorResponseJSON502
+	JSON503      *ListCommentQueueErrorResponseJSON503
+	JSONDefault  *ListCommentQueueErrorResponseJSONDefault
+}
+
 type ListCommunicationServicesResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -5851,6 +5956,57 @@ type GetMessageResp struct {
 	StatusCode   int
 	JSON200      *GetMessageResponse
 	JSONDefault  *GetMessageErrorResponse
+}
+
+type ListCommentActionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListCommentActionsResponse
+	JSON400      *ListCommentActionsErrorResponse
+	JSON401      *ListCommentActionsErrorResponseJSON
+	JSON403      *ListCommentActionsErrorResponseJSON403
+	JSON404      *ListCommentActionsErrorResponseJSON404
+	JSON409      *ListCommentActionsErrorResponseJSON409
+	JSON429      *ListCommentActionsErrorResponseJSON429
+	JSON500      *ListCommentActionsErrorResponseJSON500
+	JSON502      *ListCommentActionsErrorResponseJSON502
+	JSON503      *ListCommentActionsErrorResponseJSON503
+	JSONDefault  *ListCommentActionsErrorResponseJSONDefault
+}
+
+type RunCommentActionResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RunCommentActionResponse
+	JSON400      *RunCommentActionErrorResponse
+	JSON401      *RunCommentActionErrorResponseJSON
+	JSON403      *RunCommentActionErrorResponseJSON403
+	JSON404      *RunCommentActionErrorResponseJSON404
+	JSON409      *RunCommentActionErrorResponseJSON409
+	JSON429      *RunCommentActionErrorResponseJSON429
+	JSON500      *RunCommentActionErrorResponseJSON500
+	JSON502      *RunCommentActionErrorResponseJSON502
+	JSON503      *RunCommentActionErrorResponseJSON503
+	JSONDefault  *RunCommentActionErrorResponseJSONDefault
+}
+
+type UpdateCommentTriageResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UpdateCommentTriageResponse
+	JSON400      *UpdateCommentTriageErrorResponse
+	JSON401      *UpdateCommentTriageErrorResponseJSON
+	JSON403      *UpdateCommentTriageErrorResponseJSON403
+	JSON404      *UpdateCommentTriageErrorResponseJSON404
+	JSON409      *UpdateCommentTriageErrorResponseJSON409
+	JSON429      *UpdateCommentTriageErrorResponseJSON429
+	JSON500      *UpdateCommentTriageErrorResponseJSON500
+	JSON502      *UpdateCommentTriageErrorResponseJSON502
+	JSON503      *UpdateCommentTriageErrorResponseJSON503
+	JSONDefault  *UpdateCommentTriageErrorResponseJSONDefault
 }
 
 type GetMessageInlinePartResp struct {

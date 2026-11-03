@@ -3,6 +3,7 @@
  */
 import type {
   AccountListResponse,
+  ActionResult,
   AddAccountRequest,
   AgentTokenIssueRequest,
   AgentTokenIssueResponse,
@@ -77,6 +78,10 @@ import type {
   CliRebuildFTSEvent,
   CliSearchResponse,
   CliStatsResponse,
+  CommentActionBody,
+  CommentQueueResponse,
+  CommentTriageBody,
+  CommentTriageResponse,
   CommunicationService,
   CommunicationServicesResponse,
   ConsentSettingsPeopleInferenceProviderPathParameters,
@@ -229,6 +234,8 @@ import type {
   ListCardDAVBooksParams,
   ListCardDAVRunsParams,
   ListChangedMessagesParams,
+  ListCommentActionsPathParameters,
+  ListCommentQueueParams,
   ListCommunicationServicesParams,
   ListDayEntriesParams,
   ListDayEntriesPathParameters,
@@ -393,6 +400,7 @@ import type {
   PutSettingsProviderCredentialPathParameters,
   QueryRequest,
   QueryResult,
+  Receipt,
   RejectPersonBriefPathParameters,
   RejectPersonBriefRequest,
   RelationshipReviewsResponse,
@@ -405,6 +413,7 @@ import type {
   RevokeAgentTokenPathParameters,
   RevokeSettingsPeopleInferenceProviderPathParameters,
   RunArchiveQueryParams,
+  RunCommentActionPathParameters,
   RunQueryParams,
   RunSavedViewPathParameters,
   RunSavedViewRequest,
@@ -468,6 +477,7 @@ import type {
   UnlinkPersonAgendaItemPathParameters,
   UnpublishCardDAVPersonPathParameters,
   UpdateCardDAVBookRolesPathParameters,
+  UpdateCommentTriagePathParameters,
   UpdateMessageTagsPathParameters,
   UpdatePersonAgendaItemPathParameters,
   UploadTokenPathParameters,
@@ -1370,6 +1380,18 @@ export const verifyCLI = (
 ) => {
   return orvalText<CLIVerifyEvent>(
     { url: `/api/v1/cli/verify`, method: "POST", params },
+    options,
+  );
+};
+/**
+ * @summary List archived comments by triage state
+ */
+export const listCommentQueue = (
+  params?: ListCommentQueueParams,
+  options?: SecondParameter<typeof orvalFetch<CommentQueueResponse>>,
+) => {
+  return orvalFetch<CommentQueueResponse>(
+    { url: `/api/v1/comment-queue`, method: "GET", params },
     options,
   );
 };
@@ -2302,6 +2324,57 @@ export const getMessage = (
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read comment action receipts
+ */
+export const listCommentActions = (
+  { id }: ListCommentActionsPathParameters,
+  options?: SecondParameter<typeof orvalFetch<Receipt[]>>,
+) => {
+  return orvalFetch<Receipt[]>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/comment-actions`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Preview or perform a comment action
+ */
+export const runCommentAction = (
+  { id }: RunCommentActionPathParameters,
+  commentActionBody: CommentActionBody,
+  options?: SecondParameter<typeof orvalFetch<ActionResult>>,
+) => {
+  return orvalFetch<ActionResult>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/comment-actions`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: commentActionBody,
+    },
+    options,
+  );
+};
+/**
+ * @summary Set local comment triage state
+ */
+export const updateCommentTriage = (
+  { id }: UpdateCommentTriagePathParameters,
+  commentTriageBody: CommentTriageBody,
+  options?: SecondParameter<typeof orvalFetch<CommentTriageResponse>>,
+) => {
+  return orvalFetch<CommentTriageResponse>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/comment-triage`,
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      data: commentTriageBody,
     },
     options,
   );
