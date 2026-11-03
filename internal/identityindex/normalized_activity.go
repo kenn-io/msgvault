@@ -2,6 +2,13 @@ package identityindex
 
 import "fmt"
 
+// OwnerCanonicalsSQL projects confirmed owners through a canonical participant relation.
+// Callers deduplicate the result where they combine or join owner sets.
+func OwnerCanonicalsSQL(owners, canon string) string {
+	return fmt.Sprintf(`SELECT c.canonical_id FROM %s o
+	JOIN %s c ON c.participant_id = o.participant_id`, owners, canon)
+}
+
 // buildSparseRelationshipActivitySQL writes message facts once and keeps only
 // direct canonical edges beside them. Conversation membership stays in the
 // conversation_participants base dataset, where it is stored once per thread.
@@ -35,9 +42,7 @@ WITH message_facts AS (
 	FROM read_parquet('%s') p
 	LEFT JOIN read_parquet('%s') c ON c.participant_id = p.id
 ), owner_canon AS (
-	SELECT DISTINCT c.canonical_id
-	FROM read_parquet('%s') o
-	JOIN canon c ON c.participant_id = o.participant_id
+	SELECT DISTINCT canonical_id FROM (%s)
 ), direct_edges AS (
 	SELECT mr.message_id::BIGINT AS message_id, mr.participant_id::BIGINT AS participant_id,
 	       (mr.recipient_type = 'from' AND mr.participant_id = m.owner_participant_id) AS is_sender,
@@ -84,7 +89,7 @@ FROM message_facts m`, EntryKindSQL("m.message_type"),
 		messages, quoteSQLString(path("sources")),
 		quoteSQLString(path("conversations")), unsentMessages, occurredYear,
 		quoteSQLString(path("participants")), quoteSQLString(path("participant_clusters")),
-		quoteSQLString(path("owner_participants")), recipients)
+		OwnerCanonicalsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("owner_participants"))), "canon"), recipients)
 }
 
 // ExpandedActivityRelation restores the logical edge relation on demand from
@@ -141,8 +146,7 @@ canon AS NOT MATERIALIZED (
 	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
 	FROM %[3]s p LEFT JOIN %[4]s c ON c.participant_id = p.id
 ), owner_canon AS NOT MATERIALIZED (
-	SELECT DISTINCT c.canonical_id FROM %[5]s o
-	JOIN canon c ON c.participant_id = o.participant_id
+	SELECT DISTINCT canonical_id FROM (%[5]s)
 ), members AS NOT MATERIALIZED (
 	SELECT DISTINCT cp.conversation_id::BIGINT AS conversation_id,
 	       c.canonical_id, c.participant_domain,
@@ -196,5 +200,5 @@ WHERE f.is_direct
 	       AND NOT EXISTS (SELECT 1 FROM expanded_members cm
 	                       WHERE cm.conversation_id = f.conversation_id%[7]s
 	                         AND cm.canonical_id IS NOT NULL))
-)`, sparse, roster, participants, clusters, owners, memberCTEs, factMemberKey, directMemberKey)
+)`, sparse, roster, participants, clusters, OwnerCanonicalsSQL(owners, "canon"), memberCTEs, factMemberKey, directMemberKey)
 }

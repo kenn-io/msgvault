@@ -482,17 +482,19 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	if err != nil {
 		return errors.Join(fmt.Errorf("load unsent message IDs: %w", err), tx.Rollback())
 	}
+	canon := fmt.Sprintf(`(SELECT p.id AS participant_id, coalesce(c.canonical_id, p.id) AS canonical_id
+  FROM read_parquet('%s') p
+  LEFT JOIN read_parquet('%s') c ON c.participant_id = p.id)`,
+		quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipants, "*.parquet")),
+		quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet")))
+	owners := fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")))
 	// Source-native is_from_me messages can identify an owner absent from owner_participants.
 	_, err = tx.ExecContext(ctx, fmt.Sprintf(`CREATE OR REPLACE TEMP TABLE relationship_owner_canonicals AS
-  SELECT DISTINCT coalesce(c.canonical_id, o.participant_id) AS canonical_id
-  FROM read_parquet('%s') o
-  LEFT JOIN read_parquet('%s') c ON c.participant_id = o.participant_id
+  %s
   UNION
-  SELECT DISTINCT canonical_id FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
+  SELECT canonical_id FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
   WHERE canonical_id IS NOT NULL AND is_owner`,
-		quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")),
-		quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet")),
-		quoteIdentitySQLPath(path)))
+		identityindex.OwnerCanonicalsSQL(owners, canon), quoteIdentitySQLPath(path)))
 	if err != nil {
 		return errors.Join(fmt.Errorf("load relationship owner canonicals: %w", err), tx.Rollback())
 	}

@@ -202,6 +202,9 @@ func (e *DuckDBEngine) relationshipTemperatureSummary(
 }
 
 func (e *DuckDBEngine) relationshipOwnerCanonicalIDs(ctx context.Context) ([]int64, error) {
+	if _, err := e.sentIdentityConditions("true"); err != nil {
+		return nil, err
+	}
 	rows, err := e.db.QueryContext(ctx, "SELECT canonical_id FROM relationship_owner_canonicals")
 	if err != nil {
 		return nil, fmt.Errorf("query relationship owner canonicals: %w", err)
@@ -251,12 +254,17 @@ func (e *DuckDBEngine) relationshipCalendarDays(
 		  AND occurred_at < TIMESTAMP '%s'
 		  AND (canonical_id = %d OR is_owner)
 		  AND canonical_id IN (%s)
+		  AND message_id IN (
+		    SELECT message_id FROM relationship_activity_expanded
+		    WHERE canonical_id = %d AND occurred_year IN (%s)
+		  )
 	)`,
 		strings.Join(years, ","),
 		startUTC.Format("2006-01-02 15:04:05.999999999"),
 		endUTC.Format("2006-01-02 15:04:05.999999999"),
 		request.CanonicalID,
 		strings.Join(canonicalIDs, ","),
+		request.CanonicalID, strings.Join(years, ","),
 	)
 	facts := identityindex.RelationshipTemperatureFactsSQL(activity, cutoff)
 	rows, err := e.db.QueryContext(ctx, `
