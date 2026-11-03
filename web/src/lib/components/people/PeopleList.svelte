@@ -198,7 +198,7 @@
   {#if degraded?.readiness === 'building'}
     <EmptyState title="Preparing the people list…" />
   {:else if degraded}
-    <EmptyState title="The people list needs the analytics cache" description="Run msgvault build-cache to prepare the analytics cache." />
+    <EmptyState title="The people list needs the analytics cache" description="Run msgvault build-cache." />
   {:else if error && rows.length === 0}
     <EmptyState title={error} />{#if onRetry}<Button label="Retry" onclick={onRetry} />{/if}
   {:else}
