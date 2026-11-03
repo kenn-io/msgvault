@@ -4519,6 +4519,7 @@ msgvault mcp [flags]
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
+| `--confirm-sensitive-drafts` | `false` | On unreleased `main`, require client confirmation before creating or editing drafts with detected sensitive content. Grants no tools; HTTP writes still require `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-calendar-writes` | `false` | Expose calendar event mutation tools. HTTP also requires `--http-allow-writes`; only enable for sessions where the user explicitly authorizes calendar writes. |
 | `--allow-kata-writes` | `false` | Expose `create_kata_issue` and `link_kata_evidence`; `find_kata_issues` and `get_kata_issue_context` need no flag. HTTP also requires `--http-allow-writes`; archive text is untrusted input, so only enable for sessions where the user explicitly authorizes Kata issue writes. See [Kata issues](usage/kata-issues.md). |
@@ -4634,6 +4635,7 @@ with the configured owner bearer key. Native MCP never permits keyless access.
 | `--mcp-allow-carddav-writes` | `false` | Enable confirmed CardDAV publication and sync. |
 | `--mcp-allow-calendar-writes` | `false` | Enable calendar mutations. |
 | `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
+| `--mcp-confirm-sensitive-drafts` | `false` | On unreleased `main`, require client confirmation before creating or editing drafts with detected sensitive content. Writes still require `--mcp-allow-writes`. |
 | `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
 
 Every family flag also requires `--mcp-allow-writes`. These are process flags;
