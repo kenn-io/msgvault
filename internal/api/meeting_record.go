@@ -277,6 +277,13 @@ func (s *Server) handleListPersonMeetings(w http.ResponseWriter, r *http.Request
 		}
 	}
 	if err != nil {
+		if s.requestAuthentication(r).Grant != nil &&
+			reference.Kind == resolver.ReferencePerson && errors.Is(err, store.ErrPersonNotFound) {
+			// A delegated caller cannot distinguish an unknown profile from one
+			// whose identity data is outside its archive grant.
+			writeJSON(w, http.StatusOK, PersonMeetingsResponse{Items: []store.MeetingRecordSummary{}})
+			return
+		}
 		s.writePersonScopeError(w, reference, err, "meeting history")
 		return
 	}

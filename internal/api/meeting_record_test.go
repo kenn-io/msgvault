@@ -15,6 +15,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/agentgrant"
+	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -141,6 +143,46 @@ func TestMeetingRecordGeneratedClientAcceptsSparseResponses(t *testing.T) {
 		assertions.Empty(record.EventDetail.Location)
 		assertions.Empty(record.EventDetail.Description)
 	}
+}
+
+func TestDelegatedPersonMeetingsHideGlobalProfileExistence(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	allowedSource, _, err := testutil.CreateIndexedSourceMessage(st, "allowed@example.test", "allowed", "Allowed message", "")
+	requirements.NoError(err)
+	_, outsideMessageID, err := testutil.CreateIndexedSourceMessage(st, "outside@example.test", "outside", "Outside message", "")
+	requirements.NoError(err)
+	participantID, err := st.EnsureParticipant("outside-contact@example.test", "Synthetic Contact", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(outsideMessageID, "from", []int64{participantID}, nil))
+	profile, _, err := st.CreatePersonFromParticipantContext(t.Context(), participantID)
+	requirements.NoError(err)
+
+	cfg := &config.Config{
+		HomeDir: t.TempDir(),
+		Data:    config.DataConfig{DataDir: t.TempDir()},
+		Server:  config.ServerConfig{APIKey: "owner-key", AgentAccess: true},
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{
+		ID: allowedSource.ID, Type: allowedSource.SourceType, Identifier: allowedSource.Identifier,
+	}}, time.Time{})
+	requirements.NoError(err)
+
+	refs := []string{fmt.Sprintf("person:%d", profile.ID), fmt.Sprintf("person:%d", profile.ID+100)}
+	responses := make([]string, len(refs))
+	for i, ref := range refs {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/people/"+ref+"/meetings", nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+		assertions.JSONEq(`{"items":[]}`, w.Body.String())
+		responses[i] = w.Body.String()
+	}
+	assertions.Equal(responses[0], responses[1], "an out-of-scope profile must match an unknown profile response")
 }
 
 func TestMeetingWritesAndSuggestionsRequireQualifiedSeriesRef(t *testing.T) {
