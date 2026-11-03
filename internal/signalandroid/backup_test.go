@@ -58,38 +58,38 @@ func TestMissingLongTextOnFirstImport(t *testing.T) {
 }
 
 func TestMissingLongTextEditWithSamePreview(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
 	file := filepath.Join(dir, "Attachment_503_-1.bin")
-	require.NoError(t, os.WriteFile(file, []byte("Carol here obsoleteending"), 0o600))
+	require.NoError(os.WriteFile(file, []byte("Carol here obsoleteending"), 0o600))
 	storage := t.TempDir()
 	runImport(t, st, dir, storage)
-	require.NoError(t, os.Remove(file))
+	require.NoError(os.Remove(file))
 	changeFixture(t, dir,
 		`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
 		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, body, 300 FROM message WHERE _id = 300`,
 		`UPDATE attachment SET message_id = 301 WHERE _id = 503`)
 	runImport(t, st, dir, storage)
-	assert.Equal(t, "Carol here", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
-	assert.Zero(t, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'obsoleteending'`))
+	assert.Equal("Carol here", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
+	assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'obsoleteending'`))
 }
 
 func TestMissingLongTextAfterContactRename(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 200, 'text/x-signal-plain')`)
 	file := filepath.Join(dir, "Attachment_503_-1.bin")
-	require.NoError(t, os.WriteFile(file, []byte("Hi \uFFFC, look searchablesuffix"), 0o600))
+	require.NoError(os.WriteFile(file, []byte("Hi \uFFFC, look searchablesuffix"), 0o600))
 	storage := t.TempDir()
 	runImport(t, st, dir, storage)
-	require.NoError(t, os.Remove(file))
+	require.NoError(os.Remove(file))
 	changeFixture(t, dir, `UPDATE recipient SET system_joined_name = 'Renamed Example' WHERE _id = 2`)
 	runImport(t, st, dir, storage)
-	assert.Contains(t, importedMessages(t, st)["signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)].body, "searchablesuffix")
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
+	assert.Contains(importedMessages(t, st)["signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)].body, "searchablesuffix")
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
 }
 
 func TestUnavailableAttachmentKeepsMessage(t *testing.T) {
