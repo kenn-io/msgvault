@@ -552,7 +552,7 @@
 {/if}
 
 <style>
-  .sources > :global(.page-header) {
+  .sources > :global(.kit-page-header) {
     --page-header-parent-gap: var(--section-gap);
   }
 

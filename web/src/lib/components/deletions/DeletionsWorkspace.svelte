@@ -226,7 +226,7 @@
 {/if}
 
 <style>
-  .deletions > :global(.page-header) {
+  .deletions > :global(.kit-page-header) {
     --page-header-parent-gap: var(--section-gap);
   }
 
