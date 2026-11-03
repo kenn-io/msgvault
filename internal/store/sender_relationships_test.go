@@ -322,6 +322,28 @@ func TestSenderRelationshipsHistoryBudgetIsExplicit(t *testing.T) {
 	assertions.Nil(got, "partial evidence must not escape as a definitive result")
 }
 
+func TestSenderRelationshipsIncomingFromHistoryConsumesBudget(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	target := f.EnsureParticipant("target@example.com", "Target", "example.com")
+	// An older owner send must not be treated as a complete answer when newer
+	// incoming From rows already exhaust the historical-envelope scan budget.
+	senderRelationshipMessage(t, f, true, "to", "target@example.com")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
+		WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2049)
+		INSERT INTO messages (source_id,conversation_id,source_message_id,message_type,source_is_from_me,is_from_me,is_sent,sent_at)
+		SELECT ?,?, 'incoming-from-budget-' || CAST(x AS TEXT),'email',FALSE,FALSE,TRUE,NULL FROM n`), f.Source.ID, f.ConvID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address)
+		SELECT id,?,'from','target@example.com' FROM messages WHERE source_id=? AND source_message_id LIKE 'incoming-from-budget-%'`), target, f.Source.ID)
+	requirements.NoError(err)
+
+	got, err := f.Store.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
+	requirements.ErrorIs(err, store.ErrSenderRelationshipLimit)
+	assertions.Nil(got, "partial history must not escape as a definitive relationship")
+}
+
 func TestSenderRelationshipsMissingFromAndChatSnapshotsCannotFollowMerge(t *testing.T) {
 	for _, kind := range []string{"from", "chat"} {
 		t.Run(kind, func(t *testing.T) {

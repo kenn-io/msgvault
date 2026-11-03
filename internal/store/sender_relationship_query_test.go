@@ -39,7 +39,7 @@ func TestSenderContactRelationshipsQueryUsesNormalizedEnvelopeIndex(t *testing.T
 		"contact and archive-history lookup should probe historical recipient envelopes by normalized address:\n%s", plan)
 }
 
-func TestSenderOutboundCandidateQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
+func TestSenderHistoryMessageIDsQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	s, err := OpenForTest(filepath.Join(t.TempDir(), "sender-outbound-query.db"))
@@ -47,7 +47,7 @@ func TestSenderOutboundCandidateQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
 	t.Cleanup(func() { requirements.NoError(s.Close()) })
 	requirements.NoError(s.InitSchema())
 
-	query, args := s.senderOutboundCandidateQuery([]string{"one@example.test", "target@example.test"}, nil, 0, 0, 257)
+	query, args := s.senderHistoryMessageIDsQuery("target@example.test", nil, 0, 0, 257)
 	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
 	requirements.NoError(err)
 	defer func() { requirements.NoError(rows.Close()) }()
@@ -65,7 +65,9 @@ func TestSenderOutboundCandidateQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
 	assertions.Contains(plan, "SEARCH mr USING",
 		"outbound-history lookup should use an address lookup rather than scan the recipient index:\n%s", plan)
 	assertions.Contains(plan, "idx_message_recipients_email_address_normalized",
-		"outbound-history lookup should probe recipient envelopes by normalized address:\n%s", plan)
+		"history paging should probe recipient envelopes by normalized address:\n%s", plan)
+	assertions.NotContains(plan, "USE TEMP B-TREE FOR ORDER BY",
+		"history paging should use the index's message ID order:\n%s", plan)
 }
 
 func TestSenderKnownRelationshipKeysRequireArchiveHistory(t *testing.T) {

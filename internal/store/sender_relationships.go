@@ -57,10 +57,10 @@ func (s *Store) senderRawImportedIDSQL(sourceMessageID string) string {
 }
 
 const (
-	MaxSenderRelationshipAddresses = 100
-	maxSenderRelationshipSources   = 512
-	maxSenderRelationshipMessages  = 2048
-	maxSenderRelationshipAudience  = 10000
+	MaxSenderRelationshipAddresses      = 100
+	maxSenderRelationshipSources        = 512
+	maxSenderRelationshipHistoryEntries = 2048
+	maxSenderRelationshipAudience       = 10000
 )
 
 // ErrSenderRelationshipLimit means the lookup could not establish a complete
@@ -252,63 +252,81 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 const senderOneToOneChat = `c.conversation_type IN ('chat','direct_chat') AND (SELECT COUNT(*) FROM conversation_participants cp WHERE cp.conversation_id=m.conversation_id)=2`
 
 func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded int64, result map[string]SenderRelationshipEvidence) error {
-	var before int64
-	inspected := 0
-	for {
-		pending := senderKnownRelationshipKeys(keys, result)
-		if len(pending) == 0 {
-			return nil
+	inspectedEntries := 0
+	for _, key := range senderKnownRelationshipKeys(keys, result) {
+		if evidence := result[key]; evidence.Relationship != "none" || !evidence.SeenInArchive {
+			continue
 		}
-		limit := min(256, maxSenderRelationshipMessages-inspected)
-		ids, err := s.senderOutboundCandidateIDs(ctx, tx, pending, sources, excluded, before, limit+1)
-		if err != nil {
-			return err
-		}
-		more := len(ids) > limit
-		if more {
-			ids = ids[:limit]
-		}
-		if len(ids) == 0 {
+		var before int64
+		for {
+			limit := min(256, maxSenderRelationshipHistoryEntries-inspectedEntries)
+			historyIDs, err := s.senderHistoryMessageIDs(ctx, tx, key, sources, excluded, before, limit+1)
+			if err != nil {
+				return err
+			}
+			more := len(historyIDs) > limit
 			if more {
-				return ErrSenderRelationshipLimit
+				historyIDs = historyIDs[:limit]
 			}
-			return nil
-		}
-		addresses, err := s.senderOutboundAddresses(ctx, tx, ids)
-		if err != nil {
-			return err
-		}
-		candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, ids)
-		if err != nil {
-			return err
-		}
-		for _, candidate := range candidates {
-			// The candidate query already requires native ownership or trusted Sent
-			// evidence. Carry that proof into classification even when the provider
-			// records sent-folder ownership separately from source_is_from_me.
-			candidate.SourceIsFromMe = true
-			if !candidate.Eligible || candidate.Unsent {
-				continue
+			if len(historyIDs) == 0 {
+				if more {
+					return ErrSenderRelationshipLimit
+				}
+				break
 			}
-			classification := ClassifyActivityCandidate(candidate, DefaultMaxDirectActivityCounterparts)
-			if classification.Broadcast || (classification.Channel != ChannelEmail && classification.Channel != ChannelChat) {
-				continue
-			}
-			for _, address := range addresses[candidate.MessageID] {
-				e, requested := result[address]
-				if requested && e.Relationship == "none" {
-					e.Relationship = "known"
-					e.SeenInArchive = true
-					result[address] = e
+			inspectedEntries += len(historyIDs)
+
+			// History pages include From rows and other non-candidates so the
+			// inspection budget applies before sender, recipient-type, and
+			// conversation eligibility checks.
+			messageIDs := make([]int64, 0, len(historyIDs))
+			for _, messageID := range historyIDs {
+				if len(messageIDs) == 0 || messageIDs[len(messageIDs)-1] != messageID {
+					messageIDs = append(messageIDs, messageID)
 				}
 			}
+			candidateIDs, err := s.senderOutboundEligibleIDs(ctx, tx, []string{key}, sources, excluded, messageIDs)
+			if err != nil {
+				return err
+			}
+			if len(candidateIDs) > 0 {
+				addresses, err := s.senderOutboundAddresses(ctx, tx, candidateIDs)
+				if err != nil {
+					return err
+				}
+				candidates, err := s.loadActivityCandidatesByIDQueryerContext(ctx, tx, candidateIDs)
+				if err != nil {
+					return err
+				}
+				for _, candidate := range candidates {
+					// The candidate query already requires native ownership or trusted
+					// Sent evidence. Carry that proof into classification even when the
+					// provider records sent-folder ownership separately from source_is_from_me.
+					candidate.SourceIsFromMe = true
+					if !candidate.Eligible || candidate.Unsent {
+						continue
+					}
+					classification := ClassifyActivityCandidate(candidate, DefaultMaxDirectActivityCounterparts)
+					if classification.Broadcast || (classification.Channel != ChannelEmail && classification.Channel != ChannelChat) {
+						continue
+					}
+					for _, address := range addresses[candidate.MessageID] {
+						e, requested := result[address]
+						if requested && e.Relationship == "none" {
+							e.Relationship = "known"
+							e.SeenInArchive = true
+							result[address] = e
+						}
+					}
+				}
+			}
+			if result[key].Relationship != "none" || !more {
+				break
+			}
+			before = historyIDs[len(historyIDs)-1]
 		}
-		if !more {
-			return nil
-		}
-		inspected += len(ids)
-		before = ids[len(ids)-1]
 	}
+	return nil
 }
 
 func senderKnownRelationshipKeys(keys []string, evidence map[string]SenderRelationshipEvidence) []string {
@@ -322,11 +340,11 @@ func senderKnownRelationshipKeys(keys []string, evidence map[string]SenderRelati
 	return pending
 }
 
-func (s *Store) senderOutboundCandidateIDs(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded, before int64, limit int) ([]int64, error) {
-	query, args := s.senderOutboundCandidateQuery(keys, sources, excluded, before, limit)
+func (s *Store) senderHistoryMessageIDs(ctx context.Context, tx *loggedTx, key string, sources []int64, excluded, before int64, limit int) ([]int64, error) {
+	query, args := s.senderHistoryMessageIDsQuery(key, sources, excluded, before, limit)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("read sender outbound candidates: %w", err)
+		return nil, fmt.Errorf("read sender relationship history entries: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	var ids []int64
@@ -340,39 +358,65 @@ func (s *Store) senderOutboundCandidateIDs(ctx context.Context, tx *loggedTx, ke
 	return ids, rows.Err()
 }
 
-func (s *Store) senderOutboundCandidateQuery(keys []string, sources []int64, excluded, before int64, limit int) (string, []any) {
-	values := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
-	args := make([]any, 0, len(keys)+len(sources)+3)
+func (s *Store) senderHistoryMessageIDsQuery(key string, sources []int64, excluded, before int64, limit int) (string, []any) {
+	scope, sourceArgs := senderSourceScope(sources, excluded)
+	args := []any{key}
+	query := `SELECT mr.message_id FROM message_recipients mr
+		JOIN messages m ON m.id=mr.message_id
+		WHERE ` + senderRecipientAddress + `=?`
+	if before > 0 {
+		query += ` AND mr.message_id<?`
+		args = append(args, before)
+	}
+	query += scope + ` ORDER BY mr.message_id DESC LIMIT ?`
+	args = append(args, sourceArgs...)
+	args = append(args, limit)
+	return query, args
+}
+
+func (s *Store) senderOutboundEligibleIDs(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded int64, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	query, args := s.senderOutboundEligibleIDsQuery(keys, sources, excluded, ids)
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("filter sender relationship history entries: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var eligible []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		eligible = append(eligible, id)
+	}
+	return eligible, rows.Err()
+}
+
+func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, excluded int64, ids []int64) (string, []any) {
+	messageValues := strings.TrimSuffix(strings.Repeat("(?),", len(ids)), ",")
+	addressValues := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
+	args := make([]any, 0, len(ids)+len(keys)+len(sources)+1)
+	args = append(args, personMergeSnapshotIDArgs(ids)...)
+	scope, sourceArgs := senderSourceScope(sources, excluded)
+	args = append(args, sourceArgs...)
 	for _, key := range keys {
 		args = append(args, key)
 	}
-	scope, sourceArgs := senderSourceScope(sources, excluded)
-	args = append(args, sourceArgs...)
-	recipientJoin := `JOIN message_recipients mr ON ` + senderRecipientAddress + `=requested.address`
-	recipientAddressFilter := ""
-	if !s.IsPostgreSQL() {
-		// SQLite may otherwise scan the recipient index before filtering by
-		// address. Keep requested outside so candidate lookup starts at the
-		// normalized-address index.
-		recipientJoin = `CROSS JOIN message_recipients mr`
-		recipientAddressFilter = ` AND ` + senderRecipientAddress + `=requested.address`
-	}
-	chat := senderOneToOneChat
-	query := `WITH requested(address) AS (VALUES ` + values + `),
-		candidate_messages(message_id) AS (
-			SELECT m.id FROM requested ` + recipientJoin + `
-			JOIN messages m ON m.id=mr.message_id
-			JOIN sources src ON src.id=m.source_id
-			JOIN conversations c ON c.id=m.conversation_id
-			WHERE mr.recipient_type IN ('to','cc','bcc')` + recipientAddressFilter + `
-			AND ` + s.senderNativeOwnershipSQL() + ` AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-			AND m.list_id IS NULL AND NOT ` + s.activityUnsentSQL() + scope + `
-			AND (c.conversation_type='email_thread' OR (` + chat + `))
-			AND (?=0 OR m.id<?)
-			GROUP BY m.id ORDER BY m.id DESC LIMIT ?
-		)
-		SELECT message_id FROM candidate_messages ORDER BY message_id DESC`
-	args = append(args, before, before, limit)
+	query := `SELECT m.id FROM messages m
+		JOIN sources src ON src.id=m.source_id
+		JOIN conversations c ON c.id=m.conversation_id
+		WHERE m.id IN (` + messageValues + `)
+		AND ` + s.senderNativeOwnershipSQL() + `
+		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		AND m.list_id IS NULL AND NOT ` + s.activityUnsentSQL() + scope + `
+		AND EXISTS (SELECT 1 FROM message_recipients mr
+			WHERE mr.message_id=m.id AND mr.recipient_type IN ('to','cc','bcc')
+			AND ` + senderRecipientAddress + ` IN (` + addressValues + `))
+		AND (c.conversation_type='email_thread' OR (` + senderOneToOneChat + `))
+		ORDER BY m.id DESC`
 	return query, args
 }
 
