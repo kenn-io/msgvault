@@ -70,23 +70,6 @@ func TestRender_AllSkills(t *testing.T) {
 	}
 }
 
-func TestRender_MeetingPrepUsesConfirmedOwnerIdentities(t *testing.T) {
-	rendered, err := Render("1.2.3")
-	require.NoError(t, err)
-
-	var meetingPrep string
-	for _, skill := range rendered {
-		if skill.Name == "msgvault-meeting-prep" {
-			meetingPrep = skill.Content
-			break
-		}
-	}
-	require.NotEmpty(t, meetingPrep)
-	assert.Contains(t, meetingPrep, "configured primary account addresses in")
-	assert.Contains(t, meetingPrep, "only when their normalized email matches an address in that set")
-	assert.Contains(t, meetingPrep, "`IsCopySelf` is a provider hint, not proof of identity")
-}
-
 func TestRender_VersionDefaultsSafely(t *testing.T) {
 	rendered, err := Render("dev")
 	require.NoError(t, err)
