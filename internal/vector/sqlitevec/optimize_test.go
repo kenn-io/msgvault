@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/sqlitevec/vec1"
 )
@@ -286,6 +287,7 @@ func TestPrepareAcceleratorDetectsConcurrentSourceChange(t *testing.T) {
 }
 
 func TestAcceleratorWorkerCanBeKilledAndRetried(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	backend, err := Open(t.Context(), Options{Path: path, Dimension: 64})
 	require.NoError(t, err)
@@ -351,6 +353,7 @@ func TestAcceleratorWorkerProcessHelper(t *testing.T) {
 
 func openOptimizeBackend(t *testing.T, dimension int) *Backend {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	backend, err := Open(t.Context(), Options{
 		Path:      filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension: dimension,

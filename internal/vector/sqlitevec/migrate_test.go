@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestMigrate_FreshAndIdempotent(t *testing.T) {
@@ -439,6 +440,7 @@ func TestMigrate_KeepsDeadPendingEmbeddings(t *testing.T) {
 
 func openTestDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require.NoError(t, RegisterExtension(), "register")
 	db, err := sql.Open(DriverName(), path)
 	require.NoError(t, err, "open")

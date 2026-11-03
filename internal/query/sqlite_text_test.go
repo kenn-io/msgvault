@@ -10,8 +10,10 @@ import (
 )
 
 func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES
@@ -86,8 +88,10 @@ func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.
 }
 
 func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'owner@chat.test');
@@ -160,8 +164,10 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *test
 }
 
 func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@chat.test');
@@ -227,8 +233,10 @@ func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) 
 // In particular, an owner-authored latest message must not hide a conversation
 // that contains a selected cluster member.
 func TestSQLiteListConversationsParticipantMembership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier, display_name) VALUES
@@ -288,8 +296,10 @@ func TestSQLiteListConversationsParticipantMembership(t *testing.T) {
 }
 
 func TestSQLiteListConversationMessagesWithoutBodies(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'chat');
@@ -310,8 +320,10 @@ func TestSQLiteListConversationMessagesWithoutBodies(t *testing.T) {
 }
 
 func TestSQLiteListConversationMessagesSearchesFullBodyWithinConversation(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		CREATE VIRTUAL TABLE messages_fts USING fts5(
@@ -344,6 +356,8 @@ func TestSQLiteListConversationMessagesSearchesFullBodyWithinConversation(t *tes
 }
 
 func TestSQLiteListConversationMessagesUsesIDTiebreakerForEqualTimestamps(t *testing.T) {
+	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	_, err := tdb.DB.Exec(`
 		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'chat');

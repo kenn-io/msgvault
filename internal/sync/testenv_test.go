@@ -27,6 +27,7 @@ type TestEnv struct {
 
 func newTestEnv(t *testing.T) *TestEnv {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 
 	st := testutil.NewSQLiteTestStore(t)
 	var sequence int

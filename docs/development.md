@@ -221,6 +221,11 @@ server releases when the binary exits, so the next binary reclaims whatever an
 earlier one left behind; a role without `CREATEDB` falls back to a private
 schema in the configured database.
 
+`dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
+SQLite's backup API.
+Query tests call `t.Parallel()`; a test that replaces a package global stays
+serial and explains why in a `// serial:` comment.
+
 
 ### Local test scheduling
 
@@ -264,6 +269,18 @@ The shard scripts do not rerun tests. They write every shard's events to
 element. Successful shards print named passing and skipped test outcomes,
 including subtests, followed by the package line `go test` prints. Failed
 shards print the full verbose test output, then the package's `FAIL` line.
+
+Bash shards balance test time with recorded durations from a package's
+`testdata/shard-weights-<backend>.txt`. Only PostgreSQL store has a weights
+file; a missing file keeps round-robin assignment. Unlisted tests get the median
+recorded duration, and removed tests are ignored. Each successful shard line
+reports its summed top-level test-seconds. Refresh
+`internal/store/testdata/shard-weights-postgres.txt` from a recent successful
+main run's `test-postgres-sharded (store)` job with:
+
+```bash
+gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): ' | sort
+```
 
 In CI, Vitest and Playwright retry a failed test twice and write JSON reports
 under `web/test-results/vitest/` and `web/test-results/playwright/`. CI uploads
