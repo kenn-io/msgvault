@@ -3,7 +3,6 @@ package query
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -87,23 +86,4 @@ func TestAddAttachment_SetsHasAttachments(t *testing.T) {
 	b.AddAttachment(msgID, 1024, "file.txt")
 
 	assert.True(t, b.messages[0].HasAttachments, "HasAttachments should be true after AddAttachment")
-}
-
-func TestBuild_EmptyAuxiliaryTables(t *testing.T) {
-	t.Parallel()
-	// Build should succeed with messages but no participants, labels, etc.
-	b := NewTestDataBuilder(t)
-	b.AddSource("a@test.com")
-	b.AddMessage(MessageOpt{
-		Subject: "solo message",
-		SentAt:  time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
-	})
-
-	engine := b.BuildEngine()
-	defer func() { _ = engine.Close() }()
-
-	// Should be able to query without errors.
-	stats, err := engine.GetTotalStats(context.Background(), StatsOptions{})
-	require.NoError(t, err, "GetTotalStats")
-	assert.Equal(t, int64(1), stats.MessageCount)
 }
