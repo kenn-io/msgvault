@@ -196,7 +196,7 @@
           {@const relation = isOtherMember ? (edges.some((edge) => edge.link_origin) ? '' : 'linked') : 'this profile'}
           {@const label = identifier.service_label || (identifier.type === 'email' ? 'Email' : identifier.type === 'phone' ? 'Phone' : 'Address')}
           <DetailRow label={label === text.title ? undefined : label}>
-            <details aria-label={`Identity ${chipName}`}><summary>{text.title}</summary><p>{[text.subtitle, relation, text.detail, identifierTooltip(identifier), identifier.service_slug].filter(Boolean).join(' · ')}</p></details>
+            <details aria-label={`Identity ${chipName}`}><summary>{text.title}</summary><p>{[text.subtitle, relation, text.detail, identifierTooltip(identifier)].filter(Boolean).join(' · ')}</p></details>
             {#snippet actions()}
               <Button label="Copy" ariaLabel={`Copy ${opaque ? chipName : identifier.value}`} size="sm" onclick={() => void copyIdentifier(identifier.value)} />
               {#if isOtherMember && confirmingParticipantID !== identifier.participant_id}<Button label="Unlink" ariaLabel={`Unlink ${chipName}`} size="sm" onclick={() => startUnlink(identifier.participant_id)} />{/if}
