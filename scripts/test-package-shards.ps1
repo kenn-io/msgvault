@@ -14,7 +14,12 @@ param(
     [int]$PartCount = 1,
 
     [ValidateRange(1, 64)]
-    [int]$PartIndex = 1
+    [int]$PartIndex = 1,
+
+    # Names gotestsum/<Suite>.json under the current directory, which collects
+    # every batch's test2json events for CI to upload when a job fails.
+    # Defaults to the package's last path element.
+    [string]$Suite = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,12 +52,31 @@ if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 $importPath, $packageDir = $packageInfo.Trim() -split ' ', 2
+if (-not $Suite) { $Suite = ($importPath -split '/')[-1] }
+$suiteJson = Join-Path (Get-Location) "gotestsum/$Suite.json"
 
-$testBinary = Join-Path ([System.IO.Path]::GetTempPath()) (
-    "msgvault-tests-{0}-{1}.exe" -f $PID, [guid]::NewGuid().ToString("N")
+$scratch = Join-Path ([System.IO.Path]::GetTempPath()) (
+    "msgvault-tests-{0}-{1}" -f $PID, [guid]::NewGuid().ToString("N")
 )
+New-Item -ItemType Directory -Path $scratch | Out-Null
+$testBinary = Join-Path $scratch "tests.exe"
+$gotestsum = Join-Path $scratch "gotestsum.exe"
+$test2json = Join-Path $scratch "test2json.exe"
 
 try {
+    # gotestsum is a tool dependency of this module, which the package under
+    # test need not belong to. test2json turns each batch's -test.v=test2json
+    # output into the events go test -json prints; gotestsum records them and
+    # prints them as verbose test output.
+    & go -C $PSScriptRoot build -o $gotestsum gotest.tools/gotestsum
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    & go -C $PSScriptRoot build -o $test2json cmd/test2json
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+
     $compileArgs = @("test", "-c", "-o", $testBinary)
     if ($Tags) {
         $compileArgs += @("-tags", $Tags)
@@ -115,8 +139,8 @@ try {
 
     Write-Host "Running $($testNames.Count) tests from $Package in $activeShards shards"
 
-    # Reserve space for the quoted executable, flags, separators, and terminating NUL.
-    $patternLimit = 32767 - $testBinary.Length - 128
+    # Reserve space for the quoted executables, batch JSON path, flags, separators, and terminating NUL.
+    $patternLimit = 32767 - $gotestsum.Length - $test2json.Length - $testBinary.Length - $scratch.Length - $importPath.Length - 256
     $batches = [object[]]::new($activeShards)
     $spent = [double[]]::new($activeShards)
     for ($i = 0; $i -lt $activeShards; $i++) {
@@ -135,6 +159,8 @@ try {
         $batches[$i].Add($pattern + ')$')
     }
 
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $suiteJson) | Out-Null
+    [System.IO.File]::WriteAllText($suiteJson, '')
     $failed = $false
     $runs = @(for ($i = 0; $i -lt $activeShards; $i++) {
         [pscustomobject]@{ Batch = 0; Process = $null; StartedAt = $null; StandardOut = $null; StandardErr = $null }
@@ -153,6 +179,11 @@ try {
                     $spent[$i] += $elapsed.TotalSeconds
                     $stdout = $run.StandardOut.GetAwaiter().GetResult()
                     $stderr = $run.StandardErr.GetAwaiter().GetResult()
+                    $batchJson = Join-Path $scratch "shard$i-batch$($run.Batch).json"
+                    if (Test-Path -LiteralPath $batchJson) {
+                        [System.IO.File]::AppendAllText($suiteJson, [System.IO.File]::ReadAllText($batchJson))
+                        Remove-Item -LiteralPath $batchJson
+                    }
                     # Each batch's results end with the package line go test prints,
                     # so a reader of the log can tell which package they belong to.
                     $duration = $elapsed.TotalSeconds.ToString('F3', [cultureinfo]::InvariantCulture) + 's'
@@ -184,13 +215,20 @@ try {
                     $batchTimeout = $remaining.ToString('F9', [cultureinfo]::InvariantCulture) + 's'
                 }
                 $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-                $startInfo.FileName = $testBinary
+                $startInfo.FileName = $gotestsum
                 $startInfo.WorkingDirectory = $packageDir
                 $startInfo.UseShellExecute = $false
                 $startInfo.CreateNoWindow = $true
                 $startInfo.RedirectStandardOutput = $true
                 $startInfo.RedirectStandardError = $true
-                $startInfo.ArgumentList.Add("-test.v")
+                foreach ($argument in @(
+                    '--format', 'standard-verbose', '--format-icons', 'text',
+                    '--jsonfile', (Join-Path $scratch "shard$i-batch$($run.Batch).json"),
+                    '--raw-command', '--', $test2json, '-t', '-p', $importPath,
+                    $testBinary, '-test.v=test2json'
+                )) {
+                    $startInfo.ArgumentList.Add($argument)
+                }
                 $startInfo.ArgumentList.Add("-test.run=$($batches[$i][$run.Batch])")
                 $startInfo.ArgumentList.Add("-test.timeout=$batchTimeout")
 
@@ -218,5 +256,5 @@ try {
         exit 1
     }
 } finally {
-    Remove-Item -LiteralPath $testBinary -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
 }

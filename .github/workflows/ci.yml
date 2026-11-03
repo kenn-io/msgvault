@@ -120,7 +120,16 @@ jobs:
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
       - name: Test built CLI on a synthetic archive
-        run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} TEST_FLAGS=-v MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
+        run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-cli-e2e-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   checks:
     env:
@@ -199,10 +208,31 @@ jobs:
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
-        run: make test-unsharded TEST_TIMEOUT=17m TEST_FLAGS=-v
+        run: make test-unsharded TEST_TIMEOUT=17m
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/unsharded-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-unsharded-attempt-${{ github.run_attempt }}
+          path: gotestsum/unsharded.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Test build without vector backends
-        run: go test -v -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/vector-stub.json --rerun-fails=2 --rerun-fails-report gotestsum/vector-stub-reruns.txt
+          --packages ./cmd/msgvault/cmd --
+          -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/vector-stub-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-vector-stub-attempt-${{ github.run_attempt }}
+          path: gotestsum/vector-stub.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -253,7 +283,16 @@ jobs:
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
 
       - name: Test package in isolated shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}"
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
+
+      - name: Upload test events
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test-macos-15:
     if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
@@ -273,7 +312,16 @@ jobs:
           group: macos
 
       - name: Test
-        run: make test TEST_TIMEOUT=39m TEST_FLAGS=-v
+        run: make test TEST_TIMEOUT=39m
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-macos-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -529,7 +577,17 @@ jobs:
           $packages = go list -tags "fts5 sqlite_vec" ./... |
             Where-Object { $_ -notin $separatePackages }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -v -timeout 20m -tags "fts5 sqlite_vec" $packages
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-reruns.txt `
+            --packages "$packages" -- -timeout 20m -tags "fts5 sqlite_vec"
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -621,18 +679,18 @@ jobs:
           CGO_ENABLED: "1"
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
-        run: |
-          $output = go test -v -timeout 9m -tags "fts5 sqlite_vec" `
-            ./internal/api `
-            ./internal/importer `
-            ./scripts 2>&1
-          $status = $LASTEXITCODE
-          if ($status -ne 0) {
-            $output | ForEach-Object { "$_" }
-          } else {
-            $output | Where-Object { "$_" -match '^\s*--- (PASS|SKIP): |^(ok\s|FAIL\s|\?\s)' } | ForEach-Object { "$_" }
-          }
-          exit $status
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/windows-slow.json --rerun-fails=2 --rerun-fails-report gotestsum/windows-slow-reruns.txt
+          --packages "./internal/api ./internal/importer ./scripts" -- -timeout 9m -tags "fts5 sqlite_vec"
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-slow-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test-windows-sharded:
     needs: changes
@@ -698,9 +756,19 @@ jobs:
               -Tags "fts5 sqlite_vec" `
               -Timeout ${{ matrix.timeout }} `
               -PartIndex ${{ matrix.part || 1 }} `
-              -PartCount ${{ matrix.parts || 1 }}
+              -PartCount ${{ matrix.parts || 1 }} `
+              -Suite "windows-sharded-${{ matrix.name }}-$(Split-Path -Leaf $package)"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+
+      - name: Upload test events
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   test-windows-pack-restore:
     if: github.repository == 'kenn-io/msgvault' && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
@@ -801,7 +869,19 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -v -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/pgvector.json --rerun-fails=2 --rerun-fails-report gotestsum/pgvector-reruns.txt
+          --packages "./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/..." --
+          -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pgvector-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
@@ -856,7 +936,16 @@ jobs:
       # The three largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m TEST_FLAGS=-v
+        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
+
+      - name: Upload test events
+        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pg-shipped-unsharded-attempt-${{ github.run_attempt }}
+          path: gotestsum/*.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -926,15 +1015,43 @@ jobs:
       # in test-postgres above.
       - name: Test package in isolated shards (PostgreSQL)
         id: postgres-shards
-        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}"
+        run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
+
+      - name: Upload test events
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-postgres-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
+          path: gotestsum/postgres-sharded-${{ matrix.name }}.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Test PostgreSQL library without CGO
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
-        run: make test-pg-nocgo TEST_TIMEOUT=5m TEST_FLAGS=-v
+        run: make test-pg-nocgo TEST_TIMEOUT=5m
+
+      - name: Upload test events
+        if: ${{ matrix.followups && (failure() || hashFiles('gotestsum/pg-nocgo-reruns.txt') != '') }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-pg-nocgo-attempt-${{ github.run_attempt }}
+          path: gotestsum/pg-nocgo.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       # Run store concurrency tests after the API package test, away from the store package shard.
       # Five repetitions catch intermittent lost updates and uniqueness races.
       - name: Concurrency tests (-count=5)
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
-        run: |
-          go test -v -timeout 7m -tags fts5 -count=5 -run 'Concurrent' ./internal/store
+        run: >-
+          go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/store-concurrency.json --rerun-fails=2 --rerun-fails-report gotestsum/store-concurrency-reruns.txt
+          --packages ./internal/store -- -timeout 7m -tags fts5 -count=5 -run 'Concurrent'
+
+      - name: Upload test events
+        if: ${{ matrix.followups && (failure() || hashFiles('gotestsum/store-concurrency-reruns.txt') != '') }}
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: gotestsum-store-concurrency-attempt-${{ github.run_attempt }}
+          path: gotestsum/store-concurrency.json
+          retention-days: 14
+          if-no-files-found: ignore

@@ -1,7 +1,9 @@
 package scripts
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -67,6 +69,26 @@ func record(t *testing.T) {
 	}
 	r.NoError(os.WriteFile(filepath.Join(dir, "fixture_test.go"), []byte(source.String()), 0o600))
 
+	// outcomes reads the test2json events every batch appended to the suite file.
+	outcomes := func(t *testing.T) map[string]string {
+		t.Helper()
+		events, err := os.Open(filepath.Join(dir, "gotestsum", "shardfixture.json"))
+		require.NoError(t, err)
+		defer events.Close()
+		got := map[string]string{}
+		scanner := bufio.NewScanner(events)
+		for scanner.Scan() {
+			var event struct{ Action, Package, Test string }
+			require.NoError(t, json.Unmarshal(scanner.Bytes(), &event), scanner.Text())
+			require.Equal(t, "shardfixture", event.Package, scanner.Text())
+			if event.Test != "" && (event.Action == "pass" || event.Action == "fail") {
+				got[event.Test] = event.Action
+			}
+		}
+		require.NoError(t, scanner.Err())
+		return got
+	}
+
 	run := func(t *testing.T, timeout, fail string, extra ...string) (string, string, error) {
 		t.Helper()
 		output := t.TempDir()
@@ -88,6 +110,11 @@ func record(t *testing.T) {
 			require.NoError(err, result)
 			require.Regexp(`(?m)^--- PASS: Test0000_\w+ \(\d+\.\d+s\)\r?\n(?:--- PASS: .*\n)*ok  \tshardfixture\t\d+\.\d{3}s\r?$`, result,
 				"named passes must precede the package line go test prints")
+			passed := outcomes(t)
+			require.Len(passed, count)
+			for _, name := range want {
+				require.Equal("pass", passed[name], name)
+			}
 			files, err := os.ReadDir(output)
 			require.NoError(err)
 			require.Greater(len(files), 4, "fixture must exceed one command line per shard")
@@ -171,5 +198,6 @@ func record(t *testing.T) {
 		require.Error(err)
 		require.Contains(result, "shard failure sentinel")
 		require.Regexp(`(?m)^FAIL\tshardfixture\t\d+\.\d{3}s\r?$`, result)
+		require.Equal("fail", outcomes(t)[want[count-1]])
 	})
 }

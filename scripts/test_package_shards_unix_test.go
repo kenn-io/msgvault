@@ -3,7 +3,9 @@
 package scripts
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -68,20 +70,55 @@ func TestSilent(t *testing.T) {}
 			assert.Contains(blocks[1], "--- SKIP: TestSkip (")
 			assert.NotContains(result, "noisy success sentinel")
 			assert.NotContains(result, "skip reason sentinel")
-			assert.Contains(result, "    --- SKIP: TestNested/routes/skipped (")
+			assert.Contains(result, "--- SKIP: TestNested/routes/skipped (")
 			assert.Contains(result, "ok shard 4: 1 tests")
 			if fail == "1" {
 				assert.Contains(blocks[2], "=== RUN   TestNested/routes/get")
 				assert.Contains(blocks[2], "nested failure sentinel")
 				assert.Contains(blocks[2], "--- FAIL: TestNested/routes/get (")
-				assert.Regexp(`\nFAIL\nFAIL\texample\.com/shardfixture\t\d+\.\d{3}s\n`, blocks[2])
+				assert.Regexp(`(?m)^FAIL\texample\.com/shardfixture\t\d+\.\d{3}s$`, blocks[2])
 			} else {
 				assert.Len(blocks, 5, result)
-				assert.Contains(blocks[2], "        --- PASS: TestNested/routes/get (")
+				assert.Contains(blocks[2], "--- PASS: TestNested/routes/get (")
 				assert.Contains(blocks[2], "--- PASS: TestNested (")
 				assert.NotContains(result, "=== RUN")
 				assert.NotContains(result, "FAIL")
 			}
+
+			// Every shard's test2json events land in one file named after the package.
+			events, err := os.Open(filepath.Join(dir, "gotestsum", "shardfixture.json"))
+			require.NoError(err)
+			defer events.Close()
+			outcomes := map[string]string{}
+			packageResults := 0
+			scanner := bufio.NewScanner(events)
+			for scanner.Scan() {
+				var event struct{ Action, Package, Test string }
+				require.NoError(json.Unmarshal(scanner.Bytes(), &event), scanner.Text())
+				require.Equal("example.com/shardfixture", event.Package, scanner.Text())
+				switch event.Action {
+				case "pass", "fail", "skip":
+					if event.Test == "" {
+						packageResults++
+					} else {
+						outcomes[event.Test] = event.Action
+					}
+				}
+			}
+			require.NoError(scanner.Err())
+			assert.Equal(4, packageResults, "one package result per shard")
+			wantGet := "pass"
+			if fail == "1" {
+				wantGet = "fail"
+			}
+			assert.Equal(map[string]string{
+				"TestPass":                  "pass",
+				"TestSkip":                  "skip",
+				"TestNested":                wantGet,
+				"TestNested/routes":         wantGet,
+				"TestNested/routes/get":     wantGet,
+				"TestNested/routes/skipped": "skip",
+			}, outcomes)
 		})
 	}
 }

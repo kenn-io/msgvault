@@ -250,12 +250,18 @@ The PostgreSQL targets keep their existing connection-oriented concurrency
 limits; setting `MSGVAULT_TEST_DB` disables automatic scaling in `make test` too.
 CI's explicit `test-unsharded` and package-shard jobs keep their existing layout.
 
-Successful Bash and PowerShell shards and the Windows slow-packages job print
-named passing and skipped test outcomes, including subtests, followed by the
-package line `go test` prints. Failed runs print the full verbose test output,
-then the package's `FAIL` line. CI's other Go test steps run `go test -v`, or
-pass `TEST_FLAGS=-v` to the Makefile targets, so a rerun's log names every
-test that passed.
+Go tests run through [gotestsum](https://github.com/gotestyourself/gotestsum),
+a tool dependency in `go.mod`. `make test`, the PostgreSQL targets, and CI's
+inline test steps rerun each failed test up to twice and list rerun tests in
+`gotestsum/<suite>-reruns.txt`. Every run records its `go test -json` events in
+`gotestsum/<suite>.json`. CI uploads those files as
+`gotestsum-<suite>-attempt-<n>` artifacts when a job fails or reruns a test.
+
+The shard scripts do not rerun tests. They write every shard's events to
+`gotestsum/<suite>.json`, where the suite defaults to the package's last path
+element. Successful shards print named passing and skipped test outcomes,
+including subtests, followed by the package line `go test` prints. Failed
+shards print the full verbose test output, then the package's `FAIL` line.
 
 ## Lint & Format
 
