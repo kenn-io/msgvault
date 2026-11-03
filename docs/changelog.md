@@ -11,6 +11,7 @@ All notable changes to msgvault, grouped by release.
 ### API schema 3.38.0
 
 - Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.38.0 adds optional participant IDs to messages in conversation responses.
+- Canonical `kind` filters select Email, Conversation, Event, Meeting, and Item entries. Conversation classification includes older chat messages whose stored message type is empty.
 
 ### Other changes
 
