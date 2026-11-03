@@ -5,7 +5,9 @@ Usage:
 
 Available Commands:
   facebook-comments  Archive comments from a configured Facebook Page
+  facebook-messages  Register and archive facebook inbox messages
   instagram-comments Archive comments from a linked Instagram account
+  instagram-messages Register and archive instagram inbox messages
 
 Flags:
   -h, --help   help for source

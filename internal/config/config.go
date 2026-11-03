@@ -586,6 +586,8 @@ type Config struct {
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
 	MetaWebhooks       MetaWebhooksConfig              `toml:"meta_webhooks"`
+	FacebookMessages   []MetaMessagesSource            `toml:"facebook_messages"`
+	InstagramMessages  []MetaMessagesSource            `toml:"instagram_messages"`
 	FacebookComments   []FacebookCommentsSource        `toml:"facebook_comments"`
 	InstagramComments  []InstagramCommentsSource       `toml:"instagram_comments"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
@@ -1129,6 +1131,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		if len(key) > 0 && key[0] == "meta_webhooks" {
 			return nil, fmt.Errorf("unknown Meta webhooks config key %q", key.String())
 		}
+		if len(key) > 0 && (key[0] == "facebook_messages" || key[0] == "instagram_messages") {
+			return nil, fmt.Errorf("unknown Meta messages config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "instagram_comments" {
 			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
 		}
@@ -1290,6 +1295,12 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateMetaWebhooks(); err != nil {
+		return nil, err
+	}
+	if err := validateMetaMessagesSources("facebook_messages", cfg.FacebookMessages, false); err != nil {
+		return nil, err
+	}
+	if err := validateMetaMessagesSources("instagram_messages", cfg.InstagramMessages, true); err != nil {
 		return nil, err
 	}
 	if err := cfg.validateFacebookCommentsSources(); err != nil {

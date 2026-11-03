@@ -1660,6 +1660,62 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
 resuming, and coverage limits. These commands do not send replies.
 
+## source facebook-messages add
+
+Verify and register selected `[[facebook_messages]]` Page inboxes (unreleased).
+No identifier selects all configured profiles. The daemon reads only the named
+token environment variable. Unknown labels fail explicitly. Registration does
+not subscribe the app or change routing.
+
+```bash
+msgvault source facebook-messages add [identifier]
+```
+
+## source facebook-messages sync
+
+Backfill registered Page inboxes (unreleased). No identifier selects all
+configured profiles. Each thread exposes at most its 20 most recent messages.
+The output reports `threads`, `messages_added`, `requests`, `partial`, and that
+coverage limit. New messages and events require the Meta webhook receiver.
+
+```bash
+msgvault source facebook-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive read budget per inbox, including identity checks; unfinished work resumes |
+| `--full` | `false` | Restart the scan with fresh cursors, preserving archived history |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+Accepted partial writes remain searchable after provider errors or cancellation.
+See [Messenger inbox](usage/facebook-messages.md) for permissions, scoped person
+linking, replay, and unverified provider behavior.
+
+## source instagram-messages add
+
+Verify the Page and its linked professional Instagram account, then register
+selected `[[instagram_messages]]` inboxes (unreleased). No identifier selects
+all configured profiles; tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-messages add [identifier]
+```
+
+## source instagram-messages sync
+
+Backfill registered linked professional inboxes (unreleased). The flags and
+output match `source facebook-messages sync`; both Page and account verification
+count against the read budget. No identifier selects all configured profiles.
+
+```bash
+msgvault source instagram-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram inbox](usage/instagram-messages.md) for Advanced Access and
+verified-business requirements, the Requests-folder gap, and event coverage.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.

@@ -103,6 +103,15 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 // they are governed by the account scheduler, not a generic job.
 func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	switch sourceType {
+	case meta.SourceTypeFacebookMessages, meta.SourceTypeInstagramMessages:
+		platform := meta.PlatformMessenger
+		if sourceType == meta.SourceTypeInstagramMessages {
+			platform = meta.PlatformInstagram
+		}
+		if _, ok := meta.ParseDMSourceIdentifier(platform, identifier); !ok {
+			return "", false
+		}
+		return sourceType + ":" + identifier, true
 	case meta.InstagramSourceType:
 		if _, ok := meta.ParseInstagramSourceIdentifier(identifier); !ok {
 			return "", false
@@ -181,7 +190,7 @@ func isSourceSyncJobName(name string) bool {
 	if kind == CardDAVJobName {
 		return true
 	}
-	if kind == meta.SourceType || kind == meta.InstagramSourceType {
+	if kind == meta.SourceType || kind == meta.InstagramSourceType || kind == meta.SourceTypeFacebookMessages || kind == meta.SourceTypeInstagramMessages {
 		canonical, ok := SchedulerJobNameForSource(kind, identifier)
 		return ok && canonical == name
 	}

@@ -1788,6 +1788,67 @@ The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
 
+### `[[facebook_messages]]` {#facebook-messages}
+
+Select one Page inbox for recent backfill and webhook capture (unreleased).
+See [Messenger inbox](usage/facebook-messages.md) for permissions, registration,
+and coverage. Tokens come only from the named daemon environment variable.
+
+```toml
+[[facebook_messages]]
+identifier = "example-inbox"
+app_id = "9"
+page_id = "100"
+token_env = "EXAMPLE_PAGE_TOKEN"
+enabled = true
+schedule = "17 */6 * * *"
+actions = []
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | required | Trimmed, nonempty local label; unique ignoring case within this profile type |
+| `app_id`, `page_id` | required | Positive decimal IDs without leading zeros; the Page is verified with the token |
+| `token_env` | required | Valid environment variable name on the daemon host, containing the Page token |
+| `enabled` | `false` | Enable scheduled backfill and webhook routing; manual commands remain available |
+| `schedule` | empty | Five-field cron expression; empty disables scheduled backfill |
+| `actions` | `[]` | Reserved action opt-ins: accepts `send` and `human_agent`, without duplicates; `human_agent` requires `send` |
+
+Unknown keys, invalid IDs, duplicate app/Page pairs, invalid variable names,
+and invalid schedules fail configuration loading. Missing credentials fail with
+`facebook messages profile "<id>" needs <ENV> in the daemon environment`.
+No fallback credential is used. The source identifier is
+`app:<app_id>:page:<page_id>` and its scheduler job is
+`facebook_messages:<source-identifier>`. Renaming the label preserves identity.
+
+### `[[instagram_messages]]` {#instagram-messages}
+
+Select the professional Instagram inbox linked to a Page (unreleased).
+The fields and defaults match `[[facebook_messages]]`, with the additional
+required decimal `instagram_account_id`. The Page and its linked account are
+verified before registration and on each backfill. See
+[Instagram inbox](usage/instagram-messages.md) for access requirements and limits.
+
+```toml
+[[instagram_messages]]
+identifier = "example-instagram"
+app_id = "9"
+page_id = "100"
+instagram_account_id = "1784"
+token_env = "EXAMPLE_PAGE_TOKEN"
+enabled = true
+schedule = "17 */6 * * *"
+actions = []
+```
+
+Duplicate app/Page/Instagram tuples are rejected. Enabled profiles must also
+have unique app/Instagram account pairs, even when their Pages differ, so
+each webhook delivery selects one inbox. The source identifier is
+`app:<app_id>:page:<page_id>:instagram:<instagram_account_id>` and its scheduler
+job is `instagram_messages:<source-identifier>`. Missing credentials use the
+same error form with `instagram messages profile`. Neither profile subscribes
+an app automatically.
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a
