@@ -12,12 +12,13 @@ import (
 // FacebookCommentsSource selects one Page. Tokens exist only in the named
 // daemon environment variable; the profile label is not an archive identity.
 type FacebookCommentsSource struct {
-	Identifier string `toml:"identifier"`
-	AppID      string `toml:"app_id"`
-	PageID     string `toml:"page_id"`
-	TokenEnv   string `toml:"token_env"`
-	Enabled    bool   `toml:"enabled"`
-	Schedule   string `toml:"schedule"`
+	Actions    []string `toml:"actions"`
+	Identifier string   `toml:"identifier"`
+	AppID      string   `toml:"app_id"`
+	PageID     string   `toml:"page_id"`
+	TokenEnv   string   `toml:"token_env"`
+	Enabled    bool     `toml:"enabled"`
+	Schedule   string   `toml:"schedule"`
 }
 
 func (c *Config) GetFacebookCommentsSource(identifier string) *FacebookCommentsSource {
@@ -62,6 +63,9 @@ func (c *Config) validateFacebookCommentsSources() error {
 		assets[key] = true
 		if !envutil.ValidName(source.TokenEnv) {
 			return fmt.Errorf("facebook_comments[%d].token_env must name an explicit environment variable", i)
+		}
+		if err := ValidateMetaActions("facebook_comments", i, source.Actions, "public_reply", "private_reply", "hide", "delete"); err != nil {
+			return err
 		}
 		if source.Schedule != "" {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
@@ -131,6 +135,26 @@ func (c *Config) validateInstagramCommentsSources() error {
 			if _, err := cronexpr.Parser.Parse(source.Schedule); err != nil {
 				return fmt.Errorf("instagram_comments[%d].schedule: %w", i, err)
 			}
+		}
+	}
+	return nil
+}
+
+// ActionAllowed requires an active profile and an explicit provider-write opt-in.
+func (s FacebookCommentsSource) ActionAllowed(action string) bool {
+	switch action {
+	case "unhide":
+		action = "hide"
+	}
+	return s.Enabled && ActionsAllow(s.Actions, action)
+}
+
+// FacebookCommentsSourceFor selects credentials by their archive identity, never a label.
+func (c *Config) FacebookCommentsSourceFor(app, page string) *FacebookCommentsSource {
+	for i := range c.FacebookComments {
+		p := &c.FacebookComments[i]
+		if p.AppID == app && p.PageID == page {
+			return p
 		}
 	}
 	return nil
