@@ -45,9 +45,18 @@ func TestLiveEligibilityExcludesChangesAfterProjection(t *testing.T) {
 			latest, err := f.Store.LatestEligibleMessageContext(t.Context(), f.ConvID)
 			requirements.NoError(err)
 			assertions.Zero(latest)
+			latestCold, err := f.Store.LatestEligibleMessageIncludingColdContext(t.Context(), f.ConvID)
+			requirements.NoError(err)
+			assertions.Zero(latestCold)
 			display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id, transcript})
 			requirements.NoError(err)
-			assertions.Empty(display)
+			if change == "deleted_from_source_at=CURRENT_TIMESTAMP" {
+				assertions.Len(display, 2)
+				assertions.Contains(display, id)
+				assertions.Contains(display, transcript)
+			} else {
+				assertions.Empty(display)
+			}
 		})
 	}
 }

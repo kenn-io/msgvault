@@ -69,7 +69,7 @@ func caldavEventFixture(t *testing.T, st *Store, key, raw string) (int64, int64)
 	components, err := calevent.ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
 	require.NoError(t, err)
 	require.Len(t, components, 1)
-	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: components[0].Event.ProviderEventID, TimeZone: "UTC"}, json.Deterministic(true))
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: components[0].Event.ProviderEventID, ICalUID: components[0].ICalUID, TimeZone: "UTC"}, json.Deterministic(true))
 	require.NoError(t, err)
 	data := &MessagePersistData{
 		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: components[0].Summary, Valid: true}},

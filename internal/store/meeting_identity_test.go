@@ -41,6 +41,21 @@ func TestMeetingIdentityLinkedTranscriptSharesKey(t *testing.T) {
 	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
 }
 
+func TestMeetingIdentityCalDAVUIDFindsTranscript(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	const raw = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:shared@example.test\r\nDTSTART:20270302T170000Z\r\nDTEND:20270302T180000Z\r\nSUMMARY:Planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	_, event := caldavEventFixture(t, st, "caldav-event", raw)
+	_, note := identityNote(t, st, "note", "shared@example.test")
+	ref := identityRef(event)
+
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: []int64{note}})
+	requirements.NoError(err)
+	assertions.Equal("occ:"+ref, got.ByTranscript[note].Key)
+	assertions.Equal(ref, got.ByTranscript[note].OccurrenceRef)
+	assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+}
+
 func TestMeetingIdentityUnlinkedItemsStaySeparate(t *testing.T) {
 	assert := assert.New(t)
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -228,6 +229,24 @@ func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) 
 	assert.Equal(edit, page.Occurrences[1].MessageID)
 	assert.Equal(master, page.Occurrences[1].SeriesMessageID)
 	assert.Equal("2027-03-10T12:00:00Z", page.Occurrences[1].Start.Format(time.RFC3339))
+}
+
+func TestGetCalendarOccurrenceOldSeriesReferenceResolvesMatchingStandaloneCalDAVMaster(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	const uid = "weekly@example.test"
+	_, master := caldavEventFixture(t, st, "master", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:"+uid+"\r\nDTSTART:20270302T090000Z\r\nDTEND:20270302T100000Z\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nSUMMARY:Weekly event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	oldRef := fmt.Sprintf("evt:%d@20270309T090000Z", master)
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:" + uid + "\r\nDTSTART:20270309T090000Z\r\nDTEND:20270309T100000Z\r\nSUMMARY:Standalone event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	requirements.NoError(st.UpsertMessageRawWithFormat(master, raw, calevent.CalDAVRawFormat))
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), oldRef)
+	requirements.NoError(err)
+	assertions.Equal(fmt.Sprintf("evt:%d", master), detail.Ref)
+	assertions.Equal(master, detail.MessageID)
+	assertions.Zero(detail.SeriesMessageID)
+	assertions.Equal("2027-03-09T09:00:00Z", detail.Start.Format(time.RFC3339))
+	_, err = st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@20270316T090000Z", master))
+	requirements.ErrorIs(err, ErrCalendarOccurrenceNotFound)
 }
 
 func TestListCalendarOccurrencesMasterChangesValueType(t *testing.T) {

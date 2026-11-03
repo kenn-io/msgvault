@@ -194,6 +194,22 @@ func TestICSDecode(t *testing.T) {
 	}
 }
 
+func TestICSMailtoAttendeeDecodesBeforeOrganizerMatching(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +
+		"BEGIN:VEVENT\r\nUID:mailto@example.test\r\nDTSTAMP:20270301T120000Z\r\n" +
+		"DTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\n" +
+		"ORGANIZER:mailto:owner+calendar@example.test\r\n" +
+		"ATTENDEE:mailto:OWNER%2BCALENDAR@Example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	components, err := ParseICS(raw, "REQUEST", "UTC")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	assertions.Equal("owner+calendar@example.test", components[0].OrganizerEmail)
+	requirements.Len(components[0].Event.Attendees, 1)
+	assertions.Equal("owner+calendar@example.test", components[0].Event.Attendees[0].Email)
+	assertions.Equal("organizer", components[0].Event.Attendees[0].Role)
+}
+
 func TestICSComponentRawDropsNonEventSiblings(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +

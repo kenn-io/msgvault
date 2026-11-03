@@ -24,6 +24,7 @@ func TestCalDAVCompoundProjection(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(events, 2)
 	master := events[0]
+	assertions.Equal("series@example.org", master.ICalUID)
 	assertions.Equal("Planning, session", master.Summary)
 	assertions.Equal("series", master.Event.Kind)
 	assertions.Equal(time.Date(2027, 3, 7, 14, 0, 0, 0, time.UTC), *master.Event.Start)
@@ -31,6 +32,7 @@ func TestCalDAVCompoundProjection(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(set.ExDates, 1)
 	assertions.Equal("exception", events[1].Event.Kind)
+	assertions.Equal(master.ICalUID, events[1].ICalUID)
 	assertions.Equal(master.Event.ProviderEventID, events[1].Event.SeriesProviderID)
 	assertions.Equal("20270321T130000Z", events[1].Event.Original.Key())
 }

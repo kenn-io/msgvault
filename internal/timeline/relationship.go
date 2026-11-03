@@ -187,6 +187,13 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		c.ownerGaps()
 	}
 	occurrences := slices.Clone(upcoming.value.Occurrences)
+	seenOccurrenceRefs := make(map[string]bool, len(occurrences))
+	for _, occurrence := range occurrences {
+		if occurrence.Ref != "" {
+			seenOccurrenceRefs[occurrence.Ref] = true
+		}
+	}
+	countedOccurrenceRefs := map[string]bool{}
 	if c.src.Meetings != nil && len(transcripts.value) > 0 {
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
 			return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{TranscriptIDs: transcripts.value})
@@ -204,25 +211,42 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 				continue
 			}
 			seen[key] = true
-			at := displays[id].OccurredAt
+			linked := false
 			for _, ref := range info.ExactOccurrenceRefs {
 				if c.src.Calendar != nil {
 					d, e := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
 					if e == nil {
 						o := d.CalendarOccurrence
-						occurrences = append(occurrences, o)
+						linked = true
+						identity := o.Ref
+						if identity == "" {
+							identity = ref
+						}
+						if !seenOccurrenceRefs[identity] {
+							occurrences = append(occurrences, o)
+							seenOccurrenceRefs[identity] = true
+						}
+						if countedOccurrenceRefs[identity] {
+							continue
+						}
+						countedOccurrenceRefs[identity] = true
 						stamp := o.Start
 						if o.AllDay {
 							stamp, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
 						}
-						at = &stamp
-						break
+						if !stamp.After(c.t.Now) {
+							c.mergeContact(store.ContactAggregate{FirstAt: &stamp, LastAt: &stamp, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(stamp, c.t.Now, c.loc)}, false)
+						}
+						continue
 					}
 					c.gap("meetings", e, false)
 				}
 			}
-			if at != nil && !at.After(c.t.Now) {
-				c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+			if !linked {
+				at := displays[id].OccurredAt
+				if at != nil && !at.After(c.t.Now) {
+					c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+				}
 			}
 		}
 	}

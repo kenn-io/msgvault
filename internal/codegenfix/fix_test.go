@@ -93,6 +93,54 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	assert.Equal(got, again)
 }
 
+func TestRewriteTimelineMarkdownClientPreservesRawSuccessBody(t *testing.T) {
+	assertions := assert.New(t)
+	got, err := RewriteTimelineMarkdownClient([]byte(timelineResponseClientFixture()))
+	require.NoError(t, err)
+	assertions.Contains(string(got), `"mime"`)
+	assertions.Contains(string(got), `mime.ParseMediaType(resp.Headers.Get("Content-Type"))`)
+	assertions.Contains(string(got), `mediaType == "text/markdown"`)
+	assertions.Contains(string(got), "return out, nil")
+	again, err := RewriteTimelineMarkdownClient(got)
+	require.NoError(t, err)
+	assertions.Equal(got, again)
+}
+
+func TestRewriteTimelineMarkdownClientRejectsChangedSuccessResponse(t *testing.T) {
+	fixture := strings.Replace(timelineResponseClientFixture(), "bodyBytes := resp.Content", "body := resp.Content", 1)
+	_, err := RewriteTimelineMarkdownClient([]byte(fixture))
+	require.ErrorContains(t, err, "generated GetTimelineWithResponse success response shape changed")
+}
+
+func timelineResponseClientFixture() string {
+	return `package generated
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+func (c *Client) GetTimelineWithResponse(ctx context.Context, options *GetTimelineRequestOptions) (*GetTimelineResp, error) {
+	var resp *Response
+	out := &GetTimelineResp{}
+	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(GetTimelineResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, fmt.Errorf("decode response: %w", err)
+			}
+		}
+		return out, nil
+	default:
+		return out, nil
+	}
+}
+`
+}
+
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
 	_, err := RewriteGeneratedValidators([]byte("package generated\n"))
 

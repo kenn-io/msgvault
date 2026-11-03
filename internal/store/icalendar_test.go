@@ -34,6 +34,22 @@ func icsSource(t *testing.T, st *Store) int64 {
 	return source.ID
 }
 
+func persistEmailICSFixture(t *testing.T, st *Store, sourceID int64, raw []byte) ICalendarImportSummary {
+	t.Helper()
+	ctx := t.Context()
+	summary := ICalendarImportSummary{SourceID: sourceID}
+	err := st.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+		items, diagnostics, err := st.prepareICalendarWith(ctx, tx, sourceID, raw, "REQUEST", true, calevent.NewICSParseBudget())
+		if err != nil {
+			return err
+		}
+		summary.Diagnostics = append(summary.Diagnostics, diagnostics...)
+		return st.persistICalendarWith(ctx, tx, sourceID, items, &summary)
+	})
+	require.NoError(t, err)
+	return summary
+}
+
 func TestICalendarSeriesCancellationActivityEligibility(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -483,6 +499,52 @@ func TestICalendarConcurrentRevisions(t *testing.T) {
 	var meta calevent.ICSMetadata
 	requirements.NoError(json.Unmarshal([]byte(metadata.String), &meta))
 	assertions.Equal(int64(2), meta.Sequence)
+}
+
+func TestEmailICSRevisionMatchesEquivalentEscapedOrganizer(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("gmail", "mailbox@example.test")
+	requirements.NoError(err)
+	first := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nORGANIZER:mailto:owner%2Bcalendar@example.test")
+	second := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270302T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nORGANIZER:mailto:owner+calendar@example.test")
+	initial := persistEmailICSFixture(t, st, source.ID, first)
+	requirements.Len(initial.MessageIDs, 1)
+	updated := persistEmailICSFixture(t, st, source.ID, second)
+	assertions.Empty(updated.Diagnostics)
+	assertions.Equal(1, updated.Changed)
+	assertions.Equal(initial.MessageIDs, updated.MessageIDs)
+	metadata, err := st.GetMessageMetadata(initial.MessageIDs[0])
+	requirements.NoError(err)
+	var revision calevent.ICSMetadata
+	requirements.NoError(json.Unmarshal([]byte(metadata.String), &revision))
+	assertions.Equal(int64(2), revision.Sequence)
+}
+
+func TestEmailICSProjectionMarksConfirmedSourceAttendeeSelfOnIngestAndRebuild(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("gmail", "mailbox@example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.AddAccountIdentity(source.ID, "owner+calendar@example.test", "manual"))
+	raw := calendarDocument("REQUEST", "DTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nORGANIZER:mailto:owner%2Bcalendar@example.test\r\nATTENDEE:mailto:OWNER%2BCALENDAR@Example.test\r\nATTENDEE:mailto:guest@example.test")
+	imported := persistEmailICSFixture(t, st, source.ID, raw)
+	requirements.Len(imported.MessageIDs, 1)
+	messageID := imported.MessageIDs[0]
+	readSelf := func(email string) bool {
+		var isSelf bool
+		requirements.NoError(st.db.QueryRow(st.Rebind(`SELECT is_copy_self FROM calendar_event_attendees WHERE message_id=? AND email=?`), messageID, email).Scan(&isSelf))
+		return isSelf
+	}
+	assertions.True(readSelf("owner+calendar@example.test"))
+	assertions.False(readSelf("guest@example.test"))
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`DELETE FROM calendar_events WHERE message_id=?`), messageID)
+	requirements.NoError(err)
+	requirements.NoError(st.withTxContext(t.Context(), func(tx *loggedTx) error {
+		return st.refreshCalendarEventProjectionWith(t.Context(), tx, messageID)
+	}))
+	assertions.True(readSelf("owner+calendar@example.test"))
+	assertions.False(readSelf("guest@example.test"))
 }
 
 func TestICalendarRawIsNotEmailDedupEvidence(t *testing.T) {

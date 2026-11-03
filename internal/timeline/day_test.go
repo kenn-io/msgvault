@@ -401,6 +401,41 @@ func TestBuildHiddenTextReachesLoopsTranscriptsAndUnsavedEmail(t *testing.T) {
 	assertions.NotContains(string(encoded), "Synthetic meeting")
 	assertions.NotContains(string(encoded), "Synthetic message")
 }
+
+func TestBuildDayWithPersonScopesOpenLoopsBeforeLimit(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	personID := f.savePerson()
+	for i := range 10 {
+		f.PersistEmail(storetest.EmailSpec{
+			Thread:  fmt.Sprintf("unrelated-loop-%02d", i),
+			From:    fmt.Sprintf("other-%02d@example.test", i),
+			To:      []string{storetest.OwnerAddress},
+			Subject: "Older synthetic question",
+			Body:    "Can you review this note?",
+			SentAt:  f.now.Add(-72*time.Hour - time.Duration(i)*time.Hour),
+		})
+	}
+	target := f.PersistEmail(storetest.EmailSpec{
+		Thread:  "person-scoped-loop",
+		From:    "alice@example.com",
+		To:      []string{storetest.OwnerAddress},
+		Subject: "Synthetic question",
+		Body:    "Can you send the report?",
+		SentAt:  f.now.Add(-48 * time.Hour),
+	})
+	f.project()
+	req := dayRequest()
+	req.Date, req.Days = "", 3
+	req.With = fmt.Sprintf("person:%d", personID)
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.OpenLoops)
+	requirements.Len(got.OpenLoops.Items, 1)
+	assertions.Equal(fmt.Sprintf("msg:%d", target), got.OpenLoops.Items[0].Ref)
+	requirements.NotNil(got.OpenLoops.Items[0].Loop)
+	assertions.Equal(personID, got.OpenLoops.Items[0].Loop.Person.PersonID)
+}
 func TestBuildPinsClockAndWindowAcrossMidnight(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

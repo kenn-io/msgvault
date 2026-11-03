@@ -54,6 +54,50 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 	return source, nil
 }
 
+// RewriteTimelineMarkdownClient keeps successful Markdown timeline responses
+// in the response body instead of decoding them as the JSON result model.
+func RewriteTimelineMarkdownClient(source []byte) ([]byte, error) {
+	const methodName = "GetTimelineWithResponse"
+	start := bytes.Index(source, []byte("func (c *Client) "+methodName+"("))
+	if start < 0 {
+		return nil, fmt.Errorf("generated %s method shape changed", methodName)
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, fmt.Errorf("generated %s method boundary changed", methodName)
+	}
+	end := start + endOffset
+	method := append([]byte(nil), source[start:end]...)
+	const bodyBlock = "\t\tout.JSON200 = new(GetTimelineResponse)\n\t\tbodyBytes := resp.Content"
+	const markdownGuard = "\t\tif mediaType, _, err := mime.ParseMediaType(resp.Headers.Get(\"Content-Type\")); err == nil && mediaType == \"text/markdown\" {\n\t\t\treturn out, nil\n\t\t}\n"
+	guardCount := bytes.Count(method, []byte(markdownGuard))
+	bodyCount := bytes.Count(method, []byte(bodyBlock))
+	switch {
+	case guardCount == 0 && bodyCount == 1:
+		method = bytes.Replace(method, []byte(bodyBlock), []byte(markdownGuard+bodyBlock), 1)
+	case guardCount == 1 && bodyCount == 1:
+	default:
+		return nil, fmt.Errorf("generated %s success response shape changed", methodName)
+	}
+	result := append([]byte(nil), source[:start]...)
+	result = append(result, method...)
+	source = append(result, source[end:]...)
+
+	mimeImport := []byte("\t\"mime\"\n")
+	switch bytes.Count(source, mimeImport) {
+	case 0:
+		fmtImport := []byte("\t\"fmt\"\n")
+		if bytes.Count(source, fmtImport) != 1 {
+			return nil, fmt.Errorf("generated %s import shape changed", methodName)
+		}
+		source = bytes.Replace(source, fmtImport, append(append([]byte(nil), fmtImport...), mimeImport...), 1)
+	case 1:
+	default:
+		return nil, fmt.Errorf("generated %s mime import shape changed", methodName)
+	}
+	return source, nil
+}
+
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 

@@ -490,7 +490,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 
 func eventMetadata(item calevent.CalDAVEvent, member carddav.Member, account string) calevent.CalDAVMetadata {
 	e := item.Event
-	return calevent.CalDAVMetadata{EventID: e.ProviderEventID, Href: member.Href, ETag: member.ETag, AccountEmail: account, TimeZone: e.CalendarTimeZone, Status: e.Status, AllDay: e.AllDay}
+	return calevent.CalDAVMetadata{EventID: e.ProviderEventID, ICalUID: item.ICalUID, Href: member.Href, ETag: member.ETag, AccountEmail: account, TimeZone: e.CalendarTimeZone, Status: e.Status, AllDay: e.AllDay}
 }
 
 func persistEvent(ctx context.Context, st *store.Store, sourceID int64, account string, item calevent.CalDAVEvent, member carddav.Member) error {

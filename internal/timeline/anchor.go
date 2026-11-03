@@ -70,6 +70,9 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			return target, nil
 		}
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
+			if c.req.IncludeCold {
+				return c.src.Activity.LatestEligibleMessageIncludingColdContext(ctx, ref.ID)
+			}
 			return c.src.Activity.LatestEligibleMessageContext(ctx, ref.ID)
 		})
 		if r.err != nil {

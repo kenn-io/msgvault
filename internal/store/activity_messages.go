@@ -93,15 +93,33 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 // LatestEligibleMessageContext locates a conversation anchor without applying
 // the optional noise filter. Anchors still obey live eligibility and scope.
 func (s *Store) LatestEligibleMessageContext(ctx context.Context, conversationID int64) (int64, error) {
+	return s.latestEligibleMessageContext(ctx, conversationID, false)
+}
+
+// LatestEligibleMessageIncludingColdContext locates a live conversation anchor
+// from message metadata when the caller has requested cold activity. It keeps
+// source scope and live-message eligibility checks, but does not require an
+// activity projection event that cold messages may no longer have.
+func (s *Store) LatestEligibleMessageIncludingColdContext(ctx context.Context, conversationID int64) (int64, error) {
+	return s.latestEligibleMessageContext(ctx, conversationID, true)
+}
+
+func (s *Store) latestEligibleMessageContext(ctx context.Context, conversationID int64, includeCold bool) (int64, error) {
 	if conversationID <= 0 {
 		return 0, fmt.Errorf("%w: conversation is required", ErrInvalidActivityRequest)
 	}
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	args = append([]any{conversationID}, args...)
 	var id int64
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id JOIN activity_events ae ON ae.message_id=m.id
- WHERE m.conversation_id=? AND m.message_type<>'call_record' AND `+s.activityLiveEligibleSQL()+` AND `+FullActivityEventWhere("ae")+scope+`
- ORDER BY ae.occurred_at DESC,m.id DESC LIMIT 1`), args...).Scan(&id)
+	query := `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id
+ WHERE m.conversation_id=? AND m.message_type<>'call_record' AND ` + s.activityLiveEligibleSQL() + scope + `
+ ORDER BY COALESCE(m.sent_at,m.received_at,m.internal_date) DESC,m.id DESC LIMIT 1`
+	if !includeCold {
+		query = `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id JOIN activity_events ae ON ae.message_id=m.id
+ WHERE m.conversation_id=? AND m.message_type<>'call_record' AND ` + s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae") + scope + `
+ ORDER BY ae.occurred_at DESC,m.id DESC LIMIT 1`
+	}
+	err := s.db.QueryRowContext(ctx, s.Rebind(query), args...).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil
 	}

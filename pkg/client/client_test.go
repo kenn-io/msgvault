@@ -1548,6 +1548,30 @@ func TestImportMuesliSuccessStatuses(t *testing.T) {
 	}
 }
 
+func TestGeneratedTimelineWithResponseKeepsMarkdownBody(t *testing.T) {
+	const body = "# Timeline\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "markdown", r.URL.Query().Get("format"))
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		_, err := w.Write([]byte(body))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := New(srv.URL)
+	require.NoError(t, err)
+	editor := func(_ context.Context, req *http.Request) error {
+		query := req.URL.Query()
+		query.Set("format", "markdown")
+		req.URL.RawQuery = query.Encode()
+		return nil
+	}
+	response, err := client.GetTimelineWithResponse(t.Context(), &generated.GetTimelineRequestOptions{}, editor)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	assert.Equal(t, body, string(response.Body))
+	assert.Nil(t, response.JSON200)
+}
+
 func TestGeneratedTimelineDecodesPrimitiveOpenerArguments(t *testing.T) {
 	require := require.New(t)
 	body := `{"mode":"day","days":[{"bursts":[{"open":[{"tool":"get_message","args":{"id":42}},{"tool":"get_calendar_event","args":{"ref":"e77"}}]}]}]}`

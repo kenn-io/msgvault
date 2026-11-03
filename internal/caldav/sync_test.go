@@ -177,6 +177,20 @@ func TestSyncNonMailtoParticipants(t *testing.T) {
 	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM message_recipients WHERE recipient_type='to'`))
 }
 
+func TestSyncPersistsCalDAVICalUIDMetadata(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	c, _ := archiveFixture(t)
+	st := testutil.NewTestStore(t)
+	_, err := c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+
+	var rawMetadata string
+	requirements.NoError(st.DB().QueryRow(`SELECT m.metadata FROM messages m JOIN sources s ON s.id=m.source_id WHERE s.source_type='caldav' AND m.message_type='calendar_event'`).Scan(&rawMetadata))
+	var metadata calevent.CalDAVMetadata
+	requirements.NoError(json.Unmarshal([]byte(rawMetadata), &metadata))
+	assertions.Equal("example@example.org", metadata.ICalUID)
+}
+
 func TestSyncInterruptedFirstSyncResumesRemainingResources(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)

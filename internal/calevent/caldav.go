@@ -29,6 +29,7 @@ const CalDAVSourceType = "caldav"
 // CalDAVMetadata selects one component of the preserved calendar resource.
 type CalDAVMetadata struct {
 	EventID      string `json:"event_id"`
+	ICalUID      string `json:"ical_uid,omitempty"`
 	Href         string `json:"href,omitempty"`
 	ETag         string `json:"etag,omitempty"`
 	AccountEmail string `json:"account_email,omitempty"`
@@ -42,6 +43,7 @@ type CalDAVMetadata struct {
 
 type CalDAVEvent struct {
 	Event                                      Event
+	ICalUID                                    string
 	ExplicitAttendees                          []gcalmodel.Attendee
 	Summary, OrganizerName                     string
 	Description, Location, URL, OrganizerEmail string
@@ -228,6 +230,7 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 	if uid == "" {
 		return item, errors.New("CalDAV event has no UID")
 	}
+	item.ICalUID = uid
 	var err error
 	e.ProviderEventID, err = calDAVID(uid, "")
 	if err != nil {

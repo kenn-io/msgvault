@@ -48,3 +48,18 @@ func TestLatestEligibleMessageSkipsDrafts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, want, got)
 }
+
+func TestLatestEligibleMessageIncludingColdDoesNotRequireActivityEvent(t *testing.T) {
+	f := newTimelineActivityFixture(t)
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	want := f.add(t, f.ConvID, f.Source.ID, at, false, "")
+	projectTimelineActivity(t, f, "UTC")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM activity_events WHERE message_id=?`), want)
+	require.NoError(t, err)
+	ordinary, err := f.Store.LatestEligibleMessageContext(t.Context(), f.ConvID)
+	require.NoError(t, err)
+	assert.Zero(t, ordinary)
+	cold, err := f.Store.LatestEligibleMessageIncludingColdContext(t.Context(), f.ConvID)
+	require.NoError(t, err)
+	assert.Equal(t, want, cold)
+}

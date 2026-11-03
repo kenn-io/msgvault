@@ -35,6 +35,7 @@ type ActivitySource interface {
 	ListActivityMessagesContext(ctx context.Context, q store.MessageQuery) ([]store.ActivityMessage, error)
 	MessageDisplayContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error)
 	LatestEligibleMessageContext(ctx context.Context, conversationID int64) (int64, error)
+	LatestEligibleMessageIncludingColdContext(ctx context.Context, conversationID int64) (int64, error)
 	MessageContactAggregateContext(ctx context.Context, q store.ContactQuery) (store.ContactAggregate, error)
 	AttendedTranscriptIDsContext(ctx context.Context, q store.ContactQuery, limit int) ([]int64, bool, error)
 	CadenceForPersonContext(ctx context.Context, personID int64, lastContact *time.Time, now time.Time) (string, *time.Time, error)

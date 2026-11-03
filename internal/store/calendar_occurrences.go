@@ -917,9 +917,9 @@ func (s *Store) calendarOccurrenceAnchor(ctx context.Context, ref string) (Calen
 			return invalid()
 		}
 	}
-	predicate := "e.message_id = ? AND e.kind = 'series'"
-	if !recurring {
-		predicate = "e.message_id = ? AND e.kind <> 'series'"
+	predicate := "e.message_id = ? AND e.kind <> 'series'"
+	if recurring {
+		predicate = "e.message_id = ? AND e.kind IN ('series', 'single')"
 	}
 	rows, err := queryCalendarEventRows(ctx, s.meetingReader(ctx), predicate, []any{id}, 1)
 	if err != nil {
@@ -929,7 +929,23 @@ func (s *Store) calendarOccurrenceAnchor(ctx context.Context, ref string) (Calen
 		return CalendarEventRow{}, calrecur.Identity{}, false, ErrCalendarOccurrenceNotFound
 	}
 	row := rows[0]
+	if recurring && row.Event.Kind == "single" {
+		if !calendarEventStartsAtIdentity(row.Event, original) {
+			return CalendarEventRow{}, calrecur.Identity{}, false, ErrCalendarOccurrenceNotFound
+		}
+		return row, calrecur.Identity{}, false, nil
+	}
 	return row, original, recurring, nil
+}
+
+func calendarEventStartsAtIdentity(event calevent.Event, original calrecur.Identity) bool {
+	if event.AllDay != original.AllDay {
+		return false
+	}
+	if original.AllDay {
+		return event.StartDate == original.Date
+	}
+	return event.Start != nil && event.Start.Equal(original.Instant)
 }
 
 func (s *Store) seriesMasterFor(ctx context.Context, row CalendarEventRow) (*calendarSeries, error) {

@@ -97,6 +97,29 @@ func TestAnchorNeighboursChronologicalWithProbeGrowth(t *testing.T) {
 	}
 	assertions.True(got.History[3].Anchor)
 }
+
+func TestConversationAnchorResolvesColdLiveMessage(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	at := time.Date(2023, 10, 22, 12, 0, 0, 0, time.UTC)
+	want := f.add(at, false)
+	f.project()
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`DELETE FROM activity_events WHERE message_id=?`), want)
+	requirements.NoError(err)
+	req := anchorRequest(fmt.Sprintf("conv:%d", f.ConvID))
+	req.IncludeCold = true
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	assertions.Equal(at, got.Anchor.Time)
+	for _, entry := range got.History {
+		if entry.Anchor {
+			assertions.Equal(messageRef(want), entry.Ref)
+			return
+		}
+	}
+	requirements.Fail("cold conversation anchor was resolved but not shown in history")
+}
 func TestAnchorFilteredAnchorStillShown(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

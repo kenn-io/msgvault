@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func relationshipRequest(ref string) Request {
@@ -47,6 +48,31 @@ func TestRelationshipMeetingOnlyContactDeduplicatesNotes(t *testing.T) {
 	assertions.Equal(1, got.Person.InteractionCount)
 	assertions.Equal([]string{"meeting"}, got.Person.Channels)
 	assertions.Equal(10, got.Person.FirstAt.Hour())
+}
+
+func TestRelationshipLoadsEveryDistinctManualMeetingOccurrence(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	personID := f.savePerson()
+	event := func(id, uid, start, end string) string {
+		return fmt.Sprintf(`{"id":%q,"iCalUID":%q,"summary":"Synthetic meeting","start":{"dateTime":%q},"end":{"dateTime":%q},"attendees":[{"email":"alice@example.com"}]}`, id, uid, start, end)
+	}
+	first := f.calendar("first", event("first", "shared@example.test", "2026-10-22T09:00:00Z", "2026-10-22T10:00:00Z"))
+	alias := f.calendar("first-copy", event("first-copy", "shared@example.test", "2026-10-22T09:00:00Z", "2026-10-22T10:00:00Z"))
+	second := f.calendar("second", event("second", "other@example.test", "2026-10-22T10:00:00Z", "2026-10-22T11:00:00Z"))
+	note := f.transcript("manual-notes", "", f.now.Add(-time.Hour))
+	for _, id := range []int64{first, alias, second} {
+		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: id}))
+	}
+	f.project()
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", personID)))
+	requirements.NoError(err)
+	requirements.Len(got.History, 2)
+	for _, entry := range got.History {
+		assertions.Equal("meeting", entry.Kind)
+	}
+	requirements.NotNil(got.Person)
+	assertions.Equal(2, got.Person.InteractionCount)
 }
 func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions := assert.New(t)

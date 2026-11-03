@@ -717,6 +717,8 @@ func entryPeople(e Entry) []Person {
 		return e.Message.People
 	case e.Note != nil:
 		return e.Note.People
+	case e.Loop != nil:
+		return []Person{e.Loop.Person}
 	}
 	return nil
 }

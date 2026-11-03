@@ -704,5 +704,5 @@ func icsEmail(p *ical.Prop) string {
 	if p == nil || !strings.HasPrefix(strings.ToLower(p.Value), "mailto:") {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(p.Value[len("mailto:"):]))
+	return calDAVEmail(p)
 }

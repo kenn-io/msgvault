@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
-const calendarEventProjectionVersion = 2
+const calendarEventProjectionVersion = 3
 
 // Decode failures have no provider status. Keep a marker while retaining the
 // single kind so unknown bounds remain candidates for the occurrence reader.
@@ -44,6 +44,11 @@ func (s *Store) persistCalendarEventProjectionWith(ctx context.Context, tx *logg
 	event := invite.component.Event
 	if invite.meta.Status != "" {
 		event.Status = invite.meta.Status
+	}
+	if invite.fromEmail {
+		if err := s.markConfirmedCalendarSelfAttendeesWith(ctx, tx, sourceID, &event); err != nil {
+			return err
+		}
 	}
 	return s.writeCalendarEventProjectionWith(ctx, tx, messageID, sourceID, event)
 }
@@ -106,9 +111,9 @@ func (s *Store) CalendarEventTimesMatchContext(ctx context.Context, messageID in
 
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {
 	q := boundQuerier{ctx: ctx, q: tx}
-	var messageType, metadata sql.NullString
+	var messageType, metadata, sourceType sql.NullString
 	var sourceID int64
-	err := q.QueryRow(`SELECT message_type, metadata, source_id FROM messages WHERE id = ?`, messageID).Scan(&messageType, &metadata, &sourceID)
+	err := q.QueryRow(`SELECT m.message_type, m.metadata, m.source_id, s.source_type FROM messages m JOIN sources s ON s.id = m.source_id WHERE m.id = ?`, messageID).Scan(&messageType, &metadata, &sourceID, &sourceType)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -143,6 +148,11 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if !ok {
 		return s.clearCalendarEventProjectionWith(ctx, tx, messageID)
 	}
+	if format.String == rawFormatICS && sourceType.String != "ics" {
+		if err := s.markConfirmedCalendarSelfAttendeesWith(ctx, tx, sourceID, &event); err != nil {
+			return err
+		}
+	}
 	if format.String == rawFormatICS && event.Status == calendarEventDecodeFailureStatus {
 		// A rebuild cannot replace accepted typed state with damaged evidence.
 		var accepted bool
@@ -170,6 +180,41 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		}
 	}
 	return s.writeCalendarEventProjectionWith(ctx, tx, messageID, sourceID, event)
+}
+
+func (s *Store) markConfirmedCalendarSelfAttendeesWith(ctx context.Context, tx *loggedTx, sourceID int64, event *calevent.Event) error {
+	if len(event.Attendees) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, s.Rebind(`SELECT address, address_key FROM account_identities WHERE source_id = ? AND confirmed_at IS NOT NULL`), sourceID)
+	if err != nil {
+		return fmt.Errorf("read confirmed calendar identities: %w", err)
+	}
+	identities := map[string]bool{}
+	for rows.Next() {
+		var address, key string
+		if err := rows.Scan(&address, &key); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan confirmed calendar identity: %w", err)
+		}
+		if key == "" {
+			key = NormalizeIdentifierForCompare(address)
+		}
+		identities[key] = true
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterate confirmed calendar identities: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close confirmed calendar identities: %w", err)
+	}
+	for i := range event.Attendees {
+		if key := NormalizeIdentifierForCompare(event.Attendees[i].Email); key != "" && identities[key] {
+			event.Attendees[i].IsCopySelf = true
+		}
+	}
+	return nil
 }
 
 func (s *Store) writeCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID, sourceID int64, event calevent.Event) error {
