@@ -169,7 +169,7 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Truncated: true, Items: []generated.LoopItem{
 		item("awaiting_reply", "email", "Lunch Friday?", 120*time.Hour, "Sam Rivera", "", 4380),
 	}}, loops.MaxLimit, now))
-	assert.Contains(out.String(), "Showing the oldest 200. Results are capped at 200.\n")
+	assert.Contains(out.String(), "Showing the oldest 200; more loops remain.\n")
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{SkippedUnparseable: 2, Items: []generated.LoopItem{
@@ -178,7 +178,6 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 	assert.Equal(`Waiting on you
   3d   Alex Example <alex@example.test>   Contract draft   4521
 
-1 waiting on you, 0 waiting on them.
 2 stored messages could not be read, so a reply in one may have settled a loop.
 `, out.String())
 
@@ -198,7 +197,7 @@ Showing the oldest 50. Use --limit up to 200 to see more.
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{CoverageIncomplete: true}, 50, now))
-	assert.Equal("No open loops.\nMore history remains. Run the list again to continue checking; these results cover checked conversations.\n", out.String())
+	assert.Equal("No open loops.\nMore history remains. Run the list again to continue checking.\n", out.String())
 
 	out.Reset()
 	require.NoError(writeLoops(&out, generated.LoopListResponse{Items: []generated.LoopItem{

@@ -53,8 +53,8 @@ msgvault loops reopen 4521
 
 `list` prints a "Waiting on you" section and a "Waiting on them" section,
 oldest first, with the age, person, subject, and message ID of each loop. A
-section with no loops is left out. The footer counts both sections. When
-`--limit` cuts the list, the footer says so and gives no counts. A line also
+section with no loops is left out. When `--limit` cuts the list, a line says
+so. A line also
 says how many stored messages could not be read, when there are any. If the
 scan needs more than 1,000 uncached message classifications,
 the command returns completed conversations and warns that more loops may be

@@ -26,10 +26,8 @@ func init() {
 func newLoopsCommand() *cobra.Command {
 	group := &cobra.Command{
 		Use:   "loops",
-		Short: "List open loops",
-		Long: `Show who is waiting on a reply from you and who you are waiting on.
-
-Each person gets a separate loop anchored on their oldest open question or
+		Short: "List conversations waiting on a reply",
+		Long: `Each person gets a separate loop anchored on their oldest open question or
 request. A reply you owe lists after 24 hours, and a reply you are waiting on
 lists after 72 hours. Quiet conversations stay eligible at any age; snooze reminders remain eligible after expiry.
 The wording rules read English only.`,
@@ -152,7 +150,7 @@ currently open questions. Use the current message ID from loops list.`,
 			}
 			result := fmt.Sprintf("Snoozed %d until %s.\n", id, at.Local().Format("Mon Jan 2 3:04 PM MST"))
 			if decision.State == generated.Done {
-				result = fmt.Sprintf("%d is done and stays done.\n", id)
+				result = fmt.Sprintf("%d is already done.\n", id)
 			}
 			if _, err := fmt.Fprint(cmd.OutOrStdout(), result); err != nil {
 				return fmt.Errorf("write loop result: %w", err)
@@ -251,9 +249,7 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 	pad := func(s string, width int) string {
 		return s + strings.Repeat(" ", width-utf8.RuneCountInString(s))
 	}
-	counts := make([]int, len(sections))
-	for i, section := range sections {
-		counts[i] = len(section.rows)
+	for _, section := range sections {
 		if len(section.rows) == 0 {
 			continue
 		}
@@ -262,17 +258,18 @@ func writeLoops(w io.Writer, result generated.LoopListResponse, limit int, now t
 			fmt.Fprintf(&sb, "  %s   %s   %s   %s\n", pad(row.age, ageWidth), pad(row.with, withWidth), pad(row.subject, subjectWidth), row.id)
 		}
 	}
+	var notes strings.Builder
 	if result.Truncated {
-		// The page holds the oldest loops, so its counts are not the totals.
 		if limit < loops.MaxLimit {
-			fmt.Fprintf(&sb, "\nShowing the oldest %d. Use --limit up to %d to see more.\n", limit, loops.MaxLimit)
+			fmt.Fprintf(&notes, "Showing the oldest %d. Use --limit up to %d to see more.\n", limit, loops.MaxLimit)
 		} else {
-			fmt.Fprintf(&sb, "\nShowing the oldest %d. Results are capped at %d.\n", limit, loops.MaxLimit)
+			fmt.Fprintf(&notes, "Showing the oldest %d; more loops remain.\n", limit)
 		}
-	} else {
-		fmt.Fprintf(&sb, "\n%d waiting on you, %d waiting on them.\n", counts[0], counts[1])
 	}
-	writeLoopWarnings(&sb, result.SkippedUnparseable, result.CoverageIncomplete)
+	writeLoopWarnings(&notes, result.SkippedUnparseable, result.CoverageIncomplete)
+	if notes.Len() > 0 {
+		sb.WriteString("\n" + notes.String())
+	}
 	if _, err := io.WriteString(w, sb.String()); err != nil {
 		return fmt.Errorf("write loops: %w", err)
 	}
@@ -288,7 +285,7 @@ func writeLoopWarnings(sb *strings.Builder, skipped int64, incomplete bool) {
 		fmt.Fprintf(sb, "%d stored messages could not be read, so a reply in one may have settled a loop.\n", skipped)
 	}
 	if incomplete {
-		fmt.Fprint(sb, "More history remains. Run the list again to continue checking; these results cover checked conversations.\n")
+		fmt.Fprint(sb, "More history remains. Run the list again to continue checking.\n")
 	}
 }
 
