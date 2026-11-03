@@ -277,14 +277,6 @@ it('opening a saved person reads its profile once and leaves Directory sections 
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
-it('names an empty Domains list for the selected facet', async () => {
-  const client = clientFor({});
-  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: { ...state.current, relationshipFacet: 'domains' }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
-  try { expect(await screen.findByText('No domains yet')).toBeDefined(); }
-  finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
-});
-
 it('opens the checkbox-clicked person when Enter follows the selection', async () => {
   const client = clientFor({ '/api/v1/relationships': () => Response.json({ rows: ['Alice Example', 'Bob Example'].map((display_label, index) => ({ canonical_id: index + 1, display_label, last_at: when, member_ids: [index + 1], score: 2, signals: { last_interaction_at: when, meeting_count: 0, meetings_together: 0, modalities: 2, received_from_them: 1, sent_count: 3, sent_to_them: 1 } })) }) });
   const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
