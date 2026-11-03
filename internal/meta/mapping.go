@@ -17,9 +17,14 @@ import (
 const rawFormat = "facebook-comment-json"
 const objectMetadataVersion = 1
 const metaMessageSnippetRunes = store.MetaMessageSnippetRunes
+const metaConversationTitleRunes = 120
 
 func metaMessageSnippet(text string) string {
 	return textutil.PrefixRunes(text, metaMessageSnippetRunes)
+}
+
+func metaConversationTitle(text string) string {
+	return textutil.PrefixRunes(text, metaConversationTitleRunes)
 }
 
 var errInvalidObject = errors.New("invalid comment object")
@@ -246,11 +251,11 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	}
 	title := ""
 	if parent == "" {
-		title = obj.Message
+		title = metaConversationTitle(obj.Message)
 		if title == "" {
-			title = "Facebook post " + root
+			title = "Facebook post"
 			if r.imp.instagram != "" {
-				title = "Instagram media " + root
+				title = "Instagram media"
 			}
 		}
 	}

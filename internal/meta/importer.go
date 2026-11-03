@@ -108,6 +108,7 @@ type importRun struct {
 	sum                   *ImportSummary
 	maxRequests           int
 	syncID                int64
+	errorsCount           int64
 }
 
 func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOptions) (sum *ImportSummary, retErr error) {
@@ -238,7 +239,12 @@ func (r *importRun) checkpoint() (*store.Checkpoint, error) {
 }
 
 func (r *importRun) counters() *store.Checkpoint {
-	return &store.Checkpoint{MessagesAdded: int64(r.sum.MessagesAdded), MessagesUpdated: int64(r.sum.MessagesUpdated), MessagesProcessed: int64(r.sum.MessagesProcessed)}
+	return &store.Checkpoint{
+		MessagesAdded:     int64(r.sum.MessagesAdded),
+		MessagesUpdated:   int64(r.sum.MessagesUpdated),
+		MessagesProcessed: int64(r.sum.MessagesProcessed),
+		ErrorsCount:       r.errorsCount,
+	}
 }
 
 func (r *importRun) save(ctx context.Context) error {
@@ -318,11 +324,11 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 		child := f.Pending[0]
 		for _, ancestor := range p.Stack {
 			if child.ID == ancestor.Parent {
-				return fmt.Errorf("%s comment %q: cyclic Facebook reply traversal", r.providerName(), child.ID)
+				return fmt.Errorf("%s comment %q: reply loop", r.providerName(), child.ID)
 			}
 		}
 		if len(p.Stack) >= 128 {
-			return fmt.Errorf("%s comment %q: facebook reply traversal exceeds bounded depth", r.providerName(), child.ID)
+			return fmt.Errorf("%s comment %q: reply chain is too deep", r.providerName(), child.ID)
 		}
 		r.readSyncID, r.readRequest = f.ReadSyncID, f.ReadRequest
 		if err := r.persist(ctx, child, f.Root, f.Parent, edge); err != nil {

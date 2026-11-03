@@ -100,6 +100,40 @@ func TestDMPersistEchoIsFromMe(t *testing.T) {
 	assert.Equal("9", m.EchoAppID)
 }
 
+func TestDMPersistRefreshesConversationTitleWhenMessageIsUnchanged(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	w := dmTestWriter(t, PlatformMessenger)
+	rec, err := recordFromEvent(w.src, messagingEvent{
+		Sender:    DMParticipant{ID: "100"},
+		Recipient: DMParticipant{ID: "300"},
+		Timestamp: 1793577600123,
+		Message:   &dmEventMessage{Mid: "m_customer_name", Text: "outgoing", IsEcho: true},
+	})
+	require.NoError(err)
+	firstID, added, err := w.persist(t.Context(), rec)
+	require.NoError(err)
+	require.True(added)
+	require.Positive(firstID)
+
+	titles, err := w.store.ConversationTitlesBatchContext(t.Context(), w.sourceID, []string{"psid:300"})
+	require.NoError(err)
+	assert.Empty(titles["psid:300"])
+
+	// The provider learns the recipient's display name without changing the
+	// message payload or its raw webhook event.
+	rec.CustomerName = "Example Customer"
+	secondID, added, err := w.persist(t.Context(), rec)
+	require.NoError(err)
+	assert.False(added)
+	assert.Equal(firstID, secondID)
+
+	titles, err = w.store.ConversationTitlesBatchContext(t.Context(), w.sourceID, []string{"psid:300"})
+	require.NoError(err)
+	assert.Equal("Example Customer", titles["psid:300"])
+}
+
 func TestDMPersistEchoRetainsCampaignAttribution(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -149,6 +183,29 @@ func TestDMPersistAttachmentsMetadataOnly(t *testing.T) {
 	var found int
 	require.NoError(w.store.DB().QueryRow("SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'secret'").Scan(&found))
 	assert.Zero(found)
+}
+func TestDMGraphBackfillPreservesStickerWebhookMetadata(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	w := dmTestWriter(t, PlatformMessenger)
+	item := dmItem(w, "messages", `{"sender":{"id":"300"},"recipient":{"id":"100"},"timestamp":1793577600123,"message":{"mid":"m_sticker","attachments":[{"type":"sticker","payload":{"sticker_id":123}}]}}`)
+	require.Equal(metawebhook.Applied, dmApply(t, dmTestHandler(t, w), item).Class)
+	id := message(t, w.store, w.sourceID, "m_sticker").ID
+
+	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = fmt.Fprint(w, `{"id":"m_sticker","from":{"id":"300"},"to":{"data":[{"id":"100"}]},"message":"sticker message","created_time":"2026-11-01T00:00:00+0000","attachments":{"data":[{"mime_type":"image/webp","image_data":{"render_as_sticker":true}}]}}`)
+	})
+	node, err := c.Message(t.Context(), "m_sticker")
+	require.NoError(err)
+	backfill, err := recordFromNode(w.src, node)
+	require.NoError(err)
+	_, _, err = w.persist(t.Context(), backfill)
+	require.NoError(err)
+
+	metadata, _ := dmSavedMeta(t, w, id)
+	require.Len(metadata.Attachments, 1)
+	assert.Equal("sticker", metadata.Attachments[0].Type)
+	assert.Equal("123", string(metadata.Attachments[0].StickerID))
 }
 func TestDMPersistNodeShares(t *testing.T) {
 	assert := assert.New(t)
@@ -292,13 +349,25 @@ func TestDMMetadataVersionRefused(t *testing.T) {
 	r := dmTestRecord(t, w, "m_1", "original")
 	id, _, err := w.persist(t.Context(), r)
 	require.NoError(err)
-	require.NoError(w.store.SetMessageMetadataContext(t.Context(), id, sql.NullString{Valid: true, String: `{"version":99}`}))
+	saved, err := w.store.GetMessageMetadataContext(t.Context(), id)
+	require.NoError(err)
+	require.True(saved.Valid)
+	var metadata map[string]any
+	require.NoError(json.Unmarshal([]byte(saved.String), &metadata))
+	metadata["version"] = 99
+	unsupportedBytes, err := json.Marshal(metadata)
+	require.NoError(err)
+	unsupported := sql.NullString{Valid: true, String: string(unsupportedBytes)}
+	require.NoError(w.store.SetMessageMetadataContext(t.Context(), id, unsupported))
 	r.Text = "replacement"
 	_, _, err = w.persist(t.Context(), r)
-	require.Error(err)
+	require.EqualError(err, "unsupported direct message metadata version")
 	body, err := w.store.GetMessageBodyText(id)
 	require.NoError(err)
 	assert.Equal("original", body)
+	stored, err := w.store.GetMessageMetadataContext(t.Context(), id)
+	require.NoError(err)
+	assert.Equal(unsupported, stored)
 }
 
 func TestDMConversationVersionRefusedBeforeWrites(t *testing.T) {
@@ -312,11 +381,23 @@ func TestDMConversationVersionRefusedBeforeWrites(t *testing.T) {
 			require.NoError(err)
 			ref, err := w.store.MessageConversation(id)
 			require.NoError(err)
-			blob := sql.NullString{Valid: true, String: `{"version":2,"future_field":"retain"}`}
+			saved, err := w.store.GetConversationMetadataContext(t.Context(), ref.ConversationID)
+			require.NoError(err)
+			require.True(saved.Valid)
+			var metadata map[string]any
+			require.NoError(json.Unmarshal([]byte(saved.String), &metadata))
+			metadata["future_field"] = "retain"
+			withFutureField, err := json.Marshal(metadata)
+			require.NoError(err)
+			require.NoError(w.store.SetConversationMetadataContext(t.Context(), ref.ConversationID, sql.NullString{Valid: true, String: string(withFutureField)}))
+			metadata["version"] = 2
+			unsupportedBytes, err := json.Marshal(metadata)
+			require.NoError(err)
+			blob := sql.NullString{Valid: true, String: string(unsupportedBytes)}
 			require.NoError(w.store.SetConversationMetadataContext(t.Context(), ref.ConversationID, blob))
 			_, _, err = w.persist(t.Context(), dmTestRecord(t, w, mid, "replacement"))
-			require.Error(err)
-			saved, err := w.store.GetConversationMetadataContext(t.Context(), ref.ConversationID)
+			require.EqualError(err, "unsupported direct chat metadata version")
+			saved, err = w.store.GetConversationMetadataContext(t.Context(), ref.ConversationID)
 			require.NoError(err)
 			assert.Equal(blob, saved)
 			body, err := w.store.GetMessageBodyText(id)
@@ -344,22 +425,27 @@ func TestDMGraphStoryRetained(t *testing.T) {
 	assert.NotContains(blob, "https://")
 }
 func TestDMTimestampMillisAndGraphTime(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
 	w := dmTestWriter(t, PlatformMessenger)
-	id, _, err := w.persist(t.Context(), dmTestRecord(t, w, "m_1", "text"))
-	require.NoError(err)
-	for _, timestamp := range []string{"2026-11-02T00:00:00+0000", "2026-11-02T00:00:00Z"} {
-		r, err := recordFromNode(w.src, DMMessage{ID: "m_1", From: DMParticipant{ID: "300"}, CreatedTime: timestamp, Raw: []byte(`{}`)})
-		require.NoError(err)
-		_, _, err = w.persist(t.Context(), r)
-		require.NoError(err)
-		rows, err := w.store.StoredMessagesContext(t.Context(), w.sourceID, dmRawFormat, []string{"m_1"})
-		require.NoError(err)
-		assert.Equal(time.UnixMilli(1793577600123).UTC(), rows["m_1"].SentAt.Time.UTC())
+	want := time.Date(2026, time.November, 2, 0, 0, 0, 0, time.UTC)
+	for _, tt := range []struct {
+		name, id, createdTime string
+	}{
+		{name: "Graph offset", id: "m_graph_offset", createdTime: "2026-11-02T00:00:00+0000"},
+		{name: "RFC3339 UTC", id: "m_rfc3339", createdTime: "2026-11-02T00:00:00Z"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			rec, err := recordFromNode(w.src, DMMessage{ID: tt.id, From: DMParticipant{ID: "300"}, CreatedTime: tt.createdTime, Raw: []byte(`{}`)})
+			require.NoError(err)
+			_, _, err = w.persist(t.Context(), rec)
+			require.NoError(err)
+			rows, err := w.store.StoredMessagesContext(t.Context(), w.sourceID, dmRawFormat, []string{tt.id})
+			require.NoError(err)
+			row, ok := rows[tt.id]
+			require.True(ok)
+			assert.Equal(t, want, row.SentAt.Time.UTC())
+		})
 	}
-	require.Positive(id)
 }
 func TestDMPersistMissingGraphTextPreservesExistingBody(t *testing.T) {
 	assert := assert.New(t)

@@ -18,7 +18,8 @@ func (c *Client) VerifyPage(ctx context.Context, id string) (Page, error) {
 	// Category is Page-only evidence in the pinned SDK, not a token-type
 	// attestation. Missing evidence is unavailable, never successful validation.
 	if page.ID != id || strings.TrimSpace(page.Category) == "" {
-		return Page{}, errors.New("page identity mismatch or Page-only identity evidence unavailable")
+		//nolint:revive,staticcheck // error-strings: this user-facing sentence follows the review's exact wording.
+		return Page{}, errors.New("Could not verify this token for the configured Page.")
 	}
 	return page, nil
 }

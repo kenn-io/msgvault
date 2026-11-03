@@ -33,6 +33,16 @@ func accept(t *testing.T, s *Spool, body string) string {
 	require.False(dup)
 	return id
 }
+func totalSpoolBytes(t *testing.T, root string) int64 {
+	t.Helper()
+	stats, err := ReadStats(root)
+	require.NoError(t, err)
+	var total int64
+	for _, app := range stats {
+		total += app.Bytes
+	}
+	return total
+}
 func TestSpoolAcceptDurableLayout(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -73,6 +83,21 @@ func TestSpoolAcceptDurableLayout(t *testing.T) {
 	require.Error(err)
 	_, err = s.Body("9", "../body")
 	require.Error(err)
+}
+
+func TestSpoolDueOnlyReadsPendingDeliveries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	s, _ := testSpool(t)
+	done := accept(t, s, "done")
+	require.NoError(s.Settle("9", done, Settlement{State: StateDone}))
+	pending := accept(t, s, "pending")
+	require.NoError(os.WriteFile(statePath(s.path("9", StateDone, done)), []byte("{"), 0600))
+
+	due, err := s.Due(1)
+	require.NoError(err)
+	require.Len(due, 1)
+	assert.Equal(pending, due[0].ID)
 }
 
 func TestSpoolRefusesUnsyncableRootParent(t *testing.T) {
@@ -183,6 +208,33 @@ func TestSpoolPruneOnlyDone(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, stats["9"].Held)
 	assert.Equal(1, stats["9"].Failed)
+}
+
+func TestSpoolPruneOnlyReadsDoneDeliveries(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	s, now := testSpool(t)
+	pending := accept(t, s, "pending")
+	held := accept(t, s, "held")
+	require.NoError(s.Settle("9", held, Settlement{State: StateHeld}))
+	done := accept(t, s, "done")
+	require.NoError(s.Settle("9", done, Settlement{State: StateDone}))
+	require.NoError(os.WriteFile(statePath(s.path("9", StatePending, pending)), []byte("{"), 0600))
+	require.NoError(os.WriteFile(statePath(s.path("9", StateHeld, held)), []byte("{"), 0600))
+	*now = now.Add(2 * time.Hour)
+
+	n, err := s.Prune(time.Hour)
+	require.NoError(err)
+	assert.Equal(1, n)
+	for _, stateAndID := range []struct {
+		state State
+		id    string
+	}{{StatePending, pending}, {StateHeld, held}} {
+		_, err := os.Stat(s.path("9", stateAndID.state, stateAndID.id))
+		require.NoError(err)
+	}
+	_, err = os.Stat(s.path("9", StateDone, done))
+	assert.True(os.IsNotExist(err))
 }
 func TestSpoolRecoversTmpLeftover(t *testing.T) {
 	assert := assert.New(t)
@@ -363,6 +415,98 @@ func TestSpoolCachedCapacityCountsNewDeliveries(t *testing.T) {
 	require.ErrorIs(err, ErrSpoolFull)
 }
 
+func TestSpoolAcceptRecoversAfterTransientWriteFailure(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	s, _ := testSpool(t)
+	body := []byte("transient")
+	hash := sha256.Sum256(append([]byte("9\x00"), body...))
+	path := s.path("9", StatePending, hex.EncodeToString(hash[:]))
+	require.NoError(s.layout("9"))
+	require.NoError(os.Mkdir(statePath(path), 0700))
+
+	_, _, err := s.Accept("9", body)
+	require.Error(err)
+	assert.False(s.bytesValid)
+	require.NoError(os.Remove(statePath(path)))
+
+	id, duplicate, err := s.Accept("9", []byte("recovered"))
+	require.NoError(err)
+	assert.False(duplicate)
+	assert.NotEmpty(id)
+	assert.True(s.bytesValid)
+	assert.Equal(totalSpoolBytes(t, s.dir), s.bytes)
+
+	id, duplicate, err = s.Accept("9", body)
+	require.NoError(err)
+	assert.True(duplicate)
+	assert.Equal(hex.EncodeToString(hash[:]), id)
+	assert.Equal(totalSpoolBytes(t, s.dir), s.bytes)
+}
+
+func TestSpoolIncrementalByteAccountingTracksMutations(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	s, now := testSpool(t)
+	id := accept(t, s, "synthetic")
+	assert.Equal(totalSpoolBytes(t, s.dir), s.bytes)
+
+	for _, settlement := range []Settlement{
+		{State: StateHeld, Outcomes: map[string]int{"page/messages/unhandled": 1}},
+		{State: StatePending, NextItem: 2, CountAttempt: true, ErrorClass: "provider_temporarily_unavailable"},
+		{State: StateDone},
+	} {
+		require.NoError(s.Settle("9", id, settlement))
+		assert.Equal(totalSpoolBytes(t, s.dir), s.bytes)
+	}
+
+	n, err := s.Requeue(RequeueFilter{DeliveryID: id}, false)
+	require.NoError(err)
+	require.Equal(1, n)
+	assert.Equal(totalSpoolBytes(t, s.dir), s.bytes)
+	require.NoError(s.Settle("9", id, Settlement{State: StateDone}))
+	assert.Equal(totalSpoolBytes(t, s.dir), s.bytes)
+	*now = now.Add(2 * time.Hour)
+	n, err = s.Prune(time.Hour)
+	require.NoError(err)
+	require.Equal(1, n)
+	assert.Equal(totalSpoolBytes(t, s.dir), s.bytes)
+}
+
+func TestSpoolStatsReconcilesByteAccounting(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	s, _ := testSpool(t)
+	accept(t, s, "synthetic")
+	s.bytes += 123
+
+	stats, err := s.Stats()
+	require.NoError(err)
+	var want int64
+	for _, app := range stats {
+		want += app.Bytes
+	}
+	assert.Equal(want, s.bytes)
+}
+
+func TestSpoolAcceptDoesNotWalkOtherApplications(t *testing.T) {
+	require := require.New(t)
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("requires Unix directory read permission enforcement")
+	}
+	s, _ := testSpool(t)
+	id := accept(t, s, "first")
+	require.NoError(s.Settle("9", id, Settlement{State: StateHeld}))
+
+	otherApp := filepath.Join(s.dir, "8")
+	otherPending := filepath.Join(otherApp, "pending")
+	require.NoError(os.MkdirAll(otherPending, 0700))
+	require.NoError(os.WriteFile(filepath.Join(otherPending, "opaque"), []byte("synthetic"), 0600))
+	require.NoError(os.Chmod(otherApp, 0300))
+	t.Cleanup(func() { _ = os.Chmod(otherApp, 0700) })
+
+	_, duplicate, err := s.Accept("9", []byte("second"))
+	require.NoError(err)
+	require.False(duplicate)
+}
+
 func TestSpoolReceiptOrderSurvivesPruneRestartAndReplay(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	s, now := testSpool(t)
@@ -432,6 +576,57 @@ func TestSpoolRecoversReceiptMetadataAcrossInterruptedMoves(t *testing.T) {
 			assert.Equal(original.ReceiptOrder, due[0].ReceiptOrder)
 			assert.Equal(original.ReceivedAt, due[0].ReceivedAt)
 			assert.Equal(original.Attempts, due[0].Attempts)
+		})
+	}
+}
+
+func simulateReplayCrashAfterStateWrite(t *testing.T, s *Spool, from State, id string) DeliveryMeta {
+	t.Helper()
+	require := require.New(t)
+	var meta DeliveryMeta
+	require.NoError(readJSON(statePath(s.path("9", from, id)), &meta))
+	order, err := s.reserveOrder()
+	require.NoError(err)
+	meta.ReceiptOrder = order
+	meta.NextItem = 0
+	meta.State = StatePending
+	meta.Attempts = 0
+	meta.NextAttemptAt = time.Time{}
+	meta.LastErrorClass = ""
+	meta.Outcomes = nil
+	require.NoError(writeJSON(statePath(s.path("9", from, id)), meta))
+	return meta
+}
+
+func TestSpoolRecoversPendingStateBeforeBodyMove(t *testing.T) {
+	for _, from := range []State{StateHeld, StateFailed, StateDone} {
+		t.Run(string(from), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			s, now := testSpool(t)
+			id := accept(t, s, "replay")
+			require.NoError(s.Settle("9", id, Settlement{State: from}))
+			meta := simulateReplayCrashAfterStateWrite(t, s, from, id)
+
+			reopened, err := OpenSpool(s.dir, 1<<20, func() time.Time { return *now })
+			require.NoError(err)
+			due, err := reopened.Due(-1)
+			require.NoError(err)
+			require.Len(due, 1)
+			assert.Equal(id, due[0].ID)
+			assert.Equal(meta.ReceiptOrder, due[0].ReceiptOrder)
+			assert.Equal(meta.ReceivedAt, due[0].ReceivedAt)
+
+			body, err := reopened.Body("9", id)
+			require.NoError(err)
+			assert.Equal("replay", string(body))
+			var recovered DeliveryMeta
+			require.NoError(readJSON(statePath(reopened.path("9", StatePending, id)), &recovered))
+			assert.Equal(StatePending, recovered.State)
+			assert.Equal(meta.ReceiptOrder, recovered.ReceiptOrder)
+			_, err = os.Stat(reopened.path("9", from, id))
+			assert.True(os.IsNotExist(err))
+			_, err = os.Stat(statePath(reopened.path("9", from, id)))
+			assert.True(os.IsNotExist(err))
 		})
 	}
 }

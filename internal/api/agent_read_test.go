@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	metaimp "go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -86,6 +87,138 @@ func TestAgentCLISearchOmitsHybridHint(t *testing.T) {
 	}
 	requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
 	assertions.Equal("unsupported_agent_scope", response.Error)
+}
+
+type metaConversationTitleAPI struct {
+	post  metaimp.Object
+	media metaimp.IGMedia
+}
+
+func (metaConversationTitleAPI) VerifyPage(_ context.Context, pageID string) (metaimp.Page, error) {
+	return metaimp.Page{ID: pageID, Name: "Example Page", Category: "Community"}, nil
+}
+
+func (a metaConversationTitleAPI) Posts(_ context.Context, _ string, edge metaimp.PostEdge, after string) (metaimp.ObjectPage, error) {
+	if edge == metaimp.Posts && after == "" {
+		return metaimp.ObjectPage{Data: []metaimp.Object{a.post}}, nil
+	}
+	return metaimp.ObjectPage{}, nil
+}
+
+func (metaConversationTitleAPI) Comments(context.Context, string, string) (metaimp.ObjectPage, error) {
+	return metaimp.ObjectPage{}, nil
+}
+
+func (metaConversationTitleAPI) LinkedInstagramAccount(_ context.Context, pageID, accountID string) (metaimp.IGUser, error) {
+	return metaimp.IGUser{ID: accountID, Username: "example_business"}, nil
+}
+
+func (a metaConversationTitleAPI) InstagramMedia(_ context.Context, _ string, after string) (metaimp.IGMediaPage, error) {
+	if after == "" {
+		return metaimp.IGMediaPage{Data: []metaimp.IGMedia{a.media}}, nil
+	}
+	return metaimp.IGMediaPage{}, nil
+}
+
+func (metaConversationTitleAPI) InstagramComments(context.Context, string, string) (metaimp.IGCommentPage, error) {
+	return metaimp.IGCommentPage{}, nil
+}
+
+func (metaConversationTitleAPI) InstagramReplies(context.Context, string, string) (metaimp.IGCommentPage, error) {
+	return metaimp.IGCommentPage{}, nil
+}
+
+func TestMetaRootSearchTitleDoesNotExposeLongBodyToSearchOnlyGrant(t *testing.T) {
+	for _, tc := range []struct {
+		name, messageID string
+		instagram       bool
+	}{
+		{name: "Facebook post", messageID: "100_200"},
+		{name: "Instagram caption", messageID: "1784_300", instagram: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+
+			st := testutil.NewSQLiteTestStore(t)
+			body := strings.Repeat("synthetic root body ", 40) + "fullbodysearchmarker"
+			api := metaConversationTitleAPI{
+				post: metaimp.Object{
+					ID: "100_200", Message: body, CreatedTime: "2026-10-01T12:00:00+0000",
+					From: &metaimp.Actor{ID: "100", Name: "Example Page"},
+				},
+				media: metaimp.IGMedia{
+					ID: "1784_300", Caption: body, Timestamp: "2026-10-01T12:00:00+0000",
+					Owner: &metaimp.IGUser{ID: "1784", Username: "example_business"},
+				},
+			}
+			importer := metaimp.NewImporter(st, api)
+			var src *store.Source
+			var err error
+			if tc.instagram {
+				src, err = importer.RegisterInstagram(t.Context(), "9", "100", "1784")
+				requirements.NoError(err)
+				_, err = importer.ImportInstagram(t.Context(), "9", "100", "1784", metaimp.ImportOptions{})
+			} else {
+				src, err = importer.Register(t.Context(), "9", "100")
+				requirements.NoError(err)
+				_, err = importer.Import(t.Context(), "9", "100", metaimp.ImportOptions{})
+			}
+			requirements.NoError(err)
+
+			var conversationID int64
+			requirements.NoError(st.DB().QueryRow(
+				`SELECT conversation_id FROM messages WHERE source_id = ? AND source_message_id = ?`, src.ID, tc.messageID,
+			).Scan(&conversationID))
+			_, err = st.DB().Exec(`UPDATE conversations SET title = ? WHERE id = ?`, body, conversationID)
+			requirements.NoError(err)
+
+			// A full reread of an unchanged message still reconciles titles saved by
+			// older versions, whose root title contained the complete body.
+			if tc.instagram {
+				_, err = importer.ImportInstagram(t.Context(), "9", "100", "1784", metaimp.ImportOptions{Full: true})
+			} else {
+				_, err = importer.Import(t.Context(), "9", "100", metaimp.ImportOptions{Full: true})
+			}
+			requirements.NoError(err)
+
+			var title string
+			requirements.NoError(st.DB().QueryRow(`SELECT title FROM conversations WHERE id = ?`, conversationID).Scan(&title))
+			assertions.NotContains(title, "fullbodysearchmarker")
+			assertions.LessOrEqual(len([]rune(title)), 120)
+
+			cfg := &config.Config{
+				HomeDir: t.TempDir(),
+				Data:    config.DataConfig{DataDir: t.TempDir()},
+				Server:  config.ServerConfig{APIKey: "owner-key", AgentAccess: true},
+			}
+			srv := NewServerWithOptions(ServerOptions{
+				Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger(),
+			})
+			t.Cleanup(srv.agentGrants.Close)
+			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+			_, token, _, err := srv.agentGrants.Issue(
+				"search reader", []agentgrant.Permission{agentgrant.PermissionSearchRead},
+				[]agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, time.Time{},
+			)
+			requirements.NoError(err)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/cli/search?q=fullbodysearchmarker", nil)
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+			var response struct {
+				Results []struct {
+					ConversationTitle string `json:"conversation_title"`
+				} `json:"results"`
+			}
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+			requirements.Len(response.Results, 1)
+			assertions.NotContains(response.Results[0].ConversationTitle, "fullbodysearchmarker")
+			assertions.NotContains(w.Body.String(), "fullbodysearchmarker")
+		})
+	}
 }
 
 func TestAgentReadAuthorization(t *testing.T) {

@@ -79,7 +79,7 @@ func (e *EventImporter) ApplyFeedEvents(ctx context.Context, app, page string, e
 		return out
 	}
 	if err := ctx.Err(); err != nil {
-		return all("retry", "cancelled", true), err
+		return all("retry", "cancelled", false), err
 	}
 	if !ValidAccountID(app) || !ValidAccountID(page) || opts.MaxRequests < 0 {
 		return all("invalid", "invalid_options", false), nil
@@ -128,26 +128,42 @@ func (e *EventImporter) ApplyFeedEvents(ctx context.Context, app, page string, e
 		}
 		return err
 	}
+	incomplete := false
 	for i, ev := range events {
 		before := run.sum.MessagesAdded + run.sum.MessagesUpdated
 		batch.changed = false
 		out[i] = batch.apply(ctx, ev)
 		out[i].ArchiveChanged = batch.changed || run.sum.MessagesAdded+run.sum.MessagesUpdated > before
+		if out[i].Class == "retry" {
+			incomplete = true
+			if out[i].CountAttempt {
+				run.errorsCount++
+			}
+		}
 	}
 	if run.syncID != 0 {
-		retErr = run.finishWebhook(ctx, retErr)
+		retErr = run.finishWebhook(ctx, retErr, incomplete)
 	}
 	return out, retErr
 }
 
 // Finalization retains counters for already committed writes if the batch was
 // interrupted after persistence. Cache refreshes also inspect failed runs.
-func (r *importRun) finishWebhook(ctx context.Context, cause error) error {
+func (r *importRun) finishWebhook(ctx context.Context, cause error, incomplete bool) error {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	cause = errors.Join(cause, r.imp.store.UpdateSyncCheckpointContext(cleanup, r.syncID, r.counters()))
+	checkpoint := r.counters()
 	if ctx.Err() != nil || cause != nil {
-		return errors.Join(cause, r.imp.store.FailSyncContext(cleanup, r.syncID, "webhook processing interrupted"))
+		return errors.Join(cause, r.imp.store.FailSyncWithCheckpointContext(cleanup, r.syncID, "webhook processing interrupted", checkpoint))
+	}
+	if incomplete {
+		if checkpoint.ErrorsCount == 0 {
+			return r.imp.store.PauseSyncWithCheckpoint(r.syncID, checkpoint)
+		}
+		return r.imp.store.FailSyncWithCheckpointContext(cleanup, r.syncID, "webhook processing incomplete", checkpoint)
+	}
+	if err := r.imp.store.UpdateSyncCheckpointContext(cleanup, r.syncID, checkpoint); err != nil {
+		return errors.Join(err, r.imp.store.FailSyncWithCheckpointContext(cleanup, r.syncID, "webhook processing interrupted", checkpoint))
 	}
 	return r.imp.store.CompleteSyncContext(cleanup, r.syncID, "")
 }
@@ -372,7 +388,8 @@ func feedRetry(err error) EventOutcome {
 	if errors.Is(err, errRequestBudget) {
 		return EventOutcome{Class: "retry", ErrorClass: "request_budget"}
 	}
-	return EventOutcome{Class: "retry", ErrorClass: class, CountAttempt: true}
+	countAttempt := !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded)
+	return EventOutcome{Class: "retry", ErrorClass: class, CountAttempt: countAttempt}
 }
 func feedPersistOutcome(ctx context.Context, err error) EventOutcome {
 	if ctx.Err() != nil {

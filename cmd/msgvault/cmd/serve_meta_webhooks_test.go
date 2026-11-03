@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -35,6 +36,18 @@ type webhookObjects struct {
 	includeComment bool
 	anonymous      bool
 	body           string
+}
+
+type cancellingFeedAncestorReader struct {
+	webhookObjects
+
+	started chan struct{}
+}
+
+func (r *cancellingFeedAncestorReader) Comment(ctx context.Context, _ string) (meta.Object, error) {
+	close(r.started)
+	<-ctx.Done()
+	return meta.Object{}, ctx.Err()
 }
 
 func (webhookObjects) VerifyPage(context.Context, string) (meta.Page, error) {
@@ -227,24 +240,82 @@ func TestMetaWebhooksShutdownDrains(t *testing.T) {
 	cfg := webhookTestConfig(t)
 	reg := metawebhook.NewRegistry()
 	entered := make(chan struct{})
+	cancelled := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseHandler := func() { releaseOnce.Do(func() { close(release) }) }
 	reg.Register("page", "feed", func(ctx context.Context, _ string, _ []metawebhook.Item) []metawebhook.ItemOutcome {
 		close(entered)
 		<-ctx.Done()
-		return []metawebhook.ItemOutcome{{Class: metawebhook.Retry}}
+		close(cancelled)
+		<-release
+		return []metawebhook.ItemOutcome{{Class: metawebhook.Retry, ErrorClass: string(meta.ClassCancelled)}}
 	})
 	r, err := startMetaWebhooksWithRegistry(t.Context(), cfg, nil, reg, nil, nil)
 	require.NoError(err)
-	defer stopWebhook(t, r)
+	defer func() {
+		releaseHandler()
+		stopWebhook(t, r)
+	}()
 	postWebhook(t, r, webhookBody())
 	select {
 	case <-entered:
 	case <-time.After(8 * time.Second):
 		require.FailNow("worker did not enter handler")
 	}
-	stopWebhook(t, r)
+	shutdownCtx, cancelShutdown := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancelShutdown()
+	shutdownDone := make(chan error, 1)
+	go func() { shutdownDone <- r.Shutdown(shutdownCtx) }()
+	select {
+	case <-cancelled:
+	case err := <-shutdownDone:
+		require.NoError(err)
+		require.FailNow("Shutdown returned before the canceled handler finished")
+	case <-time.After(8 * time.Second):
+		require.FailNow("shutdown did not cancel the handler")
+	}
+	for _, done := range []chan struct{}{r.serverDone, r.heartbeatDone} {
+		select {
+		case <-done:
+		case err := <-shutdownDone:
+			require.NoError(err)
+			require.FailNow("Shutdown returned before the canceled handler finished")
+		case <-time.After(8 * time.Second):
+			require.FailNow("runtime component did not stop")
+		}
+	}
+	select {
+	case err := <-shutdownDone:
+		require.NoError(err)
+		require.FailNow("Shutdown returned before the canceled handler finished")
+	case <-time.After(time.Second):
+	}
+	releaseHandler()
+	select {
+	case err := <-shutdownDone:
+		require.NoError(err)
+	case <-time.After(8 * time.Second):
+		require.FailNow("Shutdown did not finish after releasing the handler")
+	}
+	assert.True(r.stopped.Load())
+	stats, err := metawebhook.ReadStats(filepath.Join(cfg.Data.DataDir, "meta-webhooks"))
+	require.NoError(err)
+	assert.Equal(1, stats["9"].Pending)
+	assert.Zero(stats["9"].Held)
+	assert.Zero(stats["9"].Failed)
+	assert.Zero(stats["9"].Done)
 	states, err := filepath.Glob(filepath.Join(cfg.Data.DataDir, "meta-webhooks", "9", "pending", "*.state.json"))
 	require.NoError(err)
-	assert.Len(states, 1)
+	require.Len(states, 1)
+	data, err := os.ReadFile(states[0])
+	require.NoError(err)
+	var delivery metawebhook.DeliveryMeta
+	require.NoError(json.Unmarshal(data, &delivery))
+	assert.Equal(metawebhook.StatePending, delivery.State)
+	assert.Equal(string(meta.ClassCancelled), delivery.LastErrorClass)
+	assert.Equal(map[string]int{"page/feed/retry": 1}, delivery.Outcomes)
+	assert.Zero(delivery.Attempts, "shutdown cancellation must not count as a failed attempt")
 	_, err = os.Stat(filepath.Join(cfg.Data.DataDir, "meta-webhooks", "receiver.json"))
 	assert.NoError(err)
 }
@@ -637,6 +708,37 @@ func TestMetaWebhooksYieldToWaitingWriterWithoutFailure(t *testing.T) {
 		return err == nil && stats["9"].Done == 1
 	}, 10*time.Second, time.Millisecond)
 	assert.Equal(int32(2), calls.Load(), "unfinished delivery resumes after the interactive writer")
+}
+
+func TestFeedHandlerCancellationDoesNotCountRetryAttempt(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	cfg := webhookTestConfig(t)
+	st, _ := webhookArchive(t, false)
+	reader := &cancellingFeedAncestorReader{started: make(chan struct{})}
+	handler := feedHandler(cfg, st, func(string) (meta.ObjectReader, error) { return reader, nil })
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	result := make(chan []metawebhook.ItemOutcome, 1)
+	go func() {
+		result <- handler(ctx, "9", []metawebhook.Item{{
+			EntryID: "100",
+			Value:   []byte(`{"item":"comment","verb":"add","post_id":"100_200","comment_id":"100_201","parent_id":"100_210","message":"synthetic comment"}`),
+		}})
+	}()
+	select {
+	case <-reader.started:
+	case <-time.After(10 * time.Second):
+		require.FailNow("feed handler did not start the ancestor read")
+	}
+	cancel()
+	select {
+	case outcomes := <-result:
+		require.Len(outcomes, 1)
+		assert.Equal(metawebhook.Retry, outcomes[0].Class)
+		assert.False(outcomes[0].CountAttempt)
+	case <-time.After(5 * time.Second):
+		require.FailNow("feed handler did not return after cancellation")
+	}
 }
 
 func TestMetaWebhooksCacheRefreshTracksActualChanges(t *testing.T) {

@@ -216,22 +216,31 @@ func (h *DMHandler) applyGroup(ctx context.Context, g *dmEventGroup, out []metaw
 	}
 	writer := &dmWriter{store: h.store.ScopedToSync(g.source.ID, run), sourceID: g.source.ID, src: g.src}
 	failed := false
+	var counters store.Checkpoint
 	for n, event := range g.events {
 		i := g.indices[n]
 		if ctx.Err() != nil {
 			out[i] = dmArchiveRetry(ctx.Err())
 		} else {
-			out[i] = writer.applyEvent(ctx, event)
+			out[i] = writer.applyEvent(ctx, event, &counters)
+		}
+		if out[i].Class == metawebhook.Applied || out[i].Class == metawebhook.Ignored || out[i].ArchiveChanged {
+			counters.MessagesProcessed++
+		}
+		if out[i].Class == metawebhook.Retry {
+			counters.ErrorsCount++
 		}
 		failed = failed || out[i].Class == metawebhook.Retry
 	}
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	if failed || ctx.Err() != nil {
+	checkpointErr := h.store.UpdateSyncCheckpointContext(cleanup, run, &counters)
+	if failed || ctx.Err() != nil || checkpointErr != nil {
 		err = h.store.FailSyncContext(cleanup, run, "inbox webhook processing incomplete")
 	} else {
 		err = h.store.CompleteSyncContext(cleanup, run, "")
 	}
+	err = errors.Join(checkpointErr, err)
 	if err != nil {
 		for _, i := range g.indices {
 			if out[i].Class == metawebhook.Applied {
@@ -242,7 +251,7 @@ func (h *DMHandler) applyGroup(ctx context.Context, g *dmEventGroup, out []metaw
 		}
 	}
 }
-func (w *dmWriter) applyEvent(ctx context.Context, e dmWebhookEvent) metawebhook.ItemOutcome {
+func (w *dmWriter) applyEvent(ctx context.Context, e dmWebhookEvent, counters *store.Checkpoint) metawebhook.ItemOutcome {
 	if e.Message != nil && (w.src.Platform != PlatformInstagram || !e.Message.IsDeleted) {
 		rec, err := recordFromEvent(w.src, e.messagingEvent)
 		if err != nil {
@@ -251,7 +260,15 @@ func (w *dmWriter) applyEvent(ctx context.Context, e dmWebhookEvent) metawebhook
 		if e.channel == "standby" {
 			rec.Meta.Channel = "standby"
 		}
-		id, _, err := w.persist(ctx, rec)
+		var persistStats dmPersistStats
+		id, _, err := w.persistWithStats(ctx, rec, &persistStats)
+		if id != 0 && counters != nil {
+			if persistStats.added {
+				counters.MessagesAdded++
+			} else if persistStats.updated {
+				counters.MessagesUpdated++
+			}
+		}
 		result := dmOutcome(metawebhook.Applied, "")
 		if err != nil {
 			result = dmArchiveRetry(err)
@@ -369,6 +386,9 @@ func (w *dmWriter) applyEvent(ctx context.Context, e dmWebhookEvent) metawebhook
 	}
 	if err != nil {
 		return dmArchiveRetry(err)
+	}
+	if counters != nil {
+		counters.MessagesUpdated++
 	}
 	return metawebhook.ItemOutcome{Class: metawebhook.Applied, ArchiveChanged: true}
 }

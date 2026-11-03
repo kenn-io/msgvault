@@ -84,31 +84,32 @@ func TestFacebookRegistrationRejectsIdentityBeforeWriting(t *testing.T) {
 	assert.Empty(t, sources)
 }
 
-func TestFacebookConfiguredCredentialsSelectionDelegationFlagsAndHelp(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
+func TestFacebookCommentsMissingTokenErrorsAvoidDuplicateProfileContext(t *testing.T) {
+	require := require.New(t)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "")
-	_, err := configuredFacebookCommentsClient(facebookProfile())
-	require.ErrorContains(err, "daemon environment")
-	cfg := config.NewDefaultConfig()
+	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Data.DataDir = t.TempDir()
 	cfg.FacebookComments = []config.FacebookCommentsSource{facebookProfile()}
-	_, err = resolveFacebookCommentsProfiles([]string{"missing"}, cfg)
-	require.Error(err)
+	want := `facebook profile "example-page" needs EXAMPLE_FACEBOOK_PAGE_TOKEN in the daemon environment`
+
 	for _, action := range []string{"add", "sync"} {
-		leaf, _, err := rootCmd.Find([]string{"source", "facebook-comments", action})
-		require.NoError(err)
-		assert.False(agentDelegatedCapable(leaf))
+		var cmd = newAddFacebookCommentsCmd()
+		if action == "sync" {
+			cmd = newSyncFacebookCommentsCmd()
+		}
+		cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		err := cmd.RunE(cmd, nil)
+		require.EqualError(err, want, action)
 	}
-	cmd := newSyncFacebookCommentsCmd()
-	cmd.SetArgs([]string{"--max-requests", "0"})
-	require.ErrorContains(cmd.Execute(), "positive")
-	var output bytes.Buffer
-	cmd = newSyncFacebookCommentsCmd()
-	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"--help"})
-	require.NoError(cmd.Execute())
-	assert.Contains(output.String(), "--max-requests")
-	assert.Contains(output.String(), "Facebook")
+}
+
+func TestWithMetaProfileContextOnlyOmitsMissingTokenPrefix(t *testing.T) {
+	assert := assert.New(t)
+
+	missing := &sourceCommandError{err: &missingMetaTokenError{err: errors.New("configured Facebook token is missing")}, code: 7}
+	assert.Same(missing, withMetaProfileContext("facebook profile example-page", missing))
+	assert.EqualError(withMetaProfileContext("facebook profile example-page", errors.New("provider rejected the profile")), "facebook profile example-page: provider rejected the profile")
 }
 
 func TestFacebookManualPartialWritesContinueAcrossProfiles(t *testing.T) {
@@ -136,7 +137,7 @@ func TestFacebookManualPartialWritesContinueAcrossProfiles(t *testing.T) {
 	require.Error(err)
 	assert.Contains(err.Error(), "facebook profile first")
 	assert.Contains(err.Error(), "facebook profile second")
-	assert.Contains(output.String(), "Partial coverage")
+	assert.Contains(output.String(), "Partial coverage; sync again to continue.")
 	for _, profile := range cfg.FacebookComments {
 		source, err := st.GetSourceByTypeAndIdentifier(meta.SourceType, meta.SourceIdentifier(profile.AppID, profile.PageID))
 		require.NoError(err)

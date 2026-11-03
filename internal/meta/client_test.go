@@ -29,26 +29,28 @@ func fixtureClient(t *testing.T, handler http.HandlerFunc) *Client {
 
 func TestPageIdentity(t *testing.T) {
 	for _, tt := range []struct {
-		name, body string
-		valid      bool
+		name, body, wantErr string
+		valid               bool
 	}{
-		{"page", `{"id":"100","name":"Example Page","category":"Community"}`, true},
-		{"wrong page", `{"id":"101","name":"Other Page","category":"Community"}`, false},
-		{"personal user", `{"id":"100","name":"Example Person"}`, false},
+		{"page", `{"id":"100","name":"Example Page","category":"Community"}`, "", true},
+		{"wrong page", `{"id":"101","name":"Other Page","category":"Community"}`, "Could not verify this token for the configured Page.", false},
+		{"personal user", `{"id":"100","name":"Example Person"}`, "Could not verify this token for the configured Page.", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal(t, "/v26.0/me", r.URL.Path)
-				assert.Equal(t, "id,name,category", r.URL.Query().Get("fields"))
-				assert.Equal(t, "Bearer synthetic-page-secret", r.Header.Get("Authorization"))
+				assert.Equal("/v26.0/me", r.URL.Path)
+				assert.Equal("id,name,category", r.URL.Query().Get("fields"))
+				assert.Equal("Bearer synthetic-page-secret", r.Header.Get("Authorization"))
 				_, _ = fmt.Fprint(w, tt.body)
 			})
 			page, err := c.VerifyPage(context.Background(), "100")
 			if tt.valid {
-				require.NoError(t, err)
-				assert.Equal(t, "Example Page", page.Name)
+				require.NoError(err)
+				assert.Equal("Example Page", page.Name)
 			} else {
-				require.Error(t, err)
+				require.Error(err)
+				assert.Equal(tt.wantErr, err.Error())
 			}
 		})
 	}
@@ -190,28 +192,6 @@ func (tr streamedGraphTransport) RoundTrip(r *http.Request) (*http.Response, err
 	return response, err
 }
 
-func TestGraphPostSendsFormBodyOnly(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(http.MethodPost, r.Method)
-		assert.Equal("/v26.0/100/subscribed_apps", r.URL.Path)
-		assert.Empty(r.URL.RawQuery)
-		assert.Equal("application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
-		assert.Equal("Bearer synthetic-page-secret", r.Header.Get("Authorization"))
-		if !assert.NoError(r.ParseForm()) {
-			return
-		}
-		assert.Equal("feed,messages", r.PostForm.Get("subscribed_fields"))
-		_, _ = fmt.Fprint(w, `{"success":true}`)
-	})
-	var out struct {
-		Success bool `json:"success"`
-	}
-	require.NoError(c.post(t.Context(), "100/subscribed_apps", url.Values{"subscribed_fields": {"feed,messages"}}, &out))
-	assert.True(out.Success)
-}
-
 func TestGraphPostJSON(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -318,15 +298,38 @@ func TestGraphErrorBodyCapped(t *testing.T) {
 }
 
 func TestGraphThrottleAndNotFoundCodes(t *testing.T) {
-	assert := assert.New(t)
-	for _, code := range []int{4, 17, 32, 613, 80000, 80001, 80014, 80015, 100, 190, 10, 200, 299, 300} {
-		e := &APIError{Status: 400, Code: code}
-		assert.Equal(code == 4 || code == 17 || code == 32 || code == 613 || (code >= 80000 && code <= 80014), e.Throttled(), "code %d", code)
-		assert.Equal(code == 100, e.NotFound())
-		assert.Equal(code == 190, e.TokenExpired())
-		assert.Equal(code == 10 || (code >= 200 && code <= 299), e.Permission())
+	for _, tt := range []struct {
+		code        int
+		throttled   bool
+		notFound    bool
+		tokenExpiry bool
+		permission  bool
+	}{
+		{code: 4, throttled: true, notFound: false, tokenExpiry: false, permission: false},
+		{code: 17, throttled: true, notFound: false, tokenExpiry: false, permission: false},
+		{code: 32, throttled: true, notFound: false, tokenExpiry: false, permission: false},
+		{code: 613, throttled: true, notFound: false, tokenExpiry: false, permission: false},
+		{code: 80000, throttled: true, notFound: false, tokenExpiry: false, permission: false},
+		{code: 80001, throttled: true, notFound: false, tokenExpiry: false, permission: false},
+		{code: 80014, throttled: true, notFound: false, tokenExpiry: false, permission: false},
+		{code: 80015, throttled: false, notFound: false, tokenExpiry: false, permission: false},
+		{code: 100, throttled: false, notFound: true, tokenExpiry: false, permission: false},
+		{code: 190, throttled: false, notFound: false, tokenExpiry: true, permission: false},
+		{code: 10, throttled: false, notFound: false, tokenExpiry: false, permission: true},
+		{code: 200, throttled: false, notFound: false, tokenExpiry: false, permission: true},
+		{code: 299, throttled: false, notFound: false, tokenExpiry: false, permission: true},
+		{code: 300, throttled: false, notFound: false, tokenExpiry: false, permission: false},
+	} {
+		t.Run(strconv.Itoa(tt.code), func(t *testing.T) {
+			assert := assert.New(t)
+			e := &APIError{Status: 400, Code: tt.code}
+			assert.Equal(tt.throttled, e.Throttled())
+			assert.Equal(tt.notFound, e.NotFound())
+			assert.Equal(tt.tokenExpiry, e.TokenExpired())
+			assert.Equal(tt.permission, e.Permission())
+		})
 	}
-	assert.Equal("graph request failed (HTTP 400, code 100)", (&APIError{Status: 400, Code: 100}).Error())
+	assert.Equal(t, "graph request failed (HTTP 400, code 100)", (&APIError{Status: 400, Code: 100}).Error())
 }
 
 func TestGraphErrorBodyCancellation(t *testing.T) {

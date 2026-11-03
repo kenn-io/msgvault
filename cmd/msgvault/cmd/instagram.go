@@ -33,7 +33,7 @@ func resolveInstagramCommentsProfiles(args []string, cfg *config.Config) ([]conf
 func configuredInstagramCommentsClient(source config.InstagramCommentsSource) (*meta.Client, error) {
 	token := os.Getenv(source.TokenEnv)
 	if strings.TrimSpace(token) == "" {
-		return nil, &sourceCommandError{err: fmt.Errorf("instagram profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
+		return nil, &sourceCommandError{err: metaTokenMissingErrorf("instagram profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
 	}
 	client, err := meta.NewClient(token)
 	if err != nil {
@@ -104,7 +104,7 @@ func newAddInstagramCommentsCmd() *cobra.Command {
 			for _, profile := range profiles {
 				source, err := registerInstagramCommentsProfile(cmd.Context(), st, profile)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("instagram profile %s: %w", profile.Identifier, err))
+					errs = append(errs, withMetaProfileContext("instagram profile "+profile.Identifier, err))
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Instagram professional account %s for %s (source %d)\n", profile.InstagramAccountID, profile.Identifier, source.ID)
@@ -151,11 +151,11 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 				if sum != nil {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Instagram %s: %d messages processed (%d added), %d requests\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.Requests)
 					if sum.Partial {
-						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; unfinished surfaces resume on the next sync.")
+						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; sync again to continue.")
 					}
 				}
 				if err != nil {
-					errs = append(errs, fmt.Errorf("instagram profile %s: %w", profile.Identifier, err))
+					errs = append(errs, withMetaProfileContext("instagram profile "+profile.Identifier, err))
 				}
 			}
 			// Refresh accepted partial writes even after cancellation/provider errors.
@@ -163,7 +163,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&options.MaxRequests, "max-requests", meta.DefaultMaxRequests, "maximum API reads per account, including Page and linkage checks")
-	cmd.Flags().BoolVar(&options.Full, "full", false, "restart selected source scans with fresh cursors; preserve and update archived rows")
+	cmd.Flags().BoolVar(&options.Full, "full", false, "rescan selected sources; preserve and update archived messages")
 	return cmd
 }
 

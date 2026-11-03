@@ -277,7 +277,7 @@ func (imp *DMImporter) Import(ctx context.Context, src DMSource, opts ImportOpti
 					if p.ID == dmOwner(src) {
 						continue
 					}
-					if rec.CustomerID == "" {
+					if rec.FromMe && rec.CustomerID == "" {
 						rec.CustomerID = p.ID
 					}
 					if rec.CustomerID == p.ID && rec.CustomerName == "" {

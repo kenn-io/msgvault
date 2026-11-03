@@ -7,6 +7,9 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 )
 
+// Terminal history pruning is maintenance, not part of each delivery drain.
+const spoolPruneInterval = time.Hour
+
 type WorkerOptions struct {
 	// BeginWork protects each drain from idle shutdown without treating empty
 	// maintenance ticks as new external activity.
@@ -29,8 +32,10 @@ type WorkerOptions struct {
 }
 type DrainSummary struct{ Deliveries, Applied, Held, Retried, Failed int }
 type Worker struct {
-	o    WorkerOptions
-	wake chan struct{}
+	o         WorkerOptions
+	wake      chan struct{}
+	lastPrune time.Time
+	hasPruned bool
 }
 
 func NewWorker(o WorkerOptions) *Worker {
@@ -80,6 +85,9 @@ func (w *Worker) Run(ctx context.Context) error {
 			if _, err := w.DrainOnce(ctx); err != nil {
 				return err
 			}
+			if err := w.pruneIfDue(); err != nil {
+				return err
+			}
 		case <-debounce:
 			debounce = nil
 			if _, err := w.DrainOnce(ctx); err != nil {
@@ -87,6 +95,18 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (w *Worker) pruneIfDue() error {
+	now := w.o.Spool.now()
+	if w.hasPruned && now.Sub(w.lastPrune) < spoolPruneInterval {
+		return nil
+	}
+	if _, err := w.o.Spool.Prune(w.o.Retention); err != nil {
+		return err
+	}
+	w.lastPrune, w.hasPruned = now, true
+	return nil
 }
 
 func (w *Worker) apply(ctx context.Context, group drainGroup) ([]ItemOutcome, bool) {
@@ -288,6 +308,5 @@ func (w *Worker) DrainOnce(ctx context.Context) (sum DrainSummary, err error) {
 	if yielded {
 		w.Wake()
 	}
-	_, err = w.o.Spool.Prune(w.o.Retention)
-	return sum, err
+	return sum, nil
 }

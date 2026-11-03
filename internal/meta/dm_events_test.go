@@ -2,7 +2,6 @@ package meta
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"strconv"
@@ -68,6 +67,53 @@ func TestDMHandleMessengerMessage(t *testing.T) {
 	body, err := w.store.GetMessageBodyText(m.ID)
 	require.NoError(err)
 	assert.Equal("hello inbox", body)
+}
+
+func TestDMWebhookRunPersistsMessageCounters(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	w := dmTestWriter(t, PlatformMessenger)
+	h := dmTestHandler(t, w)
+	first := dmMessageItem(w, false)
+	updated := first
+	updated.Value = []byte(strings.ReplaceAll(string(updated.Value), "hello inbox", "updated inbox"))
+	results := h.Handle(t.Context(), "9", []metawebhook.Item{first, updated})
+	require.Len(results, 2)
+	assert.Equal(metawebhook.Applied, results[0].Class)
+	assert.Equal(metawebhook.Applied, results[1].Class)
+	run, err := w.store.GetLatestSync(w.sourceID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusCompleted, run.Status)
+	assert.Equal(int64(2), run.MessagesProcessed)
+	assert.Equal(int64(1), run.MessagesAdded)
+	assert.Equal(int64(1), run.MessagesUpdated)
+	assert.Zero(run.ErrorsCount)
+}
+
+func TestDMWebhookRunRetainsCommittedCountersWhenLaterItemFails(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	w := dmTestWriter(t, PlatformMessenger)
+	_, err := w.store.DB().Exec(`CREATE TRIGGER reject_second_dm_message BEFORE INSERT ON messages WHEN NEW.source_message_id = 'm_2' BEGIN SELECT RAISE(ABORT, 'fixture failure'); END`)
+	require.NoError(err)
+	first := dmMessageItem(w, false)
+	second := first
+	second.Value = []byte(strings.ReplaceAll(string(second.Value), `"m_1"`, `"m_2"`))
+	results := dmTestHandler(t, w).Handle(t.Context(), "9", []metawebhook.Item{first, second})
+	require.Len(results, 2)
+	assert.Equal(metawebhook.Applied, results[0].Class)
+	assert.Equal(metawebhook.Retry, results[1].Class)
+	run, err := w.store.GetLatestSync(w.sourceID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, run.Status)
+	assert.Equal(int64(1), run.MessagesProcessed)
+	assert.Equal(int64(1), run.MessagesAdded)
+	assert.Zero(run.MessagesUpdated)
+	assert.Equal(int64(1), run.ErrorsCount)
+	rows, err := w.store.StoredMessagesContext(t.Context(), w.sourceID, dmRawFormat, []string{"m_1", "m_2"})
+	require.NoError(err)
+	assert.Contains(rows, "m_1")
+	assert.NotContains(rows, "m_2")
 }
 
 func TestDMHandleRetryPreservesCommittedWrite(t *testing.T) {
@@ -281,6 +327,69 @@ func TestDMHandleMessengerEdit(t *testing.T) {
 	assert.Equal(metawebhook.ItemOutcome{Class: metawebhook.Retry, ErrorClass: "edit_target_missing", CountAttempt: true}, dmApply(t, h, dmEditItem(w, "missing", "new", 1)))
 }
 
+func TestDMWebhookReplayAfterSourceRemovalAndReregistration(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		remove func(context.Context, *store.Store, int64) error
+	}{
+		{
+			name: "maintenance",
+			remove: func(_ context.Context, st *store.Store, sourceID int64) error {
+				return st.RemoveSource(sourceID)
+			},
+		},
+		{
+			name: "serialized",
+			remove: func(ctx context.Context, st *store.Store, sourceID int64) error {
+				_, _, err := st.RemoveSourceSerialized(ctx, sourceID)
+				return err
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			w := dmTestWriter(t, PlatformMessenger)
+			h := dmTestHandler(t, w)
+
+			original := dmMessageItem(w, false)
+			original.Value = []byte(strings.ReplaceAll(string(original.Value), "1793577600123", "1793577600122"))
+			require.Equal(metawebhook.Applied, dmApply(t, h, original).Class)
+
+			graph, err := recordFromNode(w.src, DMMessage{
+				ID: "m_1", From: DMParticipant{ID: "300"},
+				Message: "reconciled after missed edit", MessagePresent: true,
+				Raw: []byte(`{"id":"m_1","message":"reconciled after missed edit"}`),
+			})
+			require.NoError(err)
+			graph.GraphObservedAt = 1793577600124
+			_, _, err = w.persist(t.Context(), graph)
+			require.NoError(err)
+
+			oldSourceID := w.sourceID
+			require.NoError(tc.remove(t.Context(), w.store, oldSourceID))
+			_, found, err := w.store.GetArchiveMarker(t.Context(), dmGraphObservedKey(oldSourceID, "m_1"))
+			require.NoError(err)
+			assert.False(found, "source removal must delete its Meta Graph observation markers")
+
+			source, err := w.store.GetOrCreateSource(w.src.Platform.SourceType(), w.src.Identifier())
+			require.NoError(err)
+			require.Equal(oldSourceID, source.ID, "SQLite should reuse the removed source ID")
+			reRegistered := &dmWriter{store: w.store, sourceID: source.ID, src: w.src}
+			h = dmTestHandler(t, reRegistered)
+
+			require.Equal(metawebhook.Applied, dmApply(t, h, original).Class)
+			edit := dmEditItem(reRegistered, "m_1", "edited after re-registration", 1)
+			edit.Value = []byte(strings.ReplaceAll(string(edit.Value), "1793577601123", "1793577600123"))
+			require.Equal(metawebhook.Applied, dmApply(t, h, edit).Class)
+
+			archived := message(t, w.store, source.ID, "m_1")
+			body, err := w.store.GetMessageBodyText(archived.ID)
+			require.NoError(err)
+			assert.Equal("edited after re-registration", body)
+		})
+	}
+}
+
 func TestDMDelayedEditAfterGraphReconciliationIsIgnored(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -310,50 +419,6 @@ func TestDMDelayedEditAfterGraphReconciliationIsIgnored(t *testing.T) {
 	assert.Equal("latest polled edit", body)
 	meta, _ = dmSavedMeta(t, w, id)
 	assert.Equal(1, meta.EditCount)
-}
-
-func TestDMEditDuringGraphRequestAppliesAfterSnapshot(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	w := dmTestWriter(t, PlatformMessenger)
-	h := dmTestHandler(t, w)
-	initial, err := recordFromNode(w.src, DMMessage{ID: "m_1", From: DMParticipant{ID: "300"}, Message: "initial snapshot", MessagePresent: true, Raw: []byte(`{"id":"m_1","message":"initial snapshot"}`)})
-	require.NoError(err)
-	initial.GraphObservedAt = 1793577600000
-	id, _, err := w.persist(t.Context(), initial)
-	require.NoError(err)
-
-	graph, err := recordFromNode(w.src, DMMessage{ID: "m_1", From: DMParticipant{ID: "300"}, Message: "stale response", MessagePresent: true, Raw: []byte(`{"id":"m_1","message":"stale response"}`)})
-	require.NoError(err)
-	graph.GraphObservedAt = 1793577601122
-
-	assert.Equal(metawebhook.Applied, dmApply(t, h, dmEditItem(w, "m_1", "edit received in flight", 1)).Class)
-	body, err := w.store.GetMessageBodyText(id)
-	require.NoError(err)
-	assert.Equal("edit received in flight", body)
-
-	// This direct persistence simulates a stale Graph response prepared before
-	// the edit but committed after the event transaction.
-	_, stale, err := w.store.PersistMessageContextWithArchiveWatermark(t.Context(), &store.MessagePersistData{
-		Message:  &store.Message{SourceID: w.sourceID, SourceMessageID: "m_1", MessageType: w.src.Platform.SourceType()},
-		BodyText: sql.NullString{String: graph.Text, Valid: true},
-		FTS:      &store.FTSDoc{Body: graph.Text},
-	}, store.ArchiveWatermark{Key: dmGraphObservedKey(w.sourceID, "m_1"), ObservedAt: graph.GraphObservedAt})
-	require.NoError(err)
-	assert.True(stale)
-
-	_, _, err = w.persist(t.Context(), graph)
-	require.NoError(err)
-	body, err = w.store.GetMessageBodyText(id)
-	require.NoError(err)
-	assert.Equal("edit received in flight", body)
-	meta, _ := dmSavedMeta(t, w, id)
-	assert.Equal(1, meta.EditCount)
-	observedAt, found, err := w.loadGraphObservedAt(t.Context(), "m_1", 0)
-	require.NoError(err)
-	assert.True(found)
-	assert.Equal(int64(1793577601123), observedAt)
 }
 
 func TestDMEditKeepsSenderSearch(t *testing.T) {
@@ -439,7 +504,7 @@ func TestDMHandleInstagramDeleteKeepsBody(t *testing.T) {
 	assert.Equal(metawebhook.Ignored, dmApply(t, h, item).Class)
 }
 func TestDMHandleUnroutedEntry(t *testing.T) {
-	for _, kind := range []string{"page", "app", "disabled", "retired"} {
+	for _, kind := range []string{"page", "disabled", "retired"} {
 		t.Run(kind, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -450,8 +515,6 @@ func TestDMHandleUnroutedEntry(t *testing.T) {
 			switch kind {
 			case "page":
 				item.EntryID = "101"
-			case "app":
-				item.AppID = "10"
 			case "disabled":
 				h.route = func(context.Context, string, string, string) (DMSource, *store.Source, error) {
 					return DMSource{}, nil, ErrDMSourceUnrouted

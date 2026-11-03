@@ -92,7 +92,7 @@ func resolveMetaMessagesProfiles(p meta.DMPlatform, args []string, cfg *config.C
 func configuredMetaMessagesClient(p meta.DMPlatform, profile config.MetaMessagesSource) (*meta.Client, error) {
 	token := os.Getenv(profile.TokenEnv)
 	if strings.TrimSpace(token) == "" {
-		return nil, messagesError(fmt.Errorf("%s messages profile %q needs %s in the daemon environment", messagesPlatformName(p), profile.Identifier, profile.TokenEnv), 7, "set the configured token environment variable and restart the daemon")
+		return nil, messagesError(metaTokenMissingErrorf("%s messages profile %q needs %s in the daemon environment", messagesPlatformName(p), profile.Identifier, profile.TokenEnv), 7, "set the configured token environment variable and restart the daemon")
 	}
 	client, err := meta.NewClient(token)
 	return client, messagesError(err, 7, "set a valid token in the configured environment variable and restart the daemon")
@@ -155,7 +155,7 @@ func newAddMetaMessagesCmd(p meta.DMPlatform) *cobra.Command {
 			for _, profile := range profiles {
 				source, err := registerMetaMessagesProfile(cmd.Context(), st, p, profile)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("%s messages profile %s: %w", label, profile.Identifier, classifyMetaMessagesError(err)))
+					errs = append(errs, withMetaProfileContext(fmt.Sprintf("%s messages profile %s", label, profile.Identifier), classifyMetaMessagesError(err)))
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered %s inbox for %s (source %d)\n", label, profile.Identifier, source.ID)
@@ -192,6 +192,7 @@ func newSyncMetaMessagesCmd(p meta.DMPlatform) *cobra.Command {
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Saving inbox checkpoints...")
 			defer stop()
 			var errs []error
+			printedNotes := make(map[string]struct{})
 			for _, profile := range profiles {
 				if ctx.Err() != nil {
 					errs = append(errs, ctx.Err())
@@ -199,17 +200,23 @@ func newSyncMetaMessagesCmd(p meta.DMPlatform) *cobra.Command {
 				}
 				sum, err := importMetaMessagesProfile(ctx, st, p, profile, options)
 				if sum != nil {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s: threads=%d messages_added=%d requests=%d partial=%t\nNote: %s\n", label, profile.Identifier, sum.Threads, sum.MessagesAdded, sum.Requests, sum.Partial, sum.Note)
+					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s %s: threads=%d messages_added=%d requests=%d partial=%t\n", label, profile.Identifier, sum.Threads, sum.MessagesAdded, sum.Requests, sum.Partial)
+					if sum.Note != "" {
+						if _, printed := printedNotes[sum.Note]; !printed {
+							_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Note: %s\n", sum.Note)
+							printedNotes[sum.Note] = struct{}{}
+						}
+					}
 				}
 				if err != nil {
-					errs = append(errs, fmt.Errorf("%s messages profile %s: %w", label, profile.Identifier, classifyMetaMessagesError(err)))
+					errs = append(errs, withMetaProfileContext(fmt.Sprintf("%s messages profile %s", label, profile.Identifier), classifyMetaMessagesError(err)))
 				}
 			}
 			return errors.Join(errors.Join(errs...), rebuildCacheAfterManualSync(state.cfg.DatabaseDSN(), state))
 		},
 	}
 	cmd.Flags().IntVar(&options.MaxRequests, "max-requests", meta.DefaultMaxRequests, "maximum API reads per inbox, including identity checks")
-	cmd.Flags().BoolVar(&options.Full, "full", false, "restart the inbox scan with fresh cursors; preserve archived history")
+	cmd.Flags().BoolVar(&options.Full, "full", false, "rescan the inbox; preserve archived history")
 	return cmd
 }
 func registerMetaMessagesCommands(root *cobra.Command) {

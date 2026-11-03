@@ -92,6 +92,11 @@ type dmWriter struct {
 	src      DMSource
 }
 
+type dmPersistStats struct {
+	added   bool
+	updated bool
+}
+
 func dmOwner(src DMSource) string {
 	if src.Platform == PlatformInstagram {
 		return src.IGID
@@ -136,7 +141,30 @@ func dmDerivedMetadata(attachments []DMAttachment, reply *DMReplyTo) dmMetadata 
 	return m
 }
 
+func mergeDMAttachmentMetadata(current, saved []dmAttachmentMetadata) []dmAttachmentMetadata {
+	if len(current) == 0 {
+		return saved
+	}
+	if len(current) != len(saved) {
+		return current
+	}
+	for i := range current {
+		if current[i].Type != saved[i].Type {
+			return current
+		}
+	}
+	for i := range current {
+		if len(current[i].StickerID) == 0 {
+			current[i].StickerID = saved[i].StickerID
+		}
+	}
+	return current
+}
+
 func recordFromNode(src DMSource, m DMMessage) (dmRecord, error) {
+	if !safeObjectID(m.From.ID) {
+		return dmRecord{}, errors.New("direct message author ID is missing or invalid")
+	}
 	rec := dmRecord{Mid: m.ID, Text: m.Message, Raw: m.Raw, FromMe: m.From.ID == dmOwner(src), CustomerID: m.From.ID, CustomerName: m.From.Name, FreshGraphMessage: m.MessagePresent || m.Message != ""}
 	if rec.CustomerName == "" {
 		rec.CustomerName = m.From.Username
@@ -221,6 +249,13 @@ func recordFromEvent(src DMSource, e messagingEvent) (dmRecord, error) {
 }
 
 func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, error) {
+	return w.persistWithStats(ctx, rec, nil)
+}
+
+func (w *dmWriter) persistWithStats(ctx context.Context, rec dmRecord, stats *dmPersistStats) (int64, bool, error) {
+	if stats != nil {
+		*stats = dmPersistStats{}
+	}
 	if !safeObjectID(rec.Mid) || !ValidAccountID(rec.CustomerID) || rec.CustomerID == dmOwner(w.src) || (rec.ReplyToMid != "" && (!safeObjectID(rec.ReplyToMid) || rec.ReplyToMid == rec.Mid)) {
 		return 0, false, errors.New("invalid direct message identity")
 	}
@@ -302,9 +337,10 @@ func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, erro
 		if meta.ReferencedMessageID == "" {
 			meta.ReferencedMessageID = old.ReferencedMessageID
 		}
-		if len(meta.Attachments) == 0 {
-			meta.Attachments = old.Attachments
-		}
+		// Graph omits webhook-only sticker IDs. Merge them only when the
+		// attachment lists still have the same shape and order, since they have
+		// no stable identifier for matching after the projection changes.
+		meta.Attachments = mergeDMAttachmentMetadata(meta.Attachments, old.Attachments)
 		if meta.Shares == 0 {
 			meta.Shares = old.Shares
 		}
@@ -336,9 +372,6 @@ func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, erro
 		}
 		if existing.SentAt.Valid {
 			rec.SentAt = existing.SentAt.Time
-		}
-		if existing.SourceIsFromMe.Valid {
-			rec.FromMe = existing.SourceIsFromMe.Bool
 		}
 		// A Graph response without a message field does not retract archived text.
 		// Webhook replays also cannot replace a newer Graph observation, even if
@@ -383,9 +416,6 @@ func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, erro
 	if rec.FromMe {
 		sender, recipient, fromName = owner, customer, ""
 	}
-	if exists && existing.SenderID.Valid {
-		sender = existing.SenderID.Int64
-	}
 	msg := &store.Message{SourceID: w.sourceID, SourceMessageID: rec.Mid, MessageType: w.src.Platform.SourceType(), SenderID: sql.NullInt64{Int64: sender, Valid: true}, SentAt: sql.NullTime{Time: rec.SentAt, Valid: !rec.SentAt.IsZero()}, IsFromMe: rec.FromMe, Snippet: sql.NullString{String: metaMessageSnippet(rec.Text), Valid: true}, SizeEstimate: int64(len(rec.Text))}
 	blob, err := json.Marshal(meta)
 	if err != nil {
@@ -426,9 +456,26 @@ func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, erro
 		if err != nil {
 			return 0, false, err
 		}
-	} else if rec.FreshGraphMessage {
-		if err = w.saveGraphObservedAt(ctx, rec.Mid, rec.GraphObservedAt); err != nil {
-			return id, !exists, err
+		if stats != nil {
+			stats.added = !exists
+			stats.updated = exists
+		}
+	} else {
+		if rec.CustomerName != "" {
+			titles, titleErr := w.store.ConversationTitlesBatchContext(ctx, w.sourceID, []string{key})
+			if titleErr != nil {
+				return id, !exists, titleErr
+			}
+			if titles[key] != rec.CustomerName {
+				if _, err = w.store.EnsureConversationWithTypeContext(ctx, w.sourceID, key, "direct_chat", rec.CustomerName); err != nil {
+					return id, !exists, err
+				}
+			}
+		}
+		if rec.FreshGraphMessage {
+			if err = w.saveGraphObservedAt(ctx, rec.Mid, rec.GraphObservedAt); err != nil {
+				return id, !exists, err
+			}
 		}
 	}
 	ref, err := w.store.MessageConversation(id)

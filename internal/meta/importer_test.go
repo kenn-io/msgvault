@@ -188,6 +188,22 @@ func TestImportPageComments(t *testing.T) {
 	assert.Equal("edited example", body)
 }
 
+func TestImportFallbackConversationTitleOmitsProviderID(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, fixture, imp, src := setupImport(t)
+	fixture.posts[0].Message = ""
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	root := message(t, st, src.ID, "100_200")
+
+	var title string
+	require.NoError(st.DB().QueryRow(`SELECT title FROM conversations WHERE id=?`, root.ConversationID).Scan(&title))
+	assert.Equal("Facebook post", title)
+	assert.NotContains(title, "100_200")
+}
+
 func TestImportLongCommentKeepsFullBodyAndSearchWithBoundedSnippet(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -567,12 +583,18 @@ func TestImportFailureKeepsCheckpoint(t *testing.T) {
 }
 
 func TestImportTraversalRefusalKeepsPending(t *testing.T) {
-	for _, cause := range []string{"cyclic Facebook reply traversal", "bounded depth"} {
-		t.Run(cause, func(t *testing.T) {
+	for _, tc := range []struct {
+		name, want string
+		tooDeep    bool
+	}{
+		{name: "reply loop", want: "reply loop"},
+		{name: "too deep", want: "reply chain is too deep", tooDeep: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st, f, imp, src := setupImport(t)
 			blocked := "100_200"
-			if cause == "bounded depth" {
+			if tc.tooDeep {
 				parent := blocked
 				for i := 1; i <= 128; i++ {
 					blocked = "100_" + strconv.Itoa(200+i)
@@ -583,7 +605,7 @@ func TestImportTraversalRefusalKeepsPending(t *testing.T) {
 				f.comments[blocked] = []Object{*comment(blocked, blocked, "synthetic blocked object")}
 			}
 			sum, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.ErrorContains(err, cause)
+			require.ErrorContains(err, tc.want)
 			assert.Contains(err.Error(), strconv.Quote(blocked))
 			assert.NotContains(err.Error(), "synthetic-page-secret")
 			assert.NotContains(err.Error(), "synthetic blocked object")
@@ -598,7 +620,7 @@ func TestImportTraversalRefusalKeepsPending(t *testing.T) {
 			require.NotEmpty(pending)
 			assert.Equal(blocked, pending[0].ID)
 			sum, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-			require.ErrorContains(err, cause)
+			require.ErrorContains(err, tc.want)
 			assert.Contains(err.Error(), strconv.Quote(blocked))
 			assert.Zero(sum.MessagesAdded)
 			checkpoint, err = st.GetLatestCheckpointedSync(src.ID)

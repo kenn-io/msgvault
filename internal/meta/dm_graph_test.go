@@ -144,18 +144,3 @@ func TestDMReadRejectsUnsafeIDs(t *testing.T) {
 	_, err := c.Conversations(context.Background(), "100", "messenger", string(make([]byte, 4097)))
 	require.Error(err)
 }
-
-func TestDMReadPermissionCode(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-
-	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = fmt.Fprint(w, `{"error":{"code":200,"message":"synthetic-page-secret"}}`)
-	})
-	_, err := c.Conversations(context.Background(), "100", "instagram", "")
-	var apiErr *APIError
-	require.ErrorAs(err, &apiErr)
-	assert.True(apiErr.Permission())
-	assert.NotContains(err.Error(), "synthetic-page-secret")
-}

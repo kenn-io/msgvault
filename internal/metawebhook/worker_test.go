@@ -204,6 +204,47 @@ func TestPruneOnTick(t *testing.T) {
 	cancel()
 	require.NoError(<-done)
 }
+
+func TestDrainDoesNotPruneRetainedDeliveries(t *testing.T) {
+	require := require.New(t)
+	s, now := testSpool(t)
+	id := accept(t, s, feedDelivery("retained"))
+	require.NoError(s.Settle("9", id, Settlement{State: StateDone}))
+	*now = now.Add(2 * time.Hour)
+	w := NewWorker(WorkerOptions{Spool: s, Registry: NewRegistry(), Retention: time.Hour})
+
+	_, err := w.DrainOnce(t.Context())
+	require.NoError(err)
+	_, err = os.Stat(s.path("9", StateDone, id))
+	require.NoError(err)
+}
+
+func TestPruneIfDueRespectsMaintenanceInterval(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	s, now := testSpool(t)
+	first := accept(t, s, "first retained")
+	require.NoError(s.Settle("9", first, Settlement{State: StateDone}))
+	second := accept(t, s, "second retained")
+	require.NoError(s.Settle("9", second, Settlement{State: StateHeld}))
+	*now = now.Add(2 * time.Hour)
+	w := NewWorker(WorkerOptions{Spool: s, Registry: NewRegistry(), Retention: time.Hour})
+
+	require.NoError(w.pruneIfDue())
+	_, err := os.Stat(s.path("9", StateDone, first))
+	assert.True(os.IsNotExist(err))
+
+	require.NoError(s.Settle("9", second, Settlement{State: StateDone}))
+	require.NoError(w.pruneIfDue())
+	_, err = os.Stat(s.path("9", StateDone, second))
+	require.NoError(err)
+
+	*now = now.Add(spoolPruneInterval + time.Nanosecond)
+	require.NoError(w.pruneIfDue())
+	_, err = os.Stat(s.path("9", StateDone, second))
+	assert.True(os.IsNotExist(err))
+}
+
 func TestOnAppliedCalledOnlyWhenApplied(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -103,9 +103,9 @@ func TestMetaMessageEditLimitsSnippetWithoutTruncatingBody(t *testing.T) {
 	body, err := st.GetMessageBodyText(id)
 	require.NoError(err)
 	assert.Equal(text, body)
-	var hits int
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM messages_fts WHERE rowid=? AND messages_fts MATCH 'searchtailneedle'`), id).Scan(&hits))
-	assert.Equal(1, hits)
+	_, hits, err := st.SearchMessages("searchtailneedle", 0, 10)
+	require.NoError(err)
+	assert.Equal(int64(1), hits)
 }
 
 func FuzzMetaMessageEditSnippetIsBounded(f *testing.F) {

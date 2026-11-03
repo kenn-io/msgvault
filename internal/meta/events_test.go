@@ -82,15 +82,15 @@ func TestApplyFeedAddTopLevel(t *testing.T) {
 	root := message(t, st, src.ID, "100_200")
 	assert.Equal(root.ConversationID, got.ConversationID)
 	assert.Equal(root.ID, got.ReplyToMessageID.Int64)
+	require.True(got.SenderID.Valid)
+	var senderIdentifier string
+	require.NoError(st.DB().QueryRow(`SELECT identifier_value FROM participant_identifiers WHERE participant_id=? AND identifier_type=?`, got.SenderID.Int64, SourceType).Scan(&senderIdentifier))
+	assert.Equal("facebook_comments:1:9:3:100:3:300", senderIdentifier)
 
 	other, pf, poll, ps := setupImport(t)
 	pf.comments["100_200"] = []Object{*comment("100_201", "100_200", "webhook example")}
 	_, err = poll.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
-	want := message(t, other, ps.ID, "100_201")
-	assert.Equal(want.ConversationID, got.ConversationID)
-	assert.Equal(want.ReplyToMessageID, got.ReplyToMessageID)
-	assert.Equal(want.SenderID, got.SenderID)
 	assert.Equal(feedBody(t, other, ps.ID), feedBody(t, st, src.ID))
 }
 
@@ -378,6 +378,23 @@ func TestApplyFeedCanceled(t *testing.T) {
 	out, err := imp.ApplyFeedEvents(ctx, "9", "100", []FeedEvent{feedEvent("add", 10)}, EventOptions{})
 	require.ErrorIs(err, context.Canceled)
 	assert.Len(out, 1)
+	assert.False(out[0].CountAttempt)
+}
+
+func TestFeedRetryWrappedContextErrorsDoNotCountAttempt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "canceled", err: fmt.Errorf("synthetic shutdown: %w", context.Canceled)},
+		{name: "deadline exceeded", err: fmt.Errorf("synthetic request deadline: %w", context.DeadlineExceeded)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := feedRetry(tc.err)
+			assert.Equal(t, "retry", out.Class)
+			assert.False(t, out.CountAttempt)
+		})
+	}
 }
 
 func TestApplyFeedArchiveWriteFailureRetries(t *testing.T) {
@@ -389,6 +406,60 @@ func TestApplyFeedArchiveWriteFailureRetries(t *testing.T) {
 	out := applyFeed(t, imp, feedEvent("add", 10))[0]
 	assert.Equal("retry", out.Class)
 	assert.True(out.CountAttempt)
+}
+
+func TestApplyFeedRetryAfterCommittedWriteFailsRunAndKeepsCounters(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, _, imp, src := setupImport(t)
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	_, err = st.DB().Exec(`CREATE TRIGGER reject_second_feed_message BEFORE INSERT ON messages WHEN NEW.source_message_id = '100_202' BEGIN SELECT RAISE(ABORT, 'synthetic unavailable'); END`)
+	require.NoError(err)
+
+	first, second := feedEvent("add", 10), feedEvent("add", 20)
+	second.CommentID = "100_202"
+	outcomes, err := NewEventImporter(st, fixtureEventClient(t, imp)).ApplyFeedEvents(t.Context(), "9", "100", []FeedEvent{first, second}, EventOptions{})
+	require.NoError(err)
+	require.Len(outcomes, 2)
+	assert.Equal("applied", outcomes[0].Class)
+	assert.Equal("retry", outcomes[1].Class)
+	assert.True(outcomes[1].CountAttempt)
+
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusFailed, run.Status)
+	assert.EqualValues(1, run.MessagesAdded)
+	assert.EqualValues(1, run.ErrorsCount)
+	ids, err := st.MessageExistsBatch(src.ID, []string{first.CommentID, second.CommentID})
+	require.NoError(err)
+	assert.Contains(ids, first.CommentID)
+	assert.NotContains(ids, second.CommentID)
+}
+
+func TestApplyFeedBudgetRetryAfterCommittedWritePausesWithoutCountingError(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, fixture, imp, src := setupImport(t)
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	fixture.comments["100_200"] = []Object{
+		*comment("100_210", "100_200", "first ancestor"),
+		*comment("100_211", "100_210", "second ancestor"),
+	}
+	first, second := feedEvent("add", 10), feedEvent("add", 20)
+	second.CommentID, second.ParentID = "100_212", "100_211"
+	outcomes, err := NewEventImporter(st, fixtureEventClient(t, imp)).ApplyFeedEvents(t.Context(), "9", "100", []FeedEvent{first, second}, EventOptions{MaxRequests: 1})
+	require.NoError(err)
+	require.Len(outcomes, 2)
+	assert.Equal("applied", outcomes[0].Class)
+	assert.Equal("retry", outcomes[1].Class)
+	assert.Equal("request_budget", outcomes[1].ErrorClass)
+	assert.False(outcomes[1].CountAttempt)
+
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusPaused, run.Status)
+	assert.EqualValues(1, run.MessagesAdded)
+	assert.Zero(run.ErrorsCount)
 }
 
 func TestPollingVisibilityRemainsUnknownUntilWebhookEvidence(t *testing.T) {

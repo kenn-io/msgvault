@@ -110,9 +110,12 @@ type dmBackfillFixture struct {
 	denied        bool
 	expired       bool
 	missing       bool
+	omitAuthor    bool
+	fromOwner     bool
 	newer         bool
 	nodeError     *APIError
 	text          string
+	providerEmail string
 	firstUpdated  string
 	secondUpdated string
 }
@@ -161,7 +164,11 @@ func setupDMBackfill(t *testing.T, p DMPlatform, count int) (*store.Store, *dmBa
 			if r.URL.Query().Get("after") == "next" {
 				body = map[string]any{"data": []any{map[string]any{"id": "t_2", "updated_time": stamp}}}
 			} else {
-				body = map[string]any{"data": []any{map[string]any{"id": "t_1", "updated_time": first, "participants": map[string]any{"data": []any{map[string]string{"id": "300", "name": "Example Customer"}}}}}, "paging": map[string]any{"cursors": map[string]string{"after": "next"}, "next": "https://unsafe.example/not-followed"}}
+				customer := map[string]string{"id": "300", "name": "Example Customer"}
+				if f.providerEmail != "" {
+					customer["email"] = f.providerEmail
+				}
+				body = map[string]any{"data": []any{map[string]any{"id": "t_1", "updated_time": first, "participants": map[string]any{"data": []any{customer}}}}, "paging": map[string]any{"cursors": map[string]string{"after": "next"}, "next": "https://unsafe.example/not-followed"}}
 			}
 		case "/v26.0/t_1", "/v26.0/t_2":
 			ids := []any{}
@@ -186,7 +193,26 @@ func setupDMBackfill(t *testing.T, p DMPlatform, count int) (*store.Store, *dmBa
 				_, _ = fmt.Fprintf(w, `{"error":{"code":%d,"error_subcode":%d}}`, f.nodeError.Code, f.nodeError.Subcode)
 				return
 			}
-			body = map[string]any{"id": id, "from": map[string]string{"id": "300", "name": "Example Customer"}, "to": map[string]any{"data": []any{map[string]string{"id": dmOwner(src)}}}, "message": f.text, "created_time": "2026-11-01T00:00:00+0000"}
+			authorID, recipientID := "300", dmOwner(src)
+			authorName, recipientName := "Example Customer", ""
+			if f.fromOwner {
+				authorID, recipientID = dmOwner(src), "300"
+				authorName, recipientName = "Example Page", "Example Customer"
+			}
+			messageBody := map[string]any{
+				"id":           id,
+				"to":           map[string]any{"data": []any{map[string]string{"id": recipientID, "name": recipientName}}},
+				"message":      f.text,
+				"created_time": "2026-11-01T00:00:00+0000",
+			}
+			if !f.omitAuthor {
+				author := map[string]string{"id": authorID, "name": authorName}
+				if f.providerEmail != "" {
+					author["email"] = f.providerEmail
+				}
+				messageBody["from"] = author
+			}
+			body = messageBody
 		}
 		data, err := json.Marshal(body)
 		if !assert.NoError(err) {
@@ -200,6 +226,82 @@ func setupDMBackfill(t *testing.T, p DMPlatform, count int) (*store.Store, *dmBa
 	require.NoError(err)
 	f.calls = 0
 	return st, f, imp, src
+}
+
+func TestDMImportRejectsMissingAuthorAndRetriesWhenGraphProvidesIt(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, f, imp, src := setupDMBackfill(t, PlatformMessenger, 1)
+	f.omitAuthor = true
+	sum, err := imp.Import(t.Context(), src, ImportOptions{})
+	require.ErrorContains(err, "direct message author ID is missing or invalid")
+	require.NotNil(sum)
+	assert.True(sum.Partial)
+	assert.Equal(1, f.nodes["m_0"])
+
+	source, err := st.GetSourceByTypeAndIdentifier(src.Platform.SourceType(), src.Identifier())
+	require.NoError(err)
+	rows, err := st.StoredMessagesContext(t.Context(), source.ID, dmRawFormat, []string{"m_0"})
+	require.NoError(err)
+	assert.NotContains(rows, "m_0", "a participant must not be substituted for an absent author")
+
+	f.omitAuthor = false
+	f.fromOwner = true
+	sum, err = imp.Import(t.Context(), src, ImportOptions{})
+	require.NoError(err)
+	require.NotNil(sum)
+	assert.False(sum.Partial)
+	assert.Equal(1, sum.MessagesAdded)
+
+	rows, err = st.StoredMessagesContext(t.Context(), source.ID, dmRawFormat, []string{"m_0"})
+	require.NoError(err)
+	row, ok := rows["m_0"]
+	require.True(ok)
+	require.True(row.SourceIsFromMe.Valid)
+	assert.True(row.SourceIsFromMe.Bool)
+	wantOwner, err := ResolveDMActor(t.Context(), st, source.ID, src, dmOwner(src), "")
+	require.NoError(err)
+	assert.True(row.SenderID.Valid)
+	assert.Equal(wantOwner, row.SenderID.Int64)
+	conversation, err := st.MessageConversation(row.ID)
+	require.NoError(err)
+	assert.Equal("psid:300", conversation.SourceConversationID)
+}
+
+func TestDMImportAuthoritativeGraphAuthorCorrectsStoredAttribution(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st, f, imp, src := setupDMBackfill(t, PlatformMessenger, 1)
+	_, err := imp.Import(t.Context(), src, ImportOptions{})
+	require.NoError(err)
+
+	source, err := st.GetSourceByTypeAndIdentifier(src.Platform.SourceType(), src.Identifier())
+	require.NoError(err)
+	rows, err := st.StoredMessagesContext(t.Context(), source.ID, dmRawFormat, []string{"m_0"})
+	require.NoError(err)
+	prior := rows["m_0"]
+	require.True(prior.SourceIsFromMe.Valid)
+	assert.False(prior.SourceIsFromMe.Bool)
+
+	f.newer = true
+	f.fromOwner = true
+	sum, err := imp.Import(t.Context(), src, ImportOptions{})
+	require.NoError(err)
+	require.NotNil(sum)
+	assert.Equal(1, sum.MessagesAdded)
+	assert.Equal(2, sum.MessagesProcessed)
+
+	rows, err = st.StoredMessagesContext(t.Context(), source.ID, dmRawFormat, []string{"m_0"})
+	require.NoError(err)
+	current := rows["m_0"]
+	require.True(current.SourceIsFromMe.Valid)
+	assert.True(current.SourceIsFromMe.Bool)
+	wantOwner, err := ResolveDMActor(t.Context(), st, source.ID, src, dmOwner(src), "")
+	require.NoError(err)
+	assert.True(current.SenderID.Valid)
+	assert.Equal(wantOwner, current.SenderID.Int64)
 }
 
 type dmClockAdvancingAPI struct {
@@ -299,14 +401,24 @@ func TestDMImportFullRescan(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	_, f, imp, src := setupDMBackfill(t, PlatformMessenger, 2)
+	st, f, imp, src := setupDMBackfill(t, PlatformMessenger, 2)
+	f.newer = true
+	f.firstUpdated = "2026-11-01T00:00:00+0000"
+	f.secondUpdated = "2026-11-02T00:00:00+0000"
 	_, err := imp.Import(t.Context(), src, ImportOptions{})
 	require.NoError(err)
+	f.text = "full scan refreshed the old conversation"
 	sum, err := imp.Import(t.Context(), src, ImportOptions{Full: true})
 	require.NoError(err)
 	assert.False(sum.Partial)
 	assert.Zero(sum.MessagesAdded)
 	assert.Equal(2, f.nodes["m_0"])
+	source, err := st.GetSourceByTypeAndIdentifier(src.Platform.SourceType(), src.Identifier())
+	require.NoError(err)
+	m := message(t, st, source.ID, "m_0")
+	body, err := st.GetMessageBodyText(m.ID)
+	require.NoError(err)
+	assert.Equal(f.text, body)
 }
 
 func TestDMImportNodeFailureRetainsCheckpoint(t *testing.T) {
@@ -352,6 +464,9 @@ func TestDMImportPausedFullScanRefreshesRemainingNodes(t *testing.T) {
 	require := require.New(t)
 
 	st, f, imp, src := setupDMBackfill(t, PlatformMessenger, 2)
+	f.newer = true
+	f.firstUpdated = "2026-11-01T00:00:00+0000"
+	f.secondUpdated = "2026-11-02T00:00:00+0000"
 	_, err := imp.Import(t.Context(), src, ImportOptions{})
 	require.NoError(err)
 	f.text = "updated fixture text"
@@ -416,15 +531,32 @@ func TestDMImportExpiredCursor(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	_, f, imp, src := setupDMBackfill(t, PlatformMessenger, 2)
+	st, f, imp, src := setupDMBackfill(t, PlatformMessenger, 2)
+	f.newer = true
+	f.firstUpdated = "2026-11-01T00:00:00+0000"
+	f.secondUpdated = "2026-11-02T00:00:00+0000"
+	_, err := imp.Import(t.Context(), src, ImportOptions{})
+	require.NoError(err)
+	assert.Equal(1, f.nodes["m_0"])
+
 	f.expired = true
-	sum, err := imp.Import(t.Context(), src, ImportOptions{})
+	sum, err := imp.Import(t.Context(), src, ImportOptions{Full: true})
 	require.ErrorContains(err, "facebook continuation request failed")
 	assert.True(sum.Partial)
+	assert.Equal(2, f.nodes["m_0"])
+
 	f.expired = false
+	f.text = "full retry refreshed the old conversation"
 	sum, err = imp.Import(t.Context(), src, ImportOptions{Full: true})
 	require.NoError(err)
 	assert.False(sum.Partial)
+	assert.Equal(3, f.nodes["m_0"])
+	source, err := st.GetSourceByTypeAndIdentifier(src.Platform.SourceType(), src.Identifier())
+	require.NoError(err)
+	m := message(t, st, source.ID, "m_0")
+	body, err := st.GetMessageBodyText(m.ID)
+	require.NoError(err)
+	assert.Equal(f.text, body)
 }
 
 func TestDMImportPausedScanKeepsArrivalBoundary(t *testing.T) {

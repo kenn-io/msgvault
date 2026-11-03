@@ -1,7 +1,6 @@
 package meta
 
 import (
-	"encoding/json/v2"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,15 +61,18 @@ func TestDMNeverRecordsEmail(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 
-	var actor DMParticipant
-	require.NoError(json.Unmarshal([]byte(`{"id":"300","name":"Example Customer","email":"ignore@example.com"}`), &actor))
-	st := testutil.NewSQLiteTestStore(t)
-	src := DMSource{AppID: "9", PageID: "100", Platform: PlatformMessenger}
-	s, err := st.GetOrCreateSource(src.Platform.SourceType(), src.Identifier())
+	st, f, imp, src := setupDMBackfill(t, PlatformMessenger, 1)
+	f.providerEmail = "ignore@example.com"
+	sum, err := imp.Import(t.Context(), src, ImportOptions{})
 	require.NoError(err)
-	id, err := ResolveDMActor(t.Context(), st, s.ID, src, actor.ID, actor.Name)
+	require.NotNil(sum)
+	assert.Equal(1, sum.MessagesAdded)
+	assert.Equal(1, f.nodes["m_0"])
+	s, err := st.GetSourceByTypeAndIdentifier(src.Platform.SourceType(), src.Identifier())
 	require.NoError(err)
-	obs, err := st.ListParticipantObservationsContext(t.Context(), id, true)
+	m := message(t, st, s.ID, "m_0")
+	require.True(m.SenderID.Valid)
+	obs, err := st.ListParticipantObservationsContext(t.Context(), m.SenderID.Int64, true)
 	require.NoError(err)
 	require.Len(obs, 1)
 	assert.Equal(store.ContactAddressProviderIdentity, obs[0].AddressKind)

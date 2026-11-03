@@ -69,13 +69,13 @@ type AppStats struct {
 }
 
 type Spool struct {
-	mu       sync.Mutex
-	dir      string
-	maxBytes int64
-	now      func() time.Time
-	bytes    int64
-	bytesAt  time.Time
-	order    uint64
+	mu         sync.Mutex
+	dir        string
+	maxBytes   int64
+	now        func() time.Time
+	bytes      int64
+	bytesValid bool
+	order      uint64
 }
 
 func validID(id string) bool {
@@ -285,12 +285,95 @@ func OpenSpool(dir string, maxBytes int64, now func() time.Time) (*Spool, error)
 	if err := syncDir(dir); err != nil {
 		return nil, err
 	}
+	if _, err := s.reconcileBytes(); err != nil {
+		return nil, fmt.Errorf("read webhook spool byte stats: %w", err)
+	}
 	return s, nil
 }
 
-// Recover interrupted body/sidecar moves before orphan cleanup. A sidecar in
-// another state still owns the receipt order; an uncertain transition is safe
-// to retry using that same order, never as a newly received event.
+func fileBytes(paths ...string) (int64, error) {
+	var total int64
+	for _, path := range paths {
+		info, err := os.Stat(path) // #nosec G703 -- callers pass spool paths derived from validated app IDs, states, and delivery IDs.
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return 0, fmt.Errorf("inspect spool file %q: %w", path, err)
+		}
+		total += info.Size()
+	}
+	return total, nil
+}
+
+// trackFileMutation adjusts cached capacity from the affected paths only.
+// Full reconciliation normally belongs at startup and in Stats. Accept uses
+// it only to recover after an I/O failure invalidates the cached accounting.
+func (s *Spool) trackFileMutation(paths []string, mutate func() error) error {
+	if !s.bytesValid {
+		return mutate()
+	}
+	before, err := fileBytes(paths...)
+	if err != nil {
+		s.bytesValid = false
+		return err
+	}
+	mutationErr := mutate()
+	after, err := fileBytes(paths...)
+	if err != nil {
+		s.bytesValid = false
+		return errors.Join(mutationErr, err)
+	}
+	s.bytes += after - before
+	if mutationErr != nil && !errors.Is(mutationErr, fs.ErrNotExist) {
+		s.bytesValid = false
+	}
+	return mutationErr
+}
+
+func (s *Spool) writeJSONTracked(path string, value any) error {
+	return s.trackFileMutation([]string{path}, func() error { return writeJSON(path, value) })
+}
+
+func (s *Spool) writeDataTracked(path string, data []byte) error {
+	return s.trackFileMutation([]string{path}, func() error { return atomicWrite(path, data) })
+}
+
+func (s *Spool) replaceTracked(from, to string) error {
+	return s.trackFileMutation([]string{from, to}, func() error { return atomicfile.Replace(from, to) })
+}
+
+func (s *Spool) removeTracked(path string) error {
+	return s.trackFileMutation([]string{path}, func() error { return os.Remove(path) })
+}
+
+func (s *Spool) reconcileBytes() (map[string]AppStats, error) {
+	stats, err := ReadStats(s.dir)
+	if err != nil {
+		s.bytesValid = false
+		return nil, err
+	}
+	s.bytes = 0
+	for _, app := range stats {
+		s.bytes += app.Bytes
+	}
+	s.bytesValid = true
+	return stats, nil
+}
+
+func (s *Spool) requireByteAccounting() error {
+	if s.bytesValid {
+		return nil
+	}
+	if _, err := s.reconcileBytes(); err != nil {
+		return fmt.Errorf("reconcile webhook spool byte accounting: %w", err)
+	}
+	return nil
+}
+
+// Recover interrupted body/sidecar moves before orphan cleanup. If metadata
+// already names a different state, finish moving the body to that state. If
+// the body moved before its sidecar, retry it with the sidecar's receipt order.
 func (s *Spool) recoverMovedMetadata(app string) error {
 	for _, state := range states {
 		files, err := os.ReadDir(filepath.Join(s.dir, app, string(state)))
@@ -303,7 +386,16 @@ func (s *Spool) recoverMovedMetadata(app string) error {
 				continue
 			}
 			body := s.path(app, state, id)
-			if _, err := os.Stat(statePath(body)); err == nil {
+			var meta DeliveryMeta
+			err = readJSON(statePath(body), &meta)
+			if err == nil {
+				if meta.State == state || !slices.Contains(states, meta.State) {
+					continue
+				}
+				meta.ID, meta.AppID = id, app
+				if err := s.move(body, meta); err != nil {
+					return err
+				}
 				continue
 			} else if !errors.Is(err, fs.ErrNotExist) {
 				return err
@@ -389,16 +481,8 @@ func (s *Spool) Accept(app string, body []byte) (string, bool, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return "", false, err
 	}
-	if s.bytesAt.IsZero() || s.now().Sub(s.bytesAt) >= 10*time.Second {
-		stats, err := ReadStats(s.dir)
-		if err != nil {
-			return "", false, err
-		}
-		s.bytes = 0
-		for _, a := range stats {
-			s.bytes += a.Bytes
-		}
-		s.bytesAt = s.now()
+	if err := s.requireByteAccounting(); err != nil {
+		return "", false, err
 	}
 	if s.order > math.MaxUint64-maxDeliveryItems {
 		return "", false, errors.New("receipt order exhausted")
@@ -417,13 +501,16 @@ func (s *Spool) Accept(app string, body []byte) (string, bool, error) {
 	if _, err := s.reserveOrder(); err != nil {
 		return "", false, err
 	}
-	s.bytesAt = time.Time{} // Force a rescan if any subsequent write fails.
 	f, err := os.CreateTemp(filepath.Join(s.dir, app, "tmp"), "delivery-")
 	if err != nil {
 		return "", false, err
 	}
 	temp := f.Name()
-	defer func() { _ = os.Remove(temp) }() // #nosec G703 -- temp is the exact path returned by os.CreateTemp in the local spool directory.
+	defer func() {
+		if err := os.Remove(temp); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.bytesValid = false
+		}
+	}() // #nosec G703 -- temp is the exact path returned by os.CreateTemp in the local spool directory.
 	if _, err = f.Write(body); err == nil {
 		err = f.Sync()
 	}
@@ -435,19 +522,17 @@ func (s *Spool) Accept(app string, body []byte) (string, bool, error) {
 		return "", false, closeErr
 	}
 	target := s.path(app, StatePending, id)
-	if err = os.Link(temp, target); errors.Is(err, fs.ErrExist) {
+	if err = s.trackFileMutation([]string{target}, func() error { return os.Link(temp, target) }); errors.Is(err, fs.ErrExist) {
 		return id, true, nil
 	} else if err != nil {
 		return "", false, err
 	}
-	if err = atomicWrite(statePath(target), data); err != nil {
+	if err = s.writeDataTracked(statePath(target), data); err != nil {
 		return "", false, err
 	}
 	if err = syncDir(filepath.Dir(target)); err != nil {
 		return "", false, err
 	}
-	s.bytes += int64(len(body) + len(data))
-	s.bytesAt = s.now()
 	return id, false, nil
 }
 func (s *Spool) Body(app, id string) ([]byte, error) {
@@ -462,6 +547,25 @@ func (s *Spool) Body(app, id string) ([]byte, error) {
 
 func walkDeliveries(root string, fn func(string, DeliveryMeta) error) error {
 	return walkDeliveriesIgnoring(root, fn, func(error) bool { return false })
+}
+
+func walkDeliveriesInState(root string, state State, fn func(string, DeliveryMeta) error) error {
+	apps, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	for _, app := range apps {
+		if !app.IsDir() || !appPattern.MatchString(app.Name()) {
+			continue
+		}
+		if err := walkDeliveries(filepath.Join(root, app.Name(), string(state)), fn); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func walkDeliveriesIgnoring(root string, fn func(string, DeliveryMeta) error, ignoreReadError func(error) bool) error {
@@ -508,7 +612,7 @@ func (s *Spool) Due(limit int) ([]DeliveryMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []DeliveryMeta
-	err := walkDeliveries(s.dir, func(_ string, m DeliveryMeta) error {
+	err := walkDeliveriesInState(s.dir, StatePending, func(_ string, m DeliveryMeta) error {
 		if m.State == StatePending && !m.NextAttemptAt.After(s.now()) {
 			out = append(out, m)
 		}
@@ -529,18 +633,17 @@ func (s *Spool) Due(limit int) ([]DeliveryMeta, error) {
 	return out, err
 }
 func (s *Spool) move(path string, meta DeliveryMeta) error {
-	s.bytesAt = time.Time{}
 	target := s.path(meta.AppID, meta.State, meta.ID)
 	// Publish the new metadata before moving either name. In particular an
 	// explicit replay's new receipt order survives either crash boundary.
-	if err := writeJSON(statePath(path), meta); err != nil {
+	if err := s.writeJSONTracked(statePath(path), meta); err != nil {
 		return err
 	}
 	if path != target {
-		if err := atomicfile.Replace(path, target); err != nil {
+		if err := s.replaceTracked(path, target); err != nil {
 			return err
 		}
-		if err := atomicfile.Replace(statePath(path), statePath(target)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := s.replaceTracked(statePath(path), statePath(target)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
@@ -610,16 +713,16 @@ func (s *Spool) Requeue(f RequeueFilter, dry bool) (int, error) {
 func (s *Spool) Prune(retention time.Duration) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.bytesAt = time.Time{}
 	n := 0
-	err := walkDeliveries(s.dir, func(path string, m DeliveryMeta) error {
-		if m.State != StateDone || !m.ReceivedAt.Before(s.now().Add(-retention)) {
+	cutoff := s.now().Add(-retention)
+	err := walkDeliveriesInState(s.dir, StateDone, func(path string, m DeliveryMeta) error {
+		if m.State != StateDone || !m.ReceivedAt.Before(cutoff) {
 			return nil
 		}
-		if err := os.Remove(path); err != nil {
+		if err := s.removeTracked(path); err != nil {
 			return err
 		}
-		if err := os.Remove(statePath(path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := s.removeTracked(statePath(path)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 		n++
@@ -630,7 +733,7 @@ func (s *Spool) Prune(retention time.Duration) (int, error) {
 func (s *Spool) Stats() (map[string]AppStats, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return ReadStats(s.dir)
+	return s.reconcileBytes()
 }
 func ReadStats(root string) (map[string]AppStats, error) {
 	out := map[string]AppStats{}

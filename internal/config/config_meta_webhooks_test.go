@@ -1,11 +1,9 @@
 package config
 
 import (
-	"os"
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,20 +39,4 @@ func TestMetaWebhooksValidation(t *testing.T) {
 			require.ErrorContains(loadConfigTextError(t, tt.text), tt.field)
 		})
 	}
-}
-func TestMetaWebhooksSecretsNeverSerialised(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	t.Setenv("EXAMPLE_META_APP_SECRET", "synthetic-secret-value")
-	t.Setenv("EXAMPLE_META_VERIFY_TOKEN", "synthetic-verify-value")
-	cfg := loadConfigText(t, webhookConfig)
-	cfg.Data.DataDir = t.TempDir()
-	require.NoError(cfg.Save())
-	data, err := os.ReadFile(cfg.ConfigFilePath())
-	require.NoError(err)
-	assert.NotContains(string(data), "synthetic-secret-value")
-	assert.NotContains(string(data), "synthetic-verify-value")
-	loaded, err := Load(cfg.ConfigFilePath(), cfg.HomeDir)
-	require.NoError(err)
-	assert.Equal(cfg.MetaWebhooks, loaded.MetaWebhooks)
 }

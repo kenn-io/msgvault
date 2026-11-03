@@ -21,6 +21,27 @@ var (
 	rebuildFacebookCommentsCacheAfterScheduledSync = rebuildCacheAfterScheduledSync
 )
 
+type missingMetaTokenError struct {
+	err error
+}
+
+func (e *missingMetaTokenError) Error() string { return e.err.Error() }
+func (e *missingMetaTokenError) Unwrap() error { return e.err }
+
+func metaTokenMissingErrorf(format string, args ...any) error {
+	return &missingMetaTokenError{err: fmt.Errorf(format, args...)}
+}
+
+func withMetaProfileContext(prefix string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if _, ok := errors.AsType[*missingMetaTokenError](err); ok {
+		return err
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
+}
+
 func resolveFacebookCommentsProfiles(args []string, cfg *config.Config) ([]config.FacebookCommentsSource, error) {
 	if len(args) > 0 {
 		source := cfg.GetFacebookCommentsSource(args[0])
@@ -38,7 +59,7 @@ func resolveFacebookCommentsProfiles(args []string, cfg *config.Config) ([]confi
 func configuredFacebookCommentsClient(source config.FacebookCommentsSource) (*meta.Client, error) {
 	token := os.Getenv(source.TokenEnv)
 	if strings.TrimSpace(token) == "" {
-		return nil, &sourceCommandError{err: fmt.Errorf("facebook profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
+		return nil, &sourceCommandError{err: metaTokenMissingErrorf("facebook profile %q needs %s in the daemon environment", source.Identifier, source.TokenEnv), code: 7, hint: "set the named credential in the daemon environment and restart the daemon"}
 	}
 	client, err := meta.NewClient(token)
 	if err != nil {
@@ -109,7 +130,7 @@ func newAddFacebookCommentsCmd() *cobra.Command {
 			for _, profile := range profiles {
 				source, err := registerFacebookCommentsProfile(cmd.Context(), st, profile)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("facebook profile %s: %w", profile.Identifier, err))
+					errs = append(errs, withMetaProfileContext("facebook profile "+profile.Identifier, err))
 					continue
 				}
 				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Facebook Page %s for %s (source %d)\n", profile.PageID, profile.Identifier, source.ID)
@@ -123,7 +144,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Facebook Page comments and nested replies",
-		Long: "Includes available organic, visitor and ad posts. Tokens come from the daemon environment. Partial imports stay searchable and resume on the next sync; missing or inaccessible objects never delete archived history.",
+		Long: "Includes available organic, visitor and ad Facebook Page posts. Tokens come from the daemon environment. Partial imports stay searchable and resume on the next sync; missing or inaccessible objects never delete archived history.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))
@@ -156,11 +177,11 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 				if sum != nil {
 					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Facebook %s: %d messages processed (%d added), %d requests\n", profile.Identifier, sum.MessagesProcessed, sum.MessagesAdded, sum.Requests)
 					if sum.Partial {
-						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; unfinished surfaces resume on the next sync.")
+						_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Partial coverage; sync again to continue.")
 					}
 				}
 				if err != nil {
-					errs = append(errs, fmt.Errorf("facebook profile %s: %w", profile.Identifier, err))
+					errs = append(errs, withMetaProfileContext("facebook profile "+profile.Identifier, err))
 				}
 			}
 			// Refresh accepted partial writes even after cancellation/provider errors.
@@ -168,7 +189,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&options.MaxRequests, "max-requests", meta.DefaultMaxRequests, "maximum API reads per Page, including identity checks")
-	cmd.Flags().BoolVar(&options.Full, "full", false, "restart selected source scans with fresh cursors; preserve and update archived rows")
+	cmd.Flags().BoolVar(&options.Full, "full", false, "rescan selected sources; preserve and update archived messages")
 	return cmd
 }
 

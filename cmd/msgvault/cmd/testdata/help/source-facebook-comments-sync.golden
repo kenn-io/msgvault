@@ -1,11 +1,11 @@
-Includes available organic, visitor and ad posts. Tokens come from the daemon environment. Partial imports stay searchable and resume on the next sync; missing or inaccessible objects never delete archived history.
+Includes available organic, visitor and ad Facebook Page posts. Tokens come from the daemon environment. Partial imports stay searchable and resume on the next sync; missing or inaccessible objects never delete archived history.
 
 Usage:
   msgvault source facebook-comments sync [identifier] [flags]
 
 Flags:
       --build-cache        refresh analytics cache after this sync
-      --full               restart selected source scans with fresh cursors; preserve and update archived rows
+      --full               rescan selected sources; preserve and update archived messages
   -h, --help               help for sync
       --max-requests int   maximum API reads per Page, including identity checks (default 1000)
       --no-build-cache     skip analytics cache refresh after this sync

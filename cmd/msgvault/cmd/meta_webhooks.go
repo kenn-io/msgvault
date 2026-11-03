@@ -100,7 +100,8 @@ func subscriptionError(err error, fields []string) error {
 		if messengerFields(fields) {
 			permissions += " and pages_messaging"
 		}
-		return fmt.Errorf("meta refused subscribed_apps (code %d): the Page token needs %s from a person with a MODERATE task on the Page", apiErr.Code, permissions)
+		//nolint:revive,staticcheck // error-strings: this user-facing sentence follows review's exact wording.
+		return fmt.Errorf("Page token needs %s from someone with the Page's MODERATE task (code %d).", permissions, apiErr.Code)
 	}
 	return err
 }
@@ -270,7 +271,7 @@ func metaWebhooksStatus(ctx context.Context, cfg *config.Config, st *store.Store
 	}
 	stats, err := metawebhook.ReadStats(root)
 	if err != nil {
-		report.Errors = append(report.Errors, "spool statistics unavailable")
+		report.Errors = append(report.Errors, "delivery storage statistics unavailable")
 	}
 	if stats == nil {
 		stats = map[string]metawebhook.AppStats{}
@@ -338,7 +339,7 @@ func newMetaWebhooksStatusCmd() *cobra.Command {
 		if asJSON {
 			return writeWebhookJSON(cmd, report)
 		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Receiver: %s %s\nSpool: %d / %d bytes\n", report.Listener, report.Addr, report.SpoolBytes, report.MaxSpoolBytes)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Receiver: %s %s\nDelivery storage: %d / %d bytes\n", report.Listener, report.Addr, report.SpoolBytes, report.MaxSpoolBytes)
 		if report.DisabledReason != "" {
 			_, _ = fmt.Fprintln(cmd.OutOrStdout(), report.DisabledReason)
 		}

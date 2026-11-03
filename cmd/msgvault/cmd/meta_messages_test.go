@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -116,6 +117,14 @@ func TestSyncInstagramMessagesFlags(t *testing.T) {
 	cmd = newSyncMetaMessagesCmd(meta.PlatformInstagram)
 	cmd.SetArgs([]string{"--max-requests", "0"})
 	require.ErrorContains(cmd.Execute(), "positive")
+
+	help := newSyncMetaMessagesCmd(meta.PlatformInstagram)
+	var helpOutput bytes.Buffer
+	help.SetOut(&helpOutput)
+	help.SetErr(&helpOutput)
+	help.SetArgs([]string{"--help"})
+	require.NoError(help.Execute())
+	assert.Contains(helpOutput.String(), "rescan the inbox; preserve archived history")
 }
 func TestMetaMessagesMissingTokenEnv(t *testing.T) {
 	for _, p := range []meta.DMPlatform{meta.PlatformMessenger, meta.PlatformInstagram} {
@@ -154,8 +163,12 @@ func TestMetaMessagesMissingTokenEnv(t *testing.T) {
 			cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
 			cmd.SetArgs([]string{})
 			err := cmd.Execute()
-			require.Error(err)
-			assert.Contains(err.Error(), label+` messages profile "example" needs EXAMPLE_INBOX_TOKEN in the daemon environment`)
+			want := label + ` messages profile "example" needs EXAMPLE_INBOX_TOKEN in the daemon environment`
+			require.EqualError(err, want)
+
+			syncCmd := newSyncMetaMessagesCmd(p)
+			syncCmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			require.EqualError(syncCmd.RunE(syncCmd, nil), want)
 		})
 	}
 }
@@ -197,17 +210,27 @@ func TestMetaMessagesCommandArchivesFixture(t *testing.T) {
 
 	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
 	t.Setenv("EXAMPLE_INBOX_TOKEN", "synthetic-inbox-token")
+	t.Setenv("EXAMPLE_INBOX_TOKEN_TWO", "synthetic-inbox-token-two")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal("Bearer synthetic-inbox-token", r.Header.Get("Authorization"))
+		pageID, threadID, messageID, senderID := "100", "t_1", "m_1", "300"
+		switch r.Header.Get("Authorization") {
+		case "Bearer synthetic-inbox-token":
+		case "Bearer synthetic-inbox-token-two":
+			pageID, threadID, messageID, senderID = "101", "t_2", "m_2", "301"
+		default:
+			assert.Fail("unexpected Graph fixture authorization", r.Header.Get("Authorization"))
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		switch r.URL.Path {
 		case "/v26.0/me":
-			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
-		case "/v26.0/100/conversations":
-			_, _ = fmt.Fprint(w, `{"data":[{"id":"t_1","updated_time":"2026-11-02T00:00:00Z"}]}`)
-		case "/v26.0/t_1":
-			_, _ = fmt.Fprint(w, `{"messages":{"data":[{"id":"m_1"}]}}`)
-		case "/v26.0/m_1":
-			_, _ = fmt.Fprint(w, `{"id":"m_1","created_time":"2026-11-02T00:00:00Z","from":{"id":"300"},"to":{"data":[{"id":"100"}]},"message":"command inbox fixture"}`)
+			_, _ = fmt.Fprintf(w, `{"id":%q,"name":"Example Page","category":"Community"}`, pageID)
+		case "/v26.0/" + pageID + "/conversations":
+			_, _ = fmt.Fprintf(w, `{"data":[{"id":%q,"updated_time":"2026-11-02T00:00:00Z"}]}`, threadID)
+		case "/v26.0/" + threadID:
+			_, _ = fmt.Fprintf(w, `{"messages":{"data":[{"id":%q}]}}`, messageID)
+		case "/v26.0/" + messageID:
+			_, _ = fmt.Fprintf(w, `{"id":%q,"created_time":"2026-11-02T00:00:00Z","from":{"id":%q},"to":{"data":[{"id":%q}]},"message":"command inbox fixture"}`, messageID, senderID, pageID)
 		default:
 			assert.Fail("unexpected Graph fixture request", r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -232,7 +255,10 @@ func TestMetaMessagesCommandArchivesFixture(t *testing.T) {
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Analytics.Engine = config.AnalyticsEngineSQL
 	cfg.Vector.Enabled = false
-	cfg.FacebookMessages = []config.MetaMessagesSource{{Identifier: "example", AppID: "9", PageID: "100", TokenEnv: "EXAMPLE_INBOX_TOKEN"}}
+	cfg.FacebookMessages = []config.MetaMessagesSource{
+		{Identifier: "example", AppID: "9", PageID: "100", TokenEnv: "EXAMPLE_INBOX_TOKEN"},
+		{Identifier: "example-two", AppID: "9", PageID: "101", TokenEnv: "EXAMPLE_INBOX_TOKEN_TWO"},
+	}
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	// An unregistered configured inbox fails before any provider request.
 	missing := messagesTestCommand()
@@ -267,8 +293,13 @@ func TestMetaMessagesCommandArchivesFixture(t *testing.T) {
 	text, err := st.GetMessageBodyText(rows["m_1"])
 	require.NoError(err)
 	assert.Equal("command inbox fixture", text)
-	assert.Contains(output.String(), "messages_added=1")
-	assert.Contains(output.String(), "backfill covers at most the 20 most recent messages per thread")
+	secondSource, err := st.GetSourceByTypeAndIdentifier(meta.SourceTypeFacebookMessages, "app:9:page:101")
+	require.NoError(err)
+	secondRows, err := st.MessageExistsBatch(secondSource.ID, []string{"m_2"})
+	require.NoError(err)
+	require.NotZero(secondRows["m_2"])
+	assert.Equal(2, strings.Count(output.String(), "messages_added=1"))
+	assert.Equal(1, strings.Count(output.String(), "backfill covers at most the 20 most recent messages per thread"))
 }
 
 func TestMetaMessagesGroupedRegistration(t *testing.T) {

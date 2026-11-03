@@ -333,6 +333,15 @@ func (s *Store) RemoveSourceSerialized(
 			return hadActiveSync, 0, fmt.Errorf("delete FTS rows: %w", err)
 		}
 	}
+	if err := s.deleteMetaDMGraphObservationMarkersContext(
+		ctx,
+		func(ctx context.Context, query string, args ...any) (sql.Result, error) {
+			return conn.ExecContext(ctx, s.dialect.Rebind(query), args...)
+		},
+		sourceID,
+	); err != nil {
+		return hadActiveSync, 0, err
+	}
 	if err := s.deleteSourceObservationIdentityCandidatesContext(
 		ctx, conn, sourceID,
 	); err != nil {
@@ -442,6 +451,9 @@ func (s *Store) removeSourceExec(
 			return fmt.Errorf("delete FTS rows: %w", err)
 		}
 	}
+	if err := s.deleteMetaDMGraphObservationMarkersContext(ctx, tx.ExecContext, sourceID); err != nil {
+		return err
+	}
 	if err := s.deleteSourceObservationIdentityCandidatesContext(
 		ctx, tx, sourceID,
 	); err != nil {
@@ -472,6 +484,16 @@ func (s *Store) removeSourceExec(
 // connection.
 type sourceIdentityQuery func(context.Context, string, ...any) (rowsScanner, error)
 type sourceIdentityExec func(context.Context, string, ...any) (sql.Result, error)
+
+func (s *Store) deleteMetaDMGraphObservationMarkersContext(
+	ctx context.Context, exec sourceIdentityExec, sourceID int64,
+) error {
+	prefix := fmt.Sprintf("meta.dm_graph_observed:%d:", sourceID)
+	if _, err := exec(ctx, `DELETE FROM archive_metadata WHERE key LIKE ?`, prefix+"%"); err != nil {
+		return fmt.Errorf("delete Meta inbox Graph observation markers for source %d: %w", sourceID, err)
+	}
+	return nil
+}
 
 // currentCandidateObservationPairSQL verifies the conjunctive observation
 // behind Beeper's generated participant matches. It deliberately derives the

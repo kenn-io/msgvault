@@ -88,7 +88,7 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	require.Error(err)
 	assert.Contains(err.Error(), "instagram profile example-account")
 	assert.Contains(err.Error(), "instagram profile second")
-	assert.Contains(output.String(), "Partial coverage")
+	assert.Contains(output.String(), "Partial coverage; sync again to continue.")
 	for _, source := range cfg.InstagramComments {
 		row, err := st.GetSourceByTypeAndIdentifier(meta.InstagramSourceType, meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID))
 		require.NoError(err)
@@ -122,6 +122,27 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	require.NoError(sched.TriggerJob(job))
 	assert.Equal(1, calls)
 	require.Error(sched.TriggerJob("instagram_comments:example-account"))
+}
+
+func TestInstagramCommentsMissingTokenErrorsAvoidDuplicateProfileContext(t *testing.T) {
+	require := require.New(t)
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	profile := config.InstagramCommentsSource{Identifier: "example-account", AppID: "9", PageID: "100", InstagramAccountID: "200", TokenEnv: "EXAMPLE_INSTAGRAM_PAGE_TOKEN", Enabled: true}
+	t.Setenv(profile.TokenEnv, "")
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Data.DataDir = t.TempDir()
+	cfg.InstagramComments = []config.InstagramCommentsSource{profile}
+	want := `instagram profile "example-account" needs EXAMPLE_INSTAGRAM_PAGE_TOKEN in the daemon environment`
+
+	for _, action := range []string{"add", "sync"} {
+		var cmd = newAddInstagramCommentsCmd()
+		if action == "sync" {
+			cmd = newSyncInstagramCommentsCmd()
+		}
+		cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+		err := cmd.RunE(cmd, nil)
+		require.EqualError(err, want, action)
+	}
 }
 
 func TestInstagramScheduledTextSyncDoesNotWaitForAttachmentMaintenance(t *testing.T) {

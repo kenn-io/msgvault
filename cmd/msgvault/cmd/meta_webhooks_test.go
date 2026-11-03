@@ -171,8 +171,7 @@ func TestSubscribePermissionNamedError(t *testing.T) {
 		_, _ = fmt.Fprint(w, `{"error":{"code":200,"message":"synthetic-page-token"}}`)
 	})
 	_, err := subscribeMetaWebhooks(t.Context(), cfg, nil, []string{"feed"}, false, meta.NewClient)
-	require.ErrorContains(err, "pages_manage_metadata")
-	assert.Contains(err.Error(), "pages_show_list")
+	require.ErrorContains(err, "Page token needs pages_manage_metadata and pages_show_list from someone with the Page's MODERATE task (code 200).")
 	assert.NotContains(err.Error(), "synthetic-page-token")
 }
 
@@ -263,6 +262,20 @@ func TestStatusStaleSnapshot(t *testing.T) {
 		report := metaWebhooksStatus(t.Context(), cfg, nil)
 		assert.Equal("daemon not running or no snapshot", report.Listener)
 	}
+}
+
+func TestStatusCommandLabelsDeliveryStorage(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	cfg := webhookTestConfig(t)
+	cfg.MetaWebhooks.MaxSpoolBytes = 12345
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	command := newMetaWebhooksStatusCmd()
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	require.NoError(command.RunE(command, nil))
+	assert.Contains(out.String(), "Delivery storage: 0 / 12345 bytes")
+	assert.NotContains(strings.ToLower(out.String()), "spool")
 }
 
 func TestReplayFiltersAndDryRun(t *testing.T) {
