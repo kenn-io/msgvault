@@ -9,6 +9,11 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
+- [Facebook comment replies](usage/facebook-comments.md#public-and-private-replies)
+  send public replies or one private message within seven days through the CLI,
+  HTTP API, and MCP after explicit opt-in and confirmation. Receipts prevent
+  duplicate sends and preserve uncertain outcomes for manual resolution.
+
 - [Facebook comment actions](usage/facebook-comments.md#comment-actions) hide,
   unhide, or delete archived comments through owner-only CLI, HTTP API, and MCP
   tools after explicit profile opt-in. Delete keeps archive history; receipts

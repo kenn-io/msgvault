@@ -222,7 +222,7 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			require.NoError(st.DB().QueryRow(`SELECT title FROM conversations WHERE id=?`, root.ConversationID).Scan(&title))
 			wantTitle := "Synthetic caption"
 			if owner == "missing" {
-				wantTitle = "Instagram media 300"
+				wantTitle = "Instagram media"
 			}
 			assert.Equal(wantTitle, title)
 			var media IGMedia

@@ -42,13 +42,13 @@ func configuredInstagramCommentsClient(source config.InstagramCommentsSource) (*
 	return client, nil
 }
 
-func registerInstagramCommentsProfile(ctx context.Context, st *store.Store, source config.InstagramCommentsSource) (*store.Source, error) {
+func registerInstagramCommentsProfile(ctx context.Context, st *store.Store, source config.InstagramCommentsSource) error {
 	client, err := configuredInstagramCommentsClient(source)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	registered, err := meta.NewImporter(st, client).RegisterInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID)
-	return registered, metaSourceStateError(err, "instagram-comments")
+	_, err = meta.NewImporter(st, client).RegisterInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID)
+	return metaSourceStateError(err, "instagram-comments")
 }
 
 func importInstagramCommentsProfile(ctx context.Context, st *store.Store, source config.InstagramCommentsSource, options meta.ImportOptions) (sum *meta.ImportSummary, err error) {
@@ -82,7 +82,7 @@ func registerScheduledInstagramCommentsJob(sched *scheduler.Scheduler, source co
 func newAddInstagramCommentsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use: "add [identifier]", Short: "Register a linked Instagram account",
-		Long: "Verify Page identity and linked professional account, then register selected [[instagram_comments]] profiles. With no identifier, register all configured profiles. The Page token is read only from the named daemon environment variable.",
+		Long: "Register configured Instagram professional accounts.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -102,12 +102,12 @@ func newAddInstagramCommentsCmd() *cobra.Command {
 			defer cleanup()
 			var errs []error
 			for _, profile := range profiles {
-				source, err := registerInstagramCommentsProfile(cmd.Context(), st, profile)
+				err := registerInstagramCommentsProfile(cmd.Context(), st, profile)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("instagram profile %s: %w", profile.Identifier, err))
 					continue
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Instagram professional account %s for %s (source %d)\n", profile.InstagramAccountID, profile.Identifier, source.ID)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Instagram professional account: %s\n", profile.Identifier)
 			}
 			return errors.Join(errors.Join(errs...), runPostSourceCreateMigrationsForInvocation(st, state))
 		},
@@ -118,7 +118,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Instagram comments and replies",
-		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; ordinary media discovery does not promise ad-only coverage. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
+		Long: "Sync registered Instagram professional accounts.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))
@@ -139,7 +139,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Saving Instagram comment checkpoints...")
+			ctx, stop := withInterruptCancel(cmd, "\nInterrupted.")
 			defer stop()
 			var errs []error
 			for _, profile := range profiles {
@@ -163,7 +163,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&options.MaxRequests, "max-requests", meta.DefaultMaxRequests, "maximum API reads per account, including Page and linkage checks")
-	cmd.Flags().BoolVar(&options.Full, "full", false, "restart selected source scans with fresh cursors; preserve and update archived rows")
+	cmd.Flags().BoolVar(&options.Full, "full", false, "Rescan selected sources; preserve archived history")
 	return cmd
 }
 

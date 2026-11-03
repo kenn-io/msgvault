@@ -15,6 +15,8 @@ import (
 const rawFormat = "facebook-comment-json"
 const objectMetadataVersion = 1
 
+var errInvalidObject = errors.New("invalid comment object")
+
 type objectMetadata struct {
 	BodyReadRequest    int    `json:"body_read_request,omitempty"`
 	BodySyncID         int64  `json:"body_sync_id,omitempty"`
@@ -48,6 +50,15 @@ func (r *importRun) objectFormat() string {
 		return "instagram-comment-json"
 	}
 	return rawFormat
+}
+
+// fallbackConversationTitle provides a readable label without exposing a
+// provider object's internal ID.
+func fallbackConversationTitle(_ string, instagram bool) string {
+	if instagram {
+		return "Instagram media"
+	}
+	return "Facebook post"
 }
 
 func (r *importRun) persist(ctx context.Context, obj Object, root, parent string, edge PostEdge) error {
@@ -217,10 +228,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	if parent == "" {
 		title = obj.Message
 		if title == "" {
-			title = "Facebook post " + root
-			if r.imp.instagram != "" {
-				title = "Instagram media " + root
-			}
+			title = fallbackConversationTitle(root, r.imp.instagram != "")
 		}
 	}
 	msg := &store.Message{SourceID: r.source.ID, SourceMessageID: obj.ID, MessageType: r.imp.sourceType(),
@@ -339,4 +347,26 @@ func (r *importRun) snapshotMatches(ctx context.Context, prior store.StoredMessa
 		return matches, err
 	}
 	return r.imp.store.MessageRecipientsMatchContext(ctx, prior.ID, data.Recipients)
+}
+
+func (imp *Importer) ArchiveReply(ctx context.Context, app, page string, obj Object, root string) (int64, error) {
+	if !safeObjectID(obj.ID) || obj.CreatedTime == "" || obj.Parent == nil || !safeObjectID(obj.Parent.ID) {
+		return 0, errInvalidObject
+	}
+	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, SourceIdentifier(app, page))
+	if err != nil {
+		return 0, err
+	}
+	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
+		return 0, store.ErrSourceRetired
+	}
+	run := importRun{imp: imp, app: app, page: page, source: source, sum: &ImportSummary{}}
+	if err = run.persist(ctx, obj, root, "", ""); err != nil {
+		return 0, err
+	}
+	rows, err := imp.store.StoredMessagesContext(ctx, source.ID, rawFormat, []string{obj.ID})
+	if err != nil {
+		return 0, err
+	}
+	return rows[obj.ID].ID, nil
 }

@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
@@ -109,6 +110,54 @@ func TestCommentQueueFiltersAndOrder(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(rows)
 }
+
+func TestCommentQueueOrdersAndPagesTimestampOffsets(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, c, root := queueFixture(t)
+	if st.IsPostgreSQL() {
+		t.Skip("SQLite timestamp offset ordering regression")
+	}
+	var conversationID int64
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT conversation_id FROM messages WHERE id=?"), root).Scan(&conversationID))
+
+	messageIDs := make([]int64, 4)
+	for i := range messageIDs {
+		id, err := st.UpsertMessage(&store.Message{
+			SourceID: c.SourceID, ConversationID: conversationID,
+			SourceMessageID:  fmt.Sprintf("100_200_%d", 600+i),
+			MessageType:      "facebook_comments",
+			ReplyToMessageID: sql.NullInt64{Int64: root, Valid: true},
+			SentAt:           sql.NullTime{Time: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC), Valid: true},
+		})
+		require.NoError(err)
+		messageIDs[i] = id
+	}
+	for i, sentAt := range []string{
+		"2026-11-01T11:00:00-07:00", // 18:00Z
+		"2026-11-01T12:00:00Z",
+		"2026-11-01T18:00:00Z", // Same instant as messageIDs[0].
+		"2026-11-01T17:30:00Z",
+	} {
+		_, err := st.DB().Exec(st.Rebind("UPDATE messages SET sent_at=? WHERE id=?"), sentAt, messageIDs[i])
+		require.NoError(err)
+	}
+
+	filter := store.CommentQueueFilter{MessageTypes: []string{"facebook_comments"}, Limit: 1}
+	var got []int64
+	for range len(messageIDs) + 2 {
+		rows, err := st.ListCommentQueueContext(t.Context(), filter)
+		require.NoError(err)
+		if len(rows) == 0 {
+			break
+		}
+		require.Len(rows, 1)
+		got = append(got, rows[0].MessageID)
+		filter.BeforeID = rows[0].MessageID
+	}
+	assert.Equal([]int64{c.MessageID, messageIDs[1], messageIDs[3], messageIDs[0], messageIDs[2]}, got)
+}
+
 func TestCommentQueueSearchLabel(t *testing.T) {
 	require := require.New(t)
 	st, c, _ := queueFixture(t)

@@ -249,7 +249,7 @@ func TestServeCommentActionVerifiesPageBeforeDispatch(t *testing.T) {
 	_, err = a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionHide}, nil)
 	var failure *meta.ActionError
 	requirements.ErrorAs(err, &failure)
-	assertions.Equal("credential_unavailable", failure.Code)
+	assertions.Equal("provider_rejected", failure.Code)
 	assertions.Equal(1, reads)
 	assertions.Zero(writes)
 	rows, err := a.ListCommentActions(t.Context(), id)
@@ -267,4 +267,56 @@ func TestServeCommentActionVerifiesPageBeforeDispatch(t *testing.T) {
 	assertions.Equal("succeeded", resolved.Receipt.State)
 	assertions.Equal(2, reads)
 	assertions.Equal(1, writes)
+}
+
+func TestServeCommentActionPreservesPageVerificationErrors(t *testing.T) { //nolint:paralleltest // intercepts the Graph transport
+	for _, tc := range []struct {
+		name         string
+		body         string
+		code         string
+		abuseWarning bool
+	}{
+		{name: "expired token", body: `{"error":{"code":190,"error_subcode":463}}`, code: "token_invalid"},
+		{name: "abuse rate limit", body: `{"error":{"code":613,"error_subcode":2018338}}`, code: "rate_limited", abuseWarning: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			a, id := commentAdapterFixture(t)
+			t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "synthetic-page-token")
+			reads, writes := 0, 0
+			original := http.DefaultTransport
+			t.Cleanup(func() { http.DefaultTransport = original })
+			http.DefaultTransport = testTransport(func(r *http.Request) (*http.Response, error) {
+				if r.URL.Host != "graph.facebook.com" {
+					return nil, errors.New("unexpected fixture host")
+				}
+				if r.Method == http.MethodGet {
+					reads++
+					assertions.Equal("/v26.0/me", r.URL.Path)
+				} else {
+					writes++
+				}
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Header:     http.Header{"Content-Type": {"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(tc.body)),
+				}, nil
+			})
+
+			got, err := a.RunCommentAction(t.Context(), id, meta.ActionRequest{Action: meta.ActionHide}, nil)
+			requirements.Error(err)
+			requirements.NotNil(got)
+			assertions.Nil(got.Receipt)
+			var failure *meta.ActionError
+			requirements.ErrorAs(err, &failure)
+			assertions.Equal(tc.code, failure.Code)
+			assertions.Equal(tc.abuseWarning, failure.AbuseWarning)
+			assertions.Equal(1, reads)
+			assertions.Zero(writes)
+			rows, listErr := a.ListCommentActions(t.Context(), id)
+			requirements.NoError(listErr)
+			assertions.Empty(rows)
+		})
+	}
 }

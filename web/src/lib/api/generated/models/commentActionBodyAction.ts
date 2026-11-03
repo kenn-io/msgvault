@@ -9,4 +9,6 @@ export const CommentActionBodyAction = {
   hide: "hide",
   unhide: "unhide",
   delete: "delete",
+  public_reply: "public_reply",
+  private_reply: "private_reply",
 } as const;

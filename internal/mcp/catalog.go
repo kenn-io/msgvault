@@ -229,6 +229,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		getAttachmentDefinition(nil),
 		getMessageDefinition(nil),
 		commentToolDefinition(ToolModerateComment),
+		commentToolDefinition(ToolReplyToComment),
 		commentToolDefinition(ToolUpdateCommentTriage),
 		commentToolDefinition(ToolListCommentQueue),
 		commentToolDefinition(ToolListCommentActions),

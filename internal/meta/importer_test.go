@@ -145,6 +145,19 @@ func TestImportPageComments(t *testing.T) {
 	assert.Equal("edited example", body)
 }
 
+func TestImportFallbackConversationTitleOmitsProviderID(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, f, imp, src := setupImport(t)
+	f.posts[0].Message = ""
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	root := message(t, st, src.ID, "100_200")
+	var title string
+	require.NoError(st.DB().QueryRow(`SELECT title FROM conversations WHERE id=?`, root.ConversationID).Scan(&title))
+	assert.Equal("Facebook post", title)
+	assert.NotContains(title, "100_200")
+}
+
 func TestImportCachedOrganicCommentKeepsNewerSameRunAdSnapshot(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, fixture, imp, src := setupImport(t)
@@ -1116,8 +1129,12 @@ func TestTriageSurvivesImportReplay(t *testing.T) {
 	id := message(t, st, src.ID, "100_200_300").ID
 	_, err = st.SetCommentTriageContext(t.Context(), id, store.CommentTriageHandled, nil)
 	require.NoError(err)
+	f.comments["100_200"][0].Message = "Updated example comment"
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{Full: true})
 	require.NoError(err)
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Equal(t, "Updated example comment", body)
 	got, err := st.CommentTriageContext(t.Context(), id)
 	require.NoError(err)
 	assert.Equal(t, store.CommentTriageHandled, got)

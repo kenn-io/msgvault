@@ -77,7 +77,7 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(st.Close()) })
 	require.NoError(st.InitSchema())
 	for _, source := range cfg.InstagramComments {
-		_, err := registerInstagramCommentsProfile(t.Context(), st, source)
+		err := registerInstagramCommentsProfile(t.Context(), st, source)
 		require.NoError(err)
 	}
 	cmd := newSyncInstagramCommentsCmd()
@@ -102,8 +102,9 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	add := newAddInstagramCommentsCmd()
 	add.SetOut(&output)
 	add.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	output.Reset()
 	require.NoError(add.RunE(add, []string{"EXAMPLE-ACCOUNT"}))
-	assert.Contains(output.String(), "Registered Instagram professional account 200")
+	assert.Equal("Registered Instagram professional account: example-account\n", output.String())
 	for _, action := range []string{"add", "sync"} {
 		leaf, _, err := rootCmd.Find([]string{"source", "instagram-comments", action})
 		require.NoError(err)

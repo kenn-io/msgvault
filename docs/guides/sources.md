@@ -46,7 +46,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger, Telegram | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 
-Use `msgvault comment moderate`, `comment triage`, `comment queue`, and
+Use `msgvault comment reply`, `comment moderate`, `comment triage`, `comment queue`, and
 `comment actions` for archived Facebook comments. See the
 [comment workflow](../usage/facebook-comments.md#comment-actions) for opt-ins,
 confirmation and uncertain outcomes.
