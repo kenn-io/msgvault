@@ -54,6 +54,8 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
 test('calendar heading clears the graph and uses the touch type scale', async ({ page }) => {
   await openCalendar(page);
   const calendar = page.getByRole('region', { name: 'Relationship activity calendar' });
+  // The card shows before the activity loads; measure the loaded calendar.
+  await expect(calendar.locator('.calendar-graphs')).toBeVisible();
   const geometry = await calendar.evaluate((element) => {
     const heading = element.querySelector('.calendar-heading')!.getBoundingClientRect();
     const graphs = element.querySelector('.calendar-graphs')!;

@@ -19,7 +19,7 @@
 
 <script lang="ts">
   import { messageCount } from '../../util/format';
-  import { Button, Checkbox, Chip, CopyButton, Table, TableHeaderCell } from '@kenn-io/kit-ui';
+  import { Button, Checkbox, Chip, CopyButton, PageHeader, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
   import { getDeletion } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
@@ -32,7 +32,6 @@
   import { EmptyState } from '@kenn-io/kit-ui';
   import SidePanel from '../common/SidePanel.svelte';
   import Dialog from '../common/Dialog.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import CommandLine from '../sources/CommandLine.svelte';
 
   type Batch = GeneratedDeletionManifestSummary;
@@ -225,7 +224,7 @@
 {/if}
 
 <style>
-  .deletions > :global(.page-header) {
+  .deletions > :global(.kit-page-header) {
     --page-header-parent-gap: var(--section-gap);
   }
 

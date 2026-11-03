@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { appShortcuts, ROOT_SCOPE, Button, Modal, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
+  import { appShortcuts, ROOT_SCOPE, Button, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
   import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
@@ -11,7 +11,6 @@
   import type { ValidatedPersonMergeRequired, PersonMergeSuccess } from '../../directory/person-merge';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import PeopleList, { type PeopleRow } from './PeopleList.svelte';
   import { messageCount } from '../../util/format';
   import PossibleDuplicates from './PossibleDuplicates.svelte';

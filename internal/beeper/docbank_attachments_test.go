@@ -107,6 +107,7 @@ func (r *mirrorRig) makeRetriesDue() {
 }
 
 func TestAttachmentMirrorUploadsEachFileOnce(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -118,6 +119,7 @@ func TestAttachmentMirrorUploadsEachFileOnce(t *testing.T) {
 }
 
 func TestAttachmentMirrorDeletedBetweenDiscoveryAndIntent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -139,6 +141,7 @@ func TestAttachmentMirrorDeletedBetweenDiscoveryAndIntent(t *testing.T) {
 }
 
 func TestAttachmentMirrorUploadNamesAndInvalidUTF8(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -174,6 +177,7 @@ func TestAttachmentMirrorUploadNamesAndInvalidUTF8(t *testing.T) {
 }
 
 func TestAttachmentMirrorDestinationFaults(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name         string
 		folderStatus int
@@ -250,6 +254,7 @@ func TestAttachmentMirrorDestinationFaults(t *testing.T) {
 }
 
 func TestAttachmentMirrorFileFailuresAndBackfill(t *testing.T) {
+	t.Parallel()
 	for _, fault := range []int{http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnsupportedMediaType, http.StatusUnprocessableEntity, docbanktest.FaultInvalidReceipt} {
 		t.Run(strconv.Itoa(fault), func(t *testing.T) {
 			require := require.New(t)
@@ -281,6 +286,7 @@ func TestAttachmentMirrorFileFailuresAndBackfill(t *testing.T) {
 }
 
 func TestAttachmentMirrorDestinationFaultStreak(t *testing.T) {
+	t.Parallel()
 	for _, fault := range []int{0, http.StatusBadRequest, http.StatusConflict} {
 		t.Run(strconv.Itoa(fault), func(t *testing.T) {
 			require := require.New(t)
@@ -303,6 +309,7 @@ func TestAttachmentMirrorDestinationFaultStreak(t *testing.T) {
 }
 
 func TestAttachmentMirrorSourceFaults(t *testing.T) {
+	t.Parallel()
 	t.Run("loose sources", func(t *testing.T) {
 		require := require.New(t)
 		assert := assert.New(t)
@@ -470,6 +477,7 @@ func (r faultAttachmentReader) Close() error {
 }
 
 func TestAttachmentMirrorSourceIOErrors(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		stage string
 		err   error
@@ -506,6 +514,7 @@ func TestAttachmentMirrorSourceIOErrors(t *testing.T) {
 }
 
 func TestAttachmentMirrorLostResponse(t *testing.T) {
+	t.Parallel()
 	for _, fault := range []int{docbanktest.FaultDrop, 0} {
 		t.Run(map[int]string{docbanktest.FaultDrop: "dropped response", 0: "cancelled receipt write"}[fault], func(t *testing.T) {
 			require := require.New(t)
@@ -560,6 +569,7 @@ func TestAttachmentMirrorLostResponse(t *testing.T) {
 }
 
 func TestAttachmentMirrorOutageRecovery(t *testing.T) {
+	t.Parallel()
 	for _, fault := range []int{http.StatusServiceUnavailable, docbanktest.FaultTimeout} {
 		t.Run(strconv.Itoa(fault), func(t *testing.T) {
 			require := require.New(t)
@@ -600,6 +610,7 @@ func TestAttachmentMirrorOutageRecovery(t *testing.T) {
 }
 
 func TestAttachmentMirrorPersistentRetriesWait(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -628,6 +639,7 @@ func TestAttachmentMirrorPersistentRetriesWait(t *testing.T) {
 }
 
 func TestAttachmentMirrorPackedAliasAfterDonorReplacement(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -657,6 +669,7 @@ func TestAttachmentMirrorPackedAliasAfterDonorReplacement(t *testing.T) {
 	assert.Equal(int32(1), r.Uploads.Load())
 }
 
+// serial: changes http.DefaultTransport.
 func TestAttachmentMirrorPassProgress(t *testing.T) {
 	t.Run("upload exhausts pass budget", func(t *testing.T) {
 		must := require.New(t)
@@ -821,6 +834,7 @@ func TestAttachmentMirrorPassProgress(t *testing.T) {
 }
 
 func TestAttachmentMirrorReplayDeadline(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -870,6 +884,7 @@ func TestAttachmentMirrorReplayDeadline(t *testing.T) {
 }
 
 func TestAttachmentMirrorRestoredAfterDedup(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		timing        string
 		sourceDeleted bool
@@ -942,6 +957,7 @@ func TestAttachmentMirrorRestoredAfterDedup(t *testing.T) {
 }
 
 func TestAttachmentMirrorMalformedAliasReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)
@@ -961,6 +977,7 @@ func TestAttachmentMirrorMalformedAliasReplay(t *testing.T) {
 }
 
 func TestAttachmentMirrorBackfillDuringPass(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	r := newMirrorRig(t)

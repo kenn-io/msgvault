@@ -27,6 +27,8 @@ inference without making a model provider the system of record.
 - SQLite archives have Parquet analytics, packed attachment storage, and
   verifiable backup repositories.
 
+On unreleased `main`, the daemon also serves [native MCP endpoints](../usage/chat.md#native-daemon-endpoints).
+
 ## Current boundaries
 
 - Source APIs and export formats determine which history and media can be

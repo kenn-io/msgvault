@@ -115,6 +115,7 @@ type DocumentExtractionPublication struct {
 	ReturnedModel          string
 	ProviderBytes          *int64
 	UnitsProcessed         int
+	UploadCount            int
 	RequestCount           int
 	RetryCount             int
 	ProviderLatencyMS      int64
@@ -214,6 +215,15 @@ func (s *Store) ClaimDocumentExtraction(
 				return ErrDocumentExtractionCurrent
 			}
 		}
+		var precedingID string
+		if err := q.QueryRow(`SELECT COALESCE((SELECT id FROM document_extractions
+            WHERE profile_id = ? AND canonical_blob_hash = ? AND extraction_input_key = ?
+              AND COALESCE(rebuild_id, '') = ?
+              AND state IN ('staging', 'tombstoned', 'terminal')
+            ORDER BY created_at DESC, id DESC LIMIT 1), '')`, input.ProfileID,
+			input.CanonicalBlobHash, input.ExtractionInputKey, input.RebuildID).Scan(&precedingID); err != nil {
+			return fmt.Errorf("find preceding PDF range attempt: %w", err)
+		}
 		createdAt, err := documentAttemptCreatedAt(q, input)
 		if err != nil {
 			return err
@@ -279,6 +289,17 @@ func (s *Store) ClaimDocumentExtraction(
 		); err != nil {
 			return fmt.Errorf("record document extraction fence: %w", err)
 		}
+		if precedingID != "" {
+			if _, err := q.Exec(`INSERT INTO document_extraction_ranges
+                (extraction_id, first_page, last_page, total_pages, evidence, evidence_checksum, char_count)
+                SELECT ?, first_page, last_page, total_pages, evidence, evidence_checksum, char_count
+                FROM document_extraction_ranges WHERE extraction_id = ?`, input.ExtractionID, precedingID); err != nil {
+				return fmt.Errorf("transfer PDF range checkpoints: %w", err)
+			}
+			if _, err := q.Exec(`DELETE FROM document_extraction_ranges WHERE extraction_id = ?`, precedingID); err != nil {
+				return fmt.Errorf("delete transferred PDF range checkpoints: %w", err)
+			}
+		}
 		return nil
 	})
 	return claim, err
@@ -290,6 +311,7 @@ type DocumentExtractionFailure struct {
 	Detail            string
 	Terminal          bool
 	RetryAt           time.Time
+	UploadCount       int
 	RequestCount      int
 	RetryCount        int
 	ProviderLatencyMS int64
@@ -329,13 +351,13 @@ func (s *Store) FailDocumentExtraction(ctx context.Context, failure DocumentExtr
 		result, err := q.Exec(`
 			UPDATE document_extractions
 			SET state = ?, attempt_count = attempt_count + 1,
-			    request_count = ?, retry_count = ?, provider_latency_ms = ?,
+			    request_count = ?, upload_count = ?, retry_count = ?, provider_latency_ms = ?,
 			    next_retry_at = ?, terminal_reason = ?, failure_reason = ?, failure_detail = ?, lease_owner = NULL,
 			    lease_until = NULL, updated_at = `+s.dialect.Now()+`
 			WHERE id = ? AND profile_id = ? AND canonical_blob_hash = ?
 			  AND extraction_input_key = ? AND state = 'staging'
 			  AND lease_owner = ? AND lease_fence = ?`,
-			state, failure.RequestCount, failure.RetryCount, failure.ProviderLatencyMS,
+			state, failure.RequestCount, failure.UploadCount, failure.RetryCount, failure.ProviderLatencyMS,
 			nextRetry, terminalReason, failure.ReasonCode, CleanDocumentFailureDetail(failure.Detail), failure.Claim.ExtractionID,
 			failure.Claim.ProfileID, failure.Claim.CanonicalBlobHash,
 			failure.Claim.ExtractionInputKey, failure.Claim.LeaseOwner,
@@ -510,6 +532,9 @@ func (s *Store) PublishDocumentExtraction(
 		if sourceSequence < 0 {
 			return errors.New("document extraction claimed occurrence is no longer eligible")
 		}
+		if _, err := q.Exec(`DELETE FROM document_extraction_ranges WHERE extraction_id = ?`, publication.ExtractionID); err != nil {
+			return fmt.Errorf("remove published range checkpoints: %w", err)
+		}
 		if _, err := q.Exec(`DELETE FROM document_units WHERE extraction_id = ?`, publication.ExtractionID); err != nil {
 			return fmt.Errorf("clear staged document units: %w", err)
 		}
@@ -573,14 +598,14 @@ func (s *Store) PublishDocumentExtraction(
 			UPDATE document_extractions
 			SET state = 'ready', lease_owner = NULL, lease_until = NULL,
 				provider_bytes = ?, units_processed = ?, returned_model = ?,
-				request_count = ?, retry_count = ?, provider_latency_ms = ?,
+				request_count = ?, upload_count = ?, retry_count = ?, provider_latency_ms = ?,
 				manifest_checksum = ?, normalization_version = ?, document_family = ?,
 				unit_kind = ?, normalized_truncated = ?, source_sequence = ?,
 				updated_at = `+s.dialect.Now()+`, published_at = `+s.dialect.Now()+`
 			WHERE id = ? AND profile_id = ? AND canonical_blob_hash = ?
 			  AND extraction_input_key = ? AND state = 'staging'`,
 			providerBytes, publication.UnitsProcessed, publication.ReturnedModel,
-			publication.RequestCount, publication.RetryCount, publication.ProviderLatencyMS,
+			publication.RequestCount, publication.UploadCount, publication.RetryCount, publication.ProviderLatencyMS,
 			publication.ManifestChecksum, publication.NormalizationVersion,
 			publication.DocumentFamily, publication.UnitKind, publication.NormalizedTruncated,
 			sourceSequence, publication.ExtractionID,
@@ -693,7 +718,7 @@ func validateDocumentPublication(publication DocumentExtractionPublication) erro
 	if publication.ProviderBytes != nil && *publication.ProviderBytes < 0 {
 		return errors.New("document extraction publication has invalid provider bytes")
 	}
-	if publication.RequestCount < 0 || publication.RetryCount < 0 ||
+	if publication.UploadCount < 0 || publication.RequestCount < 0 || publication.RetryCount < 0 ||
 		publication.RetryCount > publication.RequestCount || publication.ProviderLatencyMS < 0 {
 		return errors.New("document extraction publication has invalid provider request accounting")
 	}
@@ -740,7 +765,7 @@ func validateDocumentFailure(failure DocumentExtractionFailure) error {
 		!validLowerSHA256(claim.CanonicalBlobHash) || claim.ExtractionInputKey == "" ||
 		claim.LeaseOwner == "" || claim.LeaseFence <= 0 ||
 		failure.ReasonCode == "" || len(failure.ReasonCode) > 64 ||
-		failure.RequestCount < 0 || failure.RetryCount < 0 ||
+		failure.UploadCount < 0 || failure.RequestCount < 0 || failure.RetryCount < 0 ||
 		failure.RetryCount > failure.RequestCount || failure.ProviderLatencyMS < 0 {
 		return errors.New("document extraction failure is incomplete")
 	}

@@ -1002,7 +1002,7 @@ func publicationFor(
 		OccurrenceMessageType:  claim.OccurrenceMessageType,
 		LeaseOwner:             claim.LeaseOwner, LeaseFence: claim.LeaseFence,
 		ReturnedModel: "mistral-ocr-4-0", UnitsProcessed: 1,
-		RequestCount: 1, ProviderLatencyMS: 25,
+		UploadCount: 1, RequestCount: 1, ProviderLatencyMS: 25,
 		ManifestChecksum: strings.Repeat("c", 64), NormalizationVersion: policy.Identity().Version,
 		DocumentFamily: "pdf", UnitKind: "page",
 		Units: []store.DocumentPublishedUnit{{

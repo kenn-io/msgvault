@@ -10,6 +10,7 @@
     dismissFlash,
     getThemeMode,
     IconButton,
+    PageHeader,
     appShortcuts,
     initShortcuts,
     type PaletteCommand,
@@ -70,7 +71,6 @@
   import FileViewer from '../files/FileViewer.svelte';
   import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
-  import PageHeader from './PageHeader.svelte';
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
   import { ARCHIVE_MEETING_HISTORY_KEY, parseArchiveMeetingHistory } from '../../meetings/archive-selection';

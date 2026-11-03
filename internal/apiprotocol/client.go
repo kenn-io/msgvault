@@ -1,5 +1,10 @@
 package apiprotocol
 
+import (
+	"net/http"
+	"strings"
+)
+
 const (
 	ClientClassHeader       = "X-Msgvault-Client"
 	ClientClassCLI          = "cli"
@@ -14,3 +19,14 @@ const (
 	// are still pending; older clients would read those zeros as real counts.
 	AllowPendingCountsHeader = "X-Msgvault-Allow-Pending-Counts"
 )
+
+// BearerAuthorization returns a single explicit bearer credential. Duplicate
+// Authorization values and empty credentials are rejected.
+func BearerAuthorization(r *http.Request) (string, bool) {
+	values := r.Header.Values("Authorization")
+	if len(values) != 1 {
+		return "", false
+	}
+	scheme, credential, found := strings.Cut(values[0], " ")
+	return credential, found && credential != "" && strings.EqualFold(scheme, "Bearer")
+}

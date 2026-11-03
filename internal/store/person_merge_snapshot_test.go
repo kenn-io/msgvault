@@ -118,8 +118,8 @@ func TestPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
 }
 
 func TestPostgresPersonMergeTableInventoryClassifiesEveryPersonReference(t *testing.T) {
-	dbURL := skipUnlessPostgresInternal(t)
-	assertPersonMergeTableInventory(t, newPGStoreInternal(t, dbURL))
+	skipUnlessPostgresInternal(t)
+	assertPersonMergeTableInventory(t, newPGStoreInternal(t))
 }
 
 func assertPersonMergeTableInventory(t *testing.T, st *Store) {

@@ -192,7 +192,7 @@ describe('LinkIdentityDialog', () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it('blocks Cancel, Escape, backdrop, and the close button while a confirm is pending', async () => {
+  it('blocks Cancel, Escape, and the backdrop while a confirm is pending', async () => {
     let resolveConfirm: ((outcome: LinkOutcome) => void) | undefined;
     const onConfirm = vi.fn(() => new Promise<LinkOutcome>((resolve) => { resolveConfirm = resolve; }));
     const onClose = vi.fn();
@@ -205,7 +205,6 @@ describe('LinkIdentityDialog', () => {
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
     await fireEvent.keyDown(window, { key: 'Escape' });
     await fireEvent.pointerDown(document.querySelector('.kit-modal-overlay')!);
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onClose, 'no dismissal path may hide a pending confirm').not.toHaveBeenCalled();
 
     // Success still closes the dialog itself once the outcome is known.

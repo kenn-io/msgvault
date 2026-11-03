@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 
@@ -26,6 +27,18 @@ func SecretCommand(tb testing.TB, mode string) []string {
 		exe := filepath.Join(dir, "secret-store")
 		if runtime.GOOS == "windows" {
 			exe += ".exe"
+		}
+		fixtureDir, err := exec.Command("go", "list", "-f", "{{.Dir}}", "go.kenn.io/msgvault/internal/testutil/secretcommand").Output()
+		if err != nil {
+			secretTemplate.err = fmt.Errorf("locate secret fixture: %w", err)
+			return
+		}
+		for _, name := range []string{".", "cmd"} {
+			// This read makes Go's test cache rerun the test when the child's inputs change.
+			if _, err := os.ReadDir(filepath.Join(strings.TrimSpace(string(fixtureDir)), name)); err != nil {
+				secretTemplate.err = fmt.Errorf("list secret fixture: %w", err)
+				return
+			}
 		}
 		cmd := exec.Command("go", "build", "-p=1", "-o", exe, "go.kenn.io/msgvault/internal/testutil/secretcommand/cmd") //nolint:gosec // Build the fixed fixture package in a private scratch directory.
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")

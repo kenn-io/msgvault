@@ -26,7 +26,8 @@ func TestChannelPurgeDoesNotDeadlockWithSyncPhoneParticipant(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
-			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+			skipUnlessPostgresInternal(t)
+			st := newPGStoreInternal(t)
 			st.DB().SetMaxOpenConns(12)
 			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()

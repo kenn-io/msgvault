@@ -5,7 +5,7 @@
     label: string;
     /** "42 messages", or the organization for a saved person. */
     detail: string;
-    lastAt: string;
+    lastAt?: string;
     saved: boolean;
     domain: boolean;
   }
@@ -271,7 +271,7 @@
                   {#if row.saved}
                     <Tooltip text="Saved"><span class="saved" role="img" aria-label="Saved"><BookmarkCheck size={12} aria-hidden="true" /></span></Tooltip>
                   {/if}
-                  <span class="when" data-mono>{relativeDate(row.lastAt)}</span>
+                  {#if row.lastAt}<span class="when" data-mono>{relativeDate(row.lastAt)}</span>{/if}
                 </div>
                 <span class="detail" data-mono>{row.detail}</span>
               </div>

@@ -136,7 +136,7 @@
     {#if controller.timelineError}
       <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
-    {#if !filesOpen && !details}
+    {#if !filesOpen && !details && (controller.headerState === 'normal' || !scope)}
       <div class="calendar">
         {#if domain}
           <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail?.cache_revision ?? ''} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
@@ -171,8 +171,10 @@
     {/if}
     {#if detail && !controller.detailMissing}
       <PersonAddresses {detail} {onAnnounce} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
-      {#if 'domain' in detail}
-        <p>{detail.activity_count.toLocaleString()} items{#if detail.activity_count > 0} · {formatContactDate(detail.first_at)} – {formatContactDate(detail.last_at)}{/if} · {(detail as DomainSummary).person_count.toLocaleString()} people</p>
+      {#if controller.headerState === 'no-mail'}
+        <p>No sent or received messages with this contact yet.</p>
+      {:else if 'domain' in detail}
+        <p>{detail.activity_count.toLocaleString()} items{#if detail.activity_count > 0 && detail.first_at && detail.last_at} · {formatContactDate(detail.first_at)} – {formatContactDate(detail.last_at)}{/if} · {(detail as DomainSummary).person_count.toLocaleString()} people</p>
       {/if}
     {/if}
   </div>

@@ -23,6 +23,9 @@ func buildNativeCLI(t *testing.T) string {
 	if runtime.GOOS == "windows" {
 		binary += ".exe"
 	}
+	// This read makes Go's test cache rerun the test when the child's inputs change.
+	_, err = os.ReadDir(filepath.Join(repoRoot, "cmd", "msgvault"))
+	require.NoError(t, err)
 	build := exec.CommandContext(t.Context(), "go", "build", "-tags", "fts5 sqlite_vec", "-o", binary, "./cmd/msgvault")
 	build.Dir = repoRoot
 	output, err := build.CombinedOutput()

@@ -170,8 +170,8 @@ type groupExpressions struct {
 	whereSuffix string
 	// noLists selects the logical_entries variant without participant list
 	// columns; dimensions that resolve participants/domains through
-	// relationship_activity edge joins set it. ExploreGroups also uses the
-	// narrow scalar input when its filters do not require participant lists.
+	// relationship_activity edge joins set it. ExploreGroups then also uses
+	// the narrow scalar input.
 	noLists bool
 }
 

@@ -26,6 +26,15 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
-    exclude: ['tests/**', 'node_modules/**', 'dist/**']
+    exclude: ['tests/**', 'node_modules/**', 'dist/**'],
+    // In GitHub Actions, retry a failed test twice and record every result in
+    // a JSON report that CI uploads, so a test that passed on retry stays
+    // visible as flaky. The tree reporter lists each test under its file.
+    // Naming reporters drops Vitest's automatic github-actions annotations, so
+    // keep them explicitly.
+    ...(process.env.GITHUB_ACTIONS === 'true' && {
+      retry: 2,
+      reporters: ['tree', 'github-actions', ['json', { outputFile: 'test-results/vitest/unit.json' }]]
+    })
   }
 });

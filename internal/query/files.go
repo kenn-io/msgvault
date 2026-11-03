@@ -492,8 +492,8 @@ func personFileMatchCTEs(scope PersonFileScope) (string, []any) {
 `, args
 }
 
-// personFilePopulationSQL retains the legacy single-pass query for filters
-// that already require analytical participant lists and for equivalence tests.
+// personFilePopulationSQL retains the legacy single-pass query for
+// equivalence tests.
 func personFilePopulationSQL(personCTEs, exploreConditions, fileConditions string) string {
 	return "WITH " + personCTEs + `, selected AS (
 	SELECT analytical_entries.*, person_matches.person_participant_ids,
@@ -736,8 +736,8 @@ SELECT
 FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 }
 
-// buildFileSearchFastSQL builds the two-phase file page query used when
-// exploreConditionsTouchParticipantLists is false. Phase one orders and
+// buildFileSearchFastSQL builds the two-phase file page query used unless
+// the fast path is disabled for equivalence tests. Phase one orders and
 // limits the filtered attachment population without referencing any
 // participant list column, so the whole-archive per-message list assembly
 // inside analytical_entries is pruned; phase two rebuilds the participant

@@ -20,6 +20,8 @@ func classifyParticipantIdentifier(
 	switch {
 	case kind == "imessage":
 		classification.ServiceSlug = "imessage"
+	case kind == "telegram":
+		classification.ServiceSlug = "telegram"
 	case kind == "whatsapp":
 		classification.ServiceSlug = "whatsapp"
 	case kind == "matrix":
