@@ -60,7 +60,7 @@ func (a *Actions) dispatchReply(ctx context.Context, t Target, req ActionRequest
 	if finishErr != nil {
 		return result, finishErr
 	}
-	if req.Action == ActionPublicReply && obj.CreatedTime != "" && obj.Parent != nil && obj.Parent.ID != "" {
+	if t.MessageType == SourceType && req.Action == ActionPublicReply && obj.CreatedTime != "" && obj.Parent != nil && obj.Parent.ID != "" {
 		local, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		id, err := NewImporter(a.st, nil).ArchiveReply(local, t.App, t.Asset, obj, t.RootID)

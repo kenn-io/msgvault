@@ -20,7 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
-| Reply to, moderate and triage Facebook comments | [comment reply](#comment-reply), [comment moderate](#comment-moderate), [comment triage](#comment-triage), [comment queue](#comment-queue), [comment actions](#comment-actions) |
+| Reply to, moderate and triage Facebook and Instagram comments | [comment reply](#comment-reply), [comment moderate](#comment-moderate), [comment triage](#comment-triage), [comment queue](#comment-queue), [comment actions](#comment-actions) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -290,9 +290,9 @@ providers or authentication failures, and 1 for other failures.
 
 ## comment moderate
 
-Hide, unhide, or delete an archived Facebook comment (unreleased). Requires
+Hide, unhide, or delete an archived Facebook or Instagram comment (unreleased). Requires
 owner authorization and daemon API schema 3.35.0 or newer, an enabled profile,
-and explicit [action opt-ins](configuration.md#facebook-comments). A dry run
+and explicit [action opt-ins](usage/facebook-comments.md#comment-actions). A dry run
 works without write opt-ins or a token and makes no provider request.
 
 ```bash
@@ -312,7 +312,7 @@ recovery, and MCP confirmation.
 
 ## comment reply
 
-Reply publicly or privately to an archived Facebook comment (unreleased).
+Reply publicly or privately to an archived Facebook or Instagram comment (unreleased).
 Requires owner authorization, daemon API schema 3.35.0 or newer, an enabled
 profile, and the matching `public_reply` or `private_reply` action opt-in.
 
@@ -329,7 +329,9 @@ messaging workflow. Public replies with the same body reuse their receipt.
 `--resolve-unknown sent|not-sent` records an inspected outcome without sending;
 it requires the original body, visibility, and confirmation token and cannot
 be combined with `--dry-run`. `--json` retains coded errors and partial receipts
-while exiting nonzero. See [reply limits and recovery](usage/facebook-comments.md#public-and-private-replies).
+while exiting nonzero. Instagram targets must be top-level and visible;
+see [Instagram actions](usage/instagram-comments.md#reply-and-moderate).
+See [reply limits and recovery](usage/facebook-comments.md#public-and-private-replies).
 
 ## comment triage
 
@@ -345,7 +347,7 @@ preserve triage labels. No provider-write opt-in or token is needed.
 
 ## comment queue
 
-List archived Facebook comments by local triage state. Requires owner
+List archived Facebook and Instagram comments by local triage state. Requires owner
 authorization and daemon API schema 3.35.0 or newer.
 
 ```bash
@@ -360,7 +362,7 @@ excluded. Deleted comments appear only with `--state all`.
 
 ## comment actions
 
-Read receipts for an archived Facebook comment. Requires owner authorization
+Read receipts for an archived Facebook or Instagram comment. Requires owner authorization
 and daemon API schema 3.35.0 or newer. Reading receipts never retries an action.
 
 ```bash

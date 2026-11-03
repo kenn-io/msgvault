@@ -220,3 +220,51 @@ func TestCommentTriageReservesSQLiteWriterBeforeReading(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(store.CommentTriageHandled, got)
 }
+
+func TestCommentQueueSentReplyEvidenceIsSourceBound(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, c, root := queueFixture(t)
+	var conv int64
+	require.NoError(st.DB().QueryRow(st.Rebind("SELECT conversation_id FROM messages WHERE id=?"), root).Scan(&conv))
+	sent, err := st.UpsertMessage(&store.Message{SourceID: c.SourceID, ConversationID: conv, SourceMessageID: "501", MessageType: "instagram_comments", ReplyToMessageID: sql.NullInt64{Int64: c.MessageID, Valid: true}})
+	require.NoError(err)
+	other, err := st.GetOrCreateSource("instagram_comments", "app:9:page:101:instagram:201")
+	require.NoError(err)
+	otherConv, err := st.EnsureConversation(other.ID, "other-media", "Example media")
+	require.NoError(err)
+	otherRoot, err := st.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: otherConv, SourceMessageID: "other-root", MessageType: "instagram_comments"})
+	require.NoError(err)
+	otherSent, err := st.UpsertMessage(&store.Message{SourceID: other.ID, ConversationID: otherConv, SourceMessageID: "501", MessageType: "instagram_comments", ReplyToMessageID: sql.NullInt64{Int64: otherRoot, Valid: true}})
+	require.NoError(err)
+	c.Action = "public_reply"
+	row := claimAction(t, st, c)
+	row, err = st.MarkMetaCommentActionDispatchedContext(t.Context(), row.ID, row.RowRevision)
+	require.NoError(err)
+	_, err = st.FinishMetaCommentActionContext(t.Context(), row.ID, row.RowRevision, store.MetaCommentActionOutcome{State: "succeeded", RemoteID: "501"})
+	require.NoError(err)
+	for _, merged := range []bool{false, true} {
+		if merged {
+			into, createErr := st.GetOrCreateSource("facebook_comments", "app:9:page:102")
+			require.NoError(createErr)
+			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: c.SourceID, IntoSourceID: into.ID})
+			require.NoError(err)
+		}
+		queue, listErr := st.ListCommentQueueContext(t.Context(), store.CommentQueueFilter{MessageTypes: []string{"facebook_comments", "instagram_comments"}})
+		require.NoError(listErr)
+		var parent, unrelated bool
+		for _, item := range queue {
+			assert.NotEqual(sent, item.MessageID, "merged=%t", merged)
+			if item.MessageID == c.MessageID {
+				parent = true
+				assert.True(item.PageReplied, "merged=%t", merged)
+			}
+			if item.MessageID == otherSent {
+				unrelated = true
+				assert.False(item.PageReplied, "merged=%t", merged)
+			}
+		}
+		assert.True(parent)
+		assert.True(unrelated, "another source's matching provider ID remains incoming")
+	}
+}

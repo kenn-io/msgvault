@@ -48,7 +48,7 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Chatwoot](https://msgvault.io/docs/guides/chatwoot.md): shared inboxes, employee attribution, media, and calls
 - [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): `source facebook-comments add` and `source facebook-comments sync`, coverage, opt-in `comment reply`, `comment moderate`, `comment triage`, `comment queue`, `comment actions`, and cursor recovery (unreleased)
 - [Meta webhooks](https://msgvault.io/docs/usage/meta-webhooks.md): signed Page feed receiver; `meta-webhooks subscribe|status|replay` for subscriptions, delivery backlog, and replay (unreleased)
-- [Instagram comments](https://msgvault.io/docs/usage/instagram-comments.md): `source instagram-comments add` and `source instagram-comments sync`, linked professional account comments, resumable media conversations, and opt-in `source instagram-mentions add`/`sync` tag polling and caption/comment mention webhooks (unreleased)
+- [Instagram comments](https://msgvault.io/docs/usage/instagram-comments.md): `source instagram-comments add` and `source instagram-comments sync`, linked professional account comments, resumable media conversations, and opt-in `source instagram-mentions add`/`sync` tag polling and caption/comment mention webhooks, and opt-in `comment reply`, `comment moderate`, `comment triage`, `comment queue`, `comment actions` (unreleased)
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)

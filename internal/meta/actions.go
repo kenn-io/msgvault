@@ -128,7 +128,7 @@ func resolveActionTarget(ctx context.Context, st *store.Store, id int64, allowDe
 	if src.MergedIntoSourceID != 0 {
 		return t, actionFailure("stale_identity", nil, store.ErrSourceRetired)
 	}
-	if m.MessageType != SourceType || src.SourceType != SourceType {
+	if m.MessageType != src.SourceType || (m.MessageType != SourceType && m.MessageType != InstagramSourceType) {
 		return t, actionFailure("unsupported_source", nil, nil)
 	}
 	if m.ParentMessageID == 0 {
@@ -136,6 +136,9 @@ func resolveActionTarget(ctx context.Context, st *store.Store, id int64, allowDe
 	}
 	if m.DeletedFromSource && !allowDeleted {
 		return t, actionFailure("target_deleted", nil, nil)
+	}
+	if m.MessageType == InstagramSourceType {
+		return resolveInstagramActionTarget(ctx, st, m, src)
 	}
 	var metadata objectMetadata
 	if json.Unmarshal([]byte(m.Metadata), &metadata) != nil || metadata.Version != objectMetadataVersion || !ValidAccountID(metadata.AppID) || !ValidAccountID(metadata.PageID) || src.Identifier != SourceIdentifier(metadata.AppID, metadata.PageID) || metadata.InstagramAccountID != "" || metadata.MediaID != "" || !safeObjectID(m.CommentID) || !safeObjectID(metadata.PostID) || metadata.ParentID != m.ParentCommentID || metadata.ParentID == "" {
@@ -177,6 +180,13 @@ func ConfirmToken(t Target, action ActionKind, body string) string {
 	return hex.EncodeToString(sum[:16])
 }
 func RequiredPermissions(provider string, action ActionKind) []string {
+	if provider == "instagram" {
+		permissions := []string{"instagram_basic", "instagram_manage_comments", "pages_show_list", "pages_read_engagement"}
+		if action == ActionPrivateReply {
+			permissions = append(permissions, "instagram_manage_messages")
+		}
+		return permissions
+	}
 	if provider != "facebook" {
 		return nil
 	}
@@ -218,7 +228,7 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	if err != nil {
 		return nil, err
 	}
-	result := &ActionResult{MessageID: target.MessageID, SourceID: target.SourceID, Action: req.Action, DryRun: req.DryRun, Disclosure: Disclosure{Provider: "facebook", AssetID: target.Asset, AssetName: target.AssetName, CommentID: target.CommentID, AuthorName: target.AuthorName}, Confirm: ConfirmToken(target, req.Action, req.Body)}
+	result := &ActionResult{MessageID: target.MessageID, SourceID: target.SourceID, Action: req.Action, DryRun: req.DryRun, Disclosure: Disclosure{Provider: actionProvider(target), AssetID: target.Asset, AssetName: target.AssetName, CommentID: target.CommentID, AuthorName: target.AuthorName}, Confirm: ConfirmToken(target, req.Action, req.Body)}
 	result.Disclosure.Body = req.Body
 	result.Disclosure.Public = req.Action == ActionPublicReply
 	if isReply(req.Action) {
@@ -235,6 +245,21 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	keyHash := sha256.Sum256([]byte(actionBinding(target, req.Action, req.Body)))
 	key := hex.EncodeToString(keyHash[:])
 	if req.DryRun {
+		// A later moderation change does not invalidate the exact reply's
+		// existing receipt. A preview still supplies its local recovery binding.
+		if target.MessageType == InstagramSourceType && req.Action == ActionPublicReply {
+			previous, lookupErr := a.st.GetMetaCommentActionByKeyContext(ctx, key)
+			if lookupErr == nil && previous.State != "failed" {
+				result.Receipt = receipt(previous)
+				return result, nil
+			}
+			if lookupErr != nil && !errors.Is(lookupErr, store.ErrMetaCommentActionNotFound) {
+				return result, lookupErr
+			}
+		}
+		if err = a.instagramActionChecks(ctx, target, req.Action, result); err != nil {
+			return result, err
+		}
 		return result, nil
 	}
 	if (req.Action == ActionDelete || isReply(req.Action)) && req.Confirm != result.Confirm {
@@ -284,6 +309,9 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 	}
 	if target.Deleted {
 		return result, actionFailure("target_deleted", result, nil)
+	}
+	if err = a.instagramActionChecks(ctx, locked, req.Action, result); err != nil {
+		return result, err
 	}
 	src, err := a.st.GetSourceByIDContext(ctx, target.SourceID)
 	if err != nil {
@@ -411,7 +439,7 @@ func (a *Actions) finish(ctx context.Context, t Target, result *ActionResult, ro
 		failure := actionFailure(outcome.ErrorCode, result, remoteErr)
 		failure.AbuseWarning = AbuseWarning(remoteErr)
 		if outcome.ErrorCode == string(ClassPermissionMissing) || outcome.ErrorCode == string(ClassAppAccess) {
-			failure.RequiredPermissions = RequiredPermissions("facebook", result.Action)
+			failure.RequiredPermissions = RequiredPermissions(result.Disclosure.Provider, result.Action)
 		}
 		return result, failure
 	}

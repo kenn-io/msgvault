@@ -49,7 +49,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 
 Use `msgvault comment reply`, `comment moderate`, `comment triage`, `comment queue`, and
-`comment actions` for archived Facebook comments. See the
+`comment actions` for archived Facebook and Instagram comments. See the
 [comment workflow](../usage/facebook-comments.md#comment-actions) for opt-ins,
 confirmation and uncertain outcomes.
 

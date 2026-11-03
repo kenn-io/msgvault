@@ -62,14 +62,14 @@ func classifyCommentCLIError(cmd *cobra.Command, err error) *commentCLIError {
 		result.code, result.details = failure.Code, failure.Result
 		result.requiredPermissions, result.abuseWarning = failure.RequiredPermissions, failure.AbuseWarning
 		switch failure.Code {
-		case "invalid_request", "invalid_body", "confirmation_mismatch", "not_a_comment", "unsupported_source":
+		case "invalid_request", "invalid_body", "confirmation_mismatch", "not_a_comment", "unsupported_source", "ig_target_not_top_level", "not_hideable":
 			result.exit = 3
 		case "message_not_found", "source_not_found":
 			result.exit = 4
 		case "action_not_enabled":
 			result.exit = 5
 			result.hint = "ask the archive owner to enable this action on the exact source profile"
-		case "outcome_unknown", "sync_active", "stale_identity", "triage_conflict", "target_deleted", "private_reply_window_closed", "messaging_window_closed", "private_reply_not_allowed", "already_sent", "recipient_unavailable", "remote_accepted_local_failed":
+		case "outcome_unknown", "sync_active", "stale_identity", "triage_conflict", "target_deleted", "target_hidden", "private_reply_window_closed", "messaging_window_closed", "private_reply_not_allowed", "already_sent", "recipient_unavailable", "remote_accepted_local_failed":
 			result.exit = 6
 			result.hint = "inspect 'msgvault comment actions <message-id> --json' before retrying or resolving an uncertain outcome"
 		case "cancelled_before_dispatch":

@@ -10,6 +10,11 @@ All notable changes to msgvault, grouped by release.
 
 - [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed and Instagram comments, with owner subscription, status, and replay commands. Other fields stay held until their handlers are installed and configured.
 - [Instagram mentions and tags](usage/instagram-comments.md#mentions-and-tags) adds opt-in, resumable tag polling and caption/comment mention webhooks as searchable conversations; replies are pending.
+- [Instagram comment actions](usage/instagram-comments.md#reply-and-moderate)
+  reply to, hide, unhide, or delete archived comments on the selected account's
+  media with explicit opt-ins, confirmation, and receipts. The comment queue
+  now includes Instagram. Public reply archive evidence completes after sync.
+
 - [Facebook comment replies](usage/facebook-comments.md#public-and-private-replies)
   send public replies or one private message within seven days through the CLI,
   HTTP API, and MCP after explicit opt-in and confirmation. Receipts prevent
@@ -23,7 +28,7 @@ All notable changes to msgvault, grouped by release.
 
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
-  Sending and ad-only discovery are not included.
+  Ad-only discovery is not included.
 - [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
   nested replies on organic, visitor, and ad posts returned for a selected Page.
   Search the archive and link commenters through existing people tools. This

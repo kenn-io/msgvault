@@ -6,8 +6,8 @@ description: Archive a linked professional Instagram account's media comments an
 
 Search returned Instagram media captions, comments, and replies beside your
 other communications, and link commenters with existing person tools. This
-unreleased integration reads comments; it does not publish replies or send
-messages.
+unreleased integration archives comments and supports opt-in replies and
+moderation of archived comments.
 
 ## Connect a professional account
 
@@ -63,7 +63,7 @@ commenter identity; equal digits do not establish account ownership.
 
 Only media returned by the verified account's media edge is discovered here.
 Missing media owners remain unknown; explicit foreign owners are refused.
-Ad-only discovery, media downloads, and public replies are separate work.
+Ad-only discovery and media downloads remain separate work.
 
 ## Mentions and tags
 
@@ -113,3 +113,57 @@ than a User token, still needs a live check. There is no credential fallback.
 A 400 or 403 cannot distinguish missing permissions, token type, inaccessible
 or deleted media, disabled comments, a non-mention, or rate limiting; msgvault
 reports these possible causes without including provider response text.
+
+## Reply and moderate
+
+Use the owner CLI, HTTP API, or MCP tools with daemon API schema 3.39.0 or newer.
+Delegated grants and remote-client keys cannot act, read the queue, or read
+receipts. Add only the intended writes to the selected profile and restart:
+
+```toml
+enabled = true
+actions = ["public_reply", "private_reply", "hide", "delete"]
+```
+
+An omitted `actions` list permits no provider writes. `hide` also permits
+unhide. Actions apply only to the verified account's media discovered through
+its media edge; ad-derived or other provenance is refused.
+
+Before a new provider action, the daemon verifies the configured credential
+against the selected Page and its linked Instagram account. Previews and receipt
+resolution stay local.
+
+Preview using the archived message ID, then copy its confirmation token:
+
+```bash
+msgvault comment reply 42 --visibility public --body "Example reply" --dry-run --json
+msgvault comment reply 42 --visibility public --body "Example reply" --confirm CONFIRM_TOKEN --json
+msgvault comment moderate 43 --hide --json
+```
+
+Reply targets must be top-level comments. A nested target returns
+`ig_target_not_top_level` with the top-level message ID instead of silently
+attaching to another comment. A comment recorded as hidden cannot receive a
+new reply until it is unhidden. Repeating the same public reply still returns
+its existing receipt after a later hide, without sending it again. Hiding the
+account's own comment returns
+`not_hideable`. Delete keeps archived history and requires confirmation.
+
+Private replies use `--visibility private` and send as the selected Instagram
+account. The one-message and seven-day limits, prior-author warnings,
+confirmation, and [uncertain-outcome recovery](facebook-comments.md#receipts-and-recovery)
+follow the same comment-action rules. Follow-up DMs use the messaging workflow.
+Visibility never changes as a fallback after failure.
+
+Permission failures list `instagram_basic`, `instagram_manage_comments`,
+`pages_show_list`, and `pages_read_engagement`; private replies also list
+`instagram_manage_messages`. Business Manager roles may additionally require
+ad permissions. Live permission and write-token checks remain pending; the
+client uses only this profile's named credential and never substitutes another.
+
+Instagram sends return an ID without an extra read. A later sync must observe
+the public reply before its receipt reports `archive_complete` and
+`reply_message_id`. Source merges preserve these archive links and keep sent
+replies out of incoming work. `comment queue` includes both Facebook and Instagram
+comments; filter the exact source identifier to select this account. See the
+[CLI reference](../cli-reference.md#comment-reply) for flags and receipt reads.

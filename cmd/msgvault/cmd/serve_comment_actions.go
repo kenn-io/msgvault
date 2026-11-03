@@ -16,16 +16,34 @@ var _ api.CommentActionStore = (*storeAPIAdapter)(nil)
 func commentFailure(code string, cause error) *meta.ActionError {
 	return &meta.ActionError{Code: code, Message: "Comment action: " + code, Cause: cause}
 }
-func (a *storeAPIAdapter) commentProfile(ctx context.Context, sourceID int64) (*config.FacebookCommentsSource, error) {
+
+type commentProviderProfile interface{ ActionAllowed(action string) bool }
+
+func (a *storeAPIAdapter) commentProfile(ctx context.Context, sourceID int64) (commentProviderProfile, error) {
 	src, err := a.store.GetSourceByIDContext(ctx, sourceID)
 	if err != nil {
 		return nil, err
 	}
-	app, page, ok := meta.ParseSourceIdentifier(src.Identifier)
-	if !ok || src.SourceType != meta.SourceType || a.config == nil {
+	if a.config == nil {
 		return nil, nil //nolint:nilnil // An unconfigured comment profile is a valid absence state.
 	}
-	return a.config.FacebookCommentsSourceFor(app, page), nil
+	switch src.SourceType {
+	case meta.SourceType:
+		app, page, ok := meta.ParseSourceIdentifier(src.Identifier)
+		if ok {
+			if p := a.config.FacebookCommentsSourceFor(app, page); p != nil {
+				return p, nil
+			}
+		}
+	case meta.InstagramSourceType:
+		tuple, ok := meta.ParseInstagramSourceIdentifier(src.Identifier)
+		if ok {
+			if p := a.config.InstagramCommentsSourceFor(tuple.AppID, tuple.PageID, tuple.AccountID); p != nil {
+				return p, nil
+			}
+		}
+	}
+	return nil, nil //nolint:nilnil // An unconfigured comment profile is a valid absence state.
 }
 func (a *storeAPIAdapter) RunCommentAction(ctx context.Context, id int64, req meta.ActionRequest, acquireWrite func(context.Context) (func(), error)) (*meta.ActionResult, error) {
 	ctx = a.invocationContext(ctx)
@@ -50,14 +68,30 @@ func (a *storeAPIAdapter) RunCommentAction(ctx context.Context, id int64, req me
 			if profile == nil {
 				return nil, errors.New("no matching comment profile")
 			}
-			client, err := configuredFacebookCommentsClient(*profile)
-			if err != nil {
-				return nil, err
+			switch profile := profile.(type) {
+			case *config.FacebookCommentsSource:
+				client, err := configuredFacebookCommentsClient(*profile)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := client.VerifyPage(ctx, profile.PageID); err != nil {
+					return nil, err
+				}
+				return client, nil
+			case *config.InstagramCommentsSource:
+				client, err := configuredInstagramCommentsClient(*profile)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := client.VerifyPage(ctx, profile.PageID); err != nil {
+					return nil, err
+				}
+				if _, err := client.LinkedInstagramAccount(ctx, profile.PageID, profile.InstagramAccountID); err != nil {
+					return nil, err
+				}
+				return client.InstagramActions(), nil
 			}
-			if _, err := client.VerifyPage(ctx, profile.PageID); err != nil {
-				return nil, err
-			}
-			return client, nil
+			return nil, errors.New("unsupported comment profile")
 		},
 	})
 	result, err := actions.Run(ctx, req)
@@ -78,7 +112,7 @@ func (a *storeAPIAdapter) ListCommentActions(ctx context.Context, id int64) ([]m
 	if err != nil {
 		return nil, err
 	}
-	if m.MessageType != meta.SourceType || m.ParentMessageID == 0 {
+	if (m.MessageType != meta.SourceType && m.MessageType != meta.InstagramSourceType) || m.ParentMessageID == 0 {
 		return nil, commentFailure("not_a_comment", nil)
 	}
 	rows, err := a.store.ListMessageMetaCommentActionsContext(ctx, id)
@@ -127,16 +161,18 @@ func (a *storeAPIAdapter) ListCommentQueue(ctx context.Context, f api.CommentQue
 		return nil, err
 	}
 	result := &api.CommentQueueResponse{Items: []api.CommentQueueItem{}}
-	filter := store.CommentQueueFilter{State: f.State, Limit: f.Limit, BeforeID: f.BeforeID}
+	filter := store.CommentQueueFilter{MessageTypes: []string{meta.SourceType, meta.InstagramSourceType}, State: f.State, Limit: f.Limit, BeforeID: f.BeforeID}
 	if f.Source != "" {
-		sources, err := a.store.ListSourcesContext(ctx, meta.SourceType)
-		if err != nil {
-			return nil, err
-		}
-		for _, source := range sources {
-			if source.Identifier == f.Source {
-				filter.SourceID = source.ID
-				break
+		for _, kind := range filter.MessageTypes {
+			sources, err := a.store.ListSourcesContext(ctx, kind)
+			if err != nil {
+				return nil, err
+			}
+			for _, source := range sources {
+				if source.Identifier == f.Source {
+					filter.SourceID = source.ID
+					break
+				}
 			}
 		}
 		if filter.SourceID == 0 {
@@ -166,7 +202,11 @@ func (a *storeAPIAdapter) ListCommentQueue(ctx context.Context, f api.CommentQue
 		if err != nil {
 			return nil, err
 		}
-		result.Items = append(result.Items, api.CommentQueueItem{MessageID: row.MessageID, SourceID: row.SourceID, SourceIdentifier: row.SourceIdentifier, Provider: "facebook", ConversationID: row.ConversationID, CommentID: row.CommentID, ParentMessageID: row.ParentMessageID, Author: api.CommentQueueAuthor{ParticipantID: row.AuthorParticipantID, DisplayName: row.AuthorName}, Snippet: row.Snippet, SentAt: row.SentAt, Ad: metadata.Ad, Triage: string(row.Triage), Moderation: moderation, DeletedFromSource: row.DeletedFromSource, PageReplied: row.PageReplied, PrivateReplyOpenUntil: row.PrivateReplyOpenUntil, Actions: actions})
+		provider := "facebook"
+		if row.MessageType == meta.InstagramSourceType {
+			provider = "instagram"
+		}
+		result.Items = append(result.Items, api.CommentQueueItem{MessageID: row.MessageID, SourceID: row.SourceID, SourceIdentifier: row.SourceIdentifier, Provider: provider, ConversationID: row.ConversationID, CommentID: row.CommentID, ParentMessageID: row.ParentMessageID, Author: api.CommentQueueAuthor{ParticipantID: row.AuthorParticipantID, DisplayName: row.AuthorName}, Snippet: row.Snippet, SentAt: row.SentAt, Ad: metadata.Ad, Triage: string(row.Triage), Moderation: moderation, DeletedFromSource: row.DeletedFromSource, PageReplied: row.PageReplied, PrivateReplyOpenUntil: row.PrivateReplyOpenUntil, Actions: actions})
 	}
 	if len(result.Items) > 0 {
 		result.NextBeforeID = result.Items[len(result.Items)-1].MessageID
