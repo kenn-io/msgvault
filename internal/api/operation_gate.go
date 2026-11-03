@@ -71,6 +71,43 @@ func (g *SerialOperationGate) BeginWorkContext(ctx context.Context) (func(), boo
 	return g.BeginLabeledWorkContext(ctx, "")
 }
 
+// TryBeginWorkContext acquires the gate only when it is immediately available.
+// Background webhook work uses this so it cannot block the single spool worker
+// ahead of a consent update that can safely join an active broadcast send.
+func (g *SerialOperationGate) TryBeginWorkContext(ctx context.Context) (func(), bool) {
+	if g == nil {
+		return func() {}, true
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return func() {}, false
+	}
+	sem, _ := g.state()
+	g.mu.Lock()
+	if g.draining || g.active > 0 || g.requestWaiters > 0 {
+		g.mu.Unlock()
+		return func() {}, false
+	}
+	select {
+	case sem <- struct{}{}:
+		if ctx.Err() != nil {
+			<-sem
+			g.mu.Unlock()
+			return func() {}, false
+		}
+		g.active++
+		g.holderSince = time.Now()
+		g.holderReleased = false
+		g.mu.Unlock()
+		return g.releaseWork(true), true
+	default:
+		g.mu.Unlock()
+		return func() {}, false
+	}
+}
+
 // BeginRequestWorkContext is BeginLabeledWorkContext for API-request work.
 // While queued, the request counts toward HasRequestWaiters so background
 // holders (scheduled syncs, embed passes) know to yield.

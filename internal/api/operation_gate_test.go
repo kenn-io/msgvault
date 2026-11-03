@@ -1161,6 +1161,24 @@ func TestSerialOperationGateHolderTracksLabel(t *testing.T) {
 	assert.False(held, "released gate has no holder")
 }
 
+func TestSerialOperationGateTryBegin(t *testing.T) {
+	t.Parallel()
+	gate := NewSerialOperationGate()
+	release, acquired := gate.TryBeginWorkContext(t.Context())
+	require.True(t, acquired)
+	release()
+
+	releaseActive, acquired := gate.BeginLabeledWorkContext(t.Context(), "active send")
+	require.True(t, acquired)
+	_, acquired = gate.TryBeginWorkContext(t.Context())
+	assert.False(t, acquired)
+	releaseActive()
+
+	release, acquired = gate.TryBeginWorkContext(t.Context())
+	require.True(t, acquired)
+	release()
+}
+
 func TestSerialOperationGateCountsRequestWaiters(t *testing.T) {
 	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {

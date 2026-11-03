@@ -111,6 +111,11 @@ func TestStopWebhookSharesActiveBroadcastSendLease(t *testing.T) {
 	releaseSend, ok := gate.BeginLabeledWorkContext(t.Context(), "msgvault broadcast send")
 	requirements.True(ok)
 	t.Cleanup(releaseSend)
+	postWebhook(t, runtime, `{"object":"page","entry":[{"id":"100","messaging":[{"sender":{"id":"300"},"recipient":{"id":"100"},"timestamp":1793577601123,"message":{"mid":"ordinary-before-stop","text":"Example message"}}]}]}`)
+	require.Eventually(t, func() bool {
+		due, err := runtime.spool.Due(10)
+		return err == nil && len(due) == 0
+	}, 3*time.Second, 10*time.Millisecond, "ordinary webhook work must not hold the worker behind the send gate")
 	post(optIn(1793577601123, "STOP_NOTIFICATIONS"))
 	requirements.Eventually(func() bool { return status() == "stopped" }, 3*time.Second, 10*time.Millisecond,
 		"STOP consent must apply while the production broadcast-send lease is active")

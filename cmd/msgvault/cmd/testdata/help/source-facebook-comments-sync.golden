@@ -1,4 +1,4 @@
-Sync Facebook Page comments for registered [[facebook_comments]] profiles. Scan returned organic, visitor and ad posts, retaining independent resumable progress for each surface. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.
+Requires registered [[facebook_comments]] profiles. Scan returned organic, visitor and ad posts, retaining independent resumable progress for each surface. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.
 
 Usage:
   msgvault source facebook-comments sync [identifier] [flags]

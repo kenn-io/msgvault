@@ -81,6 +81,11 @@ func startMetaWebhooksWithRegistry(ctx context.Context, cfg *config.Config, st *
 	var beginApplyGroup func(context.Context, string, string) (func(), bool)
 	if gate != nil {
 		beginApply = gate.BeginWorkContext
+		if tryGate, ok := gate.(interface {
+			TryBeginWorkContext(ctx context.Context) (func(), bool)
+		}); ok {
+			beginApply = tryGate.TryBeginWorkContext
+		}
 		if consent, ok := gate.(interface {
 			BeginBroadcastConsentWorkContext(ctx context.Context) (func(), bool)
 		}); ok {
@@ -88,7 +93,7 @@ func startMetaWebhooksWithRegistry(ctx context.Context, cfg *config.Config, st *
 				if object == "page" && field == "messaging_optins" {
 					return consent.BeginBroadcastConsentWorkContext(ctx)
 				}
-				return gate.BeginWorkContext(ctx)
+				return beginApply(ctx)
 			}
 		}
 	}

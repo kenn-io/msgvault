@@ -221,7 +221,10 @@ func (w *Worker) DrainOnce(ctx context.Context) (sum DrainSummary, err error) {
 			done, ok = w.o.BeginApply(ctx)
 		}
 		if !ok {
-			return sum, nil
+			for _, ref := range group.refs {
+				deliveries[ref.delivery].outcomes[ref.item] = ItemOutcome{Class: Retry, ErrorClass: "operation_busy"}
+			}
+			continue
 		}
 		var outcomes []ItemOutcome
 		outcomes, yielded = w.apply(ctx, group)

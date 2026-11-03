@@ -133,7 +133,7 @@ func newAddMetaMessagesCmd(p meta.DMPlatform) *cobra.Command {
 	label := messagesPlatformName(p)
 	return &cobra.Command{
 		Use: "add [identifier]", Short: "Register a configured " + label + " inbox for message sync",
-		Long: "Verify Page identity and the linked Instagram account when applicable, then register selected inbox profiles. With no identifier, register all configured profiles. Tokens come from the named daemon environment variable. This does not subscribe an app or change routing.",
+		Long: "With no identifier, register all configured inbox profiles. Tokens come from the named daemon environment variable. This does not subscribe an app or change routing.",
 		Args: messagesArgs, RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -169,7 +169,7 @@ func newSyncMetaMessagesCmd(p meta.DMPlatform) *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive recent " + label + " inbox messages",
-		Long: "Backfill registered inbox profiles with resumable request budgets. Each thread exposes at most its 20 most recent messages. Partial writes stay searchable. Tokens come from the named daemon environment variable; live coverage requires the Meta webhook receiver.",
+		Long: "Requires registered inbox profiles. Each thread exposes at most its 20 most recent messages. Partial writes stay searchable. Tokens come from the named daemon environment variable; live coverage requires the Meta webhook receiver.",
 		Args: messagesArgs, RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return messagesError(errors.New("--max-requests must be positive"), 3, "set --max-requests to a positive integer")

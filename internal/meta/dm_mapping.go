@@ -47,6 +47,7 @@ type dmMetadata struct {
 	BroadcastID         string                 `json:"broadcast_id,omitempty"`
 	CampaignID          string                 `json:"campaign_id,omitempty"`
 	EditCount           int                    `json:"edit_count,omitempty"`
+	ProviderBodySeen    bool                   `json:"provider_body_seen,omitempty"`
 	ReactionTimes       map[string]int64       `json:"reaction_times,omitempty"`
 	ReferencedMessageID string                 `json:"referenced_message_id,omitempty"`
 }
@@ -191,7 +192,7 @@ func recordFromEvent(src DMSource, e messagingEvent) (dmRecord, error) {
 }
 
 // persist applies webhook messages without allowing replayed snapshots to
-// replace content already updated by a message-edit event.
+// replace content already updated by a message-edit event or provider read.
 func (w *dmWriter) persist(ctx context.Context, rec dmRecord) (int64, bool, error) {
 	return w.persistRecord(ctx, rec, false)
 }
@@ -240,6 +241,7 @@ func (w *dmWriter) persistRecord(ctx context.Context, rec dmRecord, freshProvide
 		}
 	}
 	meta := rec.Meta
+	meta.ProviderBodySeen = freshProviderRead
 	meta.Version, meta.AppID, meta.PageID, meta.IGID = dmMetadataVersion, w.src.AppID, w.src.PageID, w.src.IGID
 	meta.ThreadID = rec.ThreadID
 	meta.ReferencedMessageID = rec.ReplyToMid
@@ -258,6 +260,7 @@ func (w *dmWriter) persistRecord(ctx context.Context, rec dmRecord, freshProvide
 		}
 		// Missing projection fields are not provider retractions.
 		meta.EditCount = old.EditCount
+		meta.ProviderBodySeen = meta.ProviderBodySeen || old.ProviderBodySeen
 		meta.ReactionTimes = old.ReactionTimes
 		if meta.ThreadID == "" {
 			meta.ThreadID = old.ThreadID
@@ -303,7 +306,7 @@ func (w *dmWriter) persistRecord(ctx context.Context, rec dmRecord, freshProvide
 		if existing.SourceIsFromMe.Valid {
 			rec.FromMe = existing.SourceIsFromMe.Bool
 		}
-		if old.EditCount > 0 && !freshProviderRead {
+		if (old.EditCount > 0 || old.ProviderBodySeen) && !freshProviderRead {
 			rec.Text, _, err = w.store.GetMessageBodyAndRawContext(ctx, existing.ID)
 			if err != nil {
 				return 0, false, err

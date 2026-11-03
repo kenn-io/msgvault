@@ -382,27 +382,29 @@ func TestDMReplayDoesNotRevertEdit(t *testing.T) {
 }
 
 func TestDMFreshProviderSnapshotRepairsMissedEdit(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
 	w := dmTestWriter(t, PlatformMessenger)
-	id, _, err := w.persist(t.Context(), dmTestRecord(t, w, "m_1", "original"))
-	requirements.NoError(err)
+	original := dmTestRecord(t, w, "m_1", "original")
+	id, _, err := w.persist(t.Context(), original)
+	require.NoError(t, err)
 	meta, _ := dmSavedMeta(t, w, id)
-	meta.EditCount = 2
-	blob, err := json.Marshal(meta)
-	requirements.NoError(err)
-	requirements.NoError(w.store.UpdateMessageDerivedText(id, sql.NullString{String: "webhook edit", Valid: true}, sql.NullString{}, sql.NullString{String: "webhook edit", Valid: true}, store.FTSDoc{Body: "webhook edit"}))
-	requirements.NoError(w.store.SetMessageMetadataContext(t.Context(), id, sql.NullString{Valid: true, String: string(blob)}))
+	require.Zero(t, meta.EditCount)
+	require.NoError(t, w.store.UpdateMessageDerivedText(id, sql.NullString{String: "webhook edit", Valid: true}, sql.NullString{}, sql.NullString{String: "webhook edit", Valid: true}, store.FTSDoc{Body: "webhook edit"}))
 
 	rec, err := recordFromNode(w.src, DMMessage{ID: "m_1", From: DMParticipant{ID: "300", Name: "Example Customer"}, Message: "latest provider text", Raw: []byte(`{"id":"m_1","message":"latest provider text"}`)})
-	requirements.NoError(err)
+	require.NoError(t, err)
 	_, _, err = w.persistProviderSnapshot(t.Context(), rec)
-	requirements.NoError(err)
+	require.NoError(t, err)
 
 	body, err := w.store.GetMessageBodyText(id)
-	requirements.NoError(err)
-	assertions.Equal("latest provider text", body)
+	require.NoError(t, err)
+	assert.Equal(t, "latest provider text", body)
+	meta, _ = dmSavedMeta(t, w, id)
+	assert.True(t, meta.ProviderBodySeen)
+	_, _, err = w.persist(t.Context(), original)
+	require.NoError(t, err)
+	body, err = w.store.GetMessageBodyText(id)
+	require.NoError(t, err)
+	assert.Equal(t, "latest provider text", body)
 }
 
 func TestDMPersistRefusesConversationMove(t *testing.T) {

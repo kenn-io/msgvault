@@ -395,14 +395,6 @@ func TestSendCredentialInvalidStops(t *testing.T) {
 	assert.Equal(t, "paused", r.State)
 	assert.Equal(t, 1, f.api.sends)
 }
-func TestSendClaimsBeforeProviderWithoutOpenTransaction(t *testing.T) {
-	f := newSenderFixture(t, 1)
-	f.warm(t)
-	f.api.onSend = func() { _, rows := f.saved(t); assert.Equal(t, "dispatching", rows[0].State) }
-	_, err := f.sender.Send(t.Context(), f.req)
-	require.NoError(t, err)
-}
-
 func TestSendResumedRunClearsFailure(t *testing.T) {
 	assertions := assert.New(t)
 

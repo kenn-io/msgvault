@@ -1,4 +1,4 @@
-Verify Page identity and linked professional account, then register selected [[instagram_comments]] profiles. With no identifier, register all configured profiles. The Page token is read only from the named daemon environment variable.
+With no identifier, register all configured [[instagram_comments]] profiles. The Page token is read only from the named daemon environment variable.
 
 Usage:
   msgvault source instagram-comments add [identifier] [flags]

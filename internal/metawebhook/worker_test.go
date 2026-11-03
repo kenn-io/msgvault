@@ -66,6 +66,37 @@ func TestDrainGroupsItemsPerHandlerPreservingOrder(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(1, calls)
 }
+
+func TestDrainContinuesWhenGroupCannotAcquireGate(t *testing.T) {
+	s, _ := testSpool(t)
+	accept(t, s, `{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":{"message":"ordinary"}},{"field":"messaging_optins","value":{"notification_messages_status":"STOP_NOTIFICATIONS"}}]}]}`)
+	reg := NewRegistry()
+	var handled []string
+	for _, field := range []string{"feed", "messaging_optins"} {
+		reg.Register("page", field, func(ctx context.Context, app string, items []Item) []ItemOutcome {
+			handled = append(handled, field)
+			return appliedItems(ctx, app, items)
+		})
+	}
+	var attempted []string
+	w := NewWorker(WorkerOptions{
+		Spool: s, Registry: reg,
+		BeginApplyGroup: func(_ context.Context, _, field string) (func(), bool) {
+			attempted = append(attempted, field)
+			return nil, field == "messaging_optins"
+		},
+	})
+	sum, err := w.DrainOnce(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"feed", "messaging_optins"}, attempted)
+	assert.Equal(t, []string{"messaging_optins"}, handled)
+	assert.Equal(t, 1, sum.Applied)
+	assert.Equal(t, 1, sum.Retried)
+	due, err := s.Due(1)
+	require.NoError(t, err)
+	assert.Empty(t, due)
+}
+
 func mixedDelivery() string {
 	return `{"object":"page","entry":[{"id":"100","changes":[{"field":"feed","value":{}}],"messaging":[{"message":{"mid":"synthetic-1","text":"example"}}]}]}`
 }
