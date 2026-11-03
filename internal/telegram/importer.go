@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/beeper"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
 )
@@ -149,6 +150,11 @@ func Import(ctx context.Context, st *store.Store, opts ImportOptions) (summary *
 		if err != nil {
 			return 0, err
 		}
+		if _, seen := participants[id]; !seen && strings.HasPrefix(id, "user") {
+			if err := beeper.LinkTelegramUser(ctx, st, source.ID, pid, strings.TrimPrefix(id, "user")); err != nil {
+				return 0, err
+			}
+		}
 		participants[id] = pid
 		named[id] = name != ""
 		return pid, nil
@@ -225,6 +231,16 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 		if opts.Limit > 0 && summary.MessagesAdded >= int64(opts.Limit) {
 			return errLimitReached
 		}
+		sender, err := resolve(m.FromID, m.FromName)
+		if err != nil {
+			return err
+		}
+		if direct && peerPID == 0 {
+			peerPID, err = resolve(peer, chat.Name)
+			if err != nil {
+				return err
+			}
+		}
 		key := fmt.Sprintf("%s:%d", peer, m.ID)
 		if id, ok := existing[key]; ok {
 			writes, err := mediaWrites(ctx, st, id, m, opts, summary)
@@ -238,16 +254,6 @@ func importChat(ctx context.Context, st *store.Store, resolve func(string, strin
 			}
 			summary.MessagesSkipped++
 			continue
-		}
-		if direct && peerPID == 0 {
-			peerPID, err = resolve(peer, chat.Name)
-			if err != nil {
-				return err
-			}
-		}
-		sender, err := resolve(m.FromID, m.FromName)
-		if err != nil {
-			return err
 		}
 		fromMe := sender != 0 && sender == ownerPID
 		members := []store.ConversationParticipantRef{{ParticipantID: ownerPID, Role: "member"}}
