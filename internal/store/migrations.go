@@ -831,3 +831,5 @@ func (s *Store) ForgetMigrationsContext(ctx context.Context, name string) error 
 	}
 	return nil
 }
+
+const migrationPersonFactEvidenceMessageIDV1 = "person_fact_evidence_message_id_v1"

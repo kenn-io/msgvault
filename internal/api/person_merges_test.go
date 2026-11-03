@@ -384,6 +384,8 @@ func TestPersonMergeHTTPErrorMapping(t *testing.T) {
 			wantStatus: http.StatusNotFound, wantCode: "person_merge_not_found"},
 		{name: "merge revision", err: store.ErrPersonRevisionConflict,
 			wantStatus: http.StatusConflict, wantCode: "person_merge_revision_conflict"},
+		{name: "owner observations", err: store.ErrPersonMergeOwnerObservations,
+			wantStatus: http.StatusConflict, wantCode: "person_merge_owner_observations"},
 		{name: "split revision", err: store.ErrPersonSplitRevision,
 			wantStatus: http.StatusConflict, wantCode: "person_merge_revision_conflict"},
 		{name: "merge retry", err: store.ErrPersonMergeIdempotency,

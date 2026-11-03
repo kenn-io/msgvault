@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/personobs"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -151,6 +152,69 @@ func TestMergePersons_RootsAndBindings(t *testing.T) {
 		IdempotencyKey:           "merge-already-absorbed", Actor: "test",
 	})
 	require.ErrorIs(err, store.ErrPersonNotFound)
+}
+
+func TestMergePersonsBlocksDeletionOfAbsorbedOwnerObservations(t *testing.T) {
+	for _, tc := range []struct {
+		name                  string
+		observationOnAbsorbed bool
+	}{
+		{name: "absorbed observation is preserved by refusing merge", observationOnAbsorbed: true},
+		{name: "survivor observation does not block merge"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			survivorParticipant := f.EnsureParticipant("merge-owner-survivor@example.com", "Survivor", "example.com")
+			absorbedParticipant := f.EnsureParticipant("merge-owner-absorbed@example.com", "Absorbed", "example.com")
+			survivor, created, err := f.Store.CreatePersonFromParticipant(survivorParticipant)
+			require.NoError(err)
+			require.True(created)
+			absorbed, created, err := f.Store.CreatePersonFromParticipant(absorbedParticipant)
+			require.NoError(err)
+			require.True(created)
+
+			observedPersonID := survivor.ID
+			if tc.observationOnAbsorbed {
+				observedPersonID = absorbed.ID
+			}
+			observation := applyObservationInput(t, f.Store, personobs.BatchInput{
+				PersonID: observedPersonID,
+				Proposals: []personobs.ProposedObservation{{
+					PersonID: observedPersonID, Level: personobs.LevelExplicit,
+					Origin: personobs.OriginOwner, Kind: personobs.KindState,
+					Content: "[PERSON] prefers tea", ConfidenceBP: 1000,
+				}},
+			}, 0)
+			require.Len(observation.Items, 1)
+			require.Equal("created", observation.Items[0].Outcome)
+
+			survivor, err = f.Store.GetPersonContext(context.Background(), survivor.ID)
+			require.NoError(err)
+			absorbed, err = f.Store.GetPersonContext(context.Background(), absorbed.ID)
+			require.NoError(err)
+			merged, err := f.Store.MergePersonsContext(context.Background(), store.PersonMergeRequest{
+				SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+				ExpectedSurvivorRevision: survivor.Revision, ExpectedAbsorbedRevision: absorbed.Revision,
+				IdempotencyKey: "merge-owner-observation", Actor: "test",
+			})
+			if tc.observationOnAbsorbed {
+				require.Nil(merged)
+				require.ErrorIs(err, store.ErrPersonMergeOwnerObservations)
+				_, err = f.Store.GetPersonContext(context.Background(), absorbed.ID)
+				require.NoError(err)
+			} else {
+				require.NoError(err)
+				require.NotNil(merged)
+				assert.Equal(survivor.ID, merged.Person.ID)
+			}
+
+			detail, err := f.Store.GetPersonObservation(context.Background(), observation.Items[0].ObservationID)
+			require.NoError(err)
+			assert.Equal(observedPersonID, detail.PersonID)
+		})
+	}
 }
 
 func TestMergePersons_CardDAVState(t *testing.T) {

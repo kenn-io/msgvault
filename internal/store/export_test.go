@@ -248,6 +248,19 @@ func (s *Store) SetPersonOperationBeforeIdentityLockHookForTest(fn func()) func(
 	return func() { s.personOperationBeforeIdentityLockHook = nil }
 }
 
+// SetPersonOperationAfterIdentityLockHookForTest pauses a merge or split
+// after it has taken the identity mutation lock.
+func (s *Store) SetPersonOperationAfterIdentityLockHookForTest(fn func()) func() {
+	s.personOperationAfterIdentityLockHook = fn
+	return func() { s.personOperationAfterIdentityLockHook = nil }
+}
+
+// SetPersonObservationTxBarrierForTest coordinates observation apply lock order.
+func (s *Store) SetPersonObservationTxBarrierForTest(fn func(phase string)) func() {
+	s.personObservationTxBarrier = fn
+	return func() { s.personObservationTxBarrier = nil }
+}
+
 // SetSourceMergeAfterJournalCheckHookForTest pauses a merge after its initial
 // idempotency lookup and before it acquires source execution locks.
 func (s *Store) SetSourceMergeAfterJournalCheckHookForTest(fn func()) func() {

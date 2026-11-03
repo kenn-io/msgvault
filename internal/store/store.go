@@ -118,9 +118,11 @@ type Store struct {
 	identityMatchReviewAfterDecisionHook  func()
 	senderRepairMessageLockHook           func()
 	personOperationBeforeIdentityLockHook func()
+	personOperationAfterIdentityLockHook  func()
 	sourceMergeBeforeIdentityLockHook     func()
 	sourceMergeAfterJournalCheckHook      func()
 	personMergeAfterSnapshotHook          func()
+	personObservationTxBarrier            func(phase string)
 	personMatchBlockingBeforeLockHook     func()
 	personEnrichmentClock                 func() time.Time
 	personEnrichmentBudgetBarrier         func()
@@ -1640,6 +1642,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		if _, err := s.db.ExecContext(ctx, `UPDATE document_extractions SET upload_count = 1 WHERE request_count > 0`); err != nil {
 			return fmt.Errorf("backfill document upload counts: %w", err)
 		}
+	}
+	if err := s.runOnceMigration(ctx, migrationPersonFactEvidenceMessageIDV1, 1, false, s.migratePersonFactEvidenceMessageIDV1); err != nil {
+		return fmt.Errorf("migrate person fact evidence message links: %w", err)
 	}
 	// account: and received: filter on the account columns, and each sync
 	// looks up pending rows; created here because the columns arrive through

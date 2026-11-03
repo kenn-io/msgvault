@@ -137,6 +137,11 @@ func (s *Store) applyPreparedPersonFactGenerationDetailedTx(
 		ctx, tx, "person-fact-generation", input.PersonID); err != nil {
 		return nil, personFactApplyMetadata{}, err
 	}
+	if len(statuses) > 0 {
+		if err := s.lockPersonMutationTx(ctx, tx, input.PersonID); err != nil {
+			return nil, personFactApplyMetadata{}, err
+		}
+	}
 	if err := verifyTrackedPersonFactPersonTx(ctx, tx, input.PersonID); err != nil {
 		return nil, personFactApplyMetadata{}, err
 	}

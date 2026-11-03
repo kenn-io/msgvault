@@ -88,6 +88,9 @@ func (s *Store) splitPersonMergeOnce(
 		if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 			return err
 		}
+		if s.personOperationAfterIdentityLockHook != nil {
+			s.personOperationAfterIdentityLockHook()
+		}
 		replayed, found, err := s.personSplitByIdempotencyKeyTx(
 			ctx, tx, request.IdempotencyKey, requestHash,
 		)

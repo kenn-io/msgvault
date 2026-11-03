@@ -46,6 +46,8 @@ func (s *Store) personHasUserOwnedStateTx(
 				WHERE person_id = persons.id AND source = 'user')
 			OR EXISTS (SELECT 1 FROM person_categories
 				WHERE person_id = persons.id AND source = 'user')
+			OR EXISTS (SELECT 1 FROM person_observations
+				WHERE person_id = persons.id AND origin = 'owner')
 			OR EXISTS (SELECT 1 FROM person_media
 				WHERE person_id = persons.id AND source = 'user')
 			OR EXISTS (SELECT 1 FROM person_relationships
