@@ -404,10 +404,8 @@ web-browser-install: web-install
 		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
 	fi
 
-# test:browser runs everything under web/tests, including tests/e2e specs
-# whose fixtures spawn the repo-root msgvault daemon, so the binary must
-# exist before Playwright starts. Same invariant as web-e2e below.
-web-test-browser: build web-browser-install
+# These specs mock the API; Playwright's webServer builds the app.
+web-test-browser: web-browser-install
 	cd web && bun run test:browser
 
 # Browser gates use local Chromium or the remote Playwright server in CI.
