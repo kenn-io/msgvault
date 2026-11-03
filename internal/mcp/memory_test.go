@@ -102,6 +102,7 @@ func daemonProxyMemoryOptions() ServeOptions {
 		Drafts:               struct{ DraftRunner }{},
 		DraftCommands:        slices.Sorted(maps.Keys(stableDraftDefinitions)),
 		ChatDiscoveryBackend: struct{ ChatDiscoveryBackend }{},
+		CommentActions:       struct{ CommentActionBackend }{},
 	}
 }
 

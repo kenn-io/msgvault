@@ -10,6 +10,11 @@ All notable changes to msgvault, grouped by release.
 
 - [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed and Instagram comments, with owner subscription, status, and replay commands. Other fields stay held until their handlers are installed and configured.
 - [Instagram mentions and tags](usage/instagram-comments.md#mentions-and-tags) adds opt-in, resumable tag polling and caption/comment mention webhooks as searchable conversations; replies are pending.
+- [Facebook comment actions](usage/facebook-comments.md#comment-actions) hide,
+  unhide, or delete archived comments through owner-only CLI, HTTP API, and MCP
+  tools after explicit profile opt-in. Delete keeps archive history; receipts
+  preserve uncertain outcomes. Local triage labels and a comment queue help
+  track work without changing Facebook. Requires daemon API schema 3.38.0.
 
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.

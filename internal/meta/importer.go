@@ -305,6 +305,18 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 }
 
 func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) error {
+	for index, frame := range p.Stack {
+		deleted, err := r.deletedByAction(ctx, frame.Parent)
+		if err != nil {
+			return err
+		}
+		if deleted {
+			// Any paused ancestor may outlive deletion and GC. Drop that
+			// frame and all descendants before reading the active frame.
+			p.Stack = p.Stack[:index]
+			return nil
+		}
+	}
 	index := len(p.Stack) - 1
 	f := &p.Stack[index]
 	if !f.Loaded {

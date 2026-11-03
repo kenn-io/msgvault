@@ -5,8 +5,9 @@ description: Archive comments on a selected Facebook Page and link commenters to
 ---
 
 Connect a selected Facebook Page to search its returned posts, comments, and
-nested replies in msgvault. This unreleased integration reads public comment
-conversations. It does not publish replies or send private messages.
+nested replies in msgvault. This unreleased integration archives public comment
+conversations and can moderate archived Facebook comments. It does not publish
+replies or send private messages.
 
 ## Connect a Page
 
@@ -96,6 +97,80 @@ Commenter identities include the app, Page, and native actor ID. Matching
 display names or usernames never merge customers. Use the existing
 [participant linking and people tools](people.md) to link the observed identity
 to a person you already maintain. No separate customer database is created.
+
+## Comment actions
+
+Hide, unhide, or delete an archived Facebook comment through the owner CLI,
+HTTP API, or MCP tools. These actions require daemon API schema 3.38.0 or newer.
+Delegated agent grants and remote-client keys are refused for actions, triage,
+queue reads, and receipt reads. Delegated MCP sessions do not expose these tools.
+
+Add explicit opt-ins to the selected `[[facebook_comments]]` profile and restart
+the daemon:
+
+```toml
+enabled = true
+actions = ["hide", "delete"]
+```
+
+`hide` also permits unhide. An omitted or empty `actions` list permits no
+provider writes. Moderation requires `pages_manage_engagement` and
+`pages_read_user_content` to be granted to the app and token. Live permission
+and app-access checks are still pending; enabling this configuration does not
+grant permissions.
+
+Use msgvault's archived **message ID**, not a free-form Facebook comment ID.
+A dry run uses local archive evidence, reads no token, makes no Graph request,
+and creates no receipt. It prints the exact target and a confirmation token:
+
+```bash
+msgvault comment moderate 42 --delete --dry-run --json
+msgvault comment moderate 42 --delete --confirm CONFIRM_TOKEN --json
+msgvault comment moderate 43 --hide --json
+msgvault comment moderate 43 --unhide --json
+```
+
+Copy `confirm` from the preview into `--confirm`. Delete requires this token
+and keeps the archived history. Hide and unhide need no confirmation token.
+The daemon checks the target's source identity and verifies that the configured
+token belongs to the selected Page before a new provider action. Previews and
+receipt resolution stay local. MCP
+`moderate_comment` previews and requests client confirmation for delete;
+hide and unhide run without that prompt.
+
+Read receipts with `msgvault comment actions 42 --json`. Each receipt identifies
+the action, state, error code, and creation and update times so you can distinguish
+attempts after a lost response. An `outcome_unknown`
+error means the provider may have accepted the action. msgvault does not retry
+it automatically. Inspect the provider and receipts first, then resolve the
+same action with `--resolve-unknown sent` or `--resolve-unknown not-sent`.
+Resolution records your observation without another provider call; `not-sent`
+permits a later explicit attempt. Delete resolution still requires `--confirm`.
+Archive cleanup retains an unresolved action's comment and parents until you
+resolve the receipt, even if the comment has since been deleted from Facebook.
+A `remote_accepted_local_failed` error includes the receipt: the provider
+accepted the action, but local evidence could not be saved or repaired. Repeating
+a succeeded delete repairs its archive marker without deleting again.
+
+Garbage collection preserves the parent links needed by surviving replies.
+See [`gc`](../cli-reference.md#gc) for retention and purge rules.
+
+Track work locally without changing Facebook:
+
+```bash
+msgvault comment triage 42 --state handled --expect open
+msgvault comment queue --state open --limit 50 --json
+```
+
+Triage states are `open`, `handled`, and `skipped`. `--expect` refuses an update
+if another caller changed the state. Later imports preserve these local labels.
+The queue includes comment context, moderation evidence, archived Page replies,
+and receipt summaries. It excludes the Page's own comments and normally excludes
+comments deleted from Facebook; `--state all` includes deleted comments too.
+Results sort by sent time, then message ID, ascending. Continue with
+`--before-id` set to the last-seen message ID; the page limit is 1–200, default 50.
+
+See the [CLI reference](../cli-reference.md#comment-moderate) for all flags.
 
 ## Limits
 

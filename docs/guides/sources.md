@@ -48,6 +48,11 @@ also a separate opt-in because downloading an image can activate email tracking.
 | WhatsApp, iMessage, iMazing CSV, Google Voice, Messenger | [Text message imports](../usage/text-messages.md) | Supported backups or exports, with your identity supplied where required |
 | SMS Backup & Restore | [Android SMS and call logs](../usage/text-messages.md) | Local XML/ZIP or scheduled imports from a configured Drive folder |
 
+Use `msgvault comment moderate`, `comment triage`, `comment queue`, and
+`comment actions` for archived Facebook comments. See the
+[comment workflow](../usage/facebook-comments.md#comment-actions) for opt-ins,
+confirmation and uncertain outcomes.
+
 Some chat providers apply size and room-participant limits to media. A message can be archived
 without all its media. Review [media policy](../configuration.md#media-policy)
 before a large sync. Providers with a backfill command use it to retry eligible

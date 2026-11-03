@@ -81,6 +81,10 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		custom = projection[0]
 		kind, format = custom.SourceType, custom.RawFormat
 	}
+	deleted, err := r.deletedByAction(ctx, obj.ID)
+	if err != nil || deleted {
+		return err
+	}
 	if r.imp.instagram != "" && obj.InstagramMedia != nil && obj.InstagramMedia.Owner != nil {
 		if owner := obj.InstagramMedia.Owner.ID; owner != "" && owner != r.imp.instagram {
 			return fmt.Errorf("%w: instagram media owner mismatch", errInvalidObject)
