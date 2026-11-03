@@ -419,6 +419,83 @@ func TestMergeSourcesPreservesMicrosoftSentEnvelopeSnapshot(t *testing.T) {
 	assert.False(survivorCandidate.Unsent, "the hidden Sent envelope overrides the retained Drafts label")
 }
 
+func TestMergeSourcesDoesNotFingerprintMicrosoftSentProvenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	from, err := st.GetOrCreateSource("msmail", "history@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("msmail", "live@example.test")
+	require.NoError(err)
+	recipients := []string{"sent-recipient@example.test"}
+	survivor := emailMergeFixtureMessage(t, st, into.ID, "live-message", recipients, true)
+	duplicate := emailMergeFixtureMessage(t, st, from.ID, "history-message", recipients, true)
+	folders, err := st.EnsureMicrosoftMailFoldersContext(ctx, from.ID, map[string]store.LabelInfo{
+		"sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	require.NoError(err)
+	sentLabel := folders["sent"]
+	_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, duplicate, &sentLabel, nil)
+	require.NoError(err)
+
+	var duplicateMetadata sql.NullString
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT metadata FROM messages WHERE id=?`), duplicate).Scan(&duplicateMetadata))
+	assert.True(duplicateMetadata.Valid && strings.Contains(duplicateMetadata.String, "msmail_sent_items_observed"),
+		"only the historical Sent copy carries the provenance marker before the merge")
+	var survivorMetadata sql.NullString
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT metadata FROM messages WHERE id=?`), survivor).Scan(&survivorMetadata))
+	assert.False(survivorMetadata.Valid && strings.Contains(survivorMetadata.String, "msmail_sent_items_observed"))
+
+	result, err := st.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: from.ID,
+		IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), result.DuplicatesHidden,
+		"Sent provenance metadata must not make otherwise identical messages fingerprint differently")
+	got, err := st.SenderRelationships(ctx, recipients, nil)
+	require.NoError(err)
+	assert.Equal("known", got[recipients[0]].Relationship,
+		"the surviving message must retain the exact Sent envelope evidence")
+}
+
+func TestMergeSourcesPreservesGmailSentEnvelopeForRawImportedSurvivor(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := t.Context()
+	from, err := st.GetOrCreateSource("gmail", "history@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "live@example.test")
+	require.NoError(err)
+	recipients := []string{"sent-recipient@example.test"}
+	rawID := "eml-" + strings.Repeat("a", 64)
+	survivor := emailMergeFixtureMessage(t, st, into.ID, rawID, recipients, true)
+	duplicate := emailMergeFixtureMessage(t, st, from.ID, "gmail-native-sent", recipients, true)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET source_is_from_me=TRUE WHERE id IN (?, ?)`), survivor, duplicate)
+	require.NoError(err)
+	labels, err := st.EnsureLabelsBatch(from.ID, map[string]store.LabelInfo{
+		"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	require.NoError(err)
+	require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+
+	result, err := st.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: from.ID,
+		IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), result.DuplicatesHidden)
+	var survivorSourceID string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT source_message_id FROM messages WHERE id=?`), survivor).Scan(&survivorSourceID))
+	assert.Equal(rawID, survivorSourceID)
+	got, err := st.SenderRelationships(ctx, recipients, nil)
+	require.NoError(err)
+	assert.Equal("known", got[recipients[0]].Relationship,
+		"a Gmail Sent envelope transferred to a raw-import survivor must establish ownership")
+}
+
 func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

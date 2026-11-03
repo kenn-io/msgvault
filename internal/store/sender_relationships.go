@@ -25,18 +25,22 @@ func (s *Store) senderNativeOwnershipSQL() string {
 	}
 	msmailSentEnvelope := `EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent
 	   WHERE sent.message_id=m.id)`
+	providerSentEnvelope := `EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent
+	   WHERE sent.message_id=m.id)`
 	sentLabel := `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 	   WHERE ml.message_id=m.id AND l.source_id=m.source_id AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))`
 	providerSent := `((src.source_type IN ('gmail','imap','msmail') AND ` + sentLabel + `) OR
 	  (src.source_type='imap' AND COALESCE(` + origin + `,'')='sent') OR
-	  (src.source_type='msmail' AND (` + microsoftSent + ` OR ` + msmailSentEnvelope + `)))`
+	  (src.source_type='msmail' AND (` + microsoftSent + ` OR ` + msmailSentEnvelope + `)) OR
+	  (src.source_type IN ('gmail','` + sourceTypeIMAP + `') AND ` + providerSentEnvelope + `))`
 	email := `COALESCE(NULLIF(m.message_type,''),'email')='email'`
 	// Microsoft Graph's legacy source_is_from_me value was address-derived.
 	// Only provider-observed Sent envelope evidence can exempt a raw-import ID.
 	nativeFlag := `(COALESCE(m.source_is_from_me,FALSE) AND NOT (` + email + ` AND src.source_type='msmail'))`
 	rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
-	allowRawMicrosoftSent := `(src.source_type='msmail' AND ` + msmailSentEnvelope + `)`
-	return `(` + nativeFlag + ` OR ` + providerSent + `) AND NOT (` + rawImported + ` AND NOT ` + allowRawMicrosoftSent + `)`
+	allowRawProviderSent := `((src.source_type='msmail' AND ` + msmailSentEnvelope + `) OR
+	  (src.source_type IN ('gmail','` + sourceTypeIMAP + `') AND ` + providerSentEnvelope + `))`
+	return `(` + nativeFlag + ` OR ` + providerSent + `) AND NOT (` + rawImported + ` AND NOT ` + allowRawProviderSent + `)`
 }
 
 // senderRawImportedIDSQL recognizes complete importer-generated email IDs.
@@ -202,14 +206,14 @@ func (s *Store) senderContactRelationshipHistory(ctx context.Context, tx *logged
 	inspectedEntries := 0
 	for _, key := range keys {
 		remaining := maxSenderRelationshipHistoryEntries - inspectedEntries
-		ids, err := s.senderHistoryMessageIDs(ctx, tx, key, nil, 0, 0, remaining+1)
+		ids, entryCount, err := s.senderHistoryMessageIDsWithEntryCount(ctx, tx, key, nil, 0, 0, remaining+1)
 		if err != nil {
 			return nil, err
 		}
-		if len(ids) > remaining {
+		if entryCount > remaining {
 			return nil, ErrSenderRelationshipLimit
 		}
-		inspectedEntries += len(ids)
+		inspectedEntries += entryCount
 		history[key] = ids
 	}
 	return history, nil
@@ -217,7 +221,7 @@ func (s *Store) senderContactRelationshipHistory(ctx context.Context, tx *logged
 
 func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, scoped bool, excluded int64) (string, []any) {
 	values := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
-	args := make([]any, 0, len(keys)+(len(sources)+1)*5)
+	args := make([]any, 0, len(keys)+(len(sources)+1)*9)
 	for _, key := range keys {
 		args = append(args, key)
 	}
@@ -237,16 +241,25 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address
 		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
 		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+		AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)
 		AND NOT ` + s.activityUnsentSQL() + scope + `) OR EXISTS (
 		SELECT 1 FROM msmail_sent_envelope_recipients sent
+		JOIN messages m ON m.id=sent.message_id JOIN sources src ON src.id=m.source_id
+		WHERE sent.email_address=requested.address
+		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		AND NOT ` + s.activityUnsentSQL() + scope + `) OR EXISTS (
+		SELECT 1 FROM provider_sent_envelope_recipients sent
 		JOIN messages m ON m.id=sent.message_id JOIN sources src ON src.id=m.source_id
 		WHERE sent.email_address=requested.address
 		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
 		AND NOT ` + s.activityUnsentSQL() + scope + `))`
 	archiveRecipientHistory := `(EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
 		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address
-		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)` + scope + `) OR EXISTS (
+		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+		AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)` + scope + `) OR EXISTS (
 		SELECT 1 FROM msmail_sent_envelope_recipients sent JOIN messages m ON m.id=sent.message_id
+		WHERE sent.email_address=requested.address` + scope + `) OR EXISTS (
+		SELECT 1 FROM provider_sent_envelope_recipients sent JOIN messages m ON m.id=sent.message_id
 		WHERE sent.email_address=requested.address` + scope + `))`
 	archiveUseCTE := ""
 	archiveUseJoin := ""
@@ -282,10 +295,9 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		CASE WHEN real_history.address IS NOT NULL THEN 1 ELSE 0 END
 		FROM requested
 		LEFT JOIN real_history ON real_history.address=requested.address ` + archiveUseJoin
-	args = append(args, sourceArgs...)
-	scopeCopies := 1
+	scopeCopies := 3
 	if !scoped {
-		scopeCopies = 6
+		scopeCopies = 9
 	}
 	for range scopeCopies {
 		args = append(args, sourceArgs...)
@@ -320,7 +332,7 @@ func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys
 				return err
 			}
 			if len(candidateIDs) > 0 {
-				addresses, err := s.senderOutboundAddresses(ctx, tx, candidateIDs)
+				addresses, sentSnapshots, err := s.senderOutboundAddresses(ctx, tx, candidateIDs)
 				if err != nil {
 					return err
 				}
@@ -337,7 +349,12 @@ func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys
 						continue
 					}
 					classification := ClassifyActivityCandidate(candidate, DefaultMaxDirectActivityCounterparts)
-					if classification.Broadcast || (classification.Channel != ChannelEmail && classification.Channel != ChannelChat) {
+					if senderAudienceIsBroadcast(
+						classification.Broadcast,
+						sentSnapshots[candidate.MessageID],
+						addresses[candidate.MessageID],
+						DefaultMaxDirectActivityCounterparts,
+					) || (classification.Channel != ChannelEmail && classification.Channel != ChannelChat) {
 						continue
 					}
 					for _, address := range addresses[candidate.MessageID] {
@@ -370,8 +387,15 @@ func senderKnownRelationshipKeys(keys []string, evidence map[string]SenderRelati
 }
 
 func (s *Store) senderHistoryMessageIDs(ctx context.Context, tx *loggedTx, key string, sources []int64, excluded, before int64, limit int) ([]int64, error) {
+	ids, _, err := s.senderHistoryMessageIDsWithEntryCount(ctx, tx, key, sources, excluded, before, limit)
+	return ids, err
+}
+
+func (s *Store) senderHistoryMessageIDsWithEntryCount(
+	ctx context.Context, tx *loggedTx, key string, sources []int64, excluded, before int64, limit int,
+) ([]int64, int, error) {
 	if limit <= 0 {
-		return nil, nil
+		return nil, 0, nil
 	}
 	read := func(query string, args []any) ([]int64, error) {
 		rows, err := tx.QueryContext(ctx, query, args...)
@@ -392,42 +416,53 @@ func (s *Store) senderHistoryMessageIDs(ctx context.Context, tx *loggedTx, key s
 	recipientQuery, recipientArgs := s.senderHistoryMessageIDsQuery(key, sources, excluded, before, limit)
 	recipientIDs, err := read(recipientQuery, recipientArgs)
 	if err != nil {
-		return nil, fmt.Errorf("read sender recipient history entries: %w", err)
+		return nil, 0, fmt.Errorf("read sender recipient history entries: %w", err)
 	}
 	sentQuery, sentArgs := s.senderSentEnvelopeHistoryMessageIDsQuery(key, sources, excluded, before, limit)
 	sentIDs, err := read(sentQuery, sentArgs)
 	if err != nil {
-		return nil, fmt.Errorf("read sender Sent envelope history entries: %w", err)
+		return nil, 0, fmt.Errorf("read sender Sent envelope history entries: %w", err)
 	}
-	ids := make([]int64, 0, min(limit, len(recipientIDs)+len(sentIDs)))
-	appendID := func(id int64) {
-		if len(ids) == 0 || ids[len(ids)-1] != id {
-			ids = append(ids, id)
+	providerSentQuery, providerSentArgs := s.senderProviderSentEnvelopeHistoryMessageIDsQuery(key, sources, excluded, before, limit)
+	providerSentIDs, err := read(providerSentQuery, providerSentArgs)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read sender provider Sent envelope history entries: %w", err)
+	}
+	// Count every source row before merging: a live recipient row and a saved
+	// Sent snapshot are separate bounded reads even when they name one message.
+	entryCount := len(recipientIDs) + len(sentIDs) + len(providerSentIDs)
+	return mergeDescendingSenderHistoryIDs(limit, recipientIDs, sentIDs, providerSentIDs), entryCount, nil
+}
+
+func mergeDescendingSenderHistoryIDs(limit int, lists ...[]int64) []int64 {
+	capacity := 0
+	for _, list := range lists {
+		capacity += len(list)
+	}
+	ids := make([]int64, 0, min(limit, capacity))
+	positions := make([]int, len(lists))
+	for len(ids) < limit {
+		var next int64
+		haveNext := false
+		for i, list := range lists {
+			if positions[i] < len(list) && (!haveNext || list[positions[i]] > next) {
+				next = list[positions[i]]
+				haveNext = true
+			}
+		}
+		if !haveNext {
+			break
+		}
+		if len(ids) == 0 || ids[len(ids)-1] != next {
+			ids = append(ids, next)
+		}
+		for i, list := range lists {
+			if positions[i] < len(list) && list[positions[i]] == next {
+				positions[i]++
+			}
 		}
 	}
-	for i, j := 0, 0; len(ids) < limit; {
-		switch {
-		case i >= len(recipientIDs) && j >= len(sentIDs):
-			return ids, nil
-		case i >= len(recipientIDs):
-			appendID(sentIDs[j])
-			j++
-		case j >= len(sentIDs):
-			appendID(recipientIDs[i])
-			i++
-		case recipientIDs[i] > sentIDs[j]:
-			appendID(recipientIDs[i])
-			i++
-		case sentIDs[j] > recipientIDs[i]:
-			appendID(sentIDs[j])
-			j++
-		default:
-			appendID(recipientIDs[i])
-			i++
-			j++
-		}
-	}
-	return ids, nil
+	return ids
 }
 
 func (s *Store) senderHistoryMessageIDsQuery(key string, sources []int64, excluded, before int64, limit int) (string, []any) {
@@ -464,6 +499,23 @@ func (s *Store) senderSentEnvelopeHistoryMessageIDsQuery(key string, sources []i
 	return query, args
 }
 
+func (s *Store) senderProviderSentEnvelopeHistoryMessageIDsQuery(key string, sources []int64, excluded, before int64, limit int) (string, []any) {
+	scope, sourceArgs := senderSourceScope(sources, excluded)
+	args := []any{key}
+	beforeFilter := ""
+	if before > 0 {
+		beforeFilter = ` AND sent.message_id<?`
+		args = append(args, before)
+	}
+	args = append(args, sourceArgs...)
+	query := `SELECT sent.message_id FROM provider_sent_envelope_recipients sent
+		JOIN messages m ON m.id=sent.message_id
+		WHERE sent.email_address=?` + beforeFilter + scope + `
+		ORDER BY sent.message_id DESC LIMIT ?`
+	args = append(args, limit)
+	return query, args
+}
+
 func (s *Store) senderOutboundEligibleIDs(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded int64, ids []int64) ([]int64, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -488,10 +540,13 @@ func (s *Store) senderOutboundEligibleIDs(ctx context.Context, tx *loggedTx, key
 func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, excluded int64, ids []int64) (string, []any) {
 	messageValues := strings.TrimSuffix(strings.Repeat("(?),", len(ids)), ",")
 	addressValues := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
-	args := make([]any, 0, len(ids)+2*len(keys)+len(sources)+1)
+	args := make([]any, 0, len(ids)+3*len(keys)+len(sources)+1)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	scope, sourceArgs := senderSourceScope(sources, excluded)
 	args = append(args, sourceArgs...)
+	for _, key := range keys {
+		args = append(args, key)
+	}
 	for _, key := range keys {
 		args = append(args, key)
 	}
@@ -508,8 +563,10 @@ func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, e
 		AND (
 			EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent
 				WHERE sent.message_id=m.id AND sent.email_address IN (` + addressValues + `))
-			OR (NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent
-				WHERE sent.message_id=m.id)
+			OR EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent
+				WHERE sent.message_id=m.id AND sent.email_address IN (` + addressValues + `))
+			OR (NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+			AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)
 			AND EXISTS (SELECT 1 FROM message_recipients mr
 				WHERE mr.message_id=m.id AND mr.recipient_type IN ('to','cc','bcc')
 				AND ` + senderRecipientAddress + ` IN (` + addressValues + `)))
@@ -519,52 +576,87 @@ func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, e
 	return query, args
 }
 
-func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids []int64) (map[int64][]string, error) {
+func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids []int64) (map[int64][]string, map[int64]bool, error) {
 	marks := int64Placeholders(len(ids))
 	args := personMergeSnapshotIDArgs(ids)
+	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	// Count every envelope and membership before the projector loads the same
 	// metadata, so a huge audience cannot cause an unbounded allocation.
 	query := `SELECT m.id, ` + senderRecipientAddress + `,
-		CASE WHEN mr.recipient_type IN ('to','cc','bcc') THEN 1 ELSE 0 END FROM messages m
+		CASE WHEN mr.recipient_type IN ('to','cc','bcc') THEN 1 ELSE 0 END, 0 FROM messages m
 		JOIN message_recipients mr ON mr.message_id=m.id
 		WHERE m.id IN (` + marks + `)
 		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
-		UNION ALL SELECT sent.message_id, sent.email_address, 1
+		AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+		UNION ALL SELECT sent.message_id, sent.email_address, 1, 1
 		FROM msmail_sent_envelope_recipients sent
 		WHERE sent.message_id IN (` + marks + `)
-		UNION ALL SELECT m.id, '', 0 FROM messages m
+		UNION ALL SELECT sent.message_id, sent.email_address, 1, 1
+		FROM provider_sent_envelope_recipients sent
+		WHERE sent.message_id IN (` + marks + `)
+		UNION ALL SELECT m.id, '', 0, 0 FROM messages m
 		JOIN message_recipients mr ON mr.message_id=m.id
 		WHERE m.id IN (` + marks + `)
-		AND EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
-		UNION ALL SELECT m.id, '', 0 FROM messages m
+		AND (EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+			OR EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id))
+		UNION ALL SELECT m.id, '', 0, 0 FROM messages m
 		JOIN conversation_participants cp ON cp.conversation_id=m.conversation_id
 		WHERE m.id IN (` + marks + `)
 		LIMIT ?`
 	args = append(args, maxSenderRelationshipAudience+1)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("read sender outbound envelopes: %w", err)
+		return nil, nil, fmt.Errorf("read sender outbound envelopes: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	result := map[int64][]string{}
+	sentSnapshots := map[int64]bool{}
 	count := 0
 	for rows.Next() {
 		count++
 		if count > maxSenderRelationshipAudience {
-			return nil, ErrSenderRelationshipLimit
+			return nil, nil, ErrSenderRelationshipLimit
 		}
 		var id int64
 		var address string
-		var chosen int
-		if err := rows.Scan(&id, &address, &chosen); err != nil {
-			return nil, err
+		var chosen, sentSnapshot int
+		if err := rows.Scan(&id, &address, &chosen, &sentSnapshot); err != nil {
+			return nil, nil, err
+		}
+		if sentSnapshot != 0 {
+			sentSnapshots[id] = true
 		}
 		if chosen != 0 {
 			result[id] = append(result[id], address)
 		}
 	}
-	return result, rows.Err()
+	return result, sentSnapshots, rows.Err()
+}
+
+// senderAudienceIsBroadcast preserves a saved Sent audience when refreshed
+// MIME has narrowed the live recipient rows. The address count is a
+// conservative upper bound on distinct people.
+func senderAudienceIsBroadcast(
+	classifiedBroadcast, hasSentSnapshot bool, sentAudience []string, maxDirectCounterparts int,
+) bool {
+	if classifiedBroadcast {
+		return true
+	}
+	if !hasSentSnapshot {
+		return false
+	}
+	if maxDirectCounterparts <= 0 {
+		maxDirectCounterparts = DefaultMaxDirectActivityCounterparts
+	}
+	uniqueAddresses := make(map[string]struct{}, len(sentAudience))
+	for _, address := range sentAudience {
+		address = strings.ToLower(strings.TrimSpace(address))
+		if address != "" {
+			uniqueAddresses[address] = struct{}{}
+		}
+	}
+	return len(uniqueAddresses) > maxDirectCounterparts
 }

@@ -473,13 +473,15 @@ func TestImportingDraftThatMovesToSentRefreshesEnvelopeBeforeCapture(t *testing.
 	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT email_address
 		FROM msmail_sent_envelope_recipients WHERE message_id=? ORDER BY email_address`), messageID)
 	requirements.NoError(err)
+	defer func() {
+		requirements.NoError(rows.Close())
+	}()
 	for rows.Next() {
 		var address string
 		requirements.NoError(rows.Scan(&address))
 		savedRecipients = append(savedRecipients, address)
 	}
 	requirements.NoError(rows.Err())
-	requirements.NoError(rows.Close())
 	assertions.Equal([]string{"actual-recipient@example.test"}, savedRecipients)
 
 	got, err := st.SenderRelationships(t.Context(), []string{

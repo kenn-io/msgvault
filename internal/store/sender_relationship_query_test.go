@@ -113,6 +113,30 @@ func TestSenderHistoryMessageIDsDeduplicatesSentSnapshots(t *testing.T) {
 	assertions.Equal([]int64{messageID}, ids, "a live row and its preserved Sent snapshot describe one message")
 }
 
+func FuzzSenderAudienceIsBroadcastMonotonicWithSentSnapshot(f *testing.F) {
+	f.Add([]byte{}, false, uint8(DefaultMaxDirectActivityCounterparts))
+	f.Add([]byte{1, 2, 3, 1, 2, 3}, false, uint8(2))
+	f.Add([]byte{1, 2, 3}, true, uint8(25))
+	f.Fuzz(func(t *testing.T, values []byte, liveBroadcast bool, configuredLimit uint8) {
+		addresses := make([]string, 0, len(values))
+		unique := make(map[string]struct{}, len(values))
+		for _, value := range values {
+			address := "recipient-" + strconv.Itoa(int(value)) + "@example.test"
+			addresses = append(addresses, address)
+			unique[address] = struct{}{}
+		}
+
+		limit := int(configuredLimit)
+		if limit == 0 {
+			limit = DefaultMaxDirectActivityCounterparts
+		}
+		got := senderAudienceIsBroadcast(liveBroadcast, true, addresses, int(configuredLimit))
+		assert.Equal(t, liveBroadcast || len(unique) > limit, got)
+		assert.False(t, senderAudienceIsBroadcast(false, false, addresses, int(configuredLimit)),
+			"without saved Sent provenance, historical audience data must not affect the result")
+	})
+}
+
 func TestSenderSentEnvelopeHistoryMessageIDsQueryUsesAddressIndex(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

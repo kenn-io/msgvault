@@ -1463,6 +1463,17 @@ CREATE TABLE IF NOT EXISTS msmail_sent_envelope_recipients (
 CREATE INDEX IF NOT EXISTS idx_msmail_sent_envelope_address
     ON msmail_sent_envelope_recipients(email_address, message_id);
 
+-- Exact Gmail and IMAP Sent-copy envelope evidence survives duplicate and
+-- source merges when a retained message has a different live recipient set.
+CREATE TABLE IF NOT EXISTS provider_sent_envelope_recipients (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    email_address TEXT NOT NULL,
+    PRIMARY KEY(message_id, email_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_sent_envelope_address
+    ON provider_sent_envelope_recipients(email_address, message_id);
+
 -- ============================================================================
 -- REACTIONS
 -- ============================================================================

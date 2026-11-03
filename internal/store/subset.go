@@ -898,6 +898,23 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 			return nil, fmt.Errorf("copy msmail_sent_envelope_recipients: %w", err)
 		}
+	} else {
+		// Schema initialization ledgered the empty destination backfill before
+		// any legacy rows were copied. Re-run it after copying metadata and
+		// recipient envelopes from an archive that predates this table.
+		if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMicrosoftSentEnvelopeRecipients); err != nil {
+			return nil, fmt.Errorf("reset Microsoft Sent envelope migration: %w", err)
+		}
+	}
+	hasProviderSentEnvelopes, err := sourceTableExists(tx, "provider_sent_envelope_recipients")
+	if err != nil {
+		return nil, fmt.Errorf("check provider_sent_envelope_recipients: %w", err)
+	}
+	if hasProviderSentEnvelopes {
+		if _, err := copyByName(tx, "provider_sent_envelope_recipients",
+			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy provider_sent_envelope_recipients: %w", err)
+		}
 	}
 
 	// Derived account attribution copies with its delivery evidence and the

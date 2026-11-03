@@ -3,6 +3,7 @@ package store_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,6 +60,9 @@ func TestSenderRelationshipsRawImportOwnershipSurvivesSourceMerge(t *testing.T) 
 func TestCopySubsetPreservesMicrosoftSentEnvelopeSnapshot(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("CopySubset operates on SQLite archive files")
+	}
 	f := storetest.New(t)
 	ctx := t.Context()
 
@@ -92,4 +96,46 @@ func TestCopySubsetPreservesMicrosoftSentEnvelopeSnapshot(t *testing.T) {
 	got, err := destination.SenderRelationships(ctx, []string{"private@example.test"}, nil)
 	requirements.NoError(err)
 	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["private@example.test"])
+}
+
+func TestCopySubsetBackfillsMicrosoftSentEnvelopeFromSchema20Source(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("CopySubset operates on SQLite archive files")
+	}
+	f := storetest.New(t)
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(
+		`UPDATE sources SET source_type='msmail' WHERE id=?`), f.Source.ID)
+	requirements.NoError(err)
+	messageID := senderRelationshipMessage(t, f, true, "to", "target@example.test")
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(
+		`UPDATE messages SET source_message_id=?,source_is_from_me=TRUE,metadata=? WHERE id=?`),
+		"eml-"+strings.Repeat("a", 64), `{"msmail_sent_items_observed":true}`, messageID)
+	requirements.NoError(err)
+	for _, statement := range []string{
+		`DROP TABLE msmail_sent_envelope_recipients`,
+		`DELETE FROM applied_migrations WHERE name='msmail_sent_envelope_recipients_v1'`,
+		`UPDATE archive_metadata SET value='20' WHERE key='schema_version'`,
+	} {
+		_, err = f.Store.DB().ExecContext(ctx, statement)
+		requirements.NoError(err)
+	}
+
+	destinationDir := filepath.Join(t.TempDir(), "schema20-subset")
+	_, err = store.CopySubset(store.DBPathForTest(f.Store), destinationDir, 1, false)
+	requirements.NoError(err)
+	destination, err := store.Open(filepath.Join(destinationDir, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(destination.Close()) })
+
+	var applied bool
+	requirements.NoError(destination.DB().QueryRowContext(ctx, destination.Rebind(`
+		SELECT EXISTS(SELECT 1 FROM applied_migrations WHERE name=?)
+	`), "msmail_sent_envelope_recipients_v1").Scan(&applied))
+	assertions.True(applied, "the copied destination must complete the Sent envelope backfill after copying")
+	got, err := destination.SenderRelationships(ctx, []string{"target@example.test"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["target@example.test"])
 }

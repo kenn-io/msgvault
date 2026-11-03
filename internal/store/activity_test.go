@@ -1639,7 +1639,8 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 func TestActivityCandidateSupportsLegacySchemaWithoutMicrosoftSentEnvelopes(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
-	_, err := f.Store.DB().Exec(`UPDATE sources SET source_type = 'msmail' WHERE id = ?`, f.Source.ID)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE sources SET source_type = 'msmail' WHERE id = ?`), f.Source.ID)
 	require.NoError(err)
 	messageID := f.NewMessage().WithSentAt(time.Now()).Create(t, f.Store)
 	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
@@ -1650,7 +1651,7 @@ func TestActivityCandidateSupportsLegacySchemaWithoutMicrosoftSentEnvelopes(t *t
 	require.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{
 		String: `{"msmail_sent_items_observed":true}`, Valid: true,
 	}))
-	_, err = f.Store.DB().Exec(`DROP TABLE msmail_sent_envelope_recipients`)
+	_, err = f.Store.DB().ExecContext(t.Context(), `DROP TABLE msmail_sent_envelope_recipients`)
 	require.NoError(err)
 
 	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)

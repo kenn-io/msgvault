@@ -10,6 +10,14 @@ import (
 )
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
+	for _, m := range plan.messages {
+		if m.survivor == 0 {
+			continue
+		}
+		if err := s.mergeProviderSentEnvelopeEvidenceTx(ctx, tx, m.survivor, m.id); err != nil {
+			return fmt.Errorf("preserve provider Sent envelope from merged message %d: %w", m.id, err)
+		}
+	}
 	if err := preserveMergedIMAPDrafts(ctx, tx, from, into); err != nil {
 		return fmt.Errorf("preserve merged IMAP draft evidence: %w", err)
 	}
