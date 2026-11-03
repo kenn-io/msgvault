@@ -232,7 +232,11 @@ func (s *Server) handleListPersonMeetings(w http.ResponseWriter, r *http.Request
 		s.writeMeetingRecordError(w, err)
 		return
 	}
-	q := store.PersonMeetingsQuery{Cursor: r.URL.Query().Get("cursor"), CursorIdentity: r.PathValue("ref")}
+	q := store.PersonMeetingsQuery{
+		Cursor:               r.URL.Query().Get("cursor"),
+		CursorIdentity:       r.PathValue("ref"),
+		CheckCalendarBreadth: s.requestAuthentication(r).Grant != nil && kind == "person",
+	}
 	for _, field := range []struct {
 		name   string
 		target *time.Time

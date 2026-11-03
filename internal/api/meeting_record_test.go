@@ -35,6 +35,37 @@ func meetingRecordAPINote(t *testing.T, st *store.Store, source int64, key strin
 	return note
 }
 
+func seedCalendarSeriesCandidates(t *testing.T, st *store.Store, sourceID, conversationID int64, count int) {
+	t.Helper()
+	requirements := require.New(t)
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = tx.Rollback() }()
+
+	for offset := 0; offset < count; offset += 500 {
+		size := min(500, count-offset)
+		messageValues, eventValues := make([]string, 0, size), make([]string, 0, size)
+		messageArgs, eventArgs := make([]any, 0, size*5), make([]any, 0, size*14)
+		for i := range size {
+			id := int64(100_000 + offset + i)
+			providerID := fmt.Sprintf("wide-series-%d", id)
+			messageValues = append(messageValues, "(?, ?, ?, ?, ?)")
+			messageArgs = append(messageArgs, id, sourceID, conversationID, providerID, "calendar_event")
+			eventValues = append(eventValues, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			eventArgs = append(eventArgs, id, 1, "fixture", "google", "calendar@example.test", providerID, providerID, "series", "", "confirmed", false, "UTC", `["RRULE:FREQ=DAILY;COUNT=1"]`, false)
+		}
+		override := ""
+		if st.IsPostgreSQL() {
+			override = " OVERRIDING SYSTEM VALUE"
+		}
+		_, err = tx.ExecContext(t.Context(), st.Rebind(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+override+` VALUES `+strings.Join(messageValues, ",")), messageArgs...)
+		requirements.NoError(err)
+		_, err = tx.ExecContext(t.Context(), st.Rebind(`INSERT INTO calendar_events (message_id,projection_version,content_hash,provider,namespace,provider_event_id,series_provider_id,kind,original_start_date,status,all_day,calendar_time_zone,recurrence_json,has_bounds) VALUES `+strings.Join(eventValues, ",")), eventArgs...)
+		requirements.NoError(err)
+	}
+	requirements.NoError(tx.Commit())
+}
+
 func TestLinkUnlinkOwnerAccessMatrix(t *testing.T) {
 	for _, mode := range []AuthMode{AuthModeAPIKey, AuthModeDelegated, AuthModeRemoteClient, AuthModeSession, AuthModeLoopback, AuthModeCaller} {
 		t.Run(string(mode), func(t *testing.T) {
@@ -209,6 +240,52 @@ func TestDelegatedPersonMeetingsHideGlobalProfileExistence(t *testing.T) {
 			assertions.Equal(responses[0], responses[1], "an out-of-scope profile must match an unknown profile response")
 		})
 	}
+}
+
+func TestDelegatedPersonMeetingsBreadthDoesNotRevealProfileExistence(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, outsideMessageID, err := testutil.CreateIndexedSourceMessage(st, "outside@example.test", "outside", "Outside message", "")
+	requirements.NoError(err)
+	participantID, err := st.EnsureParticipant("outside-contact@example.test", "Synthetic Contact", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(outsideMessageID, "from", []int64{participantID}, nil))
+	profile, _, err := st.CreatePersonFromParticipantContext(t.Context(), participantID)
+	requirements.NoError(err)
+
+	calendarSource, err := st.GetOrCreateSource("gcal", "calendar@example.test")
+	requirements.NoError(err)
+	calendarConversation, err := st.EnsureConversation(calendarSource.ID, "wide-calendar", "Wide synthetic calendar")
+	requirements.NoError(err)
+	seedCalendarSeriesCandidates(t, st, calendarSource.ID, calendarConversation, 2001)
+
+	cfg := &config.Config{
+		HomeDir: t.TempDir(),
+		Data:    config.DataConfig{DataDir: t.TempDir()},
+		Server:  config.ServerConfig{APIKey: "owner-key", AgentAccess: true},
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	t.Cleanup(srv.agentGrants.Close)
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{
+		ID: calendarSource.ID, Type: calendarSource.SourceType, Identifier: calendarSource.Identifier,
+	}}, time.Time{})
+	requirements.NoError(err)
+
+	from, to := "2027-03-01T00:00:00Z", "2027-03-02T00:00:00Z"
+	refs := []string{fmt.Sprintf("person:%d", profile.ID), fmt.Sprintf("person:%d", profile.ID+100)}
+	responses := make([]string, len(refs))
+	for i, ref := range refs {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/people/"+ref+"/meetings?from="+from+"&to="+to, nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, token)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		requirements.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+		assertions.Contains(w.Body.String(), "query_too_broad")
+		responses[i] = fmt.Sprintf("%d:%s", w.Code, w.Body.String())
+	}
+	assertions.Equal(responses[0], responses[1], "an out-of-scope profile and an unknown profile must share the calendar breadth response")
 }
 
 func TestMeetingWritesAndSuggestionsRequireQualifiedSeriesRef(t *testing.T) {

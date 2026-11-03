@@ -30,6 +30,10 @@ type PersonMeetingsQuery struct {
 	// CursorIdentity binds a page cursor to the caller-visible person selector,
 	// without fingerprinting resolved participant IDs or private contact emails.
 	CursorIdentity string
+	// CheckCalendarBreadth checks the scoped calendar window before person
+	// identity filters, so delegated person lookups cannot reveal profile
+	// existence through a breadth error.
+	CheckCalendarBreadth bool
 	// NewestFirst selects recent history for bounded person cards. The default
 	// preserves the ascending person-meetings API order.
 	NewestFirst bool
@@ -41,7 +45,8 @@ func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope
 		return nil, "", err
 	}
 	results := []MeetingRecordSummary{}
-	if len(q.ParticipantIDs) == 0 && len(q.Emails) == 0 {
+	checkCalendarBreadth := q.CheckCalendarBreadth || len(q.Emails) > 0
+	if len(q.ParticipantIDs) == 0 && len(q.Emails) == 0 && !checkCalendarBreadth {
 		return results, "", nil
 	}
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
@@ -50,6 +55,16 @@ func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope
 	}
 	defer release()
 	r := s.snapshotReader(ctx)
+	var calendarRows []CalendarEventRow
+	if checkCalendarBreadth {
+		calendarRows, err = calendarEventRowsInWindow(ctx, r, scope, q.From, q.To)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	if len(q.ParticipantIDs) == 0 && len(q.Emails) == 0 {
+		return results, "", nil
+	}
 	budget := calrecur.RequestReadBudget
 	byLogical := map[string]MeetingRecordSummary{}
 	targets := map[string]linkOccurrence{}
@@ -72,15 +87,11 @@ func (s *Store) ListPersonMeetingsContext(ctx context.Context, scope SourceScope
 		return nil
 	}
 	if len(q.Emails) > 0 {
-		rows, err := calendarEventRowsInWindow(ctx, r, scope, q.From, q.To)
-		if err != nil {
-			return nil, "", err
-		}
 		emails := map[string]bool{}
 		for _, email := range q.Emails {
 			emails[email] = true
 		}
-		rows = personMeetingInvitationRows(rows, emails)
+		rows := personMeetingInvitationRows(calendarRows, emails)
 		occurrences, unexpandable, err := expandRowsToOccurrences(ctx, r, rows, q.From, q.To, &budget)
 		if err != nil {
 			return nil, "", err
