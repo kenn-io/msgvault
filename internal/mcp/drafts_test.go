@@ -190,6 +190,8 @@ func TestSensitiveDraftConfirmationHints(t *testing.T) {
 	}{
 		{"password and duplicate card", "password: hunter2abc\n4111111111111111\n4111111111111111", "a payment card number ending 1111, a password"},
 		{"authored card", "4111111111111111", "a payment card number ending 1111"},
+		{"authored whitespace password", "password: \"        \"", "a password"},
+		{"quoted whitespace password", "> password: \"   \t    \"", "a password (in quoted text)"},
 		{"quoted card", "> 4111111111111111", "a payment card number ending 1111 (in quoted text)"},
 		{"quoted and authored card", "> 4111111111111111\n4111111111111111", "a payment card number ending 1111 (in quoted text), a payment card number ending 1111"},
 		{"different cards", "4242424242424242\n4111111111111111", "a payment card number ending 4242, a payment card number ending 1111"},
@@ -338,6 +340,8 @@ func TestDraftQuotedSensitiveReceipts(t *testing.T) {
 		name, body, subject, findings string
 	}{
 		{"quote line", "> 4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
+		{"authored whitespace password", "password: \"        \"", "", `[{"kind":"password"}]`},
+		{"quoted whitespace password", "> password: \"   \t    \"", "", `[{"kind":"password","quoted":true}]`},
 		{"wrapped attribution", "On Friday,\nExample wrote:\n4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
 		{"forward", "Note\n---------- Forwarded message ----------\n4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
 		{"repeated value", "4111111111111111\n> 4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111"},{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},

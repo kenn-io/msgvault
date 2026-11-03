@@ -1,7 +1,6 @@
 package preprocess
 
 import (
-	"regexp"
 	"strings"
 	"testing"
 
@@ -37,17 +36,27 @@ func TestStripReplyQuotes(t *testing.T) {
 }
 
 func TestMaskReplyQuotes(t *testing.T) {
-	blankLines := regexp.MustCompile(`(?m)^[ \t\r]*\n`)
 	for _, tc := range replyQuoteCases {
 		t.Run(tc.name, func(t *testing.T) {
 			masked := MaskReplyQuotes(tc.body)
 			assert.Equal(t, len(tc.body), len(masked))
-			assert.Equal(t, strings.TrimSpace(blankLines.ReplaceAllString(StripReplyQuotes(tc.body), "")), strings.TrimSpace(blankLines.ReplaceAllString(masked, "")))
 			for i := range tc.body {
 				if tc.body[i] == '\r' || tc.body[i] == '\n' {
 					assert.Equal(t, tc.body[i], masked[i], "line ending at byte %d", i)
 				}
 			}
+		})
+	}
+	for _, tc := range []struct{ name, body, want string }{
+		{"authored text", "Hello\nWorld", "Hello\nWorld"},
+		{"quoted line", "Hi\n> q\nOK", "Hi\n   \nOK"},
+		{"multibyte line with CRLF", "Hi\r\n> reçu\r\nOK", "Hi\r\n       \r\nOK"},
+		{"answer below quote block", "On Monday, A wrote:\n> q\nOK", "                   \n   \nOK"},
+		{"unmarked tail", "On Monday, A wrote:\nq\nOK", "                   \n \n  "},
+		{"separated Outlook headers", "hello\nFrom: a\nOn Monday, A wrote:\n> q\nSent: b", "hello\nFrom: a\n                   \n   \nSent: b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, MaskReplyQuotes(tc.body))
 		})
 	}
 }

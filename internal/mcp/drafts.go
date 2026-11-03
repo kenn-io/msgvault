@@ -166,7 +166,8 @@ func draftSensitiveFindings(args map[string]any) []draftFinding {
 	body := stringArgument(args, "body")
 	masked := preprocess.MaskReplyQuotes(body)
 	for _, finding := range sensitive.Scan(body) {
-		findings = append(findings, draftFinding{Finding: finding, Quoted: strings.TrimSpace(masked[finding.Start:finding.End]) == ""})
+		span := masked[finding.Start:finding.End]
+		findings = append(findings, draftFinding{Finding: finding, Quoted: strings.TrimSpace(span) == "" && span != body[finding.Start:finding.End]})
 	}
 	return findings
 }
