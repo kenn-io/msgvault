@@ -154,11 +154,27 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 	if err != nil {
 		return err
 	}
+	if intent.BeeperMaxRequests != 0 {
+		scoped, closeScope, scopeErr := client.ForBoundedOperations(intent.BeeperMaxRequests)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		defer closeScope()
+		client = scoped
+		boundedCtx, cancel := context.WithTimeout(ctx, intent.BeeperTimeout)
+		defer cancel()
+		ctx = boundedCtx
+	}
 	execution, err := a.lockBeeperSource(ctx, source.ID)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = execution.Release() }()
+	if intent.BeeperMaxRequests != 0 {
+		if _, err := a.beeperSource(ctx, source.ID, true); err != nil {
+			return err
+		}
+	}
 	chatID := strings.TrimSpace(intent.To[0])
 	if existing, err := a.store.LiveBeeperDraftContext(ctx, source.ID, chatID); err == nil {
 		if grant != nil {
@@ -169,6 +185,9 @@ func (a *storeAPIAdapter) runBeeperDraftCreate(ctx context.Context, grant *agent
 		return draftReplyError("draft_exists", store.ErrBeeperDraftExists)
 	} else if !errors.Is(err, store.ErrBeeperDraftNotFound) {
 		return draftReplyError("draft_read_failed", err)
+	}
+	if intent.BeeperMaxRequests != 0 && intent.BeeperMaxRequests < 2 {
+		return draftReplyError("request_limit", errors.New("new Beeper draft requires room for read and write"))
 	}
 	state, err := readBeeperDraft(ctx, client, source, chatID)
 	if err != nil {

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -319,6 +320,16 @@ func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
 	}
 	_, err = f.create(t, other, "agent")
 	assertBeeperDraftCode(t, err, "not_permitted")
+	for _, selector := range [][]string{
+		{"--source-id", strconv.FormatInt(f.source.ID, 10)},
+		{"--source-id", "9223372036854775807"},
+		{"--account", f.source.Identifier},
+		{"--account", "missing-synthetic-account"},
+	} {
+		_, denied := f.run(t, other, append([]string{api.CLIRunDraftComposeCommand}, append(selector,
+			"--to", beeperDraftTestChat, "--body", "Synthetic denied candidate", "--beeper-max-requests", "2", "--beeper-timeout", "1s")...)...)
+		assertBeeperDraftCode(t, denied, "not_permitted")
+	}
 	_, err = f.run(t, other, api.CLIRunDraftEditCommand, created.DraftID, "--revision", "1", "--body", "agent")
 	assertBeeperDraftCode(t, err, "not_permitted")
 	requestsAfter, _ := f.beeper.counts()
@@ -335,4 +346,81 @@ func TestBeeperDraftDelegatedDenialPrecedesProvider(t *testing.T) {
 	assertBeeperDraftCode(t, err, "draft_exists")
 	assert.Equal(created.DraftID, existing.DraftID)
 	assert.Nil(existing.Content)
+}
+
+// Exercise bounded creation at its owning command, not only the native client.
+func TestBeeperBoundedComposeOwnerGuards(t *testing.T) {
+	for _, mode := range []string{"new-one-request", "managed-reuse-one-request", "expired-provider-deadline", "unknown-write-no-replay"} {
+		t.Run(mode, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newBeeperDraftFixture(t)
+			run := func(limit, deadline, body string) (beeperDraftOutput, error) {
+				return f.run(t, nil, api.CLIRunDraftComposeCommand, "--source-id", strconv.FormatInt(f.source.ID, 10), "--to", beeperDraftTestChat, "--body", body, "--beeper-max-requests", limit, "--beeper-timeout", deadline)
+			}
+			switch mode {
+			case "new-one-request":
+				_, err := run("1", "30s", "Synthetic one-request candidate")
+				assertBeeperDraftCode(t, err, "request_limit")
+				requests, patches := f.beeper.counts()
+				assert.Zero(requests, "insufficient allowance must refuse before native GET")
+				assert.Zero(patches)
+				_, err = f.store.LiveBeeperDraftContext(t.Context(), f.source.ID, beeperDraftTestChat)
+				require.ErrorIs(err, store.ErrBeeperDraftNotFound, "refusal must not create a managed row")
+			case "managed-reuse-one-request":
+				created, err := f.create(t, nil, "Original managed response")
+				require.NoError(err)
+				before, err := f.store.GetBeeperDraftContext(t.Context(), created.DraftID)
+				require.NoError(err)
+				f.beeper.set(`{"text":"External composer remains untouched"}`, false)
+				requests, patches := f.beeper.counts()
+				reused, err := run("1", "30s", "Ignored replacement request")
+				assertBeeperDraftCode(t, err, "draft_exists")
+				assert.Equal(created.DraftID, reused.DraftID)
+				assert.Equal(created.Revision, reused.Revision)
+				afterRequests, afterPatches := f.beeper.counts()
+				assert.Equal(requests, afterRequests, "managed reuse precedes new-draft minimum budget")
+				assert.Equal(patches, afterPatches)
+				after, err := f.store.GetBeeperDraftContext(t.Context(), created.DraftID)
+				require.NoError(err)
+				assert.Equal(before, after)
+				assert.JSONEq(`{"text":"External composer remains untouched"}`, f.beeper.current())
+			case "expired-provider-deadline":
+				// An intentionally expiring valid deadline checks ownership wiring;
+				// no elapsed-time or runner throughput assertion is made.
+				_, err := run("2", "1ns", "Synthetic deadline candidate")
+				require.Error(err)
+				require.ErrorIs(err, context.DeadlineExceeded)
+				requests, patches := f.beeper.counts()
+				assert.Zero(requests)
+				assert.Zero(patches)
+				_, err = f.store.LiveBeeperDraftContext(t.Context(), f.source.ID, beeperDraftTestChat)
+				require.ErrorIs(err, store.ErrBeeperDraftNotFound)
+			case "unknown-write-no-replay":
+				f.beeper.set("null", true) // Existing fixture returns500 for one native PATCH.
+				pending, err := run("2", "30s", "Synthetic uncertain response")
+				assertBeeperDraftCode(t, err, "remote_unknown")
+				require.NotEmpty(pending.DraftID)
+				assert.Equal(store.BeeperDraftOperationEdit, pending.PendingOperation)
+				assert.Equal("Synthetic uncertain response", pending.CandidateContent)
+				requests, patches := f.beeper.counts()
+				assert.Equal(2, requests, "one native read and one attempted write")
+				assert.Equal(1, patches)
+				before, err := f.store.GetBeeperDraftContext(t.Context(), pending.DraftID)
+				require.NoError(err)
+				require.NotNil(before.Pending)
+				reused, err := run("1", "30s", "Must not retry unknown write")
+				assertBeeperDraftCode(t, err, "draft_exists")
+				assert.Equal(pending.DraftID, reused.DraftID)
+				assert.Equal(pending.Revision, reused.Revision)
+				assert.Equal(pending.PendingOperation, reused.PendingOperation)
+				afterRequests, afterPatches := f.beeper.counts()
+				assert.Equal(requests, afterRequests)
+				assert.Equal(patches, afterPatches)
+				after, err := f.store.GetBeeperDraftContext(t.Context(), pending.DraftID)
+				require.NoError(err)
+				assert.Equal(before, after, "unknown native outcome stays pending, never blindly replayed")
+			}
+		})
+	}
 }

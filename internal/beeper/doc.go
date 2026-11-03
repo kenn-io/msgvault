@@ -6,8 +6,9 @@
 // Import processes each chat in phases: backfill walks history oldest-ward
 // with resumable, checkpointed cursors; incremental extends past the stored
 // cursor; and reconcile re-walks the recent head to catch edits, deletions,
-// and reaction changes a forward-only cursor cannot see. The archiver only
-// issues GET requests; writing a chat draft is a separate, explicit command.
+// and reaction changes a forward-only cursor cannot see. Import uses GET
+// requests only. Native draft creation and reviewed chat archival are separate,
+// explicitly authorized owner commands.
 //
 // Beeper message IDs are unique only per installation. Anchor probes
 // (anchors.go) fingerprint the installation and are verified before any

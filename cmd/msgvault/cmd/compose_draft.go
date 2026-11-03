@@ -2,6 +2,11 @@ package cmd
 
 import "github.com/spf13/cobra"
 
+const (
+	beeperMaxRequestsFlag = "beeper-max-requests"
+	beeperTimeoutFlag     = "beeper-timeout"
+)
+
 func init() {
 	rootCmd.AddCommand(newDraftComposeCommand())
 }
@@ -25,6 +30,8 @@ func newDraftComposeCommand() *cobra.Command {
 	command.Flags().String("body", "", "draft body")
 	command.Flags().Int64("conversation", 0, "chat conversation for a local draft")
 	command.Flags().Int64("reply-to", 0, "archived chat message the local draft replies to")
+	command.Flags().Int(beeperMaxRequestsFlag, 0, "Native only; requires --beeper-timeout")
+	command.Flags().Duration(beeperTimeoutFlag, 0, "Native only; requires --beeper-max-requests")
 	command.Flags().Bool("json", false, "emit one JSON result")
 	return command
 }
