@@ -171,7 +171,7 @@ func draftSensitiveFindings(args map[string]any) []draftFinding {
 		if newline := strings.IndexByte(body[finding.End:], '\n'); newline >= 0 {
 			end = finding.End + newline
 		}
-		findings = append(findings, draftFinding{Finding: finding, Quoted: strings.TrimSpace(masked[start:end]) == "" && strings.TrimSpace(body[start:end]) != ""})
+		findings = append(findings, draftFinding{Finding: finding, Quoted: strings.TrimSpace(masked[start:end]) == ""})
 	}
 	return findings
 }
