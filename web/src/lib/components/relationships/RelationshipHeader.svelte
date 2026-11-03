@@ -20,7 +20,7 @@
     loading?: boolean;
     /** Heading for the identities block when the page header already shows the person. */
     title?: string;
-    missing?: boolean;
+    headerState?: 'missing' | 'no-mail' | 'normal';
     client: APIClient;
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
@@ -34,7 +34,7 @@
     detail,
     loading = false,
     title = undefined,
-    missing = false,
+    headerState = 'normal',
     client,
     onLinkParticipants,
     onUnlinkParticipants,
@@ -279,7 +279,7 @@
 <header class="relationship-header" class:has-detail={Boolean(detail) && !title} aria-label="Relationship detail">
   {#if !detail}
     <p class="header-empty" role="status">
-      {loading ? 'Loading relationship…' : missing ? 'No sent or received messages with this contact yet.' : 'Select a person or domain to see your shared history.'}
+      {loading ? 'Loading relationship…' : headerState === 'missing' ? 'Person not found.' : headerState === 'no-mail' ? 'No sent or received messages with this contact yet.' : 'Select a person or domain to see your shared history.'}
     </p>
   {:else}
     <div class="title-row">
@@ -301,9 +301,13 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    {#if !title}<p class="counts">
-      {detail.activity_count.toLocaleString()} items
-      {#if detail.activity_count > 0}
+    {#if !title || headerState === 'no-mail'}<p class="counts">
+      {#if headerState === 'no-mail'}
+        No sent or received messages with this contact yet.
+      {:else}
+        {detail.activity_count.toLocaleString()} items
+      {/if}
+      {#if detail.activity_count > 0 && detail.first_at && detail.last_at}
         · {formatDate(detail.first_at)} – {formatDate(detail.last_at)}
       {/if}
       {#if !isPersonDetail(detail)}

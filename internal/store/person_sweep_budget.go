@@ -195,6 +195,83 @@ func (s *Store) StartPersonSweepAttempt(
 	return nil
 }
 
+// RebindPersonSweepAttempt updates an unstarted extraction attempt after the
+// worker narrows its cursor envelope to a source lane that fits the request
+// budget. Status-only evidence generations do not advance these cursors.
+func (s *Store) RebindPersonSweepAttempt(
+	ctx context.Context, lease peoplesweep.Lease, attemptID string,
+	cursors []peoplesweep.GenerationCursor,
+) error {
+	if lease.PersonID <= 0 || strings.TrimSpace(lease.WorkerID) == "" || lease.Fence < 0 ||
+		strings.TrimSpace(attemptID) == "" || len(cursors) == 0 {
+		return errors.New("rebind person sweep attempt requires a lease, attempt, and cursor envelope")
+	}
+	envelope, err := json.Marshal(cursors, json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("rebind person sweep attempt: encode cursor envelope: %w", err)
+	}
+	digest := sha256.Sum256(envelope)
+	envelopeHash := hex.EncodeToString(digest[:])
+	for _, cursor := range cursors {
+		if err := validatePersonSweepCursorKey(cursor.Key); err != nil {
+			return fmt.Errorf("rebind person sweep attempt cursor: %w", err)
+		}
+		if cursor.Key.PersonID != lease.PersonID {
+			return errors.New("rebind person sweep attempt cursor belongs to another person")
+		}
+	}
+
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		attempt, err := s.lockPersonSweepBudgetAttempt(ctx, tx, attemptID)
+		if err != nil {
+			return err
+		}
+		if attempt.personID != lease.PersonID || attempt.leaseFence != lease.Fence ||
+			attempt.status != peoplesweep.AttemptRunning {
+			return peoplesweep.ErrLeaseLost
+		}
+		if err := s.requirePersonSweepBudgetRunRunning(ctx, tx, attempt.runID); err != nil {
+			return err
+		}
+		var program, catalog string
+		if err := tx.QueryRowContext(ctx, `SELECT program_fingerprint, catalog_fingerprint
+			FROM person_sweep_runs WHERE id = ?`, attempt.runID).Scan(&program, &catalog); err != nil {
+			return fmt.Errorf("load person sweep attempt fingerprints: %w", err)
+		}
+		for _, cursor := range cursors {
+			if cursor.Key.ProgramFingerprint != program || cursor.Key.CatalogFingerprint != catalog {
+				return errors.New("rebind person sweep attempt cursor has a different run fingerprint")
+			}
+		}
+		batches, err := listPersonSweepBatchCoordinatesTx(ctx, tx, attemptID)
+		if err != nil {
+			return err
+		}
+		if len(batches) != 0 {
+			return errors.New("rebind person sweep attempt requires no provider reservations")
+		}
+		current, err := s.lockPersonSweepUsageThenWorkTx(ctx, tx, attemptID, nil, lease)
+		if err != nil {
+			return err
+		}
+		if !current {
+			return peoplesweep.ErrLeaseLost
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE person_sweep_attempts
+			SET cursor_envelope_json = ?, envelope_hash = ?
+			WHERE id = ? AND status = 'running' AND lease_fence = ?`,
+			string(envelope), envelopeHash, attemptID, lease.Fence)
+		if err != nil {
+			return fmt.Errorf("update person sweep attempt cursor envelope: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed != 1 {
+			return peoplesweep.ErrLeaseLost
+		}
+		return nil
+	})
+}
+
 func validPersonSweepRunMode(mode peoplesweep.RunMode) bool {
 	return mode == peoplesweep.RunIncremental || mode == peoplesweep.RunBackstop
 }

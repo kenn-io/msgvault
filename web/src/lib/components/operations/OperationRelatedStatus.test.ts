@@ -30,6 +30,19 @@ const visualStatus = {
 };
 
 describe('OperationRelatedStatus', () => {
+  it('shows saved page ranges before any chunks are published', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
+      ...documentStatus,
+      status: { ...documentStatus.status, stored_plaintext_chunks: 0, stored_plaintext_ranges: 2 }
+    }));
+    render(OperationRelatedStatus, {
+      client: createAPIClient(fetchFn), authority: 'getDocumentIndexStatus', configured: true,
+      onClose: vi.fn(), onConfigure: vi.fn()
+    });
+
+    expect(await screen.findByText('0 stored plaintext chunks · 2 saved page ranges · 5 provider requests')).toBeDefined();
+  });
+
   it.each([
     ['getDocumentIndexStatus', '/api/v1/documents/status/current', documentStatus, '4 of 5 owners ready'],
     ['getDocumentVectorStatus', '/api/v1/documents/vectors/status', {

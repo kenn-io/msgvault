@@ -2,12 +2,10 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,27 +96,16 @@ func filenameObservedStore(t *testing.T) (*Store, *filenamePostingObserver) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "posting.db")
 	pg := IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB"))
+	var st *Store
 	if pg {
-		base, err := OpenForTest(os.Getenv("MSGVAULT_TEST_DB"))
+		st = newPGStoreInternal(t)
+		path = st.dbPath
+	} else {
+		var err error
+		st, err = OpenForTest(path)
 		require.NoError(t, err)
-		schema := "filename_postings_" + strings.ToLower(rand.Text())
-		_, err = base.DB().ExecContext(t.Context(), `CREATE SCHEMA `+schema)
-		require.NoError(t, err)
-		t.Cleanup(func() {
-			_, err := base.DB().Exec(`DROP SCHEMA ` + schema + ` CASCADE`)
-			assert.NoError(t, err)
-			assert.NoError(t, base.Close())
-		})
-		u, err := url.Parse(os.Getenv("MSGVAULT_TEST_DB"))
-		require.NoError(t, err)
-		values := u.Query()
-		values.Set("search_path", schema+",public")
-		u.RawQuery = values.Encode()
-		path = u.String()
+		require.NoError(t, st.InitSchema())
 	}
-	st, err := OpenForTest(path)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchema())
 	observer := &filenamePostingObserver{}
 	dsn := path
 	if !pg {
@@ -126,9 +113,7 @@ func filenameObservedStore(t *testing.T) (*Store, *filenamePostingObserver) {
 	}
 	db := sql.OpenDB(&filenamePostingConnector{driver: st.db.Driver(), dsn: dsn, observer: observer})
 	db.SetMaxOpenConns(1)
-	old := st.db.DB
-	st.db = newLoggedDB(db, st.dialect.Rebind)
-	require.NoError(t, old.Close())
+	replaceTestStoreDB(t, st, db)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
 	return st, observer
 }

@@ -28,15 +28,19 @@ func skipUnlessPostgresInternal(t *testing.T) string {
 	return testDB
 }
 
-// newPGStoreInternal opens a schema-isolated PostgreSQL store for an internal
-// (package store) test. It mirrors testutil.newPostgresTestStore but lives in
-// package store so tests can reach unexported symbols. The schema is dropped
-// on cleanup.
-func newPGStoreInternal(t *testing.T, dbURL string) *Store {
+// newPGStoreInternal returns a private PostgreSQL archive cloned from the
+// test binary's template, or initialized in a private schema when cloning is off.
+// The fixture is dropped on cleanup.
+func newPGStoreInternal(t *testing.T) *Store {
 	t.Helper()
-	st := newUninitializedPGStoreInternal(t, dbURL)
-	require.NoError(t, st.InitSchema(), "init schema")
-	return st
+	return pgTestStore(t)
+}
+
+func replaceTestStoreDB(t *testing.T, st *Store, db *sql.DB) {
+	t.Helper()
+	old := st.db.DB
+	st.db = newLoggedDB(db, st.dialect.Rebind)
+	require.NoError(t, old.Close())
 }
 
 // newUninitializedPGStoreInternal opens an empty schema-isolated PostgreSQL
@@ -95,8 +99,8 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 
 	// Tables with a direct ON DELETE CASCADE FK to sources(id), read from the
 	// catalog (scoped to the test's current schema so sibling schemas can't
@@ -171,8 +175,8 @@ func TestExclusiveLockTablesCoverCascade(t *testing.T) {
 // deadlock_timeout, so the loop requires every racing pair to succeed.
 func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
 	require := require.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	ctx := context.Background()
 
 	for i := range 15 {
@@ -215,8 +219,8 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithPersonMerge(t *testing.T) {
 // identities for a source that is concurrently deleted.
 func TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration(t *testing.T) {
 	require := require.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	ctx := context.Background()
 
 	_, err := st.GetOrCreateSource("gmail", "stable@example.com")
@@ -258,8 +262,8 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithLegacyIdentityMigration(t *tes
 // participants each iteration so every call takes the write path.
 func TestRemoveSourceSerializedDoesNotDeadlockWithSetParticipantIdentifier(t *testing.T) {
 	require := require.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	ctx := context.Background()
 
 	stable, err := st.GetOrCreateSource("gmail", "stable@example.com")
@@ -302,8 +306,8 @@ func TestRemoveSourceSerializedDoesNotDeadlockWithSetParticipantIdentifier(t *te
 
 func TestMergeSourcesDoesNotDeadlockWithSerializedSourceRemoval(t *testing.T) {
 	require := require.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	ctx := context.Background()
 	from, err := st.GetOrCreateSource("gmail", "merge-history@example.test")
 	require.NoError(err)
@@ -406,8 +410,8 @@ func is57014(err error) bool { return isPgError(err, "57014") }
 //     statement_timeout is 100ms runs pg_sleep(0.3) to completion, because the
 //     hatch resets the timeout to 0 inside the maintenance tx.
 func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	ctx := context.Background()
 
 	d := &PostgreSQLDialect{}
@@ -482,8 +486,8 @@ func TestMaintenanceHatchLiftsStatementTimeout(t *testing.T) {
 func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	ctx := context.Background()
 	const (
 		packID = "01hzy3v7q8r9s0t1a2v3w4x6j1"
@@ -550,7 +554,8 @@ func TestRepackMetadataMaintenanceLiftsStatementTimeout(t *testing.T) {
 // including this table's indirect cascade through conversations.
 func TestConversationPolicyMaintenanceLock(t *testing.T) {
 	requirements := require.New(t)
-	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	conn, err := st.DB().Conn(t.Context())
 	requirements.NoError(err)
 	defer func() { _ = conn.Close() }()

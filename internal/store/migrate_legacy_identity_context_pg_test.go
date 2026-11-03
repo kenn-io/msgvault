@@ -10,7 +10,7 @@ import (
 )
 
 func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testing.T) {
-	dbURL := skipUnlessPostgresInternal(t)
+	skipUnlessPostgresInternal(t)
 
 	tests := []struct {
 		name         string
@@ -37,7 +37,7 @@ func TestMigrateLegacyIdentityConfigContextCancelsBlockedRevisionUpdate(t *testi
 		t.Run(tt.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			st := newPGStoreInternal(t, dbURL)
+			st := newPGStoreInternal(t)
 			source, err := st.GetOrCreateSource("gmail", "alice@example.com")
 			require.NoError(err, "create source")
 

@@ -120,7 +120,7 @@
     {#if controller.timelineError}
       <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
-    {#if !filesOpen && !details}
+    {#if !filesOpen && !details && controller.headerState === 'normal'}
       <div class="calendar">
         {#if domain}
           <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail?.cache_revision ?? ''} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
@@ -154,7 +154,7 @@
       {#key profileID}<PersonDetails {onReviewFacts} {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
     {/if}
     {#if detail && !controller.detailMissing}
-      <RelationshipHeader {onOpenDirectoryPerson} title={person ? 'Identities' : undefined} {detail} loading={false} missing={false} {client} {onAnnounce}
+      <RelationshipHeader {onOpenDirectoryPerson} title={person ? 'Identities' : undefined} {detail} loading={false} headerState={controller.headerState} {client} {onAnnounce}
         capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
         onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
     {/if}

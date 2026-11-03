@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +11,7 @@ import (
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/duckdbutil"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
 )
@@ -34,7 +34,9 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 
 	tmpDir := tb.TempDir()
 
-	db, err := sql.Open("duckdb", "")
+	// Derive the fixture under the production cache-builder policy so the
+	// identity index build runs with the limits a real build-cache uses.
+	db, err := duckdbutil.Open(tb.Context(), duckdbutil.BuilderPolicy(tb.TempDir()))
 	requirements.NoError(err, "open duckdb")
 	defer func() { _ = db.Close() }()
 

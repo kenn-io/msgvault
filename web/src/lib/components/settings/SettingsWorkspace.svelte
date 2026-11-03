@@ -6,7 +6,7 @@
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
   } from '../../api/generated/api/api';
-  import { Notice, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
+  import { Notice, PageHeader, SettingsLayout, Toggle, Button, IconButton, EmptyState, type SettingsCategory } from '@kenn-io/kit-ui';
   import { getContext, onMount, onDestroy, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type {
@@ -45,7 +45,6 @@
     type CategoryID,
   } from '../../settings/layout';
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
-  import PageHeader from '../shell/PageHeader.svelte';
   import CardDAVSettingsWorkspace from './CardDAVSettingsWorkspace.svelte';
   import PeopleInferenceSettings from './PeopleInferenceSettings.svelte';
   import PersonEnrichmentProviderCard from './PersonEnrichmentProviderCard.svelte';

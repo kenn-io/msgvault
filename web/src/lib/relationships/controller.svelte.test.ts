@@ -1419,12 +1419,18 @@ describe('RelationshipsController draft-only targets', () => {
     { target: 'cluster:12', detailPath: '/api/v1/participants/12', filtered: true },
     { target: 'domain:example.com', detailPath: '/api/v1/domains/example.com', filtered: true }
   ])('opens $target without a detail error or calendar, filtered=$filtered', async ({ target, detailPath, filtered }) => {
+    const draftPerson = { ...person(12), activity_count: 0 };
+    delete draftPerson.first_at;
+    delete draftPerson.last_at;
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       const path = pathOf(request);
-      if (path === detailPath) return Response.json({ error: 'No contact activity' }, { status: 404 });
+      if (path === detailPath) return target.startsWith('cluster:')
+        ? Response.json(draftPerson)
+        : Response.json({ error: 'No contact activity' }, { status: 404 });
+      if (path.endsWith('/calendar')) return Response.json({ error: 'participant_not_found' }, { status: 404 });
       if (path === `${detailPath}/summary`) return Response.json({ error: 'No matching activity' }, { status: 404 });
       throw new Error(`unexpected path ${path}`);
     });
@@ -1433,8 +1439,36 @@ describe('RelationshipsController draft-only targets', () => {
     await controller.openTarget(target, { filters: filtered ? [{ dimension: 'source', values: ['1'] }] : [], presentation: 'table' });
 
     expect.soft(controller.timelineError).toBeNull();
-    expect.soft(controller.detail).toBeNull();
-    expect.soft(controller.detailMissing).toBe(true);
+    expect.soft(controller.detail?.activity_count ?? null).toBe(target.startsWith('cluster:') ? 0 : null);
+    expect.soft(controller.detailMissing).toBe(target.startsWith('domain:'));
+    expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
+    if (target.startsWith('cluster:')) {
+      expect(controller.relationshipCalendar).toBeNull();
+      expect(controller.relationshipCalendarError).toBeNull();
+      expect(controller.relationshipCalendarFirstYear).toBeNull();
+    }
+  });
+
+  it.each([
+    { filtered: false, timelineError: null },
+    { filtered: true, timelineError: 'Summary unavailable' },
+  ])('marks a missing person as not found without loading a calendar, filtered=$filtered', async ({ filtered, timelineError }) => {
+    const requests: Request[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (pathOf(request) === '/api/v1/participants/12') return Response.json({ error: 'participant_not_found', message: 'Participant cluster not found' }, { status: 404 });
+      if (pathOf(request) === '/api/v1/relationships/12/timeline') return Response.json({ canonical_id: 12, identity_revision: 1, rows: [], total_count: 0, cache_revision: 'cache-rel' });
+      if (pathOf(request) === '/api/v1/participants/12/summary') return Response.json({ error: 'unavailable', message: 'Summary unavailable' }, { status: 503 });
+      return Response.json({ error: 'participant_not_found' }, { status: 404 });
+    });
+    const controller = new RelationshipsController(createAPIClient(fetchFn), () => 'UTC');
+
+    await controller.openTarget('cluster:12', { filters: filtered ? [{ dimension: 'source', values: ['1'] }] : [], presentation: 'table' });
+
+    expect(controller.detail).toBeNull();
+    expect(controller.detailMissing).toBe(true);
+    expect(controller.timelineError).toBe(timelineError);
     expect(requests.some((request) => pathOf(request).endsWith('/calendar'))).toBe(false);
   });
 });

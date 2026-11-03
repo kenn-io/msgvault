@@ -124,6 +124,12 @@ export class RelationshipsController {
   lastPredicateFingerprint = $state<string | null>(null);
   detail = $state<PersonSummary | DomainSummary | null>(null);
   detailMissing = $state(false);
+  private personActivityCount = $state<number | null>(null);
+  headerState = $derived<'missing' | 'no-mail' | 'normal'>(
+    this.detailMissing
+      ? parseClusterID(this.target ?? '') !== undefined ? 'missing' : 'no-mail'
+      : this.personActivityCount === 0 ? 'no-mail' : 'normal',
+  );
   timelineLoading = $state(false);
   timelineError = $state<string | null>(null);
   firstContactAt = $state('');
@@ -377,6 +383,7 @@ export class RelationshipsController {
     this.lastPredicateFingerprint = predicateFingerprint(predicate);
     if (!sameTarget) { this.detail = null; this.firstContactAt = ''; this.lastContactAt = ''; }
     this.detailMissing = false;
+    this.personActivityCount = null;
     this.timelineError = null;
     if (!sameTarget) {
       this.canonicalID = null;
@@ -395,7 +402,7 @@ export class RelationshipsController {
       if (clusterID !== undefined) {
         const unfilteredPerson = await this.openCluster(clusterID, predicate, generation, controller.signal);
         const personDetail = unfilteredPerson ?? (this.detail as PersonSummary | null);
-        if (!controller.signal.aborted && generation === this.detailGeneration && personDetail !== null) {
+        if (!controller.signal.aborted && generation === this.detailGeneration && personDetail !== null && personDetail.activity_count > 0) {
           this.relationshipCalendarCurrentYear = currentYearInTimezone(this.timezone());
           this.relationshipCalendarFirstYear = clampNumber(
             personFirstYear(personDetail, this.timezone(), this.relationshipCalendarCurrentYear),
@@ -447,7 +454,8 @@ export class RelationshipsController {
       ]);
       if (signal.aborted || generation !== this.detailGeneration) return null;
       const base = personResponse.data;
-      if (base) { this.firstContactAt = base.first_at; this.lastContactAt = base.last_at; }
+      this.personActivityCount = base?.activity_count ?? null;
+      if (base) { this.firstContactAt = base.first_at ?? ''; this.lastContactAt = base.last_at ?? ''; }
       const summary = summaryResponse?.data?.summary ??
         (base && noMatchingActivity(personResponse, summaryResponse) ? { ...base, ...NO_PERSON_ACTIVITY } : undefined);
       if (base) this.canonicalID = base.cluster?.canonical_id ?? base.id;
@@ -509,6 +517,7 @@ export class RelationshipsController {
     this.detailAbort = undefined;
     ++this.detailGeneration;
     this.target = null;
+    this.personActivityCount = null;
     this.lastPredicate = undefined;
     this.lastPredicateFingerprint = null;
     this.detail = null;
@@ -698,7 +707,7 @@ export class RelationshipsController {
     clearTimeout(this.cacheBuildRetry);
     this.cacheBuildRetry = undefined;
   }
-  /** A detail 404 means no contact activity; a summary 404 means no filter matches. */
+  /** A person detail 404 means missing identity; a summary 404 means no filter matches. */
   private reportDetailFailures(
     detail: FetchResult,
     summary: FetchResult | undefined,

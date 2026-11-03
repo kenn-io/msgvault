@@ -343,16 +343,26 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, identityCondition)
 		args = append(args, identityArgs...)
 	}
-	if len(request.Context.ParticipantIDs) > 0 {
-		parts := make([]string, len(request.Context.ParticipantIDs))
-		for i := range parts {
-			parts[i] = "(sender_id = ? OR message_id IN (SELECT message_id FROM message_recipients WHERE participant_id = ?) OR conversation_id IN (SELECT conversation_id FROM conversation_participants WHERE participant_id = ?))"
+	appendParticipantGroup := func(values []int64) {
+		if len(values) == 0 {
+			return
 		}
-		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
-		for _, value := range request.Context.ParticipantIDs {
+		parts := make([]string, len(values))
+		for i, value := range values {
+			// Test the same sender, recipient, and roster membership as the
+			// list columns without aggregating lists for the whole archive.
+			parts[i] = `(sender_id = ? OR message_id IN (
+				SELECT participant_recipient.message_id FROM message_recipients participant_recipient
+				WHERE participant_recipient.participant_id = ?
+			) OR conversation_id IN (
+				SELECT participant_member.conversation_id FROM conversation_participants participant_member
+				WHERE participant_member.participant_id = ?
+			))`
 			args = append(args, value, value, value)
 		}
+		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
+	appendParticipantGroup(request.Context.ParticipantIDs)
 	appendDomainGroup := func(values []string) {
 		if len(values) == 0 {
 			return
@@ -392,17 +402,7 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 	// using the same predicate shape as the primary group above, and every
 	// group is AND'd into the overall condition list alongside it.
 	for _, group := range request.Context.AdditionalParticipantGroups {
-		if len(group) == 0 {
-			continue
-		}
-		parts := make([]string, len(group))
-		for i := range parts {
-			parts[i] = "(sender_id = ? OR message_id IN (SELECT message_id FROM message_recipients WHERE participant_id = ?) OR conversation_id IN (SELECT conversation_id FROM conversation_participants WHERE participant_id = ?))"
-		}
-		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
-		for _, value := range group {
-			args = append(args, value, value, value)
-		}
+		appendParticipantGroup(group)
 	}
 	for _, group := range request.Context.AdditionalDomainGroups {
 		appendDomainGroup(group)
@@ -651,7 +651,7 @@ SELECT COUNT(*) FROM logical_entries`
 }
 
 // buildExploreFastListingSQL builds the two-phase entry-row page query used
-// for indexed context filters. Phase one selects the
+// unless the fast path is disabled for equivalence tests. Phase one selects the
 // page (ORDER BY + LIMIT/OFFSET) from logical entries WITHOUT participant
 // list columns, so the whole-archive per-message list aggregation inside
 // analytical_entries is pruned; phase two rebuilds participant_ids and
@@ -680,7 +680,14 @@ SELECT COUNT(*) FROM logical_entries`
 // materializing the archive's message strings.
 //
 // Materialize the bounded page so its enrichment queries share those rows
-// instead of inlining the full listing pipeline into each consumer.
+// instead of inlining the full listing pipeline into each consumer. The page
+// is chosen from logical_entry_keys, which carries no display strings; the
+// page rows then read title, preview, and labels from their anchor messages.
+//
+// A conversation entry's links cover every member message, so they are joined
+// to one recipient-and-sender stream and reduced to distinct participants
+// before the list aggregation. Aggregating labels per link held every member
+// message's labels in memory at once.
 //
 // Output columns, ordering, and pagination are identical to buildExploreSQL;
 // TestExploreListingFastPathMatchesLegacy pins the equivalence.
@@ -692,11 +699,27 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
 		populationConditions = "TRUE"
 	}
 	return buildExploreNarrowFilteredClassifiedCTE(conditions, candidateRankExpression) +
-		exploreLogicalEntriesCTE(false) + fmt.Sprintf(`
-), page AS MATERIALIZED (
-    SELECT * FROM logical_entries
+		exploreLogicalEntryKeysCTE() + fmt.Sprintf(`
+), page_keys AS MATERIALIZED (
+    SELECT * FROM logical_entry_keys
     ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
     LIMIT ? OFFSET ?
+), page AS MATERIALIZED (
+    SELECT k.*,
+        COALESCE(s.source_type, '') AS source_type,
+        COALESCE(s.account_email, '') AS source_identifier,
+        COALESCE(m.message_type, '') AS message_type,
+        COALESCE(c.conversation_type, '') AS conversation_type,
+        CASE WHEN k.entry_kind = 'conversation'
+            THEN COALESCE(NULLIF(c.title, ''), 'Conversation')
+            ELSE COALESCE(NULLIF(m.subject, ''), NULLIF(c.title, ''), m.snippet, '')
+        END AS title,
+        COALESCE(m.snippet, '') AS preview,
+        m.is_from_me
+    FROM page_keys k
+    JOIN messages m ON m.id = k.anchor_message_id
+    JOIN sources s ON s.id = m.source_id
+    LEFT JOIN conversations c ON c.id = m.conversation_id
 ), membership AS (
     SELECT source_id, conversation_id, message_id
     FROM %s
@@ -710,21 +733,26 @@ func buildExploreFastListingSQL(conditions, candidateRankExpression, clustersGlo
       ON m.source_id = p.source_id AND m.conversation_id = p.conversation_id
     WHERE p.entry_kind = 'conversation'
 ), page_participant_links AS (
-    SELECT pm.entry_key, mr.participant_id
-    FROM page_messages pm JOIN message_recipients mr ON mr.message_id = pm.message_id
-    UNION ALL
-    SELECT pm.entry_key, msg.sender_id AS participant_id
-    FROM page_messages pm JOIN messages msg ON msg.id = pm.message_id
-    WHERE msg.sender_id IS NOT NULL
+    SELECT pm.entry_key, links.participant_id
+    FROM page_messages pm JOIN (
+        SELECT message_id, participant_id FROM message_recipients
+        UNION ALL
+        SELECT id AS message_id, sender_id AS participant_id
+        FROM messages WHERE sender_id IS NOT NULL
+    ) links ON links.message_id = pm.message_id
     UNION ALL
     SELECT p.entry_key, cp.participant_id
     FROM page p JOIN conversation_participants cp ON cp.conversation_id = p.conversation_id
     WHERE p.entry_kind = 'conversation'
+), page_participants AS (
+    SELECT entry_key, participant_id
+    FROM page_participant_links
+    GROUP BY entry_key, participant_id
 ), page_participant_facts AS (
     SELECT links.entry_key,
         list_sort(list_distinct(list(links.participant_id))) AS participant_ids,
         list_sort(list_distinct(list(%s))) AS participant_labels
-    FROM page_participant_links links
+    FROM page_participants links
     JOIN participants pt ON pt.id = links.participant_id
     GROUP BY links.entry_key
 ), total AS (
@@ -941,6 +969,52 @@ func exploreLogicalEntriesCTE(withParticipantLists bool) string {
 		false AS deletable,
 		bool_or(has_attachments) AS has_attachments,
 		arg_max(is_from_me, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS is_from_me,
+        SUM(attachment_count)::BIGINT AS attachment_count,
+        SUM(attachment_size)::BIGINT AS attachment_size,
+        bool_or(deleted_from_source) AS deleted_from_source
+    FROM classified
+    WHERE is_chat
+    GROUP BY source_id, conversation_id`
+}
+
+// exploreLogicalEntryKeysCTE renders logical_entry_keys: the logical entries
+// of exploreLogicalEntriesCTE(false) reduced to the columns that select and
+// order a page, plus the numeric summaries. The string columns a page displays
+// (title, preview, source and type labels) are equal to the anchor message's
+// values for both kinds of entry, so buildExploreFastListingSQL reads them for
+// the page rows only. Carrying them through both full-archive arms concurrently
+// multiplied listing memory by the query thread count.
+func exploreLogicalEntryKeysCTE() string {
+	return `, logical_entry_keys AS (
+    SELECT
+        ` + sqlMessageEntryKeyExpr("") + ` AS entry_key,
+        entry_kind,
+        message_id AS anchor_message_id,
+        conversation_id,
+        occurred_at,
+        source_id,
+        CASE WHEN candidate_rank IS NOT NULL THEN message_id ELSE NULL END AS strongest_matched_message_id,
+        1::BIGINT AS message_count,
+        has_attachments,
+        attachment_count::BIGINT AS attachment_count,
+        attachment_size::BIGINT AS attachment_size,
+        deleted_from_source
+    FROM classified
+    WHERE NOT is_chat
+
+    UNION ALL
+
+    SELECT
+        ` + sqlConversationEntryKeyExpr("") + ` AS entry_key,
+        'conversation' AS entry_kind,
+        arg_max(message_id, struct_pack(occurred_at := occurred_at, message_id := message_id)) AS anchor_message_id,
+        conversation_id,
+        MAX(occurred_at) AS occurred_at,
+        source_id,
+        arg_min(message_id, struct_pack(candidate_rank := candidate_rank, message_id := message_id))
+            FILTER (WHERE candidate_rank IS NOT NULL) AS strongest_matched_message_id,
+        COUNT(*)::BIGINT AS message_count,
+        bool_or(has_attachments) AS has_attachments,
         SUM(attachment_count)::BIGINT AS attachment_count,
         SUM(attachment_size)::BIGINT AS attachment_size,
         bool_or(deleted_from_source) AS deleted_from_source

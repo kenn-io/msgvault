@@ -1,5 +1,5 @@
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -153,7 +153,7 @@ describe('PersonRecordActions', () => {
     await choose('History');
     const dialog = await screen.findByRole('dialog', { name: 'Profile history' });
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close profile history' }));
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Profile history' })).toBeNull());
     expect(document.activeElement).toBe(trigger);

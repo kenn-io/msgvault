@@ -1,6 +1,6 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, Chip, IconButton, Modal, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, IconButton, Modal, PageHeader, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import { deletePerson as generatedDeletePerson } from '../../api/generated/api/api';
@@ -11,7 +11,6 @@
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
   import DirectoryList from './DirectoryList.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
 
   interface Props {
     client: APIClient;

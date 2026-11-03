@@ -555,21 +555,28 @@ func TestBeeperMediaJobStatus(t *testing.T) {
 
 func TestBeeperMediaDoesNotPreventIdleShutdown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		st, blobs := storedBeeperVoiceNote(t)
 		idleShutdown := make(chan struct{})
 		idle := api.NewIdleTracker(3*time.Minute, func() { close(idleShutdown) })
 		logger := slog.New(slog.DiscardHandler)
 		gate := api.NewSerialOperationGate()
 		sched, media := newServeSchedulers(nil, logger, idle, gate, nil)
 		defer func() { <-serveSchedulers{sched, media}.Stop().Done() }()
-		require.NoError(t, configureBeeperMediaJob(t.Context(), media, gate, st, blobs, t.TempDir(), t.TempDir(),
-			config.DocbankIntegrationConfig{Enabled: true, URL: "http://127.0.0.1"}, logger))
+		// Exercise scheduler activity without bringing PostgreSQL's shared pool
+		// and background readers into the synctest bubble.
+		var passes atomic.Int32
+		require.NoError(t, media.AddJob(scheduler.Job{
+			Name: beeperMediaSubmitJob, Schedule: beeperMediaSubmitCron,
+			Run: func(context.Context) error {
+				passes.Add(1)
+				return nil
+			},
+		}))
 		go idle.Run(t.Context())
 		media.Start()
 
-		// Repeated discovery passes must leave an unused daemon free to stop.
+		// Repeated media passes must leave an unused daemon free to stop.
 		synctest.Sleep(3*time.Minute + time.Second)
-		require.Len(t, retentionRows(t, st), 1, "scheduled discovery must have run")
+		require.GreaterOrEqual(t, passes.Load(), int32(2), "scheduled media passes must have run repeatedly")
 		select {
 		case <-idleShutdown:
 		default:
