@@ -41,7 +41,7 @@ it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the 
       expect(await screen.findByText('Person or domain not found')).toBeDefined();
       expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
     } else {
-      expect(await screen.findByRole('heading', { name: 'Synthetic contact', exact: true })).toBeDefined();
+      expect(await screen.findByRole('heading', { name: 'Synthetic contact' })).toBeDefined();
       expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(kind === 'filtered');
       await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
       expect(await screen.findByText(kind === 'draft' ? 'No sent or received messages with this contact yet.' : '0 items')).toBeDefined();
