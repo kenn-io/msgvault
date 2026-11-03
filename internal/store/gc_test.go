@@ -209,7 +209,7 @@ func TestQuestionDecisionDoesNotHideReusedMessageID(t *testing.T) {
 		Thread: "loop-gc", From: "alex@example.test", To: []string{storetest.OwnerAddress},
 		Body: "Can you send the invoice?", SentAt: questionAt,
 	})
-	_, err := loops.Done(t.Context(), f.Store, question, now)
+	_, err := loops.Done(t.Context(), f.Store, question, 0, now)
 	require.NoError(err)
 	sourceMessageID, err := f.Store.GetMessageSourceID(question)
 	require.NoError(err)

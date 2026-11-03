@@ -350,9 +350,9 @@ func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 			mark := func(anchor int64) {
 				var err error
 				if state == store.LoopStateSnoozed {
-					_, err = loops.Snooze(t.Context(), f.Store, anchor, now.Add(2*day), now)
+					_, err = loops.Snooze(t.Context(), f.Store, anchor, 0, now.Add(2*day), now)
 				} else {
-					_, err = loops.Done(t.Context(), f.Store, anchor, now)
+					_, err = loops.Done(t.Context(), f.Store, anchor, 0, now)
 				}
 				require.NoError(err)
 			}
@@ -388,6 +388,40 @@ func TestDecisionsHideOnlyTheQuestionsYouSaw(t *testing.T) {
 	}
 }
 
+func TestDecisionsStopAtTheListedQuestion(t *testing.T) {
+	for _, state := range []string{store.LoopStateDone, store.LoopStateSnoozed} {
+		t.Run(state, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := storetest.New(t)
+			mark := func(anchor, through int64) error {
+				var err error
+				if state == store.LoopStateSnoozed {
+					_, err = loops.Snooze(t.Context(), f.Store, anchor, through, now.Add(2*day), now)
+				} else {
+					_, err = loops.Done(t.Context(), f.Store, anchor, through, now)
+				}
+				return err
+			}
+			contract := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
+			listed, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(-3*day))
+			require.NoError(err)
+			require.Len(listed.Loops, 1)
+			questions := listed.Loops[0].Questions
+			through := questions[len(questions)-1].ID
+			assert.Equal(contract, through, "the list covered only the contract question")
+
+			invoice := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "And the invoice?", SentAt: ago(2 * day)})
+			require.ErrorIs(mark(contract, invoice+1000), loops.ErrNotOpen, "a question outside the loop cannot bound it")
+			require.NoError(mark(contract, through))
+
+			result := list(t, f, loops.Options{})
+			require.Len(result.Loops, 1, "the question that became visible after the list stays open")
+			assert.Equal(invoice, result.Loops[0].Anchor.ID)
+		})
+	}
+}
+
 func TestDoneAcceptsWhatListShows(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
@@ -418,14 +452,14 @@ func TestDoneAcceptsWhatListShows(t *testing.T) {
 				require.Len(listed.Loops, 1)
 				assert.Equal(anchor, listed.Loops[0].Anchor.ID)
 			}
-			_, err = loops.Done(t.Context(), f.Store, anchor, now.Add(tt.advance))
+			_, err = loops.Done(t.Context(), f.Store, anchor, 0, now.Add(tt.advance))
 			if tt.wantErr {
 				require.ErrorIs(err, loops.ErrNotOpen)
 			} else {
 				require.NoError(err)
 			}
 			if tt.wantErr {
-				_, err = loops.Snooze(t.Context(), f.Store, anchor, now.Add(day), now)
+				_, err = loops.Snooze(t.Context(), f.Store, anchor, 0, now.Add(day), now)
 				assert.ErrorIs(err, loops.ErrNotOpen)
 			}
 		})
@@ -478,7 +512,7 @@ func TestListSortsOldestFirstAcrossNewestFirstConversations(t *testing.T) {
 	// A thread that started long ago and was nudged lately lists with its old anchor.
 	old := f.PersistEmail(storetest.EmailSpec{Thread: "old", From: alex, To: []string{me}, Body: "Can you send the deck?", SentAt: ago(45 * day)})
 	f.PersistEmail(storetest.EmailSpec{Thread: "old", From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(3 * day)})
-	_, err := loops.Done(t.Context(), f.Store, ids[len(ids)-1], now)
+	_, err := loops.Done(t.Context(), f.Store, ids[len(ids)-1], 0, now)
 	require.NoError(err)
 
 	all := list(t, f, loops.Options{Limit: 1000})
@@ -503,7 +537,7 @@ func TestExpiredSnoozeRestoresQuestion(t *testing.T) {
 	f := storetest.New(t)
 	alexQuestion := f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you approve the contract?", SentAt: ago(25 * day)})
 	samQuestion := f.PersistEmail(storetest.EmailSpec{From: "sam@example.test", To: []string{me}, Body: "Can you send the report?", SentAt: ago(24 * day)})
-	_, err := loops.Snooze(t.Context(), f.Store, alexQuestion, now.Add(30*day), now)
+	_, err := loops.Snooze(t.Context(), f.Store, alexQuestion, 0, now.Add(30*day), now)
 	require.NoError(err)
 	before, err := loops.List(t.Context(), f.Store, loops.Options{}, now.Add(5*day))
 	require.NoError(err)
@@ -530,9 +564,9 @@ func TestLoopActionLeavesQuestionInsideItsGraceUnmarked(t *testing.T) {
 
 			var err error
 			if action == "done" {
-				_, err = loops.Done(t.Context(), f.Store, old, now)
+				_, err = loops.Done(t.Context(), f.Store, old, 0, now)
 			} else {
-				_, err = loops.Snooze(t.Context(), f.Store, old, now.Add(2*day), now)
+				_, err = loops.Snooze(t.Context(), f.Store, old, 0, now.Add(2*day), now)
 			}
 			require.NoError(err)
 			assert.Empty(list(t, f, loops.Options{}).Loops, "the fresh question stays hidden inside its own grace period")

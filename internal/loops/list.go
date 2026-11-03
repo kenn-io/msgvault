@@ -207,18 +207,21 @@ func openQuestions(loop Loop, marks map[int64]store.LoopMark, now time.Time) (Lo
 // ErrNotOpen reports a message that does not anchor an open loop.
 var ErrNotOpen = errors.New("message does not anchor an open loop")
 
-// Done marks the visible questions in the loop anchored at messageID done.
-func Done(ctx context.Context, st Store, messageID int64, now time.Time) (store.LoopDecision, error) {
-	loop, err := requireAnchor(ctx, st, messageID, now)
+// Done marks the loop anchored at messageID done, through the question with
+// ID through. The list reports that ID, so a question that became visible
+// after the caller listed stays open. A zero through covers every question
+// visible now.
+func Done(ctx context.Context, st Store, messageID, through int64, now time.Time) (store.LoopDecision, error) {
+	loop, err := requireAnchor(ctx, st, messageID, through, now)
 	if err != nil {
 		return store.LoopDecision{}, err
 	}
 	return st.MarkLoopDoneContext(ctx, messageID, loop.Questions)
 }
 
-// Snooze hides the visible questions until the given time.
-func Snooze(ctx context.Context, st Store, messageID int64, until, now time.Time) (store.LoopDecision, error) {
-	loop, err := requireAnchor(ctx, st, messageID, now)
+// Snooze hides the same questions as Done until the given time.
+func Snooze(ctx context.Context, st Store, messageID, through int64, until, now time.Time) (store.LoopDecision, error) {
+	loop, err := requireAnchor(ctx, st, messageID, through, now)
 	if err != nil {
 		return store.LoopDecision{}, err
 	}
@@ -243,8 +246,9 @@ func Reopen(ctx context.Context, st Store, messageID int64) (store.LoopDecision,
 // requireAnchor returns the loop List would show anchored at the message,
 // past its grace period and read as it is now. A reply that
 // arrived since the list was read makes the action fail instead of hiding a
-// closed loop. Covered questions cannot anchor an action.
-func requireAnchor(ctx context.Context, st Store, messageID int64, now time.Time) (Loop, error) {
+// closed loop. Covered questions cannot anchor an action. A nonzero through
+// keeps the questions up to that one, and must still be one of them.
+func requireAnchor(ctx context.Context, st Store, messageID, through int64, now time.Time) (Loop, error) {
 	ref, err := st.MessageConversationContext(ctx, messageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Loop{}, ErrNotOpen
@@ -269,6 +273,13 @@ func requireAnchor(ctx context.Context, st Store, messageID int64, now time.Time
 	}
 	if anchored.Anchor.ID != messageID {
 		return Loop{}, ErrNotOpen
+	}
+	if through != 0 {
+		last := slices.IndexFunc(anchored.Questions, func(q store.LoopMessage) bool { return q.ID == through })
+		if last < 0 {
+			return Loop{}, ErrNotOpen
+		}
+		anchored.Questions = anchored.Questions[:last+1]
 	}
 	return anchored, nil
 }
