@@ -880,7 +880,9 @@ jobs:
           POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256 -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
         ports:
           - 5432:5432
+        # Four-shard store peak: 1.77 GiB; 4 GiB tmpfs leaves headroom on 16 GiB runners.
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=4g
           --health-cmd "pg_isready -U msgvault_test -d msgvault_test"
           --health-interval 5s
           --health-timeout 5s
@@ -960,6 +962,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql:rw,size=4g
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
@@ -1048,6 +1051,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql:rw,size=4g
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
