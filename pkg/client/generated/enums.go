@@ -527,13 +527,15 @@ type CommentActionBodyAction string
 const (
 	CommentActionBodyActionDelete CommentActionBodyAction = "delete"
 	Hide                          CommentActionBodyAction = "hide"
+	PrivateReply                  CommentActionBodyAction = "private_reply"
+	PublicReply                   CommentActionBodyAction = "public_reply"
 	Unhide                        CommentActionBodyAction = "unhide"
 )
 
 // Validate checks if the CommentActionBodyAction value is valid
 func (c CommentActionBodyAction) Validate() error {
 	switch c {
-	case CommentActionBodyActionDelete, Hide, Unhide:
+	case CommentActionBodyActionDelete, Hide, PrivateReply, PublicReply, Unhide:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommentActionBodyAction value, got: %v", c))

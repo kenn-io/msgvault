@@ -21,7 +21,7 @@ type CommentActionStore interface {
 	ListCommentQueue(ctx context.Context, req CommentQueueRequest) (*CommentQueueResponse, error)
 }
 type CommentActionBody struct {
-	Action         meta.ActionKind `json:"action" enum:"hide,unhide,delete"`
+	Action         meta.ActionKind `json:"action" enum:"hide,unhide,delete,public_reply,private_reply"`
 	Body           string          `json:"body,omitempty"`
 	Confirm        string          `json:"confirm,omitempty"`
 	ResolveUnknown string          `json:"resolve_unknown,omitempty" enum:"sent,not-sent"`

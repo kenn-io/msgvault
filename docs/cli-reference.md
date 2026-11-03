@@ -20,7 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
-| Moderate and triage Facebook comments | [comment moderate](#comment-moderate), [comment triage](#comment-triage), [comment queue](#comment-queue), [comment actions](#comment-actions) |
+| Reply to, moderate and triage Facebook comments | [comment reply](#comment-reply), [comment moderate](#comment-moderate), [comment triage](#comment-triage), [comment queue](#comment-queue), [comment actions](#comment-actions) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -309,6 +309,27 @@ receipt and the command still exits nonzero.
 
 See [comment actions](usage/facebook-comments.md#comment-actions) for permissions,
 recovery, and MCP confirmation.
+
+## comment reply
+
+Reply publicly or privately to an archived Facebook comment (unreleased).
+Requires owner authorization, daemon API schema 3.35.0 or newer, an enabled
+profile, and the matching `public_reply` or `private_reply` action opt-in.
+
+```bash
+msgvault comment reply <message-id> --visibility public|private --body TEXT [--dry-run] [--confirm TOKEN] [--resolve-unknown sent|not-sent] [--json]
+```
+
+`--visibility` is required and has no default. `--body` must be 1–8,000 UTF-8
+bytes without NUL. Preview with `--dry-run`, then send with its `--confirm`
+token and the exact same target, visibility, and body. Private replies are
+limited to one per comment within seven days; follow-up DMs use the separate
+messaging workflow. Public replies with the same body reuse their receipt.
+
+`--resolve-unknown sent|not-sent` records an inspected outcome without sending;
+it requires the original body, visibility, and confirmation token and cannot
+be combined with `--dry-run`. `--json` retains coded errors and partial receipts
+while exiting nonzero. See [reply limits and recovery](usage/facebook-comments.md#public-and-private-replies).
 
 ## comment triage
 

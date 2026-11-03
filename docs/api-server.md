@@ -160,7 +160,7 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.38.0**.
+it is separate from the binary release version. The current schema is **3.39.0**.
 
 Schema 3.35.0 adds `GET /api/v1/calendar/events`, which lists archived calendar occurrences in a window with repeating events expanded. `msgvault calendar events` requires a daemon supporting this schema.
 
@@ -173,6 +173,8 @@ Schema 3.33.0 adds the read-only [person tier preview](#get-apiv1peopletiers) an
 Schema 3.36.0 adds `stored_plaintext_ranges` to document indexing status.
 
 Schema 3.38.0 adds owner-only comment moderation, triage, queue and action receipts.
+
+Schema 3.39.0 adds public and private replies to comment actions.
 
 Schema 3.34.0 adds `calls_short` and `calls_long`, the answered-call counts, to person tier signals.
 

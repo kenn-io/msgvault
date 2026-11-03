@@ -4315,3 +4315,5 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_comment_actions_private
 CREATE INDEX IF NOT EXISTS idx_meta_comment_actions_message ON meta_comment_actions(message_id);
 CREATE INDEX IF NOT EXISTS idx_meta_comment_actions_deleted
  ON meta_comment_actions(source_id,source_identifier,target_comment_id) WHERE action='delete' AND state='succeeded';
+CREATE INDEX IF NOT EXISTS idx_meta_comment_actions_sent_reply
+ ON meta_comment_actions(source_id,source_identifier,remote_id) WHERE action='public_reply' AND state='succeeded';

@@ -145,3 +145,31 @@ func TestCommentQueueRoutePagination(t *testing.T) {
 		assert.Equal(400, commentHTTPCall(s, "GET", "/api/v1/comment-queue?"+query, "").Code)
 	}
 }
+
+func TestCommentActionRouteReplyStatuses(t *testing.T) {
+	assert := assert.New(t)
+	st := &commentHTTPStore{}
+	s := NewServer(&config.Config{}, st, nil, testLogger())
+	for _, action := range []string{"public_reply", "private_reply"} {
+		body := `{"action":"` + action + `","body":"Example reply","confirm":"binding","resolve_unknown":"sent"}`
+		w := commentHTTPCall(s, "POST", "/api/v1/messages/7/comment-actions", body)
+		require.Equal(t, 200, w.Code, w.Body.String())
+		assert.Equal(meta.ActionKind(action), st.req.Action)
+		assert.Equal("Example reply", st.req.Body)
+		assert.Equal("sent", st.req.ResolveUnknown)
+		for code, status := range map[string]int{"already_sent": 409, "thread_owned_by_other_app": 502, "private_reply_window_closed": 400} {
+			st.fail = &meta.ActionError{Code: code, Message: code}
+			assert.Equal(status, commentHTTPCall(s, "POST", "/api/v1/messages/7/comment-actions", body).Code)
+		}
+		st.fail = nil
+	}
+}
+func TestCommentActionRouteReplySchema(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	schema := OpenAPIDocument().Components.Schemas.Map()["CommentActionBody"]
+	require.NotNil(schema)
+	require.NotNil(schema.Properties["action"])
+	assert.Contains(schema.Properties["action"].Enum, "public_reply")
+	assert.Contains(schema.Properties["action"].Enum, "private_reply")
+}
