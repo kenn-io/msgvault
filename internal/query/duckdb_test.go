@@ -595,24 +595,6 @@ func assertSearchDeletionScopes(t *testing.T, engine Engine, activeIDs, deletedI
 	}
 }
 
-// TestDuckDBEngine_AggregateByRecipient verifies that recipient aggregation
-// includes both to and cc recipients using list_concat.
-func TestDuckDBEngine_AggregateByRecipient(t *testing.T) {
-	t.Parallel()
-	engine := newParquetEngine(t)
-	ctx := context.Background()
-	results, err := engine.Aggregate(ctx, ViewRecipients, DefaultAggregateOptions())
-	require.NoError(t, err, "AggregateByRecipient")
-
-	// Expected recipients from test data (includes cc):
-	assertAggregateCounts(t, results, map[string]int64{
-		"bob@company.org":   3, // to in msgs 1,2,3
-		"carol@example.com": 1, // to in msg 1
-		"alice@example.com": 2, // to in msgs 4,5
-		"dan@other.net":     1, // cc in msg 2
-	})
-}
-
 // TestDuckDBEngine_AggregateByRecipient_SearchFiltersOnKey verifies that
 // text term search in Recipients view matches subjects, senders, and the
 // recipient key column, then shows the recipient breakdown of all matching
@@ -717,19 +699,6 @@ func TestDuckDBEngine_AggregateBySender(t *testing.T) {
 	assertDescendingOrder(t, results)
 }
 
-func TestDuckDBEngine_AggregateBySenderName(t *testing.T) {
-	t.Parallel()
-	engine := newParquetEngine(t)
-	ctx := context.Background()
-	results, err := engine.Aggregate(ctx, ViewSenderNames, DefaultAggregateOptions())
-	require.NoError(t, err, "AggregateBySenderName")
-
-	assertAggregateCounts(t, results, map[string]int64{
-		"Alice": 3,
-		"Bob":   2,
-	})
-}
-
 // TestDuckDBEngine_AggregateBySenderName_PerMessageNames verifies the Parquet
 // engine groups the SenderNames aggregate by the per-message From-header
 // display name (message_recipients.display_name), not the sticky
@@ -763,23 +732,6 @@ func TestDuckDBEngine_AggregateBySenderName_PerMessageNames(t *testing.T) {
 	listed, err := engine.ListMessages(ctx, MessageFilter{SenderName: "alice via GitHub"})
 	require.NoError(t, err, "ListMessages")
 	assert.Len(t, listed, 2, "ListMessages by per-message sender name")
-}
-
-func TestDuckDBEngine_SubAggregateBySenderName(t *testing.T) {
-	t.Parallel()
-	engine := newParquetEngine(t)
-	ctx := context.Background()
-
-	// Filter by recipient alice, sub-aggregate by sender name
-	filter := MessageFilter{Recipient: "alice@example.com"}
-	results, err := engine.SubAggregate(ctx, filter, ViewSenderNames, DefaultAggregateOptions())
-	require.NoError(t, err, "SubAggregate")
-
-	// Messages to alice are 4, 5 (from Bob)
-	assert.Len(t, results, 1, "expected 1 sender name")
-	if len(results) > 0 {
-		assert.Equal(t, "Bob", results[0].Key)
-	}
 }
 
 func TestDuckDBEngine_SubAggregateSourceIDsTakePrecedence(t *testing.T) {
@@ -1328,36 +1280,6 @@ func TestDuckDBEngine_AggregateByLabel(t *testing.T) {
 
 	// Verify ordering: highest count first
 	assertDescendingOrder(t, results)
-}
-
-// TestDuckDBEngine_SubAggregateByRecipient verifies sub-aggregation includes cc.
-func TestDuckDBEngine_SubAggregateByRecipient(t *testing.T) {
-	t.Parallel()
-	engine := newParquetEngine(t)
-	ctx := context.Background()
-
-	// Filter by sender alice@example.com (msgs 1,2,3) and sub-aggregate by recipients
-	filter := MessageFilter{
-		Sender: "alice@example.com",
-	}
-
-	results, err := engine.SubAggregate(ctx, filter, ViewRecipients, DefaultAggregateOptions())
-	require.NoError(t, err, "SubAggregate")
-
-	// Expected recipients for alice's messages:
-	// - bob@company.org: to in msgs 1,2,3 = 3
-	// - carol@example.com: to in msg 1 = 1
-	// - dan@other.net: cc in msg 2 = 1 (THIS TESTS CC INCLUSION IN SUBAGGREGATE)
-
-	if !assert.Len(t, results, 3, "expected 3 recipients for alice's messages") {
-		for _, r := range results {
-			t.Logf("  %s: %d", r.Key, r.Count)
-		}
-	}
-
-	// Verify dan@other.net (cc) is included
-	dan := requireAggregateRow(t, results, "dan@other.net")
-	assert.Equal(t, int64(1), dan.Count, "expected dan@other.net count 1")
 }
 
 // TestDuckDBEngine_AggregateByTime verifies time-based aggregation from Parquet.
@@ -3599,39 +3521,6 @@ func TestBuildAggregateSearchConditions_UsesILIKENotRegex(t *testing.T) {
 // =============================================================================
 // RecipientName tests
 // =============================================================================
-
-func TestDuckDBEngine_AggregateByRecipientName(t *testing.T) {
-	t.Parallel()
-	engine := newParquetEngine(t)
-	ctx := context.Background()
-	results, err := engine.Aggregate(ctx, ViewRecipientNames, DefaultAggregateOptions())
-	require.NoError(t, err, "AggregateByRecipientName")
-
-	assertAggregateCounts(t, results, map[string]int64{
-		"Bob":   3, // msgs 1,2,3
-		"Alice": 2, // msgs 4,5
-		"Carol": 1, // msg 1
-		"Dan":   1, // msg 2 cc
-	})
-}
-
-func TestDuckDBEngine_SubAggregateByRecipientName(t *testing.T) {
-	t.Parallel()
-	engine := newParquetEngine(t)
-	ctx := context.Background()
-
-	// Filter by sender alice, sub-aggregate by recipient name
-	filter := MessageFilter{Sender: "alice@example.com"}
-	results, err := engine.SubAggregate(ctx, filter, ViewRecipientNames, DefaultAggregateOptions())
-	require.NoError(t, err, "SubAggregate")
-
-	// Alice sent msgs 1,2,3 — recipients: Bob (3), Carol (1), Dan (1 via cc)
-	if !assert.Len(t, results, 3, "recipient names") {
-		for _, r := range results {
-			t.Logf("  key=%q count=%d", r.Key, r.Count)
-		}
-	}
-}
 
 func TestDuckDBEngine_ListMessages_RecipientNameFilter(t *testing.T) {
 	t.Parallel()

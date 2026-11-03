@@ -805,12 +805,9 @@ func TestImportMbox_ResumesCheckpointAfterWorkerExit(t *testing.T) {
 	assert.Equal(int64(len(mboxData)), summary.ResumedOffset)
 }
 
-func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
+func TestImportMbox_HardIngestErrorLeavesNoMessages(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
-	// Verify that when ImportMbox reports HardErrors, the caller's
-	// multi-file loop should break. This simulates the control flow
-	// in import_mbox.go where HardErrors now stops subsequent files.
 	tmp := t.TempDir()
 
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -820,11 +817,6 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 		From("Alice <alice@example.com>").
 		Subject("File1").
 		Body("body1\n").
-		Bytes()
-	raw2 := email.NewMessage().
-		From("Alice <alice@example.com>").
-		Subject("File2").
-		Body("body2\n").
 		Bytes()
 
 	writeMbox := func(name string, raw []byte) string {
@@ -840,7 +832,6 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 	}
 
 	path1 := writeMbox("file1.mbox", raw1)
-	path2 := writeMbox("file2.mbox", raw2)
 
 	// Inject ingest failure to cause HardErrors on file1.
 	failIngest := func(_ context.Context, _ *store.Store, _ int64, _ string, _ string, _ []int64, _ string, _ string, _ *mbox.Message, _ *slog.Logger) error {
@@ -857,15 +848,9 @@ func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
 	require.NoError(err, "ImportMbox file1")
 	require.True(sum1.HardErrors, "expected HardErrors=true for file1")
 
-	// Simulate the multi-file loop: if HardErrors, skip file2.
-	// This is the behavior we're testing: the loop breaks.
-	// Verify file2 was NOT processed.
 	var msgCount int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages`).Scan(&msgCount), "count messages")
 	require.Equal(0, msgCount, "msgCount (file1 failed)")
-
-	// File2 should not have been imported.
-	_ = path2 // would be processed if loop didn't break
 }
 
 type cancelOnLogMessageHandler struct {
