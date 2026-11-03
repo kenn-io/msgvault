@@ -189,6 +189,9 @@ func TestSensitiveDraftConfirmationHints(t *testing.T) {
 		name, body, labels string
 	}{
 		{"password and duplicate card", "password: hunter2abc\n4111111111111111\n4111111111111111", "a payment card number ending 1111, a password"},
+		{"authored card", "4111111111111111", "a payment card number ending 1111"},
+		{"quoted card", "> 4111111111111111", "a payment card number ending 1111 (in quoted text)"},
+		{"quoted and authored card", "> 4111111111111111\n4111111111111111", "a payment card number ending 1111 (in quoted text), a payment card number ending 1111"},
 		{"different cards", "4242424242424242\n4111111111111111", "a payment card number ending 4242, a payment card number ending 1111"},
 		{"IBAN", "GB82 WEST 1234 5698 7654 32", "an IBAN ending 5432"},
 		{"API key", "sk_" + "live_" + "abcdefghijklmnopqrstuvwx", "an API key or private key starts sk_l"},
@@ -328,4 +331,49 @@ func TestDraftToolResultShapes(t *testing.T) {
 		require.ErrorContains(err, "internal server error")
 		assert.NotContains(err.Error(), "private transport detail")
 	})
+}
+
+func TestDraftQuotedSensitiveReceipts(t *testing.T) {
+	for _, tc := range []struct {
+		name, body, subject, findings string
+	}{
+		{"quote line", "> 4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
+		{"wrapped attribution", "On Friday,\nExample wrote:\n4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
+		{"forward", "Note\n---------- Forwarded message ----------\n4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
+		{"repeated value", "4111111111111111\n> 4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111"},{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
+		{"quoted before repeated value", "> 4111111111111111\n4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true},{"kind":"payment_card","hint":"ending 1111"}]`},
+		{"same value across credential kinds", "> password: abcDef123!\napi_key: abcDef123!", "", `[{"kind":"password","quoted":true},{"kind":"api_key"}]`},
+		{"bottom-posted answer", "On Monday, Example wrote:\n> 4111111111111111\n\n4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true},{"kind":"payment_card","hint":"ending 1111"}]`},
+		{"Outlook CRLF", "Note\r\nFrom: Example\r\nSent: Monday\r\n4111111111111111", "", `[{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
+		{"card split across quote lines", "> 41111111\n> 11111111", "", ""},
+		{"incomplete headers", "From: Example\nSubject: hello\n\npassword: abcDef123!", "", `[{"kind":"password"}]`},
+		{"bare forward", "Forwarded message\npassword: abcDef123!", "", `[{"kind":"password"}]`},
+		{"subject", "> 4111111111111111", "> 4111111111111111", `[{"kind":"payment_card","hint":"ending 1111"},{"kind":"payment_card","hint":"ending 1111","quoted":true}]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"draft_id":"d1"}`}}
+			args := map[string]any{"body": tc.body, "subject": tc.subject}
+			result := confirmedCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}}, ToolDraftCompose, args, true)
+			assert.NotEqual(true, result["isError"])
+			assert.Equal(1, runner.calls)
+			assert.Equal([]string{tc.body}, runner.request.Flags["body"])
+			content, ok := result["content"].([]any)
+			require.True(ok)
+			require.NotEmpty(content)
+			text, ok := content[0].(map[string]any)
+			require.True(ok)
+			encoded, ok := text["text"].(string)
+			require.True(ok)
+			want := `{"draft_id":"d1"}`
+			if tc.findings != "" {
+				want = `{"draft_id":"d1","sensitive_content":` + tc.findings + `}`
+			}
+			assert.JSONEq(want, encoded)
+			var structured any
+			require.NoError(json.Unmarshal([]byte(want), &structured))
+			assert.Equal(structured, result["structuredContent"])
+		})
+	}
 }
