@@ -214,7 +214,7 @@ export class DirectoryController {
   }
   /** Identity changes rebind the selected profile; refresh it in place so History keeps its receipt. */
   async refreshSelectedPerson(): Promise<void> {
-    await Promise.all([this.profile?.reload(), this.entity?.load(), this.entity?.refreshNetwork()]);
+    await Promise.all([this.profile?.reload(false), this.entity?.load(), this.entity?.refreshNetwork()]);
   }
   /** Re-read server-owned Directory projections after a committed split. */
   async reconcilePersonSplit(_context: PersonSplitCommittedContext): Promise<void> {
