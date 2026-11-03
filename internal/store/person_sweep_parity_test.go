@@ -209,6 +209,18 @@ type paritySinkRecorder struct {
 	results  []peoplesweep.ApplyResult
 }
 
+func (r *paritySinkRecorder) ApplyPersonSweepStatusOnly(
+	ctx context.Context, request peoplesweep.StatusOnlyApplyRequest,
+) (peoplesweep.Lease, error) {
+	return r.store.ApplyPersonSweepStatusOnly(ctx, request)
+}
+
+func (r *paritySinkRecorder) PersonSweepEvidenceStatusesApplied(
+	ctx context.Context, personID int64, changes []personfacts.EvidenceStatusChange,
+) (bool, error) {
+	return r.store.PersonSweepEvidenceStatusesApplied(ctx, personID, changes)
+}
+
 // parityRedactedRunner models a caller that has already redacted its synthetic
 // archive excerpts. Sensitive-policy behavior is covered separately; this
 // fixture keeps its long-lived state-machine fingerprints stable.
@@ -317,7 +329,9 @@ func TestPersonSweepStateMachineParity(t *testing.T) {
 	}
 	parityRunPerson(t, f, "revoked", revokedLease, peoplesweep.RunIncremental, true)
 	revokedAfter := parityRevocationSnapshotNow(t, f)
-	assert.Equal(revokedBefore.Facts, revokedAfter.Facts)
+	assert.NotEqual(revokedBefore.Facts, revokedAfter.Facts,
+		"source retractions commit before the provider call and survive its consent failure")
+	assert.Empty(parityCurrentChannel(t, f), "the retired evidence must leave the current projection")
 	assert.Equal(revokedBefore.Cursor, revokedAfter.Cursor)
 	assert.Equal(revokedBefore.Work.DirtyThrough, revokedAfter.Work.DirtyThrough)
 	assert.Equal(revokedBefore.Work.Fence, revokedAfter.Work.Fence)
@@ -865,8 +879,8 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 		"run-parity-success":    {peoplesweep.RunSucceeded, 1, 1, 0, 1, charged},
 		"run-parity-deleted":    {peoplesweep.RunSucceeded, 1, 1, 0, 1, peoplesweep.Usage{}},
 		"run-parity-reimported": {peoplesweep.RunSucceeded, 1, 1, 0, 1, charged},
-		"run-parity-edit":       {peoplesweep.RunSucceeded, 1, 1, 0, 0, charged},
-		"run-parity-revoked":    {peoplesweep.RunFailed, 1, 0, 1, 0, charged},
+		"run-parity-edit":       {peoplesweep.RunSucceeded, 1, 1, 0, 2, charged},
+		"run-parity-revoked":    {peoplesweep.RunFailed, 1, 0, 1, 1, charged},
 		"run-parity-backstop":   {peoplesweep.RunSucceeded, 1, 1, 0, 0, charged},
 	}, runSnapshot)
 
@@ -900,11 +914,11 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 	parityAssertAttempt(t, f, byRun["run-parity-edit"], "attempt-parity-04",
 		peoplesweep.AttemptSucceeded, "", []peoplesweep.GenerationCursor{{Key: f.key,
 			Mode: peoplesweep.GenerationCursorOptimistic, CursorFrom: 4, CursorThrough: 5}},
-		1, 2, 0, "parity-request-4", charged, true)
+		1, 3, 2, "parity-request-4", charged, true)
 	parityAssertAttempt(t, f, byRun["run-parity-revoked"], "attempt-parity-05",
 		peoplesweep.AttemptFailed, peoplesweep.FailurePolicy,
 		[]peoplesweep.GenerationCursor{{Key: f.key, Mode: peoplesweep.GenerationCursorOptimistic,
-			CursorFrom: 5, CursorThrough: 6}}, 0, 0, 0, "parity-request-5", charged, false)
+			CursorFrom: 5, CursorThrough: 6}}, 0, 2, 1, "parity-request-5", charged, false)
 	parityAssertAttempt(t, f, byRun["run-parity-backstop"], "attempt-parity-backstop-2",
 		peoplesweep.AttemptSucceeded, "", []peoplesweep.GenerationCursor{
 			{Key: newKey, Mode: peoplesweep.GenerationCursorReconciliation,
@@ -935,19 +949,12 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 	require.NoError(t, err)
 	assert.Equal(t, parityExpectedEvidence(t, initialInput, false,
 		personfacts.EvidenceStatusSourceEdited), byExcerpt[initialInput.Excerpt])
-	assert.Equal(t, parityExpectedEvidence(t, editedInput, true, ""), byExcerpt[editedInput.Excerpt])
+	assert.Equal(t, parityExpectedEvidence(t, editedInput, false,
+		personfacts.EvidenceStatusSourceEdited), byExcerpt[editedInput.Excerpt])
 	statusEvents, err := f.store.ListPersonFactEvidenceStatusEventsContext(t.Context(), f.personID,
 		personfacts.EvidenceStatusFilter{Limit: 100})
 	require.NoError(t, err)
-	require.Len(t, statusEvents, 3)
-	assert.Equal(t, []personfacts.EvidenceStatusReason{
-		personfacts.EvidenceStatusSourceEdited, personfacts.EvidenceStatusSourceReimported,
-		personfacts.EvidenceStatusSourceDeleted}, []personfacts.EvidenceStatusReason{
-		statusEvents[0].Reason, statusEvents[1].Reason, statusEvents[2].Reason})
-	for _, event := range statusEvents {
-		assert.Equal(t, initialInput.SourceVersion, event.SourceVersion)
-		assert.Equal(t, byExcerpt[initialInput.Excerpt].Key, event.EvidenceKey)
-	}
+	assertPersonSweepParityStatusEvents(t, statusEvents, initialInput, editedInput, byExcerpt)
 
 	claims, err := f.store.ListPersonFactClaimsContext(t.Context(), f.personID,
 		personfacts.ClaimFilter{Target: &personfacts.TargetRef{Kind: f.target.Kind,
@@ -977,7 +984,7 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 			Key: f.target.Key, Revision: f.target.Revision}, Limit: 100})
 	require.NoError(t, err)
 	require.NotEmpty(t, decisions)
-	require.Len(t, decisions, 5)
+	require.Len(t, decisions, 8)
 	actions := make([]string, 0, len(decisions))
 	projected := 0
 	for _, decision := range decisions {
@@ -992,7 +999,9 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 	slices.Sort(actions)
 	assert.Equal(t, []string{"applied/applied-projection/900",
 		"applied/applied-projection/900", "applied/applied-projection/900",
-		"retained/evidence-unsupported/0", "retained/evidence-unsupported/0"}, actions)
+		"retained/evidence-unsupported/0", "retained/evidence-unsupported/0",
+		"retained/evidence-unsupported/0", "retained/evidence-unsupported/0",
+		"retained/evidence-unsupported/0"}, actions)
 	resolutionSnapshot := parityResolutionSnapshots(t, f)
 	const (
 		targetKey      = "59e9a7d3-4904-4d0e-97d1-d0680e1e9e55"
@@ -1003,8 +1012,7 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 		zeroScore      = `{"authority":0,"confidence":0,"corroboration":0,"directness":0,"freshness":0,"source_class":0,"total":0}`
 		appliedScore   = `{"authority":100,"confidence":100,"corroboration":0,"directness":400,"freshness":0,"source_class":300,"total":900}`
 		originalClaim  = "sha256:627d55ad9939c88f5ee37bd7335c045da79bf929cc4aface008dbbee29e67b39"
-		editedClaim    = "sha256:f2cd63039d82421ec4e6865b8a630a0c5588dca2ed694046c201b621edf641b1"
-		editInput      = "sha256:51da0168f3ef11982ca50fbe0fd520e7e36b82c8fc99b0afc3bd8724b81461c6"
+		editedClaim    = "sha256:c5e012d7a85eb953a5deb28152f678b3aa30d38622d3a990435dbcb79ad39168"
 	)
 	wantResolutions := []parityResolutionSnapshot{
 		{RunID: "run-parity-deleted", TargetKind: "attribute", TargetKey: targetKey,
@@ -1014,20 +1022,6 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 			DecisionKey: "sha256:3d12b9920f34964d24b3b16302a72b68d28c1dfe9f49a7d31497c23ee69b22a3",
 			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
 			ScoreJSON: zeroScore, ProjectionKind: "person_attribute", ProjectionRowID: 1},
-		{RunID: "run-parity-edit", TargetKind: "attribute", TargetKey: targetKey,
-			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          editInput,
-			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:470e1c0b023c68ef3ee51625aa7265d90eacf8276d03d731d4129febed882f95",
-			ClaimKey:    originalClaim, Action: "retained", Reason: "evidence-unsupported",
-			ScoreJSON: zeroScore},
-		{RunID: "run-parity-edit", TargetKind: "attribute", TargetKey: targetKey,
-			TargetRevision: targetRevision, ResolverVersion: resolver,
-			InputFingerprint:          editInput,
-			ProviderPolicyFingerprint: providerPolicy, ResolvedAt: resolvedAt,
-			DecisionKey: "sha256:bb1a06878da4d27c36b8ccd1b432f327ce8959f20443bf458d4b97c654ca947c",
-			ClaimKey:    editedClaim, Action: "applied", Reason: "applied-projection",
-			ScoreJSON: appliedScore},
 		{RunID: "run-parity-reimported", TargetKind: "attribute", TargetKey: targetKey,
 			TargetRevision: targetRevision, ResolverVersion: resolver,
 			InputFingerprint:          "sha256:d28662c7747fd0513ee80628e1ecd0e9d6427366c1f53b2280344d53c886e8eb",
@@ -1043,12 +1037,32 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 			ClaimKey:    originalClaim, Action: "applied", Reason: "applied-projection",
 			ScoreJSON: appliedScore, ProjectionKind: "person_attribute", ProjectionRowID: 1},
 	}
-	assert.Equal(t, wantResolutions, resolutionSnapshot)
+	stableGot := make([]parityResolutionSnapshot, 0, len(resolutionSnapshot))
+	editResolutions := make([]parityResolutionSnapshot, 0, 3)
+	revokedResolutions := make([]parityResolutionSnapshot, 0, 2)
+	for _, resolution := range resolutionSnapshot {
+		switch resolution.RunID {
+		case "run-parity-edit":
+			editResolutions = append(editResolutions, resolution)
+		case "run-parity-revoked":
+			revokedResolutions = append(revokedResolutions, resolution)
+		default:
+			stableGot = append(stableGot, resolution)
+		}
+	}
+	assert.Equal(t, wantResolutions, stableGot)
+	assert.Equal(t, map[parityDecisionOutcome]int{
+		{ClaimKey: originalClaim, Action: "retained", Reason: "evidence-unsupported", ScoreJSON: zeroScore}: 1,
+		{ClaimKey: editedClaim, Action: "applied", Reason: "applied-projection", ScoreJSON: appliedScore}:   1,
+	}, parityDecisionOutcomeCounts(editResolutions))
+	// Status-only retractions are committed before extraction and aren't linked
+	// through the attempt's final generation when consent is revoked.
+	assert.Empty(t, parityDecisionOutcomeCounts(revokedResolutions))
 	mutatedResolutions := slices.Clone(wantResolutions)
 	mutatedResolutions[0].InputFingerprint = strings.Repeat("0", 71)
 	assert.NotEqual(t, wantResolutions, mutatedResolutions,
 		"resolution content mutation must be visible to the exact snapshot")
-	assert.Equal(t, []string{"chat"}, parityCurrentChannel(t, f))
+	assert.Empty(t, parityCurrentChannel(t, f), "the changed archive source has no supported current value")
 
 	oldCursor := loadPersonSweepCursor(t, f.store, f.key)
 	newCursor := loadPersonSweepCursor(t, f.store, newKey)
@@ -1094,6 +1108,59 @@ func assertPersonSweepParitySnapshot(t *testing.T, f *personSweepParityFixture,
 			"durable reservation must cover exact prepared wire %d", index+1)
 	}
 	require.NoError(t, f.store.DB().PingContext(t.Context()))
+}
+
+type parityEvidenceStatusIdentity struct {
+	EvidenceKey   string
+	SourceVersion string
+	Supported     bool
+	Reason        personfacts.EvidenceStatusReason
+}
+
+type parityDecisionOutcome struct {
+	ClaimKey  string
+	Action    string
+	Reason    string
+	ScoreJSON string
+}
+
+func parityDecisionOutcomeCounts(rows []parityResolutionSnapshot) map[parityDecisionOutcome]int {
+	counts := make(map[parityDecisionOutcome]int, len(rows))
+	for _, row := range rows {
+		counts[parityDecisionOutcome{ClaimKey: row.ClaimKey, Action: row.Action,
+			Reason: row.Reason, ScoreJSON: row.ScoreJSON}]++
+	}
+	return counts
+}
+
+func assertPersonSweepParityStatusEvents(
+	t *testing.T,
+	events []personfacts.EvidenceStatusEvent,
+	initialInput, editedInput personfacts.EvidenceInput,
+	evidenceByExcerpt map[string]parityEvidenceSnapshot,
+) {
+	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
+	initialKey := evidenceByExcerpt[initialInput.Excerpt].Key
+	editedKey := evidenceByExcerpt[editedInput.Excerpt].Key
+	want := map[parityEvidenceStatusIdentity]int{
+		{EvidenceKey: initialKey, SourceVersion: initialInput.SourceVersion,
+			Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted}: 1,
+		{EvidenceKey: initialKey, SourceVersion: initialInput.SourceVersion,
+			Supported: true, Reason: personfacts.EvidenceStatusSourceReimported}: 1,
+		{EvidenceKey: initialKey, SourceVersion: initialInput.SourceVersion,
+			Supported: false, Reason: personfacts.EvidenceStatusSourceEdited}: 1,
+		{EvidenceKey: editedKey, SourceVersion: editedInput.SourceVersion,
+			Supported: false, Reason: personfacts.EvidenceStatusSourceEdited}: 1,
+	}
+	got := make(map[parityEvidenceStatusIdentity]int, len(events))
+	for _, event := range events {
+		got[parityEvidenceStatusIdentity{EvidenceKey: event.EvidenceKey,
+			SourceVersion: event.SourceVersion, Supported: event.Supported, Reason: event.Reason}]++
+	}
+	require.Len(events, 4)
+	assert.Equal(want, got)
 }
 
 func parityExpectedEvidence(t *testing.T, input personfacts.EvidenceInput, supported bool,
