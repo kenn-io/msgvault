@@ -139,7 +139,7 @@ func BenchmarkExploreScaleQueries(b *testing.B) {
 	if root == "" {
 		b.Skip("run BenchmarkExploreScaleBuild with a scratch directory first")
 	}
-	for _, name := range []string{"People", "Domains", "DomainDrill"} {
+	for _, name := range []string{"People", "Domains", "DomainDrill", "DomainDetail"} {
 		b.Run(name, func(b *testing.B) {
 			engine, err := NewDuckDBEngine(root, "", nil, DuckDBOptions{MemoryLimit: *relationshipScaleMemory})
 			require.NoError(b, err)
@@ -154,7 +154,15 @@ func BenchmarkExploreScaleQueries(b *testing.B) {
 			b.ResetTimer()
 			for range b.N {
 				start := time.Now()
-				if name == "DomainDrill" {
+				switch name {
+				case "DomainDetail":
+					// Opening one domain must read only its own activity; the
+					// archive has 1,000 other domains.
+					result, err := engine.GetDomain(b.Context(), "domain-0.example.test", Context{})
+					require.NoError(b, err)
+					require.NotNil(b, result)
+					require.Equal(b, int64(2544), result.ActivityCount)
+				case "DomainDrill":
 					result, err := engine.Explore(b.Context(), ExploreRequest{
 						Context: Context{Domains: []string{"domain-0.example.test"}},
 						Page:    PageSpec{Limit: 50},
@@ -164,7 +172,7 @@ func BenchmarkExploreScaleQueries(b *testing.B) {
 					// 71 senders have domain-0; 58 sent 36 emails and 13 sent
 					// 35. Two also authored messages in the one chat entry.
 					require.Equal(b, int64(2544), result.TotalCount)
-				} else {
+				default:
 					dimension, want := "participant", int64(71_486)
 					if name == "Domains" {
 						dimension, want = "domain", 1001
