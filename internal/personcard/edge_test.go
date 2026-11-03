@@ -78,6 +78,19 @@ func TestGapLabelsAndSuppressedEmptyGaps(t *testing.T) {
 	assertions.Contains(md, "No data:")
 	assertions.NotContains(md, "not enrolled")
 }
+
+func TestRenderMarkdownOmitsRedundantContactStateGap(t *testing.T) {
+	assertions := assert.New(t)
+	in := baseInput()
+	in.Gaps = append(in.Gaps, "contact_state_none")
+	card := Assemble(in, Options{})
+	assertions.Contains(card.Gaps, "contact_state_none")
+
+	md := RenderMarkdown(card, "")
+	assertions.Contains(md, "Last interaction: none recorded")
+	assertions.NotContains(md, "No data: contact state")
+}
+
 func TestEvidenceKindDerivedAndOversizedIDsRejected(t *testing.T) {
 	assertions := assert.New(t)
 	in := baseInput()

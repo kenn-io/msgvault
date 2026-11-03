@@ -172,6 +172,9 @@ func RenderMarkdown(card Card, affiliation string) string {
 	if len(card.Gaps) > 0 {
 		labels := []string{}
 		for _, g := range card.Gaps {
+			if g == "contact_state_none" {
+				continue
+			}
 			if label, ok := gapLabels[g]; ok && !slices.Contains(labels, label) {
 				labels = append(labels, label)
 			}
