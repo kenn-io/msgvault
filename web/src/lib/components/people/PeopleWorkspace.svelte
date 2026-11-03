@@ -101,7 +101,7 @@
     if (id === null || directory.selectedPersonID !== id || !person) return;
     const targets = person.participant_ids.map((participant) => `cluster:${participant}`);
     const next = targets.includes(page.target ?? '') ? page.target : targets[0] ?? null;
-    if (next !== page.target && !controller.detailMissing) onReplaceNavigation({ relationshipTarget: next });
+    if (next !== page.target) onReplaceNavigation({ relationshipTarget: next });
   });
   async function open(key: string): Promise<void> {
     onNavigate({ directoryPersonID: key.startsWith('person:') ? Number(key.slice(7)) : null, relationshipTarget: key.startsWith('person:') ? null : key, relationshipFiles: false });
