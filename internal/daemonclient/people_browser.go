@@ -580,7 +580,13 @@ func personSummaryFromGenerated(person generated.PersonSummary) query.PersonSumm
 		PeakRelationshipTemperature:    int(person.PeakRelationshipTemperature),
 		PeakRelationshipYear:           int(person.PeakRelationshipYear),
 		SourceCounts:                   counts,
-		FirstAt:                        person.FirstAt, LastAt: person.LastAt, CacheRevision: person.CacheRevision,
+		CacheRevision:                  person.CacheRevision,
+	}
+	if person.FirstAt != nil {
+		out.FirstAt = *person.FirstAt
+	}
+	if person.LastAt != nil {
+		out.LastAt = *person.LastAt
 	}
 	if person.Cluster != nil {
 		edges := make([]query.PersonClusterEdge, len(person.Cluster.Edges))
