@@ -12,7 +12,7 @@ import type {
   ExploreSearchMode,
   FileMIMEFamily
 } from './models';
-import { createExploreAPI, type ExploreAPI, type TimelineScope } from './api';
+import { createExploreAPI, ExploreAPIError, type ExploreAPI, type TimelineScope } from './api';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseArchiveMeetingSelection } from '../meetings/archive-selection';
 import { parseRecordingSelection } from '../archive/recording-selection';
@@ -350,6 +350,9 @@ export class ExploreLoader {
     } catch (cause: unknown) {
       if (generation !== this.requestGeneration) return { status: 'stale' };
       if (cause instanceof DOMException && cause.name === 'AbortError') return { status: 'aborted' };
+      if (cause instanceof ExploreAPIError && cause.status === 409 && cause.code === 'archive_revision_changed') {
+        return this.failPaging(REVISION_CHANGED_NOTICE);
+      }
       this.failPage(cause instanceof Error ? cause.message : 'Could not load more Messages results.');
       return { status: 'failed' };
     } finally {
