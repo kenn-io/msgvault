@@ -35,3 +35,36 @@ func TestReplaceReactionsPreservesKnownTimestampAndStoresUnknownAsNull(t *testin
 	assertions.Equal(known, gotKnown.Time.UTC())
 	assertions.False(gotUnknown.Valid, "a source without reaction time must not fabricate one")
 }
+
+func TestReplaceReactionsWritesOnlyChanges(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	source, err := st.GetOrCreateSource("signal", "reaction-changes")
+	require.NoError(t, err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, "chat", "group_chat", "Example group")
+	require.NoError(t, err)
+	messageID := insertStoreTestMessage(t, st, source.ID, conversationID, "message")
+	participantID, err := st.EnsureParticipantByIdentifier("signal", "reactor", "Example participant")
+	require.NoError(t, err)
+	reactions := []store.ReactionRef{
+		{ParticipantID: participantID, Type: "emoji", Value: "👍"},
+		{ParticipantID: participantID, Type: "emoji", Value: "👀"},
+	}
+	require.NoError(t, st.ReplaceReactions(messageID, reactions))
+	_, err = st.DB().Exec(`CREATE TABLE reaction_writes (operation TEXT);
+		CREATE TRIGGER record_reaction_delete AFTER DELETE ON reactions BEGIN INSERT INTO reaction_writes VALUES ('delete'); END;
+		CREATE TRIGGER record_reaction_insert AFTER INSERT ON reactions BEGIN INSERT INTO reaction_writes VALUES ('insert'); END`)
+	require.NoError(t, err)
+	require.NoError(t, st.ReplaceReactions(messageID, reactions))
+	var writes int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM reaction_writes`).Scan(&writes))
+	assert.Zero(t, writes, "an unchanged snapshot must leave reaction rows untouched")
+	_, err = st.DB().Exec(`DELETE FROM reaction_writes`)
+	require.NoError(t, err)
+	reactions[1].Value = "❤"
+	require.NoError(t, st.ReplaceReactions(messageID, reactions))
+	var inserts, deletes int
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM reaction_writes WHERE operation = 'insert'`).Scan(&inserts))
+	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM reaction_writes WHERE operation = 'delete'`).Scan(&deletes))
+	assert.Equal(t, 1, inserts)
+	assert.Equal(t, 1, deletes)
+}

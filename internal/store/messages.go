@@ -6232,6 +6232,8 @@ func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []Rea
 		kind, value string
 	}
 	seen := make(map[identity]bool)
+	keep := []string{"FALSE"}
+	args := []any{messageID}
 	var added int64
 	for _, r := range reactions {
 		if r.ParticipantID == 0 {
@@ -6242,25 +6244,22 @@ func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []Rea
 			continue
 		}
 		seen[key] = true
+		keep = append(keep, `(participant_id = ? AND reaction_type = ? AND reaction_value = ?)`)
+		args = append(args, r.ParticipantID, r.Type, r.Value)
 		var exists bool
 		if err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM reactions WHERE message_id = ? AND participant_id = ? AND reaction_type = ? AND reaction_value = ?)`, messageID, r.ParticipantID, r.Type, r.Value).Scan(&exists); err != nil {
 			return 0, err
 		}
 		if !exists {
+			if _, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
+				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
+				return 0, err
+			}
 			added++
 		}
 	}
-	if _, err := q.Exec(`DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
+	if _, err := q.Exec(`DELETE FROM reactions WHERE message_id = ? AND NOT (`+strings.Join(keep, " OR ")+`)`, args...); err != nil {
 		return 0, err
-	}
-	for _, r := range reactions {
-		if r.ParticipantID == 0 {
-			continue
-		}
-		if _, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
-			VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
-			return 0, err
-		}
 	}
 	return added, nil
 }
