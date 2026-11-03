@@ -291,8 +291,18 @@ func (p *pgTemplate) clone(ctx context.Context) (string, error) {
 	}
 
 	name := cloneDBPrefix + p.scope + "_" + p.token + "_" + hex.EncodeToString(suffix)
+	var version int
+	if err := admin.QueryRowContext(ctx, "SHOW server_version_num").Scan(&version); err != nil {
+		return "", fmt.Errorf("template server version: %w", err)
+	}
+	statement := "CREATE DATABASE " + name + " TEMPLATE " + p.name()
+	// PostgreSQL 15 added strategies and defaults to logging the whole copy.
+	// Older servers already copy files and do not accept the strategy option.
+	if version >= 150000 {
+		statement += " STRATEGY FILE_COPY"
+	}
 	//nolint:gosec // both names are prefixes plus hex tokens generated here.
-	if _, err := admin.ExecContext(ctx, "CREATE DATABASE "+name+" TEMPLATE "+p.name()); err != nil {
+	if _, err := admin.ExecContext(ctx, statement); err != nil {
 		return "", fmt.Errorf("clone template database: %w", err)
 	}
 
