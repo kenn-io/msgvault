@@ -855,6 +855,8 @@ func (c *MicrosoftConfig) EffectiveTenantID() string {
 // SyncConfig holds sync-related configuration.
 type SyncConfig struct {
 	RateLimitQPS int `toml:"rate_limit_qps"`
+	// IMAPMaxCommandsPerMinute paces each client's sync reads; zero disables pacing.
+	IMAPMaxCommandsPerMinute int `toml:"imap_max_commands_per_minute"`
 	// ArchiveRemoteImages opts into sender-controlled HTTP requests, which
 	// can activate tracking pixels. Unset is deliberately false.
 	ArchiveRemoteImages bool `toml:"archive_remote_images"`
@@ -873,8 +875,11 @@ type SyncConfig struct {
 	TrustedIMAPSentMailboxes map[string][]string `toml:"trusted_imap_sent_mailboxes"`
 }
 
-// Validate rejects blank saved IMAP folder names.
+// Validate rejects invalid sync limits and blank saved IMAP folder names.
 func (s *SyncConfig) Validate() error {
+	if s.IMAPMaxCommandsPerMinute < 0 {
+		return errors.New("sync.imap_max_commands_per_minute must be non-negative")
+	}
 	for identifier, folders := range s.IMAPSkipFolders {
 		for _, folder := range folders {
 			if strings.TrimSpace(folder) == "" {

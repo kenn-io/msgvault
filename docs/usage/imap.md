@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-04"
+last_edited: "2026-11-03"
 title: IMAP Sync and Repair
 description: Archive IMAP mail efficiently, choose folders, and repair stored labels.
 ---
@@ -32,6 +32,33 @@ incomplete server response is not accepted as a complete mailbox snapshot.
 Temporary connection failures receive bounded retries; a persistent failure
 still ends the run with an error. Rerun the command after correcting the
 connection problem.
+
+## Handle server command limits
+
+Sync retries a read command when the server replies with `NO [LIMIT]` or a
+`NO` containing a `retry in N seconds` hint. It waits for the hinted delay,
+capped at 60 seconds, or one second when `LIMIT` has no usable hint. Each
+command gets at most three retries. Cancellation interrupts the wait. An
+existing transport reconnect can start one fresh command budget; a FETCH
+can therefore make up to eight attempts across both connections. Persistent
+limits still surface as errors.
+
+To reduce how often sync reaches a server's command quota, set
+[`sync.imap_max_commands_per_minute`](../configuration.md#sync) and restart
+the daemon:
+
+```toml
+[sync]
+imap_max_commands_per_minute = 1800
+```
+
+The default is `0` (disabled). Positive values evenly space explicit sync
+reads, including retries, and authentication attempts for each client.
+Pacing survives reconnects and applies to manual and scheduled syncs. It
+does not coordinate quotas across clients or processes. Internal go-imap
+`CAPABILITY` commands and transport negotiation are outside this cap.
+Authentication and commands that change server messages are never
+automatically retried.
 
 ## Choose folders
 

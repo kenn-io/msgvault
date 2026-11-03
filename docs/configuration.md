@@ -984,6 +984,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 | Key | Default | Description |
 |---|---|---|
 | `rate_limit_qps` | `5` | Scales Gmail's local quota-unit refill rate: `5` allows 250 units/second; `3` allows 150. Gmail values above `5` are capped at `5`. Also sets Microsoft Teams Graph requests/second, without that cap, so lowering it slows Teams imports too. Reduce it if Gmail reports quota errors; Google's [project quotas](https://developers.google.com/workspace/gmail/api/reference/quota) can be lower than this local budget. |
+| `imap_max_commands_per_minute` | `0` | Evenly spaces each IMAP client's explicit sync read commands and authentication attempts. `0` disables pacing; negative values are invalid. Applies to manual and scheduled syncs. See [IMAP command limits](usage/imap.md#handle-server-command-limits) for retry behavior and scope. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
 | `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |

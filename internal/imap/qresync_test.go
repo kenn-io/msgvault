@@ -19,6 +19,9 @@ import (
 )
 
 type qresyncServerConfig struct {
+	// commandHook handles a synthetic response before the normal protocol fixture.
+	commandHook func(net.Conn, int, string) bool
+
 	capabilities            []string
 	mailboxes               []string
 	uidValidity             uint32
@@ -116,6 +119,9 @@ func serveQresyncTestConn(
 		}
 		line = strings.TrimSpace(line)
 		server.record(connID, line)
+		if cfg.commandHook != nil && cfg.commandHook(conn, connID, line) {
+			continue
+		}
 		tag, command, _ := strings.Cut(line, " ")
 		upper := strings.ToUpper(command)
 		switch {

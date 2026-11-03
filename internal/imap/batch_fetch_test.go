@@ -103,14 +103,14 @@ func TestRawBatchFetchRecordsMembershipBeforeDedup(t *testing.T) {
 	client.observedMemberships = nil
 	var uidSet imapapi.UIDSet
 	uidSet.AddNum(1)
-	allMailSelectErr := client.selectMailbox("All Mail")
+	allMailSelectErr := client.selectMailbox(t.Context(), "All Mail")
 	var allMailStoreErr error
 	if allMailSelectErr == nil {
 		_, allMailStoreErr = client.conn.Store(uidSet, &imapapi.StoreFlags{
 			Op: imapapi.StoreFlagsSet, Flags: []imapapi.Flag{imapapi.FlagSeen},
 		}, nil).Collect()
 	}
-	archiveSelectErr := client.selectMailbox("Archive")
+	archiveSelectErr := client.selectMailbox(t.Context(), "Archive")
 	var archiveStoreErr error
 	if archiveSelectErr == nil {
 		_, archiveStoreErr = client.conn.Store(uidSet, &imapapi.StoreFlags{
@@ -185,7 +185,7 @@ func TestLabelOnlyFetchRecordsCanonicalMembershipFlags(t *testing.T) {
 
 	client.mu.Lock()
 	client.observedMemberships = nil
-	selectErr := client.selectMailbox("INBOX")
+	selectErr := client.selectMailbox(t.Context(), "INBOX")
 	var uidSet imapapi.UIDSet
 	uidSet.AddNum(1)
 	var storeErr error

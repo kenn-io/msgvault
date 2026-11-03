@@ -1213,7 +1213,7 @@ func TestLabelMapSelectReconnectsAfterDroppedConnection(t *testing.T) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	require.NoError(client.connect(ctx))
-	require.NoError(client.selectMailbox("INBOX"))
+	require.NoError(client.selectMailbox(t.Context(), "INBOX"))
 	// Drop the connection the way a mid-run server disconnect does, leaving the
 	// client holding a dead socket it has not noticed yet.
 	require.NoError(client.conn.Close())

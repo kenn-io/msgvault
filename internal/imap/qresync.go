@@ -74,7 +74,7 @@ func (c *Client) qresyncEligible(prior, current FolderState) bool {
 		prior.KnownUIDs != nil
 }
 
-func (c *Client) enableQresync() bool {
+func (c *Client) enableQresync(ctx context.Context) bool {
 	caps := c.conn.Caps()
 	if !caps.Has(imap.CapEnable) || !caps.Has(imap.CapQResync) {
 		return false
@@ -82,7 +82,7 @@ func (c *Client) enableQresync() bool {
 	if c.qresyncEnabled {
 		return true
 	}
-	data, err := c.conn.Enable(imap.CapQResync).Wait()
+	data, err := c.enableCommand(ctx)
 	if err != nil || data == nil || !data.Caps.Has(imap.CapQResync) {
 		return false
 	}
@@ -107,7 +107,7 @@ func (c *Client) tryBuildQresyncMessageList(
 			return nil, false, nil
 		}
 	}
-	if !c.enableQresync() {
+	if !c.enableQresync(ctx) {
 		return nil, false, nil
 	}
 
@@ -156,7 +156,7 @@ func (c *Client) collectQresyncMailbox(
 	ctx context.Context, mailbox string, prior FolderState,
 ) (MailboxDelta, error) {
 	c.clearQresyncCapture()
-	selected, err := c.conn.Select(mailbox, &imap.SelectOptions{CondStore: true}).Wait()
+	selected, err := c.selectCommand(ctx, mailbox, &imap.SelectOptions{CondStore: true})
 	if err != nil {
 		return MailboxDelta{}, fmt.Errorf("CONDSTORE SELECT %q: %w", mailbox, err)
 	}
@@ -200,13 +200,13 @@ func (c *Client) collectQresyncMailbox(
 		}
 		c.beginQresyncCapture()
 		defer c.clearQresyncCapture()
-		msgs, fetchErr := c.conn.Fetch(requestedUIDs, &imap.FetchOptions{
+		msgs, fetchErr := c.fetchCommand(ctx, requestedUIDs, &imap.FetchOptions{
 			UID:          true,
 			Flags:        true,
 			ModSeq:       true,
 			ChangedSince: prior.HighestModSeq,
 			Vanished:     true,
-		}).Collect()
+		})
 		if fetchErr != nil {
 			return MailboxDelta{}, fmt.Errorf("QRESYNC UID FETCH in %q: %w", mailbox, fetchErr)
 		}
@@ -375,9 +375,9 @@ func (c *Client) refreshExistingQresyncChanges(
 			requested.AddNum(uid)
 		}
 
-		msgs, err := c.conn.Fetch(requested, &imap.FetchOptions{
+		msgs, err := c.fetchCommand(ctx, requested, &imap.FetchOptions{
 			UID: true, Flags: true, ModSeq: true,
-		}).Collect()
+		})
 		if err != nil {
 			return fmt.Errorf("QRESYNC existing-message refresh in %q: %w", mailbox, err)
 		}
@@ -574,7 +574,7 @@ func (c *Client) verifyQresyncCoverage(
 	// connection that never enabled QRESYNC. This costs nothing when the
 	// connection survived, and fails the mailbox when the new one cannot enable
 	// it, which the caller answers with a full enumeration.
-	if !c.enableQresync() {
+	if !c.enableQresync(ctx) {
 		return fmt.Errorf(
 			"QRESYNC unavailable after the coverage search in %q", mailbox)
 	}

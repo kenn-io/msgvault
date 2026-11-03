@@ -322,7 +322,10 @@ func buildAPIClient(ctx context.Context, src *store.Source, getOAuthMgr func(ctx
 		}
 
 		var opts []imaplib.Option
-		opts = append(opts, imaplib.WithLogger(logger))
+		opts = append(opts,
+			imaplib.WithLogger(logger),
+			imaplib.WithMaxCommandsPerMinute(cfg.Sync.IMAPMaxCommandsPerMinute),
+		)
 		opts = append(opts, imapOpts...)
 
 		var since, before time.Time
