@@ -1,8 +1,25 @@
 import { tick } from 'svelte';
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import DomainCalendarHost from './DomainCalendar.test-support.svelte';
+
+it('includes today before 01:00 after a transition skips midnight', async () => {
+  vi.stubEnv('TZ', 'America/Santiago');
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-07T03:30:00Z'));
+  const onDateChange = vi.fn();
+  const client = createAPIClient(async () => Response.json({
+    rows: [{ key: '2026-09-07', count: 2, level: 'FIRST_QUARTILE' }],
+    total_count: 1, cache_revision: 'cache-domain', search_provenance: {},
+  }));
+  const view = render(DomainCalendarHost, { props: { client, domain: 'example.com', revision: 'cache-1', firstAt: '2026-01-01T12:00:00Z', lastAt: '2026-09-07T03:15:00Z', selectedDate: null, onDateChange } });
+  try {
+    const cells = await screen.findAllByRole('button', { name: '2 messages on Sep 7, 2026' });
+    await fireEvent.click(cells[0]);
+    expect(onDateChange).toHaveBeenCalledWith('2026-09-07');
+  } finally { view.unmount(); vi.useRealTimers(); vi.unstubAllEnvs(); }
+});
 
 it.each([
   { name: 'last activity', year: 2025, lastAt: '2025-07-18T12:00:00Z' },

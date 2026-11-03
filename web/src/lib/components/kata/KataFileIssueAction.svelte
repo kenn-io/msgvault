@@ -67,7 +67,7 @@
   <Dialog title="Add to task" onclose={close}>
     <div class="passage-picker">
       <form onsubmit={(event) => { event.preventDefault(); void search(); }}>
-        <label>Quote from {filename}<span class="search-row"><TextInput ariaLabel="Search this file" placeholder="Search this file" bind:value={query} disabled={busy} block /><Button type="submit" label="Search" disabled={busy || !query.trim()} /></span></label>
+        <label>Quote from {filename}<span class="search-row"><TextInput ariaLabel="Search this file" bind:value={query} disabled={busy} block /><Button type="submit" label="Search" disabled={busy || !query.trim()} /></span></label>
       </form>
       {#if busy}<p role="status">Searching…</p>{/if}
       {#if error}<p role="alert">{error}</p>{/if}

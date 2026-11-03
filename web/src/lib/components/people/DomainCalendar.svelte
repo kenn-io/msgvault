@@ -33,7 +33,7 @@
       const byDate = new Map(counts.map((row) => [row.key, row]));
       const days: Calendar['days'] = [];
       const end = Math.min(new Date(wanted + 1, 0, 1).getTime(), Date.now());
-      for (const at = new Date(wanted, 0, 1); at.getTime() < end; at.setDate(at.getDate() + 1)) {
+      for (let at = new Date(wanted, 0, 1); at.getTime() < end; at = new Date(at.getFullYear(), at.getMonth(), at.getDate() + 1)) {
         const date = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
         const count = byDate.get(date)?.count ?? 0;
         days.push({ date, total: count, email: count, chat: 0, meetings: 0, sent: 0, received: 0, modality_mask: 0,
