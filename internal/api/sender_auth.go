@@ -8,7 +8,7 @@ import (
 )
 
 type messageHeaderReader interface {
-	MessageHeaderBlockContext(context.Context, int64) ([]byte, error)
+	MessageHeaderBlockContext(ctx context.Context, id int64) ([]byte, error)
 }
 
 func (s *Server) senderAuth(ctx context.Context, id, sourceID int64, messageType, from string) *senderauth.Verdict {
