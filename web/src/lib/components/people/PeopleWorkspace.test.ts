@@ -439,7 +439,7 @@ it('keeps Files on the survivor when a bulk link absorbs the open saved profile'
   try {
     await screen.findByRole('heading', { name: 'Synthetic Two' });
     for (const name of ['Alice Example', 'Bob Example', 'Cara Example']) await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${name}` }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Same person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await screen.findByRole('dialog', { name: 'Resolve person merge' });
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic One (Person 7)' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
