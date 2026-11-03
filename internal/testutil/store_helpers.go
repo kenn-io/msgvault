@@ -88,13 +88,9 @@ func SkipIfPostgres(t *testing.T, reason string) {
 	}
 }
 
-// NewPostgresTestStore always returns PostgreSQL for the given URL.
-// It creates a test-isolated PostgreSQL store: a clone of
-// the binary's template database, or — when the server cannot build one, or
-// cloning is switched off — a private schema in the configured database,
-// created and migrated here exactly as before templates existed. Either way
-// the database is private to this test, never previously used, and dropped on
-// cleanup.
+// NewPostgresTestStore creates an isolated PostgreSQL store for the given URL.
+// It clones the test binary's template database or, if cloning is unavailable
+// or disabled, initializes a private schema. Cleanup drops the clone or schema.
 func NewPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 	t.Helper()
 
