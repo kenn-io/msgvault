@@ -1937,6 +1937,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationMicrosoftSentEnvelopeRecipients, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.backfillMicrosoftSentEnvelopeRecipients(ctx, tx)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("backfill Microsoft Sent envelope recipients: %w", err)
+	}
 
 	if err := s.runOnceMigration(ctx, migrationMessagesHiddenTextBackfill, 1, false, s.backfillMessagesHiddenText); err != nil {
 		return fmt.Errorf("backfill messages hidden text flags: %w", err)

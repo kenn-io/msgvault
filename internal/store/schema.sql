@@ -1552,6 +1552,18 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- rebuilt away first.
 );
 
+-- Microsoft Sent Items envelope snapshots survive later MIME refreshes and
+-- same-source duplicate merges. These exact addresses are independent of the
+-- replaceable live recipient rows above.
+CREATE TABLE IF NOT EXISTS msmail_sent_envelope_recipients (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    email_address TEXT NOT NULL,
+    PRIMARY KEY(message_id, email_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_msmail_sent_envelope_address
+    ON msmail_sent_envelope_recipients(email_address, message_id);
+
 -- ============================================================================
 -- REACTIONS & INTERACTIONS
 -- ============================================================================

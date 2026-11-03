@@ -120,13 +120,15 @@ func (s *Store) activityUnsentSQL() string {
 func activityUnsentInSchemaSQL(dialect Dialect, schema string) string {
 	origin := `m.metadata ->> 'imap_content_origin'`
 	microsoftSent := `COALESCE(m.metadata ->> 'msmail_sent_items_observed'='true', FALSE)`
+	microsoftSentEnvelope := `EXISTS (SELECT 1 FROM ` + schema + `msmail_sent_envelope_recipients sent
+		WHERE sent.message_id=m.id)`
 	if dialect.DriverName() != postgresDriverName {
 		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
 		microsoftSent = `COALESCE(CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.msmail_sent_items_observed') END=1, FALSE)`
 	}
 	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceInSchemaSQL(schema, "m", "src") + `
 		AND COALESCE(` + origin + `, '') <> 'sent'
-		AND NOT (src.source_type='msmail' AND ` + microsoftSent + `)
+		AND NOT (src.source_type='msmail' AND (` + microsoftSent + ` OR ` + microsoftSentEnvelope + `))
 		AND NOT EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id
 		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`

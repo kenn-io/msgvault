@@ -37,6 +37,8 @@ func TestSenderContactRelationshipsQueryUsesNormalizedEnvelopeIndex(t *testing.T
 		"contact and archive-history lookup should use an address lookup rather than scan the recipient index:\n%s", plan)
 	assertions.Contains(plan, "idx_message_recipients_email_address_normalized",
 		"contact and archive-history lookup should probe historical recipient envelopes by normalized address:\n%s", plan)
+	assertions.Contains(plan, "idx_msmail_sent_envelope_address",
+		"contact and archive-history lookup should probe preserved Sent envelopes by address:\n%s", plan)
 	assertions.Equal(3, strings.Count(plan, "idx_participants_email_normalized"),
 		"all unscoped pointer-history probes should use the normalized participant email index:\n%s", plan)
 }
@@ -70,6 +72,35 @@ func TestSenderHistoryMessageIDsQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
 		"history paging should probe recipient envelopes by normalized address:\n%s", plan)
 	assertions.NotContains(plan, "USE TEMP B-TREE FOR ORDER BY",
 		"history paging should use the index's message ID order:\n%s", plan)
+}
+
+func TestSenderSentEnvelopeHistoryMessageIDsQueryUsesAddressIndex(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "sender-sent-envelope-query.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(s.Close()) })
+	requirements.NoError(s.InitSchema())
+
+	query, args := s.senderSentEnvelopeHistoryMessageIDsQuery("target@example.test", nil, 0, 0, 257)
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		requirements.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	requirements.NoError(rows.Err())
+
+	plan := strings.Join(details, "\n")
+	assertions.Contains(plan, "idx_msmail_sent_envelope_address",
+		"Sent envelope history should use the address-first index:\n%s", plan)
+	assertions.NotContains(plan, "USE TEMP B-TREE FOR ORDER BY",
+		"Sent envelope history paging should preserve message ID order:\n%s", plan)
 }
 
 func TestSenderKnownRelationshipKeysRequireArchiveHistory(t *testing.T) {

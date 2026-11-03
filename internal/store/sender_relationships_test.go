@@ -134,22 +134,158 @@ func FuzzSenderRelationshipsMicrosoftSentEvidenceSurvivesSameSourceDedup(f *test
 	})
 }
 
-func TestSenderRelationshipsMicrosoftSentEvidenceOverridesRetainedDraft(t *testing.T) {
-	got := mergeMicrosoftSentRelationshipEvidenceCase(t, true, false, true, false, false)
-	assert.Equal(t, "known", got["target@example.test"].Relationship,
-		"persisted provider Sent Items evidence must override a Drafts label retained from the survivor")
+func TestSenderRelationshipsMicrosoftSentEvidenceUsesOnlySentEnvelope(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("msmail", "owner@example.test")
+	requirements.NoError(err)
+	conversationID, err := f.Store.EnsureConversation(source.ID, "sent-envelope", "Sent Envelope")
+	requirements.NoError(err)
+	ownerID := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+
+	message := func(sourceMessageID, recipientAddress string) int64 {
+		recipientID := f.EnsureParticipant(recipientAddress, "Recipient", "example.test")
+		record := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID(sourceMessageID).Build()
+		record.RFC822MessageID = sql.NullString{String: "shared-envelope@example.test", Valid: true}
+		record.SenderID = sql.NullInt64{Int64: ownerID, Valid: true}
+		record.SentAt = sql.NullTime{Time: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC), Valid: true}
+		record.IsSent = sql.NullBool{Bool: true, Valid: true}
+		id, persistErr := f.Store.PersistMessage(&store.MessagePersistData{
+			Message: record,
+			Recipients: []store.RecipientSet{
+				{Type: "from", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{"owner@example.test"}},
+				{Type: "to", ParticipantIDs: []int64{recipientID}, EmailAddresses: []string{recipientAddress}},
+			},
+		})
+		requirements.NoError(persistErr)
+		return id
+	}
+	sentCopy := message("sent-copy", "sent@example.test")
+	draftCopy := message("draft-copy", "draft-only@example.test")
+	folders, err := f.Store.EnsureMicrosoftMailFoldersContext(t.Context(), source.ID, map[string]store.LabelInfo{
+		"sent":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"archive": {Name: "Archive", Type: "system"},
+		"drafts":  {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+	})
+	requirements.NoError(err)
+	sentLabel, archiveLabel, draftsLabel := folders["sent"], folders["archive"], folders["drafts"]
+	_, err = f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), sentCopy, &sentLabel, nil)
+	requirements.NoError(err)
+	_, err = f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), sentCopy, &archiveLabel, nil)
+	requirements.NoError(err)
+	_, err = f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), draftCopy, &draftsLabel, nil)
+	requirements.NoError(err)
+	_, err = f.Store.MergeDuplicates(draftCopy, []int64{sentCopy}, "msmail-sent-envelope")
+	requirements.NoError(err)
+
+	got, err := f.Store.SenderRelationships(t.Context(), []string{"sent@example.test", "draft-only@example.test"}, nil)
+	requirements.NoError(err)
+	assertions.Equal("known", got["sent@example.test"].Relationship)
+	assertions.Equal("none", got["draft-only@example.test"].Relationship,
+		"a retained draft envelope must not inherit a duplicate's Sent Items ownership")
 }
 
-func TestSenderRelationshipsMicrosoftSentEvidenceDoesNotOverrideExplicitUnsent(t *testing.T) {
-	got := mergeMicrosoftSentRelationshipEvidenceCase(t, true, false, true, true, false)
-	assert.Equal(t, "none", got["target@example.test"].Relationship,
-		"explicit is_sent=false must remain ineligible even when a duplicate has provider Sent Items evidence")
+func TestSenderRelationshipsMicrosoftSentEvidenceSurvivesRawImportSurvivor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("msmail", "owner@example.test")
+	requirements.NoError(err)
+	conversationID, err := f.Store.EnsureConversation(source.ID, "raw-sent-merge", "Raw Sent Merge")
+	requirements.NoError(err)
+	ownerID := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	targetID := f.EnsureParticipant("target@example.test", "Target", "example.test")
+	message := func(sourceMessageID string) int64 {
+		record := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID(sourceMessageID).Build()
+		record.RFC822MessageID = sql.NullString{String: "shared-raw-sent@example.test", Valid: true}
+		record.SenderID = sql.NullInt64{Int64: ownerID, Valid: true}
+		record.SentAt = sql.NullTime{Time: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC), Valid: true}
+		record.IsSent = sql.NullBool{Bool: true, Valid: true}
+		id, persistErr := f.Store.PersistMessage(&store.MessagePersistData{
+			Message: record,
+			Recipients: []store.RecipientSet{
+				{Type: "from", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{"owner@example.test"}},
+				{Type: "to", ParticipantIDs: []int64{targetID}, EmailAddresses: []string{"target@example.test"}},
+				{Type: "bcc", ParticipantIDs: []int64{f.EnsureParticipant("bcc@example.test", "Bcc", "example.test")}, EmailAddresses: []string{"bcc@example.test"}},
+			},
+		})
+		requirements.NoError(persistErr)
+		return id
+	}
+	rawSurvivor := message("eml-" + strings.Repeat("a", 64))
+	sentDuplicate := message("graph-sent-copy")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_is_from_me=TRUE WHERE id=?`), rawSurvivor)
+	requirements.NoError(err)
+	folders, err := f.Store.EnsureMicrosoftMailFoldersContext(t.Context(), source.ID, map[string]store.LabelInfo{
+		"sent":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"archive": {Name: "Archive", Type: "system"},
+	})
+	requirements.NoError(err)
+	sentLabel, archiveLabel := folders["sent"], folders["archive"]
+	_, err = f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), sentDuplicate, &sentLabel, nil)
+	requirements.NoError(err)
+	_, err = f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), sentDuplicate, &archiveLabel, nil)
+	requirements.NoError(err)
+	_, err = f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), rawSurvivor, &archiveLabel, nil)
+	requirements.NoError(err)
+	_, err = f.Store.MergeDuplicates(rawSurvivor, []int64{sentDuplicate}, "msmail-raw-sent-merge")
+	requirements.NoError(err)
+
+	got, err := f.Store.SenderRelationships(t.Context(), []string{"bcc@example.test"}, nil)
+	requirements.NoError(err)
+	assertions.Equal("known", got["bcc@example.test"].Relationship,
+		"provider-observed Sent provenance must survive a raw-import message ID")
 }
 
-func TestSenderRelationshipsMicrosoftSentBccSurvivesSameSourceDedup(t *testing.T) {
-	got := mergeMicrosoftSentRelationshipEvidenceCase(t, true, false, false, false, true)
-	assert.Equal(t, "known", got["bcc@example.test"].Relationship,
-		"sent-copy Bcc snapshots must survive when the archive copy is the deduplication survivor")
+func TestSenderRelationshipsMicrosoftSentLabelWithoutMetadataPreservesBcc(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("msmail", "owner@example.test")
+	requirements.NoError(err)
+	conversationID, err := f.Store.EnsureConversation(source.ID, "label-sent-merge", "Label Sent Merge")
+	requirements.NoError(err)
+	ownerID := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	targetID := f.EnsureParticipant("target@example.test", "Target", "example.test")
+	bccID := f.EnsureParticipant("bcc@example.test", "Bcc", "example.test")
+	message := func(sourceMessageID string, withBcc bool) int64 {
+		record := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID(sourceMessageID).Build()
+		record.RFC822MessageID = sql.NullString{String: "shared-label-sent@example.test", Valid: true}
+		record.SenderID = sql.NullInt64{Int64: ownerID, Valid: true}
+		record.SentAt = sql.NullTime{Time: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC), Valid: true}
+		record.IsSent = sql.NullBool{Bool: true, Valid: true}
+		recipients := []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{"owner@example.test"}},
+			{Type: "to", ParticipantIDs: []int64{targetID}, EmailAddresses: []string{"target@example.test"}},
+		}
+		if withBcc {
+			recipients = append(recipients, store.RecipientSet{Type: "bcc", ParticipantIDs: []int64{bccID}, EmailAddresses: []string{"bcc@example.test"}})
+		}
+		id, persistErr := f.Store.PersistMessage(&store.MessagePersistData{Message: record, Recipients: recipients})
+		requirements.NoError(persistErr)
+		return id
+	}
+	survivor := message("archive-copy", false)
+	sentDuplicate := message("sent-copy", true)
+	folders, err := f.Store.EnsureMicrosoftMailFoldersContext(t.Context(), source.ID, map[string]store.LabelInfo{
+		"sent":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"archive": {Name: "Archive", Type: "system"},
+	})
+	requirements.NoError(err)
+	sentLabel, archiveLabel := folders["sent"], folders["archive"]
+	requirements.NoError(f.Store.AddMessageLabels(sentDuplicate, []int64{sentLabel}))
+	requirements.NoError(f.Store.AddMessageLabels(survivor, []int64{archiveLabel}))
+	var metadata sql.NullString
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT metadata FROM messages WHERE id=?`), sentDuplicate).Scan(&metadata))
+	assertions.False(metadata.Valid, "the duplicate has provider Sent labeling but no persisted metadata marker")
+	_, err = f.Store.MergeDuplicates(survivor, []int64{sentDuplicate}, "msmail-label-sent-merge")
+	requirements.NoError(err)
+
+	got, err := f.Store.SenderRelationships(t.Context(), []string{"bcc@example.test"}, nil)
+	requirements.NoError(err)
+	assertions.Equal("known", got["bcc@example.test"].Relationship,
+		"a same-source Sent label must preserve the hidden duplicate's Bcc evidence")
 }
 
 func mergeMicrosoftSentRelationshipEvidenceCase(t *testing.T, duplicateSent, survivorSent, survivorDraft, survivorUnsent, duplicateBcc bool) map[string]store.SenderRelationshipEvidence {

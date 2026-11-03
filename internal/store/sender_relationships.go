@@ -23,16 +23,20 @@ func (s *Store) senderNativeOwnershipSQL() string {
 	if s.dialect.DriverName() != postgresDriverName {
 		microsoftSent = `CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.msmail_sent_items_observed') END=1`
 	}
+	msmailSentEnvelope := `EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent
+	   WHERE sent.message_id=m.id)`
 	sentLabel := `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 	   WHERE ml.message_id=m.id AND l.source_id=m.source_id AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))`
 	providerSent := `((src.source_type IN ('gmail','imap','msmail') AND ` + sentLabel + `) OR
 	  (src.source_type='imap' AND COALESCE(` + origin + `,'')='sent') OR
-	  (src.source_type='msmail' AND ` + microsoftSent + `))`
+	  (src.source_type='msmail' AND (` + microsoftSent + ` OR ` + msmailSentEnvelope + `)))`
 	email := `COALESCE(NULLIF(m.message_type,''),'email')='email'`
 	// Microsoft Graph's legacy source_is_from_me value was address-derived.
-	// Only its provider Sent Items role is native evidence for email ownership.
+	// Only provider-observed Sent envelope evidence can exempt a raw-import ID.
 	nativeFlag := `(COALESCE(m.source_is_from_me,FALSE) AND NOT (` + email + ` AND src.source_type='msmail'))`
-	return `(` + nativeFlag + ` OR ` + providerSent + `) AND NOT (` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
+	rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
+	allowRawMicrosoftSent := `(src.source_type='msmail' AND ` + msmailSentEnvelope + `)`
+	return `(` + nativeFlag + ` OR ` + providerSent + `) AND NOT (` + rawImported + ` AND NOT ` + allowRawMicrosoftSent + `)`
 }
 
 // senderRawImportedIDSQL recognizes complete importer-generated email IDs.
@@ -228,13 +232,22 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		recipientJoin = `CROSS JOIN messages m`
 		recipientLink = `m.id=mr.message_id AND `
 	}
-	realHistory := `EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
+	realHistory := `(EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
 		JOIN sources src ON src.id=m.source_id
 		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address
 		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-		AND NOT ` + s.activityUnsentSQL() + scope + `)`
-	archiveRecipientHistory := `EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
-		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address` + scope + `)`
+		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+		AND NOT ` + s.activityUnsentSQL() + scope + `) OR EXISTS (
+		SELECT 1 FROM msmail_sent_envelope_recipients sent
+		JOIN messages m ON m.id=sent.message_id JOIN sources src ON src.id=m.source_id
+		WHERE sent.email_address=requested.address
+		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		AND NOT ` + s.activityUnsentSQL() + scope + `))`
+	archiveRecipientHistory := `(EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
+		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address
+		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)` + scope + `) OR EXISTS (
+		SELECT 1 FROM msmail_sent_envelope_recipients sent JOIN messages m ON m.id=sent.message_id
+		WHERE sent.email_address=requested.address` + scope + `))`
 	archiveUseCTE := ""
 	archiveUseJoin := ""
 	contactHistory := "real_history.address IS NOT NULL"
@@ -270,10 +283,12 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		FROM requested
 		LEFT JOIN real_history ON real_history.address=requested.address ` + archiveUseJoin
 	args = append(args, sourceArgs...)
+	scopeCopies := 1
 	if !scoped {
-		for range 4 {
-			args = append(args, sourceArgs...)
-		}
+		scopeCopies = 6
+	}
+	for range scopeCopies {
+		args = append(args, sourceArgs...)
 	}
 	return query, args
 }
@@ -355,35 +370,82 @@ func senderKnownRelationshipKeys(keys []string, evidence map[string]SenderRelati
 }
 
 func (s *Store) senderHistoryMessageIDs(ctx context.Context, tx *loggedTx, key string, sources []int64, excluded, before int64, limit int) ([]int64, error) {
-	query, args := s.senderHistoryMessageIDsQuery(key, sources, excluded, before, limit)
-	rows, err := tx.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("read sender relationship history entries: %w", err)
+	if limit <= 0 {
+		return nil, nil
 	}
-	defer func() { _ = rows.Close() }()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+	read := func(query string, args []any) ([]int64, error) {
+		rows, err := tx.QueryContext(ctx, query, args...)
+		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
+		defer func() { _ = rows.Close() }()
+		var ids []int64
+		for rows.Next() {
+			var id int64
+			if err := rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		return ids, rows.Err()
 	}
-	return ids, rows.Err()
+	recipientQuery, recipientArgs := s.senderHistoryMessageIDsQuery(key, sources, excluded, before, limit)
+	recipientIDs, err := read(recipientQuery, recipientArgs)
+	if err != nil {
+		return nil, fmt.Errorf("read sender recipient history entries: %w", err)
+	}
+	sentQuery, sentArgs := s.senderSentEnvelopeHistoryMessageIDsQuery(key, sources, excluded, before, limit)
+	sentIDs, err := read(sentQuery, sentArgs)
+	if err != nil {
+		return nil, fmt.Errorf("read sender Sent envelope history entries: %w", err)
+	}
+	ids := make([]int64, 0, min(limit, len(recipientIDs)+len(sentIDs)))
+	for i, j := 0, 0; len(ids) < limit; {
+		switch {
+		case i >= len(recipientIDs) && j >= len(sentIDs):
+			return ids, nil
+		case j >= len(sentIDs) || (i < len(recipientIDs) && recipientIDs[i] >= sentIDs[j]):
+			ids = append(ids, recipientIDs[i])
+			i++
+		case i >= len(recipientIDs) || sentIDs[j] > recipientIDs[i]:
+			ids = append(ids, sentIDs[j])
+			j++
+		}
+	}
+	return ids, nil
 }
 
 func (s *Store) senderHistoryMessageIDsQuery(key string, sources []int64, excluded, before int64, limit int) (string, []any) {
 	scope, sourceArgs := senderSourceScope(sources, excluded)
 	args := []any{key}
-	query := `SELECT mr.message_id FROM message_recipients mr
-		JOIN messages m ON m.id=mr.message_id
-		WHERE ` + senderRecipientAddress + `=?`
+	beforeFilter := ""
 	if before > 0 {
-		query += ` AND mr.message_id<?`
+		beforeFilter = ` AND mr.message_id<?`
 		args = append(args, before)
 	}
-	query += scope + ` ORDER BY mr.message_id DESC LIMIT ?`
 	args = append(args, sourceArgs...)
+	query := `SELECT mr.message_id FROM message_recipients mr
+		JOIN messages m ON m.id=mr.message_id
+		WHERE ` + senderRecipientAddress + `=?` + beforeFilter + `
+		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)` + scope + `
+		ORDER BY mr.message_id DESC LIMIT ?`
+	args = append(args, limit)
+	return query, args
+}
+
+func (s *Store) senderSentEnvelopeHistoryMessageIDsQuery(key string, sources []int64, excluded, before int64, limit int) (string, []any) {
+	scope, sourceArgs := senderSourceScope(sources, excluded)
+	args := []any{key}
+	beforeFilter := ""
+	if before > 0 {
+		beforeFilter = ` AND sent.message_id<?`
+		args = append(args, before)
+	}
+	args = append(args, sourceArgs...)
+	query := `SELECT sent.message_id FROM msmail_sent_envelope_recipients sent
+		JOIN messages m ON m.id=sent.message_id
+		WHERE sent.email_address=?` + beforeFilter + scope + `
+		ORDER BY sent.message_id DESC LIMIT ?`
 	args = append(args, limit)
 	return query, args
 }
@@ -412,10 +474,13 @@ func (s *Store) senderOutboundEligibleIDs(ctx context.Context, tx *loggedTx, key
 func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, excluded int64, ids []int64) (string, []any) {
 	messageValues := strings.TrimSuffix(strings.Repeat("(?),", len(ids)), ",")
 	addressValues := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
-	args := make([]any, 0, len(ids)+len(keys)+len(sources)+1)
+	args := make([]any, 0, len(ids)+2*len(keys)+len(sources)+1)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	scope, sourceArgs := senderSourceScope(sources, excluded)
 	args = append(args, sourceArgs...)
+	for _, key := range keys {
+		args = append(args, key)
+	}
 	for _, key := range keys {
 		args = append(args, key)
 	}
@@ -426,9 +491,15 @@ func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, e
 		AND ` + s.senderNativeOwnershipSQL() + `
 		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
 		AND m.list_id IS NULL AND NOT ` + s.activityUnsentSQL() + scope + `
-		AND EXISTS (SELECT 1 FROM message_recipients mr
-			WHERE mr.message_id=m.id AND mr.recipient_type IN ('to','cc','bcc')
-			AND ` + senderRecipientAddress + ` IN (` + addressValues + `))
+		AND (
+			EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent
+				WHERE sent.message_id=m.id AND sent.email_address IN (` + addressValues + `))
+			OR (NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent
+				WHERE sent.message_id=m.id)
+			AND EXISTS (SELECT 1 FROM message_recipients mr
+				WHERE mr.message_id=m.id AND mr.recipient_type IN ('to','cc','bcc')
+				AND ` + senderRecipientAddress + ` IN (` + addressValues + `)))
+		)
 		AND (c.conversation_type='email_thread' OR (` + senderOneToOneChat + `))
 		ORDER BY m.id DESC`
 	return query, args
@@ -438,12 +509,17 @@ func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids [
 	marks := int64Placeholders(len(ids))
 	args := personMergeSnapshotIDArgs(ids)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
+	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	// Count every envelope and membership before the projector loads the same
 	// metadata, so a huge audience cannot cause an unbounded allocation.
 	query := `SELECT m.id, ` + senderRecipientAddress + `,
 		CASE WHEN mr.recipient_type IN ('to','cc','bcc') THEN 1 ELSE 0 END FROM messages m
 		JOIN message_recipients mr ON mr.message_id=m.id
 		WHERE m.id IN (` + marks + `)
+		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+		UNION ALL SELECT sent.message_id, sent.email_address, 1
+		FROM msmail_sent_envelope_recipients sent
+		WHERE sent.message_id IN (` + marks + `)
 		UNION ALL SELECT m.id, '', 0 FROM messages m
 		JOIN conversation_participants cp ON cp.conversation_id=m.conversation_id
 		WHERE m.id IN (` + marks + `)

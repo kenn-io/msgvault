@@ -437,6 +437,49 @@ func TestImportSentItemsEstablishesKnownSenderRelationship(t *testing.T) {
 		"provider-observed Sent Items provenance must survive folder changes")
 }
 
+func TestImportSentEnvelopeRecipientsSurviveDedupAndDeltaRefresh(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "sentitems")
+	f.put("archive-copy", "archive")
+	f.put("sent-copy", "sentitems")
+	message := func(bcc string) string {
+		headers := "From: me@example.com\r\nTo: target@example.test\r\n"
+		if bcc != "" {
+			headers += "Bcc: " + bcc + "\r\n"
+		}
+		return headers + "Subject: shared message\r\nMessage-ID: <shared-delta@example.test>\r\n" +
+			"Date: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody\r\n"
+	}
+	f.rawBodies["archive-copy"] = message("")
+	f.rawBodies["sent-copy"] = message("bcc@example.test")
+
+	summary, err := f.sync(t, st)
+	requirements.NoError(err)
+	messageIDs, err := st.MessageExistsBatch(summary.SourceID, []string{"archive-copy", "sent-copy"})
+	requirements.NoError(err)
+	requirements.Len(messageIDs, 2)
+	_, err = st.MergeDuplicates(messageIDs["archive-copy"], []int64{messageIDs["sent-copy"]}, "msmail-delta-sent-evidence")
+	requirements.NoError(err)
+
+	f.rawBodies["archive-copy"] = message("")
+	f.put("archive-copy", "archive")
+	updated, err := f.sync(t, st)
+	requirements.NoError(err)
+	assertions.Equal(1, updated.Updated)
+	var liveBccRows int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM message_recipients
+		WHERE message_id=? AND recipient_type='bcc' AND email_address='bcc@example.test'`), messageIDs["archive-copy"]).Scan(&liveBccRows))
+	assertions.Zero(liveBccRows, "the refresh must replace the live MIME recipient rows")
+
+	got, err := st.SenderRelationships(t.Context(), []string{"bcc@example.test"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["bcc@example.test"],
+		"the provider-observed sent envelope must survive a real delta refresh")
+}
+
 func TestImportMoveAndDelete(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
