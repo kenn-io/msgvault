@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -1006,7 +1005,7 @@ func TestCommitEnrichmentClaimsPostgresSerializesTwoPersonProviderIdentityOwners
 	requirements.NoError(err)
 	secondPerson, _, err := first.store.CreatePersonFromParticipantContext(t.Context(), secondParticipant)
 	requirements.NoError(err)
-	secondStore := openPostgresStoreInCurrentSchema(t, first.store, testDB)
+	secondStore := reopenPostgresStore(t, first.store)
 	requirements.NotSame(first.store.DB(), secondStore.DB())
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -1144,16 +1143,9 @@ func TestCommitEnrichmentClaimsPostgresSerializesTwoPersonProviderIdentityOwners
 	}, publicPathStages)
 }
 
-func openPostgresStoreInCurrentSchema(t *testing.T, current *Store, testDB string) *Store {
+func reopenPostgresStore(t *testing.T, current *Store) *Store {
 	t.Helper()
-	var schema string
-	require.NoError(t, current.DB().QueryRowContext(t.Context(), "SELECT current_schema()").Scan(&schema))
-	dsn, err := url.Parse(testDB)
-	require.NoError(t, err)
-	query := dsn.Query()
-	query.Set("search_path", schema)
-	dsn.RawQuery = query.Encode()
-	st, err := OpenForTest(dsn.String())
+	st, err := OpenForTest(current.dbPath)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	return st

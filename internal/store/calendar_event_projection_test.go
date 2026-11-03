@@ -226,8 +226,8 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	base := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	base := newPGStoreInternal(t)
 	data, id := calendarFixture(t, base, "race", calendarRaw)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()

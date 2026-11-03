@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"testing"
 	"time"
 
 	"go.kenn.io/msgvault/internal/personenrichment"
@@ -16,6 +17,14 @@ var ParseDBTime = parseDBTime
 // test can open a second independent handle to the same isolated database.
 func DBPathForTest(s *Store) string {
 	return s.dbPath
+}
+
+var pgTestStore func(*testing.T) *Store
+
+// SetPGTestStoreForTest lets package store_test provide testutil's clone fixture,
+// which internal tests can't import because testutil imports store.
+func SetPGTestStoreForTest(f func(*testing.T) *Store) {
+	pgTestStore = f
 }
 
 // MessagesTableColumns returns the live column names of the messages table on
