@@ -143,7 +143,7 @@
 {/if}
 
 {#if maintenance}
-  <Modal title={maintenance === 'tracking' ? 'Keep this profile updated' : 'Publish to address book'} onclose={() => maintenance = undefined}>
+  <Modal ariaLabel={maintenance === 'tracking' ? 'Keep this profile updated' : 'Publish to address book'} onclose={() => maintenance = undefined}>
     {#if maintenance === 'tracking'}<PersonTrackingControl {client} {personID} {onAnnounce} />
     {:else}<CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />{/if}
   </Modal>
