@@ -120,7 +120,7 @@
     {#if controller.timelineError}
       <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
-    {#if !filesOpen && !details && controller.headerState === 'normal'}
+    {#if !filesOpen && !details && (controller.headerState === 'normal' || !scope)}
       <div class="calendar">
         {#if domain}
           <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail?.cache_revision ?? ''} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
