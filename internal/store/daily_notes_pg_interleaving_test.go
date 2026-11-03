@@ -174,14 +174,10 @@ func newGatedPostgresStore(
 	db := sql.OpenDB(&dailyNoteGateConnector{Connector: baseConnector, gate: gate})
 	db.SetMaxOpenConns(8)
 
-	dialect := &PostgreSQLDialect{}
-	st := &Store{
-		db:      newLoggedDB(db, dialect.Rebind),
-		dbPath:  base.dbPath,
-		dialect: dialect,
-	}
-	t.Cleanup(func() { _ = st.Close() })
-	return st
+	old := base.db.DB
+	base.db = newLoggedDB(db, base.dialect.Rebind)
+	require.NoError(t, old.Close())
+	return base
 }
 
 // TestDailyNotePersonListingUsesOneSnapshot observes production statements at

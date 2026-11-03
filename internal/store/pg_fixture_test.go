@@ -6,5 +6,5 @@ import (
 )
 
 func init() {
-	store.SetPGTestStoreForTest(testutil.NewPostgresTestStore)
+	store.SetPGTestStoreForTest(testutil.NewTestStore)
 }

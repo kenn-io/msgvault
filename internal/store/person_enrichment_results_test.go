@@ -1005,7 +1005,7 @@ func TestCommitEnrichmentClaimsPostgresSerializesTwoPersonProviderIdentityOwners
 	requirements.NoError(err)
 	secondPerson, _, err := first.store.CreatePersonFromParticipantContext(t.Context(), secondParticipant)
 	requirements.NoError(err)
-	secondStore := openPostgresStoreInCurrentSchema(t, first.store)
+	secondStore := reopenPostgresStore(t, first.store)
 	requirements.NotSame(first.store.DB(), secondStore.DB())
 
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -1143,7 +1143,7 @@ func TestCommitEnrichmentClaimsPostgresSerializesTwoPersonProviderIdentityOwners
 	}, publicPathStages)
 }
 
-func openPostgresStoreInCurrentSchema(t *testing.T, current *Store) *Store {
+func reopenPostgresStore(t *testing.T, current *Store) *Store {
 	t.Helper()
 	st, err := OpenForTest(current.dbPath)
 	require.NoError(t, err)

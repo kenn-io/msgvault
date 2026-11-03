@@ -23,13 +23,13 @@ import (
 //   - unset or empty: SQLite (default)
 //   - starts with "postgres://" or "postgresql://": PostgreSQL
 //
-// For PostgreSQL, each test gets its own schema (created and dropped for isolation).
+// PostgreSQL tests get a template clone or, when cloning is unavailable, a private schema.
 func NewTestStore(t *testing.T) *store.Store {
 	t.Helper()
 
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
-		return NewPostgresTestStore(t, testDB)
+		return newPostgresTestStore(t, testDB)
 	}
 
 	return NewSQLiteTestStore(t)
@@ -88,10 +88,10 @@ func SkipIfPostgres(t *testing.T, reason string) {
 	}
 }
 
-// NewPostgresTestStore creates an isolated PostgreSQL store for the given URL.
+// newPostgresTestStore creates an isolated PostgreSQL store for the given URL.
 // It clones the test binary's template database or, if cloning is unavailable
 // or disabled, initializes a private schema. Cleanup drops the clone or schema.
-func NewPostgresTestStore(t *testing.T, dbURL string) *store.Store {
+func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 	t.Helper()
 
 	if os.Getenv(templateDisableEnv) != "0" {

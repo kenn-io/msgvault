@@ -211,11 +211,10 @@ func newGmailAuditSnapshotPostgresStore(
 	})
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
-	dialect := &PostgreSQLDialect{}
-	require.NoError(dialect.InitConn(db))
-	st := &Store{db: newLoggedDB(db, dialect.Rebind), dbPath: base.dbPath, dialect: dialect}
-	t.Cleanup(func() { _ = st.Close() })
-	return st
+	old := base.db.DB
+	base.db = newLoggedDB(db, base.dialect.Rebind)
+	require.NoError(old.Close())
+	return base
 }
 
 func seedGmailAuditSnapshotMessage(

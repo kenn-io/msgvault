@@ -31,9 +31,9 @@ func skipUnlessPostgresInternal(t *testing.T) string {
 // newPGStoreInternal returns a private PostgreSQL archive cloned from the
 // test binary's template, or initialized in a private schema when cloning is off.
 // The fixture is dropped on cleanup.
-func newPGStoreInternal(t *testing.T, dbURL string) *Store {
+func newPGStoreInternal(t *testing.T, _ string) *Store {
 	t.Helper()
-	return pgTestStore(t, dbURL)
+	return pgTestStore(t)
 }
 
 // newUninitializedPGStoreInternal opens an empty schema-isolated PostgreSQL

@@ -19,11 +19,11 @@ func DBPathForTest(s *Store) string {
 	return s.dbPath
 }
 
-var pgTestStore func(*testing.T, string) *Store
+var pgTestStore func(*testing.T) *Store
 
 // SetPGTestStoreForTest lets package store_test provide testutil's clone fixture,
 // which internal tests can't import because testutil imports store.
-func SetPGTestStoreForTest(f func(*testing.T, string) *Store) {
+func SetPGTestStoreForTest(f func(*testing.T) *Store) {
 	pgTestStore = f
 }
 
