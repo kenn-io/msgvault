@@ -1354,12 +1354,13 @@ func TestExploreKindFilter(t *testing.T) {
 		{"email", query.EntryEmail},
 	} {
 		t.Run(tc.kind, func(t *testing.T) {
+			require := require.New(t)
 			response := postExploreJSON(t, srv, "/api/v1/explore",
 				fmt.Sprintf(`{"filters":[{"dimension":"kind","values":[%q]}]}`, tc.kind))
-			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			require.Equal(http.StatusOK, response.Code, response.Body.String())
 			var body ExploreHTTPResponse
-			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-			require.Len(t, body.Rows, 1)
+			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
+			require.Len(body.Rows, 1)
 			assert.Equal(t, tc.want, body.Rows[0].Kind)
 		})
 	}
