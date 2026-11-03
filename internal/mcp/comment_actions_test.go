@@ -17,6 +17,7 @@ type commentToolBackend struct {
 	request          meta.ActionRequest
 	filter           meta.CommentQueueRequest
 	expect           string
+	warnings         []string
 	fail             bool
 }
 
@@ -27,7 +28,7 @@ func (b *commentToolBackend) RunCommentAction(_ context.Context, id int64, r met
 		b.writes++
 	}
 	b.request = r
-	result := &meta.ActionResult{MessageID: id, DryRun: r.DryRun, Confirm: "binding", Disclosure: meta.Disclosure{CommentID: "100_200_300", AuthorName: "Example Author", AssetName: "Example Page"}, Warnings: []string{fmt.Sprintf("preview%d", b.previews)}}
+	result := &meta.ActionResult{MessageID: id, DryRun: r.DryRun, Confirm: "binding", Disclosure: meta.Disclosure{CommentID: "100_200_300", AuthorName: "Example Author", AssetName: "Example Page", Body: r.Body, Public: r.Action == meta.ActionPublicReply}, Warnings: append([]string{fmt.Sprintf("preview%d", b.previews)}, b.warnings...)}
 	if b.fail {
 		return result, &meta.ActionError{Code: "outcome_unknown", Message: "Inspect provider", Result: result}
 	}
@@ -99,11 +100,13 @@ func TestMCPCommentToolsHiddenForDelegated(t *testing.T) {
 	b := &commentToolBackend{}
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, CommentActions: b, DelegatedOnly: true}
 	listed := toolsByName(t, rawListTools(t, opts, true))
-	for _, name := range []string{ToolModerateComment, ToolUpdateCommentTriage, ToolListCommentQueue, ToolListCommentActions} {
+	for _, name := range []string{ToolReplyToComment, ToolModerateComment, ToolUpdateCommentTriage, ToolListCommentQueue, ToolListCommentActions} {
 		assert.NotContains(listed, name)
 	}
 	handler := newMCPHTTPServer(opts, HTTPOptions{AllowWrites: true}).Handler
 	_, response := task3Serve(handler, task3ModernRequest("tools/call", ToolModerateComment, task3ToolCallBody(1, ToolModerateComment, `{"message_id":7,"action":"hide"}`)))
+	require.NotNil(t, response.Error)
+	_, response = task3Serve(handler, task3ModernRequest("tools/call", ToolReplyToComment, task3ToolCallBody(1, ToolReplyToComment, `{"message_id":7,"visibility":"public","body":"reply"}`)))
 	require.NotNil(t, response.Error)
 	assert.Zero(b.writes)
 	assert.Zero(b.previews)
@@ -117,9 +120,11 @@ func TestMCPCommentToolsAvailability(t *testing.T) {
 	assert.Contains(read, ToolListCommentQueue)
 	assert.Contains(read, ToolListCommentActions)
 	assert.NotContains(read, ToolModerateComment)
+	assert.NotContains(read, ToolReplyToComment)
 	assert.NotContains(read, ToolUpdateCommentTriage)
 	write := toolsByName(t, rawListTools(t, opts, true))
 	require.Contains(t, write, ToolModerateComment)
+	require.Contains(t, write, ToolReplyToComment)
 	assert.Equal(false, toolReadOnlyHint(t, write[ToolModerateComment]))
 }
 func TestMCPListCommentQueue(t *testing.T) {
@@ -136,4 +141,64 @@ func TestMCPListCommentQueue(t *testing.T) {
 	got = rawCallTool(t, opts, ToolListCommentActions, map[string]any{"message_id": float64(7)})
 	assert.NotEqual(true, got["isError"])
 	assert.Contains(toolStructuredContent(t, got), "actions")
+}
+
+func TestMCPReplyToCommentPublicDisclosure(t *testing.T) {
+	testMCPReplyDisclosure(t, "public", "Publish a PUBLIC reply as Example Page to comment 100_200_300 by Example Author:\nExample reply")
+}
+func TestMCPReplyToCommentPrivateDisclosure(t *testing.T) {
+	testMCPReplyDisclosure(t, "private", "Send ONE PRIVATE message to Example Author about comment 100_200_300 as Example Page:\nExample reply")
+}
+func testMCPReplyDisclosure(t *testing.T, visibility, want string) {
+	t.Helper()
+	b := &commentToolBackend{}
+	opts := ServeOptions{CommentActions: b}
+	args := map[string]any{"message_id": float64(7), "visibility": visibility, "body": "Example reply"}
+	result := confirmedCallTool(t, opts, "reply_to_comment", args, false, func(prompt string) { assert.Equal(t, want, prompt) })
+	assert.Equal(t, true, result["isError"])
+	assert.Zero(t, b.writes)
+	assert.Positive(t, b.previews)
+	result = confirmedCallTool(t, opts, "reply_to_comment", args, true, func(prompt string) { assert.Equal(t, want, prompt) })
+	assert.NotEqual(t, true, result["isError"])
+	assert.Equal(t, 1, b.writes)
+	assert.Equal(t, "binding", b.request.Confirm)
+	assert.Equal(t, meta.ActionKind(visibility+"_reply"), b.request.Action)
+	assert.Equal(t, "Example reply", b.request.Body)
+	missing := rawCallTool(t, opts, "reply_to_comment", map[string]any{"message_id": float64(7), "body": "reply"})
+	assert.Equal(t, true, missing["isError"])
+	assert.Equal(t, 1, b.writes)
+}
+func TestMCPReplyToCommentReinvoke(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := &commentToolBackend{}
+	ct, st := sdkmcp.NewInMemoryTransports()
+	ss, err := newMCPServer(ServeOptions{CommentActions: b}, true).Connect(t.Context(), st, nil)
+	requirements.NoError(err)
+	defer func() { _ = ss.Close() }()
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "reply-confirmation-test", Version: "1"}, &sdkmcp.ClientOptions{MultiRoundTrip: &sdkmcp.MultiRoundTripOptions{Disabled: true}})
+	session, err := client.Connect(t.Context(), ct, nil)
+	requirements.NoError(err)
+	defer func() { _ = session.Close() }()
+	args := map[string]any{"message_id": float64(7), "visibility": "public", "body": "Example reply"}
+	pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "reply_to_comment", Arguments: args})
+	requirements.NoError(err)
+	requirements.True(pending.NeedsInput())
+	assertions.Zero(b.writes)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "reply_to_comment", Arguments: args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}})
+	requirements.NoError(err)
+	assertions.False(result.IsError)
+	assertions.Equal(1, b.writes)
+	assertions.Equal(2, b.previews)
+}
+
+func TestMCPReplyToCommentAuthorWarningBeforeConfirmation(t *testing.T) {
+	b := &commentToolBackend{warnings: []string{"prior_private_reply_to_author"}}
+	result := confirmedCallTool(t, ServeOptions{CommentActions: b}, ToolReplyToComment, map[string]any{"message_id": float64(7), "visibility": "private", "body": "reply"}, false, func(prompt string) {
+		assert.Contains(t, prompt, "Warning:")
+		assert.Contains(t, prompt, "private reply to this author")
+		assert.Contains(t, prompt, "past seven days")
+	})
+	assert.Equal(t, true, result["isError"])
+	assert.Zero(t, b.writes)
 }

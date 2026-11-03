@@ -1707,7 +1707,7 @@ before choosing media caps or configuring a remote daemon.
 
 ### `[[facebook_comments]]` {#facebook-comments}
 
-Select one Facebook Page for comment ingestion and opt-in moderation (unreleased). See
+Select one Facebook Page for comment ingestion, moderation, and replies (unreleased). See
 [Facebook Page comments](usage/facebook-comments.md) for token setup, coverage,
 and recovery. Tokens are read only from the named daemon environment variable.
 
@@ -1729,9 +1729,9 @@ schedule = "*/30 * * * *"
 | `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
 | `enabled` | `false` | Enable scheduled sync and configured provider actions; manual sync remains available |
 | `schedule` | empty | Five-field cron expression; empty means manual sync only |
-| `actions` | `[]` | Explicit provider-write opt-ins: `hide` (also unhide) and `delete`; requires `enabled = true` |
+| `actions` | `[]` | Explicit provider-write opt-ins: `hide` (also unhide), `delete`, `public_reply`, and `private_reply`; requires `enabled = true` |
 
-Configure `actions = ["hide", "delete"]` only when moderation is intended.
+Configure only the actions you intend to use, such as `actions = ["hide", "public_reply"]`.
 Omitting it permits no provider writes. Local previews and triage remain
 available without these opt-ins. See [comment actions](usage/facebook-comments.md#comment-actions)
 for permission requirements, confirmation, receipts, and uncertain outcomes.

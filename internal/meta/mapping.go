@@ -15,6 +15,8 @@ import (
 const rawFormat = "facebook-comment-json"
 const objectMetadataVersion = 1
 
+var errInvalidObject = errors.New("invalid comment object")
+
 type objectMetadata struct {
 	BodyReadRequest    int    `json:"body_read_request,omitempty"`
 	BodySyncID         int64  `json:"body_sync_id,omitempty"`
@@ -339,4 +341,26 @@ func (r *importRun) snapshotMatches(ctx context.Context, prior store.StoredMessa
 		return matches, err
 	}
 	return r.imp.store.MessageRecipientsMatchContext(ctx, prior.ID, data.Recipients)
+}
+
+func (imp *Importer) ArchiveReply(ctx context.Context, app, page string, obj Object, root string) (int64, error) {
+	if !safeObjectID(obj.ID) || obj.CreatedTime == "" || obj.Parent == nil || !safeObjectID(obj.Parent.ID) {
+		return 0, errInvalidObject
+	}
+	source, err := imp.store.GetSourceByTypeAndIdentifier(SourceType, SourceIdentifier(app, page))
+	if err != nil {
+		return 0, err
+	}
+	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
+		return 0, store.ErrSourceRetired
+	}
+	run := importRun{imp: imp, app: app, page: page, source: source, sum: &ImportSummary{}}
+	if err = run.persist(ctx, obj, root, "", ""); err != nil {
+		return 0, err
+	}
+	rows, err := imp.store.StoredMessagesContext(ctx, source.ID, rawFormat, []string{obj.ID})
+	if err != nil {
+		return 0, err
+	}
+	return rows[obj.ID].ID, nil
 }

@@ -6,8 +6,8 @@ description: Archive comments on a selected Facebook Page and link commenters to
 
 Connect a selected Facebook Page to search its returned posts, comments, and
 nested replies in msgvault. This unreleased integration archives public comment
-conversations and can moderate archived Facebook comments. It does not publish
-replies or send private messages.
+conversations and can moderate or reply to archived Facebook comments after
+explicit opt-in.
 
 ## Connect a Page
 
@@ -99,8 +99,8 @@ to a person you already maintain. No separate customer database is created.
 
 ## Comment actions
 
-Hide, unhide, or delete an archived Facebook comment through the owner CLI,
-HTTP API, or MCP tools. These actions require daemon API schema 3.38.0 or newer.
+Reply to, hide, unhide, or delete an archived Facebook comment through the owner CLI,
+HTTP API, or MCP tools. These actions require daemon API schema 3.39.0 or newer.
 Delegated agent grants and remote-client keys are refused for actions, triage,
 queue reads, and receipt reads. Delegated MCP sessions do not expose these tools.
 
@@ -109,7 +109,7 @@ the daemon:
 
 ```toml
 enabled = true
-actions = ["hide", "delete"]
+actions = ["hide", "delete", "public_reply", "private_reply"]
 ```
 
 `hide` also permits unhide. An omitted or empty `actions` list permits no
@@ -137,6 +137,40 @@ receipt resolution stay local. MCP
 `moderate_comment` previews and requests client confirmation for delete;
 hide and unhide run without that prompt.
 
+### Public and private replies
+
+Choose the visibility explicitly. Public replies appear under the comment as
+the selected Page. A private reply sends one private message about the comment:
+
+```bash
+msgvault comment reply 42 --visibility public --body "Example reply" --dry-run --json
+msgvault comment reply 42 --visibility public --body "Example reply" --confirm CONFIRM_TOKEN --json
+```
+
+Use `--visibility private` for a private reply. Each send requires its own
+`public_reply` or `private_reply` opt-in. Public replies require
+`pages_manage_engagement`; private replies require `pages_messaging`.
+Confirmation binds the exact target, visibility, and UTF-8 body (1–8,000 bytes,
+no NUL). MCP `reply_to_comment` previews first, then shows `PUBLIC` or
+`ONE PRIVATE`, the Page, author, comment, and full body for client confirmation.
+Declining sends nothing. A failure never switches visibility.
+
+Private replies are limited to one message per comment within seven days of
+the comment's timestamp. The Page's own comments are refused. A prior private
+reply to the same archived author on another comment produces a warning; it
+does not establish consent for more messages. Follow-up DMs belong to the
+separate messaging workflow. `thread_owned_by_other_app` means another app owns
+the conversation; change routing outside msgvault before trying again.
+
+A repeated public reply with the same body returns its receipt without sending
+again. A different body is a new reply. A second private reply returns
+`already_sent`. Opaque private recipient IDs remain receipt evidence and never
+link people. Public replies are archived immediately only when the provider
+returns complete parent and timestamp evidence; otherwise a later sync must
+observe them. `archive_complete` and `reply_message_id` report that evidence.
+
+### Receipts and recovery
+
 Read receipts with `msgvault comment actions 42 --json`. Each receipt identifies
 the action, state, error code, and creation and update times so you can distinguish
 attempts after a lost response. An `outcome_unknown`
@@ -144,7 +178,10 @@ error means the provider may have accepted the action. msgvault does not retry
 it automatically. Inspect the provider and receipts first, then resolve the
 same action with `--resolve-unknown sent` or `--resolve-unknown not-sent`.
 Resolution records your observation without another provider call; `not-sent`
-permits a later explicit attempt. Delete resolution still requires `--confirm`.
+permits a later explicit attempt. Delete and reply resolution still require
+`--confirm`. Resolve a reply with the original visibility and exact body.
+An existing private reply receipt can be resolved after the seven-day send
+window closes; resolution does not send another message.
 Archive cleanup retains an unresolved action's comment and parents until you
 resolve the receipt, even if the comment has since been deleted from Facebook.
 A `remote_accepted_local_failed` error includes the receipt: the provider
@@ -153,6 +190,8 @@ a succeeded delete repairs its archive marker without deleting again.
 
 Garbage collection preserves the parent links needed by surviving replies.
 See [`gc`](../cli-reference.md#gc) for retention and purge rules.
+
+### Local triage
 
 Track work locally without changing Facebook:
 
@@ -176,6 +215,6 @@ See the [CLI reference](../cli-reference.md#comment-moderate) for all flags.
 This integration archives returned text and identity/context metadata. It does
 not download post/comment media, manage Facebook personal-profile comments,
 or promise complete coverage of every ad variant. Use [Instagram comments](instagram-comments.md)
-for linked professional accounts. Ad-creative discovery and public replies
-remain separate work. Threads uses its own authorization and source; a Page
-token does not authorize Threads.
+for linked professional accounts. Ad-creative discovery remains separate work.
+Threads uses its own authorization and source; a Page token does not authorize
+Threads.

@@ -9,21 +9,25 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/meta"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // These interfaces are also understood by the grouped CLI error classifier.
 // Keep comment refusals typed while that classifier is not yet on main.
 type commentCLIError struct {
-	command    *cobra.Command
-	cause      error
-	code, hint string
-	exit       int
-	details    any
+	command             *cobra.Command
+	cause               error
+	code, hint          string
+	exit                int
+	details             any
+	requiredPermissions []string
+	abuseWarning        bool
 }
 
 func (e *commentCLIError) Error() string        { return e.cause.Error() }
@@ -56,6 +60,7 @@ func classifyCommentCLIError(cmd *cobra.Command, err error) *commentCLIError {
 	result := newCommentCLIError(cmd, "internal", 1, err)
 	if failure, ok := errors.AsType[*meta.ActionError](err); ok {
 		result.code, result.details = failure.Code, failure.Result
+		result.requiredPermissions, result.abuseWarning = failure.RequiredPermissions, failure.AbuseWarning
 		switch failure.Code {
 		case "invalid_request", "invalid_body", "confirmation_mismatch", "not_a_comment", "unsupported_source":
 			result.exit = 3
@@ -105,12 +110,14 @@ func (e *commentCLIError) ReportCLIError(rawArgs []string) {
 	writer := e.command.ErrOrStderr()
 	if commentJSONRequested(e.command, rawArgs) {
 		record := struct {
-			Code     string `json:"code"`
-			Message  string `json:"message"`
-			Hint     string `json:"hint"`
-			ExitCode int    `json:"exit_code"`
-			Details  any    `json:"details,omitempty"`
-		}{e.code, e.Error(), e.hint, e.exit, e.details}
+			Code                string   `json:"code"`
+			Message             string   `json:"message"`
+			Hint                string   `json:"hint"`
+			ExitCode            int      `json:"exit_code"`
+			Details             any      `json:"details,omitempty"`
+			RequiredPermissions []string `json:"required_permissions,omitempty"`
+			AbuseWarning        bool     `json:"abuse_warning,omitempty"`
+		}{e.code, e.Error(), e.hint, e.exit, e.details, e.requiredPermissions, e.abuseWarning}
 		_ = json.MarshalWrite(writer, struct {
 			Error any `json:"error"`
 		}{record})
@@ -118,6 +125,12 @@ func (e *commentCLIError) ReportCLIError(rawArgs []string) {
 		return
 	}
 	_, _ = fmt.Fprintln(writer, "Error:", e.Error())
+	if e.abuseWarning {
+		_, _ = fmt.Fprintln(writer, "Warning: Meta flagged abusive traffic. Stop sending replies and review this source before sending again.")
+	}
+	if len(e.requiredPermissions) > 0 {
+		_, _ = fmt.Fprintln(writer, "Required permissions:", textutil.SanitizeTerminal(strings.Join(e.requiredPermissions, ", ")))
+	}
 	_, _ = fmt.Fprintln(writer, "hint:", e.hint)
 }
 
