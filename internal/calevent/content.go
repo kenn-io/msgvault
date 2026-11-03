@@ -18,10 +18,13 @@ type Content struct {
 	JoinURL     string `json:"join_url,omitempty"`
 }
 
-func DecodeContent(ctx context.Context, format string, raw, metadata []byte) (Content, error) {
+func DecodeContent(ctx context.Context, format string, raw, metadata []byte, calendarZone string) (Content, error) {
 	switch format {
 	case "ics":
-		components, _, err := ParseICSWithDiagnostics(ctx, raw, "", "UTC", NewICSParseBudget())
+		if calendarZone == "" {
+			calendarZone = "UTC"
+		}
+		components, _, err := ParseICSWithDiagnostics(ctx, raw, "", calendarZone, NewICSParseBudget())
 		if err != nil {
 			return Content{}, err
 		}

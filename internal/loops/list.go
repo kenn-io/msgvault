@@ -16,8 +16,12 @@ import (
 
 // Options selects which loops List returns. A zero Limit means the default.
 type Options struct {
-	PersonID int64
-	Limit    int
+	PersonID       int64
+	ParticipantIDs []int64
+	Limit          int
+	// Filter selects batches before Limit is applied. It can use request-level
+	// information, such as person tiers, that the loop store does not own.
+	Filter func(context.Context, []Loop) ([]Loop, error)
 }
 
 // Result is the oldest-first slice of open loops. Truncated is set when more
@@ -34,6 +38,8 @@ type Result struct {
 
 // MaxListEvidenceComputations bounds uncached message classifications per request.
 const MaxListEvidenceComputations = 1000
+
+const loopFilterBatchSize = 100
 
 // listEvidenceBudget lets package tests exercise continuation across requests.
 var listEvidenceBudget = MaxListEvidenceComputations
@@ -154,21 +160,52 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	if opts.Limit <= 0 {
 		opts.Limit = DefaultLimit
 	}
+	participants := slices.Clone(opts.ParticipantIDs)
+	participants = slices.DeleteFunc(participants, func(id int64) bool { return id <= 0 })
+	slices.Sort(participants)
+	participants = slices.Compact(participants)
 	marks, err := st.LoopMarksContext(ctx)
 	if err != nil {
 		return Result{}, err
 	}
 	var kept []Loop
-	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID}, now, marks,
+	var batch []Loop
+	insert := func(l Loop) {
+		at, _ := slices.BinarySearchFunc(kept, l, func(a, b Loop) int {
+			return cmp.Or(a.OwedSince.Compare(b.OwedSince), cmp.Compare(a.Anchor.ID, b.Anchor.ID))
+		})
+		kept = slices.Insert(kept, at, l)
+		kept = kept[:min(len(kept), opts.Limit+1)]
+	}
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		selected := batch
+		batch = nil
+		if opts.Filter != nil {
+			selected, err = opts.Filter(ctx, selected)
+			if err != nil {
+				return err
+			}
+		}
+		for _, l := range selected {
+			insert(l)
+		}
+		return nil
+	}
+	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID, ParticipantIDs: participants}, now, marks,
 		func(l Loop) error {
 			if opts.PersonID != 0 && l.Counterparty.PersonID != opts.PersonID {
 				return nil
 			}
-			at, _ := slices.BinarySearchFunc(kept, l, func(a, b Loop) int {
-				return cmp.Or(a.OwedSince.Compare(b.OwedSince), cmp.Compare(a.Anchor.ID, b.Anchor.ID))
-			})
-			kept = slices.Insert(kept, at, l)
-			kept = kept[:min(len(kept), opts.Limit+1)]
+			if len(participants) > 0 && !slices.Contains(participants, l.Counterparty.ParticipantID) {
+				return nil
+			}
+			batch = append(batch, l)
+			if len(batch) >= loopFilterBatchSize {
+				return flush()
+			}
 			return nil
 		})
 	if err != nil && ctx.Err() != nil {
@@ -176,6 +213,12 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 	}
 	incomplete := errors.Is(err, ErrEvidenceIncomplete)
 	if err != nil && !incomplete {
+		return Result{}, err
+	}
+	if err := flush(); err != nil {
+		if ctx.Err() != nil {
+			return Result{}, ctx.Err()
+		}
 		return Result{}, err
 	}
 	result := Result{Loops: kept, SkippedUnparseable: unparsed, CoverageIncomplete: incomplete}

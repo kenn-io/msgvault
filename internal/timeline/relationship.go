@@ -344,7 +344,7 @@ func (c *composer) relationshipExtras(person int64) {
 	if c.src.Loops == nil {
 		c.unavailable("loops")
 	} else {
-		c.addLoops(c.collectLoops(person))
+		c.addLoops(c.collectLoops(person, nil))
 	}
 	if c.src.Briefs == nil {
 		c.unavailable("brief")

@@ -47,10 +47,6 @@ func Build(ctx context.Context, in Inputs) (Report, error) {
 		if s.Scheduling == "disabled" {
 			r.Warnings = append(r.Warnings, fmt.Sprintf("Sync is disabled for %s source %s.", s.SourceType, s.Identifier))
 		}
-		switch s.Outcome {
-		case "failed", "cancelled", "paused":
-			r.Warnings = append(r.Warnings, fmt.Sprintf("The latest sync %s for %s source %s.", s.Outcome, s.SourceType, s.Identifier))
-		}
 		if s.Scheduling != "static" && s.Scheduling != "disabled" {
 			prefix := ""
 			switch {

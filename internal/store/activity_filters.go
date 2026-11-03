@@ -100,7 +100,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 		return "", nil, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
 	}
 	// Native calls are synchronous logical evidence, never ordinary activity.
-	where := s.activityLiveEligibleSQL() + ` AND m.message_type<>'call_record' AND ` + FullActivityEventWhere("ae")
+	where := s.activityLiveEligibleSQL() + ` AND COALESCE(m.message_type,'')<>'call_record' AND ` + FullActivityEventWhere("ae")
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	windowWhere := []string{}
@@ -185,7 +185,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	// for the requested subject when copies differ, then keep stable IDs.
 	query := prefix + `eligible AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
- m.message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet,
+	 COALESCE(m.message_type,'') AS message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet,
  CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
  ), population AS MATERIALIZED (` + activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), exclusions AS (

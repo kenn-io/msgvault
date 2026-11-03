@@ -42,3 +42,18 @@ func TestMessageDisplayCarriesHiddenTextAndEncrypted(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(got)
 }
+
+func TestMessageDisplayHandlesLegacyNullMessageType(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	id := persistLegacyLoopEmail(t, st, sourceID, conversationID, "legacy-display-null", "alice@example.test", storetest.OwnerAddress, "A synthetic note", at)
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type=NULL WHERE id=?`), id)
+	requirements.NoError(err)
+
+	got, err := st.MessageDisplayContext(t.Context(), []int64{id})
+	requirements.NoError(err)
+	requirements.Contains(got, id)
+	assertions.Empty(got[id].MessageType)
+}

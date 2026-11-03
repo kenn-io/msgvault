@@ -96,12 +96,21 @@ func Markdown(t *Timeline) string {
 	for _, d := range t.Days {
 		date, _ := time.Parse(time.DateOnly, d.Date)
 		label := date.Format("Mon Jan 02")
+		repeatedSingleDay := t.Mode == ModeDay && t.Window.From == t.Window.To && d.Date == t.Window.To
 		if d.Summary != nil {
-			fmt.Fprintf(&b, "\n%s · %d meetings · %d people (%s)\n", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			if repeatedSingleDay {
+				fmt.Fprintf(&b, "\n%d meetings · %d people (%s)\n", d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			} else {
+				fmt.Fprintf(&b, "\n%s · %d meetings · %d people (%s)\n", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			}
 			count++
 			continue
 		}
-		fmt.Fprintf(&b, "\n%s\n", label)
+		if repeatedSingleDay {
+			b.WriteByte('\n')
+		} else {
+			fmt.Fprintf(&b, "\n%s\n", label)
+		}
 		rows(d.Meetings)
 		rows(d.Bursts)
 		var other []string
@@ -219,9 +228,6 @@ func entryRow(e Entry, loc *time.Location) string {
 		body = peopleNames(p.People, p.PeopleCount) + fmt.Sprintf(" · %s ↓%d ↑%d · %s", singleLine(p.Channel, 80), p.Inbound, p.Outbound, clock)
 		if !e.HiddenText && p.Snippet.Text != "" {
 			body += " \"" + textLine(p.Snippet, 80) + "\""
-		}
-		if p.Channel == "email" {
-			body += fmt.Sprintf(" ×%d", p.Inbound+p.Outbound)
 		}
 		copies, groups := 0, 0
 		for _, n := range p.Copies {

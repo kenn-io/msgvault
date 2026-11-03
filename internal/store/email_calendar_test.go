@@ -88,6 +88,7 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 	}{
 		{name: "confirmed Gmail", sourceType: "gmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
 		{name: "confirmed IMAP", sourceType: "imap", identifier: "imap://owner%40example.com@mail.example.com:143", confirmed: true, want: "owner@example.com"},
+		{name: "confirmed Microsoft mail", sourceType: "msmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
 		{name: "unconfirmed Gmail", sourceType: "gmail", identifier: "owner@example.com"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -7,7 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestActivityReadersUseInstantForOffsetBounds(t *testing.T) {
@@ -64,4 +66,35 @@ func TestContactReadersUseInstantForOffsetClock(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestLegacyNullMessageTypeRemainsVisibleToActivityContactAndAnchorReaders(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st, sourceID, conversationID := newLegacyNullableMessageTypeStore(t)
+	peer, err := st.EnsureParticipant("alice@example.test", "Alice", "example.test")
+	requirements.NoError(err)
+	requirements.NoError(st.AddAccountIdentity(sourceID, storetest.OwnerAddress, "manual"))
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	id := persistLegacyLoopEmail(t, st, sourceID, conversationID, "legacy-activity-null", "alice@example.test", storetest.OwnerAddress, "A synthetic note", at)
+	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE messages SET message_type=NULL WHERE id=?`), id)
+	requirements.NoError(err)
+	projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC", BatchSize: 10000})
+	requirements.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	requirements.NoError(err)
+
+	messages, err := st.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conversationID, Limit: 10})
+	requirements.NoError(err)
+	requirements.Len(messages, 1)
+	assertions.Equal(id, messages[0].MessageID)
+	aggregate, err := st.MessageContactAggregateContext(t.Context(), store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{peer}}, Now: at, Location: time.UTC})
+	requirements.NoError(err)
+	assertions.Equal(1, aggregate.Count)
+	anchor, err := st.LatestEligibleMessageContext(t.Context(), conversationID)
+	requirements.NoError(err)
+	assertions.Equal(id, anchor)
+	display, err := st.MessageDisplayContext(t.Context(), []int64{anchor})
+	requirements.NoError(err)
+	requirements.Contains(display, id)
+	assertions.Empty(display[id].MessageType)
 }

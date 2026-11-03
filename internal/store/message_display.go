@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"time"
@@ -43,11 +44,13 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		for rows.Next() {
 			var d MessageDisplay
 			var sent, received, internal nullableTimestamp
+			var messageType sql.NullString
 			var sourceType string
-			if err = rows.Scan(&d.MessageID, &d.Subject, &d.Snippet, &d.HiddenText, &sent, &received, &internal, &d.ConversationID, &d.SourceID, &sourceType, &d.MessageType); err != nil {
+			if err = rows.Scan(&d.MessageID, &d.Subject, &d.Snippet, &d.HiddenText, &sent, &received, &internal, &d.ConversationID, &d.SourceID, &sourceType, &messageType); err != nil {
 				_ = rows.Close()
 				return nil, fmt.Errorf("scan message display: %w", err)
 			}
+			d.MessageType = messageType.String
 			date, dateErr := activitydate.DateEvent(activitydate.Timestamps{SentAt: nullableTimePointer(sent), ReceivedAt: nullableTimePointer(received), InternalDate: nullableTimePointer(internal)}, time.UTC)
 			if dateErr == nil {
 				d.OccurredAt = &date.OccurredAt

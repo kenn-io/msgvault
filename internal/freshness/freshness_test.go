@@ -23,11 +23,11 @@ func TestSourceFreshnessPolicy(t *testing.T) {
 		{"old", "scheduled", "completed", 24*time.Hour + time.Second, true, true, false, "source_stale:owner@example.test"},
 		{"never", "scheduled", "never", 0, false, true, false, "source_never_synced:owner@example.test"},
 		{"partial", "scheduled", "partial", time.Hour, true, false, false, ""},
-		{"failed recently", "scheduled", "failed", time.Hour, true, false, true, ""},
-		{"cancelled", "manual", "cancelled", time.Hour, true, false, true, ""},
-		{"paused", "manual", "paused", time.Hour, true, false, true, ""},
+		{"failed recently", "scheduled", "failed", time.Hour, true, false, false, ""},
+		{"cancelled", "manual", "cancelled", time.Hour, true, false, false, ""},
+		{"paused", "manual", "paused", time.Hour, true, false, false, ""},
 		{"running", "scheduled", "running", time.Hour, true, false, false, ""},
-		{"failed never", "scheduled", "failed", 0, false, true, true, "source_never_synced:owner@example.test"},
+		{"failed never", "scheduled", "failed", 0, false, true, false, "source_never_synced:owner@example.test"},
 		{"unmeasured", "scheduled", "unmeasured", time.Hour, true, true, false, "source_unmeasured:owner@example.test"},
 		{"static", "static", "never", 0, false, false, false, ""},
 		{"disabled", "disabled", "never", 0, false, false, true, ""},
@@ -102,7 +102,7 @@ func TestFreshnessWarningsAndClockSkew(t *testing.T) {
 	requirements.NoError(err)
 	assertions.False(got.Stale)
 	assertions.Equal(int64(0), *got.Sources[0].AgeSeconds)
-	assertions.Equal([]string{"Sync is disabled for gmail source owner@example.test.", "The latest sync failed for gmail source owner@example.test."}, got.Warnings)
+	assertions.Equal([]string{"Sync is disabled for gmail source owner@example.test."}, got.Warnings)
 }
 
 func TestRescanWarnsWithoutInvalidatingCertifiedProgress(t *testing.T) {

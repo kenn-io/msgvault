@@ -12,9 +12,17 @@ import (
 func TestDecodeContentICS(t *testing.T) {
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:content@example.org\r\nDTSTART:20270302T170000Z\r\nDURATION:PT1H\r\nSUMMARY:Planning\r\nDESCRIPTION:Discuss the launch\r\nLOCATION:Room 3\r\nURL:https://meet.example.org/launch\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 
-	content, err := DecodeContent(t.Context(), "ics", raw, nil)
+	content, err := DecodeContent(t.Context(), "ics", raw, nil, "")
 	require.NoError(t, err)
 	assert.Equal(t, Content{Location: "Room 3", Description: "Discuss the launch", JoinURL: "https://meet.example.org/launch"}, content)
+}
+
+func TestDecodeContentICSUsesCalendarTimezone(t *testing.T) {
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:content@example.org\r\nDTSTART:20270302T090000\r\nDTEND:20270302T010000Z\r\nDESCRIPTION:Tokyo meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+
+	content, err := DecodeContent(t.Context(), "ics", raw, nil, "Asia/Tokyo")
+	require.NoError(t, err)
+	assert.Equal(t, "Tokyo meeting", content.Description)
 }
 
 func TestDecodeContentCalDAVSelectsComponent(t *testing.T) {
@@ -28,7 +36,7 @@ func TestDecodeContentCalDAVSelectsComponent(t *testing.T) {
 	metadata, err := json.Marshal(CalDAVMetadata{EventID: components[1].Event.ProviderEventID, TimeZone: "UTC"})
 	require.NoError(t, err)
 
-	content, err := DecodeContent(t.Context(), CalDAVRawFormat, raw, metadata)
+	content, err := DecodeContent(t.Context(), CalDAVRawFormat, raw, metadata, "")
 	require.NoError(t, err)
 	assert.Equal(t, Content{Location: "Second room", Description: "Selected description", JoinURL: "https://meet.example.org/second"}, content)
 }
@@ -36,13 +44,13 @@ func TestDecodeContentCalDAVSelectsComponent(t *testing.T) {
 func TestDecodeContentCalDAVRequiresSelector(t *testing.T) {
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:event@example.org\r\nDTSTART:20270302T170000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 
-	_, err := DecodeContent(t.Context(), CalDAVRawFormat, raw, nil)
+	_, err := DecodeContent(t.Context(), CalDAVRawFormat, raw, nil, "")
 	require.ErrorContains(t, err, "component selector")
 }
 
 func TestDecodeContentHonorsCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, err := DecodeContent(ctx, "ics", []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"), nil)
+	_, err := DecodeContent(ctx, "ics", []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n"), nil, "")
 	require.ErrorIs(t, err, context.Canceled)
 }

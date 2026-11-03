@@ -436,6 +436,82 @@ func TestBuildDayWithPersonScopesOpenLoopsBeforeLimit(t *testing.T) {
 	requirements.NotNil(got.OpenLoops.Items[0].Loop)
 	assertions.Equal(personID, got.OpenLoops.Items[0].Loop.Person.PersonID)
 }
+
+func TestBuildDayWithUnsavedParticipantScopesOpenLoopsBeforeLimit(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	for i := range 10 {
+		f.PersistEmail(storetest.EmailSpec{
+			Thread:  fmt.Sprintf("unrelated-unsaved-loop-%02d", i),
+			From:    fmt.Sprintf("other-%02d@example.test", i),
+			To:      []string{storetest.OwnerAddress},
+			Subject: "Older synthetic question",
+			Body:    "Can you review this note?",
+			SentAt:  f.now.Add(-120*time.Hour - time.Duration(i)*time.Hour),
+		})
+	}
+	target := f.PersistEmail(storetest.EmailSpec{
+		Thread:  "unsaved-participant-loop",
+		From:    "target@example.test",
+		To:      []string{storetest.OwnerAddress},
+		Subject: "Synthetic question",
+		Body:    "Can you send the report?",
+		SentAt:  f.now.Add(-100 * time.Hour),
+	})
+	f.project()
+	req := dayRequest()
+	req.Mode = ModeDay
+	req.Date, req.Days, req.With = "", 3, "email:target@example.test"
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.OpenLoops, "gaps: %+v", got.Gaps)
+	requirements.Len(got.OpenLoops.Items, 1)
+	assertions.Equal(fmt.Sprintf("msg:%d", target), got.OpenLoops.Items[0].Ref)
+	requirements.NotNil(got.OpenLoops.Items[0].Loop)
+	assertions.Zero(got.OpenLoops.Items[0].Loop.Person.PersonID)
+}
+
+func TestBuildDayAppliesTierFilterBeforeOpenLoopLimit(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	lowParticipant := f.EnsureParticipant("low-tier@example.test", "Low Tier", "example.test")
+	lowPerson, _, err := f.Store.CreatePersonFromParticipant(lowParticipant)
+	requirements.NoError(err)
+	f.tier(lowPerson.ID, 2)
+	highParticipant := f.EnsureParticipant("high-tier@example.test", "High Tier", "example.test")
+	highPerson, _, err := f.Store.CreatePersonFromParticipant(highParticipant)
+	requirements.NoError(err)
+	f.tier(highPerson.ID, 1)
+	for i := range 10 {
+		f.PersistEmail(storetest.EmailSpec{
+			Thread:  fmt.Sprintf("low-tier-loop-%02d", i),
+			From:    "low-tier@example.test",
+			To:      []string{storetest.OwnerAddress},
+			Subject: "Older synthetic question",
+			Body:    "Can you review this note?",
+			SentAt:  f.now.Add(-240*time.Hour - time.Duration(i)*time.Hour),
+		})
+	}
+	target := f.PersistEmail(storetest.EmailSpec{
+		Thread:  "high-tier-loop",
+		From:    "high-tier@example.test",
+		To:      []string{storetest.OwnerAddress},
+		Subject: "Synthetic question",
+		Body:    "Can you send the report?",
+		SentAt:  f.now.Add(-200 * time.Hour),
+	})
+	f.project()
+	req := dayRequest()
+	req.Tiers = []int{1}
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.OpenLoops)
+	requirements.Len(got.OpenLoops.Items, 1)
+	assertions.Equal(fmt.Sprintf("msg:%d", target), got.OpenLoops.Items[0].Ref)
+	requirements.NotNil(got.OpenLoops.Items[0].Loop)
+	assertions.Equal(highPerson.ID, got.OpenLoops.Items[0].Loop.Person.PersonID)
+}
+
 func TestBuildPinsClockAndWindowAcrossMidnight(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

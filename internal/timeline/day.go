@@ -112,7 +112,7 @@ func (c *composer) collectDay() dayRead {
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Loops != nil {
-				r.loops = c.collectLoops(c.subject.PersonID)
+				r.loops = c.collectLoops(c.subject.PersonID, c.subject.ParticipantIDs)
 			}
 		},
 		func() {

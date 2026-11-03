@@ -18,7 +18,7 @@ func (s *Store) ActivityProjectionStateContext(ctx context.Context) (ActivityPro
 	var result ActivityProjectionState
 	var oldest nullableTimestamp
 	scope, args := sourceScopeClause(ctx, "m.source_id")
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*),MIN(q.queued_at) FROM activity_projection_queue q JOIN messages m ON m.id=q.message_id WHERE m.message_type<>'call_record' AND q.revision>q.processed_revision`+scope), args...).Scan(&result.Queued, &oldest)
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*),MIN(q.queued_at) FROM activity_projection_queue q JOIN messages m ON m.id=q.message_id WHERE COALESCE(m.message_type,'')<>'call_record' AND q.revision>q.processed_revision`+scope), args...).Scan(&result.Queued, &oldest)
 	if err != nil {
 		return result, fmt.Errorf("read activity projection queue state: %w", err)
 	}
@@ -33,7 +33,7 @@ func (s *Store) ActivityProjectionStateContext(ctx context.Context) (ActivityPro
 	}
 	if zone.Active || direct.Active {
 		var visible bool
-		err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM messages m WHERE m.message_type<>'call_record'`+scope+`)`), args...).Scan(&visible)
+		err = s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS(SELECT 1 FROM messages m WHERE COALESCE(m.message_type,'')<>'call_record'`+scope+`)`), args...).Scan(&visible)
 		if err != nil {
 			return result, fmt.Errorf("scope activity reconciliation state: %w", err)
 		}

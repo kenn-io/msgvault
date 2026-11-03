@@ -725,7 +725,7 @@ func calendarAllDayDurationDays(startDate, endDate string) (int, error) {
 	return int(end.Sub(start) / (24 * time.Hour)), nil
 }
 
-func readCalendarContent(ctx context.Context, r contextRowQuerier, messageID int64) (calevent.Content, error) {
+func readCalendarContent(ctx context.Context, r contextRowQuerier, messageID int64, calendarZone string) (calevent.Content, error) {
 	raw, format, metadata, err := readCalendarRaw(ctx, r, messageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return calevent.Content{}, nil
@@ -733,7 +733,7 @@ func readCalendarContent(ctx context.Context, r contextRowQuerier, messageID int
 	if err != nil {
 		return calevent.Content{}, err
 	}
-	return decodeCalendarContent(ctx, format, raw, metadata)
+	return decodeCalendarContent(ctx, format, raw, metadata, calendarZone)
 }
 
 func readCalendarRaw(ctx context.Context, r contextRowQuerier, messageID int64) ([]byte, string, []byte, error) {
@@ -750,8 +750,8 @@ FROM message_raw r JOIN messages m ON m.id = r.message_id WHERE r.message_id = ?
 	return raw, format.String, []byte(metadata.String), err
 }
 
-func decodeCalendarContent(ctx context.Context, format string, raw, metadata []byte) (calevent.Content, error) {
-	content, err := calevent.DecodeContent(ctx, format, raw, metadata)
+func decodeCalendarContent(ctx context.Context, format string, raw, metadata []byte, calendarZone string) (calevent.Content, error) {
+	content, err := calevent.DecodeContent(ctx, format, raw, metadata, calendarZone)
 	if err != nil {
 		return calevent.Content{}, fmt.Errorf("decode calendar content: %w", err)
 	}
@@ -832,11 +832,13 @@ func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, ref string) (C
 		return CalendarOccurrenceDetail{}, err
 	}
 	masterID := row.MessageID
+	masterZone := row.Event.CalendarTimeZone
 	if series != nil {
 		masterID = series.row.MessageID
+		masterZone = series.row.Event.CalendarTimeZone
 	}
 	row.Event.Status = occurrence.Status
-	content, err := s.calendarOccurrenceContent(ctx, row, masterID, cancellation)
+	content, err := s.calendarOccurrenceContent(ctx, row, masterID, masterZone, cancellation)
 	return CalendarOccurrenceDetail{CalendarOccurrence: occurrence, Content: content}, err
 }
 
@@ -875,7 +877,7 @@ func (s *Store) freshestCalendarExceptionAt(ctx context.Context, row, master Cal
 	return effective, found, nil
 }
 
-func (s *Store) calendarOccurrenceContent(ctx context.Context, row CalendarEventRow, masterID int64, cancellation *calendarCancellationEvidence) (calevent.Content, error) {
+func (s *Store) calendarOccurrenceContent(ctx context.Context, row CalendarEventRow, masterID int64, masterZone string, cancellation *calendarCancellationEvidence) (calevent.Content, error) {
 	var err error
 	if cancellation == nil && row.Event.Status == "cancelled" && row.MessageID != masterID {
 		cancellation, err = readCalendarCancellationEvidence(ctx, s.db, row.MessageID)
@@ -884,16 +886,16 @@ func (s *Store) calendarOccurrenceContent(ctx context.Context, row CalendarEvent
 		}
 	}
 	if cancellation == nil {
-		return readCalendarContent(ctx, s.db, row.MessageID)
+		return readCalendarContent(ctx, s.db, row.MessageID, row.Event.CalendarTimeZone)
 	}
 	var content calevent.Content
 	if cancellation.raw != nil {
-		content, err = decodeCalendarContent(ctx, cancellation.format, cancellation.raw, cancellation.metadata)
+		content, err = decodeCalendarContent(ctx, cancellation.format, cancellation.raw, cancellation.metadata, row.Event.CalendarTimeZone)
 	}
 	if err != nil || !cancellation.sparse || (content.Location != "" && content.Description != "" && content.JoinURL != "") {
 		return content, err
 	}
-	inherited, err := readCalendarContent(ctx, s.db, masterID)
+	inherited, err := readCalendarContent(ctx, s.db, masterID, masterZone)
 	return calevent.Content{Location: cmp.Or(content.Location, inherited.Location), Description: cmp.Or(content.Description, inherited.Description), JoinURL: cmp.Or(content.JoinURL, inherited.JoinURL)}, err
 }
 

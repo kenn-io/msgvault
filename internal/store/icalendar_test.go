@@ -92,6 +92,23 @@ func TestICalendarSeriesCancellationActivityEligibility(t *testing.T) {
 	}
 }
 
+func TestGetICSCalendarOccurrenceContentUsesSourceTimeZone(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	requirements.NoError(st.UpdateSourceSyncConfig(source, `{"time_zone":"Asia/Tokyo"}`))
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\n" +
+		"UID:tokyo-detail@example.test\r\nDTSTART:20270302T090000\r\nDTEND;TZID=Asia/Tokyo:20270302T100000\r\n" +
+		"DESCRIPTION:Tokyo appointment\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	imported, err := st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	requirements.Len(imported.MessageIDs, 1)
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", imported.MessageIDs[0]))
+	requirements.NoError(err)
+	assertions.Equal("Asia/Tokyo", calendarRows(t, st, imported.MessageIDs[0])[0].Event.CalendarTimeZone)
+	assertions.Equal("Tokyo appointment", detail.Description)
+}
+
 func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

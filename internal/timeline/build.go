@@ -310,6 +310,9 @@ func (c *composer) admitTier(people []Person) bool {
 // loadTiers batches known IDs and caches missing/failed reads as well as hits.
 // The cache lasts for one Build; source errors remain visible in people gaps.
 func (c *composer) loadTiers(ids []int64) {
+	c.loadTiersContext(c.ctx, ids)
+}
+func (c *composer) loadTiersContext(ctx context.Context, ids []int64) {
 	if c.tiers == nil {
 		c.tiers = map[int64]store.PersonTier{}
 	}
@@ -324,7 +327,7 @@ func (c *composer) loadTiers(ids []int64) {
 		return
 	}
 	slices.Sort(missing)
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]store.PersonTier, error) {
+	r := readWithin(ctx, requestTimeout, func(ctx context.Context) (map[int64]store.PersonTier, error) {
 		return c.src.People.PersonTiersContext(ctx, missing, store.PersonTierOptions{Config: c.src.Filters.Exclusions, AsOf: c.t.Now})
 	})
 	c.gap("people", r.err, false)
@@ -362,12 +365,38 @@ func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person
 	return people
 }
 
-func (c *composer) collectLoops(personID int64) readResult[loops.Result] {
+func (c *composer) collectLoops(personID int64, participantIDs []int64) readResult[loops.Result] {
 	limit := 10
 	if c.req.Brief {
 		limit = 5
 	}
+	options := loops.Options{PersonID: personID, Limit: limit}
+	if personID == 0 {
+		options.ParticipantIDs = slices.Clone(participantIDs)
+	}
+	if len(c.req.Tiers) > 0 {
+		options.Filter = c.filterLoopTiers
+	}
 	return readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
-		return c.src.Loops.List(ctx, loops.Options{PersonID: personID, Limit: limit}, c.t.Now)
+		return c.src.Loops.List(ctx, options, c.t.Now)
 	})
+}
+func (c *composer) filterLoopTiers(ctx context.Context, candidates []loops.Loop) ([]loops.Loop, error) {
+	ids := make([]int64, 0, len(candidates))
+	for _, loop := range candidates {
+		ids = append(ids, loop.Counterparty.PersonID)
+	}
+	c.loadTiersContext(ctx, ids)
+	selected := candidates[:0]
+	for _, loop := range candidates {
+		person := Person{PersonID: loop.Counterparty.PersonID, ParticipantID: loop.Counterparty.ParticipantID, Name: loop.Counterparty.DisplayName, TierSource: "none"}
+		if tier := c.tiers[person.PersonID]; person.PersonID > 0 && tier.Source != "" {
+			person.Tier = tier.Tier
+			person.TierSource = tier.Source
+		}
+		if c.admitTier([]Person{person}) {
+			selected = append(selected, loop)
+		}
+	}
+	return selected, nil
 }

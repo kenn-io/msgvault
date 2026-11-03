@@ -678,6 +678,8 @@ func TestColdAdapterUsesUTCWindowBounds(t *testing.T) {
 			f.add(t, room, f.Source.ID, start.Add(-time.Second), false, "")
 			atStart := f.add(t, room, f.Source.ID, start, false, "")
 			inside := f.add(t, room, f.Source.ID, start.Add(30*time.Minute), false, "")
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2026-10-22 07:30:00-05:00", inside)
+			requirements.NoError(err)
 			f.add(t, room, f.Source.ID, start.Add(time.Hour), false, "")
 			zone := time.FixedZone(tc.name, tc.offset)
 			after, before := start.In(zone), start.Add(time.Hour).In(zone)
@@ -691,6 +693,10 @@ func TestColdAdapterUsesUTCWindowBounds(t *testing.T) {
 			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(2, count)
+			messagePage, err := f.Store.ListColdActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: room, After: &after, Before: &before, Limit: 10})
+			requirements.NoError(err)
+			requirements.Len(messagePage, 2)
+			assertions.Equal([]int64{atStart, inside}, []int64{messagePage[0].MessageID, messagePage[1].MessageID})
 		})
 	}
 }
