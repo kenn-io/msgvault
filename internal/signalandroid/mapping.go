@@ -3,7 +3,6 @@ package signalandroid
 import (
 	"encoding/base64"
 	"encoding/hex"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -149,13 +148,11 @@ func applyMentions(body string, mentions []sigMention, nameOf func(int64) string
 	if len(mentions) == 0 || !strings.ContainsRune(body, objectReplacementRune) {
 		return body
 	}
-	ordered := append([]sigMention(nil), mentions...)
-	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].RangeStart < ordered[j].RangeStart })
 	var b strings.Builder
 	next := 0
 	for _, r := range body {
-		if r == objectReplacementRune && next < len(ordered) {
-			b.WriteString("@" + nameOf(ordered[next].RecipientID))
+		if r == objectReplacementRune && next < len(mentions) {
+			b.WriteString("@" + nameOf(mentions[next].RecipientID))
 			next++
 			continue
 		}

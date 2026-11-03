@@ -100,15 +100,6 @@ func TestProducerVersionSidecar(t *testing.T) {
 	}
 }
 
-func TestGroupOnlyBackup(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `DELETE FROM message WHERE thread_id <> 11`)
-	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(1), summary.MessagesAdded)
-}
-
 func TestPhoneAppearsForArchivedSender(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()

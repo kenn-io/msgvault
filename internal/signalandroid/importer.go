@@ -53,8 +53,9 @@ type run struct {
 	// seenIDs maps each message ID written in this run to its Signal row, so
 	// a second row claiming the same chat, author, and timestamp is reported
 	// instead of overwriting the first.
-	seenIDs map[string]int64
-	written int64
+	seenIDs        map[string]int64
+	pendingReplies map[string]bool
+	written        int64
 }
 
 // Import reads the Signal database at dbPath and writes its chats, messages,
@@ -94,6 +95,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		participants:    make(map[int64]int64),
 		participantErrs: make(map[int64]error),
 		seenIDs:         make(map[string]int64),
+		pendingReplies:  make(map[string]bool),
 	}
 	if r.recipients, err = fetchRecipients(ctx, db, sch); err != nil {
 		return nil, err
@@ -447,9 +449,6 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		pending = append(pending, pendingMessage{row: m, chatID: sourceConvID, id: id, rootID: rootID, senderID: author})
 		ids = append(ids, id)
 		lookupRows = append(lookupRows, m.RowID)
-		if m.OriginalRowID.Valid {
-			lookupRows = append(lookupRows, m.OriginalRowID.Int64)
-		}
 	}
 	if len(pending) == 0 {
 		return 0, nil
@@ -491,12 +490,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		if r.limitReached() {
 			break
 		}
-		// Edits copy the attachments to the newest revision; fall back to the
-		// original row for databases that kept them there.
 		rowAttachments := attachments[p.row.RowID]
-		if len(rowAttachments) == 0 && p.row.OriginalRowID.Valid {
-			rowAttachments = attachments[p.row.OriginalRowID.Int64]
-		}
 		archivedID, isExisting := existing[p.id]
 		var rowReactions []sigReaction
 		if reactionsRead {
@@ -636,12 +630,10 @@ func (r *run) writeMessage(
 		// The backup holds each message's current reactions; replace the
 		// archived set so removed and changed reactions disappear.
 		refs := make([]store.ReactionRef, 0, len(reactions))
-		complete := true
 		for _, reaction := range reactions {
 			pid, ok, err := r.participant(ctx, reaction.AuthorID)
 			if err != nil {
-				complete = false
-				break
+				return err
 			}
 			if !ok || reaction.Emoji == "" {
 				continue
@@ -651,9 +643,7 @@ func (r *run) writeMessage(
 				CreatedAt: millisTime(reaction.DateSent).Time,
 			})
 		}
-		if complete {
-			data.Reactions = &refs
-		}
+		data.Reactions = &refs
 	}
 	_, err = st.PersistMessageContext(ctx, &data)
 	if err != nil {
@@ -670,6 +660,8 @@ func (r *run) writeMessage(
 	r.summary.AttachmentsStored += int64(len(writes))
 	if msg.ReplyToMessageID.Valid {
 		r.summary.RepliesLinked++
+	} else if parentID != "" {
+		r.pendingReplies[p.id] = true
 	} else if m.QuoteID > 0 && m.QuoteAuthor > 0 && parentID == "" {
 		r.summary.RepliesUnresolved++
 	}
@@ -711,7 +703,11 @@ func (r *run) resolveReplies(ctx context.Context) error {
 		return err
 	}
 	r.summary.RepliesLinked += int64(len(before) - len(after))
-	r.summary.RepliesUnresolved += int64(len(after))
+	for _, reply := range after {
+		if r.pendingReplies[reply.SourceMessageID] {
+			r.summary.RepliesUnresolved++
+		}
+	}
 	return nil
 }
 
@@ -729,15 +725,12 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 		}
 	}
 	var found, missing int64
-	for i, a := range attachments {
+	occurrences := make(map[string]int)
+	for _, a := range attachments {
 		if a.ContentType == "text/x-signal-plain" {
 			continue
 		}
 		found++
-		key := fmt.Sprintf("signal:attachment:%d", i)
-		if archived[key] {
-			continue
-		}
 		name, ok := r.files[a.ID]
 		if !ok || r.opts.AttachmentsDir == "" {
 			missing++
@@ -751,6 +744,11 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 		}
 		if err != nil || storagePath == "" {
 			missing++
+			continue
+		}
+		key := fmt.Sprintf("signal:attachment:%s:%d", contentHash, occurrences[contentHash])
+		occurrences[contentHash]++
+		if archived[key] {
 			continue
 		}
 		mediaType := attachmentMediaType(a)

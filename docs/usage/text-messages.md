@@ -137,11 +137,11 @@ its backup files, so first unpack one with
 30-digit passphrase Signal showed when you turned on chat backups:
 
 ```bash
-signalbackup-tools signal-2026-01-01-00-00-00.backup <passphrase> --output ~/signal-backup
+signalbackup-tools signal-2026-01-01-00-00-00.backup <passphrase> --output ~/signal-backup/
 msgvault import-signal ~/signal-backup --phone +14155551234
 ```
 
-The output directory holds `database.sqlite`, `DatabaseVersion.sbf`, and one
+The trailing slash selects directory output. The output directory holds `database.sqlite`, `DatabaseVersion.sbf`, and one
 `Attachment_*.bin` file per attachment. Keep `DatabaseVersion.sbf` beside the
 database so msgvault can check its version. Pass the directory or the
 `database.sqlite` file. Export without `--onlydb`, which also omits the required
@@ -172,7 +172,7 @@ messages, msgvault finds the owner through the recipient record matching `--phon
 - **Messages:** text with `@` mentions spelled out, sender, and sent and received
   times. Long text stored in an attachment is imported in full and indexed for search.
 - **Edits:** an edited message keeps one archive entry with its newest text and
-  is marked as edited.
+  is marked as edited. A short replacement takes precedence over an older long-text attachment.
 - **Replies:** a reply links to the message it quotes when that message is in
   the archive.
 - **Reactions:** emoji reactions with who reacted.
@@ -189,12 +189,13 @@ a phone number, their archived messages and group membership follow that contact
 Run the command with each newer backup. Every message is identified by its
 chat, author's Signal account ID, and original sent timestamp. A rerun adds
 new messages and updates existing edits and reactions. It reuses archived
-attachment parts and stores newly available parts. Messages and attachment rows
+attachments even when other files are added, removed, or reordered, and stores newly available files. Messages and attachment rows
 keep their identities, including after a backup is restored on a new phone. Each rerun replaces a message's reactions with
 the ones in the backup, and a message whose text was removed loses its archived
 text.
 
 Each message commits with its text, attachments, reactions, and sender membership.
+If a reaction's author conflicts with existing people, that message keeps its previous snapshot and the import reports an error.
 If the import fails or is interrupted, rerun it to finish and repair conversation counts.
 The attachment and reaction additions in the summary count committed additions.
 

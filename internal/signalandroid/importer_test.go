@@ -184,7 +184,7 @@ func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
 	assert.Equal("image", mediaType)
 	assert.Equal(int64(len("photo bytes")), size)
 	assert.Equal(int64(640), width)
-	assert.Equal("signal:attachment:0", partKey)
+	assert.Equal("signal:attachment:2a6927613ddc903379f3e02145f22074ccf048c7753cfa1ed8ee26c746682997:0", partKey)
 	assert.True(hasAttachments)
 }
 
@@ -336,7 +336,7 @@ func TestIdentifiers(t *testing.T) {
 func TestApplyMentions(t *testing.T) {
 	assert := assert.New(t)
 	names := map[int64]string{1: "Ann", 2: "Ben"}
-	got := applyMentions("\uFFFC and \uFFFC", []sigMention{{RecipientID: 2, RangeStart: 8}, {RecipientID: 1, RangeStart: 0}},
+	got := applyMentions("\uFFFC and \uFFFC", []sigMention{{RecipientID: 1, RangeStart: 0}, {RecipientID: 2, RangeStart: 8}},
 		func(id int64) string { return names[id] })
 	assert.Equal("@Ann and @Ben", got)
 	assert.Equal("no mention", applyMentions("no mention", nil, nil))

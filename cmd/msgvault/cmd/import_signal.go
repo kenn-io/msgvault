@@ -31,7 +31,7 @@ func newImportSignalCmd() *cobra.Command {
 		Long: `Import direct and group chats from a Signal Android backup that
 signalbackup-tools has decrypted into a directory:
 
-  signalbackup-tools signal-<date>.backup <passphrase> --output <directory>
+  signalbackup-tools signal-<date>.backup <passphrase> --output <directory>/
 
 Pass that directory or its database.sqlite file. Attachment files
 (Attachment_*.bin) are read from the same directory unless --attachments-dir
