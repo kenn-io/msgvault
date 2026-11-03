@@ -68,7 +68,7 @@ it('Back opens the survivor after Details absorbs the open saved profile', async
     await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
     await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic Two' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Two/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Merge', exact: true }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await screen.findByRole('dialog', { name: 'Resolve person merge' });
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
