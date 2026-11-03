@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-03"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -4506,8 +4506,8 @@ msgvault mcp [flags]
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
-| `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
-| `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
+| `--http-token-file` | — | Read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
+| `--http-token-env` | — | Name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
