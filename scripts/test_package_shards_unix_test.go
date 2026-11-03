@@ -3,13 +3,13 @@
 package scripts
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,16 +86,18 @@ func TestSilent(t *testing.T) {}
 			}
 
 			// Every shard's test2json events land in one file named after the package.
-			events, err := os.Open(filepath.Join(dir, "gotestsum", "shardfixture.json"))
+			events, err := os.ReadFile(filepath.Join(dir, "gotestsum", "shardfixture.json"))
 			require.NoError(err)
-			defer events.Close()
 			outcomes := map[string]string{}
 			packageResults := 0
-			scanner := bufio.NewScanner(events)
-			for scanner.Scan() {
-				var event struct{ Action, Package, Test string }
-				require.NoError(json.Unmarshal(scanner.Bytes(), &event), scanner.Text())
-				require.Equal("example.com/shardfixture", event.Package, scanner.Text())
+			for line := range strings.Lines(string(events)) {
+				var event struct {
+					Action  string `json:"Action"`
+					Package string `json:"Package"`
+					Test    string `json:"Test"`
+				}
+				require.NoError(json.Unmarshal([]byte(line), &event), line)
+				require.Equal("example.com/shardfixture", event.Package, line)
 				switch event.Action {
 				case "pass", "fail", "skip":
 					if event.Test == "" {
@@ -105,7 +107,6 @@ func TestSilent(t *testing.T) {}
 					}
 				}
 			}
-			require.NoError(scanner.Err())
 			assert.Equal(4, packageResults, "one package result per shard")
 			wantGet := "pass"
 			if fail == "1" {
