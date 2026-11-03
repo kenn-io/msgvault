@@ -18,19 +18,21 @@ func TestDecodeContentICS(t *testing.T) {
 }
 
 func TestDecodeContentCalDAVSelectsComponent(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
 		"BEGIN:VEVENT\r\nUID:first@example.org\r\nDTSTART:20270302T170000Z\r\nDURATION:PT1H\r\nSUMMARY:First\r\nLOCATION:First room\r\nEND:VEVENT\r\n" +
 		"BEGIN:VEVENT\r\nUID:second@example.org\r\nDTSTART:20270303T170000Z\r\nDURATION:PT1H\r\nSUMMARY:Second\r\nDESCRIPTION:Selected description\r\nLOCATION:Second room\r\nURL:https://meet.example.org/second\r\nEND:VEVENT\r\n" +
 		"END:VCALENDAR\r\n")
 	components, err := ParseCalDAVResource(t.Context(), raw, "UTC")
-	require.NoError(t, err)
-	require.Len(t, components, 2)
+	requirements.NoError(err)
+	requirements.Len(components, 2)
 	metadata, err := json.Marshal(CalDAVMetadata{EventID: components[1].Event.ProviderEventID, TimeZone: "UTC"})
-	require.NoError(t, err)
+	requirements.NoError(err)
 
 	content, err := DecodeContent(t.Context(), CalDAVRawFormat, raw, metadata, "UTC")
-	require.NoError(t, err)
-	assert.Equal(t, Content{Location: "Second room", Description: "Selected description", JoinURL: "https://meet.example.org/second"}, content)
+	requirements.NoError(err)
+	assertions.Equal(Content{Location: "Second room", Description: "Selected description", JoinURL: "https://meet.example.org/second"}, content)
 }
 
 func TestDecodeContentCalDAVRequiresSelector(t *testing.T) {
