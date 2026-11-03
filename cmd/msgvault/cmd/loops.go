@@ -31,8 +31,7 @@ func newLoopsCommand() *cobra.Command {
 
 Each person gets a separate loop anchored on their oldest open question or
 request. A reply you owe lists after 24 hours, and a reply you are waiting on
-lists after 72 hours. Each list reads the archive as it is. Quiet conversations
-stay eligible at any age; snooze reminders remain eligible after expiry.
+lists after 72 hours. Quiet conversations stay eligible at any age; snooze reminders remain eligible after expiry.
 The wording rules read English only.`,
 	}
 	group.AddCommand(newLoopsListCommand(), newLoopsDoneCommand(), newLoopsSnoozeCommand(), newLoopsReopenCommand())
@@ -79,9 +78,8 @@ func newLoopsDoneCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "done <message-id>",
 		Short: "Mark a loop done",
-		Long: `Mark a loop done. The message ID is the last column of 'msgvault loops list'.
-A distinct question can list again, whatever its message date. Use 'reopen' to
-clear this question's done decision.`,
+		Long: `The message ID is the last column of 'msgvault loops list'.
+A distinct question can list again, whatever its message date.`,
 		Args: cobra.ExactArgs(1),
 	}
 	addLoopQuestionsFlag(command, &questions)
@@ -124,8 +122,8 @@ func newLoopsSnoozeCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:   "snooze <message-id> --until <when>",
 		Short: "Hide a loop until a later time",
-		Long: `Hide a loop until a later time. The loop returns once the time passes, or
-sooner when a distinct question arrives. Decisions apply to this person's
+		Long: `The loop returns once the time passes, or sooner when a distinct
+question arrives. Decisions apply to this person's
 currently open questions. Use the current message ID from loops list.`,
 		Example: `  msgvault loops snooze 4521 --until 48h
   msgvault loops snooze 4521 --until 2026-10-25`,
