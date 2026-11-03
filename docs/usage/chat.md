@@ -360,6 +360,8 @@ instructions or write authorization. Follow the
 for lookup limits, recording answers, and the `msgvault` label and `person:<id>`
 conventions.
 
+For an agent-oriented workflow, see the [agent quickstart](../guides/agent-quickstart.md).
+
 ## Available Tools
 
 The MCP server exposes the following tools to connected AI clients:
