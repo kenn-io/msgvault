@@ -24,19 +24,21 @@ func TestQuickstartOffline(t *testing.T) {
 		{name: "mcp", args: []string{"--mcp"}, want: mcpQuickstart(docs.AgentQuickstart)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			if helpTestSubprocess(t) {
 				return
 			}
 			configPath := filepath.Join(t.TempDir(), "invalid.toml")
-			require.NoError(t, os.WriteFile(configPath, []byte("invalid = ["), 0o600))
+			require.NoError(os.WriteFile(configPath, []byte("invalid = ["), 0o600))
 			var output bytes.Buffer
 			rootCmd.SetOut(&output)
 			rootCmd.SetArgs(append([]string{"--config", configPath, "quickstart"}, tc.args...))
-			require.NoError(t, executeRootContext(t.Context(), rootCmd))
-			assert.Equal(t, tc.want, output.String())
+			require.NoError(executeRootContext(t.Context(), rootCmd))
+			assert.Equal(tc.want, output.String())
 			entries, err := os.ReadDir(os.Getenv("MSGVAULT_HOME"))
-			require.NoError(t, err)
-			assert.Empty(t, entries, "quickstart must not create archive or home files")
+			require.NoError(err)
+			assert.Empty(entries, "quickstart must not create archive or home files")
 		})
 	}
 }
@@ -51,14 +53,16 @@ func TestMCPQuickstartNormalizesGuide(t *testing.T) {
 		{name: "CRLF checkout", doc: strings.ReplaceAll(lfDoc, "\n", "\r\n")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			output := mcpQuickstart(tc.doc)
-			assert.True(t, strings.HasPrefix(output, "# msgvault MCP quickstart\n\n"))
-			assert.NotContains(t, output, "\r")
-			assert.NotContains(t, output, "title:")
+			assert.True(strings.HasPrefix(output, "# msgvault MCP quickstart\n\n"))
+			assert.NotContains(output, "\r")
+			assert.NotContains(output, "title:")
 			links := regexp.MustCompile(`\]\(([^)\s]+)\)`).FindAllStringSubmatch(output, -1)
-			require.NotEmpty(t, links)
+			require.NotEmpty(links)
 			for _, link := range links {
-				assert.True(t, strings.HasPrefix(link[1], "https://") || strings.HasPrefix(link[1], "#"), "link must be absolute: %s", link[1])
+				assert.True(strings.HasPrefix(link[1], "https://") || strings.HasPrefix(link[1], "#"), "link must be absolute: %s", link[1])
 			}
 		})
 	}
