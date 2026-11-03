@@ -154,6 +154,59 @@ async function prepare(page: Page, personFileBodies: Record<string, unknown>[] =
   } }));
 }
 
+test('Display controls the active person Messages columns and reader position', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await prepare(page);
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.goto('/?workspace=relationships');
+  await page.getByRole('grid', { name: 'People results' }).getByText('Alice Example').click();
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await expect(grid.getByText('Team Chat')).toBeVisible();
+  await expect(grid.getByRole('columnheader', { name: 'Size' })).toHaveCount(0);
+
+  const display = page.getByRole('button', { name: 'Display', exact: true });
+  await display.click();
+  const menu = page.getByRole('menu', { name: 'Display', exact: true });
+  await menu.getByRole('menuitem', { name: 'Size', exact: true }).click();
+  await expect(grid.getByRole('columnheader', { name: 'Size' })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'Size shown' })).toBeVisible();
+  await menu.getByRole('menuitem', { name: 'Size shown' }).click();
+  await expect(grid.getByRole('columnheader', { name: 'Size' })).toHaveCount(0);
+  await menu.getByRole('menuitemradio', { name: 'Right', exact: true }).click();
+  await grid.getByText('Team Chat').click();
+  const reader = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
+  await expect(reader).toBeVisible();
+  await expect.poll(async () => (await reader.boundingBox())!.x)
+    .toBeGreaterThan((await grid.boundingBox())!.x);
+
+  await display.click();
+  await menu.getByRole('menuitemradio', { name: 'Below', exact: true }).click();
+  await expect.poll(async () => (await reader.boundingBox())!.y)
+    .toBeGreaterThan((await grid.boundingBox())!.y);
+  await page.keyboard.press('Escape');
+  await expect(menu).toBeHidden();
+
+  await page.setViewportSize({ width: 1280, height: 1080 });
+  await display.click();
+  await expect(menu.getByRole('menuitem', { name: 'Size', exact: true })).toBeVisible();
+  await expect(menu.getByRole('menuitemradio', { name: 'Right', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await page.getByRole('radio', { name: 'Files', exact: true }).click();
+  await expect(page.getByRole('grid', { name: 'Files results' })).toBeVisible();
+  await display.click();
+  await expect(menu.getByRole('menuitem', { name: 'Size', exact: true })).toHaveCount(0);
+  await expect(menu.getByRole('menuitemradio', { name: 'Below', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Messages', exact: true }).click();
+  await expect(grid.getByText('Subject line')).toBeVisible();
+  await display.click();
+  await menu.getByRole('menuitem', { name: 'Size', exact: true }).click();
+  await expect(grid.getByRole('columnheader', { name: 'Size' })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test('People facet and person Back restore the list and close the reader', async ({ page }) => {
   await prepare(page);
 
