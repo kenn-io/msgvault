@@ -29,8 +29,9 @@
     ? { dimension: 'participant', values: [String(identityScope.id)] }
     : { dimension: 'domain', values: [identityScope.domain] });
   const exploreState = new ExploreState(null);
+  let resultsWidth = $state(0);
   $effect(() => {
-    onMessagesTableChange?.({ state: exploreState, loader, openRow: (row) => navigate({ selectedRow: row.key }) });
+    onMessagesTableChange?.({ state: exploreState, loader, openRow: (row) => navigate({ selectedRow: row.key }), get resultsWidth() { return resultsWidth; } });
     return () => onMessagesTableChange?.(undefined);
   });
   let restoredRow = $state<string | null>(null);
@@ -105,7 +106,7 @@
 
 <svelte:window onpopstate={() => restore(relationshipReaderHistory(popped, 'relationships', target))} onkeydowncapture={escape} />
 <div class="messages" bind:this={root}>
-  <EverythingWorkspace {client} {meetingContext} scope={scope} conversationStart={conversationBounds?.start} conversationEnd={conversationBounds?.end} {exploreState} {loader} {session} {selection} enabled
+  <EverythingWorkspace {client} {meetingContext} bind:resultsWidth scope={scope} conversationStart={conversationBounds?.start} conversationEnd={conversationBounds?.end} {exploreState} {loader} {session} {selection} enabled
     readingTargetKey={exploreState.current.selectedRow} conversationAnchorId={exploreState.current.conversationAnchor ? Number(exploreState.current.conversationAnchor) : undefined}
     sortNotice={notice} searchInput={undefined} selectionPreflight={undefined} meetingSelection={undefined}
     exportSelection={() => undefined} commitNavigation={navigate}

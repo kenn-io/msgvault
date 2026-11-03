@@ -273,6 +273,8 @@
   let displayOpen = $state(false);
   let personMessages = $state<MessagesTable>();
   let resultsWidth = $state(0);
+  const displayState = $derived(exploreState.current.workspace === 'everything' ? exploreState : exploreState.current.workspace === 'relationships' ? personMessages?.state : undefined);
+  const displayResultsWidth = $derived(exploreState.current.workspace === 'everything' ? resultsWidth : exploreState.current.workspace === 'relationships' ? personMessages?.resultsWidth ?? 0 : 0);
   const operationsController = new OperationsController(untrack(() => client));
   const shellData = new ShellData(untrack(() => client), operationsController);
 
@@ -949,7 +951,7 @@
         : 'Messages is always shown newest first.';
     document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
-  function navigateReader(delta: number, { state, loader: { rows }, openRow: open }: MessagesTable = personMessages ?? { state: exploreState, loader, openRow }): void {
+  function navigateReader(delta: number, { state, loader: { rows }, openRow: open }: MessagesTable = personMessages ?? { state: exploreState, loader, openRow, resultsWidth }): void {
     if (!state.current.selectedRow || rows.length === 0) return;
     const index = rows.findIndex((row) => row.key === state.current.selectedRow);
     if (index < 0) return;
@@ -1289,9 +1291,9 @@
           onThemeChange={(theme) => appearance.setTemporary({ theme })}
           onDensityChange={(density) => appearance.setTemporary({ density })}
           onUseDefaults={() => appearance.clearTemporary()}
-          columns={exploreState.current.workspace === 'everything' && exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0 ? exploreState.current.columns : undefined}
-          onColumnsChange={(columns) => replaceTransient({ columns })}
-          readerPosition={exploreState.current.workspace === 'everything' && resultsWidth >= 960 ? readerPosition.value : undefined}
+          columns={displayState?.current.presentation === 'table' && displayState.current.groupingChain.length === 0 ? displayState.current.columns : undefined}
+          onColumnsChange={(columns) => { beforeCommit(); displayState?.replaceTransient({ columns }); }}
+          readerPosition={displayResultsWidth >= 960 ? readerPosition.value : undefined}
           onReaderPositionChange={(value) => readerPosition.set(value)}
         />
       </div>
