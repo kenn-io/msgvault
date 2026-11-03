@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
@@ -357,7 +356,6 @@ func TestAuditGmailMessagesIsReadOnlyAndKeysetPaged(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
-	testutil.SkipIfPostgres(t, "filesystem and SQLite query-only proof")
 	env := newTestEnv(t)
 	source := env.CreateSource(t)
 	var firstID, secondPageID int64

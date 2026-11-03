@@ -9,9 +9,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "DuckDB fixtures run on DuckDB only")
 	t.Parallel()
 	requirements := require.New(t)
 	db, err := sql.Open("duckdb", "")

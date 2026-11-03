@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 func personOverrideFixture(t *testing.T) (*TestDataBuilder, int64, int64) {
@@ -197,6 +198,7 @@ func TestPersonOverrideLeavesUnboundAndBlankNameLabelsUnchanged(t *testing.T) {
 }
 
 func TestPersonProfileRevisionComesFromStoreNotCache(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -2123,6 +2123,7 @@ func TestDuckDBEngine_ListMessages_DateFilter(t *testing.T) {
 }
 
 func TestDuckDBOffsetDateBoundsMatchSQLite(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	t.Parallel()
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "offset-bounds.db")
