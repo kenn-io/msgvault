@@ -59,7 +59,16 @@ func importInstagramCommentsProfile(ctx context.Context, st *store.Store, source
 	if err != nil {
 		return nil, err
 	}
-	sum, err = meta.NewImporter(st, client).ImportInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID, options)
+	importer := meta.NewImporter(st, client)
+	if source.AdAccountID != "" {
+		ad, clientErr := meta.NewClient(os.Getenv(source.AdTokenEnv))
+		if clientErr != nil {
+			return nil, &sourceCommandError{err: fmt.Errorf("instagram profile %q needs %s in the daemon environment: %w", source.Identifier, source.AdTokenEnv, clientErr), code: 7, hint: "check the named ad credential in the daemon environment and restart the daemon"}
+		}
+		sum, err = importer.ImportInstagramAds(ctx, source.AppID, source.PageID, source.InstagramAccountID, source.AdAccountID, ad, options)
+	} else {
+		sum, err = importer.ImportInstagram(ctx, source.AppID, source.PageID, source.InstagramAccountID, options)
+	}
 	return sum, metaSourceStateError(err, "instagram-comments")
 }
 

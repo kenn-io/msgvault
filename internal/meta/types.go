@@ -28,13 +28,14 @@ type Page struct {
 // Object preserves native IDs verbatim, including composite post/comment IDs.
 // Parent and From are optional provider evidence, never inferred from a name.
 type Object struct {
-	ID               string     `json:"id"`
-	Message          string     `json:"message"`
-	CreatedTime      string     `json:"created_time"`
-	From             *Actor     `json:"from,omitempty"`
-	Parent           *Actor     `json:"parent,omitempty"`
-	InstagramMedia   *IGMedia   `json:"instagram_media,omitempty"`
-	InstagramComment *IGComment `json:"instagram_comment,omitempty"`
+	ID               string      `json:"id"`
+	Message          string      `json:"message"`
+	CreatedTime      string      `json:"created_time"`
+	From             *Actor      `json:"from,omitempty"`
+	Parent           *Actor      `json:"parent,omitempty"`
+	AdCreative       *AdCreative `json:"ad_creative,omitempty"`
+	InstagramMedia   *IGMedia    `json:"instagram_media,omitempty"`
+	InstagramComment *IGComment  `json:"instagram_comment,omitempty"`
 }
 
 type Actor struct {

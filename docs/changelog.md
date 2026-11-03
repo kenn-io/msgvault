@@ -8,9 +8,13 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Instagram ad comment discovery](usage/instagram-ads.md) resolves selected
+  ad-account creatives to verified owned media, deduplicating their comments
+  with ordinary account media. Sending is not included.
+
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
-  Sending and ad-only discovery are not included.
+  Sending is not included.
 - [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
   nested replies on organic, visitor, and ad posts returned for a selected Page.
   Search the archive and link commenters through existing people tools. This

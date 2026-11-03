@@ -43,6 +43,7 @@ nav = [
     {"Chatwoot" = "guides/chatwoot.md"},
     {"Facebook Page Comments" = "usage/facebook-comments.md"},
     {"Instagram Comments" = "usage/instagram-comments.md"},
+    {"Instagram Ad Comments" = "usage/instagram-ads.md"},
     {"Matrix" = "usage/matrix.md"},
     {"Slack" = "usage/slack.md"},
     {"Meeting Notes and Transcripts" = "usage/meetings.md"},

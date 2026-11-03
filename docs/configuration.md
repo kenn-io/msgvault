@@ -1754,6 +1754,12 @@ The canonical source identifier is
 `app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
 scheduler job is `instagram_comments:<source-identifier>`.
 
+Optional `ad_account_id` and `ad_token_env` select an additional explicit ad
+read boundary. Supply both together: a positive decimal account ID without
+`act_`, and an environment variable name. No Page credential is borrowed
+implicitly. See [Instagram ad comments](usage/instagram-ads.md) for eligibility,
+partial coverage, and the required `--full` restart when changing this policy.
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a

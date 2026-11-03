@@ -63,4 +63,5 @@ commenter identity; equal digits do not establish account ownership.
 
 Only media returned by the verified account's media edge is discovered here.
 Missing media owners remain unknown; explicit foreign owners are refused.
-Ad-only discovery, media downloads, and public replies are separate work.
+Use [Instagram ad comments](instagram-ads.md) for separately configured creative
+discovery. Media downloads and public replies remain separate work.

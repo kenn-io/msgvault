@@ -33,6 +33,8 @@ type Importer struct {
 	api       API
 	instagram string
 	igAPI     instagramAPI
+	adAccount string
+	adClient  *Client
 }
 
 func NewImporter(st *store.Store, api API) *Importer { return &Importer{store: st, api: api} }
@@ -123,7 +125,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if source.HistoryOnly || source.MergedIntoSourceID != 0 {
 		return nil, store.ErrSourceRetired
 	}
-	state, err := loadState(ctx, imp.store, source, opts.Full)
+	state, err := loadState(ctx, imp.store, source, opts.Full, imp.adAccount)
 	if err != nil {
 		return nil, err
 	}
@@ -254,11 +256,22 @@ func (r *importRun) request(ctx context.Context, edge PostEdge, after string, re
 	return page, err
 }
 
-func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
+func (r *importRun) phase(ctx context.Context, edge PostEdge) (retErr error) {
+	var refusal error
+	defer func() {
+		if refusal != nil {
+			retErr = errors.Join(retErr, refusal)
+		}
+	}()
 	p := r.state.Phases[edge]
 	for !p.Done {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		// Report the first bounded refusal rather than hiding it behind a
+		// budget pause. Rescan retains the obligation across later runs.
+		if refusal != nil && r.sum.Requests >= r.maxRequests {
+			return nil
 		}
 		if len(p.Stack) > 0 {
 			if err := r.comments(ctx, p, edge); err != nil {
@@ -266,6 +279,24 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			}
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
+			if edge == adCreativesEdge && post.InstagramMedia == nil {
+				resolved, accepted, err := r.resolveAdMedia(ctx, post)
+				if err != nil {
+					return err
+				}
+				if !accepted {
+					p.Rescan = true
+					if refusal == nil {
+						refusal = fmt.Errorf("ad creative %q media %q is not verified for this Instagram source", post.ID, post.AdCreative.EffectiveInstagramMediaID)
+					}
+					p.Posts = p.Posts[1:]
+					if err := r.save(ctx); err != nil {
+						return err
+					}
+					continue
+				}
+				post, p.Posts[0] = resolved, resolved
+			}
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
 				return fmt.Errorf("%s post %q: %w", r.providerName(), post.ID, err)
 			}
@@ -273,6 +304,9 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			p.Stack = append(p.Stack, commentFrame{Root: post.ID, Parent: post.ID})
 		} else if p.Exhausted {
 			p.Done = true
+			if edge == adCreativesEdge && p.Rescan && refusal == nil {
+				refusal = errors.New("ad creative coverage contains unverified targets; a fresh cycle must revisit them")
+			}
 		} else {
 			page, err := r.request(ctx, edge, p.After, func() (ObjectPage, error) { return r.readPosts(ctx, edge, p.After) })
 			if err != nil {

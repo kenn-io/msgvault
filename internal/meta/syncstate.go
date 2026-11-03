@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -14,6 +15,7 @@ import (
 type syncState struct {
 	Version     int                      `json:"version"`
 	Source      string                   `json:"source"`
+	AdAccountID string                   `json:"ad_account_id,omitempty"`
 	Platform    string                   `json:"platform,omitempty"`
 	NextSurface PostEdge                 `json:"next_surface"`
 	Phases      map[PostEdge]*phaseState `json:"phases"`
@@ -56,21 +58,31 @@ func (st *syncState) complete() bool {
 
 func (st *syncState) edges() []PostEdge {
 	if st.Platform == "instagram" {
+		if st.AdAccountID != "" {
+			return instagramAdEdges[:]
+		}
 		return instagramEdges[:]
 	}
 	return postEdges[:]
 }
 
-func freshSourceState(src *store.Source) *syncState {
-	if src.SourceType == InstagramSourceType {
-		return &syncState{Version: 1, Platform: "instagram", Source: src.Identifier, NextSurface: instagramMediaEdge, Phases: map[PostEdge]*phaseState{instagramMediaEdge: {}}}
+func freshSourceState(src *store.Source, adAccount string) *syncState {
+	if src.SourceType != InstagramSourceType {
+		return freshState(src.Identifier)
 	}
-	return freshState(src.Identifier)
+	state := &syncState{Version: 1, Platform: "instagram", Source: src.Identifier, AdAccountID: adAccount, NextSurface: instagramMediaEdge, Phases: map[PostEdge]*phaseState{}}
+	if adAccount != "" {
+		state.Version = 2
+	}
+	for _, edge := range state.edges() {
+		state.Phases[edge] = &phaseState{}
+	}
+	return state
 }
 
-func loadState(ctx context.Context, st *store.Store, src *store.Source, full bool) (*syncState, error) {
+func loadState(ctx context.Context, st *store.Store, src *store.Source, full bool, adAccount string) (*syncState, error) {
 	if full {
-		return freshSourceState(src), nil
+		return freshSourceState(src, adAccount), nil
 	}
 	var blob string
 	var priorID int64
@@ -90,14 +102,14 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 		blob = checkpoint.CursorBefore.String
 	}
 	if blob == "" {
-		return freshSourceState(src), nil
+		return freshSourceState(src, adAccount), nil
 	}
 	var state syncState
-	if json.Unmarshal([]byte(blob), &state) != nil || !state.valid(src.Identifier) {
+	if json.Unmarshal([]byte(blob), &state) != nil || !state.valid(src.Identifier) || state.AdAccountID != adAccount {
 		return nil, errors.New("invalid comment checkpoint; restart this source with --full")
 	}
 	if state.complete() {
-		fresh := freshSourceState(src)
+		fresh := freshSourceState(src, adAccount)
 		fresh.NextSurface = state.NextSurface
 		return fresh, nil
 	}
@@ -114,9 +126,13 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 }
 
 func (st *syncState) valid(source string) bool {
-	_, instagram := ParseInstagramSourceIdentifier(source)
-	if st.Source != source || (instagram && (st.Platform != "instagram" || st.Version != 1 || st.NextSurface != instagramMediaEdge)) ||
-		(!instagram && (st.Platform != "" || st.Version != 2 || !st.NextSurface.valid())) || len(st.Phases) != len(st.edges()) {
+	identity, instagram := ParseInstagramSourceIdentifier(source)
+	expectedVersion := 1
+	if st.AdAccountID != "" {
+		expectedVersion = 2
+	}
+	if st.Source != source || (instagram && (st.Platform != "instagram" || st.Version != expectedVersion || (st.AdAccountID != "" && !ValidAccountID(st.AdAccountID)))) ||
+		(!instagram && (st.Platform != "" || st.AdAccountID != "" || st.Version != 2)) || !slices.Contains(st.edges(), st.NextSurface) || len(st.Phases) != len(st.edges()) {
 		return false
 	}
 	cursorOK := func(s string) bool { return len(s) <= 4096 && !strings.ContainsAny(s, "\r\n\x00") }
@@ -126,7 +142,22 @@ func (st *syncState) valid(source string) bool {
 			return false
 		}
 		for _, post := range p.Posts {
-			if !safeObjectID(post.ID) || (instagram && (post.InstagramMedia == nil || post.InstagramMedia.ID != post.ID)) {
+			if !safeObjectID(post.ID) {
+				return false
+			}
+			if instagram && edge == adCreativesEdge {
+				creative := post.AdCreative
+				if creative == nil || !safeObjectID(creative.ID) || (creative.EffectiveInstagramMediaID != "" && !safeObjectID(creative.EffectiveInstagramMediaID)) {
+					return false
+				}
+				if media := post.InstagramMedia; media == nil {
+					if post.ID != creative.ID {
+						return false
+					}
+				} else if media.ID != post.ID || creative.EffectiveInstagramMediaID != post.ID || creative.AccountID != st.AdAccountID || media.Owner == nil || media.Owner.ID != identity.AccountID {
+					return false
+				}
+			} else if instagram && (post.InstagramMedia == nil || post.InstagramMedia.ID != post.ID) {
 				return false
 			}
 		}

@@ -1598,7 +1598,9 @@ msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--fu
 ```
 
 See [Instagram comments](usage/instagram-comments.md) for setup, identity,
-resuming, and coverage limits. These commands do not send replies.
+resuming, and coverage limits. Optional [ad creative discovery](usage/instagram-ads.md)
+uses the same command with explicit ad-account settings. These commands do not
+send replies.
 
 ## add-chatwoot
 

@@ -179,11 +179,16 @@ type streamedGraphTransport struct {
 
 	cancel context.CancelCauseFunc
 	reads  *atomic.Int32
+	path   string
 }
 
 func (tr streamedGraphTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	response, err := tr.RoundTripper.RoundTrip(r)
-	if err == nil && r.URL.Path == "/v26.0/100_301/comments" {
+	path := tr.path
+	if path == "" {
+		path = "/v26.0/100_301/comments"
+	}
+	if err == nil && r.URL.Path == path {
 		response.Body = streamedGraphBody{ReadCloser: response.Body, cancel: tr.cancel, reads: tr.reads}
 	}
 	return response, err
