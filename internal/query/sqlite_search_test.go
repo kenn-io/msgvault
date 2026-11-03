@@ -15,6 +15,7 @@ import (
 )
 
 func TestSearchPipeOR(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	env := newTestEnv(t)
@@ -66,7 +67,9 @@ func TestSearchPipeOR(t *testing.T) {
 }
 
 func TestSearchPipeORDateOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	db := dbtest.NewTestDB(t, "../store/schema.sql")
 	source := db.AddSource(dbtest.SourceOpts{Identifier: "work@example.org"})
 	conversation := db.AddConversation(dbtest.ConversationOpts{SourceID: source, Title: "Staging"})
@@ -80,6 +83,7 @@ func TestSearchPipeORDateOrder(t *testing.T) {
 }
 
 func TestSearch_Filters(t *testing.T) {
+	t.Parallel()
 	after := ptr.Date(2024, 2, 1)
 	before := ptr.Date(2024, 3, 1)
 	largerThan := int64(2500)
@@ -186,6 +190,7 @@ func TestSearch_Filters(t *testing.T) {
 }
 
 func TestSearch_CaseInsensitiveFallback(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	if env.Engine.hasFTSTable(env.Ctx) {
@@ -204,6 +209,7 @@ func TestSearch_CaseInsensitiveFallback(t *testing.T) {
 }
 
 func TestSearch_SubjectTermsCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	if env.Engine.hasFTSTable(env.Ctx) {
@@ -215,6 +221,7 @@ func TestSearch_SubjectTermsCaseInsensitive(t *testing.T) {
 }
 
 func TestSearch_WithFTS(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.EnableFTS()
 
@@ -226,6 +233,7 @@ func TestSearch_WithFTS(t *testing.T) {
 }
 
 func TestSearch_MessageTypeFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -264,6 +272,7 @@ func TestSearch_MessageTypeFilter(t *testing.T) {
 // candidate selection. It exercises case folding, literal LIKE escaping, and
 // repeated-operator AND semantics against real message rows.
 func TestSearch_ListIDFilters(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	aliceID := env.MustLookupParticipant("alice@example.com")
 	bobID := env.MustLookupParticipant("bob@company.org")
@@ -323,6 +332,7 @@ func TestSearch_ListIDFilters(t *testing.T) {
 // search terms don't cause syntax errors. Without quoting, these characters
 // are interpreted as FTS5 operators (- = NOT, : = column filter, () = grouping).
 func TestSearch_WithFTS_SpecialChars(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.EnableFTS()
 
@@ -346,6 +356,7 @@ func TestSearch_WithFTS_SpecialChars(t *testing.T) {
 }
 
 func TestHasFTSTable(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	assert.False(t, env.Engine.hasFTSTable(env.Ctx),
@@ -387,6 +398,7 @@ func (ftsModuleMissingDialect) FTSLivenessSQL() string {
 // only HasFTSTableSQL's sqlite_master COUNT) and this test fails —
 // hasFTSTable returns true and Search would JOIN messages_fts and error.
 func TestHasFTSTable_LivenessProbeFailureFallsBack(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.EnableFTS() // creates a real, queryable messages_fts table
 
@@ -409,6 +421,7 @@ func TestHasFTSTable_LivenessProbeFailureFallsBack(t *testing.T) {
 }
 
 func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	_, err := env.DB.Exec(`
@@ -440,6 +453,7 @@ func TestHasFTSTable_ErrorDoesNotCache(t *testing.T) {
 }
 
 func TestSearchWithDomainFilter(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	q := &search.Query{FromAddrs: []string{"@example.com"}}
@@ -452,6 +466,7 @@ func TestSearchWithDomainFilter(t *testing.T) {
 }
 
 func TestSearchMixedExactAndDomainFilter(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	q := &search.Query{FromAddrs: []string{"alice@example.com", "@other.com"}}
@@ -469,6 +484,7 @@ func TestSearchMixedExactAndDomainFilter(t *testing.T) {
 // TestSearchFastCountMatchesSearch verifies that SearchFastCount returns the same
 // count as the number of results from Search for various query types.
 func TestSearchFastCountMatchesSearch(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	tests := []struct {
@@ -515,6 +531,7 @@ func TestSearchFastCountMatchesSearch(t *testing.T) {
 // =============================================================================
 
 func TestMergeFilterIntoQuery(t *testing.T) {
+	t.Parallel()
 	sourceID42 := int64(42)
 	sourceID1 := int64(1)
 
@@ -610,6 +627,7 @@ func TestMergeFilterIntoQuery(t *testing.T) {
 }
 
 func TestMergeFilterIntoQuery_ConversationID(t *testing.T) {
+	t.Parallel()
 	conversationID := int64(42)
 	original := &search.Query{ConversationIDs: []int64{7, 42}}
 
@@ -622,6 +640,7 @@ func TestMergeFilterIntoQuery_ConversationID(t *testing.T) {
 }
 
 func TestMergeFilterIntoQuery_ConflictingConversationIDMatchesNothing(t *testing.T) {
+	t.Parallel()
 	conversationID := int64(42)
 	original := &search.Query{ConversationIDs: []int64{7, 8}}
 
@@ -643,6 +662,7 @@ func TestMergeFilterIntoQuery_ConflictingConversationIDMatchesNothing(t *testing
 // applied SourceIDs when len > 0, so an explicit empty slice silently
 // fell through and let the original query's AccountIDs leak through.
 func TestMergeFilterIntoQuery_EmptySourceIDsClearsAccountScope(t *testing.T) {
+	t.Parallel()
 	q := &search.Query{AccountIDs: []int64{1, 2, 3}}
 	filter := MessageFilter{SourceIDs: []int64{}} // non-nil, len=0
 
@@ -655,6 +675,7 @@ func TestMergeFilterIntoQuery_EmptySourceIDsClearsAccountScope(t *testing.T) {
 // flip-side: a nil SourceIDs slice is "no override", and the original
 // query's AccountIDs survive unchanged.
 func TestMergeFilterIntoQuery_NilSourceIDsPreservesAccountScope(t *testing.T) {
+	t.Parallel()
 	q := &search.Query{AccountIDs: []int64{1, 2, 3}}
 	filter := MessageFilter{} // SourceIDs is nil
 
@@ -663,6 +684,7 @@ func TestMergeFilterIntoQuery_NilSourceIDsPreservesAccountScope(t *testing.T) {
 }
 
 func TestMergeFilterIntoQuery_SliceAliasingMutation(t *testing.T) {
+	t.Parallel()
 	backing := make([]string, 1, 10)
 	backing[0] = "original@example.com"
 
@@ -683,6 +705,7 @@ func TestMergeFilterIntoQuery_SliceAliasingMutation(t *testing.T) {
 // hidden too. Without the predicate this MCP-facing surface would surface
 // rows that every other read path suppresses.
 func TestSearchByDomains_HidesDeleted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -707,6 +730,7 @@ func TestSearchByDomains_HidesDeleted(t *testing.T) {
 }
 
 func TestSearchByDomains_SourceFilter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	ctx := context.Background()
@@ -722,6 +746,7 @@ func TestSearchByDomains_SourceFilter(t *testing.T) {
 // TestSearchByDomains_HasMore verifies the engine probes one row past the
 // page, so a page that ends exactly on the last match reports no more.
 func TestSearchByDomains_HasMore(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	ctx := context.Background()
 
@@ -746,6 +771,7 @@ func TestSearchByDomains_HasMore(t *testing.T) {
 }
 
 func TestSearch_DeletionScope(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// Source deletion is selectable; dedup-hidden rows are never searchable.
@@ -790,6 +816,7 @@ func TestSearch_DeletionScope(t *testing.T) {
 }
 
 func TestSearchFilenameLiteralFilters(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	id := env.AddMessage(dbtest.MessageOpts{Subject: "shared plan", SentAt: "2026-01-01 10:00:00"})
 	other := env.AddMessage(dbtest.MessageOpts{Subject: "shared plan", SentAt: "2026-02-01 10:00:00"})

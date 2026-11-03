@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -17,6 +18,7 @@ import (
 // creates person storage for fresh databases, or a migration that fails when
 // startup applies it a second time.
 func TestPersonMigration_UpgradesAndIsIdempotent(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require.NoError(t, RegisterExtension())
 	db, err := sql.Open(DriverName(), filepath.Join(t.TempDir(), "vectors.db"))
 	require.NoError(t, err)
@@ -47,6 +49,7 @@ func TestPersonMigration_UpgradesAndIsIdempotent(t *testing.T) {
 }
 
 func TestPersonMigration_RebuildsLegacyL2TableForCosine(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require.NoError(t, RegisterExtension())
 	db, err := sql.Open(DriverName(), filepath.Join(t.TempDir(), "vectors.db"))
 	require.NoError(t, err)
