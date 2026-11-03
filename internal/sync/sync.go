@@ -485,9 +485,9 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 	return fmt.Sprintf("%s:%x", version, sha256.Sum256([]byte(request)))
 }
 
-// failStoppedSync marks the stopped worker's run failed. Checkpoints on
-// failed runs remain resumable, while running status stays reserved for a live
-// worker.
+// failStoppedSync attempts to mark a stopped worker's run failed.
+// Checkpoints on failed runs remain resumable. If the terminal write fails,
+// the run can remain running; callers must still return without completing it.
 func (s *Syncer) failStoppedSync(syncID int64, err error) {
 	_ = s.store.FailSync(syncID, err.Error())
 }
@@ -919,7 +919,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
 				s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
-				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				if !alreadyExists {
+					if err := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseFetch, syncItemKindFetchError, fetch.Err); err != nil {
+						return nil, err
+					}
+				} else {
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				}
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -1092,7 +1098,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
-				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				if recErr := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
 				checkpoint.ErrorsCount++
 				continue
 			}
