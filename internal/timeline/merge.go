@@ -16,6 +16,7 @@ import (
 const (
 	entryKindBurst   = "burst"
 	entryKindMessage = "message"
+	entryKindMeeting = "meeting"
 )
 
 func mergeBursts(full, cold []store.ActivityBurst) []store.ActivityBurst {
@@ -371,13 +372,26 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		}
 		at, end := o.Start, o.End
 		if o.AllDay {
-			at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
-			end, _ = time.ParseInLocation(time.DateOnly, o.EndDate, c.loc)
+			var exists bool
+			var err error
+			at, exists, err = civilDateBoundary(o.StartDate, c.loc)
+			if err != nil {
+				c.gap("meetings", err, false)
+				continue
+			}
+			if !exists {
+				continue
+			}
+			end, _, err = civilDateBoundary(o.EndDate, c.loc)
+			if err != nil {
+				c.gap("meetings", err, false)
+				continue
+			}
 		}
 		if at.IsZero() {
 			continue
 		}
-		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, AllDay: o.AllDay, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
+		e := Entry{Kind: entryKindMeeting, Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, AllDay: o.AllDay, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
 		if len(linked) > 0 {
 			e.Open = append(e.Open, c.open("get_meeting_context", map[string]any{"message_ids": linked})...)
 		}
@@ -473,7 +487,11 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if !c.admitTier(people) {
 			continue
 		}
-		at, _ := time.ParseInLocation(time.DateOnly, note.LocalDate, c.loc)
+		at, _, err := civilDateBoundary(note.LocalDate, c.loc)
+		if err != nil {
+			c.gap("notes", err, false)
+			continue
+		}
 		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: []Open{}, Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
 		c.entryDates[e.Key] = note.LocalDate
 		entries = append(entries, e)
@@ -679,8 +697,7 @@ func (c *composer) groupDays(entries []Entry) {
 	}
 	slices.Sort(dates)
 	slices.Reverse(dates)
-	newest, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
-	detailFrom := newest.AddDate(0, 0, -1).Format(time.DateOnly)
+	detailFrom, _ := addCivilDate(c.t.Window.To, -1)
 	for _, date := range dates {
 		day := Day{Date: date}
 		items := byDate[date]
@@ -735,7 +752,7 @@ func (c *composer) groupDays(entries []Entry) {
 			items = c.afterPosition("days", items)
 			for _, e := range items {
 				switch e.Kind {
-				case "meeting", "transcript":
+				case entryKindMeeting, "transcript":
 					day.Meetings = append(day.Meetings, e)
 				case entryKindBurst, entryKindMessage:
 					day.Bursts = append(day.Bursts, e)

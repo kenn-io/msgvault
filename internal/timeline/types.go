@@ -255,7 +255,7 @@ func (e Entry) Validate() error {
 	}
 	valid := false
 	switch e.Kind {
-	case "meeting", "transcript":
+	case entryKindMeeting, "transcript":
 		valid = e.Meeting != nil
 	case "burst":
 		valid = e.Burst != nil
@@ -272,7 +272,7 @@ func (e Entry) Validate() error {
 		return fmt.Errorf("%w: entry must have exactly its kind's payload", ErrInvalidRequest)
 	}
 	switch e.Kind {
-	case "meeting":
+	case entryKindMeeting:
 		valid = strings.HasPrefix(e.AnchorRef, "evt:") && e.AnchorRef == e.Ref
 	case "burst":
 		valid = strings.HasPrefix(e.Key, "burst:") && e.AnchorRef == e.Key
@@ -283,7 +283,7 @@ func (e Entry) Validate() error {
 		valid = strings.HasPrefix(e.Ref, "msg:") && e.AnchorRef == e.Ref
 	}
 	parsed, err := ParseAnchor(e.AnchorRef, time.UTC)
-	if err != nil || !valid || (e.Kind == "meeting" && parsed.Kind != "meeting") || (e.Kind == "burst" && parsed.Kind != "burst") || (e.Kind == "note" && parsed.Kind != "date") || ((e.Kind == "message" || e.Kind == "transcript" || e.Kind == "call" || e.Kind == "loop") && parsed.Kind != "message") {
+	if err != nil || !valid || (e.Kind == entryKindMeeting && parsed.Kind != entryKindMeeting) || (e.Kind == "burst" && parsed.Kind != "burst") || (e.Kind == "note" && parsed.Kind != "date") || ((e.Kind == "message" || e.Kind == "transcript" || e.Kind == "call" || e.Kind == "loop") && parsed.Kind != "message") {
 		return fmt.Errorf("%w: invalid entry anchor", ErrInvalidRequest)
 	}
 	return nil

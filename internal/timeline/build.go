@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -171,17 +172,35 @@ func resolveWindow(req Request, now time.Time, loc *time.Location) (Window, erro
 		if req.Brief {
 			days = 2
 		}
-		from = now.In(loc).AddDate(0, 0, 1-days).Format(time.DateOnly)
+		var err error
+		from, err = addCivilDate(now.In(loc).Format(time.DateOnly), 1-days)
+		if err != nil {
+			return Window{}, ErrInvalidRequest
+		}
 	}
-	start, e1 := time.ParseInLocation(time.DateOnly, from, loc)
-	end, e2 := time.ParseInLocation(time.DateOnly, to, loc)
-	if e1 != nil || e2 != nil || end.Before(start) {
+	startDate, e1 := time.Parse(time.DateOnly, from)
+	endDate, e2 := time.Parse(time.DateOnly, to)
+	_, _, startErr := calrecur.CivilDateBoundary(from, loc)
+	_, _, endErr := calrecur.CivilDateBoundary(to, loc)
+	if e1 != nil || e2 != nil || startErr != nil || endErr != nil || endDate.Before(startDate) {
 		return Window{}, ErrInvalidRequest
 	}
-	if !end.Before(start.AddDate(0, 0, 31)) {
+	if !endDate.Before(startDate.AddDate(0, 0, 31)) {
 		return Window{}, ErrWindowTooLarge
 	}
 	return Window{From: from, To: to}, nil
+}
+
+func addCivilDate(date string, days int) (string, error) {
+	civil, err := time.Parse(time.DateOnly, date)
+	if err != nil {
+		return "", fmt.Errorf("parse civil date %q: %w", date, err)
+	}
+	return civil.AddDate(0, 0, days).Format(time.DateOnly), nil
+}
+
+func civilDateBoundary(date string, loc *time.Location) (time.Time, bool, error) {
+	return calrecur.CivilDateBoundary(date, loc)
 }
 
 type composer struct {
@@ -282,9 +301,10 @@ func parallel(ctx context.Context, tasks ...func()) {
 }
 
 func (c *composer) bounds() (time.Time, time.Time) {
-	from, _ := time.ParseInLocation(time.DateOnly, c.t.Window.From, c.loc)
-	to, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
-	return from, to.AddDate(0, 0, 1)
+	from, _, _ := civilDateBoundary(c.t.Window.From, c.loc)
+	afterTo, _ := addCivilDate(c.t.Window.To, 1)
+	to, _, _ := civilDateBoundary(afterTo, c.loc)
+	return from, to
 }
 func (c *composer) filters() store.ActivityFilters {
 	f := c.src.Filters

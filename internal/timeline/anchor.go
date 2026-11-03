@@ -14,6 +14,7 @@ type anchorTarget struct {
 	ref                       AnchorRef
 	at                        time.Time
 	messageID, conversationID int64
+	callIdentityKey           string
 	display                   store.MessageDisplay
 	occurrence                *store.CalendarOccurrence
 }
@@ -31,7 +32,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	switch ref.Kind {
 	case "date", "datetime":
 		return target, nil
-	case "meeting":
+	case entryKindMeeting:
 		if c.src.Calendar == nil {
 			c.unavailable("anchor")
 			return target, nil
@@ -61,7 +62,11 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		target.occurrence = &o
 		target.at = o.Start
 		if o.AllDay {
-			target.at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+			target.at, _, err = civilDateBoundary(o.StartDate, c.loc)
+			if err != nil {
+				c.gap("anchor", err, false)
+				return target, nil
+			}
 		}
 		return target, nil
 	case "conversation":
@@ -146,10 +151,24 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	target.display = d
 	target.at = d.OccurredAt.In(c.loc)
 	target.conversationID = d.ConversationID
+	if c.src.Calls != nil {
+		if resolver, ok := c.src.Calls.(interface {
+			CallIdentityForMessageContext(ctx context.Context, messageID int64) (string, error)
+		}); ok {
+			identity := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (string, error) {
+				return resolver.CallIdentityForMessageContext(ctx, target.messageID)
+			})
+			c.gap("calls", identity.err, false)
+			target.callIdentityKey = identity.value
+		}
+	}
 	return target, nil
 }
 func anchorWindow(at time.Time, loc *time.Location) Window {
-	return Window{From: at.In(loc).AddDate(0, 0, -31).Format(time.DateOnly), To: at.In(loc).AddDate(0, 0, 31).Format(time.DateOnly)}
+	date := at.In(loc).Format(time.DateOnly)
+	from, _ := addCivilDate(date, -31)
+	to, _ := addCivilDate(date, 31)
+	return Window{From: from, To: to}
 }
 
 func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
@@ -211,9 +230,19 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		func() {
 			if c.req.Scope.Owner && c.src.Notes != nil && !c.req.Conversation {
 				notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
-					start, _ := time.ParseInLocation(time.DateOnly, from.Format(time.DateOnly), c.loc)
-					end, _ := time.ParseInLocation(time.DateOnly, to.Format(time.DateOnly), c.loc)
-					return c.readNotes(ctx, start, end.AddDate(0, 0, 1))
+					start, _, err := civilDateBoundary(from.In(c.loc).Format(time.DateOnly), c.loc)
+					if err != nil {
+						return nil, err
+					}
+					afterTo, err := addCivilDate(to.In(c.loc).Format(time.DateOnly), 1)
+					if err != nil {
+						return nil, err
+					}
+					end, _, err := civilDateBoundary(afterTo, c.loc)
+					if err != nil {
+						return nil, err
+					}
+					return c.readNotes(ctx, start, end)
 				})
 			}
 		},
@@ -249,6 +278,9 @@ func anchorMatches(e Entry, target anchorTarget) bool {
 	if e.Key == target.ref.Ref || e.Ref == target.ref.Ref || target.occurrence != nil && e.Ref == target.occurrence.Ref {
 		return true
 	}
+	if target.callIdentityKey != "" && e.Call != nil && e.Key == target.callIdentityKey {
+		return true
+	}
 	if target.messageID > 0 {
 		if e.Ref == messageRef(target.messageID) {
 			return true
@@ -267,6 +299,27 @@ func (c *composer) anchorFallback(target anchorTarget) Entry {
 	ref := messageRef(target.messageID)
 	snippet := displaySnippet(d)
 	return Entry{Kind: entryKindMessage, Key: ref, Ref: ref, AnchorRef: ref, Time: target.at, Open: c.messageOpen(target.messageID), Anchor: true, Filtered: true, HiddenText: d.HiddenText, Message: &MessageEntry{Snippet: UntrustedText{Text: snippet}, People: []Person{}}}
+}
+
+func (c *composer) calendarAnchorFallback(target anchorTarget) Entry {
+	o := *target.occurrence
+	start, end := o.Start, o.End
+	if o.AllDay {
+		start, _, _ = civilDateBoundary(o.StartDate, c.loc)
+		end, _, _ = civilDateBoundary(o.EndDate, c.loc)
+	}
+	display := c.displays([]int64{o.MessageID})[o.MessageID]
+	title := o.Subject
+	if display.HiddenText {
+		title = ""
+	}
+	ref := target.ref.Ref
+	return Entry{
+		Kind: entryKindMeeting, Key: "occ:" + ref, Ref: ref, AnchorRef: ref,
+		Time: target.at, Anchor: true, Filtered: true, HiddenText: display.HiddenText,
+		Open:    c.open("get_calendar_event", map[string]any{"ref": ref}),
+		Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: start, End: end, AllDay: o.AllDay, Status: o.Status, DeletedFromSource: o.DeletedFromSource},
+	}
 }
 func (c *composer) buildAnchor(target anchorTarget) {
 	c.loadFreshness()
@@ -315,7 +368,10 @@ func (c *composer) buildAnchor(target anchorTarget) {
 			found = true
 		}
 	}
-	if !found && target.messageID > 0 {
+	if !found && target.occurrence != nil {
+		c.t.Anchor.Filtered = true
+		entries = append(entries, c.calendarAnchorFallback(target))
+	} else if !found && target.messageID > 0 {
 		c.t.Anchor.Filtered = true
 		entries = append(entries, c.anchorFallback(target))
 	}

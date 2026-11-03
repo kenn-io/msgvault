@@ -194,36 +194,88 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		})
 		c.gap("meetings", r.err, false)
 		displays := c.displays(transcripts.value)
-		seen := map[string]bool{}
+		type transcriptMeetingGroup struct {
+			key          string
+			transcriptID int64
+			refs         []string
+		}
+		groupsByKey := map[string]*transcriptMeetingGroup{}
+		groups := []*transcriptMeetingGroup{}
+		occurrenceRefs := []string{}
 		for _, id := range transcripts.value {
 			info := r.value.ByTranscript[id]
 			key := info.Key
 			if key == "" {
 				key = messageRef(id)
 			}
-			if seen[key] {
-				continue
+			group := groupsByKey[key]
+			if group == nil {
+				group = &transcriptMeetingGroup{key: key, transcriptID: id}
+				groupsByKey[key] = group
+				groups = append(groups, group)
 			}
-			seen[key] = true
-			at := displays[id].OccurredAt
-			for _, ref := range info.ExactOccurrenceRefs {
-				if c.src.Calendar != nil {
-					d, e := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
-					if e == nil {
-						o := d.CalendarOccurrence
-						occurrences = append(occurrences, o)
-						stamp := o.Start
-						if o.AllDay {
-							stamp, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
-						}
-						at = &stamp
-						break
+			group.refs = append(group.refs, info.ExactOccurrenceRefs...)
+			occurrenceRefs = append(occurrenceRefs, info.ExactOccurrenceRefs...)
+		}
+		occurrenceIdentity := store.MeetingIdentityResult{ByOccurrence: map[string]store.MeetingIdentityInfo{}}
+		occurrenceRefs = sortedSet(occurrenceRefs)
+		if len(occurrenceRefs) > 0 {
+			resolved := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
+				return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: occurrenceRefs})
+			})
+			c.gap("meetings", resolved.err, false)
+			occurrenceIdentity = resolved.value
+		}
+		seenOccurrences := map[string]bool{}
+		for _, group := range groups {
+			resolvedOccurrence := false
+			for _, ref := range sortedSet(group.refs) {
+				if c.src.Calendar == nil {
+					continue
+				}
+				detail := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
+					return c.src.Calendar.GetCalendarOccurrenceContext(ctx, ref)
+				})
+				if detail.err != nil {
+					c.gap("meetings", detail.err, false)
+					continue
+				}
+				o, ok := c.canonicalOccurrence(detail.value.CalendarOccurrence, occurrenceIdentity.ByOccurrence[ref])
+				if !ok {
+					continue
+				}
+				resolvedOccurrence = true
+				key := occurrenceIdentity.ByOccurrence[ref].Key
+				if key == "" {
+					key = "occ:" + o.Ref
+				}
+				if seenOccurrences[key] {
+					continue
+				}
+				seenOccurrences[key] = true
+				occurrences = append(occurrences, o)
+				stamp := o.Start
+				if o.AllDay {
+					var exists bool
+					var err error
+					stamp, exists, err = civilDateBoundary(o.StartDate, c.loc)
+					if err != nil {
+						c.gap("meetings", err, false)
+						continue
 					}
-					c.gap("meetings", e, false)
+					if !exists {
+						continue
+					}
+				}
+				if !stamp.After(c.t.Now) {
+					c.mergeContact(store.ContactAggregate{FirstAt: &stamp, LastAt: &stamp, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(stamp, c.t.Now, c.loc)}, false)
 				}
 			}
-			if at != nil && !at.After(c.t.Now) {
-				c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+			if !resolvedOccurrence {
+				at := displays[group.transcriptID].OccurredAt
+				if at != nil && !at.After(c.t.Now) {
+					c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+				}
 			}
 		}
 	}

@@ -94,6 +94,21 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 }
 
 func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
+	if store.HasReadSnapshotContext(r.ctx) {
+		if r.left == 0 {
+			return store.LoopMessageEvidence{}, ErrEvidenceIncomplete
+		}
+		r.left--
+		body, err := r.st.GetMessageBodyTextContext(r.ctx, id)
+		if err != nil {
+			return store.LoopMessageEvidence{}, err
+		}
+		signals, attachment, unreadable, err := r.original(id)
+		if err != nil {
+			return store.LoopMessageEvidence{}, err
+		}
+		return classify(body, signals, attachment, unreadable), nil
+	}
 	e, token, hit, err := r.st.LoopMessageEvidenceContext(r.ctx, id, evidenceVersion)
 	if err != nil || hit {
 		return e, err

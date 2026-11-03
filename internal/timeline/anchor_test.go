@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -205,6 +206,92 @@ func TestAnchorOldestMessageInBurstIsNotFiltered(t *testing.T) {
 	assertions.Equal("burst", got.History[0].Kind)
 	assertions.True(got.History[0].Anchor)
 	assertions.False(got.History[0].Filtered)
+}
+
+func TestAnchorSecondCallObservationUsesLogicalCall(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	at := f.now.Add(-time.Hour)
+	observation := callhistory.Observation{
+		RecordID: "first", Version: 1, Provider: "signal", Account: "example", NativeCallID: "canonical-call",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: at, Precision: "instant", Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}}, Raw: []byte(`{}`),
+	}
+	source, err := f.Store.GetOrCreateSource(callhistory.SourceType, observation.SourceIdentifier())
+	requirements.NoError(err)
+	_, err = f.Store.PutCallObservationContext(t.Context(), source.ID, observation)
+	requirements.NoError(err)
+	observation.RecordID = "second"
+	observation.OccurredAt = at.Add(time.Minute)
+	secondID, err := f.Store.PutCallObservationContext(t.Context(), source.ID, observation)
+	requirements.NoError(err)
+
+	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(secondID)))
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	requirements.Len(got.History, 1)
+	assertions.Equal("call", got.History[0].Kind)
+	assertions.True(got.History[0].Anchor)
+	assertions.False(got.History[0].Filtered)
+	assertions.False(got.Anchor.Filtered)
+	assertions.Equal(messageRef(secondID), got.Anchor.Ref)
+}
+
+func TestAnchorCalendarOccurrenceExcludedByTierFilterRemainsFilteredAnchor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	event := f.calendar("tier-filtered-anchor", singleDayEvent)
+	person := f.savePerson()
+	f.tier(person, 1)
+	f.project()
+	req := anchorRequest(fmt.Sprintf("evt:%d", event))
+	req.Tiers = []int{2}
+
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	requirements.True(got.Anchor.Filtered)
+	requirements.Len(got.History, 1)
+	assertions.Equal("meeting", got.History[0].Kind)
+	assertions.True(got.History[0].Anchor)
+	assertions.True(got.History[0].Filtered)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), got.History[0].Ref)
+	assertions.Empty(got.History[0].Meeting.Attendees)
+}
+
+func TestBuildDayUsesFirstExistingInstantForSkippedMidnight(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	f := newTimelineFixture(t)
+	f.src.Location = loc
+	f.src.Clock = func() time.Time { return time.Date(2018, 11, 4, 12, 0, 0, 0, loc) }
+	f.calendar("skipped-midnight-event", `{"id":"skipped-midnight-event","iCalUID":"skip-midnight@example.org","summary":"Synthetic all-day","start":{"date":"2018-11-04"},"end":{"date":"2018-11-05"}}`)
+	callAt := time.Date(2018, 11, 4, 23, 30, 0, 0, loc)
+	f.call(callAt)
+	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2018-11-04", Body: "Synthetic date note", Author: "owner"})
+	requirements.NoError(err)
+
+	req := dayRequest()
+	req.Date = "2018-11-04"
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(got.Days, 1)
+	assertions.Equal("2018-11-04", got.Days[0].Date)
+	requirements.Len(got.Days[0].Calls, 1, "the final local hour remains inside the selected day")
+	assertions.WithinDuration(callAt, got.Days[0].Calls[0].Time, time.Microsecond)
+	requirements.Len(got.Days[0].Meetings, 1)
+	assertions.Equal(time.Date(2018, 11, 4, 1, 0, 0, 0, loc), got.Days[0].Meetings[0].Meeting.Start)
+	assertions.Equal(time.Date(2018, 11, 5, 0, 0, 0, 0, loc), got.Days[0].Meetings[0].Meeting.End)
+	requirements.Len(got.Days[0].Notes, 1, "notes use the requested civil date once")
+	assertions.Equal("2018-11-04", got.Days[0].Notes[0].Ref)
+
+	anchor, err := ParseAnchor("2018-11-04", loc)
+	requirements.NoError(err)
+	assertions.Equal(time.Date(2018, 11, 4, 1, 0, 0, 0, loc), anchor.Time)
 }
 
 func TestAnchorMissingSourcesProduceUnavailableGaps(t *testing.T) {

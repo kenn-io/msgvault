@@ -185,9 +185,14 @@ func (c *composer) readCalls(ctx context.Context, q store.LogicalCallQuery) ([]s
 }
 func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.DailyNoteEntry, error) {
 	result := []store.DailyNoteEntry{}
-	for date := from; date.Before(to); date = date.AddDate(0, 0, 1) {
+	if !from.Before(to) {
+		return result, nil
+	}
+	date := from.In(c.loc).Format(time.DateOnly)
+	lastDate := to.Add(-time.Nanosecond).In(c.loc).Format(time.DateOnly)
+	for date <= lastDate {
 		for offset := 0; ; offset += 100 {
-			notes, err := c.src.Notes.ListDailyNoteEntriesContext(ctx, date.Format(time.DateOnly), 100, offset)
+			notes, err := c.src.Notes.ListDailyNoteEntriesContext(ctx, date, 100, offset)
 			result = append(result, notes...)
 			if err != nil {
 				return result, err
@@ -196,6 +201,11 @@ func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.D
 				break
 			}
 		}
+		next, err := addCivilDate(date, 1)
+		if err != nil {
+			return result, fmt.Errorf("advance daily note date: %w", err)
+		}
+		date = next
 	}
 	return result, nil
 }

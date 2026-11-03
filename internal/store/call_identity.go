@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -34,6 +35,28 @@ type LogicalCall struct {
 	Outcome         string
 	DurationSeconds *float64
 	Participants    []CallParticipant
+}
+
+// CallIdentityForMessageContext returns the active logical-call key for one
+// observation. An empty key means the message is not an active call.
+func (s *Store) CallIdentityForMessageContext(ctx context.Context, messageID int64) (string, error) {
+	if messageID <= 0 {
+		return "", fmt.Errorf("invalid call message ID %d", messageID)
+	}
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	query := `SELECT ` + callIdentitySQL("c") + ` FROM call_details c
+ JOIN messages m ON m.id = c.message_id
+ WHERE c.message_id = ? AND NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + scope
+	args := append([]any{messageID}, scopeArgs...)
+	var key string
+	err := ReadDBContext(ctx, s.db.DB).QueryRowContext(ctx, s.Rebind(query), args...).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve call identity for message %d: %w", messageID, err)
+	}
+	return key, nil
 }
 
 // ListLogicalCallsContext pages whole identities, ordered by time then key.

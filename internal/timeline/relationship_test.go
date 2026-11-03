@@ -2,11 +2,13 @@ package timeline
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func relationshipRequest(ref string) Request {
@@ -47,6 +49,43 @@ func TestRelationshipMeetingOnlyContactDeduplicatesNotes(t *testing.T) {
 	assertions.Equal(1, got.Person.InteractionCount)
 	assertions.Equal([]string{"meeting"}, got.Person.Channels)
 	assertions.Equal(10, got.Person.FirstAt.Hour())
+}
+
+func TestRelationshipCountsEveryExactOccurrenceOnceAcrossTranscripts(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	one := f.calendar("linked-one", singleDayEvent)
+	twoRaw := strings.NewReplacer(
+		`"id":"planning"`, `"id":"linked-two"`,
+		`"iCalUID":"planning@example.com"`, `"iCalUID":"other@example.com"`,
+		"2026-10-22T10:00:00Z", "2026-10-21T10:00:00Z",
+		"2026-10-22T11:00:00Z", "2026-10-21T11:00:00Z",
+	).Replace(singleDayEvent)
+	two := f.calendar("linked-two", twoRaw)
+	notes := []int64{
+		f.transcript("linked-notes-one", "planning@example.com", f.now.Add(-time.Hour)),
+		f.transcript("linked-notes-two", "planning@example.com", f.now.Add(-30*time.Minute)),
+	}
+	for _, note := range notes {
+		for _, event := range []int64{one, two} {
+			requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+		}
+	}
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	requirements.NotNil(got.Person)
+	assertions.Equal(2, got.Person.InteractionCount)
+	assertions.Equal([]string{"meeting"}, got.Person.Channels)
+	requirements.Len(got.History, 2)
+	refs := []string{got.History[0].Ref, got.History[1].Ref}
+	assertions.ElementsMatch([]string{fmt.Sprintf("evt:%d", one), fmt.Sprintf("evt:%d", two)}, refs)
+	for _, entry := range got.History {
+		assertions.Equal("meeting", entry.Kind)
+		assertions.ElementsMatch(notes, entry.Meeting.LinkedTranscriptIDs)
+	}
 }
 func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions := assert.New(t)

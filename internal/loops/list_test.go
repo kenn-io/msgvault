@@ -73,6 +73,35 @@ func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T
 	assert.Equal(id, result.Loops[0].Anchor.ID)
 }
 
+func TestListSnapshotDoesNotCacheBodyFromAnOlderSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{
+		From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(3 * day),
+	})
+
+	snapshot, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	body, err := f.Store.GetMessageBodyTextContext(snapshot, id)
+	requirements.NoError(err)
+	assertions.Equal("Can you send the contract?", body)
+
+	requirements.NoError(f.Store.UpdateMessageDerivedText(id,
+		sql.NullString{String: "Thanks, sent.", Valid: true},
+		sql.NullString{}, sql.NullString{String: "Thanks, sent.", Valid: true},
+		store.FTSDoc{Body: "Thanks, sent."}))
+
+	snapshotResult, err := loops.List(snapshot, f.Store, loops.Options{}, now)
+	requirements.NoError(err)
+	requirements.Len(snapshotResult.Loops, 1, "the request snapshot keeps its original message body")
+	release()
+
+	liveResult := list(t, f, loops.Options{})
+	assertions.Empty(liveResult.Loops, "snapshot-derived evidence must not be stored under the current live token")
+}
+
 func TestListSignatureOnlyReplyKeepsQuestionOpen(t *testing.T) {
 	for _, tc := range []struct {
 		name, body  string
