@@ -382,3 +382,84 @@ func TestPeopleModeReentryRestartsAbandonedRelationshipLoad(t *testing.T) {
 	require.NotNil(model.peopleState.relationshipCalendar)
 	assert.False(model.peopleState.relationshipLoading)
 }
+
+// Opaque system and fixed-zone labels must not become analytics timezone names.
+func TestPeopleRelationshipTimezoneRequests(t *testing.T) {
+	originalLocal := time.Local
+	time.Local = time.FixedZone("Local", 14*60*60)
+	t.Cleanup(func() { time.Local = originalLocal })
+	newYork, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	for _, tt := range []struct {
+		name     string
+		location *time.Location
+		want     string
+	}{
+		{name: "system default", want: ""},
+		{name: "opaque Local", location: time.Local, want: ""},
+		{name: "Windows label", location: time.FixedZone("Pacific Standard Time", -8*60*60), want: ""},
+		{name: "unknown fixed zone", location: time.FixedZone("Mars/Olympus_Mons", 0), want: ""},
+		{name: "empty label", location: time.FixedZone("", 0), want: ""},
+		{name: "UTC", location: time.UTC, want: "UTC"},
+		{name: "named zone", location: newYork, want: "America/New_York"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			contact := testPerson(7, "Calendar Person")
+			backend := &fakePeopleRelationshipBackend{fakePeopleBackend: &fakePeopleBackend{}}
+			model := peopleContentModel(backend, &contact)
+			model.peopleState.location = tt.location
+			loaded := relationshipCalendarMessage(t, model.beginPeopleRelationshipLoad())
+			require.NoError(t, loaded.err)
+			require.Len(t, backend.calendarRequests, 1)
+			assert.Equal(t, tt.want, backend.calendarRequests[0].Timezone)
+		})
+	}
+}
+
+func TestPeopleRelationshipOmittedTimezoneUsesCachedUTCResponse(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	contact := testPerson(7, "Calendar Person")
+	contact.CacheRevision = "cache-1"
+	year := time.Now().UTC().Year()
+	backend := &fakePeopleRelationshipBackend{
+		fakePeopleBackend: &fakePeopleBackend{},
+		calendarResponses: []*query.RelationshipCalendarResponse{{
+			CanonicalID: 7, Year: year, Timezone: "UTC", CacheRevision: "cache-1", IdentityRevision: 4,
+		}},
+	}
+	model := peopleContentModel(backend, &contact)
+	model.peopleState.location = time.FixedZone("Local", 0)
+	loaded := relationshipCalendarMessage(t, model.beginPeopleRelationshipLoad())
+	model = sendMsg(t, model, loaded)
+	require.NotNil(model.peopleState.relationshipCalendar)
+	require.NoError(model.peopleState.relationshipErr)
+	assert.Nil(model.beginPeopleRelationshipLoad(), "revisiting the default-zone calendar uses its cached UTC response")
+	assert.False(model.peopleState.relationshipLoading)
+	assert.Len(backend.calendarRequests, 1)
+}
+
+func TestPeopleRelationshipYearBoundsUseRequestTimezone(t *testing.T) {
+	now := time.Date(2026, time.December, 31, 10, 30, 0, 0, time.UTC)
+	kiritimati, err := time.LoadLocation("Pacific/Kiritimati")
+	require.NoError(t, err)
+	for _, tt := range []struct {
+		name          string
+		location      *time.Location
+		wantFirstYear int
+		wantYear      int
+	}{
+		{name: "opaque UTC plus 14", location: time.FixedZone("Local", 14*60*60), wantFirstYear: 2020, wantYear: 2026},
+		{name: "named UTC plus 14", location: kiritimati, wantFirstYear: 2021, wantYear: 2027},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			model := Model{}
+			model.peopleState.location = tt.location
+			model.initializePeopleRelationshipYears(&query.PersonSummary{
+				FirstAt: time.Date(2020, time.December, 31, 12, 0, 0, 0, time.UTC),
+			}, now)
+			assert.Equal(t, tt.wantFirstYear, model.peopleState.relationshipFirstYear)
+			assert.Equal(t, tt.wantYear, model.peopleState.relationshipYear)
+		})
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/peoplebrowser"
@@ -403,7 +404,7 @@ func (m Model) handlePeopleContactLoaded(msg peopleContactLoadedMsg) (tea.Model,
 		contact := *msg.contact
 		m.peopleState.contact = &contact
 		m.peopleState.err = nil
-		m.initializePeopleRelationshipYears(&contact)
+		m.initializePeopleRelationshipYears(&contact, time.Now())
 		if m.peopleState.tab == peopleTabOverview || m.peopleState.tab == peopleTabAttributes {
 			var commands []tea.Cmd
 			m.peopleState.bumpRequestID()
