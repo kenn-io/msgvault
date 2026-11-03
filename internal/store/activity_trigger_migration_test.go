@@ -87,7 +87,7 @@ func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing
 	}
 	require := require.New(t)
 	assert := assert.New(t)
-	st, _, _ := newActivityQueryPostgresStores(t, dbURL)
+	st, _, _ := newActivityQueryPostgresStores(t)
 
 	var watermarkMigrationApplied bool
 	err := st.DB().QueryRowContext(t.Context(), `

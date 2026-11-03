@@ -5,10 +5,8 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -205,22 +203,8 @@ func newGmailAuditSnapshotPostgresStore(
 ) *Store {
 	t.Helper()
 	require := require.New(t)
-	schemaName := fmt.Sprintf("msgvault_test_gmail_audit_snapshot_%d", time.Now().UnixNano())
-	admin, err := sql.Open("pgx", dbURL)
-	require.NoError(err)
-	t.Cleanup(func() { _ = admin.Close() })
-	_, err = admin.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
-	require.NoError(err)
-	t.Cleanup(func() {
-		_, _ = admin.ExecContext(context.Background(), "DROP SCHEMA "+schemaName+" CASCADE")
-	})
-
-	separator := "?"
-	if strings.Contains(dbURL, "?") {
-		separator = "&"
-	}
-	testURL := dbURL + separator + "search_path=" + schemaName
-	config, err := postgresConnConfig(testURL, false)
+	base := newPGStoreInternal(t, dbURL)
+	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(err)
 	db := sql.OpenDB(&gmailAuditSnapshotConnector{
 		Connector: stdlib.GetConnector(*config), gate: gate,
@@ -229,9 +213,8 @@ func newGmailAuditSnapshotPostgresStore(
 	db.SetMaxIdleConns(4)
 	dialect := &PostgreSQLDialect{}
 	require.NoError(dialect.InitConn(db))
-	st := &Store{db: newLoggedDB(db, dialect.Rebind), dbPath: testURL, dialect: dialect}
+	st := &Store{db: newLoggedDB(db, dialect.Rebind), dbPath: base.dbPath, dialect: dialect}
 	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchemaContext(t.Context()))
 	return st
 }
 

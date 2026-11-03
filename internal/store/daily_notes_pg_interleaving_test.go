@@ -2,13 +2,10 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
 	"database/sql"
 	"database/sql/driver"
-	"encoding/hex"
 	"errors"
 	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -170,26 +167,8 @@ func newGatedPostgresStore(
 	t *testing.T, dbURL string, gate *dailyNoteListGate,
 ) *Store {
 	t.Helper()
-	admin, err := sql.Open("pgx", dbURL)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = admin.Close() })
-
-	random := make([]byte, 8)
-	_, err = rand.Read(random)
-	require.NoError(t, err)
-	schema := "msgvault_test_" + hex.EncodeToString(random)
-	_, err = admin.ExecContext(t.Context(), "CREATE SCHEMA "+schema)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_, _ = admin.ExecContext(context.Background(), "DROP SCHEMA "+schema+" CASCADE")
-	})
-
-	separator := "?"
-	if strings.Contains(dbURL, "?") {
-		separator = "&"
-	}
-	testURL := dbURL + separator + "search_path=" + schema
-	config, err := postgresConnConfig(testURL, false)
+	base := newPGStoreInternal(t, dbURL)
+	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(t, err)
 	baseConnector := stdlib.GetConnector(*config)
 	db := sql.OpenDB(&dailyNoteGateConnector{Connector: baseConnector, gate: gate})
@@ -198,11 +177,10 @@ func newGatedPostgresStore(
 	dialect := &PostgreSQLDialect{}
 	st := &Store{
 		db:      newLoggedDB(db, dialect.Rebind),
-		dbPath:  testURL,
+		dbPath:  base.dbPath,
 		dialect: dialect,
 	}
 	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(t, st.InitSchema())
 	return st
 }
 

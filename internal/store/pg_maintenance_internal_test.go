@@ -28,15 +28,12 @@ func skipUnlessPostgresInternal(t *testing.T) string {
 	return testDB
 }
 
-// newPGStoreInternal opens a schema-isolated PostgreSQL store for an internal
-// (package store) test. It mirrors testutil.newPostgresTestStore but lives in
-// package store so tests can reach unexported symbols. The schema is dropped
-// on cleanup.
+// newPGStoreInternal returns a private PostgreSQL archive cloned from the
+// test binary's template, or initialized in a private schema when cloning is off.
+// The fixture is dropped on cleanup.
 func newPGStoreInternal(t *testing.T, dbURL string) *Store {
 	t.Helper()
-	st := newUninitializedPGStoreInternal(t, dbURL)
-	require.NoError(t, st.InitSchema(), "init schema")
-	return st
+	return pgTestStore(t, dbURL)
 }
 
 // newUninitializedPGStoreInternal opens an empty schema-isolated PostgreSQL
