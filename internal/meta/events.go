@@ -161,7 +161,7 @@ type feedBatch struct {
 }
 
 func (b *feedBatch) stored(ctx context.Context, id string) (store.StoredMessage, objectMetadata, bool, error) {
-	rows, err := b.run.imp.store.StoredMessagesContext(ctx, b.run.source.ID, rawFormat, []string{id})
+	rows, err := b.run.imp.store.StoredMessagesContext(ctx, b.run.source.ID, b.run.objectFormat(), []string{id})
 	row, exists := rows[id]
 	var metadata objectMetadata
 	if err == nil && exists {

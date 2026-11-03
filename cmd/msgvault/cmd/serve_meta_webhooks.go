@@ -211,6 +211,7 @@ func (r *metaWebhookRuntime) Shutdown(ctx context.Context) error {
 
 func registerMetaWebhookHandlers(reg *metawebhook.Registry, cfg *config.Config, st *store.Store) {
 	reg.Register("page", "feed", feedHandler(cfg, st, func(token string) (meta.ObjectReader, error) { return meta.NewClient(token) }))
+	registerInstagramWebhookHandlers(reg, cfg, st)
 }
 
 func feedHandler(cfg *config.Config, st *store.Store, newReader func(string) (meta.ObjectReader, error)) metawebhook.ItemHandler {
@@ -267,7 +268,7 @@ func feedHandler(cfg *config.Config, st *store.Store, newReader func(string) (me
 				out[i] = metawebhook.ItemOutcome{Class: metawebhook.Retry, ErrorClass: "archive_unavailable", CountAttempt: true}
 				if j < len(results) {
 					result := results[j]
-					out[i] = metawebhook.ItemOutcome{Class: metawebhook.Class(result.Class), ErrorClass: result.ErrorClass, CountAttempt: result.CountAttempt, ArchiveChanged: result.ArchiveChanged}
+					out[i] = metawebhook.ItemOutcome{Class: metawebhook.Class(result.Class), ErrorClass: result.ErrorClass, CountAttempt: result.CountAttempt, ArchiveChanged: result.ArchiveChanged, Checkpoint: result.Class == "applied" || result.Class == "ignored"}
 				}
 			}
 		}

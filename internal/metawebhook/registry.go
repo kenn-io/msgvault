@@ -17,8 +17,11 @@ const (
 )
 
 type ItemOutcome struct {
-	Class        Class
-	ErrorClass   string
+	Class      Class
+	ErrorClass string
+	// Checkpoint preserves a completed item during automatic retries.
+	// Explicit replay clears these checkpoints and invokes every item again.
+	Checkpoint   bool
 	CountAttempt bool
 	// ArchiveChanged includes committed partial writes even when the item retries.
 	ArchiveChanged bool
@@ -49,13 +52,16 @@ func (r *Registry) Lookup(object, field string) (ItemHandler, bool) {
 
 // Settle retains the entire delivery if any item remains unapplied.
 func Settle(outcomes []ItemOutcome, items []Item) Settlement {
-	result := Settlement{State: StateDone, Outcomes: map[string]int{}}
+	result := Settlement{State: StateDone, Outcomes: map[string]int{}, CompletedItems: map[int]Class{}}
 	for index, item := range items {
 		out := ItemOutcome{Class: Invalid, ErrorClass: "handler_outcome_missing"}
 		if index < len(outcomes) {
 			out = outcomes[index]
 		}
 		result.Outcomes[item.Object+"/"+item.Field+"/"+string(out.Class)]++
+		if out.Checkpoint && (out.Class == Applied || out.Class == Ignored) {
+			result.CompletedItems[index] = out.Class
+		}
 		switch out.Class {
 		case Retry:
 			result.State = StatePending

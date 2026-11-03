@@ -182,6 +182,10 @@ func (w *Worker) DrainOnce(ctx context.Context) (sum DrainSummary, err error) {
 				delivery.outcomes[i] = ItemOutcome{Class: Invalid, ErrorClass: "invalid_envelope"}
 				continue
 			}
+			if completed := meta.CompletedItems[i]; completed == Applied || completed == Ignored {
+				delivery.outcomes[i] = ItemOutcome{Class: completed, Checkpoint: true}
+				continue
+			}
 			handler, ok := w.o.Registry.Lookup(items[i].Object, items[i].Field)
 			if !ok {
 				delivery.outcomes[i].Class = Unhandled

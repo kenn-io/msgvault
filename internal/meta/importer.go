@@ -98,6 +98,7 @@ type importRun struct {
 	archiveUID            string
 	readRequest           int
 	bodyTime, stateTime   int64
+	webhookMedia          *InstagramWebhookMedia
 	bodyOrder, stateOrder uint64
 	readSyncID            int64
 	freshBody             bool

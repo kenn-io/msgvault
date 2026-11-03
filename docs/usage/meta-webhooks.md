@@ -1,15 +1,16 @@
 ---
 last_edited: 2026-11-03
 title: Meta Webhooks
-description: Receive signed Facebook Page events, inspect delivery health, and replay retained deliveries.
+description: Receive signed Facebook and Instagram comment events, inspect delivery health, and replay retained deliveries.
 ---
 
-Receive Facebook Page comment changes without waiting for the next polling
-scan. This feature is unreleased. The daemon verifies each delivery and saves
+Receive Facebook Page and Instagram comment changes without waiting for the
+next polling scan. This feature is unreleased. The daemon verifies each delivery and saves
 its original bytes before acknowledging it. A worker then archives Page
-`feed` comments through the same persistence path as polling.
+`feed` comments and Instagram `comments` and `live_comments` through the same
+persistence path as polling.
 
-Comments keep their conversation, parent, and participant links. Edits update
+Comments keep their conversation, parent, and participant links. Page edits update
 the body; hide and unhide update metadata; removal leaves a tombstone and
 preserves the archived row. Older webhook events cannot undo newer webhook
 body or state changes. Equal timestamps apply in arrival order. Automatic
@@ -71,11 +72,31 @@ App mode, access levels, Page tasks, and grants still determine live delivery
 and ancestor reads. Configuration alone does not grant access. Instagram
 fields are selected in the dashboard; this command manages Page fields only.
 
+## Receive Instagram comments
+
+Register and enable an [Instagram comments profile](instagram-comments.md).
+Its app and professional account must match the delivery. Select `comments`
+and `live_comments` for the Instagram object in the App Dashboard. The Page
+subscription command above does not install Instagram fields.
+
+The worker reads each comment node for its text, author, and timestamp. It
+checks the media owner and reads missing parents before archiving a reply.
+Delivery time orders updates; it never supplies the message's sent time.
+Any `media.ad_id` and related webhook media fields remain provenance only.
+They do not establish ad ownership or classify the comment as an ad.
+
+Live delivery requires a Live app and Advanced `instagram_manage_comments`,
+plus the Page and Instagram read permissions described in the Instagram guide.
+Missing tokens, permissions, or temporarily unavailable nodes retain deliveries
+for retry. Completed comment items resume after an automatic retry or restart,
+so large deliveries can make progress within the request budget. Explicit replay
+reads them again. Exhausting this budget does not count as a failed attempt.
+Disabled or unmatched profiles leave their events held.
+
 ## Hold other event types
 
-Only Page `feed` comments are applied in this release. Messenger messages,
-Instagram comments and messages, and mentions are **held for a future release**.
-The whole delivery is retained when it includes an unhandled item, even if its
+Other event types are held until their handlers are installed and configured.
+The whole delivery is retained when it includes an unhandled item, even if
 comments were applied. Replay can therefore apply those comments again without
 duplicating archive rows. An equal-time replay can temporarily replace a body
 refreshed by polling; the next poll reconciles it. The ordering guard compares
