@@ -251,6 +251,7 @@ type GenerationInput struct {
 	ProgramVersion        string
 	ProgramFingerprint    string
 	CatalogFingerprint    string
+	SelectionFingerprint  string
 	Provider              string
 	ProviderVersion       string
 	Model                 string

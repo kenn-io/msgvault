@@ -379,6 +379,9 @@ func validateGenerationInput(input GenerationInput) error {
 	if input.CatalogFingerprint == "" {
 		return errors.New("generation catalog fingerprint is required")
 	}
+	if input.SelectionFingerprint != "" && !lowercaseSHA256Pattern.MatchString(input.SelectionFingerprint) {
+		return errors.New("generation selection fingerprint must be lowercase 64-hex SHA-256")
+	}
 	if input.Provider == "" || input.ProviderVersion == "" {
 		return errors.New("generation provider and provider version are required")
 	}
@@ -582,19 +585,20 @@ type canonicalClaim struct {
 }
 
 type canonicalGeneration struct {
-	PersonID           int64             `json:"person_id"`
-	SourceCursors      []SourceCursor    `json:"source_cursors"`
-	ProgramID          string            `json:"program_id"`
-	ProgramVersion     string            `json:"program_version"`
-	ProgramFingerprint string            `json:"program_fingerprint"`
-	CatalogFingerprint string            `json:"catalog_fingerprint"`
-	Provider           string            `json:"provider"`
-	ProviderVersion    string            `json:"provider_version"`
-	Model              string            `json:"model"`
-	ModelVersion       string            `json:"model_version"`
-	Policy             PolicyContext     `json:"policy"`
-	Claims             []canonicalClaim  `json:"claims"`
-	StatusChanges      []canonicalStatus `json:"evidence_status_changes"`
+	PersonID             int64             `json:"person_id"`
+	SourceCursors        []SourceCursor    `json:"source_cursors"`
+	ProgramID            string            `json:"program_id"`
+	ProgramVersion       string            `json:"program_version"`
+	ProgramFingerprint   string            `json:"program_fingerprint"`
+	CatalogFingerprint   string            `json:"catalog_fingerprint"`
+	SelectionFingerprint string            `json:"selection_fingerprint,omitzero"`
+	Provider             string            `json:"provider"`
+	ProviderVersion      string            `json:"provider_version"`
+	Model                string            `json:"model"`
+	ModelVersion         string            `json:"model_version"`
+	Policy               PolicyContext     `json:"policy"`
+	Claims               []canonicalClaim  `json:"claims"`
+	StatusChanges        []canonicalStatus `json:"evidence_status_changes"`
 }
 
 type canonicalStatus struct {
@@ -637,7 +641,8 @@ func canonicalGenerationJSON(
 		PersonID: input.PersonID, SourceCursors: input.SourceCursors,
 		ProgramID: input.ProgramID, ProgramVersion: input.ProgramVersion,
 		ProgramFingerprint: input.ProgramFingerprint, CatalogFingerprint: input.CatalogFingerprint,
-		Provider: input.Provider, ProviderVersion: input.ProviderVersion,
+		SelectionFingerprint: input.SelectionFingerprint,
+		Provider:             input.Provider, ProviderVersion: input.ProviderVersion,
 		Model: input.Model, ModelVersion: input.ModelVersion, Policy: input.Policy,
 		Claims: claimViews, StatusChanges: statusViews,
 	}, json.Deterministic(true), json.FormatNilSliceAsNull(true), json.FormatNilMapAsNull(true), jsontext.EscapeForHTML(true), jsontext.EscapeForJS(true))
