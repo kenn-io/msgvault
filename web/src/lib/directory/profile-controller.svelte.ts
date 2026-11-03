@@ -82,6 +82,8 @@ export class DirectoryProfileController {
   private definitionsGeneration = 0;
   private draftGeneration = 0;
   private activeMutationGeneration: number | null = null;
+  private mutationSettled = Promise.resolve();
+  private settleMutation: (() => void) | undefined;
   private disposed = false;
   constructor(
     client: APIClient,
@@ -137,9 +139,14 @@ export class DirectoryProfileController {
     this.disposed = true;
     ++this.generation;
     this.reloadAbort?.abort();
+    this.settleMutation?.();
   }
   async reload(resolveDraft = true): Promise<DirectoryProfileOperationResult> {
-    if (this.mutationPending) return { ok: false, code: 'mutation_in_progress' };
+    while (this.mutationPending && !this.disposed) {
+      if (resolveDraft) return { ok: false, code: 'mutation_in_progress' };
+      await this.mutationSettled;
+    }
+    if (this.disposed) return { ok: false, code: 'reload_in_progress' };
     this.reloadAbort?.abort();
     this.reloadPending = true;
     const abort = new AbortController();
@@ -477,6 +484,7 @@ export class DirectoryProfileController {
     return ++this.draftGeneration;
   }
   private beginMutation(draftGeneration: number): void {
+    this.mutationSettled = new Promise(resolve => { this.settleMutation = resolve; });
     this.mutationPending = true;
     this.activeMutationGeneration = draftGeneration;
   }
@@ -489,6 +497,8 @@ export class DirectoryProfileController {
     if (this.activeMutationGeneration !== draftGeneration) return;
     this.activeMutationGeneration = null;
     this.mutationPending = false;
+    this.settleMutation?.();
+    this.settleMutation = undefined;
   }
   private captureMutationFailure(error: unknown, status: number, draftGeneration: number): void {
     if (this.draftGeneration === draftGeneration) this.captureFailure(error, status);

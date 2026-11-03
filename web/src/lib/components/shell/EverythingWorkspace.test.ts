@@ -5,7 +5,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { meetingAction, meetingActions, meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
@@ -44,6 +44,47 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it('opens scoped Action items after choosing the canonical Meeting kind', async () => {
+    window.history.replaceState(null, '', '/');
+    const meetingRequests: Array<{ path: string; body: unknown }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/groups')) return Response.json({ rows: [{ key: 'meeting', count: 4 }] });
+      if (path.endsWith('/accounts')) return Response.json({ accounts: [] });
+      if (path.endsWith('/identities')) return Response.json({ identities: [] });
+      if (path.startsWith('/api/v1/meetings/')) {
+        meetingRequests.push({ path, body: await request.clone().json() });
+        if (path.endsWith('/actions')) return Response.json(meetingActions({ rows: [meetingAction()], total_count: 1 }));
+        return meetingFixtureResponse(path)!;
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      await screen.findByText('0 items');
+      expect(screen.queryByRole('region', { name: 'Meeting summary' })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'Meeting' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      const summary = await screen.findByRole('region', { name: 'Meeting summary' });
+      expect(await within(summary).findByText(/4 meetings/)).toBeTruthy();
+      await fireEvent.click(await within(summary).findByRole('button', { name: 'Action items · 1' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Action items' });
+      expect(await within(dialog).findByText('Prepare review')).toBeTruthy();
+      for (const path of ['/api/v1/meetings/metrics', '/api/v1/meetings/actions']) {
+        expect(meetingRequests).toContainEqual({ path, body: expect.objectContaining({ explore: expect.objectContaining({
+          predicate: expect.objectContaining({ filters: [{ dimension: 'kind', values: ['meeting'] }] }),
+          cache_revision: 'cache-1',
+        }) }) });
+      }
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it('hides unconfigured recording search and preserves the layout across navigation', async () => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
