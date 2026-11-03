@@ -140,13 +140,17 @@ type Store struct {
 	rfc822IDBackfillBatchSizeOverride int
 }
 
+// Hot import writes carry trigger programs whose compilation dominated CPU time.
+// Cache statements per connection; reset entries hold no transactions or locks.
+const sqliteStmtCacheParams = "&_stmt_cache_size=128"
+
 // synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
 // (NORMAL only protects against process crashes). msgvault is commonly run as a
 // laptop daemon (`msgvault serve`) where sleep/wake, forced reboots, and OOM kills
 // give many opportunities to leave a torn page on disk; the write volume is tiny
 // so the durability cost is negligible. fullfsync is macOS-only (F_FULLFSYNC
 // fcntl) and a no-op on other platforms.
-const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON"
+const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON" + sqliteStmtCacheParams
 
 // IsPostgresURL returns true if the path looks like a PostgreSQL connection URL.
 // Exported so cmd-side helpers can decide whether to skip SQLite-only code
@@ -161,7 +165,7 @@ func IsPostgresURL(dbPath string) bool {
 // durability against OS crashes is irrelevant — and on slow-fsync platforms
 // like Windows CI runners, the production FULL setting can push bulk-import
 // tests past their timing tripwires.
-const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OFF&_foreign_keys=ON"
+const testSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=OFF&_foreign_keys=ON" + sqliteStmtCacheParams
 
 // Open opens or creates the database at the given path.
 // If dbPath is a postgres:// or postgresql:// URL, opens a PostgreSQL connection.
