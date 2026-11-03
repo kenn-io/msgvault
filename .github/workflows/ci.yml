@@ -141,7 +141,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
-          extra-path: ~/.cache/golangci-lint
+          extra-path: .git/golangci-lint-cache
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
@@ -166,10 +166,19 @@ jobs:
         run: make openapi-check
 
       - name: Lint
-        run: make lint-ci
+        run: |
+          cache=$(git rev-parse --git-path golangci-lint-cache)
+          cmp -s .custom-gcl.yml "$cache/.custom-gcl.yml" || rm -rf "$cache"
+          mkdir -p "$cache"
+          cp .custom-gcl.yml "$cache/.custom-gcl.yml"
+          make lint-ci
 
       - name: Vulnerability check
         run: make vulncheck
+
+      - name: Log cache sizes
+        if: github.event_name != 'pull_request'
+        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
