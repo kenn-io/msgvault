@@ -28,6 +28,7 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"comment":                helpGroupWrite,
 	"source":                 helpGroupSources,
 	"activity":               helpGroupIndex,
 	"add-account":            helpGroupSources,

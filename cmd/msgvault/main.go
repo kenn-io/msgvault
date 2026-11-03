@@ -35,6 +35,14 @@ func run() int {
 		if isSignalCanceled(ctx, err) {
 			return exitCodeInterrupted
 		}
+		if coded, ok := errors.AsType[interface {
+			error
+			ExitCode() int
+		}](err); ok {
+			if code := coded.ExitCode(); code > 0 && code <= 255 {
+				return code
+			}
+		}
 		return exitCodeError
 	}
 	return 0
