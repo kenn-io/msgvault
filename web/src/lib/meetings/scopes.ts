@@ -19,11 +19,10 @@ export const filtersToMeetingTranscripts = (predicate: ExplorePredicate): boolea
     (filter.dimension === 'message_type' && filter.values.includes('meeting_transcript')) ||
     (filter.dimension === 'kind' && filter.values.includes('meeting'))) ?? false;
 
-/** Meeting context export needs a type or kind filter that admits only meetings. */
+/** Meeting context export accepts transcripts; the meeting kind also admits notes and minutes. */
 export const restrictsToMeetingTranscripts = (predicate: ExplorePredicate): boolean =>
   predicate.filters?.some((filter) => filter.values.length > 0 &&
-    ((filter.dimension === 'message_type' && filter.values.every((value) => value === 'meeting_transcript')) ||
-    (filter.dimension === 'kind' && filter.values.every((value) => value === 'meeting')))) ?? false;
+    filter.dimension === 'message_type' && filter.values.every((value) => value === 'meeting_transcript')) ?? false;
 
 const unsupportedFilters = () => new Error('Meeting activity cannot represent these relationship filters exactly. Adjust the filters to load meeting activity.');
 

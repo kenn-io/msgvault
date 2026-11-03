@@ -6,7 +6,7 @@ describe('meeting scopes', () => {
     { name: 'no filters', filters: undefined, want: false },
     { name: 'meetings only', filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }], want: true },
     { name: 'meetings and email', filters: [{ dimension: 'message_type', values: ['meeting_transcript', 'email'] }], want: false },
-    { name: 'canonical meetings', filters: [{ dimension: 'kind', values: ['meeting'] }], want: true },
+    { name: 'canonical meetings including notes and minutes', filters: [{ dimension: 'kind', values: ['meeting'] }], want: false },
     { name: 'mixed canonical kinds', filters: [{ dimension: 'kind', values: ['meeting', 'email'] }], want: false },
     { name: 'an empty kind', filters: [{ dimension: 'kind', values: [] }], want: false },
     { name: 'another dimension', filters: [{ dimension: 'source', values: ['meeting_transcript'] }], want: false },
