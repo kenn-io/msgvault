@@ -2709,6 +2709,7 @@ type CliMessageResponse struct {
 	ReceivedAt           *time.Time             `json:"received_at" validate:"required"`
 	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Rfc822MessageID      *string                `json:"rfc822_message_id,omitzero"`
+	SenderAuth           *Verdict               `json:"sender_auth,omitempty"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`
@@ -2784,6 +2785,13 @@ func (c CliMessageResponse) Validate() error {
 	if c.ReceivedAt != nil {
 		if err := typesValidator.Var(c.ReceivedAt, "required"); err != nil {
 			errors = errors.Append("ReceivedAt", err)
+		}
+	}
+	if c.SenderAuth != nil {
+		if v, ok := any(c.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(c.SentAt, "required"); err != nil {
@@ -8030,6 +8038,7 @@ type MessageDetail struct {
 	Labels            []string `json:"labels" validate:"required"`
 	MessageType       *string  `json:"message_type,omitzero"`
 	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
+	SenderAuth        *Verdict `json:"sender_auth,omitempty"`
 	SentAt            string   `json:"sent_at" validate:"required"`
 	SizeBytes         int64    `json:"size_bytes"`
 	Snippet           string   `json:"snippet" validate:"required"`
@@ -8069,6 +8078,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
+	}
+	if m.SenderAuth != nil {
+		if v, ok := any(m.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.SentAt, "required"); err != nil {
 		errors = errors.Append("SentAt", err)
@@ -16700,6 +16716,15 @@ type VectorHealth struct {
 
 func (v VectorHealth) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
+}
+
+type Verdict struct {
+	AuthservID *string `json:"authserv_id,omitzero"`
+	Dkim       *string `json:"dkim,omitzero"`
+	Dmarc      *string `json:"dmarc,omitzero"`
+	Domain     *string `json:"domain,omitzero"`
+	Spf        *string `json:"spf,omitzero"`
+	Verified   bool    `json:"verified"`
 }
 
 type VirtualAccount struct {

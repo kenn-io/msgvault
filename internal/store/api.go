@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
@@ -50,6 +51,7 @@ const participantSummarySenderSQL = participantDisplaySQL + ` as from_display,
 
 // APIMessage represents a message for API responses.
 type APIMessage struct {
+	SenderAuth           *senderauth.Verdict
 	RelatedMessageID     *int64
 	ConversationTitle    string
 	Calendar             *CalendarProjection

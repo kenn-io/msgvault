@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -399,4 +400,16 @@ func TestMessageAttachmentDocbankTextView(t *testing.T) {
 	require.Greater(second, firstNode)
 	assert.Greater(secondNode, second)
 	assert.NotContains(output, "\x1b")
+}
+
+func TestMessageJSONValueSenderAuth(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	msg := &query.MessageDetail{}
+	assert.NotContains(messageJSONValue(msg), "sender_auth")
+	msg.SenderAuth = &senderauth.Verdict{Verified: true, Domain: "example.test", AuthservID: "mx.google.com", DMARC: "pass"}
+	var out bytes.Buffer
+	require.NoError(outputMessageJSON(&out, msg))
+	var got map[string]json.RawMessage
+	require.NoError(json.Unmarshal(out.Bytes(), &got))
+	assert.JSONEq(`{"verified":true,"domain":"example.test","authserv_id":"mx.google.com","dmarc":"pass"}`, string(got["sender_auth"]))
 }

@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/BurntSushi/toml"
@@ -562,7 +563,27 @@ func (b *BackupConfig) Validate() error {
 	return fmt.Errorf("invalid [backup] zstd_level %d (want 0 or 1-19)", b.ZstdLevel)
 }
 
+// SenderAuthConfig pins receiver identities for each archive source.
+type SenderAuthConfig struct {
+	Sources []SenderAuthSource `toml:"sources"`
+}
+
+type SenderAuthSource struct {
+	SourceID           int64    `toml:"source_id"`
+	TrustedAuthservIDs []string `toml:"trusted_authserv_ids"`
+}
+
+// Pins returns a snapshot that callers can retain across config edits.
+func (c SenderAuthConfig) Pins() map[int64][]string {
+	pins := make(map[int64][]string, len(c.Sources))
+	for _, source := range c.Sources {
+		pins[source.SourceID] = append([]string(nil), source.TrustedAuthservIDs...)
+	}
+	return pins
+}
+
 type Config struct {
+	SenderAuth         SenderAuthConfig                `toml:"sender_auth"`
 	ConversationPolicy ConversationPolicyConfig        `toml:"conversation_policy"`
 	Data               DataConfig                      `toml:"data"`
 	Log                LogConfig                       `toml:"log"`
@@ -1297,6 +1318,9 @@ type draftSelector struct {
 
 func (c *Config) validateDraftSources(content []byte) error {
 	var raw struct {
+		SenderAuth struct {
+			Sources []draftSelector `toml:"sources"`
+		} `toml:"sender_auth"`
 		IMAP struct {
 			Drafts []draftSelector `toml:"drafts"`
 		} `toml:"imap"`
@@ -1316,8 +1340,19 @@ func (c *Config) validateDraftSources(content []byte) error {
 		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
 		return err
 	}
-	return validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
-		func(d GmailDraftSource) int64 { return d.SourceID }, nil)
+	if err := validateDraftSelectors("beeper.drafts", c.Beeper.Drafts, raw.Beeper.Drafts,
+		func(d GmailDraftSource) int64 { return d.SourceID }, nil); err != nil {
+		return err
+	}
+	return validateDraftSelectors("sender_auth.sources", c.SenderAuth.Sources, raw.SenderAuth.Sources,
+		func(s SenderAuthSource) int64 { return s.SourceID }, func(s SenderAuthSource) error {
+			for _, id := range s.TrustedAuthservIDs {
+				if id == "" || strings.ContainsFunc(id, unicode.IsSpace) {
+					return errors.New("trusted_authserv_ids must be nonblank and contain no whitespace")
+				}
+			}
+			return nil
+		})
 }
 
 func validateDraftSelectors[T any](section string, entries []T, raw []draftSelector, sourceID func(T) int64, check func(T) error) error {

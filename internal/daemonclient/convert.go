@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/deletion"
 	"go.kenn.io/msgvault/internal/identityops"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -419,6 +420,7 @@ func cliMessageDetailFromGenerated(resp *generated.GetCLIMessageResponse) *query
 	return &query.MessageDetail{
 		RelatedMessageID:     resp.RelatedMessageID,
 		ID:                   resp.ID,
+		SenderAuth:           senderAuthFromGenerated(resp.SenderAuth),
 		Calendar:             calendarProjectionFromGenerated(resp.Calendar),
 		SourceMessageID:      resp.SourceMessageID,
 		RFC822MessageID:      stringValue(resp.Rfc822MessageID),
@@ -952,4 +954,11 @@ func calendarProjectionFromGenerated(calendar *generated.CalendarProjection) *st
 		TimeZone: calendar.TimeZone,
 		ICalUID:  calendar.IcalUID,
 	}
+}
+
+func senderAuthFromGenerated(v *generated.Verdict) *senderauth.Verdict {
+	if v == nil {
+		return nil
+	}
+	return &senderauth.Verdict{Verified: v.Verified, Domain: stringValue(v.Domain), AuthservID: stringValue(v.AuthservID), SPF: stringValue(v.Spf), DKIM: stringValue(v.Dkim), DMARC: stringValue(v.Dmarc)}
 }

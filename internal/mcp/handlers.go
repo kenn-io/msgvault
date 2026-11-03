@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/savedview"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
@@ -1635,6 +1636,7 @@ func lineNumberAt(body string, byteOffset int) int {
 }
 
 type getMessageResponse struct {
+	SenderAuth           *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	WebURL               string                    `json:"web_url,omitempty"`
 	ID                   int64                     `json:"id"`
 	SourceMessageID      string                    `json:"source_message_id"`
@@ -1730,6 +1732,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	}
 
 	return jsonResult(getMessageResponse{
+		SenderAuth:           msg.SenderAuth,
 		Calendar:             msg.Calendar,
 		WebURL:               msg.WebURL,
 		ID:                   msg.ID,

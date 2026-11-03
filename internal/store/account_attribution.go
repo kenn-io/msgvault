@@ -679,6 +679,29 @@ func (s *Store) calendarAccountAddressTx(
 	return address, nil
 }
 
+// MessageHeaderBlockContext returns a bounded outer MIME header block.
+func (s *Store) MessageHeaderBlockContext(ctx context.Context, id int64) ([]byte, error) {
+	var prefix []byte
+	var compression sql.NullString
+	err := ReadDBContext(ctx, s.db.DB).QueryRowContext(ctx, s.Rebind(`
+		SELECT `+s.dialect.BlobPrefixSQL("raw_data")+`, compression
+		FROM message_raw WHERE message_id = ? AND raw_format = 'mime'`), accountHeaderRawPrefix, id).Scan(&prefix, &compression)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read raw MIME headers for message %d: %w", id, err)
+	}
+	block, err := decodeMessageRawHeaderBounded(prefix, compression, emailattribution.MaxHeaderBytes)
+	if err != nil {
+		return nil, err
+	}
+	if mimeHeaderEnd(block) == 0 {
+		block = append(slices.Clip(block), "\r\n\r\n"...)
+	}
+	return block, nil
+}
+
 // readDeliveryHeadersTx reads a bounded prefix of the stored MIME and parses
 // its delivery headers. Undecodable payloads report malformed with no
 // evidence; SQL errors return.

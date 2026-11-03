@@ -22,6 +22,7 @@ require (
 	github.com/duckdb/duckdb-go/v2 v2.20000.0
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
+	github.com/emersion/go-msgauth v0.7.0
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6
 	github.com/go-playground/validator/v10 v10.30.5
 	github.com/gofrs/flock v0.13.1

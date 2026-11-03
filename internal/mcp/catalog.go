@@ -663,6 +663,7 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 	return readDefinition(
 		ToolGetMessage,
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
+			"sender_auth.verified covers only the sender domain; empty results mean the pinned receiver reported nothing. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
 			hiddenTextFlagDoc+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
