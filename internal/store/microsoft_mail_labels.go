@@ -260,3 +260,36 @@ func persistMicrosoftSentEvidence(q boundQuerier, dialect Dialect, messageID int
 	}
 	return nil
 }
+
+func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, survivorID, duplicateID int64) error {
+	sentObserved := `CASE WHEN json_valid(duplicate.metadata) THEN json_extract(duplicate.metadata, '$.` + microsoftSentEvidenceKey + `') END=1`
+	if s.IsPostgreSQL() {
+		sentObserved = `duplicate.metadata ->> '` + microsoftSentEvidenceKey + `'='true'`
+	}
+	var observed bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM messages duplicate
+		JOIN messages survivor ON survivor.id=?
+		JOIN sources src ON src.id=duplicate.source_id
+		WHERE duplicate.id=? AND duplicate.source_id=survivor.source_id
+		  AND src.source_type='msmail' AND `+sentObserved+`
+	)`, survivorID, duplicateID).Scan(&observed)
+	if err != nil {
+		return fmt.Errorf("check duplicate Microsoft Sent Items provenance: %w", err)
+	}
+	if !observed {
+		return nil
+	}
+	if err := persistMicrosoftSentEvidence(boundQuerier{ctx: ctx, q: tx}, s.dialect, survivorID); err != nil {
+		return fmt.Errorf("preserve duplicate Microsoft Sent Items provenance: %w", err)
+	}
+	transferRecipientsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_recipients
+		(message_id, participant_id, recipient_type, display_name, email_address)
+		SELECT ?, participant_id, recipient_type, display_name, email_address
+		FROM message_recipients
+		WHERE message_id=? AND recipient_type IN ('to','cc','bcc')`)
+	if _, err := tx.ExecContext(ctx, transferRecipientsSQL, survivorID, duplicateID); err != nil {
+		return fmt.Errorf("preserve duplicate Microsoft Sent Items recipients: %w", err)
+	}
+	return nil
+}

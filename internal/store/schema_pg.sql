@@ -3898,6 +3898,8 @@ CREATE INDEX IF NOT EXISTS idx_participants_canonical ON participants(canonical_
 -- idx_participants_email_lower is built by Store.buildLargeIndexesConcurrently:
 -- participants can be large on an existing archive, and an inline build here
 -- would run under the pool-wide statement_timeout.
+-- idx_participants_email_normalized is built the same way for trimmed-address
+-- history probes.
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_value ON participant_identifiers(identifier_value);
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_participant ON participant_identifiers(participant_id);
 -- idx_participant_identifiers_value_lower is likewise built by

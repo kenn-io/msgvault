@@ -536,6 +536,9 @@ func (s *Store) MergeDuplicates(
 			}
 			affected, _ := res.RowsAffected()
 			result.LabelsTransferred += int(affected)
+			if err := s.mergeMicrosoftSentEvidenceTx(ctx, tx, survivorID, dupID); err != nil {
+				return fmt.Errorf("merge Microsoft Sent Items provenance from %d: %w", dupID, err)
+			}
 		}
 
 		var survivorHasRaw int

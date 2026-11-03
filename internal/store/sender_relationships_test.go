@@ -105,6 +105,133 @@ func TestSenderRelationshipsRejectsLegacyMicrosoftAddressOwnership(t *testing.T)
 		"legacy address-derived source ownership must not turn an incoming Microsoft message into an owner send")
 }
 
+func FuzzSenderRelationshipsMicrosoftSentEvidenceSurvivesSameSourceDedup(f *testing.F) {
+	for _, seed := range [][5]bool{
+		{false, false, false, false, false},
+		{false, true, false, false, false},
+		{true, false, false, false, false},
+		{true, true, false, false, false},
+		{true, false, true, false, false},
+		{true, false, true, true, false},
+		{true, false, false, false, true},
+	} {
+		f.Add(seed[0], seed[1], seed[2], seed[3], seed[4])
+	}
+	f.Fuzz(func(t *testing.T, duplicateSent, survivorSent, survivorDraft, survivorUnsent, duplicateBcc bool) {
+		got := mergeMicrosoftSentRelationshipEvidenceCase(t, duplicateSent, survivorSent, survivorDraft, survivorUnsent, duplicateBcc)
+		want := "none"
+		if (duplicateSent || survivorSent) && !survivorUnsent {
+			want = "known"
+		}
+		assert.Equal(t, want, got["target@example.test"].Relationship)
+		if duplicateBcc {
+			wantBcc := "none"
+			if duplicateSent && !survivorUnsent {
+				wantBcc = "known"
+			}
+			assert.Equal(t, wantBcc, got["bcc@example.test"].Relationship)
+		}
+	})
+}
+
+func TestSenderRelationshipsMicrosoftSentEvidenceOverridesRetainedDraft(t *testing.T) {
+	got := mergeMicrosoftSentRelationshipEvidenceCase(t, true, false, true, false, false)
+	assert.Equal(t, "known", got["target@example.test"].Relationship,
+		"persisted provider Sent Items evidence must override a Drafts label retained from the survivor")
+}
+
+func TestSenderRelationshipsMicrosoftSentEvidenceDoesNotOverrideExplicitUnsent(t *testing.T) {
+	got := mergeMicrosoftSentRelationshipEvidenceCase(t, true, false, true, true, false)
+	assert.Equal(t, "none", got["target@example.test"].Relationship,
+		"explicit is_sent=false must remain ineligible even when a duplicate has provider Sent Items evidence")
+}
+
+func TestSenderRelationshipsMicrosoftSentBccSurvivesSameSourceDedup(t *testing.T) {
+	got := mergeMicrosoftSentRelationshipEvidenceCase(t, true, false, false, false, true)
+	assert.Equal(t, "known", got["bcc@example.test"].Relationship,
+		"sent-copy Bcc snapshots must survive when the archive copy is the deduplication survivor")
+}
+
+func mergeMicrosoftSentRelationshipEvidenceCase(t *testing.T, duplicateSent, survivorSent, survivorDraft, survivorUnsent, duplicateBcc bool) map[string]store.SenderRelationshipEvidence {
+	t.Helper()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("msmail", "owner@example.test")
+	requirements.NoError(err)
+	conversationID, err := f.Store.EnsureConversation(source.ID, "sent-thread", "Sent Thread")
+	requirements.NoError(err)
+	ownerID := f.EnsureParticipant("owner@example.test", "Owner", "example.test")
+	targetID := f.EnsureParticipant("target@example.test", "Target", "example.test")
+	bccID := int64(0)
+	if duplicateBcc {
+		bccID = f.EnsureParticipant("bcc@example.test", "Bcc", "example.test")
+	}
+	message := func(sourceMessageID string, withBcc, isUnsent bool) int64 {
+		record := storetest.NewMessage(source.ID, conversationID).WithSourceMessageID(sourceMessageID).Build()
+		record.RFC822MessageID = sql.NullString{String: "shared@example.test", Valid: true}
+		record.SenderID = sql.NullInt64{Int64: ownerID, Valid: true}
+		record.SentAt = sql.NullTime{Time: time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC), Valid: true}
+		record.IsSent = sql.NullBool{Bool: !isUnsent, Valid: true}
+		recipients := []store.RecipientSet{
+			{Type: "from", ParticipantIDs: []int64{ownerID}, EmailAddresses: []string{"owner@example.test"}},
+			{Type: "to", ParticipantIDs: []int64{targetID}, EmailAddresses: []string{"target@example.test"}},
+		}
+		if withBcc {
+			recipients = append(recipients, store.RecipientSet{Type: "bcc", ParticipantIDs: []int64{bccID}, EmailAddresses: []string{"bcc@example.test"}})
+		}
+		id, persistErr := f.Store.PersistMessage(&store.MessagePersistData{
+			Message:    record,
+			Recipients: recipients,
+		})
+		requirements.NoError(persistErr)
+		return id
+	}
+	archiveDuplicate := message("archive-duplicate", duplicateBcc, false)
+	archiveSurvivor := message("archive-survivor", false, survivorUnsent)
+	folders, err := f.Store.EnsureMicrosoftMailFoldersContext(t.Context(), source.ID, map[string]store.LabelInfo{
+		"sent":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"archive": {Name: "Archive", Type: "system"},
+		"drafts":  {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+	})
+	requirements.NoError(err)
+	sentFolder := folders["sent"]
+	archiveFolder := folders["archive"]
+	setHistory := func(messageID int64, hadSentEvidence bool) {
+		if hadSentEvidence {
+			_, reconcileErr := f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), messageID, &sentFolder, nil)
+			requirements.NoError(reconcileErr)
+		}
+		_, reconcileErr := f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), messageID, &archiveFolder, nil)
+		requirements.NoError(reconcileErr)
+	}
+	setHistory(archiveDuplicate, duplicateSent)
+	setHistory(archiveSurvivor, survivorSent)
+	if survivorDraft {
+		draftFolder := folders["drafts"]
+		_, err = f.Store.ReconcileMicrosoftMailLabelsContext(t.Context(), archiveSurvivor, &draftFolder, nil)
+		requirements.NoError(err)
+	}
+
+	wantBeforeMerge := "none"
+	if duplicateSent || (survivorSent && !survivorUnsent) {
+		wantBeforeMerge = "known"
+	}
+	addresses := []string{"target@example.test"}
+	if duplicateBcc {
+		addresses = append(addresses, "bcc@example.test")
+	}
+	got, err := f.Store.SenderRelationships(t.Context(), addresses, nil)
+	requirements.NoError(err)
+	assertions.Equal(wantBeforeMerge, got["target@example.test"].Relationship)
+	_, err = f.Store.MergeDuplicates(archiveSurvivor, []int64{archiveDuplicate}, "msmail-sent-dedup")
+	requirements.NoError(err)
+
+	got, err = f.Store.SenderRelationships(t.Context(), addresses, nil)
+	requirements.NoError(err)
+	return got
+}
+
 func TestSenderRelationshipsExcludeUnsentListBroadcastDeletedAndAddressOwnership(t *testing.T) {
 	for _, kind := range []string{"unsent", "list", "broadcast", "deleted", "remote-deleted", "identity-derived"} {
 		t.Run(kind, func(t *testing.T) {
@@ -342,6 +469,50 @@ func TestSenderRelationshipsIncomingFromHistoryConsumesBudget(t *testing.T) {
 	got, err := f.Store.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
 	requirements.ErrorIs(err, store.ErrSenderRelationshipLimit)
 	assertions.Nil(got, "partial history must not escape as a definitive relationship")
+}
+
+func TestSenderRelationshipsContactHistoryBudgetPrecedesEligibilityAndScope(t *testing.T) {
+	for _, kind := range []string{"deleted-only", "draft-only", "absent-in-scope"} {
+		t.Run(kind, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := storetest.New(t)
+			target := f.EnsureParticipant("target@example.test", "Target", "example.test")
+			sourceID := f.Source.ID
+			conversationID := f.ConvID
+			var allowedSources []int64
+			if kind == "absent-in-scope" {
+				other, err := f.Store.GetOrCreateSource("gmail", "other@example.test")
+				requirements.NoError(err)
+				conversationID, err = f.Store.EnsureConversation(other.ID, "other-thread", "Other Thread")
+				requirements.NoError(err)
+				sourceID = other.ID
+				allowedSources = []int64{f.Source.ID}
+			}
+
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`
+				WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<2049)
+				INSERT INTO messages (source_id,conversation_id,source_message_id,message_type,source_is_from_me,is_from_me,is_sent,sent_at)
+				SELECT ?,?, 'contact-budget-' || CAST(x AS TEXT),'email',TRUE,TRUE,TRUE,NULL FROM n`), sourceID, conversationID)
+			requirements.NoError(err)
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address)
+				SELECT id,?,'to','target@example.test' FROM messages WHERE source_id=? AND source_message_id LIKE 'contact-budget-%'`), target, sourceID)
+			requirements.NoError(err)
+
+			if kind == "deleted-only" {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE source_id=? AND source_message_id LIKE 'contact-budget-%'`), sourceID)
+				requirements.NoError(err)
+			}
+			if kind == "draft-only" {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE source_id=? AND source_message_id LIKE 'contact-budget-%'`), sourceID)
+				requirements.NoError(err)
+			}
+
+			got, err := f.Store.SenderRelationships(t.Context(), []string{"target@example.test"}, allowedSources)
+			requirements.ErrorIs(err, store.ErrSenderRelationshipLimit)
+			assertions.Nil(got, "partial evidence must not escape as a definitive result")
+		})
+	}
 }
 
 func TestSenderRelationshipsMissingFromAndChatSnapshotsCannotFollowMerge(t *testing.T) {

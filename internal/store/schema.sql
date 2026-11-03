@@ -2301,6 +2301,7 @@ CREATE INDEX IF NOT EXISTS idx_participants_canonical ON participants(canonical_
 -- Serves case-insensitive address lookups (e.g. identity confirmation's
 -- participant resolution) without a full table scan.
 CREATE INDEX IF NOT EXISTS idx_participants_email_lower ON participants(LOWER(email_address));
+CREATE INDEX IF NOT EXISTS idx_participants_email_normalized ON participants(LOWER(TRIM(email_address)));
 
 -- Participant identifiers
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_value ON participant_identifiers(identifier_value);

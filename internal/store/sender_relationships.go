@@ -128,10 +128,11 @@ func (s *Store) SenderRelationshipsWithOptions(ctx context.Context, addresses []
 	}
 	slices.Sort(keys)
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		if err := s.senderContactRelationships(ctx, tx, keys, sources, allowedSourceIDs != nil, options.ExcludeMessageID, result); err != nil {
+		history, err := s.senderContactRelationships(ctx, tx, keys, sources, allowedSourceIDs != nil, options.ExcludeMessageID, result)
+		if err != nil {
 			return err
 		}
-		return s.senderKnownRelationships(ctx, tx, keys, sources, options.ExcludeMessageID, result)
+		return s.senderKnownRelationships(ctx, tx, keys, sources, options.ExcludeMessageID, history, result)
 	})
 	if err != nil {
 		return nil, fmt.Errorf("resolve sender relationships: %w", err)
@@ -158,18 +159,22 @@ func senderSourceScope(sources []int64, excluded int64) (string, []any) {
 // not inherit the current address of a renamed or merged participant.
 const senderRecipientAddress = `LOWER(COALESCE(TRIM(mr.email_address), ''))`
 
-func (s *Store) senderContactRelationships(ctx context.Context, tx *loggedTx, keys []string, sources []int64, scoped bool, excluded int64, result map[string]SenderRelationshipEvidence) error {
+func (s *Store) senderContactRelationships(ctx context.Context, tx *loggedTx, keys []string, sources []int64, scoped bool, excluded int64, result map[string]SenderRelationshipEvidence) (map[string][]int64, error) {
+	history, err := s.senderContactRelationshipHistory(ctx, tx, keys)
+	if err != nil {
+		return nil, err
+	}
 	query, args := s.senderContactRelationshipsQuery(keys, sources, scoped, excluded)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
-		return fmt.Errorf("read sender contacts: %w", err)
+		return nil, fmt.Errorf("read sender contacts: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var address string
 		var contact, seen int
 		if err := rows.Scan(&address, &contact, &seen); err != nil {
-			return fmt.Errorf("scan sender contacts: %w", err)
+			return nil, fmt.Errorf("scan sender contacts: %w", err)
 		}
 		e := result[address]
 		e.SeenInArchive = seen != 0
@@ -178,7 +183,32 @@ func (s *Store) senderContactRelationships(ctx context.Context, tx *loggedTx, ke
 		}
 		result[address] = e
 	}
-	return rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return history, nil
+}
+
+// senderContactRelationshipHistory snapshots every requested address's
+// envelope history before source, deletion, and draft eligibility checks.
+// Existence probes otherwise can scan unbounded deleted, draft-only, or
+// out-of-scope rows while trying to establish that no real history exists.
+func (s *Store) senderContactRelationshipHistory(ctx context.Context, tx *loggedTx, keys []string) (map[string][]int64, error) {
+	history := make(map[string][]int64, len(keys))
+	inspectedEntries := 0
+	for _, key := range keys {
+		remaining := maxSenderRelationshipHistoryEntries - inspectedEntries
+		ids, err := s.senderHistoryMessageIDs(ctx, tx, key, nil, 0, 0, remaining+1)
+		if err != nil {
+			return nil, err
+		}
+		if len(ids) > remaining {
+			return nil, ErrSenderRelationshipLimit
+		}
+		inspectedEntries += len(ids)
+		history[key] = ids
+	}
+	return history, nil
 }
 
 func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, scoped bool, excluded int64) (string, []any) {
@@ -251,36 +281,21 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 // Chat evidence must be 1:1 and carry an exact historical recipient address.
 const senderOneToOneChat = `c.conversation_type IN ('chat','direct_chat') AND (SELECT COUNT(*) FROM conversation_participants cp WHERE cp.conversation_id=m.conversation_id)=2`
 
-func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded int64, result map[string]SenderRelationshipEvidence) error {
-	inspectedEntries := 0
+func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded int64, history map[string][]int64, result map[string]SenderRelationshipEvidence) error {
 	for _, key := range senderKnownRelationshipKeys(keys, result) {
 		if evidence := result[key]; evidence.Relationship != "none" || !evidence.SeenInArchive {
 			continue
 		}
-		var before int64
-		for {
-			limit := min(256, maxSenderRelationshipHistoryEntries-inspectedEntries)
-			historyIDs, err := s.senderHistoryMessageIDs(ctx, tx, key, sources, excluded, before, limit+1)
-			if err != nil {
-				return err
-			}
-			more := len(historyIDs) > limit
-			if more {
-				historyIDs = historyIDs[:limit]
-			}
-			if len(historyIDs) == 0 {
-				if more {
-					return ErrSenderRelationshipLimit
-				}
-				break
-			}
-			inspectedEntries += len(historyIDs)
+		historyIDs := history[key]
+		for start := 0; start < len(historyIDs); start += 256 {
+			end := min(start+256, len(historyIDs))
+			batch := historyIDs[start:end]
 
-			// History pages include From rows and other non-candidates so the
-			// inspection budget applies before sender, recipient-type, and
-			// conversation eligibility checks.
-			messageIDs := make([]int64, 0, len(historyIDs))
-			for _, messageID := range historyIDs {
+			// The shared history snapshot includes From rows and other
+			// non-candidates. It was budgeted before source and eligibility
+			// filtering; only the candidate query below applies those rules.
+			messageIDs := make([]int64, 0, len(batch))
+			for _, messageID := range batch {
 				if len(messageIDs) == 0 || messageIDs[len(messageIDs)-1] != messageID {
 					messageIDs = append(messageIDs, messageID)
 				}
@@ -320,10 +335,9 @@ func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys
 					}
 				}
 			}
-			if result[key].Relationship != "none" || !more {
+			if result[key].Relationship != "none" {
 				break
 			}
-			before = historyIDs[len(historyIDs)-1]
 		}
 	}
 	return nil

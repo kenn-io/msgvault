@@ -37,6 +37,8 @@ func TestSenderContactRelationshipsQueryUsesNormalizedEnvelopeIndex(t *testing.T
 		"contact and archive-history lookup should use an address lookup rather than scan the recipient index:\n%s", plan)
 	assertions.Contains(plan, "idx_message_recipients_email_address_normalized",
 		"contact and archive-history lookup should probe historical recipient envelopes by normalized address:\n%s", plan)
+	assertions.Equal(3, strings.Count(plan, "idx_participants_email_normalized"),
+		"all unscoped pointer-history probes should use the normalized participant email index:\n%s", plan)
 }
 
 func TestSenderHistoryMessageIDsQueryUsesNormalizedEnvelopeIndex(t *testing.T) {

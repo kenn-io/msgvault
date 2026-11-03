@@ -638,6 +638,8 @@ func TestStore_InitSchemaAddsLabelRoleWithoutRewritingLegacyRows(t *testing.T) {
 		"SQLite-redundant composite index must not be created: id is the rowid alias")
 	assert.Equal(1, indexCount("idx_participants_email_lower"),
 		"participant email lower expression index")
+	assert.Equal(1, indexCount("idx_participants_email_normalized"),
+		"participant email normalized expression index")
 	assert.Equal(1, indexCount("idx_participant_identifiers_value_lower"),
 		"participant identifier value lower expression index")
 }
