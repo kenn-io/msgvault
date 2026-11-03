@@ -263,7 +263,7 @@ type analyticsEngineContextKey struct{}
 
 // Server represents the HTTP API server.
 type Server struct {
-	nativeMCP nativeMCPHandlers
+	nativeMCP   nativeMCPHandlers
 	lineWebhook *line.Receiver
 	// statsSnapshots and accountCountSnapshots bound /stats and
 	// /cli/accounts latency under load (see snapshotCache). Background
