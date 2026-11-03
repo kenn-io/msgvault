@@ -49,6 +49,7 @@ func TestFreshnessSourcePolicy(t *testing.T) {
 	card := Assemble(in, Options{})
 	assertions.True(card.Freshness.Stale)
 	assertions.Equal(5, card.Freshness.SourcesOmitted)
+	assertions.Contains(RenderMarkdown(card, ""), "Source freshness: stale")
 	in = baseInput()
 	for i := int64(1); i <= 11; i++ {
 		in.Freshness.Sources = append(in.Freshness.Sources, SourceInput{SourceID: i, Identifier: strconv.FormatInt(i, 10), LastSuccessfulSyncAt: &recent})

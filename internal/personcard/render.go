@@ -148,7 +148,15 @@ func RenderMarkdown(card Card, affiliation string) string {
 		b.WriteByte('\n')
 	}
 	if card.Freshness.Stale {
-		b.WriteString("Source freshness: stale\n")
+		staleSources := 0
+		for _, s := range card.Freshness.Sources {
+			if s.Stale {
+				staleSources++
+			}
+		}
+		if staleSources == 0 {
+			b.WriteString("Source freshness: stale\n")
+		}
 		for _, s := range card.Freshness.Sources {
 			if s.Stale {
 				fmt.Fprintf(&b, "Source %s: stale", EscapeMarkdown(s.Identifier))
