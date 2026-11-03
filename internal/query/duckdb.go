@@ -310,7 +310,7 @@ func newDuckDBEngine(ctx context.Context, analyticsDir string, sqlitePath string
 		log.Printf("[warn] Parquet cache missing columns %v — run 'msgvault build-cache --full-rebuild' to update", missing)
 	}
 	if !engine.archiveOnly {
-		if err := refreshUnsentMessageIDs(ctx, db, analyticsDir); err != nil {
+		if err := refreshRelationshipQuerySets(ctx, db, analyticsDir); err != nil {
 			return nil, errors.Join(err, engine.Close())
 		}
 	}
@@ -667,7 +667,7 @@ func (e *DuckDBEngine) ensureFreshOptionalCols(ctx context.Context, fp string) e
 		return err
 	}
 	if !e.archiveOnly {
-		err = refreshUnsentMessageIDs(ctx, e.db, e.analyticsDir)
+		err = refreshRelationshipQuerySets(ctx, e.db, e.analyticsDir)
 	}
 	e.optColsMu.Lock()
 	e.unsentRefreshErr = err

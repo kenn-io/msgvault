@@ -466,25 +466,38 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 	return nil
 }
 
-// refreshUnsentMessageIDs loads the entry-level exclusion set once per
-// committed cache publication. Querying sparse facts avoids roster expansion;
-// retaining only unsent IDs avoids a Parquet scan on every people search.
-func refreshUnsentMessageIDs(ctx context.Context, db *sql.DB, analyticsDir string) error {
+// refreshRelationshipQuerySets loads unsent message IDs and owner canonicals once
+// per committed cache publication, avoiding sparse-fact scans on each request.
+func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir string) error {
 	if analyticsDir == "" {
 		return nil
 	}
 	path := filepath.Join(analyticsDir, identityindex.DatasetActivity, "**", "*.parquet")
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin unsent message ID refresh: %w", err)
+		return fmt.Errorf("begin relationship query set refresh: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_unsent_messages AS SELECT message_id FROM read_parquet('"+quoteIdentitySQLPath(path)+"', hive_partitioning=true, union_by_name=true) WHERE canonical_id IS NULL AND unsent")
 	if err != nil {
 		return errors.Join(fmt.Errorf("load unsent message IDs: %w", err), tx.Rollback())
 	}
+	// Source-native is_from_me messages can identify an owner absent from owner_participants.
+	_, err = tx.ExecContext(ctx, fmt.Sprintf(`CREATE OR REPLACE TEMP TABLE relationship_owner_canonicals AS
+  SELECT DISTINCT coalesce(c.canonical_id, o.participant_id) AS canonical_id
+  FROM read_parquet('%s') o
+  LEFT JOIN read_parquet('%s') c ON c.participant_id = o.participant_id
+  UNION
+  SELECT DISTINCT canonical_id FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
+  WHERE canonical_id IS NOT NULL AND is_owner`,
+		quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")),
+		quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet")),
+		quoteIdentitySQLPath(path)))
+	if err != nil {
+		return errors.Join(fmt.Errorf("load relationship owner canonicals: %w", err), tx.Rollback())
+	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit unsent message ID refresh: %w", err)
+		return fmt.Errorf("commit relationship query set refresh: %w", err)
 	}
 	return nil
 }
