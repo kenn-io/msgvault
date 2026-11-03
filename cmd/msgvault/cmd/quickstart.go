@@ -17,6 +17,7 @@ var quickstartCmd = &cobra.Command{
 	Short: "Print a quickstart guide for AI agents",
 	Long: `Print a markdown quickstart guide explaining how to use the msgvault CLI.
 
+Use --mcp to print the MCP connection and safety guide instead.
 Both guides work offline, before any config or archive exists.
 
 Example:
