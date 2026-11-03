@@ -148,10 +148,6 @@ func (c *Client) tokenError(ctx context.Context, err error) error {
 	return errors.New("line: token request failed")
 }
 
-func (c *Client) send(ctx context.Context, method, base, path string, body []byte, contentType, token string) (*http.Response, error) {
-	return c.sendWithHTTPClient(ctx, method, base, path, body, contentType, token, c.http, "")
-}
-
 func (c *Client) sendWithHTTPClient(ctx context.Context, method, base, path string, body []byte, contentType, token string, client *http.Client, retryKey string) (*http.Response, error) {
 	request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(body))
 	if err != nil {
