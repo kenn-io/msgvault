@@ -25,6 +25,7 @@ export default defineConfig({
     { name: 'browser', testIgnore: [...e2eSpecs, ...virtualizerSpecs] },
     {
       name: 'virtualizer',
+      dependencies: ['browser'],
       testMatch: virtualizerSpecs,
       // Deep virtualizer fixtures intentionally exercise tens of thousands of rows.
       // Serial execution keeps their timing and visual rasterization deterministic
