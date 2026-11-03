@@ -104,7 +104,6 @@
         </p>
       {/if}
       {#if !loading && !failed && coverageIncomplete}
-        <p class="note">More archive history remains.</p>
         {#if checkMoreFailed}<p role="alert">Couldn't check more archive history.</p>{/if}
         <Button size="sm" surface="outline" label={checkingMore ? 'Checking…' : 'Check more'} disabled={checkingMore} onclick={checkMore} />
       {/if}

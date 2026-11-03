@@ -106,8 +106,7 @@ describe("PersonOpenLoops", () => {
   it("warns when the scan could not cover all stored originals", async () => {
     const { client } = clientFor([loop()], false, 0, true);
     const view = render(PersonOpenLoops, { client, personID: 7 });
-    expect(await screen.findByText("More archive history remains.")).toBeDefined();
-    expect(screen.getByRole("button", { name: "Check more" })).toBeDefined();
+    expect(await screen.findByRole("button", { name: "Check more" })).toBeDefined();
     view.unmount();
 
     const empty = clientFor([], false, 0, true);
