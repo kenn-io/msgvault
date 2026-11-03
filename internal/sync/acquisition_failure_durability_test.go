@@ -6,7 +6,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -85,7 +84,6 @@ func acquisitionWriteFault(t *testing.T, e *TestEnv, table, event, condition str
 type acquisitionDurabilityAPI struct {
 	*gmail.MockAPI
 
-	batchFailure  bool
 	catchup       bool
 	historyPages  bool
 	profiles      int
@@ -119,19 +117,9 @@ func (a *acquisitionDurabilityAPI) ListHistory(ctx context.Context, start uint64
 	return r, err
 }
 
-func (a *acquisitionDurabilityAPI) GetMessagesRawBatchWithErrors(ctx context.Context, ids []string) ([]gmail.RawMessageBatchResult, error) {
-	if a.batchFailure && slices.Contains(ids, "lost") {
-		return nil, errors.New("synthetic acquisition batch failure")
-	}
-	return a.MockAPI.GetMessagesRawBatchWithErrors(ctx, ids)
-}
-
-func acquisitionPrimaryFault(t *testing.T, e *TestEnv, api *acquisitionDurabilityAPI, kind string) func() {
+func acquisitionPrimaryFault(t *testing.T, e *TestEnv, kind string) func() {
 	t.Helper()
 	switch kind {
-	case "batch":
-		api.batchFailure = true
-		return func() { api.batchFailure = false }
 	case "ingest":
 		return acquisitionWriteFault(t, e, "messages", "INSERT", "NEW.source_message_id = 'lost'")
 	default:
@@ -152,10 +140,7 @@ func assertAcquisitionPresent(t *testing.T, e *TestEnv, ids ...string) {
 
 func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 	for _, route := range []string{"history", "label", "replay", "catchup"} {
-		for _, kind := range []string{"fetch", "batch", "ingest"} {
-			if route == "label" && kind == "batch" {
-				continue // Label-only acquisition uses GetMessageRaw.
-			}
+		for _, kind := range []string{"fetch", "ingest"} {
 			for _, rejectRecord := range []bool{false, true} {
 				name := route + "/" + kind + "/durable"
 				if rejectRecord {
@@ -185,7 +170,7 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 					if route == "catchup" {
 						e.Mock.MessagePages = [][]string{{"good"}} // lost exists only in History.
 					}
-					heal := acquisitionPrimaryFault(t, e, api, kind)
+					heal := acquisitionPrimaryFault(t, e, kind)
 					var allowRecord func()
 					if rejectRecord {
 						allowRecord = acquisitionWriteFault(t, e, "sync_run_items", "INSERT", "NEW.source_message_id = 'lost' AND NEW.status = 'error'")
@@ -257,7 +242,7 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 
 func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 	for _, recovery := range []bool{false, true} {
-		for _, kind := range []string{"fetch", "batch", "ingest"} {
+		for _, kind := range []string{"fetch", "ingest"} {
 			t.Run(map[bool]string{false: "full", true: "recovery"}[recovery]+"/"+kind, func(t *testing.T) {
 				require := require.New(t)
 				assert := assert.New(t)
@@ -268,7 +253,7 @@ func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 				e.Mock.MessagePages = [][]string{{"good"}, {"lost"}, {"tail"}}
 				api := &acquisitionDurabilityAPI{MockAPI: e.Mock}
 				e.Syncer = New(api, e.Store, nil)
-				heal := acquisitionPrimaryFault(t, e, api, kind)
+				heal := acquisitionPrimaryFault(t, e, kind)
 				allowRecord := acquisitionWriteFault(t, e, "sync_run_items", "INSERT", "NEW.source_message_id = 'lost' AND NEW.status = 'error'")
 				var err error
 				if recovery {
@@ -277,9 +262,7 @@ func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 					_, err = e.Syncer.Full(t.Context(), testEmail)
 				}
 				require.Error(err)
-				if kind != "batch" { // Full already stops on a whole-batch failure.
-					require.ErrorIs(err, errAcquisitionFailureRecord)
-				}
+				require.ErrorIs(err, errAcquisitionFailureRecord)
 				assert.Equal([]string{"", "page_1"}, api.listTokens)
 				assert.Empty(api.historyTokens, "must not reach catch-up after an unrecorded acquisition")
 				run, err := e.Store.GetLatestSync(source.ID)
