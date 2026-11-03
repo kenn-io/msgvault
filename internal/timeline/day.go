@@ -150,7 +150,7 @@ func (c *composer) collectDay() dayRead {
 		},
 		func() {
 			if c.src.Inventory != nil {
-				r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
+				r.inventory = readWithin(c.ctx, inventoryTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
 			}
 		},
 	)

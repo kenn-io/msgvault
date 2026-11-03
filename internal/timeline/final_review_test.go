@@ -438,3 +438,20 @@ func TestSnapshotReadWaitsForCanceledReaderAndPreservesTimeout(t *testing.T) {
 		})
 	}
 }
+
+func TestCounterpartPeopleDeduplicatesBySavedPersonAndUnsavedParticipant(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	people := counterpartPeople([]store.ActivityMessageCounterpart{
+		{PersonID: 7, ParticipantID: 71, DisplayName: "Alice", Address: "first@example.test"},
+		{PersonID: 7, ParticipantID: 72, DisplayName: "Alice", Address: "second@example.test"},
+		{ParticipantID: 80, DisplayName: "Unknown", Address: "unknown@example.test"},
+		{ParticipantID: 80, DisplayName: "Unknown", Address: "alias@example.test"},
+		{ParticipantID: 81, DisplayName: "Other", Address: "other@example.test"},
+	})
+	requirements.Len(people, 3)
+	assertions.Equal(int64(7), people[0].PersonID)
+	assertions.Equal(int64(71), people[0].ParticipantID)
+	assertions.Zero(people[1].PersonID)
+	assertions.Equal(int64(80), people[1].ParticipantID)
+	assertions.Equal(int64(81), people[2].ParticipantID)
+}

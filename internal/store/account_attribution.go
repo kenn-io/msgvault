@@ -669,7 +669,7 @@ func (s *Store) calendarAccountAddressTx(
 	ctx context.Context, tx *loggedTx, sourceID int64, sourceType, identifier string, syncConfig sql.NullString,
 ) (string, error) {
 	address := calendarMailbox(syncConfig)
-	if sourceType == "gmail" || sourceType == sourceTypeIMAP {
+	if sourceType == "gmail" || sourceType == sourceTypeIMAP || sourceType == "msmail" {
 		// Email invitations inherit the confirmed mailbox of their mail source.
 		address = accountSink(sourceType, identifier)
 	}

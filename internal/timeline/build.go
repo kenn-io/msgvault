@@ -16,6 +16,9 @@ import (
 )
 
 const requestTimeout = 10 * time.Second
+
+// Keep optional freshness work from using the shared deadline needed for display hydration.
+const inventoryTimeout = requestTimeout / 2
 const loopsTimeout = 5 * time.Second
 const maxBursts = 5000
 
@@ -373,12 +376,23 @@ func (c *composer) tierPeople(people []Person) []Person {
 }
 func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person {
 	people := []Person{}
-	seen := map[int64]bool{}
+	type identity struct {
+		personID      int64
+		participantID int64
+	}
+	seen := map[identity]bool{}
 	for _, p := range counterparts {
-		if p.Excluded != "" || seen[p.ParticipantID] {
+		if p.Excluded != "" {
 			continue
 		}
-		seen[p.ParticipantID] = true
+		key := identity{participantID: p.ParticipantID}
+		if p.PersonID > 0 {
+			key = identity{personID: p.PersonID}
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		name := p.DisplayName
 		if name == "" {
 			name = p.Address

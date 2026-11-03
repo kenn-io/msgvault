@@ -21,6 +21,27 @@ import (
 
 const singleDayEvent = `{"id":"planning","iCalUID":"planning@example.com","summary":"Planning","start":{"dateTime":"2026-10-22T10:00:00Z"},"end":{"dateTime":"2026-10-22T11:00:00Z"},"attendees":[{"email":"alice@example.com","displayName":"Alice"}]}`
 
+type blockingInventory struct{}
+
+func (blockingInventory) Build(ctx context.Context, _ time.Time) (Freshness, error) {
+	<-ctx.Done()
+	return Freshness{}, ctx.Err()
+}
+
+func TestBuildDaySlowInventoryLeavesTimeForDisplayHydration(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	f.src.Inventory = blockingInventory{}
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	assertions.NotNil(entries[0].Burst, "the activity loaded before the optional inventory timeout must still be hydrated")
+}
+
 func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
