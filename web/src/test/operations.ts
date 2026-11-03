@@ -51,7 +51,7 @@ export const documentStatus: DocumentIndexStatusResponse = {
   status: {
     profile_exists: true, profile_enabled: true, exact_consent: true,
     ready_owners: 4, eligible_owners: 5, missing_owners: 1, retry_owners: 0,
-    terminal_owners: 0, stored_plaintext_chunks: 12, provider_requests: 2,
+    terminal_owners: 0, stored_plaintext_chunks: 12, stored_plaintext_ranges: 0, provider_requests: 2,
     average_provider_latency_millis: 0, eligible_bytes: 0, eligible_occurrences: 5,
     extraction_attempts: 4, failed_attempts: 0, failures: [], failures_exhausted: false,
     ineligible_role_occurrences: 0, missing_provider_byte_reports: 0, processed_provider_units: 0,

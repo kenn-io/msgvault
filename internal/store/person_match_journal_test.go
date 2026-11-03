@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -29,6 +31,42 @@ func createScoringCandidate(t *testing.T, st *store.Store, suffix string) int64 
 	})
 	require.NoError(t, err)
 	return candidate.ID
+}
+
+// Raw SQL seeds ordered candidate IDs; claims and records still use the real API.
+func createScoringCandidates(t *testing.T, st *store.Store, count int) []int64 {
+	t.Helper()
+	addresses := make([]mime.Address, 2*count)
+	for i := range addresses {
+		addresses[i] = mime.Address{Email: fmt.Sprintf("score-%04d@example.test", i), Domain: "example.test"}
+	}
+	participants, err := st.EnsureParticipantsBatch(addresses)
+	require.NoError(t, err)
+	values := make([]string, count)
+	args := make([]any, 0, 2*count)
+	for i := range count {
+		left, right := participants[addresses[2*i].Email], participants[addresses[2*i+1].Email]
+		if left > right {
+			left, right = right, left
+		}
+		values[i] = "('participant', ?, 'participant', ?, 'email', 'archive_observation')"
+		args = append(args, left, right)
+	}
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(
+		`INSERT INTO identity_match_candidates (left_kind, left_id, right_kind, right_id, basis, source)
+		VALUES `+strings.Join(values, ",")+` RETURNING id`), args...)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	ids := make([]int64, 0, count)
+	for rows.Next() {
+		var id int64
+		require.NoError(t, rows.Scan(&id))
+		ids = append(ids, id)
+	}
+	require.NoError(t, rows.Err())
+	require.Len(t, ids, count)
+	slices.Sort(ids)
+	return ids
 }
 
 func scoredJudgmentInput() store.IdentityMatchJudgmentInput {
@@ -422,16 +460,19 @@ func TestIdentityMatchJudgmentWithdrawalPreservesPriorProviderFailures(t *testin
 func TestIdentityMatchJudgmentWrapsBeforeReportingDone(t *testing.T) {
 	for _, count := range []int{3, 258, 260} {
 		for _, eligibility := range []string{"changed_evidence", "expired_backoff", "expired_lease"} {
+			if eligibility == "changed_evidence" && count != 258 {
+				continue // The fuzz seeds cover counts 3 and 260.
+			}
 			t.Run(fmt.Sprintf("%d/%s", count, eligibility), func(t *testing.T) {
 				assert := assert.New(t)
 				require := require.New(t)
 				st := storetest.New(t).Store
-				ids := make([]int64, count)
+				ids := createScoringCandidates(t, st, count)
 				for i := range count {
-					ids[i] = createScoringCandidate(t, st, fmt.Sprintf("wrap-%d", i))
 					lease, err := st.ClaimNextIdentityMatchJudgmentContext(t.Context(), "worker", time.Hour)
 					require.NoError(err)
 					require.NotNil(lease)
+					require.Equal(ids[i], lease.CandidateID)
 					if i == 0 && eligibility == "expired_lease" {
 						continue
 					}

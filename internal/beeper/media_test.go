@@ -21,6 +21,7 @@ import (
 )
 
 func TestAttachmentMetadataPreservesSharedURLAndBoundsSourceTranscript(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	longTranscript := strings.Repeat("あ", 11_000) + "x"
 	m := &Message{
@@ -61,12 +62,14 @@ func TestAttachmentMetadataPreservesSharedURLAndBoundsSourceTranscript(t *testin
 }
 
 func TestAttachmentMetadataEmptyAndTranscriptAbsentStayNull(t *testing.T) {
+	t.Parallel()
 	assert.Empty(t, attachmentMetadataJSON(&Message{Type: typeImage, Attachments: []Attachment{{}}}, &Attachment{}))
 	assert.JSONEq(t, `{"shared_url":"https://example.com"}`, attachmentMetadataJSON(
 		&Message{Text: "https://example.com", Attachments: []Attachment{{}}}, &Attachment{}))
 }
 
 func TestImportAndRepairPreserveAttachmentTranscriptMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -174,6 +177,7 @@ func mediaImportOptions(t *testing.T) ImportOptions {
 }
 
 func TestImportDownloadsAttachment(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -238,6 +242,7 @@ func TestImportDownloadsAttachment(t *testing.T) {
 }
 
 func TestSetBeeperAttachmentRoleUsesSourceSemantics(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		attachment Attachment
@@ -273,6 +278,7 @@ func TestSetBeeperAttachmentRoleUsesSourceSemantics(t *testing.T) {
 }
 
 func TestPersistAttachmentsPreservesReusedMediaFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -324,6 +330,7 @@ func TestPersistAttachmentsPreservesReusedMediaFields(t *testing.T) {
 }
 
 func TestImportMediaPolicySkipsWithoutFetching(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -353,6 +360,7 @@ func TestImportMediaPolicySkipsWithoutFetching(t *testing.T) {
 }
 
 func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -467,6 +475,7 @@ func TestImportMediaFailureLeavesMarkerAndBackfillRepairs(t *testing.T) {
 }
 
 func TestImportMediaSizeCap(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -507,6 +516,7 @@ func TestImportMediaSizeCap(t *testing.T) {
 }
 
 func TestImportMediaSizeCapSaturatesReportedBytes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -532,6 +542,7 @@ func TestImportMediaSizeCapSaturatesReportedBytes(t *testing.T) {
 }
 
 func TestImportMediaSizeCapClampsExtremeDeclaredSize(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -561,6 +572,7 @@ func TestImportMediaSizeCapClampsExtremeDeclaredSize(t *testing.T) {
 }
 
 func TestImportMediaSizeCapUndeclaredSize(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -611,6 +623,7 @@ func TestImportMediaSizeCapUndeclaredSize(t *testing.T) {
 }
 
 func TestBackfillMediaCountsExistingSizeSkipOnceInMixedMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -642,6 +655,7 @@ func TestBackfillMediaCountsExistingSizeSkipOnceInMixedMessage(t *testing.T) {
 }
 
 func TestImportNoMediaSkipsDownloadsEntirely(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -670,6 +684,7 @@ func TestImportNoMediaSkipsDownloadsEntirely(t *testing.T) {
 }
 
 func TestImportClearsAttachmentsRemovedAtSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -704,6 +719,7 @@ func TestImportClearsAttachmentsRemovedAtSource(t *testing.T) {
 }
 
 func TestBackfillMediaClearsMarkerWhenAttachmentGone(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -738,6 +754,7 @@ func TestBackfillMediaClearsMarkerWhenAttachmentGone(t *testing.T) {
 }
 
 func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -802,6 +819,7 @@ func TestBackfillMediaTransientFetchErrorKeepsMarker(t *testing.T) {
 }
 
 func TestBackfillMediaAppliesTightenedPolicyBeforeFetchingPendingMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -872,6 +890,7 @@ func assetRequests(f *fakeBeeper) []string {
 // the few participant rows that were persisted and downloads exactly what the
 // participant limit excluded.
 func TestMediaPolicyArchivesAuthoritativeParticipantTotal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -918,6 +937,7 @@ func TestMediaPolicyArchivesAuthoritativeParticipantTotal(t *testing.T) {
 // sync and backfill fail closed until a detail fetch reads it, and then the
 // real size decides.
 func TestMediaPolicyFailsClosedWithoutParticipantTotal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -976,6 +996,7 @@ func TestMediaPolicyFailsClosedWithoutParticipantTotal(t *testing.T) {
 // the backfill must not download on them. A sync that visits the chat archives
 // the roster and the next backfill decides on it.
 func TestBackfillMediaFailsClosedOnConversationWithoutArchivedRoster(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -1029,6 +1050,7 @@ func TestBackfillMediaFailsClosedOnConversationWithoutArchivedRoster(t *testing.
 // media. A chat it cannot re-read stays pending, and a genuine direct chat
 // still downloads.
 func TestBackfillMediaRefreshesLegacyConversationTypeForDirectScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -1096,6 +1118,7 @@ func TestBackfillMediaRefreshesLegacyConversationTypeForDirectScope(t *testing.T
 }
 
 func TestBackfillMediaVerifiesAnchorFirst(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1130,6 +1153,7 @@ func TestBackfillMediaVerifiesAnchorFirst(t *testing.T) {
 }
 
 func TestBackfillMediaGoneMessageKeepsDownloadedRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1180,6 +1204,7 @@ func TestBackfillMediaGoneMessageKeepsDownloadedRows(t *testing.T) {
 }
 
 func TestImportMediaUnavailableIsTerminal(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1228,6 +1253,7 @@ func TestImportMediaUnavailableIsTerminal(t *testing.T) {
 }
 
 func TestImportBoundsRepeatedAssetAttemptsAcrossIncrementalAndReconcile(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1263,6 +1289,7 @@ func TestImportBoundsRepeatedAssetAttemptsAcrossIncrementalAndReconcile(t *testi
 }
 
 func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1309,6 +1336,7 @@ func TestBackfillMediaDefinitiveLossKeepsUnavailableRow(t *testing.T) {
 }
 
 func TestBackfillMediaRearmsLostAnchor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	f := newFakeBeeper(t)
@@ -1349,6 +1377,7 @@ func TestBackfillMediaRearmsLostAnchor(t *testing.T) {
 }
 
 func TestMediaTypeOf(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	cases := []struct {
 		name string
@@ -1378,6 +1407,7 @@ func TestMediaTypeOf(t *testing.T) {
 // retryable marker, and it becomes terminal only for an old message whose
 // not-found repeats on a separate, later run.
 func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
+	t.Parallel()
 	const assetURL = "mxc://beeper.local/photo1"
 	oldTimestamp := func() time.Time { return time.Now().Add(-assetNotFoundMaxAge - time.Hour).UTC() }
 
@@ -1521,6 +1551,7 @@ func TestAssetNotFoundBecomesTerminalOnlyOnConfirmedRepeat(t *testing.T) {
 
 // TestIsConfirmedAssetNotFound covers the previous-marker and age checks.
 func TestIsConfirmedAssetNotFound(t *testing.T) {
+	t.Parallel()
 	now := time.Now()
 	old := now.Add(-assetNotFoundMaxAge - time.Hour)
 	young := now.Add(-assetNotFoundMaxAge + time.Hour)

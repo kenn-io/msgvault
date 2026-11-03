@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -63,6 +64,23 @@ func relationshipCalendarMessage(t *testing.T, cmd tea.Cmd) peopleRelationshipLo
 	}
 	require.FailNow(t, "People relationship command did not return a load message")
 	return peopleRelationshipLoadedMsg{}
+}
+
+func TestPeopleOverviewDraftOnlySkipsRelationshipCalendar(t *testing.T) {
+	assert := assert.New(t)
+	contact := testPerson(7, "Draft recipient")
+	contact.ActivityCount = 0
+	backend := &fakePeopleRelationshipBackend{
+		fakePeopleBackend: &fakePeopleBackend{},
+	}
+	model := peopleContentModel(backend, &contact)
+	cmd := model.beginPeopleRelationshipLoad()
+	assert.Nil(cmd)
+	overview := stripANSI(strings.Join(model.peopleContactTabLines(), "\n"))
+	assert.Contains(overview, "No sent or received messages with this contact yet.")
+	assert.NotContains(overview, "has not loaded")
+	assert.NotContains(overview, "Press r to retry")
+	assert.NotContains(overview, "Relationship")
 }
 
 func TestPeopleOverviewLoadsRelationshipForObservedContact(t *testing.T) {

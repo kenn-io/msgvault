@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/gmail"
+
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
 // EventInput contains writable event fields. Pointers distinguish an omitted
@@ -30,14 +32,8 @@ type EventInput struct {
 	Reminders        *Reminders     `json:"reminders,omitzero"`
 }
 
-type Reminder struct {
-	Method  string `json:"method"`
-	Minutes int    `json:"minutes"`
-}
-type Reminders struct {
-	UseDefault bool       `json:"useDefault"`
-	Overrides  []Reminder `json:"overrides"`
-}
+type Reminder = gcalmodel.Reminder
+type Reminders = gcalmodel.Reminders
 
 type MutationOptions struct {
 	SendUpdates string
@@ -181,12 +177,10 @@ func mutationPath(path string, opts MutationOptions) (string, error) {
 	return path + "?" + url.Values{"sendUpdates": {updates}}.Encode(), nil
 }
 func decodeControlEvent(body []byte) (*Event, error) {
-	var wire wireEvent
-	if err := json.Unmarshal(body, &wire); err != nil {
+	ev, err := gcalmodel.DecodeEvent(body)
+	if err != nil {
 		return nil, fmt.Errorf("%w; inspect the event before retrying; decode response: %w", ErrOutcomeUnknown, err)
 	}
-	ev := wire.toEvent()
-	ev.Raw = append(ev.Raw[:0], body...)
 	if ev.ID == "" {
 		return nil, fmt.Errorf("%w; response missing event ID; inspect the calendar before retrying", ErrOutcomeUnknown)
 	}

@@ -77,6 +77,7 @@ func preparePendingProcess(t *testing.T, worker *MediaSubmitter, destination str
 }
 
 func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "profile-crash", asset: "mxc://beeper.local/profile-crash",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 72)})
@@ -137,6 +138,7 @@ func TestStoredMediaProfileChangeRecoversPreparedProcessReceipt(t *testing.T) {
 }
 
 func TestStoredMediaPreparedProcessAfterRevocation(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"deleted", "replaced"} {
 		t.Run(change, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
@@ -207,6 +209,7 @@ func TestStoredMediaPreparedProcessAfterRevocation(t *testing.T) {
 }
 
 func TestStoredMediaProfileChangeRetiresUnpreparedProcess(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "profile-unprepared", asset: "mxc://beeper.local/profile-unprepared",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 73)})
@@ -243,6 +246,7 @@ func TestStoredMediaProfileChangeRetiresUnpreparedProcess(t *testing.T) {
 }
 
 func TestBeeperMediaDailyRescan(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "original", data: syntheticWAV(800, 24)})
@@ -284,6 +288,7 @@ func TestBeeperMediaDailyRescan(t *testing.T) {
 }
 
 func TestBeeperMediaDiscoveryReadsOutsideGate(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "SQLite authorizer observes reads under the operation gate")
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -316,6 +321,7 @@ func TestBeeperMediaDiscoveryReadsOutsideGate(t *testing.T) {
 }
 
 func TestBeeperMediaRawReadFailure(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 26)})
@@ -352,6 +358,7 @@ func TestBeeperMediaRawReadFailure(t *testing.T) {
 }
 
 func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
+	t.Parallel()
 	t.Run("retain-source-gap", func(t *testing.T) {
 		require, assert := require.New(t), assert.New(t)
 		world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/retain-gap",
@@ -890,6 +897,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 }
 
 func TestBeeperMediaArtifactReactionRefresh(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/reaction-refresh",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "reaction transcript", data: syntheticWAV(800, 40)})
@@ -940,6 +948,7 @@ func TestBeeperMediaArtifactReactionRefresh(t *testing.T) {
 }
 
 func TestBeeperMediaArtifactRevisionChangeDoesNotReuseReceipt(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/revision-change",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "revision transcript", data: syntheticWAV(800, 43)})
@@ -1025,6 +1034,7 @@ func TestBeeperMediaArtifactRevisionChangeDoesNotReuseReceipt(t *testing.T) {
 }
 
 func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/final-read-change",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "final read transcript", data: syntheticWAV(800, 41)})
@@ -1094,6 +1104,7 @@ func TestBeeperMediaArtifactFinalReadSourceChangeRetries(t *testing.T) {
 }
 
 func TestBeeperMediaProcessDescriptorRefresh(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		mutate       func(string) string
@@ -1232,6 +1243,7 @@ func findProcessDelivery(t *testing.T, identities []processDeliveryIdentity, key
 }
 
 func TestBeeperMediaProcessActionFence(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.example/process-action-fence",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "fence transcript", data: syntheticWAV(800, 45)})
@@ -1296,6 +1308,7 @@ func TestBeeperMediaProcessActionFence(t *testing.T) {
 }
 
 func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t,
 		voiceSpec{id: "voice1", asset: "mxc://beeper.example/reregister-one", mime: "audio/wav",
@@ -1371,6 +1384,7 @@ func TestBeeperMediaFullRescanRevokesAfterReregistration(t *testing.T) {
 }
 
 func TestBeeperMediaFullRescanRevokesAllNonRevokedStates(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t,
 		voiceSpec{id: "pending", asset: "mxc://beeper.example/full-scan-pending", mime: "audio/wav",
@@ -1462,6 +1476,7 @@ func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool
 }
 
 func TestBeeperMediaOperatorRequired(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "words", data: syntheticWAV(800, 27)})
@@ -1493,6 +1508,7 @@ func TestBeeperMediaOperatorRequired(t *testing.T) {
 }
 
 func TestBeeperMediaTimestampOffset(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	candidate := store.BeeperMediaCandidate{SourceType: "beeper", SourceIdentifier: "signal",
 		SourceConversationID: "chat", SourceMessageID: "message-1", SourceAttachmentID: "beeper:mxc://audio",

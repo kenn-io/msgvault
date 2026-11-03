@@ -419,6 +419,14 @@ func TestExistingAPIKeyAuthenticationCompatibility(t *testing.T) {
 			name:    "bearer authorization",
 			headers: http.Header{"Authorization": []string{"Bearer " + apiKey}},
 		},
+		{
+			name:    "lowercase bearer",
+			headers: http.Header{"Authorization": []string{"bearer " + apiKey}},
+		},
+		{
+			name:    "uppercase bearer",
+			headers: http.Header{"Authorization": []string{"BEARER " + apiKey}},
+		},
 	}
 
 	for _, tt := range tests {

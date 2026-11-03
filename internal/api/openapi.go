@@ -386,7 +386,10 @@ import (
 // 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity.
 // 3.33.0 adds the read-only person tier preview and explanation routes.
 // 3.34.0 adds answered-call counts to person tier signals.
-const APISchemaVersion = "3.34.0"
+// 3.35.0 adds archived calendar occurrence listing.
+// 3.36.0 adds stored plaintext range counts to document indexing status.
+// 3.37.0 omits first_at and last_at on person summaries with no sent or received messages, and returns participants with no sent or received messages instead of 404.
+const APISchemaVersion = "3.37.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -997,10 +1000,13 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		return
 	}
 	schemas := doc.Components.Schemas.Map()
-	// These response properties stay required in JSON, but an empty string is
-	// meaningful for canonical aliases, direct routes, unresolved routes, and
-	// candidates whose saved display name has been cleared.
+	// These response properties stay required in JSON, but allow empty strings.
 	for _, field := range []struct{ schema, property string }{
+		{"Attendee", "email"},
+		{"Attendee", "display_name"},
+		{"CalendarOccurrence", "start_date"},
+		{"CalendarOccurrence", "end_date"},
+		{"CalendarOccurrence", "subject"},
 		{"ContactCandidate", "display_name"},
 		{"MediaAttachmentResult", "filename"},
 		{"MediaAttachmentResult", "containing_title"},

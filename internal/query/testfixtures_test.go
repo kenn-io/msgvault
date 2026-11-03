@@ -1011,8 +1011,10 @@ func escapePath(p string) string {
 // writeTableParquet writes a single table's data to a Parquet file using DuckDB.
 func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, empty bool) {
 	tb.Helper()
-	valueRows, err := db.Query("SELECT * FROM (VALUES " + values + ") LIMIT 0")
+	_, err := db.Exec("CREATE TABLE fixture_values AS SELECT * FROM (VALUES " + values + ")")
 	require.NoError(tb, err, "parse fixture values for %s", path)
+	valueRows, err := db.Query("SELECT * FROM fixture_values LIMIT 0")
+	require.NoError(tb, err, "read fixture values for %s", path)
 	defer func() { _ = valueRows.Close() }()
 	valueColumns, err := valueRows.Columns()
 	require.NoError(tb, err, "read fixture value arity for %s", path)
@@ -1033,12 +1035,14 @@ func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, 
 	}
 	query := fmt.Sprintf(`
 			COPY (
-				SELECT %s FROM (VALUES %s) AS t(%s)%s
+				SELECT %s FROM fixture_values AS t(%s)%s
 			) TO '%s' (FORMAT PARQUET)
-		`, projection, values, columns, whereClause, path)
+		`, projection, columns, whereClause, path)
 
 	_, err = db.Exec(query)
 	require.NoError(tb, err, "create parquet %s", path)
+	_, err = db.Exec("DROP TABLE fixture_values")
+	require.NoError(tb, err, "drop fixture values for %s", path)
 }
 
 // ---------------------------------------------------------------------------

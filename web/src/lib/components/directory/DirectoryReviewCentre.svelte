@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, SegmentedControl, SelectDropdown, Spinner } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, PageHeader, SegmentedControl, SelectDropdown, Spinner } from '@kenn-io/kit-ui';
   import { tick } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -14,7 +14,6 @@
   import IdentityDecisionModal from './IdentityDecisionModal.svelte';
   import FactReviewPanel from './FactReviewPanel.svelte';
   import RelationshipReviewQueue from './RelationshipReviewQueue.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import type { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
   import PersonBindingConflictModal from './PersonBindingConflictModal.svelte';
   import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
@@ -131,17 +130,16 @@
 </script>
 
 <main class="review-centre" aria-label="Reviews">
-  <PageHeader title="Reviews" description="Decide which identities and facts belong together.">
-    {#snippet view()}
-      <SegmentedControl
-        options={reviewKindOptions}
-        value={controller.reviewKind}
-        onchange={selectReviewKind}
-        ariaLabel="Review type"
-        disabled={!!activeDecision}
-      />
-    {/snippet}
-  </PageHeader>
+  <PageHeader title="Reviews" description="Decide which identities and facts belong together." />
+  <div>
+    <SegmentedControl
+      options={reviewKindOptions}
+      value={controller.reviewKind}
+      onchange={selectReviewKind}
+      ariaLabel="Review type"
+      disabled={!!activeDecision}
+    />
+  </div>
 
   {#if controller.reviewKind === 'identity'}
     <section class="identity-review" aria-labelledby="identity-review-heading" data-review-section>
