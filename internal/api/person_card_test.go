@@ -595,7 +595,7 @@ func TestPersonCardEventFactUsesStaleSourceAndCollectionClock(t *testing.T) {
 	requirements := require.New(t)
 
 	srv, st, id, _ := newPersonFactAPIFixture(t)
-	now := time.Now().UTC().Add(time.Minute)
+	now := personFactAPINow.Add(24 * time.Hour)
 	p, err := st.GetPersonContext(t.Context(), id)
 	requirements.NoError(err)
 	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
