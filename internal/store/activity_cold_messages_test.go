@@ -73,8 +73,8 @@ func TestColdActivityMessagesKeysetScopeAndGroupNoise(t *testing.T) {
 			q.AfterKey = &store.ActivityKey{OccurredAt: last.OccurredAt, MessageID: last.MessageID}
 			requirements.Less(pageNumber, 9, "keyset failed to finish")
 		}
-		want := slices.Clone(ids)
-		want[0] = countedCopyID // The non-list copy is the counted representative.
+		want := slices.Clone(ids[1:])                // The counted non-list copy replaces the listed duplicate.
+		want = slices.Insert(want, 1, countedCopyID) // Keep message-ID tie ordering.
 		if descending {
 			slices.Reverse(want)
 		}
