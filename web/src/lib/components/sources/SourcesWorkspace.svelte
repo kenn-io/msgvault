@@ -414,7 +414,7 @@
     </div>{/if}
   {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
-    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" /><CommandLine command={ADD_SOURCE_COMMAND} />{/if}
+    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" />{/if}
   {:else}
     <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
@@ -490,9 +490,8 @@
             </td>
             <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
               {#if controller.statusError}<span class="muted" role="alert">{controller.statusError}</span><Button size="sm" label="Retry" onclick={() => void controller.retryStatus()} />{/if}
-              {#if controller.syncUnknown}<span class="muted" role="alert">Sync state unknown.</span><Button size="sm" label="Retry CardDAV sync state" disabled={controller.syncPending} onclick={() => void controller.retrySyncState()} />{/if}
+              {#if controller.syncUnknown}<span class="muted" role="alert">Sync state unknown.</span><Button size="sm" label="Retry sync state" disabled={controller.syncPending} onclick={() => void controller.retrySyncState()} />{/if}
               {#if controller.syncError}<span class="muted" role="alert">{controller.syncError}</span>{/if}
-              {#if controller.syncStatus}<span class="muted" role="status">{controller.syncStatus}</span>{/if}
             </div></td>
             <td>{@render lastGood(contactLastGood(connection.status))}</td>
             <td class="action">

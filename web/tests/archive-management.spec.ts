@@ -85,7 +85,7 @@ for (const failure of ['mail sync', 'contacts sync', 'contacts status']) {
     await expect(alert).toBeInViewport();
     if (failure === 'contacts status') {
       await expect(panel.getByRole('alert', { name: 'Sync state', exact: true })).toBeInViewport();
-      await expect(panel.getByRole('button', { name: 'Retry CardDAV sync state', exact: true })).toBeInViewport();
+      await expect(panel.getByRole('button', { name: 'Retry sync state', exact: true })).toBeInViewport();
     } else {
       await expect(panel.getByRole('button', { name: 'Sync now', exact: true })).toBeInViewport();
     }
