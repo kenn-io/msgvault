@@ -19,6 +19,7 @@ type coldActivityMessage struct {
 	channel   ActivityChannel
 	copyKey   string
 	copies    int
+	counted   bool
 }
 
 type coldActivityGroup struct {
@@ -251,6 +252,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 			g.burst.Channel = m.channel
 		}
 		counted := coldActivityCounted(m, q.Subject)
+		m.counted = counted
 		// A saved person's recipient aliases inherit the strongest contact
 		// role; noise follows original sender membership, as in the warm SQL.
 		nonNoise := (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender
@@ -266,7 +268,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		g.messages = append(g.messages, m)
 	}
 	for _, g := range groups {
-		finishColdActivityGroup(g)
+		finishColdActivityGroup(g, q.MergeCopies)
 	}
 	return groups, filters, nil
 }
@@ -289,7 +291,7 @@ func coldActivityCounted(m coldActivityMessage, subject ActivitySubject) bool {
 	return false
 }
 
-func finishColdActivityGroup(g *coldActivityGroup) {
+func finishColdActivityGroup(g *coldActivityGroup, mergeCopies bool) {
 	slices.SortFunc(g.messages, func(a, b coldActivityMessage) int {
 		if n := b.dating.OccurredAt.Compare(a.dating.OccurredAt); n != 0 {
 			return n
@@ -298,6 +300,12 @@ func finishColdActivityGroup(g *coldActivityGroup) {
 	})
 	counterparts := map[int64]ActivityMessageCounterpart{}
 	for _, m := range g.messages {
+		if mergeCopies {
+			g.burst.Messages = append(g.burst.Messages, ActivityBurstMessage{
+				MessageID: m.ID, CopyKey: m.copyKey, OccurredAt: m.dating.OccurredAt, Direction: m.Direction,
+				Counted: m.counted, CopyCount: m.copies, Counterparts: m.Counterparts,
+			})
+		}
 		if g.burst.AnchorMessageID == 0 {
 			g.burst.AnchorMessageID = m.ID
 		}

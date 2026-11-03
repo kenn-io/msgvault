@@ -166,6 +166,15 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 			if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
 				row.Event.Status = meetingCancelledStatus
 			}
+		} else if len(masters) == 1 && row.OverrideRemoved && masters[0].Event.Kind == meetingSingleKind {
+			master := masters[0]
+			if !calendarSingleMatchesOriginal(master.Event, *row.Event.Original) {
+				return linkOccurrence{}, sql.ErrNoRows
+			}
+			if master.Event.Start == nil || master.Event.End == nil {
+				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(master.Event), sql.ErrNoRows)
+			}
+			return occurrenceFromRow(master, ""), nil
 		} else if len(masters) == 1 && (row.Event.Original.AllDay || row.Event.Original.Instant.Nanosecond() == 0) {
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 		} else {
@@ -220,7 +229,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	if x, ok := calendarExceptionOverrides(moved)[ref.Key]; ok {
+	if x, ok := calendarExceptionOverrides(row, moved)[ref.Key]; ok {
 		if x.Event.Start != nil && x.Event.End != nil {
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)
@@ -250,6 +259,13 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		return linkOccurrence{}, err
 	}
 	return linkOccurrence{}, sql.ErrNoRows
+}
+
+func calendarSingleMatchesOriginal(event calevent.Event, original calrecur.Identity) bool {
+	if original.AllDay {
+		return event.AllDay && event.StartDate == original.Date
+	}
+	return !event.AllDay && event.Start != nil && event.Start.Equal(original.Instant)
 }
 
 func seriesExceptionBounds(master, exception CalendarEventRow) (time.Time, time.Time, error) {

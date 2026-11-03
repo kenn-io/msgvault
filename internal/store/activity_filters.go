@@ -215,7 +215,8 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  FROM message_flags e
  ), copies AS (
  SELECT e.*,ROW_NUMBER() OVER (PARTITION BY ` + s.activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + ` ORDER BY counted DESC,source_id,message_id) AS copy_rank,
- COUNT(*) OVER (PARTITION BY ` + s.activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + `) AS copy_count
+ COUNT(*) OVER (PARTITION BY ` + s.activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + `) AS copy_count,
+ ` + s.activityCopyKeySQL("channel", "rfc822_message_id", "message_id") + ` AS copy_key
  FROM scored e
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
 	return query, args, nil
