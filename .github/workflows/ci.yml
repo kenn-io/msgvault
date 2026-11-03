@@ -389,6 +389,15 @@ jobs:
       - name: Check, test, and build frontend
         run: make web-check web-test web-build
 
+      - name: Upload Vitest report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: vitest-unit-attempt-${{ github.run_attempt }}
+          path: web/test-results/vitest/unit.json
+          retention-days: 14
+          if-no-files-found: ignore
+
       # The e2e specs generate their archive fixture by running a Go test;
       # compile it here so the first Playwright test doesn't pay the cold
       # cgo build inside its own timeout.
@@ -398,7 +407,17 @@ jobs:
       - name: Run deterministic browser and visual tests
         env:
           PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
+          MSGVAULT_PLAYWRIGHT_SUITE: browser
         run: make web-test-browser
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-browser-attempt-${{ github.run_attempt }}
+          path: web/test-results/playwright/browser.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v7.0.2
         if: failure()
@@ -458,7 +477,17 @@ jobs:
       - name: Run accessibility, keyboard, security, and mixed-archive gates
         env:
           PW_TEST_CONNECT_WS_ENDPOINT: ws://127.0.0.1:3000/
+          MSGVAULT_PLAYWRIGHT_SUITE: e2e
         run: make web-e2e
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: playwright-e2e-attempt-${{ github.run_attempt }}
+          path: web/test-results/playwright/e2e.json
+          retention-days: 14
+          if-no-files-found: ignore
 
       - uses: actions/upload-artifact@v7.0.2
         if: failure()

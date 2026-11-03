@@ -263,6 +263,12 @@ element. Successful shards print named passing and skipped test outcomes,
 including subtests, followed by the package line `go test` prints. Failed
 shards print the full verbose test output, then the package's `FAIL` line.
 
+In CI, Vitest and Playwright retry a failed test twice and write JSON reports
+under `web/test-results/vitest/` and `web/test-results/playwright/`. CI uploads
+each report as a `vitest-<suite>-attempt-<n>` or
+`playwright-<suite>-attempt-<n>` artifact. `MSGVAULT_PLAYWRIGHT_SUITE` names a
+Playwright run's report.
+
 ## Lint & Format
 
 ```bash
