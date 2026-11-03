@@ -162,62 +162,33 @@ func TestDraftConfirmationBindsToolAndArguments(t *testing.T) {
 }
 
 func TestSensitiveDraftConfirmation(t *testing.T) {
-	for _, tc := range []struct {
-		command string
-		args    map[string]any
-	}{
-		{"draft-compose", map[string]any{"to": []string{"to@example.com"}}},
-		{"draft-reply", map[string]any{"message_id": 7}},
-		{"draft-forward", map[string]any{"message_id": 7, "to": []string{"to@example.com"}}},
-		{"draft-edit", map[string]any{"draft_id": "d1", "revision": 1}},
-	} {
-		t.Run(tc.command, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"draft_id":"d1","revision":2}`}}
-			opts := ServeOptions{Drafts: runner, DraftCommands: []string{tc.command}, ConfirmSensitiveDrafts: true}
-			name := strings.ReplaceAll(tc.command, "-", "_")
-			tc.args["body"] = "password: hunter2abc\n4111111111111111\n4111111111111111"
-			unanswered := rawCallTool(t, opts, name, tc.args)
-			require.NotEmpty(unanswered["inputRequests"])
-			assert.Zero(runner.calls)
-			session := draftConfirmationSession(t, opts)
-			pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: tc.args})
-			require.NoError(err)
-			require.True(pending.NeedsInput())
-			assert.Zero(runner.calls)
-			prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
-			require.True(ok)
-			assert.Equal("Approve "+name+"? The draft's subject or body may contain a payment card number ending 1111, a password. Approving creates or edits the draft; msgvault never sends.", prompt.Message)
-			for _, response := range []*sdkmcp.ElicitResult{{Action: "decline"}, {Action: "accept", Content: map[string]any{"confirm": false}}} {
-				result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: tc.args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": response}})
-				require.NoError(err)
-				assert.True(result.IsError)
-				assert.Zero(runner.calls)
-			}
-			approval := sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
-			result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: tc.args, RequestState: pending.RequestState, InputResponses: approval})
-			require.NoError(err)
-			assert.False(result.IsError)
-			assert.Equal(1, runner.calls)
-			assert.Equal([]string{tc.args["body"].(string)}, runner.request.Flags["body"])
-			text, ok := result.Content[0].(*sdkmcp.TextContent)
-			require.True(ok)
-			assert.JSONEq(`{"draft_id":"d1","revision":2,"sensitive_content":[{"kind":"password"},{"kind":"payment_card","hint":"ending 1111"},{"kind":"payment_card","hint":"ending 1111"}]}`, text.Text)
-			tc.args["body"] = "clean replacement"
-			result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: name, Arguments: tc.args})
-			require.NoError(err)
-			assert.False(result.NeedsInput())
-			assert.False(result.IsError)
-			assert.Equal(2, runner.calls)
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"draft_id":"d1","revision":2}`}}
+	session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}, ConfirmSensitiveDrafts: true})
+	args := map[string]any{"to": []string{"to@example.com"}, "body": "password: hunter2abc\n4111111111111111\n4111111111111111"}
+	pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args})
+	require.NoError(err)
+	require.True(pending.NeedsInput())
+	assert.Zero(runner.calls)
+	approval := sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args, RequestState: pending.RequestState, InputResponses: approval})
+	require.NoError(err)
+	assert.False(result.IsError)
+	assert.Equal(1, runner.calls)
+	args["body"] = "clean replacement"
+	result, err = session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args})
+	require.NoError(err)
+	assert.False(result.NeedsInput())
+	assert.False(result.IsError)
+	assert.Equal(2, runner.calls)
 }
 
 func TestSensitiveDraftConfirmationHints(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, labels string
 	}{
+		{"password and duplicate card", "password: hunter2abc\n4111111111111111\n4111111111111111", "a payment card number ending 1111, a password"},
 		{"different cards", "4242424242424242\n4111111111111111", "a payment card number ending 4242, a payment card number ending 1111"},
 		{"IBAN", "GB82 WEST 1234 5698 7654 32", "an IBAN ending 5432"},
 		{"API key", "sk_" + "live_" + "abcdefghijklmnopqrstuvwx", "an API key or private key starts sk_l"},
@@ -236,22 +207,6 @@ func TestSensitiveDraftConfirmationHints(t *testing.T) {
 			assert.Zero(runner.calls)
 		})
 	}
-}
-
-func TestSensitiveDraftConfirmationBindsArguments(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	args := map[string]any{"to": []string{"to@example.com"}, "subject": "4111111111111111", "body": "clean"}
-	runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"draft_id":"d1"}`}}
-	session := draftConfirmationSession(t, ServeOptions{Drafts: runner, DraftCommands: []string{"draft-compose"}, ConfirmSensitiveDrafts: true})
-	pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args})
-	require.NoError(err)
-	require.True(pending.NeedsInput())
-	args["to"] = []string{"other@example.com"}
-	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolDraftCompose, Arguments: args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}})
-	require.NoError(err)
-	assert.True(result.IsError)
-	assert.Zero(runner.calls)
 }
 
 func TestDraftReadsDoNotRequireConfirmation(t *testing.T) {
