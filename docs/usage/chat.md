@@ -593,6 +593,7 @@ the automatic body format. The tool returns an exact `total`, paginated `data`,
 and a `char_offset`, `line`, and centered `snippet` for every match. Offsets
 index that body. Feed `char_offset` to `get_message` as
 `center_at` to read a larger body window around that occurrence.
+Offsets index the body as returned; for HTML-only mail, archiving remote images can change the HTML and shift offsets from an earlier call.
 
 The tool defaults to `limit = 10`. For semantic search across the archive, use
 `semantic_search_messages`; `msgvault mcp` does not expose a vector mode for
