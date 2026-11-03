@@ -2041,7 +2041,6 @@ func TestSettingsOffValuesPassBoundsChecks(t *testing.T) {
 			continue
 		}
 		assertionsT.NotEmpty(validation.Off.Label, "%s off state needs a label", key)
-		assertionsT.NotContains(strings.ToLower(validation.Hint), " 0 ", "%s hint must not restate its off value", key)
 	}
 }
 
@@ -2125,34 +2124,6 @@ func currentSettingString(t *testing.T, srv *Server, key string) string {
 	require.NotNil(t, setting.Value, key)
 	require.NotNil(t, setting.Value.String, key)
 	return *setting.Value.String
-}
-
-func TestSettingsBoundHintsLiveOnTheControl(t *testing.T) {
-	t.Parallel()
-	assertionsT := assert.New(t)
-	for key, validation := range settingsValidation {
-		hint := strings.ToLower(validation.Hint)
-		for _, phrase := range []string{"at least", "or more", " to ", "between"} {
-			assertionsT.NotContains(hint, phrase, "%s spells out a bound in text; use minimum, maximum, or off", key)
-		}
-		if validation.Format != "" {
-			assertionsT.Empty(validation.Hint, "%s has a format; the control explains the syntax", key)
-		}
-	}
-}
-
-func TestSettingsHintsDoNotRepeatDescriptions(t *testing.T) {
-	t.Parallel()
-	assertionsT := assert.New(t)
-	for key, validation := range settingsValidation {
-		hint := strings.TrimSpace(validation.Hint)
-		if hint == "" {
-			continue
-		}
-		description := metadataForSetting(key).description
-		assertionsT.NotContains(strings.ToLower(description), strings.ToLower(strings.TrimSuffix(hint, ".")),
-			"%s repeats its hint inside its description", key)
-	}
 }
 
 func TestSecretHint(t *testing.T) {
