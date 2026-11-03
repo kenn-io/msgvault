@@ -751,6 +751,230 @@ type BodySearchContext struct {
 	MessageID                int64    `json:"message_id"`
 }
 
+type BroadcastDetail struct {
+	AdAccountID               string                   `json:"ad_account_id" validate:"required"`
+	BudgetWarning             bool                     `json:"budget_warning"`
+	CampaignDays              int64                    `json:"campaign_days"`
+	CampaignEndsAt            *time.Time               `json:"campaign_ends_at,omitempty"`
+	CampaignID                string                   `json:"campaign_id" validate:"required"`
+	CampaignReadyAt           *time.Time               `json:"campaign_ready_at,omitempty"`
+	CreatedAt                 time.Time                `json:"created_at" validate:"required"`
+	DailyBudgetCents          int64                    `json:"daily_budget_cents"`
+	ID                        string                   `json:"id" validate:"required"`
+	LastError                 string                   `json:"last_error" validate:"required"`
+	MessageJSON               jsontext.Value           `json:"message_json"`
+	MinConversationGapSeconds int64                    `json:"min_conversation_gap_seconds"`
+	Name                      string                   `json:"name" validate:"required"`
+	PageID                    string                   `json:"page_id" validate:"required"`
+	PlanDigest                string                   `json:"plan_digest" validate:"required"`
+	Recipients                []BroadcastRecipientView `json:"recipients" validate:"required"`
+	Revision                  int64                    `json:"revision"`
+	SourceID                  int64                    `json:"source_id"`
+	State                     string                   `json:"state" validate:"required"`
+	UpdatedAt                 time.Time                `json:"updated_at" validate:"required"`
+	WorstDailyCents           float64                  `json:"worst_daily_cents"`
+	WorstWeeklyCents          float64                  `json:"worst_weekly_cents"`
+}
+
+func (b BroadcastDetail) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(b.AdAccountID, "required"); err != nil {
+		errors = errors.Append("AdAccountID", err)
+	}
+	if err := typesValidator.Var(b.CampaignID, "required"); err != nil {
+		errors = errors.Append("CampaignID", err)
+	}
+	if err := typesValidator.Var(b.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(b.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(b.LastError, "required"); err != nil {
+		errors = errors.Append("LastError", err)
+	}
+	if v, ok := any(b.MessageJSON).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("MessageJSON", err)
+		}
+	}
+	if err := typesValidator.Var(b.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if err := typesValidator.Var(b.PageID, "required"); err != nil {
+		errors = errors.Append("PageID", err)
+	}
+	if err := typesValidator.Var(b.PlanDigest, "required"); err != nil {
+		errors = errors.Append("PlanDigest", err)
+	}
+	if err := typesValidator.Var(b.Recipients, "required"); err != nil {
+		errors = errors.Append("Recipients", err)
+	}
+	for i, item := range b.Recipients {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Recipients[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(b.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if err := typesValidator.Var(b.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type BroadcastListResponse struct {
+	Broadcasts []BroadcastSummary `json:"broadcasts" validate:"required"`
+}
+
+func (b BroadcastListResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(b.Broadcasts, "required"); err != nil {
+		errors = errors.Append("Broadcasts", err)
+	}
+	for i, item := range b.Broadcasts {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Broadcasts[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type BroadcastRecipientView struct {
+	AttemptedAt    *time.Time `json:"attempted_at,omitempty"`
+	ErrorCode      string     `json:"error_code" validate:"required"`
+	MessageID      *int64     `json:"message_id,omitempty"`
+	Mid            string     `json:"mid" validate:"required"`
+	ParticipantID  *int64     `json:"participant_id,omitempty"`
+	Reason         string     `json:"reason" validate:"required"`
+	RowRevision    int64      `json:"row_revision"`
+	State          string     `json:"state" validate:"required"`
+	SubscriptionID int64      `json:"subscription_id"`
+	TrackingID     string     `json:"tracking_id" validate:"required"`
+}
+
+func (b BroadcastRecipientView) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BroadcastSubscriptionView struct {
+	ID               int64      `json:"id"`
+	LastConfirmedAt  *time.Time `json:"last_confirmed_at,omitempty"`
+	NextEligibleAt   *time.Time `json:"next_eligible_at,omitempty"`
+	ParticipantID    *int64     `json:"participant_id,omitempty"`
+	Reoptin          string     `json:"reoptin" validate:"required"`
+	SourceID         int64      `json:"source_id"`
+	Status           string     `json:"status" validate:"required"`
+	Timezone         string     `json:"timezone" validate:"required"`
+	TokenExpiryAt    *time.Time `json:"token_expiry_at,omitempty"`
+	TokenFingerprint string     `json:"token_fingerprint" validate:"required"`
+	TopicTitle       string     `json:"topic_title" validate:"required"`
+}
+
+func (b BroadcastSubscriptionView) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(b))
+}
+
+type BroadcastSubscriptionsResponse struct {
+	Subscriptions []BroadcastSubscriptionView `json:"subscriptions" validate:"required"`
+}
+
+func (b BroadcastSubscriptionsResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(b.Subscriptions, "required"); err != nil {
+		errors = errors.Append("Subscriptions", err)
+	}
+	for i, item := range b.Subscriptions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Subscriptions[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type BroadcastSummary struct {
+	AdAccountID               string         `json:"ad_account_id" validate:"required"`
+	BudgetWarning             bool           `json:"budget_warning"`
+	CampaignDays              int64          `json:"campaign_days"`
+	CampaignEndsAt            *time.Time     `json:"campaign_ends_at,omitempty"`
+	CampaignID                string         `json:"campaign_id" validate:"required"`
+	CampaignReadyAt           *time.Time     `json:"campaign_ready_at,omitempty"`
+	CreatedAt                 time.Time      `json:"created_at" validate:"required"`
+	DailyBudgetCents          int64          `json:"daily_budget_cents"`
+	ID                        string         `json:"id" validate:"required"`
+	LastError                 string         `json:"last_error" validate:"required"`
+	MessageJSON               jsontext.Value `json:"message_json"`
+	MinConversationGapSeconds int64          `json:"min_conversation_gap_seconds"`
+	Name                      string         `json:"name" validate:"required"`
+	PageID                    string         `json:"page_id" validate:"required"`
+	PlanDigest                string         `json:"plan_digest" validate:"required"`
+	Revision                  int64          `json:"revision"`
+	SourceID                  int64          `json:"source_id"`
+	State                     string         `json:"state" validate:"required"`
+	UpdatedAt                 time.Time      `json:"updated_at" validate:"required"`
+	WorstDailyCents           float64        `json:"worst_daily_cents"`
+	WorstWeeklyCents          float64        `json:"worst_weekly_cents"`
+}
+
+func (b BroadcastSummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(b.AdAccountID, "required"); err != nil {
+		errors = errors.Append("AdAccountID", err)
+	}
+	if err := typesValidator.Var(b.CampaignID, "required"); err != nil {
+		errors = errors.Append("CampaignID", err)
+	}
+	if err := typesValidator.Var(b.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(b.ID, "required"); err != nil {
+		errors = errors.Append("ID", err)
+	}
+	if err := typesValidator.Var(b.LastError, "required"); err != nil {
+		errors = errors.Append("LastError", err)
+	}
+	if v, ok := any(b.MessageJSON).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("MessageJSON", err)
+		}
+	}
+	if err := typesValidator.Var(b.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if err := typesValidator.Var(b.PageID, "required"); err != nil {
+		errors = errors.Append("PageID", err)
+	}
+	if err := typesValidator.Var(b.PlanDigest, "required"); err != nil {
+		errors = errors.Append("PlanDigest", err)
+	}
+	if err := typesValidator.Var(b.State, "required"); err != nil {
+		errors = errors.Append("State", err)
+	}
+	if err := typesValidator.Var(b.UpdatedAt, "required"); err != nil {
+		errors = errors.Append("UpdatedAt", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type BuildingSummary struct {
 	Dimension int64    `json:"dimension"`
 	ID        int64    `json:"id"`

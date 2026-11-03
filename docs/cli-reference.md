@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-03
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -1536,6 +1536,231 @@ the source message has since been deleted. See
 [Discord](/docs/usage/discord/#attachment-backfill-and-limits).
 
 ---
+
+## source facebook-comments add
+
+Register the Page selected by a configured `[[facebook_comments]]` profile
+(unreleased). The daemon reads its named token environment variable and checks
+Page identity before writing the source or confirmed owner identity.
+
+```bash
+msgvault source facebook-comments add [identifier]
+```
+
+No identifier selects all configured profiles. An unknown explicit label fails;
+it never selects another profile or falls back to an email sync. See
+[Facebook Page comments](usage/facebook-comments.md).
+
+---
+
+## source facebook-comments sync
+
+Archive returned organic, visitor, and ad-post comments and nested replies for
+registered Facebook Pages (unreleased). No identifier selects all configured
+profiles. Partial writes are retained and included in cache refreshes even
+when another surface fails. This command does not send replies.
+
+```bash
+msgvault source facebook-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive maximum API reads per Page, including identity validation; unfinished scans resume |
+| `--full` | `false` | Explicitly restart selected source scans from fresh cursors, preserving and updating existing rows |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+See [coverage and resuming](usage/facebook-comments.md#understand-coverage-and-resuming)
+for independent surface progress, request costs, and expired-cursor recovery.
+
+---
+
+## meta-webhooks subscribe
+
+Install or check webhook fields for selected `[[facebook_comments]]` profiles
+(unreleased). No identifier selects all configured profiles. The daemon checks
+the token's app, preserves existing fields, and confirms the result by reading
+the subscription again. Delegated grants are refused.
+
+```bash
+msgvault meta-webhooks subscribe [identifier] [--fields feed] [--check] [--json]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--fields` | `feed` | Comma-separated Page fields; Messenger fields require explicit selection |
+| `--check` | `false` | Read only; exit 1 when the app or a requested field is missing |
+| `--json` | `false` | Print structured subscription results |
+
+Permission refusals name `pages_manage_metadata` and `pages_show_list`, plus
+`pages_messaging` for Messenger fields. See [setup and routing](usage/meta-webhooks.md#connect-the-receiver).
+
+---
+
+## meta-webhooks status
+
+Show listener health, spool counts and capacity, held categories, receiver
+counters, and the last completed polling run per Page (unreleased).
+
+```bash
+msgvault meta-webhooks status [--json]
+```
+
+Reads disk through the daemon without Graph calls or writes. Diagnostic
+conditions keep exit status 0. Snapshots older than two minutes are reported as
+`daemon not running or no snapshot`. Owner only; delegated grants are refused.
+
+---
+
+## meta-webhooks replay
+
+Ask the daemon worker to requeue retained deliveries with attempts reset
+(unreleased). The CLI waits up to 45 seconds for the worker's result.
+
+```bash
+msgvault meta-webhooks replay [--app 9] [--state held] [--dry-run] [--json]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--app` | all | Filter by decimal app ID |
+| `--state` | `held,failed` | Repeatable or comma-separated: `held`, `failed`, `done` |
+| `--delivery` | all | Filter by lowercase SHA-256 delivery ID |
+| `--since` | none | Filter by receipt time, in RFC3339 |
+| `--dry-run` | `false` | Have the worker count matches without moving them |
+| `--json` | `false` | Print `count` and `dry_run` |
+
+A timeout exits 1; the filed request may still execute after recovery.
+Delegated grants are refused. See [replay and recovery](usage/meta-webhooks.md#inspect-and-replay-deliveries).
+
+---
+
+## source instagram-comments add
+
+Register the professional account linked to the selected Page, using a
+configured `[[instagram_comments]]` profile (unreleased). No identifier selects
+all configured profiles. Tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-comments add [identifier]
+```
+
+## source instagram-comments sync
+
+Archive returned media captions, comments, and replies from registered linked
+professional accounts (unreleased). A positive request budget includes Page
+and account verification. Partial writes remain searchable, and `--full`
+restarts cursors without deleting rows. No identifier selects all profiles.
+
+```bash
+msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+resuming, and coverage limits. These commands do not send replies.
+
+## source facebook-messages add
+
+Verify and register selected `[[facebook_messages]]` Page inboxes (unreleased).
+No identifier selects all configured profiles. The daemon reads only the named
+token environment variable. Unknown labels fail explicitly. Registration does
+not subscribe the app or change routing.
+
+```bash
+msgvault source facebook-messages add [identifier]
+```
+
+## source facebook-messages sync
+
+Backfill registered Page inboxes (unreleased). No identifier selects all
+configured profiles. Each thread exposes at most its 20 most recent messages.
+The output reports `threads`, `messages_added`, `requests`, `partial`, and that
+coverage limit. New messages and events require the Meta webhook receiver.
+
+```bash
+msgvault source facebook-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive read budget per inbox, including identity checks; unfinished work resumes |
+| `--full` | `false` | Restart the scan with fresh cursors, preserving archived history |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+Accepted partial writes remain searchable after provider errors or cancellation.
+See [Messenger inbox](usage/facebook-messages.md) for permissions, scoped person
+linking, replay, and unverified provider behavior.
+
+## source instagram-messages add
+
+Verify the Page and its linked professional Instagram account, then register
+selected `[[instagram_messages]]` inboxes (unreleased). No identifier selects
+all configured profiles; tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-messages add [identifier]
+```
+
+## source instagram-messages sync
+
+Backfill registered linked professional inboxes (unreleased). The flags and
+output match `source facebook-messages sync`; both Page and account verification
+count against the read budget. No identifier selects all configured profiles.
+
+```bash
+msgvault source instagram-messages sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram inbox](usage/instagram-messages.md) for Advanced Access and
+verified-business requirements, the Requests-folder gap, and event coverage.
+
+## broadcast
+
+Plan and send paid Messenger marketing messages to explicitly selected
+subscribers (unreleased). All operations run in the daemon. Sends require an
+active [`[[messenger_broadcasts]]` profile](configuration.md#messenger-broadcasts)
+with `actions = ["send"]`, eligible Meta access, and the reviewed revision and
+plan digest. See [Messenger broadcasts](usage/messenger-broadcasts.md) for
+consent, spend bounds, campaign warm-up and uncertain-result recovery.
+
+```bash
+msgvault broadcast <command> <profile-or-broadcast-id> [flags] [--json]
+```
+
+Every command takes exactly one profile or broadcast ID. `--json` emits a
+structured result. Profile labels are case-insensitive; credentials are read
+only from the configured environment variables on the daemon host.
+
+Missing required flags and invalid values are refused before contacting the
+daemon. A changed plan or campaign warm-up is a conflicting state; inspect
+`broadcast show <broadcast-id> --json` before planning or retrying a send.
+
+| Command | Argument | Flags and behavior |
+|---|---|---|
+| `subscriptions` | profile | Optional repeatable `--participant <id>` and `--status active\|stopped\|unsubscribed\|absent`; returns fingerprints, never raw tokens |
+| `sync-subscriptions` | profile | `--max-requests 1000`; positive token-list request budget; every run starts a new walk |
+| `create` | profile | Required `--name`, `--message-json`, `--daily-budget-cents`, and either repeatable `--participant` or `--subscription`; optional `--min-conversation-gap-seconds 0`; creates a local draft |
+| `plan` | broadcast ID | Required positive `--revision`; freezes current consent decisions and returns `plan_digest` and spend bounds; no provider calls |
+| `show` | broadcast ID | Read the saved message, campaign state and recipient receipts |
+| `list` | profile | Read the profile's broadcasts |
+| `preview` | broadcast ID | Request a Meta preview of the saved message |
+| `send` | broadcast ID | Required `--revision` and `--plan-digest`; `--limit 100` accepts 1–1000 dispatches per run; rechecks the frozen plan |
+| `adopt-campaign` | broadcast ID | Required decimal `--campaign-id`; check and attach an existing campaign after an uncertain creation result |
+| `cancel` | broadcast ID | Stop remaining local dispatch; leave the Meta campaign until its end time |
+| `unsubscribe` | profile | Exactly one `--participant` or `--subscription`; persist local suppression before requesting provider unsubscribe |
+
+`--message-json` must be a valid JSON object of at most 32 KiB. Create accepts
+at most 1000 recipient selectors, all positive IDs, and cannot mix participant
+and subscription selectors. A positive daily budget is required even while
+sends are disabled. A partial subscription walk cannot establish fresh
+list-based consent or mark unseen tokens absent. There is no opt-in request
+command in this release.
+
+These operations require owner access. Delegated agents cannot use the
+broadcast CLI group. Owner-only HTTP reads use API schema 3.35.0; see
+[HTTP and MCP access](usage/messenger-broadcasts.md#use-http-or-mcp).
 
 ## add-chatwoot
 

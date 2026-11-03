@@ -226,6 +226,10 @@ func (s *Server) humaAuthMiddleware(ctx huma.Context, next func(huma.Context)) {
 			next(ctx)
 			return
 		}
+		if op := ctx.Operation(); op != nil && isBroadcastReadOperation(op.OperationID) {
+			writeHumaError(ctx, http.StatusForbidden, "not_permitted", "Broadcast reads require owner access")
+			return
+		}
 		s.logUnauthorizedAPIRequest(req)
 		writeHumaError(ctx, http.StatusUnauthorized, "unauthorized", "Invalid or missing API key")
 		return
@@ -310,6 +314,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	s.registerSettingsRoutes(apiV1)
 	s.registerCardDAVRoutes(apiV1)
 	s.registerSavedViewRoutes(apiV1)
+	s.registerBroadcastRoutes(apiV1)
 	s.registerExploreRoutes(apiV1)
 	s.registerFilesRoutes(apiV1)
 	s.registerDocumentSearchRoute(apiV1)

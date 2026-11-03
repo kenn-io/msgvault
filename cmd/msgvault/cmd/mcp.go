@@ -350,6 +350,10 @@ func daemonMCPServeOptions(ctx context.Context, st *daemonclient.Client, state *
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, identityScoringMinAPISchemaVersion) {
 		opts.IdentityScoring = st
 	}
+	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, mcpserver.BroadcastMinAPISchemaVersion) {
+		opts.Broadcasts = st
+		opts.BroadcastAPISchemaVersion = schemaVersion
+	}
 	if capabilityErr == nil && daemonclient.APISchemaVersionAtLeast(schemaVersion, draftsMinAPISchemaVersion) {
 		opts.DraftCommands = mcpDraftCommands(false)
 	}

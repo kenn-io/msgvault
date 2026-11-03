@@ -347,7 +347,12 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 			} else if allowed[op.OperationID] {
 				assertions.NotEqual(http.StatusUnauthorized, w.Code, op.OperationID)
 			} else {
-				assertions.Equal(http.StatusUnauthorized, w.Code, op.OperationID)
+				wantDeniedStatus := http.StatusUnauthorized
+				switch op.OperationID {
+				case "listBroadcastSubscriptions", "listBroadcasts", "getBroadcast":
+					wantDeniedStatus = http.StatusForbidden
+				}
+				assertions.Equal(wantDeniedStatus, w.Code, op.OperationID)
 				denied++
 			}
 		}

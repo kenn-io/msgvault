@@ -82,7 +82,7 @@ func runDaemonCLICommandHTTPWithEnv(
 	if err != nil {
 		return err
 	}
-	if api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args) {
+	if api.IsCLIRunDraftCreate(args) || api.IsCLIRunDraftLifecycle(args) || api.IsCLIRunDraftSendAs(args) || (len(args) > 0 && args[0] == "broadcast") {
 		cwd = ""
 	}
 

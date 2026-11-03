@@ -843,6 +843,38 @@ type GetMessageTagsQuery struct {
 	Mailbox *string `json:"mailbox,omitempty"`
 }
 
+type ListBroadcastSubscriptionsQuery struct {
+	Profile     string                                 `json:"profile" validate:"required"`
+	Participant *int64                                 `json:"participant,omitempty"`
+	Status      *ListBroadcastSubscriptionsQueryStatus `json:"status,omitempty"`
+}
+
+func (l ListBroadcastSubscriptionsQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(l.Profile, "required"); err != nil {
+		errors = errors.Append("Profile", err)
+	}
+	if l.Status != nil {
+		if v, ok := any(l.Status).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Status", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ListBroadcastsQuery struct {
+	Profile string `json:"profile" validate:"required"`
+}
+
+func (l ListBroadcastsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
 type ListOperationRunsQuery struct {
 	// Kind Exact operation kind
 	Kind *ListOperationRunsQueryKind `json:"kind,omitempty"`

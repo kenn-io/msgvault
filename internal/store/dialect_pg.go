@@ -2393,6 +2393,10 @@ var exclusiveLockTables = []string{
 	"chat_members", "chat_members_dirty", "chat_anchors",
 	"collections", "collection_sources", "account_identities", "applied_migrations",
 	"source_merges", "source_settings", "source_merge_preserved_labels",
+	// Marketing consent and receipts cascade with their source, including
+	// consent events and recipient rows reached through subscriptions.
+	"meta_marketing_list_walks", "meta_marketing_subscriptions", "meta_marketing_consent_events",
+	"meta_broadcasts", "meta_broadcast_recipients",
 	"sync_operations",
 	"source_import_items", "sync_run_items", "sync_checkpoints",
 	"imap_folder_state", "imap_message_memberships", "imap_drafts", "gmail_drafts", "chat_drafts", "beeper_drafts",
