@@ -47,8 +47,8 @@ msgvault loops reopen 4521
 | Command | Flags and behavior |
 |---|---|
 | `list` | `--limit` 1..200 (default 50), `--json`, `--person <positive id>` to show one person's loops |
-| `done` | One message ID; marks that loop done. `--through <id>` stops at the `through_message_id` from `list --json`. A distinct question can list again |
-| `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions; `--through <id>` stops at the listed question |
+| `done` | One message ID; marks that loop done. `--questions <ids>` marks only the `question_message_ids` from `list --json`. A distinct question can list again |
+| `snooze` | One message ID; required future `--until` as a duration, `YYYY-MM-DD` (local midnight), or RFC3339 time. A distinct question can list before the time passes. Decisions apply to this person's open questions; `--questions <ids>` marks only the listed questions |
 | `reopen` | One message ID; clears the done or snooze decision on that exact question |
 
 `list` prints a "Waiting on you" section and a "Waiting on them" section,

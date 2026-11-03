@@ -106,10 +106,10 @@ msgvault loops reopen 4521
 ```
 
 `done` hides this person's open questions. `snooze` hides them until the time
-passes. They cover the questions the list shows when you act. To stop at the
-questions you already saw, pass `--through` with the item's
-`through_message_id` from `msgvault loops list --json`. A question that became
-visible after that list then stays open. A question still
+passes. They cover the questions the list shows when you act. To mark only the
+questions you already saw, pass `--questions` with the item's
+`question_message_ids` from `msgvault loops list --json`. A question that
+appeared after that list then stays open, whatever its date. A question still
 inside its 24- or 72-hour wait stays undecided and lists when its wait ends. A
 distinct question imported later can list again, whatever its message date. For
 example, Alex asks for the contract on Monday and you mark it done. "And the
@@ -135,7 +135,7 @@ passes. A new question must wait its own 24 or 72 hours before it lists.
 `done` and `snooze` take the current message ID from `loops list` and re-read
 the conversation before acting. A covered anchor, an archived answer, or a
 question still inside its grace period makes the action fail with the
-existing not-open error, as does a `--through` question that is no longer
+existing not-open error, as does a `--questions` question that is no longer
 open. `reopen` clears the decision by exact message ID; it
 returns an error when that question has no decision.
 
