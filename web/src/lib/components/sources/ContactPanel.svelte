@@ -63,7 +63,7 @@
     {#if controller.syncUnknown}
       <section class="block" aria-label="Sync state" role="alert">
         <p class="failure">Sync state unknown.</p>
-        <Button size="sm" label="Retry CardDAV sync state" disabled={controller.syncPending} onclick={() => void controller.retrySyncState()} />
+        <Button size="sm" label="Retry sync state" disabled={controller.syncPending} onclick={() => void controller.retrySyncState()} />
       </section>
     {/if}
     {#if failure}

@@ -512,12 +512,12 @@ describe('SourcesWorkspace', () => {
     await waitFor(() => expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'Sync now user-a' }));
     const table = screen.getByRole('table', { name: 'Sources' });
-    await within(table).findByRole('button', { name: 'Retry CardDAV sync state' });
+    await within(table).findByRole('button', { name: 'Retry sync state' });
     expect((within(table).getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.click(screen.getByRole('button', { name: 'Details for user-a' }));
     const panel = screen.getByRole('dialog', { name: 'user-a' });
-    await fireEvent.click(within(panel).getByRole('button', { name: 'Retry CardDAV sync state' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry CardDAV sync state' })).toBeNull());
+    await fireEvent.click(within(panel).getByRole('button', { name: 'Retry sync state' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry sync state' })).toBeNull());
     expect((within(table).getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);
     view.unmount();
   });
