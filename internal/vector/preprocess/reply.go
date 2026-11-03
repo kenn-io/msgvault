@@ -31,6 +31,8 @@ func StripReplyQuotes(body string) string {
 }
 
 // MaskReplyQuotes blanks quoted history while preserving byte offsets and line endings.
+// It applies the shared quote rules without deleting text. Later matches see
+// blanked text rather than the adjacent lines StripReplyQuotes can create.
 func MaskReplyQuotes(body string) string {
 	return dropReplyQuotes(body, func(quote string) string {
 		masked := []byte(quote)
