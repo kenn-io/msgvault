@@ -64,3 +64,41 @@ commenter identity; equal digits do not establish account ownership.
 Only media returned by the verified account's media edge is discovered here.
 Missing media owners remain unknown; explicit foreign owners are refused.
 Ad-only discovery, media downloads, and public replies are separate work.
+
+## Mentions and tags
+
+Opt in to a separate `instagram_mentions` source to search foreign media where
+this account is photo-tagged (unreleased). Add `mentions = true` to the same
+`[[instagram_comments]]` profile, then register and sync:
+
+```bash
+msgvault source instagram-mentions add example-account
+msgvault source instagram-mentions sync example-account --max-requests 1000
+```
+
+Tags are polled. An enabled profile with a schedule runs both comments and
+tags as independent jobs. Tags have their own request budget and checkpoint.
+Collection needs at least three reads, including two verification reads.
+`--full` restarts tags without changing comment progress or deleting history.
+Accepted partial writes remain searchable. Each foreign media item forms one
+Conversation. Foreign authors have no linkable identity: media usernames are
+searchable text, including after a search index rebuild. Mentioned comments
+expose no author ID. Foreign-owned
+media is accepted; media explicitly owned by the selected account is skipped.
+
+Caption and comment mentions require webhook discovery. The resolver is
+implemented, but its webhook integration is pending; these commands collect
+tags only. Public mention replies are also pending. Tagged photos cannot be
+replied to through this integration. Story mentions belong to Instagram
+Messaging and are outside this source.
+
+Live reads require `instagram_basic`, `instagram_manage_comments`, and
+`pages_read_engagement`, plus `ads_read` or `ads_management` when Page roles
+come through Business Manager. The planned mentions webhook also requires
+`pages_manage_metadata` and `pages_show_list`, a Live app, and production
+business verification. Permission and access checks must be completed before
+live use. Whether the profile's Page token works on mentions and tags, rather
+than a User token, still needs a live check. There is no credential fallback.
+A 400 or 403 cannot distinguish missing permissions, token type, inaccessible
+or deleted media, disabled comments, a non-mention, or rate limiting; msgvault
+reports these possible causes without including provider response text.
