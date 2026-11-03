@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
@@ -146,7 +147,7 @@ func TestMeetingRecordGeneratedClientAcceptsSparseResponses(t *testing.T) {
 }
 
 func TestDelegatedPersonMeetingsHideGlobalProfileExistence(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	allowedSource, _, err := testutil.CreateIndexedSourceMessage(st, "allowed@example.test", "allowed", "Allowed message", "")
 	requirements.NoError(err)
@@ -172,17 +173,42 @@ func TestDelegatedPersonMeetingsHideGlobalProfileExistence(t *testing.T) {
 	requirements.NoError(err)
 
 	refs := []string{fmt.Sprintf("person:%d", profile.ID), fmt.Sprintf("person:%d", profile.ID+100)}
-	responses := make([]string, len(refs))
-	for i, ref := range refs {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/people/"+ref+"/meetings", nil)
-		req.Header.Set(apiprotocol.AgentTokenHeader, token)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-		assertions.JSONEq(`{"items":[]}`, w.Body.String())
-		responses[i] = w.Body.String()
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	encodedCursor, err := json.Marshal(struct {
+		From, To, Start time.Time
+		Ref, Query      string
+	}{from, to, from.Add(time.Hour), "msg:1", strings.Repeat("0", 64)})
+	requirements.NoError(err)
+	cases := []struct {
+		name       string
+		query      string
+		wantStatus int
+	}{
+		{name: "valid query", wantStatus: http.StatusOK},
+		{name: "malformed cursor", query: "?cursor=!", wantStatus: http.StatusBadRequest},
+		{name: "mismatched cursor", query: "?cursor=" + base64.RawURLEncoding.EncodeToString(encodedCursor), wantStatus: http.StatusBadRequest},
+		{name: "invalid date", query: "?from=not-a-time", wantStatus: http.StatusBadRequest},
+		{name: "reversed window", query: "?from=2027-03-02T00:00:00Z&to=2027-03-01T00:00:00Z", wantStatus: http.StatusBadRequest},
 	}
-	assertions.Equal(responses[0], responses[1], "an out-of-scope profile must match an unknown profile response")
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, subRequirements := assert.New(t), require.New(t)
+			responses := make([]string, len(refs))
+			for i, ref := range refs {
+				req := httptest.NewRequest(http.MethodGet, "/api/v1/people/"+ref+"/meetings"+tc.query, nil)
+				req.Header.Set(apiprotocol.AgentTokenHeader, token)
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				subRequirements.Equal(tc.wantStatus, w.Code, w.Body.String())
+				if tc.wantStatus == http.StatusOK {
+					assertions.JSONEq(`{"items":[]}`, w.Body.String())
+				}
+				responses[i] = fmt.Sprintf("%d:%s", w.Code, w.Body.String())
+			}
+			assertions.Equal(responses[0], responses[1], "an out-of-scope profile must match an unknown profile response")
+		})
+	}
 }
 
 func TestMeetingWritesAndSuggestionsRequireQualifiedSeriesRef(t *testing.T) {

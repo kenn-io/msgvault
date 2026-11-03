@@ -74,14 +74,26 @@ func normalizePersonMeetingsQuery(scope SourceScope, q PersonMeetingsQuery, now 
 	scope.IDs = slices.Clone(scope.IDs)
 	slices.Sort(scope.IDs)
 	scope.IDs = slices.Compact(scope.IDs)
-	encoded, err := json.Marshal(struct {
-		Scope    SourceScope
-		IDs      []int64
-		Emails   []string
-		From, To time.Time
-		// Omit false to retain the fingerprints of existing ascending cursors.
-		NewestFirst bool `json:",omitempty,omitzero"`
-	}{scope, q.ParticipantIDs, q.Emails, q.From, q.To, q.NewestFirst})
+	var err error
+	var encoded []byte
+	if q.CursorIdentity != "" {
+		encoded, err = json.Marshal(struct {
+			Scope    SourceScope
+			Identity string
+			From, To time.Time
+			// Omit false to retain the fingerprints of existing ascending cursors.
+			NewestFirst bool `json:",omitempty,omitzero"`
+		}{scope, q.CursorIdentity, q.From, q.To, q.NewestFirst})
+	} else {
+		encoded, err = json.Marshal(struct {
+			Scope    SourceScope
+			IDs      []int64
+			Emails   []string
+			From, To time.Time
+			// Omit false to retain the fingerprints of existing ascending cursors.
+			NewestFirst bool `json:",omitempty,omitzero"`
+		}{scope, q.ParticipantIDs, q.Emails, q.From, q.To, q.NewestFirst})
+	}
 	if err != nil {
 		return q, cursor, "", err
 	}

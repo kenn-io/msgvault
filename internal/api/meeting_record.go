@@ -232,7 +232,7 @@ func (s *Server) handleListPersonMeetings(w http.ResponseWriter, r *http.Request
 		s.writeMeetingRecordError(w, err)
 		return
 	}
-	q := store.PersonMeetingsQuery{Cursor: r.URL.Query().Get("cursor")}
+	q := store.PersonMeetingsQuery{Cursor: r.URL.Query().Get("cursor"), CursorIdentity: r.PathValue("ref")}
 	for _, field := range []struct {
 		name   string
 		target *time.Time
@@ -281,7 +281,12 @@ func (s *Server) handleListPersonMeetings(w http.ResponseWriter, r *http.Request
 			reference.Kind == resolver.ReferencePerson && errors.Is(err, store.ErrPersonNotFound) {
 			// A delegated caller cannot distinguish an unknown profile from one
 			// whose identity data is outside its archive grant.
-			writeJSON(w, http.StatusOK, PersonMeetingsResponse{Items: []store.MeetingRecordSummary{}})
+			items, cursor, listErr := backend.ListPersonMeetingsContext(ctx, s.calendarEventsScope(r), q)
+			if listErr != nil {
+				s.writeMeetingRecordError(w, listErr)
+				return
+			}
+			writeJSON(w, http.StatusOK, PersonMeetingsResponse{Items: items, NextCursor: cursor})
 			return
 		}
 		s.writePersonScopeError(w, reference, err, "meeting history")
