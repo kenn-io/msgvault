@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestActivityTriggerMigrationRequeuesProjectedUnsentMessages(t *testing.T) {
@@ -77,8 +78,8 @@ func TestActivityUpgradeRetractsUnsentContact(t *testing.T) {
 	assert.Equal(int64(1), state.InteractionCount)
 }
 
-// The helper initializes an archive through the combined message and attachment
-// trigger migration, then this test proves that activity triggers are installed.
+// A fresh archive has both the combined message and attachment trigger
+// migration and the activity triggers installed.
 func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing.T) {
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	if !strings.HasPrefix(dbURL, "postgres://") &&
@@ -87,7 +88,7 @@ func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing
 	}
 	require := require.New(t)
 	assert := assert.New(t)
-	st, _, _ := newActivityQueryPostgresStores(t, dbURL)
+	st := testutil.NewTestStore(t)
 
 	var watermarkMigrationApplied bool
 	err := st.DB().QueryRowContext(t.Context(), `
@@ -114,13 +115,12 @@ func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing
 	require.NoError(err)
 
 	var revision int64
-	//nolint:gosec // The query is a fixed test literal; Rebind only changes placeholders.
 	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT revision
 		FROM activity_projection_queue
 		WHERE message_id = ?
 	`), messageID).Scan(&revision)
 	require.NoError(err,
-		"activity trigger migration must install queue triggers on an upgraded archive")
+		"activity trigger migration must install queue triggers on a fresh archive")
 	assert.Equal(int64(1), revision)
 }

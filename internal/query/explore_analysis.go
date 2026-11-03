@@ -70,7 +70,7 @@ func (e *DuckDBEngine) ExploreGroups(ctx context.Context, request ExploreGroupRe
 		keyFilter = " WHERE group_key = ?"
 	}
 	buildPopulation := buildExploreFilteredClassifiedCTE
-	if spec.noLists && !exploreConditionsTouchParticipantLists(explore) {
+	if spec.noLists {
 		// The multiply-referenced filtered CTE otherwise materializes the
 		// wide view's participant lists before projection can discard them.
 		buildPopulation = buildExploreNarrowFilteredClassifiedCTE
@@ -141,8 +141,8 @@ type groupExpressions struct {
 	whereSuffix string
 	// noLists selects the logical_entries variant without participant list
 	// columns; dimensions that resolve participants/domains through
-	// relationship_activity edge joins set it. ExploreGroups also uses the
-	// narrow scalar input when its filters do not require participant lists.
+	// relationship_activity edge joins set it. ExploreGroups then also uses
+	// the narrow scalar input.
 	noLists bool
 }
 

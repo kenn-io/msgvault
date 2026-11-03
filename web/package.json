@@ -12,8 +12,8 @@
     "check:generated": "bun scripts/generate-api-client.mjs --check",
     "generate": "bun scripts/generate-api-client.mjs",
     "test": "vitest run",
-    "test:browser": "playwright test",
-    "test:e2e": "playwright test e2e conversation-content-frame.spec.ts files-viewer.spec.ts"
+    "test:browser": "playwright test --project=browser --project=virtualizer",
+    "test:e2e": "playwright test --project=e2e"
   },
   "dependencies": {
     "@kenn-io/kit-ui": "https://github.com/kenn-io/kit-ui/archive/3cfdc3ee492fab56911effb1bcda66efa960ad59.tar.gz",
