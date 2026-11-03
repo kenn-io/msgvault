@@ -87,6 +87,37 @@ func TestRelationshipCountsEveryExactOccurrenceOnceAcrossTranscripts(t *testing.
 		assertions.ElementsMatch(notes, entry.Meeting.LinkedTranscriptIDs)
 	}
 }
+
+func TestRelationshipCountsOnlyOccurrencesAttendedBySubject(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	attended := f.calendar("attended", singleDayEvent)
+	unattendedRaw := strings.NewReplacer(
+		`"id":"planning"`, `"id":"unattended"`,
+		`"iCalUID":"planning@example.com"`, `"iCalUID":"other@example.com"`,
+		"2026-10-22T10:00:00Z", "2026-10-21T10:00:00Z",
+		"2026-10-22T11:00:00Z", "2026-10-21T11:00:00Z",
+		"alice@example.com", "bob@example.test",
+		"Alice", "Bob",
+	).Replace(singleDayEvent)
+	unattended := f.calendar("unattended", unattendedRaw)
+	note := f.transcript("linked-notes", "planning@example.com", f.now.Add(-time.Hour))
+	for _, event := range []int64{attended, unattended} {
+		requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+	}
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	requirements.NotNil(got.Person)
+	assertions.Equal(1, got.Person.InteractionCount)
+	assertions.Equal("2026-10-22", got.Person.FirstAt.Format(time.DateOnly))
+	assertions.Equal("2026-10-22", got.Person.LastAt.Format(time.DateOnly))
+	requirements.Len(got.History, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", attended), got.History[0].Ref)
+}
+
 func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -755,6 +755,26 @@ type LoopMessageEvidence struct {
 	Unreadable      bool `json:"unreadable"`
 }
 
+// ReadLoopMessageEvidenceSnapshotContext reads only cached facts visible in
+// the caller's snapshot. A miss does not create or advance the live cache.
+func (s *Store) ReadLoopMessageEvidenceSnapshotContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, bool, error) {
+	var e LoopMessageEvidence
+	var facts sql.NullString
+	err := ReadDBContext(ctx, s.db.DB).QueryRowContext(ctx, `SELECT facts FROM loop_message_evidence
+	WHERE message_id = ? AND rule_version = ?`, id, version).Scan(&facts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return e, false, nil
+	}
+	if err != nil {
+		return e, false, err
+	}
+	if !facts.Valid {
+		return e, false, nil
+	}
+	err = json.Unmarshal([]byte(facts.String), &e)
+	return e, err == nil, err
+}
+
 // LoopMessageEvidenceContext returns cached facts only for the requested rules.
 // A version mismatch replaces derived evidence so every reader can make progress.
 func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, string, bool, error) {

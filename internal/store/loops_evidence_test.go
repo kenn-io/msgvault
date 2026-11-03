@@ -146,6 +146,35 @@ func TestLoopMessageEvidenceVersionMissIgnoresReadSnapshot(t *testing.T) {
 	assertions.False(currentFacts.Valid)
 }
 
+func TestLoopMessageEvidenceSnapshotReadsCachedFactsWithoutAdvancingVersion(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
+	want := store.LoopMessageEvidence{Asks: true}
+	_, token, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
+	requirements.NoError(err)
+	requirements.False(hit)
+	requirements.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 1, token, want))
+
+	snapshotCtx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	got, hit, err := f.Store.ReadLoopMessageEvidenceSnapshotContext(snapshotCtx, id, 1)
+	requirements.NoError(err)
+	requirements.True(hit)
+	assertions.Equal(want, got)
+
+	miss, hit, err := f.Store.ReadLoopMessageEvidenceSnapshotContext(snapshotCtx, id, 2)
+	requirements.NoError(err)
+	assertions.False(hit)
+	assertions.Empty(miss)
+	var currentVersion int
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(),
+		`SELECT rule_version FROM loop_message_evidence WHERE message_id = ?`, id).Scan(&currentVersion))
+	assertions.Equal(1, currentVersion)
+}
+
 func TestLoopEvidenceSchemaUpgrade(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

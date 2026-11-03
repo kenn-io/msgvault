@@ -512,7 +512,7 @@ func TestBuildEmptyWindowRendersExplicitNothingLine(t *testing.T) {
 	got, err := Build(t.Context(), f.src, dayRequest())
 	require.NoError(t, err)
 	assertions.Contains(Markdown(got), "nothing archived")
-	assertions.Contains(Markdown(got), "UTC (set [activity].timezone)")
+	assertions.Contains(Markdown(got), "UTC (default)")
 	assertions.False(got.Now.IsZero())
 	assertions.Equal(f.now, got.Now)
 }

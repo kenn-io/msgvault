@@ -22,7 +22,7 @@ func Markdown(t *Timeline) string {
 	}
 	zone := t.Timezone
 	if t.TimezoneIsDefault {
-		zone += " (set [activity].timezone)"
+		zone += " (default)"
 	}
 	heading := t.Window.To
 	if t.Window.From != t.Window.To {
@@ -53,6 +53,9 @@ func Markdown(t *Timeline) string {
 		}
 	}
 	for _, warning := range t.Freshness.Warnings {
+		if strings.HasPrefix(warning, "The latest sync ") {
+			continue
+		}
 		fmt.Fprintf(&b, "⚠ %s\n", singleLine(warning, 160))
 	}
 	if p := t.Person; p != nil && t.Mode == ModeRelationship {
@@ -83,9 +86,6 @@ func Markdown(t *Timeline) string {
 	if t.OpenLoops != nil {
 		fmt.Fprintf(&b, "\nOpen (%d)\n", len(t.OpenLoops.Items))
 		rows(t.OpenLoops.Items)
-		if t.OpenLoops.Truncated {
-			b.WriteString("more available\n")
-		}
 		if t.OpenLoops.CoverageIncomplete {
 			b.WriteString("coverage incomplete\n")
 		}
@@ -219,9 +219,6 @@ func entryRow(e Entry, loc *time.Location) string {
 		body = peopleNames(p.People, p.PeopleCount) + fmt.Sprintf(" · %s ↓%d ↑%d · %s", singleLine(p.Channel, 80), p.Inbound, p.Outbound, clock)
 		if !e.HiddenText && p.Snippet.Text != "" {
 			body += " \"" + textLine(p.Snippet, 80) + "\""
-		}
-		if p.Channel == "email" {
-			body += fmt.Sprintf(" ×%d", p.Inbound+p.Outbound)
 		}
 		copies, groups := 0, 0
 		for _, n := range p.Copies {

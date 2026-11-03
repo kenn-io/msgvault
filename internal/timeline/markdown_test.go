@@ -61,3 +61,25 @@ func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v.History[0].Burst.Copies = map[int64]int{1: 2, 2: 2, 3: 2}
 	assert.Contains(t, Markdown(v), "(3 extra copies)")
 }
+
+func TestMarkdownAvoidsRepeatedCountsAndDefaultHint(t *testing.T) {
+	got := Markdown(sampleTimeline())
+	assert.Contains(t, got, "UTC (default)")
+	assert.NotContains(t, got, "set [activity].timezone")
+	assert.NotContains(t, got, "more available")
+	assert.Contains(t, got, "omitted: history 2 · open_loops more · noise 2 · cold 3")
+	assert.Contains(t, got, "email ↓2 ↑1")
+	assert.NotContains(t, got, "×3")
+}
+
+func TestMarkdownDoesNotRepeatLatestSyncWarning(t *testing.T) {
+	v := sampleTimeline()
+	v.Freshness.Warnings = []string{
+		"The latest sync failed for mail source owner@example.test.",
+		"The activity projection is reconciling archive changes.",
+	}
+	got := Markdown(v)
+	assert.Contains(t, got, "⚠ mail stale failed → msgvault sync")
+	assert.NotContains(t, got, "The latest sync failed for mail source owner@example.test.")
+	assert.Contains(t, got, "⚠ The activity projection is reconciling archive changes.")
+}

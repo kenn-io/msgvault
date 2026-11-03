@@ -63,6 +63,7 @@ type Store interface {
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
 	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
+	ReadLoopMessageEvidenceSnapshotContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, bool, error)
 	LoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, string, bool, error)
 	SaveLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int, token string, evidence store.LoopMessageEvidence) error
 	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
@@ -94,22 +95,16 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 }
 
 func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
-	if store.HasReadSnapshotContext(r.ctx) {
-		if r.left == 0 {
-			return store.LoopMessageEvidence{}, ErrEvidenceIncomplete
-		}
-		r.left--
-		body, err := r.st.GetMessageBodyTextContext(r.ctx, id)
-		if err != nil {
-			return store.LoopMessageEvidence{}, err
-		}
-		signals, attachment, unreadable, err := r.original(id)
-		if err != nil {
-			return store.LoopMessageEvidence{}, err
-		}
-		return classify(body, signals, attachment, unreadable), nil
+	snapshot := store.HasReadSnapshotContext(r.ctx)
+	var e store.LoopMessageEvidence
+	var token string
+	var hit bool
+	var err error
+	if snapshot {
+		e, hit, err = r.st.ReadLoopMessageEvidenceSnapshotContext(r.ctx, id, evidenceVersion)
+	} else {
+		e, token, hit, err = r.st.LoopMessageEvidenceContext(r.ctx, id, evidenceVersion)
 	}
-	e, token, hit, err := r.st.LoopMessageEvidenceContext(r.ctx, id, evidenceVersion)
 	if err != nil || hit {
 		return e, err
 	}
@@ -126,6 +121,9 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 		return e, err
 	}
 	e = classify(body, signals, attachment, unreadable)
+	if snapshot {
+		return e, nil
+	}
 	return e, r.st.SaveLoopMessageEvidenceContext(r.ctx, id, evidenceVersion, token, e)
 }
 

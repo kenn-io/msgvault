@@ -1,6 +1,7 @@
 package loops
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -42,4 +43,38 @@ func TestListProgressesPastNewerEvidence(t *testing.T) {
 	assert.False(second.CoverageIncomplete)
 	require.Len(second.Loops, 1)
 	assert.Equal(anchor, second.Loops[0].Anchor.ID)
+}
+
+func TestListSnapshotUsesCachedEvidenceWithoutSpendingBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	previousBudget := listEvidenceBudget
+	listEvidenceBudget = 2
+	t.Cleanup(func() { listEvidenceBudget = previousBudget })
+	f := storetest.New(t)
+	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
+	for i := range 4 {
+		f.PersistEmail(storetest.EmailSpec{
+			Thread: fmt.Sprintf("cached-%d", i), From: "alex@example.test", To: []string{storetest.OwnerAddress},
+			Body: "Can you send the contract?", SentAt: now.Add(-5*24*time.Hour + time.Duration(i)*time.Minute),
+		})
+	}
+	first, err := List(t.Context(), f.Store, Options{}, now)
+	require.NoError(err)
+	assert.True(first.CoverageIncomplete)
+	var want []Loop
+	for range 2 {
+		snapshot, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+		require.NoError(err)
+		got, err := List(snapshot, f.Store, Options{}, now)
+		release()
+		require.NoError(err)
+		assert.False(got.CoverageIncomplete)
+		require.Len(got.Loops, 4)
+		if want == nil {
+			want = got.Loops
+		} else {
+			assert.Equal(want, got.Loops)
+		}
+	}
 }

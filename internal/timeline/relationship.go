@@ -267,7 +267,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 						continue
 					}
 				}
-				if !stamp.After(c.t.Now) {
+				if !stamp.After(c.t.Now) && c.matchesSubject(Entry{Meeting: &MeetingEntry{People: c.occurrencePeople(o)}}) {
 					c.mergeContact(store.ContactAggregate{FirstAt: &stamp, LastAt: &stamp, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(stamp, c.t.Now, c.loc)}, false)
 				}
 			}
