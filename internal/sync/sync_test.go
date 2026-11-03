@@ -458,7 +458,6 @@ func TestFullSyncCompletionFailureMarksRunFailed(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
-	testutil.SkipIfPostgres(t, "uses a SQLite trigger to inject the completion failure")
 	env := newTestEnv(t)
 	_, err := env.Store.DB().Exec(`
 		CREATE TRIGGER fail_sync_completion
@@ -2167,6 +2166,7 @@ func (a *recoveryProfileSequenceAPI) GetProfile(context.Context) (*gmail.Profile
 }
 
 func TestFullRecoversCheckpointAfterSyncOwnerExit(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)

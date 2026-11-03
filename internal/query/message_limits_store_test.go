@@ -15,6 +15,7 @@ import (
 // TestBoundedMessageDetails covers each place GetMessage and GetMessageRaw
 // apply the remote client byte limit, on whichever backend the store uses.
 func TestBoundedMessageDetails(t *testing.T) {
+	t.Parallel()
 	f := storetest.New(t)
 	engine := originalEngine(f)
 	withRaw := func(t *testing.T, raw string) int64 {
@@ -104,6 +105,7 @@ func TestBoundedMessageDetails(t *testing.T) {
 }
 
 func TestBoundedAllThreadMembershipNeverTruncates(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)

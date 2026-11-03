@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // NewTestStore creates a temporary database for testing.
@@ -82,10 +83,7 @@ func NewSQLiteTestStoreAt(t *testing.T, dbPath string) *store.Store {
 // by the Dialect interface.
 func SkipIfPostgres(t *testing.T, reason string) {
 	t.Helper()
-	testDB := os.Getenv("MSGVAULT_TEST_DB")
-	if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
-		t.Skipf("skipping on PostgreSQL: %s", reason)
-	}
+	dbtest.SkipIfPostgres(t, reason)
 }
 
 // newPostgresTestStore creates an isolated PostgreSQL store for the given URL.

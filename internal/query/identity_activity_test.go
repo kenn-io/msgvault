@@ -10,6 +10,7 @@ import (
 )
 
 func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
@@ -63,6 +64,7 @@ func TestIdentityActivityPreservesNonChatConversationEdgeSemantics(t *testing.T)
 }
 
 func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)
 	mailSource := builder.AddSourceWithType("archive-a@example.com", "gmail")
@@ -117,6 +119,7 @@ func TestUnfilteredIdentityIndexMatchesLegacyPeopleAndDomains(t *testing.T) {
 }
 
 func TestSourceOnlyPeopleRollupFastPathMatchesLogicalReduction(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -176,6 +179,7 @@ func TestSourceOnlyPeopleRollupFastPathMatchesLogicalReduction(t *testing.T) {
 }
 
 func TestIdentityActivityAppliesFactFilters(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -250,6 +254,7 @@ func TestIdentityActivityAppliesFactFilters(t *testing.T) {
 }
 
 func TestIdentityActivityDeletionScopesMatchLegacyPeopleAndDomains(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
@@ -315,6 +320,7 @@ func TestIdentityActivityDeletionScopesMatchLegacyPeopleAndDomains(t *testing.T)
 }
 
 func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
+	t.Parallel()
 	assertionsForTest := assert.New(t)
 	zone := time.FixedZone("fixture-offset", -4*60*60)
 	after := time.Date(2026, 7, 20, 9, 30, 0, 0, zone)
@@ -329,6 +335,7 @@ func TestIdentityActivityDateFiltersBindUTCWallClock(t *testing.T) {
 }
 
 func TestIdentityCandidateNarrowingRetainsScalarFilters(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -368,6 +375,7 @@ func TestIdentityCandidateNarrowingRetainsScalarFilters(t *testing.T) {
 }
 
 func TestIdentityCandidateNarrowingSaturationFallsBackExactly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	builder := NewTestDataBuilder(t)

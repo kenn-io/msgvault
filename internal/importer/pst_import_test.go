@@ -52,6 +52,7 @@ func (m *mockIngestFunc) fn(
 
 func openTestStorePst(t *testing.T) *store.Store {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)

@@ -12,6 +12,7 @@ import (
 )
 
 func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -35,6 +36,7 @@ func TestExploreGroupsAggregatesCompleteLogicalPopulation(t *testing.T) {
 }
 
 func TestExploreAttachmentByteEstimates(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name, sourceType, messageType string
 		sizeEstimate, wantBytes       int64
@@ -77,6 +79,7 @@ func TestExploreAttachmentByteEstimates(t *testing.T) {
 // mailing-list dimension that drops empty values, splits case variants into
 // separate rows, or applies a broader-than-exact drill predicate.
 func TestExploreGroupsMailingListsPreserveAggregateDrillPopulation(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -124,6 +127,7 @@ func TestExploreGroupsMailingListsPreserveAggregateDrillPopulation(t *testing.T)
 // drilling into 'email' (the filter that group row applies) must reproduce
 // the group row's count.
 func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -185,6 +189,7 @@ func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
 // must be returned even when other groups outrank it, so a top-N page can
 // never make a valid selection look unavailable.
 func TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -211,6 +216,7 @@ func TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank(t *testing.T) {
 }
 
 func TestExploreGroupsGroupKeyWithoutMatchReturnsZeroRows(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -228,6 +234,7 @@ func TestExploreGroupsGroupKeyWithoutMatchReturnsZeroRows(t *testing.T) {
 }
 
 func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -261,6 +268,7 @@ func TestExploreGroupsGroupKeyComposesWithContextFilters(t *testing.T) {
 }
 
 func TestExploreGroupsParticipantLabelsUseDurableIdentityPrecedence(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -323,6 +331,7 @@ func linkedParticipantExploreFixture(t *testing.T) (b *TestDataBuilder, alice, a
 }
 
 func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b, _, _ := linkedParticipantExploreFixture(t)
@@ -344,6 +353,7 @@ func TestExploreGroupsMergesLinkedParticipantIdentities(t *testing.T) {
 }
 
 func TestExploreGroupsDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, curated, want string
 		files               bool
@@ -396,6 +406,7 @@ func TestExploreGroupsDraftOnlyClusterUsesCanonicalLabelPolicy(t *testing.T) {
 }
 
 func TestExploreGroupsPreservesFilteredChatAndRosterMembership(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.test")
 	alice := b.AddParticipant("alice@alpha.example.test", "alpha.example.test", "Alice")
@@ -445,6 +456,7 @@ func TestExploreGroupsPreservesFilteredChatAndRosterMembership(t *testing.T) {
 }
 
 func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b, alice, alias := linkedParticipantExploreFixture(t)
@@ -472,6 +484,7 @@ func TestExploreParticipantFilterMatchesLinkedAliases(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCoversPredicateAndExclusions(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("archive@example.com")
@@ -489,6 +502,7 @@ func TestExploreSelectionStatsCoversPredicateAndExclusions(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCountsPerEntryActionSupport(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -509,6 +523,7 @@ func TestExploreSelectionStatsCountsPerEntryActionSupport(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCanResolveExactDeletableMessageIDs(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -528,6 +543,7 @@ func TestExploreSelectionStatsCanResolveExactDeletableMessageIDs(t *testing.T) {
 
 // Gmail and Graph mail can be deleted at the source. IMAP mail cannot.
 func TestDeletionCoversGmailAndMSMailOnly(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -550,6 +566,7 @@ func TestDeletionCoversGmailAndMSMailOnly(t *testing.T) {
 }
 
 func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
+	t.Parallel()
 	for _, deletion := range []DeletionFilter{DeletionAny, DeletionActive} {
 		t.Run(string(deletion), func(t *testing.T) {
 			assertions := assert.New(t)
@@ -579,6 +596,7 @@ func TestExploreSelectionStatsExcludesDedupHiddenDeletionTargets(t *testing.T) {
 }
 
 func TestExploreSelectionStatsCanResolveExactRawExportMessageID(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -602,6 +620,7 @@ func TestExploreSelectionStatsCanResolveExactRawExportMessageID(t *testing.T) {
 }
 
 func TestExploreFilesReturnsBoundedChronologicalAttachmentFacts(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -627,6 +646,7 @@ func TestExploreFilesReturnsBoundedChronologicalAttachmentFacts(t *testing.T) {
 }
 
 func TestExploreFilesUsesDurableAttachmentIdentityForDuplicateMetadataPages(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -652,6 +672,7 @@ func TestExploreFilesUsesDurableAttachmentIdentityForDuplicateMetadataPages(t *t
 }
 
 func TestExploreMatchCountsBatchesExactLogicalRowCounts(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("+15550000000", messageTypeIMessage)

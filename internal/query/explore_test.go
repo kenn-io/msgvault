@@ -57,6 +57,7 @@ func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
 }
 
 func TestExploreSentOnlyExcludesDraftsBeforePagination(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.com", "gmail")
 	owner := b.AddParticipant("owner@example.com", "example.com", "Owner")
@@ -106,6 +107,7 @@ func TestExploreSentOnlyExcludesDraftsBeforePagination(t *testing.T) {
 }
 
 func TestSharedChatClassificationSQL(t *testing.T) {
+	t.Parallel()
 	engine, err := NewDuckDBEngine("", "", nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -146,6 +148,7 @@ func TestSharedChatClassificationSQL(t *testing.T) {
 }
 
 func TestExploreKeepsSemanticMatchStateConstantPerLogicalRow(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("+15550000000", messageTypeIMessage)
@@ -200,6 +203,7 @@ func TestExploreKeepsSemanticMatchStateConstantPerLogicalRow(t *testing.T) {
 }
 
 func TestExploreTenThousandFragmentConversationKeepsConstantMatchState(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("+15550000000", messageTypeIMessage)
@@ -268,6 +272,7 @@ func TestExploreKindFilterUsesConversationFallback(t *testing.T) {
 // store.IsEmailMessageType), so an "email" filter must include them while
 // non-email filters must not.
 func TestExploreMessageTypeEmailIncludesLegacyRows(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -310,6 +315,7 @@ func TestExploreMessageTypeEmailIncludesLegacyRows(t *testing.T) {
 }
 
 func TestExploreCoverageStreamsExactLiveMessagesInOneScan(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -349,6 +355,7 @@ func TestExploreCoverageStreamsExactLiveMessagesInOneScan(t *testing.T) {
 }
 
 func TestExploreCoverageStopsOnVisitError(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("selected@example.com")
@@ -369,6 +376,7 @@ func TestExploreCoverageStopsOnVisitError(t *testing.T) {
 }
 
 func TestExploreCoverageHonorsCancellation(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("selected@example.com")
 	b.AddMessage(MessageOpt{SourceID: source})
@@ -390,6 +398,7 @@ func assertExploreBoundedStrongestMatch(t *testing.T, row EntryRow, want *int64)
 }
 
 func TestExploreLogicalRowUnitsAndStableArchiveOrdering(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -449,6 +458,7 @@ func TestExploreLogicalRowUnitsAndStableArchiveOrdering(t *testing.T) {
 }
 
 func TestExploreFlattensTitleOnlyWhenFallenBackToSnippet(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -473,6 +483,7 @@ func TestExploreFlattensTitleOnlyWhenFallenBackToSnippet(t *testing.T) {
 }
 
 func TestExploreAppliesContextBeforeChatAggregation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -500,6 +511,7 @@ func TestExploreAppliesContextBeforeChatAggregation(t *testing.T) {
 }
 
 func TestExploreIdentityDirectionSeparatesSenderAndRecipientWithinSource(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -552,6 +564,7 @@ func TestExploreIdentityDirectionSeparatesSenderAndRecipientWithinSource(t *test
 }
 
 func TestExploreIdentitySenderUsesDirectSenderOnlyWithoutFromRows(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -580,6 +593,7 @@ func TestExploreIdentitySenderUsesDirectSenderOnlyWithoutFromRows(t *testing.T) 
 }
 
 func TestExploreIdentityPredicateAppliesBeforeChatAggregation(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -618,6 +632,7 @@ func TestExploreIdentityPredicateAppliesBeforeChatAggregation(t *testing.T) {
 }
 
 func TestExploreIdentityPredicateValidatesSourceIDsParticipantsAndDirection(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -678,6 +693,7 @@ func TestExploreIdentityPredicateValidatesSourceIDsParticipantsAndDirection(t *t
 // select only that alias's envelope rows, not everything the survivor
 // participant touches.
 func TestExploreIdentityFilterPrefersEnvelopeAddressOverMergedParticipant(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -735,6 +751,7 @@ func TestExploreIdentityFilterPrefersEnvelopeAddressOverMergedParticipant(t *tes
 // envelope snapshot is empty keep matching through the resolved participant
 // IDs even when the filter carries an email identifier.
 func TestExploreIdentityFilterFallsBackToParticipantForRowsWithoutEnvelope(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -772,6 +789,7 @@ func TestExploreIdentityFilterFallsBackToParticipantForRowsWithoutEnvelope(t *te
 // coexisting legacy NULL From row must not select the message through the
 // participant fallback when attribution stored it as not-from-me.
 func TestExploreIdentitySenderSuppressesFallbackWhenAnyEnvelopeExists(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -805,6 +823,7 @@ func TestExploreIdentitySenderSuppressesFallbackWhenAnyEnvelopeExists(t *testing
 // absorbed email vanished from every participant surface): the envelope
 // snapshot alone must still select the alias's mail.
 func TestExploreIdentityFilterMatchesEnvelopeWithoutParticipantEvidence(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -837,6 +856,7 @@ func TestExploreIdentityFilterMatchesEnvelopeWithoutParticipantEvidence(t *testi
 // committed cache written before the envelope column existed keeps serving
 // identity filters with the participant semantics instead of erroring.
 func TestExploreIdentityFilterLegacyCacheWithoutEnvelopeColumnFallsBack(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -866,6 +886,7 @@ func TestExploreIdentityFilterLegacyCacheWithoutEnvelopeColumnFallsBack(t *testi
 }
 
 func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -952,6 +973,7 @@ func TestExploreIdentityPredicateScopesCountsGroupsSelectionAndSearchCandidates(
 }
 
 func TestExploreIdentityPredicateScopesRelationshipTimeline(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -987,6 +1009,7 @@ func TestExploreIdentityPredicateScopesRelationshipTimeline(t *testing.T) {
 }
 
 func TestExploreIdentityPredicateScopesPeopleGrouping(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1016,6 +1039,7 @@ func TestExploreIdentityPredicateScopesPeopleGrouping(t *testing.T) {
 }
 
 func TestExploreKeepsDurableCallsAsIndividualItemsInsideChatConversations(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1044,6 +1068,7 @@ func TestExploreKeepsDurableCallsAsIndividualItemsInsideChatConversations(t *tes
 }
 
 func TestExploreAggregatesRCSFragmentsIntoOneConversation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1066,6 +1091,7 @@ func TestExploreAggregatesRCSFragmentsIntoOneConversation(t *testing.T) {
 }
 
 func TestExploreIncludesDirectSendersAndConversationMembership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1109,6 +1135,7 @@ func TestExploreIncludesDirectSendersAndConversationMembership(t *testing.T) {
 }
 
 func TestExploreReturnsSearchIndexProvenance(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1160,6 +1187,7 @@ func TestExploreReturnsSearchIndexProvenance(t *testing.T) {
 }
 
 func TestExploreRejectsModeInapplicableSearchFields(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("archive@example.com")
 	messageID := b.AddMessage(MessageOpt{SourceID: sourceID, Subject: "Needle"})
@@ -1199,6 +1227,7 @@ func TestExploreRejectsModeInapplicableSearchFields(t *testing.T) {
 }
 
 func TestExploreEmptyAnalyticsDirReturnsTypedAbsentCache(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	_, err := (&DuckDBEngine{}).Explore(context.Background(), ExploreRequest{})
@@ -1210,6 +1239,7 @@ func TestExploreEmptyAnalyticsDirReturnsTypedAbsentCache(t *testing.T) {
 }
 
 func TestExploreRejectsUnresolvedSearchCandidatesAndProvenance(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("archive@example.com")
 	b.AddMessage(MessageOpt{SourceID: sourceID, Subject: "Needle"})
@@ -1265,6 +1295,7 @@ func TestExploreRejectsUnresolvedSearchCandidatesAndProvenance(t *testing.T) {
 }
 
 func TestExploreResolvedEmptySearchCandidatesReturnNoRows(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("archive@example.com")
 	b.AddMessage(MessageOpt{SourceID: sourceID, Subject: "Needle"})
@@ -1285,6 +1316,7 @@ func TestExploreResolvedEmptySearchCandidatesReturnNoRows(t *testing.T) {
 }
 
 func TestExploreRejectsUnsupportedPresentationAndSort(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("archive@example.com")
 	b.AddMessage(MessageOpt{SourceID: sourceID})
@@ -1308,6 +1340,7 @@ func TestExploreRejectsUnsupportedPresentationAndSort(t *testing.T) {
 }
 
 func TestExploreAcceptsExplicitTableDateDescending(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("archive@example.com")
 	b.AddMessage(MessageOpt{SourceID: sourceID})
@@ -1321,6 +1354,7 @@ func TestExploreAcceptsExplicitTableDateDescending(t *testing.T) {
 }
 
 func TestExplorePreservesTotalCountBeyondLastPage(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("archive@example.com")
 	b.AddMessage(MessageOpt{SourceID: sourceID, Subject: "Only row"})
@@ -1345,6 +1379,7 @@ func entryKinds(rows []EntryRow) []EntryKind {
 // entry, not simply participant_ids[0]: the owner is added first (so it has
 // the smallest raw ID) and would be picked by that naive heuristic.
 func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1370,6 +1405,7 @@ func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
 // only participant is the owner (e.g. a self-addressed note) yields a nil
 // counterpart rather than falling back to the owner's own ID.
 func TestExploreCounterpartParticipantIDNilWhenOwnerOnly(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	srcID := b.AddSource("owner@example.com")
@@ -1395,6 +1431,7 @@ func TestExploreCounterpartParticipantIDNilWhenOwnerOnly(t *testing.T) {
 // self-mail with no third participant must yield a nil counterpart, not the
 // owner's other address.
 func TestExploreCounterpartSkipsOwnerIdentityFromAnotherSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1439,6 +1476,7 @@ func TestExploreCounterpartSkipsOwnerIdentityFromAnotherSource(t *testing.T) {
 // column is nil rather than guessing the smallest participant ID overall —
 // the exact heuristic this field replaces.
 func TestExploreCounterpartParticipantIDNilWhenOwnerUnknown(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
 	srcID := b.AddSource("archive@example.com")
@@ -1462,6 +1500,7 @@ func TestExploreCounterpartParticipantIDNilWhenOwnerUnknown(t *testing.T) {
 // messages. Before the fix, coverage omitted alias-only messages and disagreed
 // with Explore.
 func TestExploreCoverageParticipantFilterMatchesExploreAcrossClusters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1508,6 +1547,7 @@ func TestExploreCoverageParticipantFilterMatchesExploreAcrossClusters(t *testing
 // (A) narrows to entries involving BOTH A and B, instead of widening to
 // every entry that involves either.
 func TestExploreAdditionalParticipantGroupsIntersectRatherThanUnion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1549,6 +1589,7 @@ func TestExploreAdditionalParticipantGroupsIntersectRatherThanUnion(t *testing.T
 // TestExploreAdditionalDomainGroupsIntersectRatherThanUnion is the domain
 // analogue of TestExploreAdditionalParticipantGroupsIntersectRatherThanUnion.
 func TestExploreAdditionalDomainGroupsIntersectRatherThanUnion(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -1589,6 +1630,7 @@ func TestExploreAdditionalDomainGroupsIntersectRatherThanUnion(t *testing.T) {
 // additional group still matches entries recorded under its canonical
 // identity.
 func TestExploreAdditionalParticipantGroupExpandsThroughIdentityClusters(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
