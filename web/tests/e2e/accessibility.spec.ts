@@ -3,7 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 import { expectKitTheme, selectKitOption, selectWorkspace, setKitTheme, setTemporaryDensity } from '../kit-ui';
 import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/carddav';
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
-import { installOperations, OPERATION_REFERENCES } from './fixtures/operations';
+import { installOperations } from './fixtures/operations';
 
 async function assertNoViolations(page: Page, label: string) {
   const result = await new AxeBuilder({ page }).analyze();
@@ -12,40 +12,39 @@ async function assertNoViolations(page: Page, label: string) {
 }
 
 for (const theme of ['light', 'dark'] as const) {
-  test(`${theme} Operations workspace, detail, failure, and narrow states have no axe violations`, async ({ page }) => {
+  test(`${theme} Past runs, detail, failure, and narrow states have no axe violations`, async ({ page }) => {
     test.slow();
     const fixture = await installOperations(page);
-    const operations = `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`;
-    await page.goto(operations);
+    await page.goto('/?workspace=everything');
     await setKitTheme(page, theme);
-    await expect(page.getByRole('main', { name: 'Operations' })).toBeVisible();
-    await assertNoViolations(page, `Operations workspace ${theme}`);
-
+    const openHistory = async () => {
+      const opener = page.getByRole('button', { name: 'Open navigation' });
+      if (await opener.isVisible()) await opener.click();
+      await page.getByRole('button', { name: /Sync status:/ }).click();
+      await page.getByRole('menuitem', { name: 'Past runs' }).click();
+    };
+    await openHistory();
+    await expect(page.getByRole('dialog', { name: 'Past runs' })).toBeVisible();
+    await assertNoViolations(page, `Past runs ${theme}`);
     await page.getByRole('button', { name: 'Open Document extraction run' }).click();
     await expect(page.getByRole('region', { name: 'Operation run detail' })).toContainText('Operation archive input changed.');
-    await assertNoViolations(page, `Operations detail with fixed failure ${theme}`);
-
+    await assertNoViolations(page, `Run detail ${theme}`);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'operations', operationRunID: OPERATION_REFERENCES.document
-    }))}`);
-    await setKitTheme(page, theme);
-    await expect(page.getByRole('region', { name: 'Operation detail focused content' })).toBeVisible();
-    await assertNoViolations(page, `Operations narrow detail ${theme}`);
-
-    await page.getByRole('button', { name: 'Back to operation history' }).click();
+    await assertNoViolations(page, `Narrow run detail ${theme}`);
+    await page.keyboard.press('Escape');
     fixture.failNextHistory();
-    await page.getByRole('button', { name: 'Reload run history' }).click();
-    await expect(page.getByRole('alert', { name: 'Operation history failure' })).toBeVisible();
-    await assertNoViolations(page, `Operations history failure ${theme}`);
-
+    await page.reload();
+    await openHistory();
+    await expect(page.getByRole('dialog', { name: 'Past runs' }).getByRole('alert').filter({ hasText: 'Unable to load operation history.' })).toBeVisible();
+    await assertNoViolations(page, `History failure ${theme}`);
+    await page.keyboard.press('Escape');
     fixture.setOperationConfigured('document_extraction', false);
-    await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto(operations);
-    await setKitTheme(page, theme);
+    await page.reload();
+    await openHistory();
+    await page.getByRole('button', { name: 'Open Document extraction run' }).click();
     await page.getByRole('button', { name: 'Open Document index status' }).click();
     await expect(page.getByRole('link', { name: 'Document indexing setup' })).toBeVisible();
-    await assertNoViolations(page, `Operations document setup line ${theme}`);
+    await assertNoViolations(page, `Document setup ${theme}`);
   });
 }
 
@@ -105,7 +104,7 @@ for (const theme of ['light', 'dark'] as const) {
       description: 'Older cleanup', message_count: 12, account: 'archive@example.com',
       execution: { succeeded: 11, failed: 1, failed_ids: ['msg-1'] }
     } }));
-    await selectWorkspace(page, 'Everything');
+    await selectWorkspace(page, 'Messages');
     await selectWorkspace(page, 'Deletions');
     const manifests = page.getByRole('table', { name: 'Deletion manifests' });
     await expect(manifests.getByText('Completed')).toBeVisible();
@@ -114,8 +113,8 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByText('archive@example.com')).toBeVisible();
     await assertNoViolations(page, `Deletions manifest detail ${theme}`);
 
-    await selectWorkspace(page, 'Everything');
-    const grid = page.getByRole('grid', { name: 'Everything results' });
+    await selectWorkspace(page, 'Messages');
+    const grid = page.getByRole('grid', { name: 'Messages results' });
     await grid.focus();
     await page.keyboard.press('Space');
     await page.keyboard.press('d');
@@ -164,9 +163,8 @@ for (const theme of ['light', 'dark'] as const) {
       await setKitTheme(page, theme);
       await setTemporaryDensity(page, density === 'compact' ? 'Compact' : 'Comfortable');
 
-      // The Relationships hub is the default landing workspace; walk its
-      // three panes (list, timeline, reading pane) open one at a time so
-      // each incremental layout gets its own axe pass.
+      await selectWorkspace(page, 'People');
+      // Walk each pane so every layout gets its own axe pass.
       const hub = page.getByRole('main', { name: 'Relationships' });
       await expect(hub).toBeVisible();
       const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
@@ -191,8 +189,8 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `Relationships reading pane ${theme}/${density}`);
       await page.keyboard.press('Escape');
 
-      await selectWorkspace(page, 'Everything');
-      const grid = page.getByRole('grid', { name: 'Everything results' });
+      await selectWorkspace(page, 'Messages');
+      const grid = page.getByRole('grid', { name: 'Messages results' });
       await expect(grid.locator('[data-row-key]').first()).toBeVisible();
       await assertNoViolations(page, `Everything ${theme}/${density}`);
       await grid.focus();
@@ -207,7 +205,7 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `modal ${theme}/${density}`);
       await keyboardHelp.getByRole('button', { name: 'Close' }).click();
 
-      for (const workspace of ['Directory', 'Files', 'Saved views', 'Sources', 'Deletions', 'Settings']) {
+      for (const workspace of ['Directory', 'Files', 'Sources', 'Deletions', 'Settings']) {
         await selectWorkspace(page, workspace);
         await expect(page.getByRole('main', { name: workspace, exact: true })).toBeVisible();
         await assertNoViolations(page, `${workspace} ${theme}/${density}`);
@@ -230,19 +228,15 @@ for (const theme of ['light', 'dark'] as const) {
     await installMixedArchive(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
     await setKitTheme(page, theme);
-    const grid = page.getByRole('grid', { name: 'Everything results' });
+    const grid = page.getByRole('grid', { name: 'Messages results' });
     await expect(grid.locator('[data-row-key]').first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Display' }).click();
     await expect(page.getByRole('menuitemradio', { name: 'Compact' })).toBeVisible();
     await assertNoViolations(page, `Display menu ${theme}`);
+    await expect(page.getByRole('menuitem', { name: /^Size/ })).toBeVisible();
     await page.keyboard.press('Escape');
-
-    await page.getByRole('button', { name: 'Columns' }).click();
-    await expect(page.getByRole('button', { name: 'Size' })).toBeVisible();
-    await assertNoViolations(page, `Columns menu ${theme}`);
-    await page.keyboard.press('Escape');
-    await expect(page.getByRole('button', { name: 'Size' })).toHaveCount(0);
+    await expect(page.getByRole('menuitem', { name: /^Size/ })).toHaveCount(0);
 
     await grid.focus();
     await page.keyboard.press('Home');
@@ -268,8 +262,8 @@ for (const theme of ['light', 'dark'] as const) {
     await expect(page.getByRole('button', { name: /^Images/ })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Collapse sidebar' }).click();
-    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Saved views' }).hover();
-    await expect(page.getByRole('tooltip', { name: 'Saved views' })).toBeVisible();
+    await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Messages' }).hover();
+    await expect(page.getByRole('tooltip', { name: 'Messages' })).toBeVisible();
     await assertNoViolations(page, `rail tooltip ${theme}`);
 
     await page.setViewportSize({ width: 420, height: 860 });
@@ -561,6 +555,7 @@ for (const theme of ['light', 'dark'] as const) {
       await page.route('**/api/session', (route) => route.fulfill({ json: sessionRequired
         ? { auth_mode: 'required', https: true, plain_http_warning: false }
         : { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+      await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
       await page.route('**/api/v1/settings', (route) => route.fulfill({ json: {
         settings: [
           { key: 'web.theme', value: { string: 'light' } },
@@ -593,7 +588,7 @@ for (const theme of ['light', 'dark'] as const) {
 
       sessionRequired = false;
       await page.reload();
-      const grid = page.getByRole('grid', { name: 'Everything results' });
+      const grid = page.getByRole('grid', { name: 'Messages results' });
       await expect(grid).toHaveAttribute('aria-busy', 'true');
       await expect(page.getByTestId('everything-skeleton').first()).toBeVisible();
       await assertNoViolations(page, `loading ${theme}/${density}`);

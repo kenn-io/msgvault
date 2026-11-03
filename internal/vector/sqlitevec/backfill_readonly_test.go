@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -43,6 +44,7 @@ func backfillLedgerMarked(t *testing.T, db *sql.DB) bool {
 // generation must NOT attempt the write, must NOT error, and must leave the
 // ledger unmarked. Migrate still runs (vectors.db is read-write).
 func TestBackfillEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(
 		t,
 	)
@@ -152,6 +154,7 @@ func vectorChunkOne() []vector.Chunk {
 // index_generations) so a writable Open WOULD reset it; the read-only Open
 // must not.
 func TestResetOrphanedEmbedGen_ReadOnlyMainDB_Skipped(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(
 		t,
 	)
@@ -220,6 +223,7 @@ VALUES (1, 1, 1, 'm1', 'email', 99);
 }
 
 func TestResetOrphanedEmbedGen_ClearsOrphanedDiagnostics(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.New(t)
 	ctx := t.Context()

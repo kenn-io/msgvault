@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { selectWorkspace } from './kit-ui';
 
 // Touch contexts let the scroll-dismissal flow tap a day for real, matching
 // the component's touch-specific tooltip behavior.
@@ -48,6 +49,7 @@ async function openCalendar(page: Page, firstAt: string | Promise<string> = pers
     score_version: 1, effective_date: '2026-12-31', cache_revision: 'cache-calendar', identity_revision: 1
   } }));
   await page.goto('/');
+  await selectWorkspace(page, 'People');
   await page.getByRole('grid', { name: 'Relationship results' }).getByText(person.display_label).click();
   await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
 }

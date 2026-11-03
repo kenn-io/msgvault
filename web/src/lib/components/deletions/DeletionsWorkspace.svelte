@@ -317,7 +317,7 @@
     {#if !selection}
       <EmptyState
         title="Nothing selected for deletion"
-        description="Select items in Everything, then choose Review for deletion…"
+        description="Select items in Messages, then choose Review for deletion…"
       />
     {:else}
       <Card padding="sm">

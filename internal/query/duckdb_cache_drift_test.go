@@ -29,6 +29,7 @@ import (
 // The engine must detect out-of-band drift and refuse the cache instead of
 // reading an uncommitted file set or falling back to SQLite.
 func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -80,6 +81,7 @@ func TestDuckDBEngine_CacheRebuiltUnderneath(t *testing.T) {
 }
 
 func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	analyticsDir, cleanup := buildStandardTestData(t).Build()
 	t.Cleanup(cleanup)
@@ -100,6 +102,7 @@ func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFastWithStatsRejectsMessageParquetDrift(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -146,6 +149,7 @@ func TestDuckDBEngine_SearchFastWithStatsRejectsMessageParquetDrift(t *testing.T
 }
 
 func TestDuckDBEngine_SearchFastWithStatsRejectsAttachmentParquetDrift(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -189,6 +193,7 @@ func TestDuckDBEngine_SearchFastWithStatsRejectsAttachmentParquetDrift(t *testin
 }
 
 func TestDuckDBEngine_CacheFingerprintCoversRequiredParquetDirs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -210,6 +215,7 @@ func TestDuckDBEngine_CacheFingerprintCoversRequiredParquetDirs(t *testing.T) {
 }
 
 func TestStableOptionalColumnsRetriesWhenFingerprintChanges(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -263,6 +269,7 @@ func bobExchangeFixture(t *testing.T) (*TestDataBuilder, int64) {
 // Parquet views against the new schema instead of failing with
 // "Column ... in REPLACE list not found in FROM clause".
 func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -320,6 +327,7 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 }
 
 func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t *testing.T) {
+	t.Parallel()
 	for _, outcome := range []string{"reloads after sent publication", "retries after unreadable activity is restored"} {
 		t.Run(outcome, func(t *testing.T) {
 			require := require.New(t)
@@ -393,6 +401,7 @@ func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t 
 // revalidation; and an out-of-band shard mutation without a marker change
 // still forces a full inspection on the next query and is rejected as drift.
 func TestDuckDBEngine_QueryPathMemoizesFullFingerprintWalks(t *testing.T) {
+	// serial: swaps the package global inspectDatasetFingerprint.
 	require := require.New(t)
 	assert := assert.New(t)
 

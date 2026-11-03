@@ -87,14 +87,14 @@ have not heard from recently.
 
 ## Browse your archive
 
-Use the grouped sidebar to browse messages, files, and people. Press `/` to
-search from any page. Save the current view from Everything or Files, or share
+Use the sidebar to open Messages, People, Files, and Sources. Press `/` to
+search from any page. Save the current view from Messages or Files, or share
 its URL with someone who has access to your archive. Use Back and Forward to
 return to earlier views.
 
 Maintain profiles, review identities and merges, publish contacts through
 CardDAV, and catch up with a saved conversation brief in **Directory**.
-Check syncs and background jobs in **Operations**. Update provider credentials
+Open the status dot for running and failed jobs, or Past runs for history. Update provider credentials
 in **Settings**, which shows changes that take effect after a restart.
 [Explore the workspaces](/docs/web-ui/).
 

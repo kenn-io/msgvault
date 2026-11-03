@@ -1,6 +1,13 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 import { selectKitOption, selectWorkspace } from './kit-ui';
 import { exploreHistoryState } from './explore-state';
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+  await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
+});
 
 function fileRow(id: number, title: string) {
   return {
@@ -63,9 +70,9 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   });
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const everything = page.getByRole('grid', { name: 'Everything results' });
+  const everything = page.getByRole('grid', { name: 'Messages results' });
   await expect(everything).toBeVisible();
-  await page.getByRole('searchbox', { name: 'Search everything' }).fill('pasta');
+  await page.getByRole('searchbox', { name: 'Search messages' }).fill('pasta');
   await page.getByRole('button', { name: 'Search', exact: true }).click();
 
   await selectKitOption(page, 'Show as', 'Timeline');
@@ -90,7 +97,7 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   await expect(everything).toBeFocused();
   await expect(filesMain).toHaveCount(0);
   await expect(page).toHaveURL(/[?&]workspace=everything(&|$)/);
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('pasta');
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('pasta');
   await page.goForward();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
 
@@ -121,12 +128,10 @@ test('Show as Files opens the Files workspace with the same context, and Back re
   await expect(dialog).toHaveCount(0);
   expect(savedViews[0]!.canonical_state).toMatchObject({ query: 'pasta', presentation: 'files' });
 
-  await selectWorkspace(page, 'Saved views');
-  await expect(page.getByRole('list', { name: 'Pasta files summary' })).toContainText('Full text: “pasta”');
-  await page.getByRole('button', { name: 'Open Pasta files' }).click();
+  await page.getByRole('button', { name: 'Pasta files', exact: true }).click();
   await expect(files.getByText('pasta-analysis.pdf')).toBeVisible();
   await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('pasta');
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('pasta');
 });
 
 test('an old Everything-as-Files link opens Files at its deep anchor with bounded paging and a focused fallback', async ({ page }) => {

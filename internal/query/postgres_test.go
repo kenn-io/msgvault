@@ -15,6 +15,7 @@ var _ Engine = (*DuckDBEngine)(nil)
 // TextEngine, but the pgEngine wrapper deliberately hides those methods
 // because they emit FTS5 MATCH and strftime() SQL that PostgreSQL rejects.
 func TestPostgresEngineHidesTextEngine(t *testing.T) {
+	t.Parallel()
 	e := NewPostgreSQLEngine(nil)
 	_, ok := e.(TextEngine)
 	require.False(t, ok, "PostgreSQL engine must not satisfy TextEngine (SQLite-only FTS5/strftime SQL)")
@@ -24,6 +25,7 @@ func TestPostgresEngineHidesTextEngine(t *testing.T) {
 }
 
 func TestPostgresEngineExposesAggregateDeletionResolver(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	engine := NewPostgreSQLEngine(nil)
 
@@ -33,6 +35,7 @@ func TestPostgresEngineExposesAggregateDeletionResolver(t *testing.T) {
 
 // TestPostgresTimeTruncExpression verifies the PostgreSQL time truncation expressions.
 func TestPostgresTimeTruncExpression(t *testing.T) {
+	t.Parallel()
 	d := PostgreSQLQueryDialect{}
 	for _, tc := range []struct {
 		gran string

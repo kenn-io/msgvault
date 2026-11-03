@@ -1,4 +1,10 @@
+import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
+
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
+  await stubOperationStatus(page);
+});
 
 const row = {
   key: 'source:1:message:m1', kind: 'message', message_type: 'email', conversation_type: 'email',
@@ -21,7 +27,6 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   const preflights: unknown[] = [];
   const sourceRequests: Array<{ method: string; accept: string | null }> = [];
   let syncStarted = false;
-  let sourceReads = 0;
 
   await page.route('**/api/session', (route) => route.fulfill({
     json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
@@ -41,8 +46,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [] } }));
   await page.route('**/api/v1/sources/status', (route) => {
     sourceRequests.push({ method: route.request().method(), accept: route.request().headers().accept ?? null });
-    sourceReads += 1;
-    const active = syncStarted && sourceReads === 2 ? syncRun('running', 5) : null;
+    const active = syncStarted ? syncRun('running', 5) : null;
     return route.fulfill({ json: { sources: [{
       id: 1, source_type: 'gmail', identifier: 'archive@example.com', display_name: 'Archive',
       last_sync_at: null, updated_at: '2026-07-19T10:00:00Z', active_sync: active,
@@ -64,7 +68,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   }] } }));
 
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Reviewed message')).toBeVisible();
   await grid.focus();
   await page.keyboard.press('Space');
@@ -86,13 +90,13 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect(page.getByText(/creates a staged manifest; it does not execute deletion/i)).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
 
-  await page.getByRole('button', { name: 'Everything' }).click();
+  await page.getByRole('button', { name: 'Messages' }).click();
   await page.getByRole('button', { name: 'Select all 1 matching items' }).click();
   await page.keyboard.press('Shift+d');
   await expect(page.getByRole('dialog', { name: 'Confirm matching deletion' })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel' }).click();
 
-  await page.getByRole('button', { name: 'Everything' }).click();
+  await page.getByRole('button', { name: 'Messages' }).click();
   await expect(page.getByRole('status', { name: 'Selection status' }))
     .toHaveText('All 1 matching items selected');
   await page.getByRole('button', { name: 'Review for deletion…' }).click();
@@ -106,9 +110,8 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect.poll(() => sourceRequests.some((request) => request.method === 'POST')).toBe(true);
   expect(sourceRequests.every((request) => request.accept !== 'text/event-stream')).toBe(true);
 
-  await page.getByRole('button', { name: 'Saved Views' }).click();
-  await page.getByRole('button', { name: 'Open Invoices' }).click();
-  await expect(page.getByRole('searchbox', { name: 'Search everything' })).toHaveValue('invoice');
-  await expect(page.getByRole('grid', { name: 'Everything results' })).toBeFocused();
+  await page.getByRole('button', { name: 'Invoices' }).click();
+  await expect(page.getByRole('searchbox', { name: 'Search messages' })).toHaveValue('invoice');
+  await expect(page.getByRole('grid', { name: 'Messages results' })).toBeFocused();
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
 });

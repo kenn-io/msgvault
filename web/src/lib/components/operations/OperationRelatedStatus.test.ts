@@ -3,19 +3,18 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import OperationRelatedStatus from './OperationRelatedStatus.svelte';
+import { documentStatus as sharedDocumentStatus } from '../../../test/operations';
 
 afterEach(() => vi.unstubAllGlobals());
 
 const documentStatus = {
+  ...sharedDocumentStatus,
   status: {
+    ...sharedDocumentStatus.status,
     average_provider_latency_millis: 4, eligible_bytes: 100, eligible_occurrences: 6,
-    eligible_owners: 5, exact_consent: true, extraction_attempts: 5, failed_attempts: 1,
-    ineligible_role_occurrences: 0, missing_owners: 1, missing_provider_byte_reports: 0,
-    processed_provider_units: 5, profile_enabled: true, profile_exists: true,
-    provider_latency_millis: 20, provider_requests: 5, provider_retries: 1, ready_owners: 4,
-    reported_provider_bytes: 100, retry_owners: 1, staging_owners: 0,
-    stored_plaintext_chunks: 12, stored_plaintext_ranges: 0, successful_attempts: 4, terminal_owners: 0,
-    unknown_role_occurrences: 0, verified_upload_bytes: 100
+    extraction_attempts: 5, failed_attempts: 1, processed_provider_units: 5,
+    provider_latency_millis: 20, provider_requests: 5, provider_retries: 1,
+    reported_provider_bytes: 100, retry_owners: 1, verified_upload_bytes: 100
   },
   active_rebuild: { snapshot_owners: 5, remaining_owners: 1 }
 };

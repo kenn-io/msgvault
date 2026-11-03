@@ -65,6 +65,7 @@ func seedPaginationStabilityFixture(t *testing.T, st *store.Store) (*store.Sourc
 }
 
 func TestPaginationStability_IdenticalSentAt(t *testing.T) {
+	t.Parallel()
 	st := testutil.NewTestStore(t)
 	src, wantIDs := seedPaginationStabilityFixture(t, st)
 	const n = paginationStabilityN

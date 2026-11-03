@@ -85,6 +85,7 @@ export async function installCardDAV(page: Page, options: CardDAVFixtureOptions 
   let heldResolution: Promise<void> | undefined;
   let releaseHeldResolution: (() => void) | undefined;
 
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
   await page.route('**/api/session', (route) =>
     route.fulfill({
       json: { auth_mode: 'loopback', https: false, plain_http_warning: false },

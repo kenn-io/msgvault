@@ -15,6 +15,7 @@ import (
 // expression the explore engine renders inside DuckDB, for both the
 // per-message and the chat conversation classification.
 func TestEntryKeyFactsMatchSQLProducedEntryKeys(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -53,6 +54,7 @@ func TestEntryKeyFactsMatchSQLProducedEntryKeys(t *testing.T) {
 }
 
 func TestEntryKeyFallsBackToInternalMessageID(t *testing.T) {
+	t.Parallel()
 	facts := EntryKeyFacts{
 		SourceID: 3, MessageID: 42, ConversationID: 7,
 		MessageType: "email", ConversationType: "email_thread",
@@ -61,6 +63,7 @@ func TestEntryKeyFallsBackToInternalMessageID(t *testing.T) {
 }
 
 func TestIsChatEntryClassification(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name             string
 		messageType      string

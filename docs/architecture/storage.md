@@ -252,12 +252,12 @@ results instantly as you group and drill down. On the default SQLite backend, ms
 Parquet so DuckDB can group and filter it without repeatedly joining the
 normalized archive tables.
 
-Ungrouped Everything and Files listings page a scalar message or attachment
+Ungrouped Messages and Files listings page a scalar message or attachment
 population before resolving participant lists for the returned rows. Exact
 totals use separate narrow scans. This page-before-enrichment boundary keeps
 multi-million-message listings inside the daemon's interactive DuckDB memory
 budget without changing cache format or query semantics. Domain-filtered
-Everything listings share the filtered message population between page
+Messages listings share the filtered message population between page
 selection, participant enrichment, and total counting. This avoids repeating
 recipient and conversation-roster membership joins under the interactive
 memory limit. Listings without domain filters retain separate scalar scans.
