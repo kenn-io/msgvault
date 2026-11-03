@@ -10,6 +10,7 @@ import (
 	"github.com/emersion/go-msgauth/authres"
 	"github.com/jhillyerd/enmime/v2"
 	"go.kenn.io/msgvault/internal/mime"
+	"golang.org/x/net/idna"
 )
 
 // Verdict describes the pinned receiver's results. Verified covers the From domain only.
@@ -55,7 +56,7 @@ func Evaluate(block []byte, trusted []string, displayedFrom string) *Verdict {
 				verdict.SPF = string(r.Value)
 			}
 		case *authres.DKIMResult:
-			if !seenDKIM {
+			if !seenDKIM || r.Value == authres.ResultPass {
 				seenDKIM = true
 				verdict.DKIM = string(r.Value)
 			}
@@ -71,8 +72,11 @@ func Evaluate(block []byte, trusted []string, displayedFrom string) *Verdict {
 	}
 	from, err := enmime.ParseAddressList(headers.Get("From"))
 	if err == nil && len(from) == 1 && len(headers.Values("From")) == 1 {
-		domain := mime.ExtractDomain(from[0].Address)
-		verdict.Verified = verdict.DMARC == "pass" && domain != "" && strings.EqualFold(verdict.Domain, domain) && strings.EqualFold(domain, mime.ExtractDomain(displayedFrom))
+		domain, domainErr := idna.Lookup.ToASCII(mime.ExtractDomain(from[0].Address))
+		reportedDomain, reportedErr := idna.Lookup.ToASCII(verdict.Domain)
+		displayedDomain, displayedErr := idna.Lookup.ToASCII(mime.ExtractDomain(displayedFrom))
+		verdict.Verified = domainErr == nil && reportedErr == nil && displayedErr == nil &&
+			verdict.DMARC == "pass" && domain != "" && strings.EqualFold(reportedDomain, domain) && strings.EqualFold(domain, displayedDomain)
 	}
 	return verdict
 }
