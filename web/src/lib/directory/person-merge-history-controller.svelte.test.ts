@@ -1,3 +1,4 @@
+import { requestOf } from './entity-fixtures.test-support';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -12,10 +13,6 @@ type Person = GeneratedPerson;
 type PersonMergeDetail = GeneratedPersonMergeDetail;
 
 afterEach(() => vi.restoreAllMocks());
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function person(id: number, revision = 4, name = `Synthetic Person ${id}`): Person {
   return {

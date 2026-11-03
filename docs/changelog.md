@@ -10,6 +10,8 @@ All notable changes to msgvault, grouped by release.
 
 ### API schema 3.40.0
 
+- People Details brings saved profile fields, identity actions, Work, Connections, Network, Tasks, Facts, briefs, and person-scoped meetings onto the same page.
+
 - People brings people, domains, and saved profile filters into one list. Person and domain pages share Messages and Files, with a daily Activity calendar; Details keeps identity actions and links to full Directory profiles. API schema 3.40.0 adds timezone-aware daily grouping and sent-only group counts.
 
 ### API schema 3.39.0

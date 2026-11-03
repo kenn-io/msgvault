@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -6,6 +6,7 @@ import type { PersonContactPoint as GeneratedPersonContactPoint } from '../../ap
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import StructuredProfileEditor from './StructuredProfileEditor.svelte';
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 
 type PersonContactPoint = GeneratedPersonContactPoint;
 
@@ -24,15 +25,7 @@ function person(revision = 3) {
 }
 
 function profile(revision = 3) {
-  return {
-    person: person(revision),
-    names: [],
-    contact_points: [],
-    addresses: [],
-    dates: [],
-    categories: [],
-    media: [],
-  };
+  return emptyProfile(person(revision));
 }
 
 function bundle(): DirectoryReadBundle {
@@ -805,5 +798,59 @@ describe('StructuredProfileEditor', () => {
     );
     expect(screen.queryByLabelText('Media URI')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Save media metadata' })).toBeNull();
+  });
+
+  it('refuses to save a new pronunciation with both said-as fields empty', async () => {
+    const { controller, requests } = requestHarness();
+    const view = render(StructuredProfileEditor, { controller, section: 'names', nameKind: 'phonetic' });
+    try {
+      await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+      expect(requests).toHaveLength(0);
+      expect(screen.getByRole('textbox', { name: 'First name, said as' })).toBeDefined();
+    } finally { view.unmount(); controller.destroy(); }
+  });
+
+  it.each([
+    { label: 'parts', current: { original_value: 'Example', given_name: 'Ex', family_name: 'Ample', phonetic_system: 'ipa' }, initial: 'Ex', edit: 'Ecks', expected: { original_value: 'Ecks Ample', formatted: 'Ecks Ample', given_name: 'Ecks', family_name: 'Ample', phonetic_system: 'ipa' } },
+    { label: 'formatted only', current: { formatted: 'Arisu', original_value: 'Arisu' }, initial: 'Arisu', edit: 'Arisu', expected: { formatted: 'Arisu', original_value: 'Arisu' } },
+  ])('preserves pronunciation and metadata when replacing a $label name', async ({ current, initial, edit, expected }) => {
+    const { controller, requests } = requestHarness();
+    const envelope = { id: 11, ordinal: 2, source: 'user', created_at: when, updated_at: when, vcard: {} };
+    render(StructuredProfileEditor, { controller, section: 'names', current: { person_id: 7, name_kind: 'phonetic', is_derived: false, envelope, ...current } });
+    const first = screen.getByRole('textbox', { name: 'First name, said as' });
+    expect(first).toHaveProperty('value', initial);
+    await fireEvent.input(first, { target: { value: edit } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save name' }));
+    await waitFor(() => expect(requests).toHaveLength(1));
+    await expect(requests[0]!.json()).resolves.toEqual({ names: { add: [{ ...expected, name_kind: 'phonetic', is_derived: false, envelope: { source: 'user', ordinal: 2 } }], supersede: [11] } });
+  });
+
+  it.each([
+    { arrival: 'at mount', expected: 'anniversary' },
+    { arrival: 'after reload', expected: 'birthday' },
+  ])('defaults a new Date to $expected with a birthday arriving $arrival', async ({ arrival, expected }) => {
+    const birthday = { person_id: 7, date_kind: 'birthday', date: { month: 2, day: 14 }, original_value: '--02-14', envelope: { id: 11, ordinal: 0, source: 'user', created_at: when, updated_at: when, vcard: {} } };
+    const refreshed = { ...profile(4), dates: [birthday] };
+    const client = createAPIClient(async input => {
+      const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
+      if (path.endsWith('/profile')) return Response.json(refreshed, { headers: { ETag: '"person-7-r4"' } });
+      if (path === '/api/v1/people/7') return Response.json(person(4), { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+      throw new Error(`unexpected ${path}`);
+    });
+    const initial = bundle();
+    if (arrival === 'at mount') initial.structuredProfile = { ...profile(), dates: [birthday] };
+    const controller = new DirectoryProfileController(client, 7, initial);
+    const view = render(StructuredProfileEditor, { controller, section: 'dates' });
+    try {
+      if (arrival === 'after reload') {
+        await fireEvent.input(screen.getByRole('textbox', { name: 'Date' }), { target: { value: '1985-04-12' } });
+        await act(async () => { await controller.reload(); });
+        expect(screen.getByRole('textbox', { name: 'Date' })).toHaveProperty('value', '1985-04-12');
+      }
+      expect(screen.getByLabelText('Date kind')).toHaveProperty('value', expected);
+    } finally { view.unmount(); controller.destroy(); }
   });
 });

@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -40,10 +41,6 @@ function deferredResponse() {
   let resolve!: (response: Response) => void;
   const promise = new Promise<Response>((next) => { resolve = next; });
   return { promise, resolve };
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
 }
 
 function renderReview(controller: DirectoryReviewController) {

@@ -196,10 +196,7 @@ test('pending decisions block Escape and global shortcuts, while failure retains
     request.method === 'POST' && request.path.endsWith('/18/review/reject'))).toHaveLength(2);
 });
 
-for (const profile of [
-  { id: 7, name: 'Synthetic One' },
-  { id: 9, name: 'Synthetic Two' }
-]) {
+for (const profile of [{ id: 7, name: 'Synthetic One' }, { id: 9, name: 'Synthetic Two' }]) {
   test(`merge handoff inspects ${profile.name} separately without mutating`, async ({ page }) => {
     const fixture = await installDirectoryReviewArchive(page);
     await page.goto(reviewURL());
@@ -210,18 +207,44 @@ for (const profile of [
 
     await expect(page).toHaveURL(new RegExp(`directoryPersonID%22%3A${profile.id}`));
     await expect(page.getByRole('heading', { name: profile.name })).toBeVisible();
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
-    await expect(page.getByText('No merge history on this page.')).toBeVisible();
-    await expect(page.getByRole('table', { name: 'Person merge history' })).toHaveCount(0);
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+    await expect(page.getByText('No merges', { exact: true })).toBeVisible();
+    await expect(page.getByRole('list', { name: 'Person merge history' })).toHaveCount(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/merge'))).toHaveLength(0);
     expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
   });
 }
 
-for (const completionTarget of [
-  { id: 7, label: 'Open source profile Synthetic One (Person 7)', heading: 'Synthetic One' },
-  { id: 19, label: 'Open restored profile Synthetic Restored (Person 19)', heading: 'Synthetic Restored' }
-]) test(`explicit merge and partial split open ${completionTarget.heading} with fresh server state`, async ({ page }) => {
+test('History wraps long provenance at phone width', async ({ page }) => {
+  await installDirectoryReviewArchive(page);
+  await page.setViewportSize({ width: 390, height: 900 });
+  const reference = 'synthetic-provenance-reference-'.repeat(8);
+  await page.route(`**/api/v1/people/7/profile/history`, route => route.fulfill({ json: {
+    person: { id: 7, revision: 4, display_name: 'Synthetic One', participant_ids: [], vcard_uid: `synthetic-7`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-07-01T00:00:00Z' },
+    names: [{ person_id: 7, name_kind: 'formatted', formatted: 'Earlier name', original_value: 'Earlier name', is_derived: false, envelope: {
+      id: 71, ordinal: 0, source: 'carddav_import', source_ref: reference, actor: 'synthetic-importer', confidence: 0.95,
+      active_from: '2026-01-01T00:00:00Z', active_until: '2026-06-01T00:00:00Z', superseded_at: '2026-06-02T00:00:00Z',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-06-03T00:00:00Z', vcard: {},
+    } }], contact_points: [], addresses: [], dates: [], categories: [], media: [], observations: [],
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 }))}`);
+  await expect(page.getByRole('heading', { name: 'Synthetic One' })).toBeVisible();
+  await page.getByRole('button', { name: 'More actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+  const historyDialog = page.getByRole('dialog', { name: 'Profile history', exact: true });
+  await historyDialog.getByText('1 earlier value', { exact: true }).click();
+  const metadata = historyDialog.locator('.meta').filter({ hasText: reference });
+  await expect.poll(() => metadata.evaluate(element => {
+    const row = element.closest('li')!;
+    const bounds = row.getBoundingClientRect();
+    const range = document.createRange(); range.selectNodeContents(element);
+    return [...range.getClientRects()].every(rect => rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1);
+  })).toBe(true);
+  expect(await historyDialog.locator('.profile-history').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+async function mergeAndSplit(page: Page) {
   const fixture = await installDirectoryReviewArchive(page);
   await page.setViewportSize({ width: 1280, height: 1000 });
   await page.goto(reviewURL());
@@ -240,7 +263,10 @@ for (const completionTarget of [
   await expect(page.getByRole('heading', { name: 'Synthetic One' })).toBeVisible();
   await expect(page.getByRole('status', { name: 'Operation status' }))
     .toContainText('People merged into Synthetic One. Identity cache ready.');
-  const directoryPeople = page.getByRole('grid', { name: 'Directory people' });
+  await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByRole('button', { name: 'Saved', exact: true }).click();
+  await page.keyboard.press('Escape');
+  const directoryPeople = page.getByRole('grid', { name: 'People results' });
   await expect(directoryPeople).toContainText('Synthetic One');
   await expect(directoryPeople).not.toContainText('Synthetic Two');
   await expect(directoryPeople).not.toContainText('Synthetic Restored');
@@ -254,8 +280,9 @@ for (const completionTarget of [
     .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   expect(fixture.requests.filter((request) => request.path.endsWith('/19/review/accept'))).toHaveLength(1);
 
-  await page.getByRole('tab', { name: 'Maintenance' }).click();
-  const history = page.getByRole('table', { name: 'Person merge history' });
+  await page.getByRole('button', { name: 'More actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+  const history = page.getByRole('list', { name: 'Person merge history' });
   await expect(history).toBeVisible();
   expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(0);
   await history.getByRole('button', { name: 'Inspect merge 41' }).focus();
@@ -263,13 +290,6 @@ for (const completionTarget of [
   await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();
   await expect(page.getByRole('table', { name: 'Merge participants' })).toContainText('absorbed');
   expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(0);
-  if (completionTarget.id === 7) {
-    await page.getByRole('button', { name: 'View verified snapshot' }).focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('region', { name: 'Verified merge snapshot content' }))
-      .toContainText('synthetic snapshot');
-    expect(fixture.requests.filter((request) => request.path.endsWith('/snapshot'))).toHaveLength(1);
-  }
 
   await page.getByRole('button', { name: 'Split merged profile' }).focus();
   await page.keyboard.press('Enter');
@@ -299,25 +319,38 @@ for (const completionTarget of [
   expect(splitRequests[0]!.headers['idempotency-key'])
     .toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
 
-  const completionAction = split.getByRole('button', { name: completionTarget.label });
-  const personGETsBefore = fixture.requests.filter((request) =>
-    request.method === 'GET' && request.path === `/api/v1/people/${completionTarget.id}`).length;
+  return { fixture, split };
+}
+
+test('opening the source profile reuses state already refreshed by split reconciliation', async ({ page }) => {
+  const { fixture, split } = await mergeAndSplit(page);
+  const completionAction = split.getByRole('button', { name: 'Open source profile Synthetic One (Person 7)' });
+  const personGETsBefore = fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/7').length;
   await completionAction.focus();
   await expect(completionAction).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.requests.filter((request) =>
-    request.method === 'GET' && request.path === `/api/v1/people/${completionTarget.id}`).length)
-    .toBe(personGETsBefore + 1);
-  await expect(page.getByRole('heading', { name: completionTarget.heading })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Profile history', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Synthetic One' })).toBeVisible();
+  expect(fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/7').length).toBe(personGETsBefore);
+  await page.getByRole('button', { name: 'More actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+  const updatedHistory = page.getByRole('list', { name: 'Person merge history' });
+  await expect(updatedHistory).toBeVisible();
+  await updatedHistory.getByRole('button', { name: 'Inspect merge 41' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('table', { name: 'Prior splits' })).toContainText('55');
+});
 
-  if (completionTarget.id === 7) {
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
-    const updatedHistory = page.getByRole('table', { name: 'Person merge history' });
-    await expect(updatedHistory).toBeVisible();
-    await updatedHistory.getByRole('button', { name: 'Inspect merge 41' }).focus();
-    await page.keyboard.press('Enter');
-    await expect(page.getByRole('table', { name: 'Prior splits' })).toContainText('55');
-  }
+test('explicit merge and partial split open Synthetic Restored with fresh server state', async ({ page }) => {
+  const { fixture, split } = await mergeAndSplit(page);
+  const completionAction = split.getByRole('button', { name: 'Open restored profile Synthetic Restored (Person 19)' });
+  const personGETsBefore = fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/19').length;
+  await completionAction.focus();
+  await expect(completionAction).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Profile history', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Synthetic Restored' })).toBeVisible();
+  await expect.poll(() => fixture.requests.filter(request => request.method === 'GET' && request.path === '/api/v1/people/19').length).toBe(personGETsBefore + 1);
 });
 
 test('Facts is a keyboard-readable private ledger with honest unavailable gates', async ({ page }) => {

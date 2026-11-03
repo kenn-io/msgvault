@@ -1,11 +1,14 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
+  import type { DirectoryController } from '../../directory/controller.svelte';
+  import PersonDetails from './PersonDetails.svelte';
+  import PersonRecordActions from '../directory/PersonRecordActions.svelte';
   import type { PersonMergeSuccess } from '../../directory/person-merge';
   import type { MessagesTable } from '../../explore/loader.svelte';
-  import { listPersonAttributes } from '../../api/generated/api/api';
   import type { MeetingRef } from '../../api/generated/models';
-  import { contextPredicate, type LinkOutcome, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
+  import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DomainSummary, PersonSummary, ExplorePredicate, FileSearchSort, FileMIMEFamily, PersonFileDirection, ExploreFilter } from '../../explore/models';
   import RelationshipHeader from '../relationships/RelationshipHeader.svelte';
   import RelationshipCalendar from '../relationships/RelationshipCalendar.svelte';
@@ -16,17 +19,17 @@
   import PersonMessages from './PersonMessages.svelte';
   import DomainCalendar from './DomainCalendar.svelte';
 
-  let { client, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
-    onConfigureVisualSearch, onOpenDirectory, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings,
+  let { client, directory, onRecordDeleted, onSplitCommitted, onOpenCardDAVConflict, onOpenCardDAVSettings, controller, target, filesOpen, predicate, onFilesToggle, onBack, durablePersonID = null,
+    onConfigureVisualSearch, onOpenDirectoryPerson, onAnnounce, onOpenPerson, onOpenMeeting, onOpenSettings, sweepConfigured, onReviewFacts,
     onOpenFileItem, onOpenFileConversation, onReconcilePersonMerge, onIdentityChange, personFilePresentation = 'files', personFileDirections = ['from_person'],
     onPersonFilePresentationChange, onPersonFileDirectionsChange, onFiltersChange, onMessagesTableChange,
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
-    { client: APIClient; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
+    { client: APIClient; directory: DirectoryController; onRecordDeleted?: (personID: number) => void; onSplitCommitted?: (context: import('../../directory/person-merge-history-controller.svelte').PersonSplitCommittedContext) => void | Promise<void>; onOpenCardDAVConflict?: (id: number) => void; onOpenCardDAVSettings?: () => void; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
       onReconcilePersonMerge: (context: RelationshipsMergeContext, success: PersonMergeSuccess) => Promise<void>; onIdentityChange?: () => Promise<void>;
-      onFilesToggle: (value: boolean) => void; onBack?: () => void; onOpenDirectory?: (id: number) => void;
+      onFilesToggle: (value: boolean) => void; onBack?: () => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
-      onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: () => void; onOpenFileItem?: (key: string) => void;
+      onReviewFacts?: (personID: number) => void; sweepConfigured?: boolean; onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: (category?: string) => void; onOpenFileItem?: (key: string) => void;
       onOpenFileConversation?: (key: string, messageID: number, conversationID: number) => void;
       personFilePresentation?: 'media' | 'files'; personFileDirections?: PersonFileDirection[];
       details?: boolean; selectedDate?: string | null; domainYear?: number | null; sort?: FileSearchSort; filenameQuery?: string; mimeFamilies?: FileMIMEFamily[];
@@ -38,7 +41,27 @@
   const detail = $derived(controller.target === target ? controller.detail : null);
   const person = $derived(detail && !domain ? detail as PersonSummary : null);
   const scope = $derived(domain ? { kind: 'domain' as const, domain } : controller.target === target && controller.canonicalID !== null ? { kind: 'person' as const, id: controller.canonicalID } : undefined);
-  const name = $derived(domain ?? person?.display_label ?? 'Person');
+  const profileID = $derived(durablePersonID ?? person?.profile?.id ?? null);
+  const savedProfile = $derived(directory.selectedPersonID === profileID ? directory.profile : null);
+  $effect(() => {
+    void savedProfile;
+    // Stop following loading state once this profile's unfiltered metadata is available.
+    if (untrack(() => !directory.detail)) void directory.detailLoading;
+    if (untrack(() => target === null || controller.target !== target || controller.timelineLoading)) void controller.timelineLoading;
+    untrack(() => {
+      if (directory.detailLoading || directory.selectedPersonID !== profileID || !directory.detail) return;
+      if (target === null ? directory.detail.person?.participant_ids.length : controller.target !== target || controller.timelineLoading) return;
+      details ||= !filesOpen &&
+        !(controller.target === target && target !== null && controller.firstContactAt);
+    });
+  });
+  const name = $derived(domain ?? savedProfile?.person?.display_name ?? person?.display_label ?? 'Person');
+  let saving = $state(false);
+  async function savePerson(): Promise<void> {
+    if (!person || saving) return;
+    saving = true;
+    try { const result = await directory.promote(person.id); if (result.ok) await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); } finally { saving = false; }
+  }
   const email = $derived(person?.identifiers?.find((identity) => identity.type === 'email')?.value ?? '');
   const since = $derived(controller.firstContactAt ? new Intl.DateTimeFormat('en-US', { month: 'short', year: 'numeric' }).format(new Date(controller.firstContactAt)) : undefined);
   const period = $derived.by(() => {
@@ -52,11 +75,6 @@
     if (domain) domainYear = year;
     else if (controller.relationshipCalendarYear !== year) void controller.loadRelationshipYear(year);
   });
-  // Linking or unlinking moves a person's activity, so the caller's saved list refreshes too.
-  async function identityChanged(outcome: LinkOutcome): Promise<LinkOutcome> {
-    if (outcome.ok) await onIdentityChange?.();
-    return outcome;
-  }
   // Files pushes its own entry first, so this drops the cleared day only from that entry's reader.
   function clearDate(): void {
     selectedDate = null;
@@ -64,10 +82,15 @@
     if (reader) window.history.replaceState({ ...window.history.state, [RELATIONSHIP_READER_HISTORY_KEY]: { ...reader, bounds: undefined } }, '');
   }
   $effect(() => { if (filesOpen) clearDate(); });
+  // Linking or unlinking moves a person's activity, so the open profile and the caller's saved list refresh too.
+  async function refreshSaved<T extends { ok: boolean }>(outcome: T): Promise<T> {
+    if (outcome.ok) await Promise.all([savedProfile ? directory.refreshSelectedPerson() : undefined, onIdentityChange?.()]);
+    return outcome;
+  }
 </script>
 
 {#snippet files()}
-  <div class="files"><FilesWorkspace {onConfigureVisualSearch} {client} embedded showHeader={false} predicate={context} identityScope={durablePersonID === null ? scope : { kind: 'durable-person', id: durablePersonID }} {sort} {filenameQuery} {mimeFamilies}
+  <div class="files"><FilesWorkspace {onConfigureVisualSearch} {client} embedded showHeader={false} predicate={context} identityScope={profileID === null ? scope : { kind: 'durable-person', id: profileID }} {sort} {filenameQuery} {mimeFamilies}
     personPresentation={personFilePresentation} personDirections={personFileDirections} onSortChange={(value) => sort = value}
     onFilenameQueryChange={(value) => filenameQuery = value} onMIMEFamiliesChange={(value) => mimeFamilies = value}
     onPersonPresentationChange={onPersonFilePresentationChange} onPersonDirectionsChange={onPersonFileDirectionsChange}
@@ -75,31 +98,40 @@
 {/snippet}
 
 <section class="person-page" role="group" aria-label="Person page">
-  {#if controller.timelineLoading && !detail}
+  {#if durablePersonID !== null || (detail && !controller.detailMissing)}
+    <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true}>
+      {#snippet actions()}
+        {#if profileID !== null && savedProfile}{#key savedProfile}<PersonRecordActions {client} controller={savedProfile} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} onDeleted={onRecordDeleted} {onSplitCommitted} {onOpenCardDAVConflict} {onOpenCardDAVSettings} />{/key}
+        {:else if person && profileID === null}<Button label={saving ? 'Saving…' : 'Save'} disabled={saving} onclick={() => void savePerson()} />{/if}
+      {/snippet}
+    </PersonHeader>
+  {/if}
+  {#if directory.detailLoading && durablePersonID !== null && !details}<p role="status">Loading details…</p>{/if}
+  {#if controller.timelineLoading && !detail && durablePersonID === null}
     <p role="status">Loading…</p>{#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
-  {:else if controller.detailMissing && durablePersonID !== null}
-    {@render files()}
-  {:else if controller.detailMissing}
+  {:else if controller.detailMissing && durablePersonID === null}
     <EmptyState title="Person or domain not found" />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
-  {:else if !detail}
+  {:else if !detail && durablePersonID === null}
     <EmptyState title={controller.timelineError ?? 'Select a person or domain'} />
     {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
     {#if controller.timelineError && target}<Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} />{/if}
   {:else}
-    <PersonHeader {name} {email} domain={Boolean(domain)} {onBack} onOpenDetails={() => details = true} />
+    {#if directory.promotionError}<p role="alert">{directory.promotionError}<Button label="Retry Save" onclick={() => void savePerson()} /></p>{/if}
     {#if controller.timelineError}
       <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
-    {#if !filesOpen && !details && controller.headerState === 'normal'}
+    {#if !filesOpen && !details && (controller.headerState === 'normal' || !scope)}
       <div class="calendar">
         {#if domain}
-          <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail.cache_revision} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
-        {:else}
+          <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail?.cache_revision ?? ''} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
+        {:else if scope}
           <RelationshipCalendar calendar={controller.relationshipCalendar} loading={controller.relationshipCalendarLoading} error={controller.relationshipCalendarError}
             year={controller.relationshipCalendarYear} firstYear={controller.relationshipCalendarFirstYear} currentYear={controller.relationshipCalendarCurrentYear}
             {selectedDate} {since} title="Activity" onDateChange={(date) => selectedDate = date}
             onYearChange={(year) => { selectedDate = null; void controller.loadRelationshipYear(year); }} />
+        {:else}
+          <EmptyState title="No items match this view" />
         {/if}
       </div>
     {/if}
@@ -108,23 +140,26 @@
         options={[{ value: 'messages', label: 'Messages' }, { value: 'files', label: 'Files' }, { value: 'details', label: 'Details' }]}
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
-    <div class="details" hidden={!details}>
-      <RelationshipHeader {detail} loading={false} headerState={controller.headerState} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
-        loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
-        capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
-        {onReconcilePersonMerge}
-        onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(identityChanged)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(identityChanged)} />
-    </div>
-    {#if !details && scope}
-      {#key `${target}:${controller.activityRevision}:${detail.cache_revision}`}
+    {#if !details && (scope || (filesOpen && profileID !== null))}
+      {#key `${target}:${controller.activityRevision}:${detail?.cache_revision}`}
         {#if filesOpen}
           {@render files()}
-        {:else}
+        {:else if scope}
           <PersonMessages {client} target={target!} predicate={context} identityScope={scope} {period} {onFiltersChange} {onOpenPerson} {onOpenMeeting} {onOpenSettings} {onMessagesTableChange} onOpenFiles={() => onFilesToggle(true)} onClearPeriod={() => selectedDate = null} />
         {/if}
       {/key}
     {/if}
   {/if}
+  <div class="details" hidden={!details}>
+    {#if profileID !== null && details}
+      {#key profileID}<PersonDetails {onReviewFacts} {onOpenMeeting} {sweepConfigured} {client} {directory} personID={profileID} onOpenPerson={onOpenDirectoryPerson} {onAnnounce} {onOpenSettings} />{/key}
+    {/if}
+    {#if detail && !controller.detailMissing}
+      <RelationshipHeader {onOpenDirectoryPerson} showCounts={!person} {detail} loading={false} headerState={controller.headerState} {client} {onAnnounce}
+        capturePersonMergeContext={() => controller.personMergeContextSnapshot()} {onReconcilePersonMerge}
+        onLinkParticipants={(a, b) => controller.linkParticipants(a, b).then(refreshSaved)} onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b).then(refreshSaved)} />
+    {/if}
+  </div>
 </section>
 
 <style>
@@ -132,6 +167,7 @@
   .calendar { width: 100%; max-width: 960px; margin-inline: auto; padding: var(--pane-pad-y) var(--page-gutter); box-sizing: border-box; }
   .tabs { padding: var(--space-3) var(--page-gutter); border-bottom: 1px solid var(--border-muted); }
   .files { display: flex; min-height: 0; flex: 1; padding: var(--pane-pad-y) var(--page-gutter) var(--page-gutter); }
-  .details { padding: var(--pane-pad-y) var(--page-gutter); }
+  .details:not([hidden]) { display: flex; flex-direction: column; gap: var(--space-7); padding: var(--pane-pad-y) var(--page-gutter) var(--space-8); }
+  .details > :global(*) { max-width: 720px; }
   .summary-error { display: flex; align-items: center; gap: var(--space-3); padding: var(--pane-pad-y) var(--page-gutter); }
 </style>

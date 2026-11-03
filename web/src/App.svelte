@@ -152,7 +152,7 @@
     <MessagePage client={session.client} {messageID} onOpenPerson={(participantID) => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, ...relationshipDestination(participantID) })}`)} onOpenSettings={() => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, ...tasksSettingsDestination() })}`)} />
   {:else}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>
-    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController)}
+    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController, onDirectoryChange)}
       <SettingsWorkspace
         client={session.client}
         plainHTTPWarning={session.status?.plain_http_warning ?? false}
@@ -165,6 +165,7 @@
         {onOpenStatus}
         {onStatusChange}
         {operationsController}
+        {onDirectoryChange}
         onAppearanceSaved={appearanceSaved}
       />
     {/snippet}

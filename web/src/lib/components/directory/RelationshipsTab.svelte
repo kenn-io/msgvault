@@ -1,20 +1,26 @@
 <script lang="ts">
-  import { appShortcuts, Button, Checkbox, EmptyState, Modal } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount } from 'svelte';
+  import { formatPartialDate as dateText } from '../../directory/dates';
+  import { appShortcuts, Button, Checkbox, Modal, IconButton } from '@kenn-io/kit-ui';
+  import Pencil from '@lucide/svelte/icons/pencil';
+  import X from '@lucide/svelte/icons/x';
 
   import type { APIClient } from '../../api/client';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { PersonRelationship, PersonRelationshipView, RelationshipType } from '../../directory/models';
   import PersonRelationshipEditor from './PersonRelationshipEditor.svelte';
+  import DetailRow from '../people/DetailRow.svelte';
+  import { sentenceCase } from '../../explore/labels';
   import RelationshipTypeEditor from './RelationshipTypeEditor.svelte';
 
   interface Props {
     client: APIClient;
     controller: DirectoryEntityController;
     personID: number;
+    catalogOnly?: boolean;
+    onOpenPerson?: (id: number) => void;
   }
 
-  let { client, controller, personID }: Props = $props();
+  let { client, controller, personID, catalogOnly = false, onOpenPerson }: Props = $props();
   let relationshipEditor = $state<PersonRelationshipView | null | undefined>(undefined);
   let relationshipTypeEditor = $state<RelationshipType | null | undefined>(undefined);
   let deletingRelationship = $state<PersonRelationshipView>();
@@ -23,18 +29,23 @@
   let actionMessage = $state('');
   let conflictRelationship = $state<PersonRelationship>();
   let conflictType = $state<RelationshipType>();
-  let releaseScope: (() => void) | undefined;
+  $effect(() => {
+    if (deletingRelationship || deletingType) return appShortcuts.pushScope('directory-relationships');
+  });
 
-  onMount(() => { releaseScope = appShortcuts.pushScope('directory-relationships'); });
-  onDestroy(() => releaseScope?.());
+  const typeLabel = (type: RelationshipType) => type.is_symmetric ? type.forward_label : `${type.forward_label} / ${type.reverse_label}`;
+  const byLabel = (left: RelationshipType, right: RelationshipType) => typeLabel(left).localeCompare(typeLabel(right));
+  const customTypes = $derived(controller.relationshipTypes.filter((type) => type.ownership !== 'system').sort(byLabel));
+  const builtInTypes = $derived(controller.relationshipTypes.filter((type) => type.ownership === 'system').sort(byLabel));
+
+  // The editor picks from the type list, so a failed load retries when it opens.
+  function openEditor(view: PersonRelationshipView | null): void {
+    if (controller.errors.relationshipTypes) void controller.refreshRelationshipTypes();
+    relationshipEditor = view;
+  }
 
   function counterpart(view: PersonRelationshipView): string {
     return view.counterpart_display_name?.trim() || view.counterpart_vcard_uid || `Person ${view.counterpart_person_id}`;
-  }
-
-  function dateText(value: { year?: number; month?: number; day?: number } | undefined): string {
-    if (!value) return '';
-    return [value.year?.toString().padStart(4, '0'), value.month?.toString().padStart(2, '0'), value.day?.toString().padStart(2, '0')].filter(Boolean).join('-');
   }
 
   async function changeHistoryMode(checked: boolean): Promise<void> {
@@ -95,68 +106,63 @@
   }
 </script>
 
-<section class="relationships-tab" aria-label="Person relationships">
-  <header>
-    <div><h2>Relationships</h2><p>Curated, typed connections between durable people.</p></div>
-    <div class="actions">
-      <Button label="Add relationship" onclick={() => { relationshipEditor = null; }} />
-      <Button label="Add relationship type" onclick={() => { relationshipTypeEditor = null; }} />
-    </div>
-  </header>
+<section class="relationships-tab" aria-label={catalogOnly ? 'Connection types' : 'Person relationships'}>
+  {#if !catalogOnly}
+    <header>
+      <h3>Connections</h3>
+      <div class="actions">
+        <Checkbox checked={controller.relationshipsIncludeEnded} label="Show ended" ariaLabel="Include ended relationships" onchange={(checked) => void changeHistoryMode(checked)} />
+        <Button size="sm" label="Add connection" onclick={() => openEditor(null)} />
+      </div>
+    </header>
 
-  <div class="filters">
-    <Checkbox checked={controller.relationshipsIncludeEnded} label="Include ended relationships" onchange={(checked) => void changeHistoryMode(checked)} />
-    <Button label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
-  </div>
-
-  {#if controller.errors.relationships}
-    <div class="refresh-error" role="alert">
-      <p>{controller.errors.relationships}</p>
-      <Button label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
-    </div>
-  {/if}
-  {#if controller.relationshipsLoading}<p role="status">Loading relationships…</p>{/if}
-  {#if controller.relationships.length === 0 && !controller.relationshipsLoading && !controller.errors.relationships}
-    <EmptyState title="No relationships" description="Add a typed relationship to connect this durable person." />
-  {:else if controller.relationships.length > 0}
-    <ul class="records">
-      {#each controller.relationships as view (view.relationship.id)}
-        <li>
-          <div>
-            <strong>{counterpart(view)} · {view.counterpart_label}</strong>
-            <small>{view.direction}{#if view.relationship.start_date} · from {dateText(view.relationship.start_date)}{/if}{#if view.relationship.end_date} · ended {dateText(view.relationship.end_date)}{/if}</small>
-            {#if view.relationship.notes}<p>{view.relationship.notes}</p>{/if}
-          </div>
-          <div class="row-actions">
-            <Button size="sm" label="Edit relationship" onclick={() => { relationshipEditor = view; }} />
-            <Button size="sm" tone="danger" label="Delete relationship" onclick={() => { deletingRelationship = view; }} />
-          </div>
-        </li>
-      {/each}
-    </ul>
-  {/if}
-
-  <section aria-label="Relationship types">
-    <div class="section-heading"><h3>Relationship types</h3><Button label="Refresh relationship types" disabled={controller.relationshipTypesLoading} onclick={() => void controller.refreshRelationshipTypes()} /></div>
-    {#if controller.relationshipTypesLoading}<p role="status">Loading relationship types…</p>
-    {:else if controller.errors.relationshipTypes}<p role="alert">{controller.errors.relationshipTypes}</p>
+    {#if controller.errors.relationships}
+      <div class="refresh-error" role="alert">
+        <p>{controller.errors.relationships}</p>
+        <Button size="sm" label="Refresh relationships" disabled={controller.relationshipsLoading} onclick={() => void controller.refreshRelationships()} />
+      </div>
+    {/if}
+    {#if controller.relationshipsLoading}<p class="muted" role="status">Loading relationships…</p>{/if}
+    {#if controller.relationships.length === 0 && !controller.relationshipsLoading && !controller.errors.relationships}
+      <p class="muted">No connections yet</p>
+    {:else if controller.relationships.length > 0}
+      <div class="records">
+        {#each controller.relationships as view (view.relationship.id)}
+          <DetailRow description={[sentenceCase(view.counterpart_label), view.relationship.start_date ? `since ${dateText(view.relationship.start_date)}` : '', view.relationship.end_date ? `ended ${dateText(view.relationship.end_date)}` : '', view.relationship.notes ?? ''].filter(Boolean).join(' · ')}>
+            {#if onOpenPerson}<button class="person-link" type="button" onclick={() => onOpenPerson(view.counterpart_person_id)}>{counterpart(view)}</button>{:else}{counterpart(view)}{/if}
+            {#snippet actions()}
+              <IconButton size="sm" ariaLabel="Edit relationship" onclick={() => openEditor(view)}><Pencil size={14} /></IconButton>
+              <IconButton size="sm" ariaLabel="Delete relationship" onclick={() => { deletingRelationship = view; }}><X size={14} /></IconButton>
+            {/snippet}
+          </DetailRow>
+        {/each}
+      </div>
+    {/if}
+  {:else}
+    <header><h3>Connection types</h3><Button size="sm" label="Add type" onclick={() => relationshipTypeEditor = null} /></header>
+    {#if controller.relationshipTypesLoading}<p class="muted" role="status">Loading relationship types…</p>
+    {:else if controller.errors.relationshipTypes}<p role="alert">{controller.errors.relationshipTypes}<Button size="sm" label="Refresh relationship types" onclick={() => void controller.refreshRelationshipTypes()} /></p>
     {:else if controller.relationshipTypes.length === 0}<p class="muted">No relationship types are available.</p>
     {:else}
-      <ul class="types">
-        {#each controller.relationshipTypes as type (type.id)}
-          <li>
-            <span><strong>{type.slug}</strong> · {type.is_symmetric ? type.forward_label : `${type.forward_label} / ${type.reverse_label}`} <small>{type.ownership === 'system' ? 'Built in' : 'Custom'}</small></span>
-            {#if type.ownership !== 'system'}
-              <span class="row-actions">
-                <Button size="sm" label={`Edit ${type.slug} relationship type`} onclick={() => { relationshipTypeEditor = type; }} />
-                {#if type.is_deletable}<Button size="sm" tone="danger" label={`Delete ${type.slug} relationship type`} onclick={() => { deletingType = type; }} />{/if}
-              </span>
-            {/if}
-          </li>
-        {/each}
-      </ul>
+      {#if customTypes.length > 0}
+        <ul class="types">
+          {#each customTypes as type (type.id)}
+            <li>
+              <span class="type-name">{typeLabel(type)}</span>
+              <Button size="sm" surface="soft" label="Edit" ariaLabel={`Edit ${type.slug} relationship type`} onclick={() => { relationshipTypeEditor = type; }} />
+              {#if type.is_deletable}<Button size="sm" surface="soft" tone="danger" label="Delete" ariaLabel={`Delete ${type.slug} relationship type`} onclick={() => { deletingType = type; }} />{/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      {#if builtInTypes.length > 0}
+        <div class="built-in">
+          <span data-section-label>Built in</span>
+          <ul aria-label="Built-in connection types">{#each builtInTypes as type (type.id)}<li>{typeLabel(type)}</li>{/each}</ul>
+        </div>
+      {/if}
     {/if}
-  </section>
+  {/if}
 </section>
 
 {#if relationshipEditor !== undefined}
@@ -183,13 +189,21 @@
 {/if}
 
 <style>
-  .relationships-tab, section, .refresh-error { display: grid; gap: var(--space-3); }
-  header, .actions, .filters, .row-actions, .types li, .section-heading { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  h2, h3, p, ul { margin: 0; }
-  header p, small, .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .records, .types { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
-  .records li { display: flex; gap: var(--space-3); justify-content: space-between; align-items: start; flex-wrap: wrap; padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
-  .records li > div:first-child { display: grid; gap: var(--space-1); }
-  .row-actions { justify-content: flex-start; }
+  .relationships-tab { display: grid; gap: var(--space-2); min-width: 0; }
+  .refresh-error { display: flex; gap: var(--control-gap); align-items: center; }
+  header, .actions { display: flex; gap: var(--control-gap); align-items: center; justify-content: space-between; flex-wrap: wrap; min-height: var(--control-h); }
+  h3, p, ul { margin: 0; }
+  h3 { font-size: var(--font-size-md); }
+  .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .records { display: grid; }
+  .types { display: grid; padding: 0; border: 1px solid var(--border-muted); border-radius: var(--radius-md); list-style: none; }
+  .types li { display: flex; align-items: center; gap: var(--control-gap); min-height: var(--control-h-lg); padding: var(--space-1) var(--pane-pad-x); }
+  .types li + li { border-top: 1px solid var(--border-muted); }
+  .type-name { flex: 1; min-width: 0; color: var(--text-primary); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  .built-in { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+  .built-in ul { display: flex; flex-wrap: wrap; gap: var(--space-2); padding: 0; list-style: none; }
+  .built-in li { padding: var(--space-1) var(--chip-pad-x); border: 1px solid var(--border-muted); border-radius: var(--radius-md); color: var(--text-secondary); font-size: var(--font-size-sm); }
   [role="alert"] { color: var(--text-danger); }
+  .person-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
+  .person-link:hover { text-decoration: underline; }
 </style>

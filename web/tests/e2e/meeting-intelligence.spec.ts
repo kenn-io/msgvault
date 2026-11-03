@@ -237,7 +237,7 @@ test("production imports expose archived actions, summary totals, and exact cont
   });
 });
 
-test("participant, domain, Directory and Relationships keep scoped meeting evidence and source navigation", async ({
+test("participant, domain and Relationships keep scoped meeting evidence and source navigation", async ({
   page,
   daemon,
 }, info) => {
@@ -257,10 +257,6 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
         groupingChain: ["domain"],
         selectedRow: "group:domain:example.com",
       },
-    },
-    {
-      name: "directory",
-      state: { workspace: "directory", directoryPersonID: daemon.personID },
     },
     {
       name: "relationships",
@@ -305,29 +301,6 @@ test("participant, domain, Directory and Relationships keep scoped meeting evide
       fullPage: true,
     });
   }
-  await page.setViewportSize({ width: 700, height: 900 });
-  await page.goto(
-    meetingURL(daemon, {
-      workspace: "directory",
-      directoryPersonID: daemon.personID,
-    }),
-  );
-  const narrow = page.getByRole("region", {
-    name: "Meeting activity",
-    exact: true,
-  });
-  await assertMetrics(narrow, 3, 3, 0, "1h 40m", "33m 20s");
-  await narrow
-    .getByRole("link", { name: "Open archived meeting" })
-    .first()
-    .click();
-  await expect(
-    page.getByRole("dialog", { name: "Archived meeting", exact: true }),
-  ).toBeVisible();
-  await page.goBack();
-  await expect(
-    page.getByRole("dialog", { name: "Archived meeting", exact: true }),
-  ).toHaveCount(0);
 });
 
 test("rapid search scope changes leave only the final meeting evidence", async ({
@@ -442,10 +415,12 @@ for (const viewport of [{ width: 1280, height: 720 }, { width: 700, height: 560 
 test('closing the reader removes its scope and cancels a pending continuation', async ({ page, daemon }) => {
   await importLongActions(daemon);
   await page.goto(meetingURL(daemon, { workspace: 'directory', directoryPersonID: daemon.personID }));
-  const panel = page.getByRole('region', { name: 'Meeting activity', exact: true });
+  await page.getByRole('radio', { name: 'Messages', exact: true }).click();
+  await page.getByRole('region', { name: 'Meeting summary', exact: true }).getByRole('button', { name: /Action items/ }).click();
+  const panel = page.getByRole('dialog', { name: 'Action items', exact: true });
   const firstAction = panel.getByText('Archived action 1', { exact: true });
   await expect(firstAction).toBeVisible();
-  await firstAction.locator('xpath=ancestor::li').getByRole('link', { name: 'Open archived meeting', exact: true }).click();
+  await firstAction.locator('xpath=ancestor::li').locator('a[href^="/messages/"]').click();
   const reader = page.getByRole('dialog', { name: 'Archived meeting', exact: true });
   await expect(reader.getByText('Archived action 1', { exact: true })).toBeVisible();
   // Browser transport latency keeps a genuine daemon request pending; no
@@ -462,7 +437,8 @@ test('closing the reader removes its scope and cancels a pending continuation', 
     await cancelled;
     await expect(reader).toHaveCount(0);
     await expect(panel.getByText('Archived action 1', { exact: true })).toBeVisible();
-    await expect(page).toHaveURL((url) => url.searchParams.get('workspace') === 'directory');
+    await expect(page).toHaveURL((url) => url.searchParams.get('workspace') === 'relationships');
+    await panel.getByRole('button', { name: 'Close', exact: true }).click();
     await network.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
     await page.getByRole('button', { name: 'Messages', exact: true }).click();
     const search = page.getByRole('searchbox', { name: 'Search messages', exact: true });

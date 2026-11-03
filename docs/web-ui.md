@@ -16,7 +16,7 @@ you do not need a separate web application process.
 | Where is that message, conversation, or meeting? | Messages |
 | Who have I been in contact with? | People |
 | Where is an attachment, image, or video? | Files |
-| What do I know about this person? | Directory |
+| What do I know about this person? | People → Details |
 | Which identity matches or profile facts need my decision? | Reviews |
 | Can I return to this search later? | Saved views under Messages and Files |
 | Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
@@ -237,7 +237,7 @@ filters stay visible as chips.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 
-In a person's Media & files section, choose a media gallery or file table and
+In a person's Files tab, choose a media gallery or file table and
 narrow the relationship to **From them**, **To them**, or **Group
 conversations**. These directions describe the containing messages; they do not
 identify people pictured in an image.
@@ -273,8 +273,8 @@ meeting notes, plus the files associated with that person. Message filters conti
 
 People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show curated Directory profiles, including people with no archived messages. Select **Same person** after checking multiple observed people to link their identities.
 
-A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details keeps identity linking, attributes, and **Open in Directory** for the full profile. Directory and Reviews are also available in the People header.
-For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster, as **Open relationship** does in Directory.
+A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Tasks, Facts, and Briefs. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Directory and Reviews are also available in the People header.
+For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster. Profiles without archived activity open Details.
 
 The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to narrow Messages and its conversation reader. Details keeps that day selected; select it again or choose **Clear date** to restore the shared date filters. Editing a message filter also clears the day without copying its bounds to Files. People and domains use your browser's local time zone. Domain days count individual sent messages, including chats that span several days. Calendars summarize the whole person or domain; message filters narrow the table and Files. Switching people, years, or to Files clears the day selection. Messages groups chats by conversation; a selected day limits the opened conversation to that day.
 
@@ -292,37 +292,20 @@ fields, **Last contacted after** and **Last contacted before**. Each active
 filter also appears as a chip; select its remove button to drop it. The order
 menu sorts by Name, Most recently contacted, or Least recently contacted.
 
-Its person detail has seven sections: Overview, Profile, Organizations,
-Connections, Network, Media & files, and Maintenance. The header offers **Open
-relationship** (when the person has a linked source identity), **Review facts**
-(opens Reviews on that person's facts), and **More actions** (Rename person,
-View profile history, and Delete person). Maintenance holds
-profile-maintenance tracking, CardDAV publication, and merge history. Edit
-structured profile information, attributes, employment, and typed
-relationships here. Curated display names also appear in message views,
-analytics, and exports while source identifiers remain available.
+Selecting a Directory row opens the same person page as People: **Messages** and the calendar when the person has archived activity, **Details** otherwise. On Details, each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Editing a row opens its editor below the fields; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
-The Overview tab's **Last time we talked** card summarizes the person's recent
-chat and text messages. Enroll the person, generate a brief, and expand a
-sentence to check its sources. You can reject a brief or inspect the dates and status of earlier
-versions. Generation requires a consented provider and uses its budget; see
-[person briefs](/docs/usage/people-briefs/)
-for setup and supported sources.
+Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 nodes and 500 connections. An always-present list groups the same connections by hop for keyboard and screen reader use.
 
-The Network tab can request one, two, or three hops and optionally include
-ended records. It visualizes at most 250 nodes and 500 connections, while an
-always-present list groups the same connections by hop for keyboard and screen
-reader use. Person and organization names in this view come from durable
-profiles. Edges come only from curated typed relationships and employments
-(including shared organizations), never messages, participant co-occurrence,
-or inferred communication activity.
+Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last time we talked** holds brief enrollment, generation, rejection, sentence sources, and earlier versions. Generation requires a consented provider and uses its budget; see [person briefs](/docs/usage/people-briefs/).
+
+Manage organizations, connection types, and custom field definitions under **Settings → People**. Catalog edits save immediately.
 
 Reviews brings together identity matches, facts, and imported
 relationships; the **Review type** control switches between them. Inspect the
 evidence before accepting or rejecting a candidate. Conflicts between existing
 profiles require an explicit merge decision. Facts starts with a person: search
 by name in the **Person** field to see that person's evidence, claims,
-decisions, and pins. **Open person profile** returns to their Directory entry.
+decisions, and pins. **Open person profile** opens their person page in People.
 Merge history and reversal follow the boundaries documented in
 [People](/docs/usage/people/).
 
@@ -446,7 +429,7 @@ Settings opens on Overview, with status and setup or build actions for
 background features. Use **Refresh feature status** to update Overview after
 background work changes. **Build index** appears when offered by the daemon and
 asks for confirmation before a full rebuild. Its categories are Overview,
-Server, Search & AI, People lookups, Tasks, Contacts, Sources, and Advanced.
+Server, Search & AI, People lookups, People, Tasks, Contacts, Sources, and Advanced.
 Sources includes source and attachment settings. Advanced includes archive
 settings and Appearance. People lookups includes named enrichment providers and
 People sweep profiles.

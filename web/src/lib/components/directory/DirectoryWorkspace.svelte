@@ -1,50 +1,30 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, Chip, DetailDrawer, IconButton, Modal, PageHeader, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { Button, Chip, IconButton, Modal, PageHeader, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { onDestroy, untrack } from 'svelte';
 
-  import type { MeetingRef } from '../../api/generated/models';
   import { deletePerson as generatedDeletePerson } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
   import type { DirectoryURLState } from '../../directory/models';
   import { DirectoryController } from '../../directory/controller.svelte';
-  import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatContactDate, formatDay } from '../../directory/labels';
+  import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
   import DirectoryList from './DirectoryList.svelte';
-  import PersonDetail from './PersonDetail.svelte';
 
   interface Props {
     client: APIClient;
     controller: DirectoryController;
     state: DirectoryURLState;
-    /** A caller may offer promotion only with an actual participant/cluster context. */
-    promotionParticipantID?: number;
-    onOpenCardDAVConflict?: (conflictID: number) => void;
-    onOpenCardDAVSettings?: () => void;
-    onAnnounce?: (message: string) => void;
-    onConfigureVisualSearch?: () => void;
-    onOpenMeeting?: (meeting: MeetingRef) => void;
-    onOpenRelationship?: (participantID: number) => void;
-    onReviewFacts?: (personID: number) => void;
+    onOpenPerson?: (id: number) => void;
   }
 
   let {
     client,
     controller,
     state: urlState,
-    promotionParticipantID = undefined,
-    onOpenCardDAVConflict = () => undefined,
-    onOpenCardDAVSettings = () => undefined,
-    onAnnounce = () => undefined,
-    onConfigureVisualSearch = undefined,
-    onOpenMeeting = undefined,
-    onOpenRelationship = undefined,
-    onReviewFacts = undefined
+    onOpenPerson = undefined
   }: Props = $props();
-  let root = $state<HTMLElement>();
-  let narrow = $state(false);
-  let mediaQuery: MediaQueryList | undefined;
   const listSelection = new ExploreSelectionState();
   let bulkDeletePending = $state(false);
   let bulkMessage = $state<string | null>(null);
@@ -170,30 +150,6 @@
     confirmBulkDelete = false;
   });
 
-  onMount(() => {
-    if (!window.matchMedia) return;
-    mediaQuery = window.matchMedia('(max-width: 760px)');
-    const update = () => { narrow = mediaQuery?.matches ?? false; };
-    update();
-    mediaQuery.addEventListener('change', update);
-    return () => mediaQuery?.removeEventListener('change', update);
-  });
-
-  async function closeDetail(): Promise<void> {
-    await controller.selectPerson(null);
-    await tick();
-    // DetailDrawer's focus trap restores its previous element during
-    // teardown. Yield one task so that cleanup finishes before placing focus
-    // on Directory's roving row.
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    root?.querySelector<HTMLElement>('[role="row"][tabindex="0"]')?.focus();
-  }
-
-  async function promote(): Promise<void> {
-    if (promotionParticipantID === undefined) return;
-    await controller.promote(promotionParticipantID);
-  }
-
   function beginBulkDelete(): void {
     if (selectedPeople.length === 0 || bulkDeletePending) return;
     confirmBulkDelete = true;
@@ -249,14 +205,8 @@
   }
 </script>
 
-<main class="directory-workspace" bind:this={root} aria-label="Directory">
-  <PageHeader title="Directory" description="People you've saved, with profiles and contact details.">
-    {#snippet actions()}
-      {#if promotionParticipantID !== undefined}
-        <Button label="Promote to person" tone="info" surface="solid" onclick={() => void promote()} />
-      {/if}
-    {/snippet}
-  </PageHeader>
+<main class="directory-workspace" aria-label="Directory">
+  <PageHeader title="Directory" description="People you've saved, with profiles and contact details." />
   <div class="directory-controls">
     <div class="directory-toolbar">
       <SearchInput value={textFilters.directoryQuery} ariaLabel="Search directory" placeholder="Search people, email, or organization…" block oninput={(value) => editTextFilter('directoryQuery', value)} />
@@ -316,13 +266,7 @@
       </div>
     {/if}
   </div>
-  {#if controller.promotionResult && !controller.promotionResult.ok}
-    <div role="alert" class="promotion-error">
-      {controller.promotionResult.message}
-      {#if controller.promotionResult.code === 'person_binding_conflict'} This participant already belongs to another durable person; resolve that binding before promoting it.{/if}
-    </div>
-  {/if}
-  <div class="directory-content" class:has-detail={controller.selectedPersonID !== null && !narrow}>
+  <div class="directory-content">
     <DirectoryList
       rows={controller.rows}
       loading={controller.loading}
@@ -337,22 +281,12 @@
       {bulkMessage}
       {bulkError}
       {bulkFailures}
-      onSelect={(personID) => void controller.selectPerson(personID)}
+      onSelect={(personID) => onOpenPerson?.(personID)}
       onBulkDelete={beginBulkDelete}
       onLoadMore={() => void controller.loadNextPage()}
       onReload={() => void controller.reloadFirstPage()}
     />
-    {#if controller.selectedPersonID !== null && !narrow}
-      <aside class="detail-pane" aria-label="Person detail">
-        {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} {onOpenRelationship} {onReviewFacts} {onConfigureVisualSearch} />{/if}
-      </aside>
-    {/if}
   </div>
-  {#if controller.selectedPersonID !== null && narrow}
-    <DetailDrawer title="Person detail" ariaLabel="Person detail" onclose={() => void closeDetail()}>
-      {#if controller.detailLoading}<p role="status">Loading person detail…</p>{:else if controller.detail}<PersonDetail {client} bundle={controller.detail} personID={controller.selectedPersonID} profileController={controller.profile} entityController={controller.entity} onOpenPerson={(personID) => void controller.selectPerson(personID)} onSplitCommitted={(context) => controller.reconcilePersonSplit(context)} {onOpenCardDAVConflict} {onOpenCardDAVSettings} {onAnnounce} {onOpenMeeting} {onOpenRelationship} {onReviewFacts} {onConfigureVisualSearch} />{/if}
-    </DetailDrawer>
-  {/if}
 </main>
 
 {#if confirmBulkDelete}
@@ -390,7 +324,4 @@
   .filter-chips :global(.chip) { border: 1px solid color-mix(in srgb, var(--accent-amber) 35%, var(--border-muted)); background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-surface)); color: var(--text-secondary); font-size: var(--font-size-xs); }
   .directory-content { display: grid; grid-row: 4; min-height: 0; overflow: hidden; }
   .directory-content > :global(*) { min-height: 0; overflow: auto; }
-  .directory-content.has-detail { grid-template-columns: minmax(260px, 0.8fr) minmax(360px, 1.2fr); gap: var(--space-4); }
-  .detail-pane { border-left: 1px solid var(--border-default); min-width: 0; min-height: 0; overflow: auto; }
-  .promotion-error { padding: var(--space-3); background: var(--bg-inset); color: var(--text-secondary); }
 </style>

@@ -1,3 +1,4 @@
+import { requestOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
@@ -44,10 +45,6 @@ function deferredResponse() {
     resolve = settle;
   });
   return { promise, resolve };
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
 }
 
 describe('RelationshipReviewController', () => {

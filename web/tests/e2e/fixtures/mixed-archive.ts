@@ -416,7 +416,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
     route.fulfill({
       json: {
         person_id: 42,
-        cadence_status: 'current',
+        cadence_status: 'ok',
         computed_at: FIXTURE_TIME,
         interaction_count: 3,
         stale: false,
@@ -447,37 +447,38 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
       },
     }),
   );
-  await page.route('**/api/v1/people/42/network*', (route) =>
-    route.fulfill({
-      json: {
-        root_person_id: 42,
-        depth: Number(new URL(route.request().url()).searchParams.get('depth') ?? 1),
-        truncated: false,
-        nodes: [
-          { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person', hop: 0 },
-          { id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 1 },
-          { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 1 },
-        ],
-        edges: [
-          {
-            id: 'relationship:31',
-            kind: 'relationship',
-            source_node_id: 'person:42',
-            target_node_id: 'person:43',
-            relationship_type_slug: 'colleague',
-            label: 'works with',
-          },
-          {
-            id: 'employment:41',
-            kind: 'employment',
-            source_node_id: 'person:43',
-            target_node_id: 'organization:21',
-            label: 'Engineer',
-          },
-        ],
-      },
-    }),
-  );
+  await page.route('**/api/v1/people/42/network*', (route) => {
+    const depth = Number(new URL(route.request().url()).searchParams.get('depth') ?? 1);
+    const nodes = [
+      { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person', hop: 0 },
+      { id: 'person:43', kind: 'person', entity_id: 43, label: 'Curated Peer', hop: 1 },
+      { id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 },
+    ].filter(node => node.hop <= depth);
+    const ids = new Set(nodes.map(node => node.id));
+    return route.fulfill({ json: {
+      root_person_id: 42, depth, truncated: false, nodes,
+      edges: [
+        {
+          id: 'relationship:31',
+          kind: 'relationship',
+          source_node_id: 'person:42',
+          target_node_id: 'person:43',
+          relationship_type_slug: 'colleague',
+          label: 'works with',
+        },
+        {
+          id: 'relationship:32', kind: 'relationship', source_node_id: 'person:42', target_node_id: 'person:43', relationship_type_slug: 'mentor', label: 'mentors',
+        },
+        {
+          id: 'employment:41',
+          kind: 'employment',
+          source_node_id: 'person:43',
+          target_node_id: 'organization:21',
+          label: 'Engineer',
+        },
+      ].filter(edge => ids.has(edge.source_node_id) && ids.has(edge.target_node_id)),
+    } });
+  });
   await page.route('**/api/v1/relationship-types', (route) => route.fulfill({ json: { relationship_types: [] } }));
   await page.route('**/api/v1/people/42/days*', (route) =>
     route.fulfill({
@@ -711,6 +712,12 @@ export async function installDirectoryReviewArchive(page: Page) {
   let failNextRelationshipRead = false;
   let factCatalogMode: 'ready' | 'deferred' | 'failed' | 'malformed' = 'ready';
   let factCatalogGate: Promise<void> | null = null;
+
+  await page.route(/\/api\/v1\/participants\/(?:701|702|901)$/, (route) => {
+    const id = Number(new URL(route.request().url()).pathname.split('/').at(-1));
+    const profile = [...people.values()].find(person => person.participant_ids?.includes(id));
+    return route.fulfill({ json: { ...archivePerson, id, display_label: profile?.display_name, display_name: profile?.display_name, identifiers: [], profile } });
+  });
 
   await page.route(/\/api\/v1\/person-relationship-reviews(?:\?.*)?$/, (route) => {
     const request = route.request();
@@ -1147,7 +1154,7 @@ export async function installDirectoryReviewArchive(page: Page) {
     if (suffix === '' && request.method() === 'GET') {
       return route.fulfill({ headers: { ETag: `"person-${person.id}-r${person.revision}"` }, json: person });
     }
-    if (suffix === '/profile') {
+    if (suffix === '/profile' || suffix === '/profile/history') {
       return route.fulfill({
         headers: { ETag: `"person-${person.id}-r${person.revision}"` },
         json: {
@@ -1158,6 +1165,7 @@ export async function installDirectoryReviewArchive(page: Page) {
           dates: [],
           categories: [],
           media: [],
+          ...(suffix === '/profile/history' ? { observations: [] } : {}),
         },
       });
     }
@@ -1166,7 +1174,7 @@ export async function installDirectoryReviewArchive(page: Page) {
       return route.fulfill({
         json: {
           person_id: person.id,
-          cadence_status: 'current',
+          cadence_status: 'ok',
           computed_at: FIXTURE_TIME,
           interaction_count: 2,
           stale: false,

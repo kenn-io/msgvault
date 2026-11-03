@@ -548,14 +548,13 @@ describe('application foundation', () => {
       if (path === '/api/v1/people/7/contact-state')
         return Response.json({
           person_id: 7,
-          cadence_status: 'current',
+          cadence_status: 'ok',
           interaction_count: 0,
           computed_at: '2026-08-28T10:00:00Z',
           stale: false,
         });
       if (path === '/api/v1/people/7/employments') return Response.json({ employments: [] });
       if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
-      if (path === '/api/v1/people/7/days') return Response.json({ person_id: 7, days: [], total_count: 0 });
       if (path === '/api/v1/people/7/files/search')
         return Response.json({
           files: [],
@@ -576,25 +575,22 @@ describe('application foundation', () => {
     const session = createSessionController(fetchFn);
     const rendered = render(App, { session });
     await session.bootstrap();
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const detailHeading = await screen.findByRole('heading', { name: 'Conflict comparison' });
+    expect(screen.queryByRole('dialog', { name: 'Publish to address book' })).toBeNull();
     await waitFor(() => expect(document.activeElement).toBe(detailHeading));
     expect(detailRequests).toEqual([41]);
-    expect(screen.queryByRole('dialog')).toBeNull();
-    expect(screen.getByRole('status', { name: 'Operation status' }).textContent).toBe(
-      'Opening CardDAV conflict 41 in Settings.',
-    );
     const firstAnnouncement = screen.getByRole('status', { name: 'Operation status' }).firstElementChild;
     expect(firstAnnouncement).not.toBeNull();
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    await fireEvent.click(await screen.findByRole('tab', { name: 'Maintenance' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Publish to address book' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'Review CardDAV conflict 41' }));
     const repeatedStatus = screen.getByRole('status', { name: 'Operation status' });
     await waitFor(() => expect(repeatedStatus.firstElementChild).not.toBe(firstAnnouncement));
-    expect(repeatedStatus.textContent).toBe('Opening CardDAV conflict 41 in Settings.');
-    expect(screen.getAllByRole('status', { name: 'Operation status' })).toHaveLength(1);
     await waitFor(() => expect(detailRequests).toEqual([41, 41]));
     rendered.unmount();
     window.history.replaceState(null, '', '/');

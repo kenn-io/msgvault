@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
@@ -36,6 +37,16 @@ function handler(detailResponse: () => Response | Promise<Response> = () => Resp
     if (path.endsWith('/participants/7/timeline')) return Response.json({ rows: [{ key: 'message:42', anchor_message_id: 42, conversation_id: 8, kind: 'email', title: detail.subject, occurred_at: detail.sent_at, message_type: 'email', conversation_type: 'email', source_id: 3, participant_labels: [], participant_ids: [], attachment_count: 0, attachment_size: 0, message_count: 1, deleted_from_source: false, match: {} }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
     if (path.endsWith('/integrations/tasks/status')) return Response.json({ state: 'disabled', message: 'Tasks disabled.' });
     if (path === '/api/v1/people/7') return Response.json({ id: 7, revision: 1, display_name: 'Example Person', participant_ids: [7], vcard_uid: 'person-7', created_at: '', updated_at: '' });
+    if (path === '/api/v1/people/7/profile') return Response.json(emptyProfile({ id: 7, revision: 1, display_name: 'Example Person', participant_ids: [7], vcard_uid: 'example-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' }));
+    if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, cadence_status: 'ok', interaction_count: 1, computed_at: detail.sent_at, stale: false });
+    if (path === '/api/v1/people/7/network') return Response.json({ root_person_id: 7, depth: 1, truncated: false, nodes: [], edges: [] });
+    if (path === '/api/v1/people/7/attributes') return Response.json({ person_id: 7, attributes: [] });
+    if (path === '/api/v1/relationships/7/calendar') return Response.json({
+      participant_id: 7, canonical_id: 7, year: 2026, timezone: 'UTC', days: [], annual: [],
+      current: { temperature: 50, rank: 1, population: 1, raw_score: 1, signals: { sent_signal: 1, received_volume: 0, meeting_signal: 0, modalities: 1 } },
+      peak_temperature: 50, peak_year: 2026, scoring_timezone: 'UTC', score_version: 1,
+      effective_date: '2026-07-19', cache_revision: 'cache-1', identity_revision: 1,
+    });
     if (path === '/api/v1/people/directory') return Response.json({ people: [] });
     if (path.endsWith('/brief-enrollment')) return Response.json({ person_id: 7, enrolled: false });
     if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false });
@@ -325,25 +336,26 @@ describe('meeting archive reader navigation', () => {
   });
 });
 
- it.each([false, true])('opens Directory meeting actions through the shell and returns to the person (narrow=%s)', async (narrow) => {
-   vi.stubGlobal('matchMedia', () => ({ matches: narrow, addEventListener: vi.fn(), removeEventListener: vi.fn() }));
+ it('opens saved person meeting actions through Messages and returns to the person', async () => {
    const { client } = handler();
    window.history.replaceState(null, '', '/');
    const state = new ExploreState(window);
    state.commitNavigation({ workspace: 'directory', directoryPersonID: 7 });
    const view = render(AppShell, { client, state });
    try {
-     const link = await screen.findByRole('link', { name: 'Open archived meeting' });
+     await fireEvent.click(await screen.findByRole('radio', { name: 'Messages' }));
+     await fireEvent.click(await screen.findByRole('button', { name: /Action items ·/ }));
+     const link = await screen.findByRole('link', { name: 'Action provenance title' });
      await fireEvent.click(link);
      const reader = await screen.findByRole('dialog', { name: 'Archived meeting' });
      expect(await within(reader).findByText('Archived transcript body')).toBeDefined();
-     expect(state.current.workspace).toBe('directory');
+     expect(state.current.workspace).toBe('relationships');
      expect(state.current.directoryPersonID).toBe(7);
      const close = historyChange(); await fireEvent.click(within(reader).getByRole('button', { name: 'Close archived meeting' })); await close;
      await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Archived meeting' })).toBeNull());
      expect(state.current.directoryPersonID).toBe(7);
-     expect(screen.getByText(/^4 meetings(?: ·|$)/)).toBeDefined();
-   } finally { view.unmount(); state.destroy(); vi.unstubAllGlobals(); }
+     expect(screen.getByRole('region', { name: 'Meeting summary' }).textContent).toContain('4 meetings');
+   } finally { view.unmount(); state.destroy(); }
  });
 
 it('opens a person from the archived meeting reader', async () => {
