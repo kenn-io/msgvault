@@ -931,7 +931,6 @@ func (b *parquetBuilder) build() (string, func()) {
 	tmpDir, err := os.MkdirTemp("", "msgvault-test-parquet-*")
 	require.NoError(b.t, err, "create fixture copy directory")
 	cleanup := func() { _ = os.RemoveAll(tmpDir) }
-	b.t.Cleanup(cleanup)
 	require.NoError(b.t, os.CopyFS(tmpDir, template.files), "copy parquet template")
 	derived := template.derived
 	fingerprint, err := CacheDatasetFingerprint(tmpDir)
