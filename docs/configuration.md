@@ -1741,6 +1741,23 @@ keys, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
+### `[[instagram_comments]]` {#instagram-comments}
+
+Select a professional Instagram account linked to an explicitly selected Page
+(unreleased). See [Instagram comments](usage/instagram-comments.md) for setup
+and coverage. Each profile requires `identifier`, `app_id`, `page_id`,
+`instagram_account_id`, and `token_env`; `enabled` defaults to `false`, and
+an empty `schedule` means manual sync only.
+
+The label is trimmed, nonempty, and unique ignoring case. All three IDs must
+be positive decimal IDs without leading zeros. Duplicate app/Page/Instagram
+tuples, unknown keys, invalid environment variable names, and invalid five-field
+cron expressions are rejected. Tokens come only from the named daemon
+environment variable. Renaming the label preserves archive identity.
+The canonical source identifier is
+`app:<app_id>:page:<page_id>:instagram:<instagram_account_id>`; its generic
+scheduler job is `instagram_comments:<source-identifier>`.
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a

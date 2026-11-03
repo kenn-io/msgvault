@@ -115,6 +115,11 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 		return WhatsAppAppleJobName(identifier), true
 	case "apple_messages":
 		return IMessageJobName, true
+	case meta.InstagramSourceType:
+		if _, ok := meta.ParseInstagramSourceIdentifier(identifier); !ok {
+			return "", false
+		}
+		return meta.InstagramSourceType + ":" + identifier, true
 	case meta.SourceType:
 		if _, _, ok := meta.ParseSourceIdentifier(identifier); !ok {
 			return "", false
@@ -188,7 +193,7 @@ func isSourceSyncJobName(name string) bool {
 	if kind == CardDAVJobName {
 		return true
 	}
-	if kind == meta.SourceType {
+	if kind == meta.SourceType || kind == meta.InstagramSourceType {
 		canonical, ok := SchedulerJobNameForSource(kind, identifier)
 		return ok && canonical == name
 	}
