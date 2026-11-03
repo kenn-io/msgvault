@@ -34,6 +34,10 @@ const rederiveVersion = "v7"
 // pass of the walk.
 const repairBatchSize = 500
 
+// checkpointSaveTimeout bounds the checkpoint write that runs after a repair
+// stops early, which usually means after its context was cancelled.
+const checkpointSaveTimeout = 5 * time.Second
+
 func init() {
 	rederive.Register(sourceTypeBeeper, rederiveVersion,
 		func(ctx context.Context, s *store.Store, sourceID int64, progress func(string)) (*rederive.Summary, error) {
@@ -76,7 +80,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 		resume.Version, resume.AfterID = rederiveVersion, 0
 	}
 	afterID := resume.AfterID
-	checkpoint := func() error {
+	checkpoint := func(ctx context.Context) error {
 		checkpoint := resume
 		checkpoint.AfterID = afterID
 		blob, err := json.Marshal(checkpoint)
@@ -94,7 +98,12 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 		// derived writes succeeded so a retry neither skips a failed row nor
 		// repeats the successful prefix.
 		if err != nil && afterID > resume.AfterID {
-			err = errors.Join(err, checkpoint())
+			// A cancel is the usual reason to get here, so save on a context
+			// that outlives it. The timeout keeps a stuck database from
+			// holding the stop.
+			saveCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), checkpointSaveTimeout)
+			defer cancel()
+			err = errors.Join(err, checkpoint(saveCtx))
 		}
 	}()
 	for {
@@ -124,7 +133,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 			afterID = item.MessageID
 		}
 		if afterID > resume.AfterID {
-			if err := checkpoint(); err != nil {
+			if err := checkpoint(ctx); err != nil {
 				return sum, err
 			}
 		}
@@ -149,7 +158,7 @@ func (imp *Importer) RepairSource(ctx context.Context, sourceID int64, progress 
 		return sum, err
 	}
 	resume.Version, afterID = "", 0
-	if err := checkpoint(); err != nil {
+	if err := checkpoint(ctx); err != nil {
 		return sum, err
 	}
 	sum.Duration = time.Since(start)

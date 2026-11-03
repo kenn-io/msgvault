@@ -241,7 +241,9 @@ func importSingleAccount(
 		// next invocation retries and prints the summary then. UX
 		// polish tracked separately in
 		// private/drafts/2026-05-02-issue-import-migration-error-ux.md.
-		if err := runPostSourceCreateMigrationsForInvocation(ctx, st, state); err != nil {
+		// The import itself succeeded, so a cancel that arrives now must not
+		// fail the migration retry and hide the summary.
+		if err := runPostSourceCreateMigrationsForInvocation(context.WithoutCancel(ctx), st, state); err != nil {
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 	}
@@ -389,7 +391,9 @@ func importAutoAccounts(
 			// above. UX polish tracked in
 			// private/drafts/2026-05-02-issue-import-migration-error-ux.md
 			// for a follow-up PR.
-			if err := runPostSourceCreateMigrationsForInvocation(ctx, st, state); err != nil {
+			// See importSingleAccount: a cancel after a successful import
+			// must not fail the migration retry.
+			if err := runPostSourceCreateMigrationsForInvocation(context.WithoutCancel(ctx), st, state); err != nil {
 				importErrors = append(importErrors, fmt.Errorf("%s: post-source-create migrations: %w", identifier, err))
 				continue
 			}

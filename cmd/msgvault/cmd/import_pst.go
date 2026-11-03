@@ -127,7 +127,9 @@ Examples:
 		if err != nil {
 			return err
 		}
-		if err := runPstPostImportMigrations(ctx, cmd.OutOrStdout(), st, summary, importPstSourceType, identifier, state); err != nil {
+		// These steps run for interrupted imports too (see the function), so
+		// a cancel must not stop them before the summary prints.
+		if err := runPstPostImportMigrations(context.WithoutCancel(ctx), cmd.OutOrStdout(), st, summary, importPstSourceType, identifier, state); err != nil {
 			return err
 		}
 

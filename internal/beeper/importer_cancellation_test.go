@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
@@ -545,4 +546,55 @@ func TestIncrementalAuxiliaryWriteCancellationRetriesPage(t *testing.T) {
 	).Scan(&deletedFromSourceAt))
 	assert.True(deletedFromSourceAt.Valid, "the resumed walk must apply the tombstone the stopped run missed")
 	assert.ErrorIs(firstErr, context.Canceled)
+}
+
+// Clearing a message's pending markers commits the row replacement before it
+// refreshes the message's attachment flags. If a cancel landing between the
+// two also stopped the refresh, has_attachments and attachment_count would
+// keep counting the deleted markers, and no later run revisits the message.
+// serial: changes slog.Default and SQL logging.
+func TestClearPendingMarkersRefreshesFlagsAfterCancel(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	sourceID := newBeeperTestSource(t, st, "signal")
+	convID, err := st.EnsureConversationWithType(sourceID, "!markers:example.com", "single", "Markers")
+	require.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{
+		SourceID: sourceID, ConversationID: convID, SourceMessageID: "marker-1", MessageType: "beeper",
+	})
+	require.NoError(err)
+	const assetURL = "mxc://example.com/photo"
+	require.NoError(st.ReplaceMessageBeeperAttachments(messageID, []store.AttachmentRef{{
+		Filename: "photo.jpg", MimeType: "image/jpeg", StoragePath: assetURL,
+		SourceAttachmentID: beeperAttachmentID(assetURL), State: attachmentpolicy.StatePending,
+	}}))
+	require.NoError(st.RecomputeMessageAttachmentStatsContext(t.Context(), messageID))
+	attachmentFlags := func() (bool, int) {
+		var hasAttachments bool
+		var attachmentCount int
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+			`SELECT has_attachments, attachment_count FROM messages WHERE id = ?`), messageID,
+		).Scan(&hasAttachments, &attachmentCount))
+		return hasAttachments, attachmentCount
+	}
+	hasAttachments, attachmentCount := attachmentFlags()
+	require.True(hasAttachments, "the pending marker counts before it is cleared")
+	require.Equal(1, attachmentCount)
+
+	// The marker replacement is the only transaction clearPendingMarkers
+	// commits, so the cancel lands after it and before the refresh.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	handler := installCancelOnLog(t, cancel, 1, logMessage("sql tx commit"))
+	err = NewImporter(st, nil).clearPendingMarkers(ctx, messageID)
+	require.True(handler.canceled, "the cancel must land after the marker replacement commits")
+	assert.NoError(err)
+
+	var rows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), messageID).Scan(&rows))
+	assert.Zero(rows, "the pending marker is removed")
+	hasAttachments, attachmentCount = attachmentFlags()
+	assert.False(hasAttachments, "has_attachments must match the remaining rows")
+	assert.Zero(attachmentCount, "attachment_count must match the remaining rows")
 }

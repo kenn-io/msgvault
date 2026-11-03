@@ -3357,6 +3357,17 @@ func TestChannelReplyLinkCancellationRelinksOnResume(t *testing.T) {
 func TestAuxiliaryWriteCancellationRewritesOnResume(t *testing.T) {
 	const message = `{"id":"m1","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z","body":{"contentType":"text","content":"hello"},
 	  "reactions":[{"reactionType":"like","createdDateTime":"2025-02-01T00:00:02Z","user":{"user":{"id":"reactor","displayName":"Reactor","userIdentityType":"aadUser"}}}]}`
+	// The resumed chat query re-reads one second before the cursor, which
+	// would deliver m1 again on its own. m2 is newer by more than that, so a
+	// cursor saved past the failed reaction write would leave m1 out of range.
+	// Graph returns m2 first, so m1 is still the last message collected.
+	chatMessages := []struct {
+		modified time.Time
+		json     string
+	}{
+		{time.Date(2025, 2, 1, 0, 0, 5, 0, time.UTC), `{"id":"m2","createdDateTime":"2025-02-01T00:00:05Z","lastModifiedDateTime":"2025-02-01T00:00:05Z","body":{"contentType":"text","content":"later"}}`},
+		{time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC), message},
+	}
 	tests := []struct {
 		name            string
 		includeChannels bool
@@ -3372,6 +3383,7 @@ func TestAuxiliaryWriteCancellationRewritesOnResume(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
+			var filters graphFilterFake
 			serverURL := ""
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if selfChatAbsent(w, r) {
@@ -3386,12 +3398,17 @@ func TestAuxiliaryWriteCancellationRewritesOnResume(t *testing.T) {
 				case strings.HasSuffix(r.URL.Path, "/members"):
 					_, _ = w.Write([]byte(`{"value":[]}`))
 				case strings.HasPrefix(r.URL.Path, "/me/chats/") && strings.HasSuffix(r.URL.Path, "/messages"):
-					// An advanced cursor filters out the message, as Graph does.
-					if r.URL.Query().Get("$filter") != "" {
-						_, _ = w.Write([]byte(`{"value":[]}`))
+					cut, ok := filters.cutoff(w, r.URL.Query().Get("$filter"))
+					if !ok {
 						return
 					}
-					_, _ = w.Write([]byte(`{"value":[` + message + `]}`))
+					var out []string
+					for _, m := range chatMessages {
+						if cut == nil || m.modified.After(*cut) {
+							out = append(out, m.json)
+						}
+					}
+					_, _ = w.Write([]byte(`{"value":[` + strings.Join(out, ",") + `]}`))
 				case r.URL.Path == "/me/joinedTeams":
 					_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
 				case strings.HasSuffix(r.URL.Path, "/channels"):
@@ -3428,7 +3445,8 @@ func TestAuxiliaryWriteCancellationRewritesOnResume(t *testing.T) {
 				tt.sourceMessageID,
 			).Scan(&reactions))
 			assert.Equal(1, reactions, "the resumed run must write the reaction the canceled run missed")
-			assert.ErrorIs(firstErr, context.Canceled)
+			require.ErrorIs(firstErr, context.Canceled)
+			filters.check(t)
 		})
 	}
 }

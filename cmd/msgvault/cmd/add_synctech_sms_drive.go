@@ -281,6 +281,7 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 		return summary, fmt.Errorf("create staging directory: %w", err)
 	}
 	imp := synctechsms.NewImporter(st, opts)
+	var importErr error
 	for _, file := range selected {
 		fileSummary, err := importOneDriveBackup(ctx, st, imp, client, source.ID, file, stagingDir)
 		summary.FilesSeen += fileSummary.FilesSeen
@@ -291,13 +292,19 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 		summary.AttachmentsImported += fileSummary.AttachmentsImported
 		summary.MessageIDs = append(summary.MessageIDs, fileSummary.MessageIDs...)
 		if err != nil {
-			return summary, err
+			importErr = err
+			break
 		}
 	}
 	if summary.FilesImported > 0 {
-		if err := st.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
-			return summary, fmt.Errorf("recompute conversation stats: %w", err)
+		// Files imported before a cancel or failure are committed, so their
+		// conversations need current statistics either way.
+		if err := st.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
+			return summary, errors.Join(importErr, fmt.Errorf("recompute conversation stats: %w", err))
 		}
+	}
+	if importErr != nil {
+		return summary, importErr
 	}
 	totalRecords := int64(summary.SMSImported + summary.MMSImported + summary.CallsImported)
 	if err := st.UpdateSyncCheckpoint(syncID, &store.Checkpoint{

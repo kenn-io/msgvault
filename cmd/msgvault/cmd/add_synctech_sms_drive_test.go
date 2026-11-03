@@ -510,3 +510,60 @@ func TestSynctechSMSDriveRepairsMalformedFileToken(t *testing.T) {
 	require.ErrorIs(err, context.Canceled)
 	assert.NotErrorIs(err, oauth.ErrInvalidTokenJSON)
 }
+
+// cancelingSynctechDriveClient cancels the run when asked to download
+// cancelID, as a stop request arriving during that download would.
+type cancelingSynctechDriveClient struct {
+	fakeSynctechDriveClient
+
+	cancelID string
+	cancel   context.CancelFunc
+}
+
+func (c cancelingSynctechDriveClient) DownloadToFile(ctx context.Context, fileID, path string) error {
+	if fileID == c.cancelID {
+		c.cancel()
+		return ctx.Err()
+	}
+	return c.fakeSynctechDriveClient.DownloadToFile(ctx, fileID, path)
+}
+
+// A cancel during a later file's download must still recompute conversation
+// statistics for the files already imported. If the run returned on the
+// cancel, or recomputed on the cancelled context, message_count would stay at
+// zero for a conversation holding a committed message.
+func TestSynctechSMSDriveCancelRecomputesStatsForImportedFiles(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	f := storetest.New(t)
+	src := synctechDriveTestSource()
+	ctx, cancel := context.WithCancel(testCtx)
+	defer cancel()
+	client := cancelingSynctechDriveClient{
+		files: []synctechsms.DriveFile{
+			{ID: "backup-1", Name: "sms-1.xml", Checksum: "sum-1", Size: 128, ModifiedTime: time.Now().Add(-30 * time.Minute)},
+			{ID: "backup-2", Name: "sms-2.xml", Checksum: "sum-2", Size: 128, ModifiedTime: time.Now().Add(-20 * time.Minute)},
+		},
+		downloads: map[string]string{
+			"backup-1": `<smses count="1">
+  <sms address="+15551234567" date="1717214400000" type="1" body="imported before cancel" read="1" status="-1" contact_name="Alice" />
+</smses>`,
+		},
+		cancelID: "backup-2",
+		cancel:   cancel,
+	}
+
+	summary, err := runSynctechSMSDriveSourceWithClient(ctx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
+	require.ErrorIs(err, context.Canceled, "runSynctechSMSDriveSourceWithClient")
+	require.Equal(1, summary.FilesImported, "the first file imports before the cancel")
+
+	source := getSynctechSource(t, f.Store, src.OwnerPhone)
+	assertSourceMessageCount(t, f.Store, source.ID, 1)
+	assertSourceConversationMessageCount(t, f.Store, source.ID, 1)
+	assert.Equal(store.SyncStatusFailed, getOnlySyncRun(t, f.Store, source.ID).Status, "sync status")
+}

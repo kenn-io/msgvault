@@ -651,3 +651,44 @@ func TestRepairSourceResumesAfterCanceledBatch(t *testing.T) {
 	assert.EqualValues(1, sum.MessagesScanned, "resume starts after the committed batch")
 	assert.EqualValues(1, sum.BodiesRewritten, "the final row gets repaired")
 }
+
+// A cancel that lands mid-batch must still save the checkpoint for the rows
+// the batch already repaired. If the deferred save ran on the cancelled
+// context, its write would fail, repair_after_id would stay unset, and the
+// next pass would repeat those rows.
+// serial: changes slog.Default and SQL logging.
+func TestRepairSourceSavesCheckpointWhenCancelledMidBatch(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	f := newFakeBeeper(t)
+	f.addChat(budgetTestChat("!repaircancel:beeper.local", 3, time.Now().Add(-72*time.Hour)))
+	imp, st, done := newTestImporter(t, f)
+	defer done()
+	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	require.NoError(err)
+	_, err = st.DB().ExecContext(t.Context(), `UPDATE message_bodies SET body_text = 'stale'`)
+	require.NoError(err)
+	sourceID := beeperSourceID(t, st)
+	var firstID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT MIN(id) FROM messages WHERE source_id = ?`), sourceID).Scan(&firstID))
+
+	// Each row's derived-text write is one transaction, so the second begin
+	// is the second row's write, after the first row has finished.
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	handler := installCancelOnLog(t, cancel, 2, logMessage("sql tx begin"))
+	sum, err := imp.RepairSource(ctx, sourceID, nil)
+	require.True(handler.canceled, "the cancel must land inside the batch")
+	require.ErrorIs(err, context.Canceled)
+	assert.EqualValues(2, sum.MessagesScanned, "the cancel stops the second row")
+	assert.EqualValues(1, sum.BodiesRewritten, "only the first row is repaired")
+
+	source, err := st.GetSourceByIDContext(t.Context(), sourceID)
+	require.NoError(err)
+	require.True(source.SyncConfig.Valid, "the stopped repair must save a checkpoint")
+	var saved struct {
+		AfterID int64 `json:"repair_after_id"`
+	}
+	require.NoError(json.Unmarshal([]byte(source.SyncConfig.String), &saved))
+	assert.Equal(firstID, saved.AfterID, "the checkpoint must cover the repaired row")
+}

@@ -381,7 +381,9 @@ func (imp *Importer) persistAttachments(ctx context.Context, syncID, messageID i
 		sum.Errors++
 		return
 	}
-	if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+	// The rows above are already replaced; refresh the message's attachment
+	// flags even after a cancel so they match those rows.
+	if err := imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
 		sum.Errors++
 	}
 }
@@ -482,7 +484,9 @@ func (imp *Importer) clearPendingMarkers(ctx context.Context, messageID int64) e
 	if err := imp.store.ReplaceMessageBeeperAttachments(messageID, keep); err != nil {
 		return err
 	}
-	return imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID)
+	// The markers are already gone, so a later run will not revisit this
+	// message. Refresh its attachment flags even after a cancel.
+	return imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID)
 }
 
 // BackfillMedia retries eligible Beeper attachment downloads for one account:

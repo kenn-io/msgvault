@@ -159,8 +159,11 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 		ctx, syncStore, source.ID, plans, existingMessages,
 		retainedConversations,
 	)
+	// Committed messages need current conversation statistics even when a
+	// cancel stopped persistence or arrives before the recompute.
+	statsCtx := context.WithoutCancel(ctx)
 	if err != nil {
-		if statsErr := syncStore.RecomputeConversationStatsContext(ctx, source.ID); statsErr != nil {
+		if statsErr := syncStore.RecomputeConversationStatsContext(statsCtx, source.ID); statsErr != nil {
 			return Summary{}, errors.Join(err,
 				fmt.Errorf("recompute iMazing CSV conversation statistics after partial persistence: %w", statsErr))
 		}
@@ -170,7 +173,7 @@ func (importer *Importer) ImportPath(ctx context.Context, path string) (summary 
 	// messages even when a later stage of the run fails, so recompute them
 	// immediately after persistence and before reply, attachment, and
 	// contact processing.
-	if err := syncStore.RecomputeConversationStatsContext(ctx, source.ID); err != nil {
+	if err := syncStore.RecomputeConversationStatsContext(statsCtx, source.ID); err != nil {
 		return Summary{}, fmt.Errorf("recompute iMazing CSV conversation statistics: %w", err)
 	}
 	repliesLinked, repliesUnresolved, err := resolveReplies(
