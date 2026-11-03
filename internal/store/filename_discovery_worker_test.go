@@ -188,6 +188,13 @@ func TestFilenameDiscoveryBatchUsesSetBasedWrites(t *testing.T) {
 	}
 	require.NoError(insert.Commit())
 
+	// The authorizer counts compilations, so disable statement reuse while counting writes.
+	location := filenameLocation(t, f.Store)
+	require.NoError(f.Store.Close())
+	f.Store, err = store.OpenForTest(location + "?_stmt_cache_size=0")
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(f.Store.Close()) })
+
 	counter := watchFilenameWrites(t, f.Store)
 	counter.resetAndEnable()
 	bootstrap, err := f.Store.FilenameDiscoveryBatchContext(t.Context())
@@ -196,6 +203,7 @@ func TestFilenameDiscoveryBatchUsesSetBasedWrites(t *testing.T) {
 	assert.Equal(500, bootstrap.Processed)
 	assert.Equal(500, filenameEntries(t, f.Store, bootstrap.Status.Generation))
 	assert.Equal("report-0000.pdf", filenameEntryName(t, f.Store, bootstrap.Status.Generation, ids[0]))
+	assert.Positive(counter.entryInserts.Load(), "the authorizer observed entry writes")
 	assert.LessOrEqual(counter.entryInserts.Load(), int64(8), "entries use a bounded number of multi-row inserts")
 	assert.LessOrEqual(counter.entryDeletes.Load(), int64(1), "a new generation has no prior entries to delete")
 	assert.LessOrEqual(counter.tokenInserts.Load(), int64(20), "token writes span the whole page")
@@ -224,6 +232,7 @@ func TestFilenameDiscoveryBatchUsesSetBasedWrites(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(500, replay.Processed)
 	assert.Equal("renamed-0000.pdf", filenameEntryName(t, f.Store, ready.Generation, ids[0]))
+	assert.Positive(counter.entryInserts.Load(), "the authorizer observed replay writes")
 	assert.LessOrEqual(counter.entryInserts.Load(), int64(8), "replay entries use a bounded number of multi-row inserts")
 	assert.LessOrEqual(counter.entryDeletes.Load(), int64(8), "replay removes entries in bounded batches")
 	assert.LessOrEqual(counter.tokenInserts.Load(), int64(20), "replay token writes span the whole page")
