@@ -117,6 +117,8 @@ type pgTemplate struct {
 	token string    // set once the template is built
 	err   error     // set once building failed; the fixture falls back for good
 	owner *sql.Conn // pinned session holding the ownership lock; never closed
+
+	fileCopy bool // PostgreSQL 15+ with fsync off; checked once per template
 }
 
 // templateFor returns the template for a database URL, creating the record on
@@ -152,6 +154,13 @@ func (p *pgTemplate) ensure() error {
 	}
 
 	p.scope, p.token, p.owner, p.err = buildTemplate(p.dbURL)
+	if p.err == nil {
+		p.err = p.owner.QueryRowContext(context.Background(),
+			"SELECT current_setting('server_version_num')::int >= 150000 AND current_setting('fsync') = 'off'").Scan(&p.fileCopy)
+		if p.err != nil {
+			p.err = fmt.Errorf("template server settings: %w", p.err)
+		}
+	}
 
 	return p.err
 }
@@ -291,14 +300,10 @@ func (p *pgTemplate) clone(ctx context.Context) (string, error) {
 	}
 
 	name := cloneDBPrefix + p.scope + "_" + p.token + "_" + hex.EncodeToString(suffix)
-	var version int
-	if err := admin.QueryRowContext(ctx, "SHOW server_version_num").Scan(&version); err != nil {
-		return "", fmt.Errorf("template server version: %w", err)
-	}
 	statement := "CREATE DATABASE " + name + " TEMPLATE " + p.name()
-	// PostgreSQL 15 added strategies and defaults to logging the whole copy.
-	// Older servers already copy files and do not accept the strategy option.
-	if version >= 150000 {
+	// FILE_COPY avoids logging the whole copy, but its checkpoints cost more
+	// with fsync on. Older servers already copy files and lack this option.
+	if p.fileCopy {
 		statement += " STRATEGY FILE_COPY"
 	}
 	//nolint:gosec // both names are prefixes plus hex tokens generated here.
