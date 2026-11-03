@@ -33,13 +33,11 @@ signalbackup-tools has decrypted into a directory:
 
   signalbackup-tools signal-<date>.backup <passphrase> --output <directory>/
 
-Pass that directory or its database.sqlite file. Attachment files
-(Attachment_*.bin) are read from the same directory unless --attachments-dir
-names another one. msgvault reads Signal Android database versions 185 through
-330. Keep DatabaseVersion.sbf beside database.sqlite. Run the command again with
-a newer backup to add new messages; messages already in the archive are updated
-in place. Missing or skipped attachment files leave message text available;
-rerun with the files available to archive them.
+msgvault reads Signal Android database versions 185 through 330. Keep
+DatabaseVersion.sbf beside database.sqlite. Run the command again with a newer
+backup to add new messages; messages already in the archive are updated in place.
+Missing or skipped attachment files leave message text available; rerun with the
+files available to archive them.
 
 Examples:
   msgvault import-signal --phone "+447700900000" ~/signal-backup
