@@ -1,0 +1,71 @@
+package store
+
+import (
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestSenderContactRelationshipsQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "sender-relationships-query.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(s.Close()) })
+	requirements.NoError(s.InitSchema())
+
+	query, args := s.senderContactRelationshipsQuery([]string{"one@example.test", "target@example.test"}, nil, false, 0)
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		requirements.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	requirements.NoError(rows.Err())
+
+	plan := strings.Join(details, "\n")
+	assertions.Contains(plan, "SEARCH mr USING INDEX idx_message_recipients_email_address_normalized",
+		"contact and archive-history lookup should probe historical recipient envelopes by normalized address:\n%s", plan)
+}
+
+func FuzzNativeIMAPMailboxIDsAreNotRawImporterIDs(f *testing.F) {
+	for _, mailbox := range []string{
+		"sent", "INBOX", "eml-sent",
+		"eml-" + strings.Repeat("a", 64),
+		"mbox-" + strings.Repeat("a", 64),
+		"pst-" + strings.Repeat("a", 12),
+	} {
+		f.Add(mailbox, uint32(1))
+	}
+
+	requirements := require.New(f)
+	s, err := OpenForTest(filepath.Join(f.TempDir(), "native-imap-id-fuzz.db"))
+	requirements.NoError(err)
+	f.Cleanup(func() { requirements.NoError(s.Close()) })
+	predicate := "SELECT " + s.senderRawImportedIDSQL("CAST(? AS TEXT)")
+
+	f.Fuzz(func(t *testing.T, mailbox string, uid uint32) {
+		if len(mailbox) > 256 {
+			t.Skip()
+		}
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		sourceMessageID := mailbox + "|" + strconv.FormatUint(uint64(uid), 10)
+		args := make([]any, strings.Count(predicate, "?"))
+		for i := range args {
+			args[i] = sourceMessageID
+		}
+		var imported bool
+		requirements.NoError(s.db.QueryRowContext(t.Context(), predicate, args...).Scan(&imported))
+		assertions.False(imported, "native mailbox|UID identifiers are not raw importer IDs")
+	})
+}
