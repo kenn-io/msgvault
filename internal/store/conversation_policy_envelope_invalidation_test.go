@@ -174,3 +174,70 @@ func TestConversationPolicyRecipientAdditionInvalidatesSharedContext(t *testing.
 		}
 	}
 }
+
+func TestConversationPolicyEnvelopeRestorationInvalidatesSharedContext(t *testing.T) {
+	requirements := require.New(t)
+	checks := assert.New(t)
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("beeper", "envelope-restoration")
+	requirements.NoError(err)
+	supportRoom, err := s.EnsureConversation(source.ID, "support", "Support")
+	requirements.NoError(err)
+	targetRoom, err := s.EnsureConversation(source.ID, "target", "Target")
+	requirements.NoError(err)
+	for _, room := range []string{"support", "target"} {
+		requirements.NoError(s.SetConversationPolicyOverride(t.Context(), source.ID, room, conversationpolicy.Full))
+	}
+	participantID, err := s.EnsureParticipantByIdentifier("beeper", "synthetic:restored-envelope", "Synthetic Restored Envelope")
+	requirements.NoError(err)
+	supportID, err := s.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: supportRoom,
+		SourceMessageID: "restored-envelope", MessageType: "beeper",
+	})
+	requirements.NoError(err)
+	requirements.NoError(s.ReplaceMessageRecipients(
+		supportID, "from", []int64{participantID}, []string{"Synthetic Restored Envelope"},
+	))
+	targetID, err := s.UpsertMessage(&store.Message{
+		SourceID: source.ID, ConversationID: targetRoom, SourceMessageID: "target-context",
+		MessageType: "beeper", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+	})
+	requirements.NoError(err)
+	var eligible bool
+	queryEligibility := func() {
+		t.Helper()
+		requirements.NoError(s.DB().QueryRow(s.Rebind(
+			`SELECT `+store.FullParticipantNameWhere("p.id", "p.display_name")+` FROM participants p WHERE p.id=?`,
+		), participantID).Scan(&eligible))
+	}
+	queryEligibility()
+	requirements.True(eligible)
+	requirements.NoError(s.SetEmbedGen(t.Context(), []int64{targetID}, 73))
+
+	requirements.NoError(s.MarkMessageDeleted(source.ID, "restored-envelope"))
+	queryEligibility()
+	checks.False(eligible, "a tombstoned envelope no longer supports the shared name")
+	var generation sql.NullInt64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen FROM messages WHERE id=?`), targetID).Scan(&generation))
+	checks.False(generation.Valid, "withdrawing an envelope invalidates its shared context")
+
+	requirements.NoError(s.SetEmbedGen(t.Context(), []int64{targetID}, 73))
+	var beforeRevision int64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), targetID).Scan(&beforeRevision))
+	requirements.NoError(s.ClearMessageDeletedFromSource(source.ID, "restored-envelope"))
+	queryEligibility()
+	checks.True(eligible, "restoring the envelope restores its name support")
+	var afterGeneration sql.NullInt64
+	var afterRevision int64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`), targetID).Scan(&afterGeneration, &afterRevision))
+	checks.False(afterGeneration.Valid, "restoring support invalidates contexts built while it was absent")
+	checks.Greater(afterRevision, beforeRevision)
+
+	requirements.NoError(s.SetEmbedGen(t.Context(), []int64{targetID}, 73))
+	var idempotentRevision int64
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embedding_revision FROM messages WHERE id=?`), targetID).Scan(&idempotentRevision))
+	requirements.NoError(s.ClearMessageDeletedFromSource(source.ID, "restored-envelope"))
+	requirements.NoError(s.DB().QueryRow(s.Rebind(`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`), targetID).Scan(&afterGeneration, &afterRevision))
+	checks.Equal(sql.NullInt64{Int64: 73, Valid: true}, afterGeneration)
+	checks.Equal(idempotentRevision, afterRevision, "an unchanged replay keeps current context")
+}

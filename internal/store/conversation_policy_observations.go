@@ -528,6 +528,45 @@ func tombstoneEnvelopeMessagesWith(q querier, now, selection string, args ...any
 	return err
 }
 
+func (s *Store) tombstoneEnvelopeMessagesTxContext(ctx context.Context, tx *loggedTx, now, selection string, args ...any) error {
+	if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+		return err
+	}
+	return tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, now, selection, args...)
+}
+
+func (s *Store) tombstoneSourceEnvelopesTxContext(ctx context.Context, tx *loggedTx, now string, sourceID int64, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+		return err
+	}
+	return tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, now, sourceID, ids)
+}
+
+func restoreEnvelopeMessagesWith(q querier, updateSelection, supportSelection string, args ...any) error {
+	result, err := q.Exec(`UPDATE messages SET deleted_from_source_at=NULL WHERE `+updateSelection+` AND deleted_from_source_at IS NOT NULL`, args...)
+	if err != nil {
+		return err
+	}
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return nil
+	}
+	return invalidateEnvelopeContextWith(q, supportSelection+` AND support.deleted_from_source_at IS NULL`, args...)
+}
+
+func (s *Store) restoreEnvelopeMessagesTxContext(ctx context.Context, tx *loggedTx, updateSelection, supportSelection string, args ...any) error {
+	if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+		return err
+	}
+	return restoreEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, updateSelection, supportSelection, args...)
+}
+
 func tombstoneSourceEnvelopesWith(q querier, now string, sourceID int64, ids []string) error {
 	for start := 0; start < len(ids); start += 500 {
 		chunk := ids[start:min(start+500, len(ids))]

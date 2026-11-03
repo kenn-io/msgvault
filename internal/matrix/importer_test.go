@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"maunium.net/go/mautrix"
@@ -45,6 +46,11 @@ func TestImporterBackfillsJoinedRoomAndPersistsCheckpoint(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource(SourceType, "@archive:example.org")
 	require.NoError(err)
+	_, err = st.EnsureConversationWithType(source.ID, "!room:example.org", "direct_chat", "Example room")
+	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "!room:example.org", conversationpolicy.Full,
+	))
 	sum, err := NewImporter(st, &Runtime{Client: client}).Import(t.Context(), ImportOptions{UserID: "@archive:example.org"})
 	require.NoError(err)
 	assert.Equal(int64(6), sum.MessagesAdded)
@@ -102,6 +108,43 @@ func TestImporterBackfillsJoinedRoomAndPersistsCheckpoint(t *testing.T) {
 	var conversationType string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT conversation_type FROM conversations WHERE source_id = ?`), source.ID).Scan(&conversationType))
 	assert.Equal("direct_chat", conversationType)
+	matrixParticipant, err := st.EnsureParticipantByIdentifier(SourceType, "@member:example.org", "Member")
+	require.NoError(err)
+	matrixObservations, err := st.ListParticipantObservationsContext(t.Context(), matrixParticipant, true)
+	require.NoError(err)
+	require.Len(matrixObservations, 2)
+	var matrixIdentity, matrixDisplayName *store.ParticipantContactObservation
+	for i := range matrixObservations {
+		observation := &matrixObservations[i]
+		if observation.AddressKind == store.ContactAddressProviderIdentity {
+			matrixIdentity = observation
+		}
+		if observation.AddressKind == store.ContactAddressDisplayName {
+			matrixDisplayName = observation
+		}
+	}
+	require.NotNil(matrixIdentity)
+	require.NotNil(matrixDisplayName)
+	require.NotNil(matrixIdentity.ProviderUserID)
+	require.NotNil(matrixDisplayName.ProviderUserID)
+	require.NotNil(matrixIdentity.SourceID)
+	require.NotNil(matrixDisplayName.SourceID)
+	assert.Equal("@member:example.org", matrixIdentity.OriginalValue)
+	assert.Equal("@member:example.org", *matrixIdentity.ProviderUserID)
+	assert.Equal("Member", matrixDisplayName.OriginalValue)
+	assert.Equal("@member:example.org", *matrixDisplayName.ProviderUserID)
+	for _, observation := range []*store.ParticipantContactObservation{matrixIdentity, matrixDisplayName} {
+		assert.Equal(source.ID, *observation.SourceID)
+		require.NotNil(observation.ServiceSlug)
+		require.NotNil(observation.ScopeKind)
+		require.NotNil(observation.ScopeValue)
+		assert.Equal(SourceType, *observation.ServiceSlug)
+		assert.Equal("server", *observation.ScopeKind)
+		assert.Equal("example.org", *observation.ScopeValue)
+		eligible, err := st.ObservationFullEligibleContext(t.Context(), observation.Envelope.ID)
+		require.NoError(err)
+		assert.True(eligible, "Full Matrix membership supports the imported identity and name")
+	}
 	run, err := st.GetLastSuccessfulSync(source.ID)
 	require.NoError(err)
 	state, err := loadSyncState(run.CursorAfter.String)
@@ -118,6 +161,122 @@ func TestImporterBackfillsJoinedRoomAndPersistsCheckpoint(t *testing.T) {
 	body, err = st.GetMessageBodyText(messageIDs["$one"])
 	require.NoError(err)
 	assert.Equal("updated", body)
+	matrixObservations, err = st.ListParticipantObservationsContext(t.Context(), matrixParticipant, true)
+	require.NoError(err)
+	assert.Len(matrixObservations, 2, "full backfill repeats preserve one exact identity and name observation")
+
+	beeperSource, err := st.GetOrCreateSource("beeper", "synthetic-cold-merge-account")
+	require.NoError(err)
+	coldRoom, err := st.EnsureConversation(beeperSource.ID, "cold-room", "Cold room")
+	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(
+		t.Context(), beeperSource.ID, "cold-room", conversationpolicy.Cold,
+	))
+	coldParticipant, err := st.EnsureParticipantByIdentifier("beeper", "synthetic-cold-beeper-member", "Synthetic Beeper Member")
+	require.NoError(err)
+	coldProviderID := "provider:synthetic-cold-beeper-member"
+	_, err = st.RecordContactObservationContext(t.Context(), coldParticipant, store.ParticipantContactObservationInput{
+		SourceID:       &beeperSource.ID,
+		ConversationID: &coldRoom,
+		AddressKind:    store.ContactAddressProviderIdentity,
+		ProviderUserID: &coldProviderID,
+		OriginalValue:  coldProviderID,
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	})
+	require.NoError(err)
+	require.NoError(st.MergeParticipantsContext(t.Context(), matrixParticipant, coldParticipant))
+	mergedObservations, err := st.ListParticipantObservationsContext(t.Context(), coldParticipant, true)
+	require.NoError(err)
+	var mergedMatrixIdentity, mergedMatrixDisplayName, mergedColdIdentity *store.ParticipantContactObservation
+	for i := range mergedObservations {
+		observation := &mergedObservations[i]
+		switch {
+		case observation.SourceID != nil && *observation.SourceID == source.ID && observation.AddressKind == store.ContactAddressProviderIdentity:
+			mergedMatrixIdentity = observation
+		case observation.SourceID != nil && *observation.SourceID == source.ID && observation.AddressKind == store.ContactAddressDisplayName:
+			mergedMatrixDisplayName = observation
+		case observation.SourceID != nil && *observation.SourceID == beeperSource.ID && observation.AddressKind == store.ContactAddressProviderIdentity:
+			mergedColdIdentity = observation
+		}
+	}
+	require.NotNil(mergedMatrixIdentity)
+	require.NotNil(mergedMatrixDisplayName)
+	require.NotNil(mergedColdIdentity)
+	for _, observation := range []*store.ParticipantContactObservation{mergedMatrixIdentity, mergedMatrixDisplayName} {
+		eligible, err := st.ObservationFullEligibleContext(t.Context(), observation.Envelope.ID)
+		require.NoError(err)
+		assert.True(eligible, "merging a Cold Beeper participant must preserve Full Matrix evidence")
+	}
+	coldEligible, err := st.ObservationFullEligibleContext(t.Context(), mergedColdIdentity.Envelope.ID)
+	require.NoError(err)
+	assert.False(coldEligible, "the Cold Beeper identity must remain ineligible after the merge")
+}
+
+func TestImporterRepairsHistoricalSenderObservationOnReplay(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	const (
+		roomID  = "!history:example.org"
+		userID  = "@former:example.org"
+		eventID = "$historical"
+		archive = "@archive:example.org"
+	)
+	var historyFrom string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /_matrix/client/v3/sync", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"next_batch":"next","rooms":{"join":{"!history:example.org":{"state":{"events":[]},"timeline":{"events":[],"prev_batch":"history-1"}}}}}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/user/@archive:example.org/account_data/m.direct", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/rooms/!history:example.org/joined_members", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"joined":{"@archive:example.org":{"display_name":"Archive"}}}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/rooms/!history:example.org/messages", func(w http.ResponseWriter, r *http.Request) {
+		historyFrom = r.URL.Query().Get("from")
+		_, _ = w.Write([]byte(`{"chunk":[{"type":"m.room.message","event_id":"$historical","sender":"@former:example.org","origin_server_ts":1000,"content":{"msgtype":"m.text","body":"legacy"}}],"end":""}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client, err := mautrix.NewClient(server.URL, id.UserID(archive), "token")
+	require.NoError(err)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, archive)
+	require.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(source.ID, roomID, "group_chat", "History")
+	require.NoError(err)
+	participantID, err := st.EnsureParticipantByIdentifier(SourceType, userID, "")
+	require.NoError(err)
+	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: source.ID, ConversationID: conversationID, SourceMessageID: eventID,
+			MessageType: SourceType, SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+		},
+	})
+	require.NoError(err)
+	observations, err := st.ListParticipantObservationsContext(t.Context(), participantID, true)
+	require.NoError(err)
+	require.Empty(observations, "the fixture represents a message archived before Matrix identity evidence was recorded")
+
+	summary, err := NewImporter(st, &Runtime{Client: client}).Import(t.Context(), ImportOptions{UserID: archive})
+	require.NoError(err)
+	assert.Equal("history-1", historyFrom)
+	assert.Zero(summary.MessagesAdded, "replaying an existing event must not create a duplicate message")
+	observations, err = st.ListParticipantObservationsContext(t.Context(), participantID, true)
+	require.NoError(err)
+	require.Len(observations, 1)
+	identity := observations[0]
+	assert.Equal(store.ContactAddressProviderIdentity, identity.AddressKind)
+	assert.Equal(userID, identity.OriginalValue)
+	require.NotNil(identity.ProviderUserID)
+	assert.Equal(userID, *identity.ProviderUserID)
+	require.NotNil(identity.ServiceSlug)
+	require.NotNil(identity.ScopeKind)
+	require.NotNil(identity.ScopeValue)
+	assert.Equal(SourceType, *identity.ServiceSlug)
+	assert.Equal("server", *identity.ScopeKind)
+	assert.Equal("example.org", *identity.ScopeValue)
 }
 
 func TestImporterFullSyncIgnoresMalformedSavedCursor(t *testing.T) {

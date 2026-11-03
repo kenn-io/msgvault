@@ -91,6 +91,12 @@ type Importer struct {
 	users   map[id.UserID]int64
 }
 
+type matrixMemberObservation struct {
+	participantID int64
+	userID        id.UserID
+	displayName   string
+}
+
 func NewImporter(s *store.Store, runtime *Runtime) *Importer {
 	return &Importer{store: s, runtime: runtime, users: map[id.UserID]int64{}}
 }
@@ -244,7 +250,7 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 		title = timelineTitle
 		titlePresent = true
 	}
-	members, memberNames, err := imp.members(ctx, roomID)
+	members, memberNames, memberObservations, err := imp.members(ctx, roomID)
 	if err != nil {
 		return err
 	}
@@ -257,6 +263,11 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	convID, err := imp.store.EnsureConversationWithType(sourceID, roomID.String(), roomType, title)
 	if err != nil {
 		return fmt.Errorf("ensure Matrix room %s: %w", roomID, err)
+	}
+	for _, observation := range memberObservations {
+		if err := imp.recordMemberObservations(ctx, sourceID, convID, observation.participantID, observation.userID, observation.displayName); err != nil {
+			return fmt.Errorf("record Matrix member observations in room %s: %w", roomID, err)
+		}
 	}
 	if titlePresent && title == "" {
 		if err := imp.store.SetConversationTitle(sourceID, convID, ""); err != nil {
@@ -551,29 +562,36 @@ func roomTitle(events []*event.Event) (string, bool) {
 	return "", false
 }
 
-func (imp *Importer) members(ctx context.Context, roomID id.RoomID) ([]store.ConversationParticipantRef, []string, error) {
+func (imp *Importer) members(ctx context.Context, roomID id.RoomID) ([]store.ConversationParticipantRef, []string, []matrixMemberObservation, error) {
 	resp, err := imp.runtime.Client.JoinedMembers(ctx, roomID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("list Matrix room %s members: %w", roomID, err)
+		return nil, nil, nil, fmt.Errorf("list Matrix room %s members: %w", roomID, err)
 	}
 	refs := make([]store.ConversationParticipantRef, 0, len(resp.Joined))
 	names := make([]string, 0, len(resp.Joined))
+	observations := make([]matrixMemberObservation, 0, len(resp.Joined))
 	for userID, member := range resp.Joined {
 		pid, err := imp.participant(userID, member.DisplayName)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		refs = append(refs, store.ConversationParticipantRef{ParticipantID: pid, Role: "member"})
 		if userID != imp.runtime.Client.UserID {
-			name := strings.TrimSpace(member.DisplayName)
+			displayName := strings.TrimSpace(member.DisplayName)
+			name := displayName
 			if name == "" {
 				name = userID.String()
 			}
 			names = append(names, name)
+			observations = append(observations, matrixMemberObservation{
+				participantID: pid,
+				userID:        userID,
+				displayName:   displayName,
+			})
 		}
 	}
 	slices.Sort(names)
-	return refs, names, nil
+	return refs, names, observations, nil
 }
 
 func (imp *Importer) participant(userID id.UserID, displayName string) (int64, error) {
@@ -586,6 +604,41 @@ func (imp *Importer) participant(userID id.UserID, displayName string) (int64, e
 	}
 	imp.users[userID] = pid
 	return pid, nil
+}
+
+func (imp *Importer) recordMemberObservations(
+	ctx context.Context, sourceID, conversationID, participantID int64, userID id.UserID, displayName string,
+) error {
+	server := userID.Homeserver()
+	if server == "" || userID == imp.runtime.Client.UserID {
+		return nil
+	}
+	providerUserID := userID.String()
+	serviceSlug := SourceType
+	scopeKind := "server"
+	identity := store.ParticipantContactObservationInput{
+		SourceID:       &sourceID,
+		ConversationID: &conversationID,
+		AddressKind:    store.ContactAddressProviderIdentity,
+		ServiceSlug:    &serviceSlug,
+		ScopeKind:      &scopeKind,
+		ScopeValue:     &server,
+		ProviderUserID: &providerUserID,
+		OriginalValue:  providerUserID,
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	}
+	if _, err := imp.store.RecordContactObservationContext(ctx, participantID, identity); err != nil {
+		return fmt.Errorf("record Matrix member identity: %w", err)
+	}
+	if displayName == "" {
+		return nil
+	}
+	identity.AddressKind = store.ContactAddressDisplayName
+	identity.OriginalValue = displayName
+	if _, err := imp.store.RecordContactObservationContext(ctx, participantID, identity); err != nil {
+		return fmt.Errorf("record Matrix member name: %w", err)
+	}
+	return nil
 }
 
 func (imp *Importer) persistEvent(ctx context.Context, sourceID, convID int64, evt *event.Event, sum *ImportSummary) error {
@@ -741,6 +794,13 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 			}
 		}
 	}
+	senderID, err := imp.participant(evt.Sender, "")
+	if err != nil {
+		return err
+	}
+	if err := imp.recordMemberObservations(ctx, sourceID, convID, senderID, evt.Sender, ""); err != nil {
+		return err
+	}
 	existing, err := imp.store.MessageExistsBatch(sourceID, []string{evt.ID.String()})
 	if err != nil {
 		return err
@@ -754,10 +814,6 @@ func (imp *Importer) persistMessage(ctx context.Context, sourceID, convID int64,
 			return errRelationTargetMissing
 		}
 		return nil
-	}
-	senderID, err := imp.participant(evt.Sender, "")
-	if err != nil {
-		return err
 	}
 	when := time.UnixMilli(evt.Timestamp).UTC()
 	msg := &store.Message{

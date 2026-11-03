@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/emailtags"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -294,8 +295,40 @@ func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 	assert := assert.New(t)
 	f := newIMAPMembershipFixture(t)
 	messageID := f.createMessage(t, "reappearing", "<reappearing@example.com>")
+	require.NoError(f.store.SetConversationPolicyOverride(t.Context(), f.source.ID, "membership-thread", conversationpolicy.Full))
+	beeperSource, err := f.store.GetOrCreateSource("beeper", "synthetic-imap-restore-context")
+	require.NoError(err)
+	targetRoom, err := f.store.EnsureConversation(beeperSource.ID, "target", "Target")
+	require.NoError(err)
+	require.NoError(f.store.SetConversationPolicyOverride(t.Context(), beeperSource.ID, "target", conversationpolicy.Full))
+	participantID, err := f.store.EnsureParticipantByIdentifier("beeper", "synthetic:imap-restored-member", "Synthetic IMAP Restored Member")
+	require.NoError(err)
+	require.NoError(f.store.ReplaceMessageRecipients(
+		messageID, "from", []int64{participantID}, []string{"Synthetic IMAP Restored Member"},
+	))
+	targetID, err := f.store.UpsertMessage(&store.Message{
+		SourceID: beeperSource.ID, ConversationID: targetRoom, SourceMessageID: "target-context",
+		MessageType: "beeper", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+	})
+	require.NoError(err)
+	var eligible bool
+	queryEligibility := func() {
+		t.Helper()
+		require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+			`SELECT `+store.FullParticipantNameWhere("p.id", "p.display_name")+` FROM participants p WHERE p.id=?`,
+		), participantID).Scan(&eligible))
+	}
+	queryEligibility()
+	require.True(eligible)
 	require.NoError(f.store.MarkMessageDeleted(f.source.ID, "reappearing"))
 	assert.True(messageTombstoned(t, f.store, messageID))
+	queryEligibility()
+	assert.False(eligible)
+	require.NoError(f.store.SetEmbedGen(t.Context(), []int64{targetID}, 73))
+	var beforeRevision int64
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id=?`,
+	), targetID).Scan(&beforeRevision))
 
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
 		Mailbox: "Recovered",
@@ -307,6 +340,15 @@ func TestApplyIMAPMailboxDeltas_ReappearanceClearsTombstone(t *testing.T) {
 
 	assert.False(messageTombstoned(t, f.store, messageID))
 	assert.Equal([]string{"Recovered"}, messageLabels(t, f.store, messageID))
+	queryEligibility()
+	assert.True(eligible)
+	var generation sql.NullInt64
+	var afterRevision int64
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(
+		`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`,
+	), targetID).Scan(&generation, &afterRevision))
+	assert.False(generation.Valid, "restoring envelope visibility invalidates shared context")
+	assert.Greater(afterRevision, beforeRevision)
 }
 
 func TestApplyIMAPMailboxDeltas_UIDValidityResetDeletesOldEpoch(t *testing.T) {

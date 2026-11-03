@@ -471,6 +471,9 @@ func (s *Store) retireIMAPDraftMembershipTx(
 		}
 		labelIDs = append(labelIDs, labelID)
 	}
+	if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+		return err
+	}
 	if err := s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error {
 		return replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, messageID, labelIDs)
 	}); err != nil {

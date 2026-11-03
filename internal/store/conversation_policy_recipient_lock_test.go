@@ -195,3 +195,92 @@ func TestCrossSourceRecipientReplacementsDoNotDeadlock(t *testing.T) {
 		}
 	}
 }
+
+func TestTombstoneSerializesContextInvalidationPostgres(t *testing.T) {
+	requirements := require.New(t)
+	s := testutil.NewTestStore(t)
+	if !s.IsPostgreSQL() {
+		t.Skip("PostgreSQL row locks are required for the tombstone/context deadlock regression")
+	}
+	s.DB().SetMaxOpenConns(4)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	source, err := s.GetOrCreateSource("beeper", "tombstone-context-lock-order")
+	requirements.NoError(err)
+	supportRoom, err := s.EnsureConversation(source.ID, "support", "Support")
+	requirements.NoError(err)
+	targetRoom, err := s.EnsureConversation(source.ID, "target", "Target")
+	requirements.NoError(err)
+	for _, room := range []string{"support", "target"} {
+		requirements.NoError(s.SetConversationPolicyOverride(ctx, source.ID, room, conversationpolicy.Full))
+	}
+	participantID, err := s.EnsureParticipantByIdentifierContext(ctx, "beeper", "synthetic:tombstone-context", "Synthetic Tombstone Context")
+	requirements.NoError(err)
+	supportID, err := s.UpsertMessageContext(ctx, &store.Message{
+		SourceID: source.ID, ConversationID: supportRoom,
+		SourceMessageID: "support-envelope", MessageType: "beeper",
+	})
+	requirements.NoError(err)
+	requirements.NoError(s.ReplaceMessageRecipientsContext(
+		ctx, supportID, "from", []int64{participantID}, []string{"Synthetic Tombstone Context"},
+	))
+	targetID, err := s.UpsertMessageContext(ctx, &store.Message{
+		SourceID: source.ID, ConversationID: targetRoom, SourceMessageID: "target-context",
+		MessageType: "beeper", SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+	})
+	requirements.NoError(err)
+	requirements.NoError(s.SetEmbedGen(ctx, []int64{targetID}, 73))
+	var beforeRevision int64
+	requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id=?`,
+	), targetID).Scan(&beforeRevision))
+
+	blocker, err := s.DB().BeginTx(ctx, nil)
+	requirements.NoError(err)
+	committed := false
+	t.Cleanup(func() {
+		if !committed {
+			_ = blocker.Rollback()
+		}
+	})
+	_, err = blocker.ExecContext(ctx, `SELECT pg_advisory_xact_lock(
+		hashtextextended('msgvault.recipient_context_invalidation', 0))`)
+	requirements.NoError(err)
+
+	tombstoned := make(chan error, 1)
+	go func() {
+		tombstoned <- s.MarkMessageDeletedContext(ctx, source.ID, "support-envelope")
+	}()
+	requirements.Eventually(func() bool {
+		var waiting bool
+		err := s.DB().QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM pg_stat_activity
+			WHERE datname=current_database() AND pid<>pg_backend_pid()
+			  AND wait_event_type='Lock'
+			  AND query LIKE '%msgvault.recipient_context_invalidation%')`).Scan(&waiting)
+		return err == nil && waiting
+	}, 5*time.Second, 10*time.Millisecond, "tombstone did not wait for recipient-context serialization")
+	requirements.Empty(tombstoned, "tombstoning must acquire the shared lock before changing any message row")
+	var generation sql.NullInt64
+	var lockedRevision int64
+	requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(
+		`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`,
+	), targetID).Scan(&generation, &lockedRevision))
+	requirements.Equal(sql.NullInt64{Int64: 73, Valid: true}, generation)
+	requirements.Equal(beforeRevision, lockedRevision)
+
+	requirements.NoError(blocker.Commit())
+	committed = true
+	select {
+	case err := <-tombstoned:
+		requirements.NoError(err, "tombstone completes after serialization is released")
+	case <-ctx.Done():
+		requirements.NoError(ctx.Err(), "tombstone did not resume after serialization was released")
+	}
+	requirements.NoError(s.DB().QueryRowContext(ctx, s.Rebind(
+		`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`,
+	), targetID).Scan(&generation, &lockedRevision))
+	requirements.False(generation.Valid)
+	requirements.Greater(lockedRevision, beforeRevision)
+}

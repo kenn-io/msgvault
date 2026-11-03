@@ -3592,7 +3592,7 @@ func (s *Store) MarkMessageDeletedContext(ctx context.Context, sourceID int64, s
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.source_id=? AND support.source_message_id=? AND support.deleted_from_source_at IS NULL", sourceID, sourceMessageID)
+		return s.tombstoneEnvelopeMessagesTxContext(ctx, tx, s.dialect.Now(), "support.source_id=? AND support.source_message_id=? AND support.deleted_from_source_at IS NULL", sourceID, sourceMessageID)
 	})
 }
 
@@ -3607,18 +3607,13 @@ func (s *Store) ClearMessageDeletedFromSourceContext(ctx context.Context, source
 	if err := s.requireSyncSource(sourceID); err != nil {
 		return err
 	}
-	write := func(q querier) error {
-		_, err := q.Exec(`
-			UPDATE messages
-			SET deleted_from_source_at = NULL
-			WHERE source_id = ? AND source_message_id = ?
-		`, sourceID, sourceMessageID)
-		return err
-	}
-	if s.syncGeneration == nil {
-		return write(boundQuerier{ctx: ctx, q: s.db})
-	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return s.restoreEnvelopeMessagesTxContext(ctx, tx,
+			"source_id = ? AND source_message_id = ?",
+			"support.source_id = ? AND support.source_message_id = ?",
+			sourceID, sourceMessageID,
+		)
+	})
 }
 
 // MarkMessagesDeletedBatch marks multiple messages as deleted from the source in a single transaction.
@@ -3630,7 +3625,7 @@ func (s *Store) MarkMessagesDeletedBatch(sourceID int64, sourceMessageIDs []stri
 		return err
 	}
 	return s.withTx(func(tx *loggedTx) error {
-		return tombstoneSourceEnvelopesWith(tx, s.dialect.Now(), sourceID, sourceMessageIDs)
+		return s.tombstoneSourceEnvelopesTxContext(context.Background(), tx, s.dialect.Now(), sourceID, sourceMessageIDs)
 	})
 }
 
@@ -3683,7 +3678,7 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 		if len(missing) == 0 {
 			return nil
 		}
-		if err := tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), sourceID, missing); err != nil {
+		if err := s.tombstoneSourceEnvelopesTxContext(ctx, tx, s.dialect.Now(), sourceID, missing); err != nil {
 			return fmt.Errorf("reconcile source message snapshot: mark missing messages: %w", err)
 		}
 		return nil
@@ -3718,7 +3713,7 @@ func (s *Store) MarkMessagesDeletedFromReaderContext(ctx context.Context, source
 			if len(batch) == 0 {
 				return nil
 			}
-			if err := tombstoneSourceEnvelopesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), sourceID, batch); err != nil {
+			if err := s.tombstoneSourceEnvelopesTxContext(ctx, tx, s.dialect.Now(), sourceID, batch); err != nil {
 				return err
 			}
 			batch = batch[:0]
@@ -3771,7 +3766,7 @@ func (s *Store) MarkMessageDeletedBySourceMessageID(sourceID int64, _ bool, gmai
 		args = append(args, sourceID)
 	}
 	return s.withTx(func(tx *loggedTx) error {
-		return tombstoneEnvelopeMessagesWith(tx, s.dialect.Now(), "support.source_message_id = ?"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
+		return s.tombstoneEnvelopeMessagesTxContext(context.Background(), tx, s.dialect.Now(), "support.source_message_id = ?"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
 	})
 }
 
@@ -3816,7 +3811,7 @@ func (s *Store) MarkMessagesDeletedBySourceMessageIDBatch(sourceID int64, gmailI
 		}
 
 		err := s.withTx(func(tx *loggedTx) error {
-			return tombstoneEnvelopeMessagesWith(tx, s.dialect.Now(), "support.source_message_id IN ("+strings.Join(placeholders, ",")+")"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
+			return s.tombstoneEnvelopeMessagesTxContext(context.Background(), tx, s.dialect.Now(), "support.source_message_id IN ("+strings.Join(placeholders, ",")+")"+sourceClause+" AND support.deleted_from_source_at IS NULL", args...)
 		})
 		if err != nil {
 			if firstErr == nil {

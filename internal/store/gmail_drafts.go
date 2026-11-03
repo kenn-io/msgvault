@@ -385,7 +385,7 @@ func (s *Store) PublishGmailDraftReplacementContext(
 		if err != nil {
 			return err
 		}
-		if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", draft.CurrentMessageID, draft.SourceID); err != nil {
+		if err := s.tombstoneEnvelopeMessagesTxContext(ctx, tx, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", draft.CurrentMessageID, draft.SourceID); err != nil {
 			return fmt.Errorf("tombstone Gmail draft predecessor: %w", err)
 		}
 		if err := s.bumpDerivedDataRevision(tx); err != nil {
@@ -482,7 +482,7 @@ func (s *Store) AdoptGmailDraftObservationContext(
 		if err != nil {
 			return err
 		}
-		if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", draft.CurrentMessageID, draft.SourceID); err != nil {
+		if err := s.tombstoneEnvelopeMessagesTxContext(ctx, tx, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", draft.CurrentMessageID, draft.SourceID); err != nil {
 			return fmt.Errorf("tombstone Gmail draft predecessor: %w", err)
 		}
 		if err := s.bumpDerivedDataRevision(tx); err != nil {
@@ -534,7 +534,7 @@ func (s *Store) FinishGmailDraftDeleteContext(
 		if draft.Pending == nil || draft.Pending.Operation != GmailDraftOperationDelete {
 			return ErrGmailDraftState
 		}
-		if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", draft.CurrentMessageID, draft.SourceID); err != nil {
+		if err := s.tombstoneEnvelopeMessagesTxContext(ctx, tx, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", draft.CurrentMessageID, draft.SourceID); err != nil {
 			return fmt.Errorf("tombstone deleted Gmail draft: %w", err)
 		}
 		if err := s.bumpDerivedDataRevision(tx); err != nil {

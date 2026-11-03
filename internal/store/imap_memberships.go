@@ -328,6 +328,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 			}
 		}
 
+		if len(affected) > 0 {
+			if err := s.lockRecipientContextInvalidationTxContext(ctx, tx); err != nil {
+				return err
+			}
+		}
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
 			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
@@ -350,10 +355,12 @@ func (s *Store) applyIMAPMailboxDeltas(
 				if err := tombstoneEnvelopeMessagesWith(boundQuerier{ctx: ctx, q: tx}, s.dialect.Now(), "support.id=? AND support.source_id=? AND support.deleted_from_source_at IS NULL", messageID, sourceID); err != nil {
 					return fmt.Errorf("tombstone IMAP message %d: %w", messageID, err)
 				}
-			} else if _, err := tx.Exec(`
-				UPDATE messages SET deleted_from_source_at = NULL
-				WHERE id = ? AND source_id = ? AND deleted_from_source_at IS NOT NULL
-			`, messageID, sourceID); err != nil {
+			} else if err := restoreEnvelopeMessagesWith(
+				boundQuerier{ctx: ctx, q: tx},
+				"id = ? AND source_id = ?",
+				"support.id = ? AND support.source_id = ?",
+				messageID, sourceID,
+			); err != nil {
 				return fmt.Errorf("clear IMAP tombstone for message %d: %w", messageID, err)
 			}
 		}
