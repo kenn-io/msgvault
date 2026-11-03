@@ -125,6 +125,7 @@ jobs:
   checks:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
+      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
     needs: changes
     if: *go-changed
     runs-on: ubuntu-26.04
@@ -141,7 +142,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
-          extra-path: ~/.cache/golangci-lint
+          extra-path: ${{ env.GOLANGCI_LINT_CACHE }}
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
@@ -170,6 +171,9 @@ jobs:
 
       - name: Vulnerability check
         run: make vulncheck
+
+      - name: Log cache sizes
+        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$GOLANGCI_LINT_CACHE"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
