@@ -21,16 +21,16 @@ import (
 )
 
 const (
-	DefaultDirectoryPeopleLimit        = 50
-	MaxDirectoryPeopleLimit            = 100
-	maxDirectoryQueryRunes             = 256
-	maxDirectoryCursorBytes            = 1024
-	maxDirectoryRawCandidateChunkSize  = 64
-	directoryCursorVersion             = 6
-	directoryLastContactKeyLayout      = "2006-01-02T15:04:05.000000000Z"
-	DirectoryPeopleSortName            = "name"
-	DirectoryPeopleSortLastContactAsc  = "last_contact_asc"
-	DirectoryPeopleSortLastContactDesc = "last_contact_desc"
+	DefaultDirectoryPeopleLimit            = 50
+	MaxDirectoryPeopleLimit                = 100
+	maxDirectoryQueryRunes                 = 256
+	maxDirectoryCursorBytes                = 1024
+	maxDirectoryFirstRawCandidateChunkSize = 64
+	directoryCursorVersion                 = 6
+	directoryLastContactKeyLayout          = "2006-01-02T15:04:05.000000000Z"
+	DirectoryPeopleSortName                = "name"
+	DirectoryPeopleSortLastContactAsc      = "last_contact_asc"
+	DirectoryPeopleSortLastContactDesc     = "last_contact_desc"
 )
 
 // DirectoryPeopleQuery selects durable people for the Directory read surface.
@@ -253,7 +253,8 @@ func (s *Store) directoryPeoplePageContext(
 }
 
 // selectDirectoryPeopleTx scans indexed candidate chunks until it has the
-// requested verified page plus its cursor row. Hydration stays separate so
+// requested verified page plus its cursor row, doubling the chunk size after
+// each chunk that leaves the page short. Hydration stays separate so
 // current categories and employments are never read outside that window.
 func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query normalizedDirectoryPeopleQuery, after *directoryPeopleCursor) ([]directoryPersonCandidate, error) {
 	querySQL, args := directoryCandidateProjectionSQL(query)
@@ -361,7 +362,7 @@ func (s *Store) directoryCursorAnchorTx(
 }
 
 func directoryRawCandidateChunkSize(limit int) int {
-	return min(max(limit+1, 16), maxDirectoryRawCandidateChunkSize)
+	return min(max(limit+1, 16), maxDirectoryFirstRawCandidateChunkSize)
 }
 
 func (s *Store) selectDirectoryRawCandidateChunkTx(ctx context.Context, tx *loggedTx, candidateSQL string, args []any, after *directoryRawCandidateCursor, limit int, order string) ([]directoryPersonCandidate, error) {

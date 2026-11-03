@@ -173,6 +173,7 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 		var err error
 		switch index / 640 {
 		case 0, 4:
+			// Match the contact point's original value, then its normalized value.
 			original, normalized := "SHARED-İ-HANDLE", "other-handle"
 			if index == 2560 {
 				original, normalized = normalized, original
@@ -181,10 +182,13 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 				(person_id, address_kind, original_value, normalized_value, source)
 				VALUES (?, 'username', ?, ?, 'user')`), personID, original, normalized)
 		case 1:
+			// Match the participant's email address.
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id IN (SELECT participant_id FROM person_participants WHERE person_id = ?)`), "shared-i-handle@example.test", personID)
 		case 2:
+			// Match the participant's phone number.
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET phone_number = ? WHERE id IN (SELECT participant_id FROM person_participants WHERE person_id = ?)`), "shared-i-handle", personID)
 		case 3:
+			// Match a participant identifier.
 			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) SELECT participant_id, 'matrix', ? FROM person_participants WHERE person_id = ?`), "shared-i-handle", personID)
 		}
 		require.NoError(err)
