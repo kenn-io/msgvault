@@ -124,7 +124,7 @@ describe('ConversationView', () => {
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 2' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for alice@example.com on Jan 2, 2026/ }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(screen.getByText('Body 2')).toBeDefined();
   });
@@ -210,7 +210,7 @@ describe('ConversationView', () => {
         ? 'Task integration unreachable: Task service is unreachable.'
         : 'Task integration unreachable: Tasks status could not be read.');
     }
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 2' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for alice@example.com on Jan 2, 2026/ }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
     expect(await screen.findByRole('dialog', { name: 'Add to task' })).toBeDefined();
     await waitFor(() => expect(statusCalls).toBe(3));

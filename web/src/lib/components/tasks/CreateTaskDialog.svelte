@@ -7,6 +7,7 @@
   let {
     client,
     pending = $bindable(false),
+    disabled = false,
     messageId,
     project,
     defaultTitle,
@@ -23,6 +24,7 @@
   }: {
     client: APIClient;
     pending?: boolean;
+    disabled?: boolean;
     messageId: number;
     project: string;
     defaultTitle: string;
@@ -60,7 +62,7 @@
     lastAttemptFingerprint = undefined;
   });
   async function create(): Promise<void> {
-    if (!title.trim() || pending) return;
+    if (!title.trim() || pending || disabled) return;
     const payload = currentPayload();
     const fingerprint = JSON.stringify(payload);
     lastAttemptFingerprint = fingerprint;
@@ -200,7 +202,7 @@
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
       <Button surface="soft" label="Cancel" disabled={pending} onclick={requestClose} />
-      <Button type="submit" tone="info" surface="solid" label="Create task" disabled={pending || !title.trim()} />
+      <Button type="submit" tone="info" surface="solid" label="Create task" disabled={pending || disabled || !title.trim()} />
     </div>
   </form>
 

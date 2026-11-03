@@ -197,7 +197,7 @@ test("production imports expose archived actions, summary totals, and exact cont
   await expect(source).toBeVisible();
   await source.click();
   await expect(reader).toBeVisible();
-  await reader.getByRole('button', { name: `More actions for message ${daemon.meetings.circleback.message_id}` }).click();
+  await reader.getByRole('button', { name: /^More actions for .+ on / }).click();
   await reader.getByRole('menuitem', { name: 'Export meeting…' }).click();
   const packet = await downloadContext(page, info, 'reader-context');
   expect(packet.meetings).toHaveLength(1);

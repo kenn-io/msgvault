@@ -416,6 +416,16 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, messageTypeCondition)
 		args = append(args, messageTypeArgs...)
 	}
+	if len(request.Context.Kinds) > 0 {
+		placeholders := make([]string, len(request.Context.Kinds))
+		for i, kind := range request.Context.Kinds {
+			placeholders[i] = "?"
+			args = append(args, string(kind))
+		}
+		kind := "CASE WHEN " + sqlIsChatPredicate("message_type", "conversation_type") +
+			" THEN 'conversation' ELSE " + identityindex.EntryKindSQL("message_type") + " END"
+		conditions = append(conditions, "("+kind+") IN ("+strings.Join(placeholders, ",")+")")
+	}
 	// CAST(? AS TIMESTAMP) pins the bound time to its UTC wall clock. The Go
 	// DuckDB driver binds time.Time as TIMESTAMP WITH TIME ZONE; left uncast,
 	// the comparison would coerce the naive-UTC occurred_at column to

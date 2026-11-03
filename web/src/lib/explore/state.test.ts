@@ -607,6 +607,14 @@ describe('Explore URL state', () => {
     }
   });
 
+  it('preserves selected canonical kinds in shared URLs', () => {
+    const restored = parseExploreURLState(serializeExploreURLState({
+      ...defaultExploreURLState,
+      filters: [{ dimension: 'kind', values: ['conversation', 'email'] }],
+    }));
+    expect(restored.filters).toEqual([{ dimension: 'kind', values: ['conversation', 'email'] }]);
+  });
+
   it('preserves Files filters, layout, and the selected item in shared URLs', () => {
     const state: ExploreURLState = {
       ...defaultExploreURLState,

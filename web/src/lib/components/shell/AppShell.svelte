@@ -193,7 +193,6 @@
       archiveWasOpen = id !== undefined;
     });
   });
-  const DEFAULT_SORT_NOTICE = 'Newest first is the canonical Messages order.';
   let fileFiltersReset = $state(0);
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
   const debouncedSearchPatch = bufferedCallback((patch: Partial<ExploreURLState>) => {
@@ -512,7 +511,7 @@
       isEnabled: () => enabled,
       onPredicateChange: () => selection.clear(),
       onPagingNotice: (message) => {
-        sortNotice = message ?? DEFAULT_SORT_NOTICE;
+        sortNotice = message ?? '';
       },
       onRestorationFocus: () => focusGrid(),
       onSearchAccepted: (query, mode, signal, count) => { reportWhenVisible(() => reportSearch(client, query, mode, exploreState.current.workspace === 'everything' && !media?.absent ? undefined : count), signal); },
@@ -544,7 +543,7 @@
   let keyboardHelpOpen = $state(false);
   let keyboardHelpReturnFocus: HTMLElement | undefined;
   let keyboardHelpScopeCleanup: (() => void) | undefined;
-  let sortNotice = $state(DEFAULT_SORT_NOTICE);
+  let sortNotice = $state('');
   let editableScopeCleanup: (() => void) | undefined;
   let previousSortNoticeWorkspace = untrack(() => exploreState.current.workspace);
   // An epoch is a monotonically increasing restoration event, not a boolean
@@ -632,7 +631,7 @@
     untrack(() => {
       if (workspace !== previousSortNoticeWorkspace) {
         previousSortNoticeWorkspace = workspace;
-        sortNotice = DEFAULT_SORT_NOTICE;
+        sortNotice = '';
       }
     });
   });
@@ -1071,7 +1070,7 @@
   ]);
   const shellCommands = $derived([
     ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['directory', 'deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
-    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: `Open view: ${view.name}`, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
+    ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: view.name, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
     { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
     ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
   ]);

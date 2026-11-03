@@ -139,6 +139,7 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('Mbox import')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Imported' }));
     expect(await screen.findByText('Mbox import · import@example.com')).toBeDefined();
+    expect(within(screen.getByRole('region', { name: 'Sync' })).getByText('Imported file — nothing to sync')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(screen.getByText('Imported file — nothing to sync').getAttribute('title')).toBe('source_not_schedulable');
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
@@ -164,6 +165,24 @@ describe('SourcesWorkspace', () => {
     expect(within(screen.getByRole('table', { name: 'Sources' })).getAllByText('Never synced')).toHaveLength(2);
   });
 
+  it.each([
+    { display_name: null, title: 'import@example.com', subtitle: 'Mbox import' },
+    { display_name: '', title: 'import@example.com', subtitle: 'Mbox import' },
+    { display_name: 'import@example.com', title: 'import@example.com', subtitle: 'Mbox import' },
+    { display_name: 'Imported', title: 'Imported', subtitle: 'Mbox import · import@example.com' },
+  ])('shows a distinct source subtitle for display name "$display_name"', async ({ display_name, title, subtitle }) => {
+    render(SourcesWorkspace, { client: createAPIClient(api([source({
+      source_type: 'mbox', identifier: 'import@example.com', display_name,
+      can_sync: false, scheduled: false, sync_unavailable_reason: 'source_not_schedulable'
+    })])) });
+
+    await fireEvent.click(await screen.findByRole('button', { name: `Details for ${title}` }));
+    const panel = screen.getByRole('dialog', { name: title });
+    expect(within(panel).getByRole('heading', { name: title })).toBeDefined();
+    expect(within(panel).getByText(subtitle, { exact: true })).toBeDefined();
+    expect(within(panel).getAllByText(title, { exact: true })).toHaveLength(1);
+  });
+
   it('presents generic meeting imports as on-demand API sources', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       source_type: 'meeting_import',
@@ -177,6 +196,10 @@ describe('SourcesWorkspace', () => {
 
     expect(await screen.findByText('On demand')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Details for Local Meetings' }));
+    const panel = screen.getByRole('dialog', { name: 'Local Meetings' });
+    expect(within(within(panel).getByRole('region', { name: 'Schedule' })).getByText('On demand')).toBeDefined();
+    expect(within(panel).getAllByText('On demand')).toHaveLength(1);
+    expect(within(panel).queryByRole('region', { name: 'Sync' })).toBeNull();
     expect(screen.getByText('Meeting import · local-meetings')).toBeDefined();
     expect(screen.queryByText('Not scheduled')).toBeNull();
     expect(screen.queryByText('source_not_schedulable')).toBeNull();
@@ -321,6 +344,9 @@ describe('SourcesWorkspace', () => {
     const fetch = api([source()], () => undefined, [contact]);
     const view = render(SourcesWorkspace, { client: createCaptureClient(fetch, []) });
     expect(await screen.findByRole('button', { name: 'Details for user-a' })).toBeDefined();
+    const table = screen.getByRole('table', { name: 'Sources' });
+    expect(within(table).getByRole('rowheader', { name: 'Contacts' })).toBeDefined();
+    expect(within(table).getAllByText('Contacts', { exact: true })).toHaveLength(1);
     expect(screen.queryByText('No sources yet')).toBeNull();
     expect((screen.getByRole('button', { name: 'Sync now Archive' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Sync now user-a' }) as HTMLButtonElement).disabled).toBe(false);

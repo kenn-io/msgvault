@@ -218,6 +218,50 @@ func TestExploreTenThousandFragmentConversationKeepsConstantMatchState(t *testin
 	assertExploreBoundedStrongestMatch(t, result.Rows[0], nil)
 }
 
+func TestExploreKindFilterUsesConversationFallback(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	email := b.AddMessage(MessageOpt{Subject: "Legacy email", LegacyEmptyMessageType: true})
+	chat := b.AddMessage(MessageOpt{
+		Snippet: "Legacy group chat", LegacyEmptyMessageType: true,
+		ConversationID: 700, ConversationType: "group_chat",
+	})
+	engine := b.BuildEngine()
+
+	groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+		Dimension: "kind", Page: PageSpec{Limit: 10},
+	})
+	require.NoError(t, err)
+	keys := make([]string, len(groups.Rows))
+	for i, row := range groups.Rows {
+		keys[i] = row.Key
+	}
+	assert.ElementsMatch(t, []string{"email", "conversation"}, keys)
+
+	for _, tc := range []struct {
+		name  string
+		kinds []EntryKind
+		ids   []int64
+	}{
+		{"email", []EntryKind{EntryEmail}, []int64{email}},
+		{"conversation", []EntryKind{EntryConversation}, []int64{chat}},
+		{"both", []EntryKind{EntryEmail, EntryConversation}, []int64{email, chat}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fast, singlePass := runExploreBothPaths(t, engine, ExploreRequest{
+				Context: Context{Kinds: tc.kinds}, Page: PageSpec{Limit: 10},
+			})
+			assert.Equal(t, singlePass, fast)
+			ids := make([]int64, len(fast.Rows))
+			for i, row := range fast.Rows {
+				require.NotNil(t, row.AnchorMessageID)
+				ids[i] = *row.AnchorMessageID
+			}
+			assert.ElementsMatch(t, tc.ids, ids)
+		})
+	}
+}
+
 // TestExploreMessageTypeEmailIncludesLegacyRows pins the legacy-row rule for
 // the explore context filter: rows imported before message_type existed carry
 // an empty value and count as email (see emailOnlyFilterMsg,
