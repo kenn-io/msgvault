@@ -365,6 +365,10 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 				}
 				continue
 			}
+			if len(rawData) == 0 {
+				sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: empty raw MIME", msgID))
+				continue
+			}
 
 			// Verify it can be parsed as MIME
 			_, err = mime.Parse(rawData)

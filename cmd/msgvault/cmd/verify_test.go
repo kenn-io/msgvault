@@ -1,10 +1,157 @@
 package cmd
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/json/v2"
+	"encoding/pem"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+// serial: verify flags, stdout and http.DefaultTransport are process globals.
+func TestRunVerifyLocalRawSamples(t *testing.T) {
+	setupRequire := require.New(t)
+	resetVerifyFlagsForTest(t)
+	verifySampleSize = 1
+
+	// Only OAuth and Gmail profile responses are simulated. Store reopening,
+	// sampling, decompression, MIME parsing and result reporting are real.
+	savedTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = savedTransport })
+	http.DefaultTransport = testTransport(func(req *http.Request) (*http.Response, error) {
+		var body string
+		switch req.Method + " " + req.URL.String() {
+		case "POST https://token.example.test/oauth2":
+			body = `{"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}`
+		case "GET https://gmail.googleapis.com/gmail/v1/users/me/profile":
+			body = `{"emailAddress":"verify@example.test","messagesTotal":1,"historyId":"100"}`
+		default:
+			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+			Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
+	})
+
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	setupRequire.NoError(err)
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	setupRequire.NoError(err)
+	keyJSON, err := json.Marshal(map[string]string{
+		"type":         "service_account",
+		"client_email": "service@example.test",
+		"private_key":  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})),
+		"token_uri":    "https://token.example.test/oauth2",
+	})
+	setupRequire.NoError(err)
+	keyPath := filepath.Join(t.TempDir(), "service-account.json")
+	setupRequire.NoError(os.WriteFile(keyPath, keyJSON, 0o600))
+
+	for _, state := range []string{"valid_empty_body", "empty_zlib", "empty_uncompressed", "missing", "truncated_zlib", "malformed_mime"} {
+		t.Run(state, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			dir := t.TempDir()
+			cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir},
+				OAuth: config.OAuthConfig{ServiceAccountKey: keyPath}}
+			var st *store.Store
+			testDB := os.Getenv("MSGVAULT_TEST_DB")
+			if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
+				st = testutil.NewTestStore(t)
+				// Point the command at this fixture's clone or private schema,
+				// never the shared test database itself.
+				dsn, err := url.Parse(testDB)
+				require.NoError(err)
+				var database, schema string
+				require.NoError(st.DB().QueryRow("SELECT current_database(), current_schema()").Scan(&database, &schema))
+				dsn.Path = "/" + database
+				query := dsn.Query()
+				query.Set("search_path", schema+",public")
+				dsn.RawQuery = query.Encode()
+				cfg.Data.DatabaseURL = dsn.String()
+			} else {
+				st = testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			}
+			source, err := st.GetOrCreateSource("gmail", "verify@example.test")
+			require.NoError(err)
+			conversationID, err := st.EnsureConversation(source.ID, "thread", "Original")
+			require.NoError(err)
+			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID,
+				SourceMessageID: "synthetic-verify", MessageType: store.MessageTypeEmail})
+			require.NoError(err)
+			if state != "missing" {
+				raw := []byte("From: sender@example.test\r\nSubject: Original\r\n\r\n")
+				switch state {
+				case "empty_zlib", "empty_uncompressed":
+					raw = []byte{}
+				case "malformed_mime":
+					raw = []byte("Content-Type: multipart/mixed\r\n\r\nmissing boundary")
+				}
+				require.NoError(st.UpsertMessageRaw(id, raw))
+				switch state {
+				case "empty_uncompressed":
+					_, err = st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), raw, id)
+					require.NoError(err)
+				case "truncated_zlib":
+					var compressed []byte
+					require.NoError(st.DB().QueryRow(st.Rebind(`SELECT raw_data FROM message_raw WHERE message_id = ?`), id).Scan(&compressed))
+					require.Greater(len(compressed), 3)
+					_, err = st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), compressed[:len(compressed)-3], id)
+					require.NoError(err)
+				}
+			}
+			require.NoError(st.Close())
+			command := &cobra.Command{Use: "verify"}
+			command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+			verifyJSON = true
+			capture := captureStdout(t)
+			err = runVerifyLocal(command, []string{"verify@example.test"})
+			output := capture()
+			// Sample errors are reported in the summary, as for missing RAW;
+			// they do not change the command's existing exit-status contract.
+			require.NoError(err)
+			var result verifyResult
+			require.NoError(json.Unmarshal([]byte(output), &result))
+			assert.Equal(1, result.SampleSize)
+			if state == "valid_empty_body" {
+				assert.Equal(1, result.SampleVerified)
+				assert.Zero(result.SampleErrors)
+			} else {
+				assert.Zero(result.SampleVerified)
+				assert.Equal(1, result.SampleErrors)
+			}
+			if state == "missing" {
+				assert.Zero(result.RawMIMEMessages)
+			} else {
+				assert.Equal(int64(1), result.RawMIMEMessages, "coverage counts stored rows, not valid originals")
+			}
+			assert.False(result.SampleInterrupted)
+			if state == "empty_zlib" {
+				verifyJSON = false
+				capture = captureStdout(t)
+				err = runVerifyLocal(command, []string{"verify@example.test"})
+				output = capture()
+				require.NoError(err)
+				assert.Contains(output, fmt.Sprintf("msg %d: empty raw MIME", id))
+				assert.Contains(output, "Sample errors:")
+				assert.NotContains(output, "(all OK)")
+			}
+		})
+	}
+}
 
 // TestIsFTSIntegrityError_Classification verifies that the hint-classifier
 // cleanly separates FTS5 shadow-table errors (which rebuild-fts can fix)
