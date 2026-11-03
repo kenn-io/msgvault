@@ -72,12 +72,6 @@ func TestImportSignalConfirmsNormalizedPhone(t *testing.T) {
 	assert.Equal("+15555550100", identities[0].Address)
 }
 
-func TestImportSignalRejectsNegativeLimit(t *testing.T) {
-	command := newImportSignalCmd()
-	command.SetArgs([]string{"missing", "--phone", signalfixture.OwnPhone, "--limit", "-1"})
-	require.ErrorContains(t, command.Execute(), "--limit must be non-negative")
-}
-
 func TestImportSignalRejectsRemoteLocalFiles(t *testing.T) {
 	server, requests := newDaemonCLIRunnerTestServer(t, func(daemonCLIRunTestRequest) {}, `{"type":"complete"}`)
 	command := newImportSignalCmd()

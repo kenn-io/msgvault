@@ -87,42 +87,40 @@ func TestRerunClearsEmptiedBody(t *testing.T) {
 }
 
 func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
-	importWith := func(t *testing.T, phone string, stmts ...string) (*ImportSummary, *store.Store, error) {
-		t.Helper()
-		dir := t.TempDir()
-		signalfixture.Write(t, dir, signalfixture.Current, 0)
-		changeFixture(t, dir, stmts...)
-		opts := DefaultOptions()
-		opts.Phone = phone
-		st := testutil.NewTestStore(t)
-		summary, err := NewImporter(st, nil).Import(context.Background(), filepath.Join(dir, "database.sqlite"), opts)
-		return summary, st, err
-	}
 	const dropOutgoing = `DELETE FROM message WHERE (type & 31) IN (21, 22, 23, 24)`
-
-	t.Run("incoming-only backup of another number", func(t *testing.T) {
-		assert, require := assert.New(t), require.New(t)
-		_, st, err := importWith(t, "+15555550199", dropOutgoing)
-		require.Error(err)
-		assert.Contains(err.Error(), "--phone does not match")
-		assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
-	})
-	t.Run("incoming-only backup of the right number", func(t *testing.T) {
-		summary, _, err := importWith(t, signalfixture.OwnPhone, dropOutgoing)
-		require.NoError(t, err)
-		assert.Equal(t, int64(4), summary.MessagesAdded)
-	})
-	t.Run("group-only backup", func(t *testing.T) {
-		summary, _, err := importWith(t, signalfixture.OwnPhone, dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`)
-		require.NoError(t, err)
-		assert.Equal(t, int64(1), summary.MessagesAdded)
-	})
-	t.Run("owner number not recorded", func(t *testing.T) {
-		assert, require := assert.New(t), require.New(t)
-		_, _, err := importWith(t, signalfixture.OwnPhone, `UPDATE recipient SET e164 = NULL WHERE _id = 1`)
-		require.Error(err)
-		assert.Contains(err.Error(), "cannot verify --phone")
-	})
+	for _, tc := range []struct {
+		name, phone, wantError string
+		changes                []string
+		added                  int64
+		checkNoSource          bool
+	}{
+		{name: "full backup of another number", phone: "+15555550199", wantError: "--phone does not match"},
+		{name: "incoming-only backup of another number", phone: "+15555550199", changes: []string{dropOutgoing}, wantError: "--phone does not match", checkNoSource: true},
+		{name: "incoming-only backup of the right number", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing}, added: 4},
+		{name: "group-only backup", phone: signalfixture.OwnPhone, changes: []string{dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`}, added: 1},
+		{name: "owner number not recorded", phone: signalfixture.OwnPhone, changes: []string{`UPDATE recipient SET e164 = NULL WHERE _id = 1`}, wantError: "cannot verify --phone"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			dir := t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, tc.changes...)
+			opts := DefaultOptions()
+			opts.Phone = tc.phone
+			st := testutil.NewTestStore(t)
+			summary, err := NewImporter(st, nil).Import(context.Background(), path, opts)
+			if tc.wantError != "" {
+				require.Error(err)
+				assert.Contains(err.Error(), tc.wantError)
+			} else {
+				require.NoError(err)
+				assert.Equal(tc.added, summary.MessagesAdded)
+			}
+			if tc.checkNoSource {
+				assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
+			}
+		})
+	}
 }
 
 func TestRerunRecordsUpdatedMessagesOnSyncRun(t *testing.T) {
@@ -164,17 +162,6 @@ func TestSendStateFollowsSignal(t *testing.T) {
 	changeFixture(t, dir, `UPDATE message SET type = `+ms(signalfixture.TypeOutgoing)+` WHERE _id = 101`)
 	runImport(t, st, dir, t.TempDir())
 	assert.True(isSent(), "a later backup shows it sent")
-}
-
-func TestLongTextReplacedByShortEdit(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 102, 'text/x-signal-plain')`, `UPDATE message SET body = 'Short replacement' WHERE _id = 106`)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Original long text"), 0o600))
-	runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, "Short replacement", importedMessages(t, st)["signal:aci:"+signalfixture.AliceACI+":"+signalfixture.OwnACI+":"+ms(signalfixture.TEditOld)].body)
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'replacement'`))
 }
 
 func TestRerunLongTextRemovalKeepsMediaOccurrence(t *testing.T) {

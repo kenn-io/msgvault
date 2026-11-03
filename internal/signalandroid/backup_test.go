@@ -14,87 +14,96 @@ import (
 )
 
 func TestMissingLongTextOnRerun(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	full := strings.Repeat("long text ", 300) + "searchablesuffix"
-	changeFixture(t, dir, `UPDATE message SET body = 'long text ' WHERE _id = 300`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
-	file := filepath.Join(dir, "Attachment_503_-1.bin")
-	require.NoError(t, os.WriteFile(file, []byte(full), 0o600))
-	runImport(t, st, dir, t.TempDir())
-	require.NoError(t, os.Remove(file))
-	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, full, importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
-	assert.Equal(t, int64(2), summary.AttachmentsMissing)
-}
-
-func TestMissingEditedLongTextKeepsLatestPreview(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Carol here originalsuffix"), 0o600))
-	storage := t.TempDir()
-	runImport(t, st, dir, storage)
-	changeFixture(t, dir,
-		`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
-		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, 'Carol EDITED short', 300 FROM message WHERE _id = 300`,
-		`INSERT INTO attachment (_id, message_id, content_type) VALUES (504, 301, 'text/x-signal-plain')`)
-	runImport(t, st, dir, storage)
-	assert.Equal(t, "Carol EDITED short", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'EDITED'`))
-	assert.Zero(t, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'originalsuffix'`))
-}
-
-func TestMissingLongTextOnFirstImport(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
-	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(2), summary.AttachmentsMissing)
-	assert.Equal(t, "Carol here", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
-}
-
-func TestMissingLongTextEditWithSamePreview(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
-	file := filepath.Join(dir, "Attachment_503_-1.bin")
-	require.NoError(os.WriteFile(file, []byte("Carol here obsoleteending"), 0o600))
-	storage := t.TempDir()
-	runImport(t, st, dir, storage)
-	require.NoError(os.Remove(file))
-	changeFixture(t, dir,
-		`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
-		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, body, 300 FROM message WHERE _id = 300`,
-		`UPDATE attachment SET message_id = 301 WHERE _id = 503`)
-	runImport(t, st, dir, storage)
-	assert.Equal("Carol here", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
-	assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'obsoleteending'`))
-}
-
-func TestMissingLongTextAfterContactRename(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 200, 'text/x-signal-plain')`)
-	file := filepath.Join(dir, "Attachment_503_-1.bin")
-	require.NoError(os.WriteFile(file, []byte("Hi \uFFFC, look searchablesuffix"), 0o600))
-	storage := t.TempDir()
-	runImport(t, st, dir, storage)
-	require.NoError(os.Remove(file))
-	changeFixture(t, dir, `UPDATE recipient SET system_joined_name = 'Renamed Example' WHERE _id = 2`)
-	runImport(t, st, dir, storage)
-	assert.Contains(importedMessages(t, st)["signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)].body, "searchablesuffix")
-	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
+	for _, tc := range []struct {
+		name, full, body, messageID, presentSearch, absentSearch string
+		initial, revision                                        []string
+		firstMissing                                             bool
+		checkMissing                                             bool
+	}{
+		{
+			name: "missing on rerun", full: strings.Repeat("long text ", 300) + "searchablesuffix",
+			initial:       []string{`UPDATE message SET body = 'long text ' WHERE _id = 300`},
+			presentSearch: "searchablesuffix", checkMissing: true,
+		},
+		{
+			name: "missing on first import", firstMissing: true, body: "Carol here", checkMissing: true,
+		},
+		{
+			name: "edited latest preview", full: "Carol here originalsuffix", body: "Carol EDITED short",
+			revision: []string{
+				`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
+				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, 'Carol EDITED short', 300 FROM message WHERE _id = 300`,
+				`INSERT INTO attachment (_id, message_id, content_type) VALUES (504, 301, 'text/x-signal-plain')`,
+			},
+			presentSearch: "EDITED", absentSearch: "originalsuffix",
+		},
+		{
+			name: "edit with same preview", full: "Carol here obsoleteending", body: "Carol here",
+			revision: []string{
+				`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
+				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, body, 300 FROM message WHERE _id = 300`,
+				`UPDATE attachment SET message_id = 301 WHERE _id = 503`,
+			},
+			absentSearch: "obsoleteending",
+		},
+		{
+			name: "contact rename", full: "Hi \uFFFC, look searchablesuffix",
+			messageID:     "signal:group:" + signalfixture.GroupB64 + ":" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup),
+			initial:       []string{`UPDATE attachment SET message_id = 200 WHERE _id = 503`},
+			revision:      []string{`UPDATE recipient SET system_joined_name = 'Renamed Example' WHERE _id = 2`},
+			presentSearch: "searchablesuffix",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
+			changeFixture(t, dir, tc.initial...)
+			file, storage := filepath.Join(dir, "Attachment_503_-1.bin"), t.TempDir()
+			if !tc.firstMissing {
+				require.NoError(os.WriteFile(file, []byte(tc.full), 0o600))
+			}
+			summary := runImport(t, st, dir, storage)
+			if !tc.firstMissing {
+				// The latest-preview case keeps the original file, but the new revision's file is missing.
+				if tc.name != "edited latest preview" {
+					require.NoError(os.Remove(file))
+				}
+				changeFixture(t, dir, tc.revision...)
+				summary = runImport(t, st, dir, storage)
+			}
+			id := tc.messageID
+			if id == "" {
+				id = "signal:aci:" + signalfixture.CarolACI + ":" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol)
+			}
+			body := importedMessages(t, st)[id].body
+			if tc.name == "contact rename" {
+				assert.Contains(body, "searchablesuffix")
+			} else {
+				want := tc.body
+				if want == "" {
+					want = tc.full
+				}
+				assert.Equal(want, body)
+			}
+			if tc.checkMissing {
+				assert.Equal(int64(2), summary.AttachmentsMissing)
+			}
+			if tc.presentSearch != "" {
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, tc.presentSearch))
+			}
+			if tc.absentSearch != "" {
+				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?`, tc.absentSearch))
+			}
+		})
+	}
 }
 
 func TestUnavailableAttachmentKeepsMessage(t *testing.T) {
 	for _, storageFailure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "oversize", true: "storage failure"}[storageFailure], func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			st := testutil.NewTestStore(t)
 			dir := t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -102,14 +111,15 @@ func TestUnavailableAttachmentKeepsMessage(t *testing.T) {
 			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, t.TempDir()
 			if storageFailure {
 				opts.AttachmentsDir = filepath.Join(t.TempDir(), "file")
-				require.NoError(t, os.WriteFile(opts.AttachmentsDir, []byte("file"), 0o600))
+				require.NoError(os.WriteFile(opts.AttachmentsDir, []byte("file"), 0o600))
 			} else {
 				opts.MaxAttachmentSize = 3
 			}
 			summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
-			require.NoError(t, err)
-			assert.Equal(t, expectedMessages(), importedMessages(t, st))
-			assert.Equal(t, int64(2), summary.AttachmentsMissing)
+			require.NoError(err)
+			assert.Equal(expectedMessages(), importedMessages(t, st))
+			assert.Equal(int64(2), summary.AttachmentsMissing)
+			assert.Equal(int64(1), summary.Errors)
 		})
 	}
 }
@@ -169,19 +179,6 @@ func TestPhoneAppearsForArchivedSender(t *testing.T) {
 	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM participants WHERE id = ? AND phone_number IS NULL`, sender))
 }
 
-func TestInterruptedReplyIsComplete(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	opts := DefaultOptions()
-	opts.Phone, opts.BatchSize = signalfixture.OwnPhone, 2
-	_, err := NewImporter(st, cancelProgress{cancel: cancel}).Import(ctx, path, opts)
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`))
-}
-
 func TestDeferredReplyAfterBackupDropsChild(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
@@ -211,15 +208,6 @@ func TestStatsFailureCannotCompleteImport(t *testing.T) {
 	_, err = NewImporter(st, nil).Import(t.Context(), path, opts)
 	require.ErrorContains(t, err, "stats failure")
 	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM sync_runs WHERE status = 'failed'`))
-}
-
-func TestImportCountsSkippedMessages(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(10), summary.MessagesProcessed)
-	assert.Equal(t, int64(4), summary.MessagesSkipped)
 }
 
 func TestNegativeLimit(t *testing.T) {

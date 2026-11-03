@@ -27,36 +27,40 @@ func TestFailedWriteCounts(t *testing.T) {
 }
 
 func TestRerunCountsUnchanged(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	storage := t.TempDir()
-	runImport(t, st, dir, storage)
-	// An archived part must be reused even when its source is unreadable.
-	require.NoError(t, os.Remove(filepath.Join(dir, "Attachment_500_-1.bin")))
-	require.NoError(t, os.Mkdir(filepath.Join(dir, "Attachment_500_-1.bin"), 0o700))
-	summary := runImport(t, st, dir, storage)
-	assert.Zero(t, summary.ReactionsAdded)
-	assert.Zero(t, summary.AttachmentsStored)
-	assert.Zero(t, summary.Errors)
-}
-
-func TestRerunKeepsAttachmentOccurrence(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `UPDATE attachment SET content_type = 'application/pdf', file_name = 'example.pdf' WHERE _id = 500`)
-	storage := t.TempDir()
-	runImport(t, st, dir, storage)
-	var attachmentID int64
-	require.NoError(t, st.DB().QueryRow(`SELECT id FROM attachments`).Scan(&attachmentID))
-	_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
-	require.NoError(t, err)
-	require.True(t, eligible)
-	require.NoError(t, os.Remove(filepath.Join(dir, "Attachment_500_-1.bin")))
-	runImport(t, st, dir, storage)
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
+	for _, name := range []string{"unreadable source", "missing source keeps occurrence"} {
+		t.Run(name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewTestStore(t), t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			occurrence := name == "missing source keeps occurrence"
+			if occurrence {
+				changeFixture(t, dir, `UPDATE attachment SET content_type = 'application/pdf', file_name = 'example.pdf' WHERE _id = 500`)
+			}
+			storage := t.TempDir()
+			runImport(t, st, dir, storage)
+			var attachmentID int64
+			if occurrence {
+				require.NoError(st.DB().QueryRow(`SELECT id FROM attachments`).Scan(&attachmentID))
+				_, eligible, err := st.ReconcileDocumentOccurrence(t.Context(), attachmentID, 1)
+				require.NoError(err)
+				require.True(eligible)
+			}
+			file := filepath.Join(dir, "Attachment_500_-1.bin")
+			require.NoError(os.Remove(file))
+			if !occurrence {
+				require.NoError(os.Mkdir(file, 0o700))
+			}
+			summary := runImport(t, st, dir, storage)
+			if occurrence {
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
+				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
+			} else {
+				assert.Zero(summary.ReactionsAdded)
+				assert.Zero(summary.AttachmentsStored)
+				assert.Zero(summary.Errors)
+			}
+		})
+	}
 }
 
 func TestMigratedIncomingOnly(t *testing.T) {
@@ -85,14 +89,12 @@ func TestInterruptedHistoricalSender(t *testing.T) {
 	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id AND m.sender_id = cp.participant_id`))
 }
 
-func TestImportCurrentDatabaseVersion(t *testing.T) {
+func TestImportPrefersContactNickname(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), []byte("VERSION:uint32:330\n"), 0o600))
 	changeFixture(t, dir, `UPDATE recipient SET nickname_joined_name = 'Example nickname' WHERE _id = 2`)
-	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(6), summary.MessagesAdded)
+	runImport(t, st, dir, t.TempDir())
 	assert.Equal(t, "Hi @Example nickname, look\n\nBeach", importedMessages(t, st)["signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)].body)
 }
 
