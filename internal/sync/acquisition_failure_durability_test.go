@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -66,6 +67,7 @@ func acquisitionWriteFault(t *testing.T, e *TestEnv, table, event, condition str
 			" WHEN " + condition + " BEGIN SELECT RAISE(ABORT, 'synthetic acquisition write failure'); END")
 		require.NoError(t, err)
 	}
+	// Use the fixture's current Store so the fault can be removed after reopen.
 	return func() {
 		query := "DROP TRIGGER " + name
 		if e.Store.IsPostgreSQL() {
@@ -82,6 +84,7 @@ func acquisitionWriteFault(t *testing.T, e *TestEnv, table, event, condition str
 
 type acquisitionDurabilityAPI struct {
 	*gmail.MockAPI
+
 	batchFailure  bool
 	catchup       bool
 	historyPages  bool
@@ -94,9 +97,9 @@ func (a *acquisitionDurabilityAPI) GetProfile(ctx context.Context) (*gmail.Profi
 	p, err := a.MockAPI.GetProfile(ctx)
 	a.profiles++
 	if err == nil && a.catchup && a.profiles == 1 {
-		copy := *p
-		copy.HistoryID = 1000 // Enumeration pins H before the later History event.
-		p = &copy
+		pinned := *p
+		pinned.HistoryID = 1000 // Enumeration pins H before the later History event.
+		p = &pinned
 	}
 	return p, err
 }
@@ -117,12 +120,8 @@ func (a *acquisitionDurabilityAPI) ListHistory(ctx context.Context, start uint64
 }
 
 func (a *acquisitionDurabilityAPI) GetMessagesRawBatchWithErrors(ctx context.Context, ids []string) ([]gmail.RawMessageBatchResult, error) {
-	if a.batchFailure {
-		for _, id := range ids {
-			if id == "lost" {
-				return nil, errors.New("synthetic acquisition batch failure")
-			}
-		}
+	if a.batchFailure && slices.Contains(ids, "lost") {
+		return nil, errors.New("synthetic acquisition batch failure")
 	}
 	return a.MockAPI.GetMessagesRawBatchWithErrors(ctx, ids)
 }
@@ -163,6 +162,9 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 					name = route + "/" + kind + "/rejected"
 				}
 				t.Run(name, func(t *testing.T) {
+					require := require.New(t)
+					assert := assert.New(t)
+
 					e := acquisitionDurabilityEnv(t)
 					source := e.CreateSourceWithHistory(t, "1000")
 					seedMessages(e, 2, 1001, "good", "lost")
@@ -196,39 +198,39 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 						summary, err = e.Syncer.Incremental(t.Context(), source)
 					}
 					if route == "catchup" {
-						assert.Equal(t, []string{""}, api.historyTokens, "exercise History after the pinned enumeration")
+						assert.Equal([]string{""}, api.historyTokens, "exercise History after the pinned enumeration")
 					}
 					if rejectRecord {
-						require.ErrorIs(t, err, errAcquisitionFailureRecord)
-						require.ErrorContains(t, err, "synthetic acquisition write failure")
+						require.ErrorIs(err, errAcquisitionFailureRecord)
+						require.ErrorContains(err, "synthetic acquisition write failure")
 						run, readErr := e.Store.GetLatestSync(source.ID)
-						require.NoError(t, readErr)
-						assert.Equal(t, store.SyncStatusFailed, run.Status)
-						assert.Equal(t, source.SyncCursor.String, gmailCoverageSource(t, e).SyncCursor.String)
+						require.NoError(readErr)
+						assert.Equal(store.SyncStatusFailed, run.Status)
+						assert.Equal(source.SyncCursor.String, gmailCoverageSource(t, e).SyncCursor.String)
 						if route == "history" || route == "label" {
-							assert.Equal(t, "history_1", run.CursorBefore.String, "failed page must not replace the previous checkpoint")
+							assert.Equal("history_1", run.CursorBefore.String, "failed page must not replace the previous checkpoint")
 						}
 						if route == "catchup" {
 							cp, err := decodeRecoveryCheckpoint(run.CursorBefore.String)
-							require.NoError(t, err)
-							assert.Equal(t, recoveryCatchup, cp.Phase)
-							assert.Equal(t, "1000", run.CursorAfter.String, "preserve the pinned handoff")
+							require.NoError(err)
+							assert.Equal(recoveryCatchup, cp.Phase)
+							assert.Equal("1000", run.CursorAfter.String, "preserve the pinned handoff")
 						}
 					} else {
-						require.NoError(t, err)
-						assert.Equal(t, int64(1), summary.Errors)
-						assert.Equal(t, "1001", gmailCoverageSource(t, e).SyncCursor.String)
+						require.NoError(err)
+						assert.Equal(int64(1), summary.Errors)
+						assert.Equal("1001", gmailCoverageSource(t, e).SyncCursor.String)
 					}
 					assertAcquisitionPresent(t, e, "good")
 					missing, readErr := e.Store.MessageExistsBatch(source.ID, []string{"lost"})
-					require.NoError(t, readErr)
-					assert.Empty(t, missing, "exercise a failed acquisition, not a metadata refresh")
+					require.NoError(readErr)
+					assert.Empty(missing, "exercise a failed acquisition, not a metadata refresh")
 					reopenAcquisitionStore(t, e)
 					if route == "replay" || !rejectRecord {
 						items, readErr := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
-						require.NoError(t, readErr)
-						require.Len(t, items, 1, "retry debt must survive the run and restart")
-						assert.Equal(t, "lost", items[0].SourceMessageID)
+						require.NoError(readErr)
+						require.Len(items, 1, "retry debt must survive the run and restart")
+						assert.Equal("lost", items[0].SourceMessageID)
 					}
 					if allowRecord != nil {
 						allowRecord()
@@ -241,9 +243,9 @@ func TestAcquisitionFailureDurabilityIncremental(t *testing.T) {
 					// cursor, recovery resumes H, and idle replay uses its old debt.
 					lists := e.Mock.ListMessagesCalls
 					_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
-					require.NoError(t, err)
+					require.NoError(err)
 					if route == "catchup" {
-						assert.Equal(t, lists, e.Mock.ListMessagesCalls, "catch-up resumes without re-enumeration")
+						assert.Equal(lists, e.Mock.ListMessagesCalls, "catch-up resumes without re-enumeration")
 					}
 					reopenAcquisitionStore(t, e)
 					assertAcquisitionPresent(t, e, "good", "lost")
@@ -257,6 +259,9 @@ func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 	for _, recovery := range []bool{false, true} {
 		for _, kind := range []string{"fetch", "batch", "ingest"} {
 			t.Run(map[bool]string{false: "full", true: "recovery"}[recovery]+"/"+kind, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+
 				e := acquisitionDurabilityEnv(t)
 				source := e.CreateSourceWithHistory(t, "999")
 				seedMessages(e, 3, 1000, "good", "lost", "tail")
@@ -271,24 +276,24 @@ func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 				} else {
 					_, err = e.Syncer.Full(t.Context(), testEmail)
 				}
-				require.Error(t, err)
+				require.Error(err)
 				if kind != "batch" { // Full already stops on a whole-batch failure.
-					require.ErrorIs(t, err, errAcquisitionFailureRecord)
+					require.ErrorIs(err, errAcquisitionFailureRecord)
 				}
-				assert.Equal(t, []string{"", "page_1"}, api.listTokens)
-				assert.Empty(t, api.historyTokens, "must not reach catch-up after an unrecorded acquisition")
+				assert.Equal([]string{"", "page_1"}, api.listTokens)
+				assert.Empty(api.historyTokens, "must not reach catch-up after an unrecorded acquisition")
 				run, err := e.Store.GetLatestSync(source.ID)
-				require.NoError(t, err)
-				assert.Equal(t, store.SyncStatusFailed, run.Status)
+				require.NoError(err)
+				assert.Equal(store.SyncStatusFailed, run.Status)
 				if recovery {
 					cp, err := decodeRecoveryCheckpoint(run.CursorBefore.String)
-					require.NoError(t, err)
-					assert.Equal(t, recoveryEnumerate, cp.Phase)
-					assert.Equal(t, "page_1", cp.PageToken)
+					require.NoError(err)
+					assert.Equal(recoveryEnumerate, cp.Phase)
+					assert.Equal("page_1", cp.PageToken)
 				} else {
-					assert.Equal(t, "page_1", run.CursorBefore.String)
+					assert.Equal("page_1", run.CursorBefore.String)
 				}
-				assert.Equal(t, "999", gmailCoverageSource(t, e).SyncCursor.String)
+				assert.Equal("999", gmailCoverageSource(t, e).SyncCursor.String)
 				assertAcquisitionPresent(t, e, "good")
 				reopenAcquisitionStore(t, e)
 				allowRecord()
@@ -296,9 +301,9 @@ func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 				api = &acquisitionDurabilityAPI{MockAPI: e.Mock}
 				e.Syncer = New(api, e.Store, nil)
 				_, err = e.Syncer.Full(t.Context(), testEmail)
-				require.NoError(t, err)
-				require.NotEmpty(t, api.listTokens)
-				assert.Equal(t, "page_1", api.listTokens[0], "restart must retry the failed page")
+				require.NoError(err)
+				require.NotEmpty(api.listTokens)
+				assert.Equal("page_1", api.listTokens[0], "restart must retry the failed page")
 				reopenAcquisitionStore(t, e)
 				assertAcquisitionPresent(t, e, "good", "lost", "tail")
 			})
@@ -307,24 +312,27 @@ func TestAcquisitionFailureDurabilityFullCheckpoint(t *testing.T) {
 }
 
 func TestAcquisitionFailureDurabilityFullAllowsRecordedErrors(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	e := acquisitionDurabilityEnv(t)
 	source := e.CreateSource(t)
 	seedMessages(e, 3, 1000, "good", "lost", "tail")
 	e.Mock.MessagePages = [][]string{{"good"}, {"lost"}, {"tail"}}
 	e.Mock.GetMessageError["lost"] = errors.New("synthetic fetch failure")
 	summary, err := e.Syncer.Full(t.Context(), testEmail)
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), summary.Errors)
+	require.NoError(err)
+	assert.Equal(int64(1), summary.Errors)
 	assertAcquisitionPresent(t, e, "good", "tail")
 	reopenAcquisitionStore(t, e)
 	delete(e.Mock.GetMessageError, "lost")
 	e.SetHistory(1000) // No History event for this old full-sync acquisition.
 	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
-	require.NoError(t, err)
+	require.NoError(err)
 	assertAcquisitionPresent(t, e, "lost")
 	items, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
-	require.NoError(t, err)
-	assert.Empty(t, items)
+	require.NoError(err)
+	assert.Empty(items)
 }
 
 func TestAcquisitionFailureDurabilityFailedStatusWrite(t *testing.T) {
@@ -368,31 +376,34 @@ func TestAcquisitionFailureDurabilityCrashWorker(t *testing.T) {
 
 func TestAcquisitionFailureDurabilityProcessRestart(t *testing.T) {
 	testutil.SkipIfPostgres(t, "subprocess reopens a SQLite file; failed status writes are also tested on PostgreSQL")
+	require := require.New(t)
+	assert := assert.New(t)
+
 	e := acquisitionDurabilityEnv(t)
 	source := e.CreateSourceWithHistory(t, "1000")
 	seedMessages(e, 1, 1001, "lost")
 	e.SetHistory(1001, historyAdded("lost"))
 	var sequence int
 	var name, path string
-	require.NoError(t, e.Store.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &path))
+	require.NoError(e.Store.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &path))
 	executable, err := os.Executable()
-	require.NoError(t, err)
+	require.NoError(err)
 	cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestAcquisitionFailureDurabilityCrashWorker$", "-test.timeout=30s")
 	cmd.Env = append(os.Environ(), "MSGVAULT_TEST_F1_CRASH_DB="+path)
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
-	require.ErrorAs(t, err, &exit, string(output))
-	require.Equal(t, 42, exit.ExitCode(), string(output))
+	require.ErrorAs(err, &exit, string(output))
+	require.Equal(42, exit.ExitCode(), string(output))
 	reopenAcquisitionStore(t, e)
 	run, err := e.Store.GetLatestSync(source.ID)
-	require.NoError(t, err)
-	assert.Equal(t, store.SyncStatusRunning, run.Status)
-	assert.Equal(t, "1000", gmailCoverageSource(t, e).SyncCursor.String)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusRunning, run.Status)
+	assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
 	_, err = e.Store.DB().Exec("DROP TRIGGER f1_reject_sync_runs")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = e.Store.DB().Exec("DROP TRIGGER f1_reject_sync_run_items")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
-	require.NoError(t, err)
+	require.NoError(err)
 	assertAcquisitionPresent(t, e, "lost")
 }

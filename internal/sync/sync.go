@@ -485,9 +485,9 @@ func (s *Syncer) fullSyncRequestFingerprint() string {
 	return fmt.Sprintf("%s:%x", version, sha256.Sum256([]byte(request)))
 }
 
-// failStoppedSync marks the stopped worker's run failed. Checkpoints on
-// failed runs remain resumable, while running status stays reserved for a live
-// worker.
+// failStoppedSync attempts to mark a stopped worker's run failed.
+// Checkpoints on failed runs remain resumable. If the terminal write fails,
+// the run can remain running; callers must still return without completing it.
 func (s *Syncer) failStoppedSync(syncID int64, err error) {
 	_ = s.store.FailSync(syncID, err.Error())
 }
