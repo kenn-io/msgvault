@@ -57,13 +57,14 @@ func readableMessageDetail(message *query.MessageDetail) *query.MessageDetail {
 	return &display
 }
 
-func messageTextBody(message *query.MessageDetail, stripQuoted bool) string {
+func messageTextBody(message *query.MessageDetail, stripQuoted bool) (string, bool) {
 	body := embed.BodyTextForEmbedding(message.BodyText, message.BodyHTML)
-	if body == "" {
+	hasBody := body != ""
+	if !hasBody {
 		body = message.Snippet
 	}
 	if stripQuoted {
 		body = readableMessageBody(body)
 	}
-	return body
+	return body, hasBody
 }

@@ -16,7 +16,6 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
-	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
 var (
@@ -108,14 +107,7 @@ func showHTTPMessage(cmd *cobra.Command, idStr string) (result error) {
 
 func outputMessageText(w io.Writer, msg *query.MessageDetail) error {
 	output := bufio.NewWriter(w)
-	body := embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML)
-	hasBody := body != ""
-	if !hasBody {
-		body = msg.Snippet
-	}
-	if showMessageStripQuoted {
-		body = readableMessageBody(body)
-	}
+	body, hasBody := messageTextBody(msg, showMessageStripQuoted)
 	if showMessageBodyOnly {
 		_, _ = fmt.Fprintln(output, textutil.SanitizeTerminalMultiline(body))
 		if err := output.Flush(); err != nil {

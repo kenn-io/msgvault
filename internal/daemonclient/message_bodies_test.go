@@ -17,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 // Exercise both production detail handlers and both client conversion layers.
@@ -27,7 +27,8 @@ func TestMessageBodiesThroughDaemon(t *testing.T) {
 		t.Run(map[bool]string{false: "store", true: "engine"}[withEngine], func(t *testing.T) {
 			setupAssert := assert.New(t)
 			setupRequire := require.New(t)
-			st := testutil.NewTestStore(t)
+			fixture := storetest.New(t)
+			st := fixture.Store
 			opts := api.ServerOptions{Config: &config.Config{}, Store: st, Logger: slog.New(slog.DiscardHandler)}
 			if withEngine {
 				engine := query.NewEngine(st.DB(), st.IsPostgreSQL())
@@ -39,10 +40,6 @@ func TestMessageBodiesThroughDaemon(t *testing.T) {
 			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
 			setupRequire.NoError(err)
 			t.Cleanup(func() { setupAssert.NoError(client.Close()) })
-			src, err := st.GetOrCreateSource("gmail", "owner@example.com")
-			setupRequire.NoError(err)
-			conversationID, err := st.EnsureConversation(src.ID, "body-fixture", "Body fixture")
-			setupRequire.NoError(err)
 			for _, tc := range []struct{ name, text, html string }{
 				{"plain", "Plain text", ""},
 				{"multipart", "Plain alternative", "<p>HTML alternative</p>"},
@@ -54,7 +51,7 @@ func TestMessageBodiesThroughDaemon(t *testing.T) {
 					assert := assert.New(t)
 					require := require.New(t)
 					id, err := st.PersistMessage(&store.MessagePersistData{
-						Message:  &store.Message{SourceID: src.ID, ConversationID: conversationID, SourceMessageID: tc.name, MessageType: "email"},
+						Message:  &store.Message{SourceID: fixture.Source.ID, ConversationID: fixture.ConvID, SourceMessageID: tc.name, MessageType: "email"},
 						BodyText: sql.NullString{String: tc.text, Valid: true},
 						BodyHTML: sql.NullString{String: tc.html, Valid: true},
 					})
