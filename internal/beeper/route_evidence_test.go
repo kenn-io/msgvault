@@ -1009,7 +1009,7 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 		}
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	})
-	st := testutil.NewTestStore(t)
+	st := testutil.NewSQLiteTestStore(t)
 	client := NewClient("http://beeper.test", testToken, 10000)
 	client.http.Transport = handlerTransport(handler)
 	imp := NewImporter(st, client)
