@@ -103,6 +103,14 @@ function messageFor(error: unknown, status: number): string {
     ? String(error.message)
     : `Exploration request failed (${status})`;
 }
+export class ExploreAPIError extends Error {
+  readonly code: string | undefined;
+  constructor(readonly status: number, error: unknown) {
+    super(messageFor(error, status));
+    this.code = typeof error === 'object' && error !== null && 'error' in error && typeof error.error === 'string'
+      ? error.error : undefined;
+  }
+}
 export interface ExploreAPI {
   explore(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreLoadResult>;
   groups(
@@ -163,7 +171,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async groups(predicate, dimension, signal) {
       const body = {
@@ -185,7 +193,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async fileGroups(predicate, filenameQuery, mimeFamilies, dimension, signal) {
       const { cursor, ...context } = predicate;
@@ -207,7 +215,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async files(predicate, signal) {
       const { cursor, ...context } = predicate;
@@ -222,7 +230,7 @@ export function createExploreAPI(client: APIClient, scope?: TimelineScope): Expl
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async coverage(filters, signal) {
       const { data, error, response } = await generatedGetSearchCoverage(
