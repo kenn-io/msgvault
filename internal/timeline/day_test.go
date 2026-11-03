@@ -252,7 +252,7 @@ func TestBuildIncludesColdMeetingTranscriptsAcrossModes(t *testing.T) {
 		entries func(*Timeline) []Entry
 		anchor  bool
 	}{
-		{name: "day", request: dayRequest(), entries: func(got *Timeline) []Entry { return allDayEntries(got) }},
+		{name: "day", request: dayRequest(), entries: allDayEntries},
 		{name: "relationship", request: relationshipRequest("email:alice@example.com"), entries: func(got *Timeline) []Entry { return got.History }},
 		{name: "message anchor", request: anchorRequest(messageRef(id)), entries: func(got *Timeline) []Entry { return got.History }, anchor: true},
 		{name: "conversation anchor", request: anchorRequest(fmt.Sprintf("conv:%d", conversationID)), entries: func(got *Timeline) []Entry { return got.History }, anchor: true},
@@ -296,7 +296,7 @@ func TestBuildReappliesNoiseAfterColdCopyMergeAcrossModes(t *testing.T) {
 		request Request
 		entries func(*Timeline) []Entry
 	}{
-		{name: "day", request: dayRequest(), entries: func(got *Timeline) []Entry { return allDayEntries(got) }},
+		{name: "day", request: dayRequest(), entries: allDayEntries},
 		{name: "relationship", request: relationshipRequest("email:alice@example.com"), entries: func(got *Timeline) []Entry { return got.History }},
 		{name: "anchor", request: anchorRequest(messageRef(warmID)), entries: func(got *Timeline) []Entry { return got.History }},
 	}

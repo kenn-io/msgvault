@@ -20,6 +20,7 @@ type activityWindow struct {
 
 type coldActivityWindow struct {
 	store.BurstPage
+
 	meetings []store.ActivityMessage
 }
 
