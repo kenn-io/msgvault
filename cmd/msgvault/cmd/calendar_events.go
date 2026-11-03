@@ -58,7 +58,7 @@ func newCalendarEventsCommand(deps calendarEventsCommandDeps) *cobra.Command {
 	var sources []int64
 	var includeCancelled, jsonOutput bool
 	var limit int
-	command := &cobra.Command{Use: "events", Short: "List archived calendar occurrences", Long: "Expand archived calendar series in a window of at most 400 days. Reads use message.read on the calendar sources. --source further narrows the granted sources. Dates and times come from the archive.", Args: cobra.NoArgs,
+	command := &cobra.Command{Use: "events", Short: "List archived calendar occurrences", Long: "Expand archived calendar series in a window of at most 400 days. Reads use message.read on the calendar sources. --source further narrows the granted sources.", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			start, err := time.Parse(time.RFC3339, from)
 			if err != nil {
