@@ -13,17 +13,17 @@ import (
 )
 
 func TestFailedWriteCounts(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
+	assert := assert.New(t)
+	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
 	_, err := st.DB().Exec(`CREATE TRIGGER fail_carol BEFORE INSERT ON messages WHEN NEW.snippet = 'Carol here' BEGIN SELECT RAISE(ABORT, 'message failure'); END`)
 	require.NoError(t, err)
 	summary := runImport(t, st, dir, t.TempDir())
-	assert.Equal(t, int64(1), summary.Errors)
-	assert.Equal(t, int64(1), summary.AttachmentsFound)
-	assert.Zero(t, summary.AttachmentsMissing)
-	assert.Equal(t, int64(1), summary.AttachmentsStored)
+	assert.Equal(int64(1), summary.Errors)
+	assert.Equal(int64(1), summary.AttachmentsFound)
+	assert.Zero(summary.AttachmentsMissing)
+	assert.Equal(int64(1), summary.AttachmentsStored)
 }
 
 func TestRerunCountsUnchanged(t *testing.T) {
@@ -73,8 +73,8 @@ func TestMigratedIncomingOnly(t *testing.T) {
 }
 
 func TestInterruptedHistoricalSender(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewTestStore(t), t.TempDir()
 	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
 	changeFixture(t, dir, `DELETE FROM message WHERE thread_id <> 11`, `DELETE FROM group_membership WHERE recipient_id = 3`)
 	ctx, cancel := context.WithCancel(t.Context())
@@ -82,11 +82,11 @@ func TestInterruptedHistoricalSender(t *testing.T) {
 	opts := DefaultOptions()
 	opts.Phone, opts.BatchSize = signalfixture.OwnPhone, 1
 	summary, err := NewImporter(st, cancelProgress{cancel: cancel}).Import(ctx, path, opts)
-	require.ErrorIs(t, err, context.Canceled)
-	require.NotNil(t, summary)
-	assert.Equal(t, int64(1), summary.MessagesAdded)
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id AND m.sender_id = cp.participant_id`))
+	require.ErrorIs(err, context.Canceled)
+	require.NotNil(summary)
+	assert.Equal(int64(1), summary.MessagesAdded)
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM messages`))
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN messages m ON m.conversation_id = cp.conversation_id AND m.sender_id = cp.participant_id`))
 }
 
 func TestImportPrefersContactNickname(t *testing.T) {
@@ -109,25 +109,25 @@ func TestCurrentDeletedMessageIsSkipped(t *testing.T) {
 }
 
 func TestReactorConflictLeavesSnapshot(t *testing.T) {
-	st := testutil.NewSQLiteTestStore(t)
-	dir := t.TempDir()
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	storage := t.TempDir()
 	runImport(t, st, dir, storage)
 	before := importedMessages(t, st)
 	// A new phone for an ACI-only reactor conflicts with two curated people.
 	aciPID, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = st.CreatePersonFromParticipant(aciPID)
-	require.NoError(t, err)
+	require.NoError(err)
 	phonePID, err := st.EnsureParticipantByPhone("+15555550102", "Other Example", SourceType)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, _, err = st.CreatePersonFromParticipant(phonePID)
-	require.NoError(t, err)
+	require.NoError(err)
 	// Carol's sender resolves normally; only her reactor has a conflict.
 	changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 300`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (300, 3, 'x', 1700000300100, 1700000300101)`)
 	summary := runImport(t, st, dir, storage)
-	require.Positive(t, summary.Errors)
-	assert.Equal(t, before, importedMessages(t, st))
-	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Changed'`))
+	require.Positive(summary.Errors)
+	assert.Equal(before, importedMessages(t, st))
+	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Changed'`))
 }

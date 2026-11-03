@@ -70,6 +70,7 @@ func TestReplyQuotesLatestRevision(t *testing.T) {
 
 type cancelProgress struct {
 	NullProgress
+
 	cancel context.CancelFunc
 }
 

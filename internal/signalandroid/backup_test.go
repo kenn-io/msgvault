@@ -136,13 +136,13 @@ func TestProducerVersionSidecar(t *testing.T) {
 		{"missing", "", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			st := testutil.NewTestStore(t)
-			dir := t.TempDir()
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewTestStore(t), t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
 			changeFixture(t, dir, `PRAGMA user_version = 0`)
 			versionPath := filepath.Join(dir, "DatabaseVersion.sbf")
 			if tc.data != "" {
-				require.NoError(t, os.WriteFile(versionPath, []byte(tc.data), 0o600))
+				require.NoError(os.WriteFile(versionPath, []byte(tc.data), 0o600))
 			} else {
 				_ = os.Remove(versionPath)
 			}
@@ -150,33 +150,33 @@ func TestProducerVersionSidecar(t *testing.T) {
 			opts.Phone = signalfixture.OwnPhone
 			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			if tc.wantError {
-				require.ErrorIs(t, err, ErrUnsupportedDatabase)
+				require.ErrorIs(err, ErrUnsupportedDatabase)
 				if tc.name == "future" {
-					assert.Contains(t, err.Error(), "331")
+					assert.Contains(err.Error(), "331")
 				}
-				assert.Zero(t, countRows(t, st, `SELECT COUNT(*) FROM sources`))
+				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
 			} else {
-				require.NoError(t, err)
-				assert.Len(t, importedMessages(t, st), 6)
+				require.NoError(err)
+				assert.Len(importedMessages(t, st), 6)
 			}
 		})
 	}
 }
 
 func TestPhoneAppearsForArchivedSender(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
+	assert, require := assert.New(t), require.New(t)
+	st, dir := testutil.NewTestStore(t), t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	runImport(t, st, dir, t.TempDir())
 	changeFixture(t, dir, `DELETE FROM message WHERE _id = 200`, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`)
 	runImport(t, st, dir, t.TempDir())
 	pid, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
-	require.NoError(t, err)
+	require.NoError(err)
 	var sender int64
-	require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&sender))
-	assert.Equal(t, pid, sender)
-	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN participants p ON p.id = cp.participant_id WHERE p.id = ?`, pid))
-	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM participants WHERE id = ? AND phone_number IS NULL`, sender))
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT sender_id FROM messages WHERE source_message_id = ?`), "signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&sender))
+	assert.Equal(pid, sender)
+	assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM conversation_participants cp JOIN participants p ON p.id = cp.participant_id WHERE p.id = ?`, pid))
+	assert.Equal(0, countRows(t, st, `SELECT COUNT(*) FROM participants WHERE id = ? AND phone_number IS NULL`, sender))
 }
 
 func TestDeferredReplyAfterBackupDropsChild(t *testing.T) {

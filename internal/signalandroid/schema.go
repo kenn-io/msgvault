@@ -66,7 +66,7 @@ var requiredMessageColumns = []string{
 func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, error) {
 	data, err := os.ReadFile(filepath.Join(filepath.Dir(dbPath), "DatabaseVersion.sbf"))
 	if err != nil {
-		return nil, fmt.Errorf("%w: read DatabaseVersion.sbf beside database.sqlite: %v; export without --onlydb", ErrUnsupportedDatabase, err)
+		return nil, fmt.Errorf("%w: read DatabaseVersion.sbf beside database.sqlite: %w; export without --onlydb", ErrUnsupportedDatabase, err)
 	}
 	value, found := strings.CutPrefix(strings.TrimSpace(string(data)), "VERSION:uint32:")
 	version, err := strconv.ParseUint(value, 10, 32)

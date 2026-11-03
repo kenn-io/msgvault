@@ -82,22 +82,22 @@ func TestImportSignalRejectsRemoteLocalFiles(t *testing.T) {
 }
 
 func TestImportSignalRefreshesCacheAfterPartialFailure(t *testing.T) {
-	cfg := lifecycleTestConfig(t.TempDir())
+	cfg, require := lifecycleTestConfig(t.TempDir()), require.New(t)
 	command := &cobra.Command{Use: "import-signal"}
 	command.SetContext(withStoreResolverConfig(t, cfg))
 	st, cleanup, err := openWritableStoreAndInitForIngestInvocation(invocationFromCommand(command))
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.DB().Exec(`CREATE TRIGGER fail_stats BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT, 'stats failure'); END`)
 	cleanup()
-	require.NoError(t, err)
+	require.NoError(err)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	err = runSignalImport(command, dir, importSignalFlags{phone: signalfixture.OwnPhone})
-	require.ErrorContains(t, err, "stats failure")
+	require.ErrorContains(err, "stats failure")
 	db, err := sql.Open("duckdb", "")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
 	var count int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&count))
+	require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true)`, filepath.Join(cfg.AnalyticsDir(), "messages", "**", "*.parquet")).Scan(&count))
 	assert.Equal(t, 6, count)
 }

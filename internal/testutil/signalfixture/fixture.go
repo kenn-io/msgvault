@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3" // Register the SQLite driver for fixture databases.
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,16 +59,16 @@ var (
 // Write writes a small Signal Android database and an
 // attachment file into dir. offset shifts every local row ID, as restoring a
 // backup on another phone can.
-func Write(t testing.TB, dir string, layout Layout, offset int64) string {
-	t.Helper()
+func Write(tb testing.TB, dir string, layout Layout, offset int64) string {
+	tb.Helper()
 	path := filepath.Join(dir, "database.sqlite")
 	db, err := sql.Open("sqlite3", path)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, db.Close()) }()
+	require.NoError(tb, err)
+	defer func() { require.NoError(tb, db.Close()) }()
 
 	id := func(n int64) int64 { return n + offset }
 	version := layout.version
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), fmt.Appendf(nil, "VERSION:uint32:%d\n", version), 0o600))
+	require.NoError(tb, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), fmt.Appendf(nil, "VERSION:uint32:%d\n", version), 0o600))
 	stmts := []string{
 		fmt.Sprintf(`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, type INTEGER DEFAULT 0,
 			%s TEXT, %s TEXT, group_id TEXT, distribution_list_id INTEGER,
@@ -98,7 +98,7 @@ func Write(t testing.TB, dir string, layout Layout, offset int64) string {
 	}
 	for _, stmt := range stmts {
 		_, err := db.Exec(stmt)
-		require.NoError(t, err, stmt)
+		require.NoError(tb, err, stmt)
 	}
 
 	if layout == Current {
@@ -109,14 +109,14 @@ func Write(t testing.TB, dir string, layout Layout, offset int64) string {
 			`ALTER TABLE message ADD COLUMN deleted_by INTEGER DEFAULT NULL REFERENCES recipient (_id) ON DELETE CASCADE`,
 		} {
 			_, err := db.Exec(stmt)
-			require.NoError(t, err, stmt)
+			require.NoError(tb, err, stmt)
 		}
 	}
 
 	exec := func(query string, args ...any) {
-		t.Helper()
+		tb.Helper()
 		_, err := db.Exec(query, args...)
-		require.NoError(t, err, query)
+		require.NoError(tb, err, query)
 	}
 	recipientSQL := fmt.Sprintf(`INSERT INTO recipient (_id, %s, %s, group_id, system_joined_name, profile_joined_name)
 		VALUES (?, ?, ?, ?, ?, ?)`, layout.e164, layout.aci)
@@ -169,9 +169,9 @@ func Write(t testing.TB, dir string, layout Layout, offset int64) string {
 	exec(attachmentSQL, id(502), id(300), "application/pdf", "notes.pdf", 9, 0, 0, nil, 0)
 
 	// Only the photo's file is present; the PDF was never downloaded.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("Attachment_%d_-1.bin", id(500))),
+	require.NoError(tb, os.WriteFile(filepath.Join(dir, fmt.Sprintf("Attachment_%d_-1.bin", id(500))),
 		[]byte("photo bytes"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, fmt.Sprintf("Attachment_%d_-1.sbf", id(500))),
+	require.NoError(tb, os.WriteFile(filepath.Join(dir, fmt.Sprintf("Attachment_%d_-1.sbf", id(500))),
 		[]byte("frame"), 0o600))
 	return path
 }
