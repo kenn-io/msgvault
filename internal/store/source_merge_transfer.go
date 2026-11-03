@@ -296,6 +296,9 @@ func (s *Store) clearIneligibleProviderBindingsForSourceMergeTx(
 	if len(sourceIDs) == 0 {
 		return false, nil
 	}
+	if err := s.collapseProviderBindingCollisionsBeforeClearTx(ctx, tx, sourceIDs); err != nil {
+		return false, err
+	}
 	marks, args := sortedIDPlaceholders(sourceIDs)
 	result, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations AS observation
 		SET provider_user_id = NULL, updated_at = `+s.dialect.Now()+`
@@ -311,6 +314,113 @@ func (s *Store) clearIneligibleProviderBindingsForSourceMergeTx(
 		return false, fmt.Errorf("check unsupported provider binding changes: %w", err)
 	}
 	return changed > 0, nil
+}
+
+type sourceMergeObservationIdentity struct {
+	participantID   int64
+	addressKind     string
+	serviceID       int64
+	scopeKind       string
+	scopeValue      string
+	normalizedValue string
+	sourceRef       string
+}
+
+type sourceMergeObservationCollision struct {
+	id             int64
+	providerUserID sql.NullString
+}
+
+// collapseProviderBindingCollisionsBeforeClearTx merges the support for
+// observations that will share an identity after unsupported provider IDs are
+// cleared and source ownership is transferred. Source IDs are omitted from the
+// key because the caller may pass both sides of a merge. Keep an existing
+// providerless row when one exists; otherwise keep the oldest row. Superseded
+// rows retain their IDs and provider evidence.
+func (s *Store) collapseProviderBindingCollisionsBeforeClearTx(
+	ctx context.Context,
+	tx *loggedTx,
+	sourceIDs []int64,
+) error {
+	marks, args := sortedIDPlaceholders(sourceIDs)
+	rows, err := tx.QueryContext(ctx, `SELECT observation.id,
+		observation.participant_id, observation.address_kind, observation.service_id,
+		observation.scope_kind, observation.scope_value, observation.normalized_value,
+		observation.provider_user_id, observation.source_ref
+		FROM participant_contact_observations AS observation
+		WHERE observation.source_id IN (`+marks+`)
+		  AND observation.active_until IS NULL AND observation.superseded_at IS NULL
+		  AND observation.service_id IS NOT NULL
+		  AND observation.scope_kind IS NOT NULL
+		  AND observation.scope_value IS NOT NULL
+		  AND (observation.provider_user_id IS NULL OR NOT `+FullObservationWhere("observation")+`)
+		ORDER BY observation.id`, args...)
+	if err != nil {
+		return fmt.Errorf("list observations that can collide after provider binding clear: %w", err)
+	}
+	groupIndexes := make(map[sourceMergeObservationIdentity]int)
+	groups := make([][]sourceMergeObservationCollision, 0)
+	for rows.Next() {
+		var row sourceMergeObservationCollision
+		var key sourceMergeObservationIdentity
+		var sourceRef sql.NullString
+		if err := rows.Scan(
+			&row.id, &key.participantID, &key.addressKind,
+			&key.serviceID, &key.scopeKind, &key.scopeValue, &key.normalizedValue,
+			&row.providerUserID, &sourceRef,
+		); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan observations that can collide after provider binding clear: %w", err)
+		}
+		if sourceRef.Valid {
+			key.sourceRef = sourceRef.String
+		}
+		index, exists := groupIndexes[key]
+		if !exists {
+			index = len(groups)
+			groupIndexes[key] = index
+			groups = append(groups, nil)
+		}
+		groups[index] = append(groups[index], row)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close observations that can collide after provider binding clear: %w", err)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate observations that can collide after provider binding clear: %w", err)
+	}
+
+	for _, group := range groups {
+		if len(group) < 2 {
+			continue
+		}
+		keeper := 0
+		for i, row := range group {
+			if !row.providerUserID.Valid {
+				keeper = i
+				break
+			}
+		}
+		for i, row := range group {
+			if i == keeper {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO participant_contact_observation_conversations
+				(observation_id, conversation_id)
+				SELECT ?, conversation_id FROM participant_contact_observation_conversations
+				WHERE observation_id=? ON CONFLICT(observation_id, conversation_id) DO NOTHING`,
+				group[keeper].id, row.id,
+			); err != nil {
+				return fmt.Errorf("merge colliding observation support before provider binding clear: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE participant_contact_observations
+				SET superseded_at=`+s.dialect.Now()+`, updated_at=`+s.dialect.Now()+`
+				WHERE id=? AND active_until IS NULL AND superseded_at IS NULL`, row.id); err != nil {
+				return fmt.Errorf("supersede colliding observation before provider binding clear: %w", err)
+			}
+		}
+	}
+	return nil
 }
 
 // preserveFullProviderBindingsForSourceMergeTx selects the binding to retain

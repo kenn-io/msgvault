@@ -973,6 +973,82 @@ func TestConversationPolicyObservationSourceMergePreservesScopedBindings(t *test
 	assert.ElementsMatch(t, []string{"provider:scoped-left", "provider:scoped-right"}, providers)
 }
 
+func TestSourceMergePreservesProviderlessFullScopedObservation(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s := testutil.NewTestStore(t)
+	s.DB().SetMaxOpenConns(4)
+	ctx := t.Context()
+
+	fullSource, err := s.GetOrCreateSource("beeper", "scoped-full-source")
+	requirements.NoError(err)
+	coldSource, err := s.GetOrCreateSource("beeper", "scoped-cold-source")
+	requirements.NoError(err)
+	fullRoom, err := s.EnsureConversation(fullSource.ID, "scoped-full-room", "Scoped full room")
+	requirements.NoError(err)
+	coldRoom, err := s.EnsureConversation(coldSource.ID, "scoped-cold-room", "Scoped cold room")
+	requirements.NoError(err)
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, fullSource.ID, "scoped-full-room", conversationpolicy.Full))
+	requirements.NoError(s.SetConversationPolicyOverride(ctx, coldSource.ID, "scoped-cold-room", conversationpolicy.Cold))
+	participantID, err := s.EnsureParticipantByIdentifier(
+		"beeper", "scoped-providerless-collision", "Synthetic Scoped Collision",
+	)
+	requirements.NoError(err)
+
+	fullInput := policyObservationInput(fullSource.ID, &fullRoom)
+	fullInput.AddressKind = store.ContactAddressUsername
+	fullInput.OriginalValue = "shared-user"
+	fullInput.ServiceSlug = new("slack")
+	fullInput.ScopeKind = new("workspace")
+	fullInput.ScopeValue = new("T0SYNTHETIC")
+	fullInput.ProviderUserID = nil
+	full, err := s.RecordContactObservationContext(ctx, participantID, fullInput)
+	requirements.NoError(err)
+	requirements.NotNil(full.Observation)
+
+	coldInput := policyObservationInput(coldSource.ID, &coldRoom)
+	coldInput.AddressKind = fullInput.AddressKind
+	coldInput.OriginalValue = fullInput.OriginalValue
+	coldInput.ServiceSlug = fullInput.ServiceSlug
+	coldInput.ScopeKind = fullInput.ScopeKind
+	coldInput.ScopeValue = fullInput.ScopeValue
+	coldProviderID := "provider:cold-scoped"
+	coldInput.ProviderUserID = &coldProviderID
+	cold, err := s.RecordContactObservationContext(ctx, participantID, coldInput)
+	requirements.NoError(err)
+	requirements.NotNil(cold.Observation)
+
+	_, err = s.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: fullSource.ID,
+		IntoSourceID: coldSource.ID,
+	})
+	requirements.NoError(err)
+
+	current, err := s.ListParticipantObservationsContext(ctx, participantID, true)
+	requirements.NoError(err)
+	requirements.Len(current, 1)
+	assertions.Equal(full.Observation.Envelope.ID, current[0].Envelope.ID)
+	assertions.Nil(current[0].ProviderUserID)
+	requirements.NotNil(current[0].SourceID)
+	assertions.Equal(coldSource.ID, *current[0].SourceID)
+	assertions.ElementsMatch([]int64{fullRoom, coldRoom},
+		policyObservationSupport(t, s, full.Observation.Envelope.ID))
+
+	history, err := s.ListParticipantObservationsContext(ctx, participantID, false)
+	requirements.NoError(err)
+	requirements.Len(history, 2)
+	var coldHistory *store.ParticipantContactObservation
+	for i := range history {
+		if history[i].Envelope.ID == cold.Observation.Envelope.ID {
+			coldHistory = &history[i]
+		}
+	}
+	requirements.NotNil(coldHistory)
+	requirements.NotNil(coldHistory.Envelope.SupersededAt)
+	requirements.NotNil(coldHistory.ProviderUserID)
+	assertions.Equal(coldProviderID, *coldHistory.ProviderUserID)
+}
+
 func TestConversationPolicyObservationScoringRequiresBothFullSides(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("legacy-%t", legacy), func(t *testing.T) {
