@@ -353,6 +353,7 @@ func newMCPServerWithPolicy(
 	}
 	capabilities := &sdkmcp.ServerCapabilities{Tools: &sdkmcp.ToolCapabilities{}}
 	instructions := archiveSafetyInstructions + " " + decisionMemoryInstructions + " Use returned web_url values when linking to archived messages."
+	instructions += " Agent guide: https://msgvault.io/docs/guides/agent-quickstart.md (msgvault quickstart --mcp)."
 	if !opts.DelegatedOnly {
 		capabilities.Resources = &sdkmcp.ResourceCapabilities{}
 	} else {
@@ -413,35 +414,7 @@ func newMCPServerWithPolicy(
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
-		if definition.security == toolSecurityWrite && !allowWrites {
-			continue
-		}
-		if definition.security == toolSecurityProfileWrite &&
-			(!allowWrites || !opts.AllowProfileWrites) {
-			continue
-		}
-		if definition.security == toolSecurityIdentityDecision &&
-			(!allowWrites || !opts.AllowIdentityDecisions) {
-			continue
-		}
-		if definition.security == toolSecurityIdentityScoring &&
-			(!allowWrites || !opts.AllowIdentityScoring) {
-			continue
-		}
-		if definition.security == toolSecurityPersonMerge &&
-			(!allowWrites || !opts.AllowPersonMerges) {
-			continue
-		}
-		if definition.security == toolSecurityCardDAVWrite &&
-			(!allowWrites || !opts.AllowCardDAVWrites) {
-			continue
-		}
-		if definition.security == toolSecurityCalendarWrite &&
-			(!allowWrites || !opts.AllowCalendarWrites) {
-			continue
-		}
-		if definition.security == toolSecurityKataWrite &&
-			(!allowWrites || !opts.AllowKataWrites) {
+		if !toolClassAllowed(definition.security, opts, allowWrites) {
 			continue
 		}
 		sdkmcp.AddTool[map[string]any, any](s, definition.tool(), officialToolHandler(definition.bind(h), confirmation))

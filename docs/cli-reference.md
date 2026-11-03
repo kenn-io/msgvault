@@ -5408,7 +5408,13 @@ Print a quickstart guide for AI agents.
 
 ```bash
 msgvault quickstart
+msgvault quickstart --mcp
 ```
+
+Print the CLI guide by default, or use `--mcp` for MCP connections, safe
+reading, drafts, and approval requirements. Both guides are embedded and work
+without configuration, archive access, or a running daemon. The MCP guide is
+also [published online](guides/agent-quickstart.md).
 
 ---
 
