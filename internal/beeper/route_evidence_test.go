@@ -1009,8 +1009,10 @@ func TestResumedTailScanSkipsChatsAlreadyConfirmedGone(t *testing.T) {
 		}
 		http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
 	})
-	imp, st := newHandlerTestImporter(t, f)
-	imp.client.http.Transport = handlerTransport(handler)
+	st := testutil.NewTestStore(t)
+	client := NewClient("http://beeper.test", testToken, 10000)
+	client.http.Transport = handlerTransport(handler)
+	imp := NewImporter(st, client)
 	source, err := st.GetOrCreateSource("beeper", "account-a")
 	requirements.NoError(err)
 	state := NewSyncState()
