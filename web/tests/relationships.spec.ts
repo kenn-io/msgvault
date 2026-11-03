@@ -591,13 +591,13 @@ test('list filters clear hidden selections and each mode offers only supported c
   await list.press('ArrowDown');
   await list.press('Space');
   await expect(page.getByText('2 selected', { exact: true })).toBeVisible();
-  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: /^Filter/ }).click();
   await page.getByRole('button', { name: 'Include one-way senders', exact: true }).click();
   await expect(page.getByText('2 selected', { exact: true })).toBeHidden();
   await page.keyboard.press('Escape');
   await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).click();
   await page.getByRole('option', { name: 'Name', exact: true }).click();
-  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: /^Filter/ }).click();
   await expect(page.getByRole('button', { name: 'Include one-way senders', exact: true })).toBeHidden();
   await page.getByRole('button', { name: 'Saved', exact: true }).click();
   await page.keyboard.press('Escape');
@@ -607,7 +607,7 @@ test('list filters clear hidden selections and each mode offers only supported c
   await list.getByRole('row', { name: /Saved 91/ }).hover();
   await list.getByRole('checkbox', { name: 'Select Saved 91' }).click();
   await expect(page.getByText('1 selected', { exact: true })).toBeVisible();
-  await page.getByTitle('Filter people', { exact: true }).click();
+  await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: /^Filter/ }).click();
   await page.getByRole('button', { name: 'Profile filters', exact: true }).click();
   await page.getByRole('textbox', { name: 'Category filter', exact: true }).fill('work');
   await expect(page.getByText('1 selected', { exact: true })).toBeHidden();
@@ -733,7 +733,7 @@ for (const change of ['filter', 'sort', 'show-all'] as const) {
       expect(await page.evaluate(() => window.history.state.relationshipReader?.anchor)).toBe(500);
     } else {
       expect(await page.evaluate(() => history.state.relationshipReader)).toBeUndefined();
-      await page.getByTitle('Filter people', { exact: true }).click();
+      await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: /^Filter/ }).click();
       await page.getByRole('button', { name: 'Include one-way senders', exact: true }).click();
       await page.keyboard.press('Escape');
       await expect.poll(async () => (await exploreHistoryState(page)).relationshipShowAll).toBe(true);

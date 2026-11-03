@@ -8,7 +8,7 @@
 <header>
   {#if onBack}<Button label="Back to People" onclick={onBack} />{/if}
   <IdentityAvatar label={name} seed={email || name} shape={domain ? 'domain' : 'person'} size={40} />
-  <div><h2><button type="button" onclick={onOpenDetails}>{name}</button></h2>{#if email}<span>{email}</span>{/if}</div>
+  <div><h2><button type="button" onclick={onOpenDetails}>{name}</button></h2>{#if email && email !== name}<span>{email}</span>{/if}</div>
 </header>
 
 <style>

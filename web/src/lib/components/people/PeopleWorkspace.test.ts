@@ -19,6 +19,42 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
 
+it('shows Saved badges only when the Saved filter is off', async () => {
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: [{ ...profile(7, 1, []), organizations: [], categories: [], contact_state: 'active' }] }),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const urlState = { ...state.current, directoryContactState: 'active' };
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const list = within(screen.getByRole('complementary', { name: 'People' }));
+    await list.findByText('Synthetic One');
+    expect(list.getByRole('img', { name: 'Saved' })).toBeDefined();
+    expect(list.getByText('1 person')).toBeDefined();
+    await view.rerender({ urlState: { ...urlState, relationshipSaved: true } });
+    await list.findByText('Synthetic One');
+    expect(list.getByRole('button', { name: 'Remove Saved' })).toBeDefined();
+    expect(list.queryByRole('img', { name: 'Saved' })).toBeNull();
+    await view.rerender({ urlState });
+    expect(await list.findByRole('img', { name: 'Saved' })).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it.each([
+  { relationshipFacet: 'people', identityQuery: '', empty: 'No people yet', count: '0 people' },
+  { relationshipFacet: 'people', identityQuery: 'missing', empty: 'No matches', count: '0 people' },
+  { relationshipFacet: 'domains', identityQuery: '', empty: 'No domains yet', count: '0 domains' },
+] as const)('hides the count alongside $empty', async ({ relationshipFacet, identityQuery, empty, count }) => {
+  const client = clientFor({});
+  const controller = new RelationshipsController(client, () => 'UTC'); const directory = new DirectoryController(client); const state = new ExploreState(null);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: { ...state.current, relationshipFacet, identityQuery }, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    const list = within(screen.getByRole('complementary', { name: 'People' }));
+    await list.findByText(empty);
+    expect(list.queryByText(count)).toBeNull();
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the redesigned page', async (kind) => {
   const client = clientFor({
     '/api/v1/participants/1': () => kind === 'missing'
