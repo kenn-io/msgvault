@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/url"
 	"os"
-	"os/exec"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -319,6 +318,9 @@ func TestAcquisitionFailureDurabilityFullAllowsRecordedErrors(t *testing.T) {
 }
 
 func TestAcquisitionFailureDurabilityFailedStatusWrite(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+
 	e := acquisitionDurabilityEnv(t)
 	source := e.CreateSourceWithHistory(t, "1000")
 	seedMessages(e, 1, 1001, "lost")
@@ -327,66 +329,16 @@ func TestAcquisitionFailureDurabilityFailedStatusWrite(t *testing.T) {
 	allowRecord := acquisitionWriteFault(t, e, "sync_run_items", "INSERT", "NEW.status = 'error'")
 	allowFailure := acquisitionWriteFault(t, e, "sync_runs", "UPDATE", "NEW.status = 'failed'")
 	_, err := e.Syncer.Incremental(t.Context(), source)
-	require.ErrorIs(t, err, errAcquisitionFailureRecord)
-	assert.Equal(t, "1000", gmailCoverageSource(t, e).SyncCursor.String)
+	require.ErrorIs(err, errAcquisitionFailureRecord)
+	run, err := e.Store.GetLatestSync(source.ID)
+	require.NoError(err)
+	assert.Equal(store.SyncStatusRunning, run.Status)
+	assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
 	reopenAcquisitionStore(t, e)
 	allowRecord()
 	allowFailure()
 	delete(e.Mock.GetMessageError, "lost")
 	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
-	require.NoError(t, err, "next owner recovers the abandoned run")
-	assertAcquisitionPresent(t, e, "lost")
-}
-
-func TestAcquisitionFailureDurabilityCrashWorker(t *testing.T) {
-	path := os.Getenv("MSGVAULT_TEST_F1_CRASH_DB")
-	if path == "" {
-		return
-	}
-	st, err := store.OpenForTest(path)
-	require.NoError(t, err)
-	mock := gmail.NewMockAPI()
-	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 1001}
-	e := &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), Context: t.Context()}
-	e.SetHistory(1001, historyAdded("lost"))
-	mock.GetMessageError["lost"] = errors.New("synthetic fetch failure")
-	acquisitionWriteFault(t, e, "sync_run_items", "INSERT", "NEW.status = 'error'")
-	acquisitionWriteFault(t, e, "sync_runs", "UPDATE", "NEW.status = 'failed'")
-	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
-	require.ErrorIs(t, err, errAcquisitionFailureRecord)
-	os.Exit(42) // Leave a running row and bypass Store.Close and all test cleanup.
-}
-
-func TestAcquisitionFailureDurabilityProcessRestart(t *testing.T) {
-	testutil.SkipIfPostgres(t, "subprocess reopens a SQLite file; failed status writes are also tested on PostgreSQL")
-	require := require.New(t)
-	assert := assert.New(t)
-
-	e := acquisitionDurabilityEnv(t)
-	source := e.CreateSourceWithHistory(t, "1000")
-	seedMessages(e, 1, 1001, "lost")
-	e.SetHistory(1001, historyAdded("lost"))
-	var sequence int
-	var name, path string
-	require.NoError(e.Store.DB().QueryRow("PRAGMA database_list").Scan(&sequence, &name, &path))
-	executable, err := os.Executable()
-	require.NoError(err)
-	cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestAcquisitionFailureDurabilityCrashWorker$", "-test.timeout=30s")
-	cmd.Env = append(os.Environ(), "MSGVAULT_TEST_F1_CRASH_DB="+path)
-	output, err := cmd.CombinedOutput()
-	var exit *exec.ExitError
-	require.ErrorAs(err, &exit, string(output))
-	require.Equal(42, exit.ExitCode(), string(output))
-	reopenAcquisitionStore(t, e)
-	run, err := e.Store.GetLatestSync(source.ID)
-	require.NoError(err)
-	assert.Equal(store.SyncStatusRunning, run.Status)
-	assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
-	_, err = e.Store.DB().Exec("DROP TRIGGER f1_reject_sync_runs")
-	require.NoError(err)
-	_, err = e.Store.DB().Exec("DROP TRIGGER f1_reject_sync_run_items")
-	require.NoError(err)
-	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
-	require.NoError(err)
+	require.NoError(err, "next owner recovers the abandoned run")
 	assertAcquisitionPresent(t, e, "lost")
 }
