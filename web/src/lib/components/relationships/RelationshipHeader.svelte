@@ -24,7 +24,7 @@
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     capturePersonMergeContext?: () => RelationshipsMergeContext;
-    onReconcilePersonMerge?: (context: RelationshipsMergeContext) => Promise<void>;
+    onReconcilePersonMerge?: (context: RelationshipsMergeContext, success: PersonMergeSuccess) => Promise<void>;
     onOpenDirectoryPerson?: (personID: number) => void;
     onAnnounce?: (message: string) => void;
   }
@@ -201,7 +201,7 @@
     activeDialog = undefined;
     const name = success.survivor.display_name?.trim() || `Person ${success.survivor.id}`;
     onAnnounce?.(`People merged into ${name}. Identity cache ${success.result.cache_state}.`);
-    if (context && onReconcilePersonMerge) void onReconcilePersonMerge(context);
+    if (context && onReconcilePersonMerge) void onReconcilePersonMerge(context, success);
     onOpenDirectoryPerson?.(success.survivor.id);
   }
 
