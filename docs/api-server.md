@@ -28,7 +28,7 @@ browser login, secure remote deployment, search states, and keyboard controls.
 
 ### Send a reviewed LINE reply {#line-reply}
 
-Available on unreleased `main` with API schema 3.38.0: the owner can invoke
+Available on unreleased `main` with API schema 3.44.0: the owner can invoke
 `send-line-reply` through `POST /api/v1/cli/run` with ordinary owner API
 authentication:
 

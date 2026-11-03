@@ -11,7 +11,8 @@ import (
 
 func lineReplyPGFixture(t *testing.T) (*Store, ChatDraft, int64) {
 	t.Helper()
-	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	source, err := st.GetOrCreateSource("line", "2000000001")
 	require.NoError(t, err)
 	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, "U00000000000000000000000000000001"))

@@ -832,7 +832,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	for _, group := range []struct {
 		role  string
 		addrs []string
-	}{{meetingSenderRole, q.FromAddrs}, {"to", q.ToAddrs}, {"cc", q.CcAddrs}, {"bcc", q.BccAddrs}} {
+	}{{messageSenderRole, q.FromAddrs}, {"to", q.ToAddrs}, {"cc", q.CcAddrs}, {"bcc", q.BccAddrs}} {
 		for _, addr := range group.addrs {
 			arg := "%" + escapeLike(strings.ToLower(addr)) + "%"
 			if !rowIDs {
