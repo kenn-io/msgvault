@@ -142,7 +142,7 @@
               }}>{formatDateTime(batch.created_at)}</button
             >
           </td>
-          <td>{count(batch.message_count)}</td>
+          <td>{batch.message_count.toLocaleString()}</td>
           <td>{batch.account || 'Account unavailable'}</td>
           <td><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip></td>
         </tr>
