@@ -187,6 +187,10 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 // isSourceSyncJobName reports whether a generic scheduler job syncs a source.
 func isSourceSyncJobName(name string) bool {
 	kind, identifier, _ := strings.Cut(name, ":")
+	if kind == "messenger_broadcasts" {
+		_, _, ok := meta.ParseSourceIdentifier(identifier)
+		return ok
+	}
 	if kind == CardDAVJobName {
 		return true
 	}

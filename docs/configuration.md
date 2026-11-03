@@ -1849,6 +1849,49 @@ job is `instagram_messages:<source-identifier>`. Missing credentials use the
 same error form with `instagram messages profile`. Neither profile subscribes
 an app automatically.
 
+### `[[messenger_broadcasts]]` {#messenger-broadcasts}
+
+Configure consent refresh and paid Messenger marketing sends (unreleased).
+Register the matching app/Page pair through `source facebook-messages add` first.
+See [Messenger broadcasts](usage/messenger-broadcasts.md) for eligibility,
+planning, spend and recovery. Credentials must be present in the daemon's
+named environment variables; no fallback credential is used.
+
+```toml
+[[messenger_broadcasts]]
+identifier = "example-broadcasts"
+app_id = "9"
+page_id = "100"
+ad_account_id = "700"
+token_env = "EXAMPLE_PAGE_TOKEN"
+ad_token_env = "EXAMPLE_ADS_TOKEN"
+actions = []
+max_daily_budget_cents = 1000
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | required | Trimmed, nonempty local label, unique ignoring case within broadcast profiles |
+| `app_id`, `page_id` | required | Positive decimal IDs without leading zeros; duplicate app/Page pairs are rejected |
+| `ad_account_id` | required | Positive decimal ad account ID without the `act_` prefix |
+| `token_env` | required | Environment variable containing the Page token for consent refresh and unsubscribe |
+| `ad_token_env` | required | Environment variable containing the ads token for campaign operations, preview and sends |
+| `enabled` | `true` | Activate webhook routing, scheduled consent refresh and sending; sending also requires `actions` |
+| `actions` | `[]` | Accepts only `send`, without duplicates; sends are off by default |
+| `max_daily_budget_cents` | `0` | Maximum requested average daily campaign budget; positive when `send` is allowed |
+| `max_recipients` | `100` | Eligible recipients per broadcast, from 1 to 1000 |
+| `min_interval_hours` | `24` | Minimum time since a recipient's accepted send; at least 12 hours |
+| `consent_max_age_hours` | `24` | Maximum age of qualifying consent evidence; positive |
+| `campaign_days` | `7` | Campaign duration from creation, from 1 to 30 days |
+| `schedule` | empty | Five-field cron expression for subscription refresh only; empty means manual refresh |
+
+Unknown keys, invalid environment variable names, invalid IDs or limits, and
+invalid schedules fail configuration loading. `enabled = false` prevents
+sending, subscription refresh and webhook routing; local unsubscribe remains
+available. The generic consent job is
+`messenger_broadcasts:<source-identifier>`, separate from inbox backfill.
+An active profile does not grant Meta permissions or subscribe the app.
+
 ### `[[chatwoot]]` {#chatwoot}
 
 Configure one account per Chatwoot instance. Each registered inbox becomes a

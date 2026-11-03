@@ -54,6 +54,7 @@ type SerialOperationGate struct {
 
 	holderLabel    string
 	holderSince    time.Time
+	holderReleased bool
 	requestWaiters int
 	requestsDone   chan struct{}
 }
@@ -171,22 +172,50 @@ func (g *SerialOperationGate) beginLabeledWorkContext(ctx context.Context, label
 		g.active++
 		g.holderLabel = label
 		g.holderSince = time.Now()
+		g.holderReleased = false
 		g.mu.Unlock()
 		break
 	}
+	return g.releaseWork(true), true
+}
+
+// beginConcurrentWorkContext shares an existing lease only with the named
+// holder. The semaphore stays held until both operations finish, so backup
+// freezes, shutdown and unrelated mutations still wait for all archive writes.
+func (g *SerialOperationGate) beginConcurrentWorkContext(ctx context.Context, holder string) (func(), bool) {
+	if g == nil || ctx == nil || ctx.Err() != nil {
+		return func() {}, false
+	}
+	g.mu.Lock()
+	if g.draining || g.active == 0 || g.holderReleased || g.holderLabel != holder {
+		g.mu.Unlock()
+		return func() {}, false
+	}
+	g.active++
+	g.mu.Unlock()
+	return g.releaseWork(false), true
+}
+
+func (g *SerialOperationGate) releaseWork(holder bool) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			g.mu.Lock()
-			if g.active > 0 {
-				g.active--
+			if holder {
+				g.holderReleased = true
 			}
-			g.holderLabel = ""
-			g.holderSince = time.Time{}
+			g.active--
+			last := g.active == 0
+			if last {
+				g.holderLabel = ""
+				g.holderSince = time.Time{}
+			}
 			g.mu.Unlock()
-			<-sem
+			if last {
+				<-g.sem
+			}
 		})
-	}, true
+	}
 }
 
 // Holder reports what currently holds the gate, if anything.
@@ -302,6 +331,20 @@ func operationGateMiddleware(gate OperationGate, authorized func(*http.Request) 
 			if !shouldGate {
 				next.ServeHTTP(w, r)
 				return
+			}
+			// Only fully parsed cancellation and unsubscribe requests receive
+			// these labels. Share an active send's lease, never a backup freeze
+			// or another operation's lease. The handler still authorizes owners.
+			if label == "msgvault broadcast cancel" || label == "msgvault broadcast unsubscribe" {
+				if concurrent, ok := gate.(interface {
+					beginConcurrentWorkContext(ctx context.Context, holder string) (func(), bool)
+				}); ok {
+					if done, ok := concurrent.beginConcurrentWorkContext(r.Context(), "msgvault broadcast send"); ok {
+						defer done()
+						next.ServeHTTP(w, r)
+						return
+					}
+				}
 			}
 			done, ok := beginGateWorkBounded(r.Context(), gate, label)
 			if !ok {
@@ -657,14 +700,20 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 
 	// An unparseable body stays gated with a generic label; the handler
 	// produces the real decode error for the client.
-	var req struct {
-		Args []string `json:"args"`
-	}
+	var req CLIRunRequest
 	if json.Unmarshal(body, &req) == nil && len(req.Args) > 0 {
 		// Delegated callers are admitted by the same command and permission
 		// predicate as the handler, so rejected work never takes a gate slot.
 		if auth.Mode == AuthModeDelegated && !delegatedCLIRunAdmitted(req.Args, auth.Grant) {
 			return "", true, nil
+		}
+		if len(req.Args) > 0 && req.Args[0] == "broadcast" {
+			if in, err := ParseCLIRunBroadcast(req); err == nil {
+				switch in.Sub {
+				case "send", "cancel", "unsubscribe":
+					return "msgvault broadcast " + in.Sub, false, nil
+				}
+			}
 		}
 		command := cliRunCommandWords(req.Args)
 		if cliRunReadOnlyCommands[command] || cliRunSelfGatedCommands[command] || IsCLIRunEmbeddingsOptimize(req.Args) {

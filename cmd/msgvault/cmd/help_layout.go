@@ -28,6 +28,7 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"broadcast":              helpGroupWrite,
 	"meta-webhooks":          helpGroupSources,
 	"source":                 helpGroupSources,
 	"activity":               helpGroupIndex,

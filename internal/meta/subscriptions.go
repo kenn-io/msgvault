@@ -9,7 +9,7 @@ import (
 )
 
 // PageWebhookFields is the Page subscription surface supported by this client.
-var PageWebhookFields = []string{"feed", "mention", "messages", "message_echoes", "message_reactions", "message_edits", "messaging_postbacks", "messaging_referrals", "messaging_optins", "standby", "messaging_handovers"}
+var PageWebhookFields = []string{"feed", "mention", "messages", "message_echoes", "message_reactions", "message_edits", "messaging_postbacks", "messaging_referrals", "messaging_optins", "marketing_message_echoes", "marketing_message_deliveries", "marketing_message_reads", "marketing_message_clicks", "marketing_message_delivery_failed", "standby", "messaging_handovers"}
 
 const graphFieldsParam = "fields"
 

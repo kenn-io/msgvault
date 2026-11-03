@@ -42,6 +42,7 @@ also a separate opt-in because downloading an image can activate email tracking.
 | Meta webhooks | [Signed receiver and replay](../usage/meta-webhooks.md) | Incoming Page feed comments; other fields held for a future release; unreleased |
 | Instagram comments | [Professional account sync](../usage/instagram-comments.md) | Selected Page token and linked professional account; returned media comments and replies; unreleased |
 | Messenger inbox | [`source facebook-messages add` and `sync`](../usage/facebook-messages.md) | Selected Page token; recent backfill and webhook events; unreleased |
+| Messenger marketing subscribers | [Broadcast consent and sends](../usage/messenger-broadcasts.md) | Existing Page inbox source, explicit opt-in evidence and eligible paid marketing access; sends off by default; unreleased |
 | Instagram inbox | [`source instagram-messages add` and `sync`](../usage/instagram-messages.md) | Verified business and Advanced Access; recent backfill and webhook events; unreleased |
 | Beeper Desktop | [Beeper sync](../usage/beeper.md) | History and media exposed by the running local Beeper API |
 | Inline | [Inline sync](../usage/inline.md) | All accessible chats, including hidden, archived, and child threads; optional exact chat filter; requires a complete catalog from the connected backend |

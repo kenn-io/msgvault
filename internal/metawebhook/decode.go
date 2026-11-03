@@ -69,7 +69,7 @@ func messagingField(object string, value jsontext.Value) string {
 		}
 		return "messages"
 	}
-	for _, pair := range [][2]string{{"reaction", "message_reactions"}, {"message_edit", "message_edits"}, {"read", "message_reads"}, {"delivery", "message_deliveries"}, {"postback", "messaging_postbacks"}, {"referral", "messaging_referrals"}, {"optin", "messaging_optins"}, {"pass_thread_control", "messaging_handovers"}, {"take_thread_control", "messaging_handovers"}, {"request_thread_control", "messaging_handovers"}, {"app_roles", "messaging_handovers"}} {
+	for _, pair := range [][2]string{{"reaction", "message_reactions"}, {"message_edit", "message_edits"}, {"read", "message_reads"}, {"delivery", "message_deliveries"}, {"postback", "messaging_postbacks"}, {"referral", "messaging_referrals"}, {"optin", "messaging_optins"}, {"marketing_message_echoes", "marketing_message_echoes"}, {"marketing_message_deliveries", "marketing_message_deliveries"}, {"marketing_message_reads", "marketing_message_reads"}, {"marketing_message_clicks", "marketing_message_clicks"}, {"marketing_message_delivery_failed", "marketing_message_delivery_failed"}, {"pass_thread_control", "messaging_handovers"}, {"take_thread_control", "messaging_handovers"}, {"request_thread_control", "messaging_handovers"}, {"app_roles", "messaging_handovers"}} {
 		if _, ok := event[pair[0]]; !ok {
 			continue
 		}

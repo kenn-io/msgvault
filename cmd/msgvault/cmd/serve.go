@@ -655,6 +655,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, profile := range cfg.ScheduledMessengerBroadcastProfiles() {
+		if err := registerScheduledBroadcastJob(sched, profile, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredBroadcastSync(ctx, s, profile)
+		})); err != nil {
+			logger.Error("failed to schedule Messenger subscriptions", "profile", profile.Identifier, "error", err)
+		}
+	}
+
 	for _, source := range cfg.InstagramComments {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("Instagram comments profile is enabled but has no schedule", "profile", source.Identifier)
@@ -2655,6 +2663,9 @@ func (a *storeAPIAdapter) runCLICommandWithRunner(
 			return nil
 		}
 		return emit(api.CLIRunEvent{Type: stream, Data: data})
+	}
+	if len(req.Args) > 0 && req.Args[0] == "broadcast" {
+		return a.runCLIBroadcast(ctx, req, emit)
 	}
 	if api.IsCLIRunDraftCreate(req.Args) {
 		if api.IsCLIRunDraftForward(req.Args) {

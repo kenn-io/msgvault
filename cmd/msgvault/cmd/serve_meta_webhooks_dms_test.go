@@ -88,7 +88,9 @@ func TestServeRegistersDMHandlers(t *testing.T) {
 		_, ok := reg.Lookup(pair[0], pair[1])
 		assert.True(ok, pair)
 	}
-	for _, field := range []string{"messaging_optins", "message_reads", "message_deliveries", "messaging_postbacks", "messaging_referrals", "messaging_handovers"} {
+	_, optins := reg.Lookup("page", "messaging_optins")
+	assert.True(optins, "broadcast consent handler holds unconfigured deliveries for replay")
+	for _, field := range []string{"message_reads", "message_deliveries", "messaging_postbacks", "messaging_referrals", "messaging_handovers"} {
 		_, ok := reg.Lookup("page", field)
 		assert.False(ok, field)
 	}

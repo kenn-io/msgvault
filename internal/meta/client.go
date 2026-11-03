@@ -58,7 +58,11 @@ func newClient(token, origin string, h *http.Client) (*Client, error) {
 }
 
 // APIError retains no provider text, URLs, request headers or token.
-type APIError struct{ Status, Code, Subcode int }
+type APIError struct {
+	Status, Code, Subcode int
+	RemainingSeconds      int
+	Kind                  string
+}
 
 func (e *APIError) Error() string {
 	if e.Code == 0 {
@@ -138,6 +142,9 @@ func (c *Client) do(ctx context.Context, method, path string, q url.Values, body
 		}
 		if readErr == nil && len(data) <= errorLimit && json.Unmarshal(data, &wire) == nil {
 			apiErr.Code, apiErr.Subcode = wire.Error.Code, wire.Error.Subcode
+		}
+		if readErr == nil && len(data) <= errorLimit {
+			apiErr.Kind, apiErr.RemainingSeconds = marketingErrorFields(data)
 		}
 		return apiErr
 	}
