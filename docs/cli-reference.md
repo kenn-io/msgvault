@@ -1684,8 +1684,8 @@ msgvault source instagram-mentions sync [identifier] [--max-requests 1000] [--fu
 ```
 
 See [Mentions and tags](usage/instagram-comments.md#mentions-and-tags) for
-coverage and access prerequisites. Caption/comment webhook discovery and
-public replies are pending.
+coverage and access prerequisites. Caption and comment mentions arrive through
+the webhook receiver; public replies are pending.
 
 ## add-chatwoot
 

@@ -68,7 +68,7 @@ Ad-only discovery, media downloads, and public replies are separate work.
 ## Mentions and tags
 
 Opt in to a separate `instagram_mentions` source to search foreign media where
-this account is photo-tagged (unreleased). Add `mentions = true` to the same
+this account is tagged or mentioned (unreleased). Add `mentions = true` to the same
 `[[instagram_comments]]` profile, then register and sync:
 
 ```bash
@@ -86,15 +86,26 @@ searchable text, including after a search index rebuild. Mentioned comments
 expose no author ID. Foreign-owned
 media is accepted; media explicitly owned by the selected account is skipped.
 
-Caption and comment mentions require webhook discovery. The resolver is
-implemented, but its webhook integration is pending; these commands collect
-tags only. Public mention replies are also pending. Tagged photos cannot be
-replied to through this integration. Story mentions belong to Instagram
-Messaging and are outside this source.
+Caption and comment mentions arrive through the Meta webhook receiver
+(unreleased). Register the mentions source first, enable the receiver for its
+app, and subscribe to Instagram `mentions`. The receiver selects the enabled,
+opted-in profile by signing app and Instagram account. Polling collects tags
+only. A busy source is retried; inaccessible mentions stay in the webhook
+inbox for retry or inspection. Duplicate deliveries preserve one archived row.
+Backlogs resolve in turns of up to 16 mentions so other archive operations can
+run between turns. Automatic retries resume completed items after a restart
+and do not spend an attempt on a request-budget pause. Explicit replay
+refreshes every item.
+Public mention replies are pending. Tagged photos cannot be replied to through
+this integration. Story mentions belong to Instagram Messaging and are outside
+this source.
+
+The own-media skip depends on Graph returning the account as `owner`. Owner
+availability on comment expansions and tags still needs a live check.
 
 Live reads require `instagram_basic`, `instagram_manage_comments`, and
 `pages_read_engagement`, plus `ads_read` or `ads_management` when Page roles
-come through Business Manager. The planned mentions webhook also requires
+come through Business Manager. The mentions webhook also requires
 `pages_manage_metadata` and `pages_show_list`, a Live app, and production
 business verification. Permission and access checks must be completed before
 live use. Whether the profile's Page token works on mentions and tags, rather

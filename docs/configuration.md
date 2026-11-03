@@ -1793,7 +1793,7 @@ scheduler job is `instagram_comments:<source-identifier>`.
 `source instagram-mentions sync` or, when enabled and scheduled, the independent job
 `instagram_mentions:<source-identifier>`. It reuses `token_env` with no fallback.
 See [Mentions and tags](usage/instagram-comments.md#mentions-and-tags) for
-coverage, pending webhook integration, and live-access prerequisites.
+coverage, webhook integration, and live-access prerequisites.
 
 ### `[[chatwoot]]` {#chatwoot}
 

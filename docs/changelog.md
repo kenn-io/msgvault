@@ -9,8 +9,7 @@ All notable changes to msgvault, grouped by release.
 ## Unreleased
 
 - [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed and Instagram comments, with owner subscription, status, and replay commands. Other fields stay held until their handlers are installed and configured.
-
-- [Instagram mentions and tags](usage/instagram-comments.md#mentions-and-tags) adds opt-in, resumable tag polling as searchable conversations; webhook mention discovery and replies are pending.
+- [Instagram mentions and tags](usage/instagram-comments.md#mentions-and-tags) adds opt-in, resumable tag polling and caption/comment mention webhooks as searchable conversations; replies are pending.
 
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
