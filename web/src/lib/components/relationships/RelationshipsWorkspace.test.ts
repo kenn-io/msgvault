@@ -390,6 +390,20 @@ describe('RelationshipsWorkspace', () => {
     expect(screen.queryByRole('grid', { name: 'Relationship activity' })).toBeNull();
   });
 
+  it('forwards visual search setup from files for a person', async () => {
+    const { fetchFn } = fetchHandler({
+      '/api/v1/participants/1': async () => Response.json(person(1, 'Alice Example')),
+      '/api/v1/relationships/1/timeline': async () => Response.json({ canonical_id: 1, identity_revision: 1, cache_revision: 'cache-rel', rows: [], total_count: 0 }),
+      '/api/v1/participants/1/files/search': async () => Response.json({ files: [], total_count: 0, cache_revision: 'cache-rel', search_provenance: {} })
+    });
+    const onConfigureVisualSearch = vi.fn();
+    const props = { ...baseProps(fetchFn), target: 'cluster:1', filesOpen: true, onConfigureVisualSearch };
+    render(RelationshipsWorkspace, { props });
+    await props.controller.openTarget('cluster:1', props.predicate);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Set up' }));
+    expect(onConfigureVisualSearch).toHaveBeenCalledTimes(1);
+  });
+
   it('debounces identity search typing into one /api/v1/participants/search fetch', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
@@ -555,10 +569,10 @@ describe('RelationshipsWorkspace', () => {
     const row = (await screen.findByText('report.pdf')).closest('[role="row"]')!;
     await fireEvent.click(row);
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open containing item' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open message' }));
     expect(onOpenFileItem).toHaveBeenCalledWith('message:42');
 
-    await fireEvent.click(await screen.findByRole('button', { name: 'Open containing conversation' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'Open conversation' }));
     expect(onOpenFileConversation).toHaveBeenCalledWith('message:42', 42, 70);
   });
 

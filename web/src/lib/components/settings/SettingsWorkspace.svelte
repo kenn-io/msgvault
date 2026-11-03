@@ -28,6 +28,7 @@
     isChange,
     isIncompleteNumber,
     persistedValue,
+    readOnlyValue,
     typedValue,
     valueText,
     type SettingState,
@@ -245,7 +246,7 @@
     const request = cardDAVRequest;
     if (!request || request.key === consumedCategoryRequestKey) return;
     activeCategory = 'carddav';
-    if (request.conflictID === undefined) {
+    if (request.conflictID === undefined && request.connection === undefined) {
       consumedCategoryRequestKey = request.key;
       onCardDAVRequestConsumed(request.key);
     }
@@ -416,13 +417,6 @@
   function humanizeKey(key: string): string {
     const words = (key.split('.').at(-1) ?? key).replaceAll('_', ' ');
     return words.charAt(0).toUpperCase() + words.slice(1);
-  }
-  function readOnlyValue(setting: SettingState): string {
-    if (setting.kind === 'secret') return setting.secret?.configured ? setting.secret.hint || 'Set' : 'None';
-    const value = valueText(persistedValue(setting));
-    const off = setting.validation?.off;
-    if (off && value === (off.value ?? '')) return off.label;
-    return value || 'Not set';
   }
   // Rows that only matter once something else is on stay out of the way until then.
   function visible(setting: SettingState): boolean {

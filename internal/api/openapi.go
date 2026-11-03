@@ -391,7 +391,8 @@ import (
 // 3.37.0 omits first_at and last_at on person summaries with no sent or received messages, and returns participants with no sent or received messages instead of 404.
 // 3.38.0 adds exact sender and To participant identities to conversation windows
 // and canonical entry-kind filters to analytical requests.
-const APISchemaVersion = "3.38.0"
+// 3.39.0 adds the optional account to staged deletion list summaries.
+const APISchemaVersion = "3.39.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

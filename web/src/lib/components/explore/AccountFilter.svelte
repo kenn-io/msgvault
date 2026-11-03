@@ -5,6 +5,7 @@
   import type { APIClient } from '../../api/client';
   import type { ExploreFilter } from '../../explore/models';
   import { sameFilterID } from '../../explore/models';
+  import { sourceMailbox } from '../../sources/labels';
 
   let {
     client,
@@ -52,20 +53,6 @@
 
   function includesSource(id: string): boolean {
     return sourceIDs.some((sourceID) => sameFilterID(sourceID, id));
-  }
-
-  // The username of an "imaps://user@host" identifier, or the identifier.
-  function sourceMailbox(identifier: string): string {
-    const scheme = identifier.indexOf('://');
-    if (scheme < 0) return identifier.toLowerCase();
-    const rest = identifier.slice(scheme + 3);
-    const at = rest.lastIndexOf('@');
-    if (at <= 0) return identifier.toLowerCase();
-    try {
-      return decodeURIComponent(rest.slice(0, at)).toLowerCase();
-    } catch {
-      return rest.slice(0, at).toLowerCase();
-    }
   }
 
   // List a source's children when they divide its mail, or when some of it

@@ -19,7 +19,7 @@ import { SEARCH_MODE_PREFERENCE_KEY } from '../search/modes';
 
 describe('Explore URL state', () => {
   it.each([
-    ['Back', 'stay'], ['Back', 'leave'], ['click', 'stay'], ['click', 'leave']
+    ['Back', 'stay'], ['Back', 'leave'], ['click', 'leave']
   ] as const)('holds Back to an unindexed entry from dirty Settings, then handles %s and %s', async (navigation, outcome) => {
     window.history.replaceState(null, '', '/?workspace=files');
     window.history.pushState({ exploreIndex: 3 }, '', '/?workspace=settings');

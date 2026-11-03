@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### API schema 3.39.0
+
+- Staged deletion list summaries include the optional `account` so clients can identify the mailbox for each batch.
+
 ### API schema 3.38.0
 
 - Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.38.0 adds optional participant IDs to messages in conversation responses.

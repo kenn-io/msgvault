@@ -216,7 +216,7 @@ test('person attachment gallery preserves directions and Media state across sour
   await card.click();
   const viewer = page.getByRole('dialog', { name: 'View photo.png' });
   await expect(viewer).toBeVisible();
-  await viewer.getByRole('button', { name: 'Open containing item' }).click();
+  await viewer.getByRole('button', { name: 'Open message', exact: true }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Messages' })).toBeVisible();
   await expect(page.getByRole('complementary', { name: /Reading pane: Subject line/ })).toBeVisible();
 
@@ -308,6 +308,9 @@ for (const width of [1440, 420]) {
     const files = page.getByRole('grid', { name: 'Files results' });
     await expect(files.getByText('notes.pdf', { exact: true })).toBeInViewport();
     expect((await files.boundingBox())!.height).toBeGreaterThanOrEqual(100);
+    await page.getByRole('checkbox', { name: 'Group conversations' }).check();
+    await expect(page.getByRole('checkbox', { name: 'Group conversations' })).toBeInViewport();
+    await expect(files.getByText('notes.pdf', { exact: true })).toBeInViewport();
     await expect(overview).toHaveAttribute('open', '');
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: `test-results/artifacts/relationships-expanded-${width}.png` });

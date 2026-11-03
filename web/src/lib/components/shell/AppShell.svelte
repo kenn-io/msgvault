@@ -18,6 +18,7 @@
   import { onDestroy, onMount, setContext, tick, type Snippet, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
+  import { visualReadiness } from '../../search/visual-ready.svelte';
   import { reportError, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { startScreenViewReporting } from '../../telemetry/screen-views';
   import type {
@@ -37,7 +38,6 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { FILE_FAMILY_LABELS } from '../../explore/labels';
   import { ExploreLoader } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
@@ -65,6 +65,9 @@
   import GroupTable from '../explore/GroupTable.svelte';
   import SaveViewDialog from '../saved-views/SaveViewDialog.svelte';
   import SourcesWorkspace from '../sources/SourcesWorkspace.svelte';
+  import DeletionReview from '../deletions/DeletionReview.svelte';
+  import FileFilters from '../files/FileFilters.svelte';
+  import { fileFilterChips } from '../files/filter-chips';
   import DeletionsWorkspace from '../deletions/DeletionsWorkspace.svelte';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
@@ -93,6 +96,7 @@
   import RunHistoryDialog from './RunHistoryDialog.svelte';
 
   const media = mediaReadiness();
+  const visual = visualReadiness();
   interface Props {
     client: APIClient;
     state?: ExploreState;
@@ -169,31 +173,6 @@
     if (fileCount === null) return '';
     return `${fileCount.toLocaleString()} ${fileCount === 1 ? 'file' : 'files'}`;
   });
-  // Grouped Files hides the Filename and Type controls, but the group request still applies them.
-  const groupedFileFilterChips = $derived.by(() => {
-    const { groupingChain, fileFilenameQuery, fileMIMEFamilies } = exploreState.current;
-    if (groupingChain.length === 0) return [];
-    const chips = [];
-    if (fileFilenameQuery) {
-      chips.push({
-        key: 'filename',
-        label: `Filename: “${fileFilenameQuery}”`,
-        removeLabel: 'Remove filename filter',
-        onRemove: () =>
-          commitNavigation({ fileFilenameQuery: '', activeRow: null, selectedRow: null, scrollAnchor: null }),
-      });
-    }
-    if (fileMIMEFamilies.length > 0) {
-      chips.push({
-        key: 'type',
-        label: `Type: ${fileMIMEFamilies.map((family) => FILE_FAMILY_LABELS[family]).join(', ')}`,
-        removeLabel: 'Remove type filter',
-        onRemove: () =>
-          commitNavigation({ fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }),
-      });
-    }
-    return chips;
-  });
   let archiveWasOpen = false;
   const archiveMeetingID = $derived(parseArchiveMeetingSelection(exploreState.current.selectedRow));
   const archiveNavigationFingerprint = $derived(navigationFingerprint(exploreState.current));
@@ -214,6 +193,7 @@
       archiveWasOpen = id !== undefined;
     });
   });
+  let fileFiltersReset = $state(0);
   const SEARCH_TYPING_DEBOUNCE_MS = 250;
   const debouncedSearchPatch = bufferedCallback((patch: Partial<ExploreURLState>) => {
     exploreState.replaceCommittedDraft(patch);
@@ -505,7 +485,7 @@
   onMount(() => {
     shellData.start();
     if (enabled) void shellData.jobs.refresh();
-    const refresh = () => { if (enabled) { void shellData.refresh(); void shellData.jobs.refresh(); } };
+    const refresh = () => { if (enabled) { void shellData.refresh(); void shellData.jobs.refresh(); void visual?.ready; } };
     window.addEventListener('focus', refresh);
     return () => { window.removeEventListener('focus', refresh); shellData.stop(); };
   });
@@ -514,7 +494,7 @@
   let previousAttachmentID: number | undefined;
   let selectionPreflight = $state<ExplorePreflight>();
   let selectionPreflightController: AbortController | undefined;
-  let pendingDeletionReview = $state<'explicit' | 'all_matching'>();
+  let pendingDeletionReview = $state<GeneratedExploreSelection>();
   let searchInput = $state<HTMLInputElement>();
   // The loader also drives the Files-shell grouped view (AppShell gates its
   // internal load effect on `workspace === 'files' && groupingChain.length >
@@ -714,8 +694,7 @@
   function openDeletionReview(mode: 'explicit' | 'all_matching'): void {
     const candidate = apiSelection;
     if (exploreState.current.workspace !== 'everything' || !candidate || candidate.mode !== mode) return;
-    pendingDeletionReview = mode;
-    commitWorkspace('deletions');
+    pendingDeletionReview = candidate;
   }
   async function openSavedView(state: Partial<ExploreURLState>): Promise<void> {
     if (exploreState.holdNavigation(state, () => void openSavedView(state))) return;
@@ -967,7 +946,7 @@
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
     const selector =
       kind === 'filters'
-        ? exploreState.current.workspace === 'everything' ? 'button[aria-label="Filter"]' : 'button[aria-label="Filters"]'
+        ? exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' ? 'button[aria-label="Filter"]' : 'button[aria-label="Filters"]'
         : kind === 'grouping'
           ? '[data-group-picker] button'
           : '[data-sort-menu] button';
@@ -1283,6 +1262,7 @@
       showCollapseToggle
       jobs={shellData.jobs}
       views={shellData.views}
+      deletionsStaged={shellData.deletionsStaged}
       viewsError={shellData.error}
       onRetryViews={() => void shellData.refresh()}
       onPastRuns={() => openOperations()}
@@ -1345,18 +1325,12 @@
           operationsController
         )}{/if}
       {:else if exploreState.current.workspace === 'sources'}
-        <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenOperations={() => openOperations('source_sync')} />
+        <SourcesWorkspace bind:this={sourcesPage} {client} onStatusChange={() => void shellData.jobs.refresh(true)} onOpenSettings={(settingsCategory, connection) => { cardDAVSettingsRequest = connection ? { connection, key: ++cardDAVSettingsRequestKey } : undefined; commitNavigation({ workspace: 'settings', settingsCategory, settingsAuthority: '' }); }} onOpenOperations={() => openOperations('source_sync')} />
       {:else if exploreState.current.workspace === 'deletions'}
-        <DeletionsWorkspace
-          {client}
-          selection={apiSelection}
-          reviewOnMount={pendingDeletionReview === apiSelection?.mode}
-          onReviewStarted={() => {
-            pendingDeletionReview = undefined;
-          }}
-        />
+        <DeletionsWorkspace {client} controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
         <RelationshipsWorkspace
+          onConfigureVisualSearch={openVisualAttachmentSettings}
           {client}
           controller={relationshipsController}
           facet={exploreState.current.relationshipFacet}
@@ -1396,6 +1370,7 @@
         />
       {:else if exploreState.current.workspace === 'directory'}
         <DirectoryWorkspace
+          onConfigureVisualSearch={openVisualAttachmentSettings}
           {client}
           controller={directoryController}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
@@ -1434,14 +1409,17 @@
           <PageHeader title="Files">
             {#snippet actions()}<Button surface="outline" label="Save view…" onclick={() => (saveViewOpen = true)} />{/snippet}
           </PageHeader>
+          {#snippet filesToolbar(controls: Snippet | undefined)}
           <ContextBar
             {client}
+            messages
+            extraControls={controls}
             query={exploreState.current.query}
             searchMode={exploreState.current.searchMode}
             filters={exploreState.current.filters}
             groupingChain={exploreState.current.groupingChain}
             countLabel={filesCountLabel}
-            extraChips={groupedFileFilterChips}
+            extraChips={fileFilterChips(exploreState.current.fileFilenameQuery, exploreState.current.fileMIMEFamilies, () => commitNavigation({ fileFilenameQuery: '', activeRow: null, selectedRow: null, scrollAnchor: null }), () => commitNavigation({ fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }))}
             sort={exploreState.current.groupingChain.length > 0 ? undefined : {
               options: FILE_SORT_OPTIONS,
               value: fileSortValue(exploreState.current.fileSort),
@@ -1468,7 +1446,7 @@
                 activeRow: null,
                 scrollAnchor: null,
               })}
-            onClearFilters={() => commitNavigation({ filters: [], activeRow: null, scrollAnchor: null })}
+            onClearFilters={() => { commitNavigation({ filters: [], fileFilenameQuery: '', fileMIMEFamilies: [], activeRow: null, selectedRow: null, scrollAnchor: null }); fileFiltersReset++; }}
             onFiltersChange={(filters) =>
               commitNavigation({
                 filters,
@@ -1484,7 +1462,11 @@
                 selectedRow: null,
                 scrollAnchor: null,
               })}
-          />
+          >
+            {#snippet filterExtra()}{#key fileFiltersReset}<FileFilters filenameQuery={exploreState.current.fileFilenameQuery} mimeFamilies={exploreState.current.fileMIMEFamilies} onFilenameQueryChange={(fileFilenameQuery) => debouncedSearchPatch({ fileFilenameQuery, activeRow: null, selectedRow: null, scrollAnchor: null })} onMIMEFamiliesChange={(fileMIMEFamilies) => commitNavigation({ fileMIMEFamilies, activeRow: null, selectedRow: null, scrollAnchor: null })} />{/key}{/snippet}
+          </ContextBar>
+          {/snippet}
+          {#if exploreState.current.groupingChain.length > 0}{@render filesToolbar(undefined)}{/if}
           <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
           {#if exploreState.current.groupingChain.length > 0}
             <GroupTable
@@ -1514,10 +1496,12 @@
             />
           {:else}
             <FilesWorkspace
+              onConfigureVisualSearch={openVisualAttachmentSettings}
               bind:submitted={loader.submitted}
               {client}
               embedded
               showHeader={false}
+              toolbar={filesToolbar}
               bind:fileCount
               bind:fileCountLoading
               predicate={{ ...exploreState.predicate(), grouping: undefined }}
@@ -1621,6 +1605,7 @@
         showCollapseToggle={false}
         jobs={shellData.jobs}
         views={shellData.views}
+        deletionsStaged={shellData.deletionsStaged}
         viewsError={shellData.error}
         onRetryViews={() => void shellData.refresh()}
         onPastRuns={() => { void closeDrawer().then(() => openOperations()); }}
@@ -1689,6 +1674,10 @@
       openFileConversation(entryKey, messageID, conversationID);
     }}
   />
+{/if}
+
+{#if pendingDeletionReview}
+  <DeletionReview {client} selection={pendingDeletionReview} onclose={() => pendingDeletionReview = undefined} onStaged={() => { selection.clear(); void shellData.refreshDeletions(); }} />
 {/if}
 
 <style>

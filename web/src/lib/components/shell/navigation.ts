@@ -3,6 +3,7 @@ import Inbox from '@lucide/svelte/icons/inbox';
 import Paperclip from '@lucide/svelte/icons/paperclip';
 import Plug from '@lucide/svelte/icons/plug';
 import Settings from '@lucide/svelte/icons/settings';
+import Trash2 from '@lucide/svelte/icons/trash-2';
 import Users from '@lucide/svelte/icons/users';
 
 import type { ExploreWorkspace } from '../../explore/models';
@@ -23,12 +24,14 @@ export const NAVIGATION_ITEMS: NavigationItem[] = [
   { id: 'sources', label: 'Sources', icon: Plug },
 ];
 
+export const DELETIONS_ITEM: NavigationItem = { id: 'deletions', label: 'Staged deletions', icon: Trash2 };
+
 export const SETTINGS_ITEM: NavigationItem = { id: 'settings', label: 'Settings', icon: Settings };
 
 export function workspaceLabel(id: ExploreWorkspace): string {
   if (id === 'directory') return 'Directory';
   if (id === 'directory_review') return 'Reviews';
-  if (id === 'deletions') return 'Deletions';
+  if (id === 'deletions') return 'Staged deletions';
   return [...NAVIGATION_ITEMS, SETTINGS_ITEM].find((item) => item.id === id)?.label ?? 'msgvault';
 }
 

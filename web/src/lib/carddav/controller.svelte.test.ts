@@ -9,7 +9,8 @@ const idleStatus = {
   credential_configured: true,
   enabled: false,
   scheduled: false,
-  schedule: ''
+  schedule: '',
+  scheduler_running: false
 };
 
 function run(id: number, state: 'running' | 'succeeded' = 'running', updated = 0) {
@@ -116,6 +117,31 @@ describe('CardDAVController', () => {
     expect(controller.books.map(({ id, name }) => ({ id, name }))).toEqual([{ id: 3, name: 'Synthetic book 3' }]);
     await controller.sync();
     expect(posts).toBe(0);
+    controller.destroy();
+  });
+
+  it('restores sync after an idle Connections summary replaces a failed status read', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/status')) return Response.json({ error: 'unavailable' }, { status: 503 });
+      if (path.endsWith('/runs')) return Response.json({ runs: [] });
+      if (path.endsWith('/sync')) return Response.json({ error: 'unavailable' }, { status: 503 });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new CardDAVController(createAPIClient(fetchFn), document, 'default');
+    await controller.refreshFromConnection(idleStatus, controller.statusRevision);
+    await controller.sync();
+    await controller.retrySyncState();
+    expect(controller.statusError).toBe('Unable to load CardDAV status.');
+    expect(controller.syncUnknown).toBe(true);
+    expect(controller.canSync).toBe(false);
+
+    await controller.refreshFromConnection(idleStatus, controller.statusRevision);
+
+    expect(controller.syncUnknown).toBe(false);
+    expect(controller.statusError).toBeNull();
+    expect(controller.canSync).toBe(true);
     controller.destroy();
   });
 

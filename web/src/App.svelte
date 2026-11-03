@@ -8,6 +8,7 @@
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
   import { provideKataReadiness } from './lib/kata/kata-ready.svelte';
+  import { provideVisualReadiness } from './lib/search/visual-ready.svelte';
   import { provideMediaReadiness } from './lib/search/media-ready.svelte';
   import Login from './lib/components/auth/Login.svelte';
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
@@ -33,6 +34,8 @@
   provideKataReadiness(session.client);
   // svelte-ignore state_referenced_locally
   provideMediaReadiness(session.client);
+  // svelte-ignore state_referenced_locally
+  provideVisualReadiness(session.client);
   let oauthCallback = $state(false);
   let pathname = $state(window.location.pathname);
   const messageID = $derived(Number(/^\/messages\/([1-9]\d*)\/?$/.exec(pathname)?.[1]) || undefined);
