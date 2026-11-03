@@ -696,6 +696,8 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 	}{
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},
+		{"meta-webhooks status", `{"args":["meta-webhooks","status"]}`},
+		{"meta-webhooks status flags", `{"args":["meta-webhooks","--json","status"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},
 		{"person tiers preview", `{"args":["person","tiers","preview","--json"]}`},
 		{"person tiers explain", `{"args":["person","tiers","explain","7"]}`},
@@ -1483,4 +1485,18 @@ func TestBeginActivityNestingAndIdempotentEnd(t *testing.T) {
 	endSecond()
 	_, _, active = srv.currentActivity()
 	assert.False(active, "last end must clear the activity")
+}
+
+func TestMetaWebhookReplayBypassesHeldOperationGate(t *testing.T) {
+	gate := NewSerialOperationGate()
+	release, ok := gate.BeginWorkContext(t.Context())
+	require.True(t, ok)
+	defer release()
+	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/cli/run", strings.NewReader(`{"args":["meta-webhooks","replay","--state","held"]}`)).WithContext(ctx)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	assert.Equal(t, http.StatusNoContent, response.Code)
 }

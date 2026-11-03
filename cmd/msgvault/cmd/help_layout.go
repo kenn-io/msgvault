@@ -28,6 +28,8 @@ const (
 )
 
 var topLevelCommandGroups = map[string]string{
+	"meta-webhooks":          helpGroupSources,
+	"source":                 helpGroupSources,
 	"activity":               helpGroupIndex,
 	"add-account":            helpGroupSources,
 	"add-beeper":             helpGroupSources,
