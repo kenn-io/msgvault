@@ -5,9 +5,6 @@ Start here:
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
-  msgvault export-eml <id> -o msg.eml
-  msgvault export-messages --start 2026-09-01T00:00:00Z --end 2026-10-01T00:00:00Z
-  msgvault person --help
   msgvault daemon status
   msgvault setup status --json
 
@@ -83,8 +80,10 @@ Add and sync sources:
   backfill-teams-media   Re-fetch missing Teams inline images for imported messages
   list-folders           List IMAP folders (mailboxes) available for an account
   merge-account          Merge archived accounts
+  meta-webhooks          Manage Meta webhook delivery
   muesli-hook            Sync the meeting named by a Muesli completion event
   remove-account         Remove an account and all its data
+  source                 Add and sync provider sources
   sync                   Sync new mail from Gmail, IMAP, and Microsoft accounts
   sync-beeper            Sync chats from Beeper Desktop (all connected networks)
   sync-calendar          Sync Google Calendar events for an account
