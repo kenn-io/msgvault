@@ -16,6 +16,7 @@ import (
 )
 
 func TestImportAnchorMismatchFailsFast(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -96,6 +97,7 @@ func TestImportAnchorMismatchFailsFast(t *testing.T) {
 }
 
 func TestImportAnchorLostMessageReanchors(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	f := newFakeBeeper(t)
@@ -139,6 +141,7 @@ func TestImportAnchorLostMessageReanchors(t *testing.T) {
 }
 
 func TestRearmAnchorFallsBackToKnownChats(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	// A quiet account can enumerate zero chats in a run; re-arming must fall
@@ -157,6 +160,7 @@ func TestRearmAnchorFallsBackToKnownChats(t *testing.T) {
 }
 
 func TestVerifyAnchorsChatChurnVsReinstall(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	// Two chats, anchors in both. Deleting one anchored chat is ordinary
@@ -204,6 +208,7 @@ func TestVerifyAnchorsChatChurnVsReinstall(t *testing.T) {
 }
 
 func TestVerifyAnchorsZeroAnchorsFallsBackToArchivedSample(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 
 	// A run can legitimately complete with zero anchors (all lost to churn,
@@ -278,6 +283,7 @@ func reassignFirstAnchor(t *testing.T, f *fakeBeeper, imp *Importer, st *store.S
 }
 
 func TestImportRecoversAfterAnchorRepair(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	f := newFakeBeeper(t)
 	f.addChat(e2eChat())

@@ -22,6 +22,7 @@ import (
 )
 
 func TestStoredMediaNonAudioProbe(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"missing", "no-blob-store", "unread-tail"} {
 		t.Run(mode, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
@@ -56,6 +57,7 @@ func TestStoredMediaNonAudioProbe(t *testing.T) {
 }
 
 func TestStoredMediaUnhintedAudioHeaderRecovery(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t)
 	wav := syntheticWAV(800, 71)
@@ -92,6 +94,7 @@ func TestStoredMediaUnhintedAudioHeaderRecovery(t *testing.T) {
 }
 
 func TestStoredMediaUsesMessageTimestampWithoutRawRead(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	testutil.SkipIfPostgres(t, "SQLite authorizer detects unnecessary MIME reads")
 	world := importVoiceChat(t)
@@ -133,6 +136,7 @@ func TestStoredMediaUsesMessageTimestampWithoutRawRead(t *testing.T) {
 }
 
 func TestBeeperMediaMissingPartStaysVisible(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "missing-part", asset: "mxc://beeper.local/part",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 78)})
@@ -176,6 +180,7 @@ func addStoredMediaSource(
 }
 
 func TestStoredMediaProviderMatrix(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	wav := syntheticWAV(800, 61)
@@ -236,6 +241,7 @@ func TestStoredMediaProviderMatrix(t *testing.T) {
 }
 
 func TestBeeperMediaProcessesStoredAudioAfterSourceMerge(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	wav := syntheticWAV(800, 93)
 	world := importVoiceChat(t, voiceSpec{
@@ -278,6 +284,7 @@ func TestBeeperMediaProcessesStoredAudioAfterSourceMerge(t *testing.T) {
 }
 
 func TestBeeperMediaPreservesOriginalMessageIDAcrossChainedSourceMerges(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	wav := syntheticWAV(800, 94)
 	world := importVoiceChat(t, voiceSpec{
@@ -321,6 +328,7 @@ func TestBeeperMediaPreservesOriginalMessageIDAcrossChainedSourceMerges(t *testi
 }
 
 func TestBeeperMediaProcessesMergedAudioAfterSubsetExport(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "subset export uses SQLite database attachment")
 	require, assert := require.New(t), assert.New(t)
 	wav := syntheticWAV(800, 95)
@@ -373,6 +381,7 @@ func TestBeeperMediaProcessesMergedAudioAfterSubsetExport(t *testing.T) {
 }
 
 func TestBeeperMediaJournalReconcilesSourceMergeOwnershipChange(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{
 		id: "journal-merged-voice", asset: "mxc://beeper.local/journal-merged-voice", mime: "audio/wav",
@@ -420,6 +429,7 @@ func TestBeeperMediaJournalReconcilesSourceMergeOwnershipChange(t *testing.T) {
 }
 
 func TestStoredMediaEmptySlackExportDoesNotBlockLaterAudio(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t)
 	source, err := world.st.GetOrCreateSource("slack", "T01:EMPTY")
@@ -456,6 +466,7 @@ func TestStoredMediaEmptySlackExportDoesNotBlockLaterAudio(t *testing.T) {
 }
 
 func TestStoredMediaEmailFallback(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t)
@@ -501,6 +512,7 @@ func TestStoredMediaEmailFallback(t *testing.T) {
 }
 
 func TestStoredMediaRealWhatsAppImportWithoutRemoteRoute(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t)
@@ -569,6 +581,7 @@ func TestStoredMediaRealWhatsAppImportWithoutRemoteRoute(t *testing.T) {
 }
 
 func TestStoredMediaUnavailableCASTries(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"missing", "corrupt", "corrupt-header"} {
 		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)
@@ -612,6 +625,7 @@ func newTestDocbankServer(t *testing.T, docbank *fakeDocbank) *httptest.Server {
 }
 
 func TestStoredMediaProcessingChoice(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	descriptor := MediaDescriptor{SourceType: "whatsapp", SourceSHA256: strings.Repeat("a", 64),
 		TranscriptSHA256: hashBytes([]byte("source words")), Language: "en"}
@@ -630,6 +644,7 @@ func TestStoredMediaProcessingChoice(t *testing.T) {
 }
 
 func TestStoredMediaProfileReplay(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "asr-replay", asset: "mxc://beeper.local/asr-replay",
@@ -670,6 +685,7 @@ func TestStoredMediaProfileReplay(t *testing.T) {
 }
 
 func TestStoredMediaProfileChangeStartedJob(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "profile-change", asset: "mxc://beeper.local/profile-change",
@@ -730,6 +746,7 @@ func TestStoredMediaProfileChangeStartedJob(t *testing.T) {
 }
 
 func TestStoredMediaNewerSourceVersionUsesOwnReceipt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "identity-mismatch", asset: "mxc://beeper.local/identity-mismatch",
@@ -785,6 +802,7 @@ func TestStoredMediaNewerSourceVersionUsesOwnReceipt(t *testing.T) {
 }
 
 func TestStoredMediaOmittedReceiptVersions(t *testing.T) {
+	t.Parallel()
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "optional-versions", asset: "mxc://beeper.local/optional-versions",
 		mime: "audio/wav", fileName: "voice.wav", data: syntheticWAV(800, 79)})
@@ -823,6 +841,7 @@ func processingKeyForDestination(t *testing.T, st *store.Store, destination, pro
 // revision the worker records, so a reader can trust a match to mean the
 // provider transcript is unchanged.
 func TestMediaRevisionMatchesWorker(t *testing.T) {
+	t.Parallel()
 	requireParent := require.New(t)
 	assertParent := assert.New(t)
 	wav := syntheticWAV(800, 23)

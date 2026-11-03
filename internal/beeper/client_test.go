@@ -16,6 +16,7 @@ import (
 )
 
 func TestClientRetriesOn429(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	var calls atomic.Int32
@@ -38,6 +39,7 @@ func TestClientRetriesOn429(t *testing.T) {
 }
 
 func TestClientCapsOversizedRetryAfter(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -64,6 +66,7 @@ func TestClientCapsOversizedRetryAfter(t *testing.T) {
 }
 
 func TestClientUnauthorizedMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -79,6 +82,7 @@ func TestClientUnauthorizedMessage(t *testing.T) {
 }
 
 func TestClientNotFound(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +98,7 @@ func TestClientNotFound(t *testing.T) {
 }
 
 func TestClientContextCancelDuringBackoff(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +118,7 @@ func TestClientContextCancelDuringBackoff(t *testing.T) {
 }
 
 func TestClientSendsBearerToken(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	var got string
@@ -129,6 +135,7 @@ func TestClientSendsBearerToken(t *testing.T) {
 }
 
 func TestSearchChatsParams(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -152,6 +159,7 @@ func TestSearchChatsParams(t *testing.T) {
 }
 
 func TestListMessagesPagination(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -226,6 +234,7 @@ func assetServer(t *testing.T, responses ...assetResponse) (*Client, *atomic.Int
 // phrase-table sentinels and their precedence, a bare 404, statuses that win
 // over the phrase table, transient retries, and unhandled 4xx statuses.
 func TestGetAssetBytesClassification(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		responses   []assetResponse
@@ -392,6 +401,7 @@ func TestGetAssetBytesClassification(t *testing.T) {
 }
 
 func TestGetAssetBytesLargeErrorBodyIsNotSizeCap(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	body := expiredAssetBody + strings.Repeat(" ", 2048)
 	c, calls := assetServer(t, assetResponse{status: http.StatusInternalServerError, body: body})
@@ -403,6 +413,7 @@ func TestGetAssetBytesLargeErrorBodyIsNotSizeCap(t *testing.T) {
 }
 
 func TestClientPermanentPhraseIgnoredOffAssets(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	c, calls := assetServer(t,
 		assetResponse{status: http.StatusInternalServerError, body: expiredAssetBody},
@@ -414,6 +425,7 @@ func TestClientPermanentPhraseIgnoredOffAssets(t *testing.T) {
 	assert.EqualValues(2, calls.Load())
 }
 
+// serial: asserts a real-time retry duration.
 func TestClientDoesNotSleepAfterFinalAttempt(t *testing.T) {
 	assert := assert.New(t)
 	c, calls := assetServer(t, assetResponse{status: http.StatusInternalServerError})

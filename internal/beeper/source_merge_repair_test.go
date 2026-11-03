@@ -16,6 +16,7 @@ import (
 )
 
 func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"completed destination", "partial destination", "fresh destination"} {
 		t.Run(mode, func(t *testing.T) {
 			require := require.New(t)

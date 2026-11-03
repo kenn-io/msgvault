@@ -13,6 +13,7 @@ import (
 // Participant and would decode only the User fields, silently dropping
 // isAdmin. Participant must declare its own decoder.
 func TestParticipantDecodeKeepsIsAdminAndCapturesRawUser(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -31,6 +32,7 @@ func TestParticipantDecodeKeepsIsAdminAndCapturesRawUser(t *testing.T) {
 }
 
 func TestUserDecodeCapturesRawAndAccountUserStillDecodes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -46,6 +48,7 @@ func TestUserDecodeCapturesRawAndAccountUserStillDecodes(t *testing.T) {
 }
 
 func TestProviderUserIDNamespacesEveryForm(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		serviceSlug string
@@ -115,6 +118,7 @@ func TestProviderUserIDNamespacesEveryForm(t *testing.T) {
 }
 
 func TestProviderUserIDUsesOnlyDocumentedProviderID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	user := &User{
 		ID:  "@slack_alice:beeper.local",
@@ -126,6 +130,7 @@ func TestProviderUserIDUsesOnlyDocumentedProviderID(t *testing.T) {
 }
 
 func TestProviderUserIDNamespacesNativeIDByObservedScope(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	user := &User{
 		ID:  "@slack_alice:beeper.local",
@@ -138,6 +143,7 @@ func TestProviderUserIDNamespacesNativeIDByObservedScope(t *testing.T) {
 }
 
 func TestBridgePrefixAndMatrixServerFromUserID(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		userID     string
 		wantBridge string
