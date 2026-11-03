@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-03
 title: Changelog
 description: Release history for msgvault
 ---
@@ -25,6 +25,10 @@ All notable changes to msgvault, grouped by release.
 
 ### Other changes
 
+- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
+  nested replies on organic, visitor, and ad posts returned for a selected Page.
+  Search the archive and link commenters through existing people tools. This
+  does not send messages or include Instagram or ad-creative discovery.
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Import Telegram Desktop JSON exports with senders, replies, edit markers, and available media using [`import-telegram`](usage/text-messages.md#import-telegram). Overlapping exports add new messages while preserving archived content.
 
