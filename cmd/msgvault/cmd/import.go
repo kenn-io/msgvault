@@ -277,12 +277,18 @@ func (p *ImportCLIProgress) OnError(err error) {
 var importType string
 
 var importCmd = &cobra.Command{
-	Use:        "import [path]",
-	Short:      "Import messages (deprecated: use import-whatsapp)",
-	Deprecated: "use import-whatsapp instead",
-	Hidden:     true,
-	Args:       cobra.ExactArgs(1),
+	Use:   "import [path]",
+	Short: "Import messages from local exports",
+	Args: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return nil
+		}
+		return cobra.ExactArgs(1)(cmd, args)
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return cmd.Help()
+		}
 		if !isDaemonCLISubprocess() {
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
