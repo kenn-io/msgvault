@@ -4,7 +4,8 @@ Usage:
   msgvault source [command]
 
 Available Commands:
-  facebook-comments Archive comments from a configured Facebook Page
+  facebook-comments  Archive comments from a configured Facebook Page
+  instagram-comments Archive comments from a linked Instagram account
 
 Flags:
   -h, --help   help for source

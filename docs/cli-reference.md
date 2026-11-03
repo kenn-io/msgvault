@@ -1576,6 +1576,30 @@ for independent surface progress, request costs, and expired-cursor recovery.
 
 ---
 
+## source instagram-comments add
+
+Register the professional account linked to the selected Page, using a
+configured `[[instagram_comments]]` profile (unreleased). No identifier selects
+all configured profiles. Tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-comments add [identifier]
+```
+
+## source instagram-comments sync
+
+Archive returned media captions, comments, and replies from registered linked
+professional accounts (unreleased). A positive request budget includes Page
+and account verification. Partial writes remain searchable, and `--full`
+restarts cursors without deleting rows. No identifier selects all profiles.
+
+```bash
+msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+resuming, and coverage limits. These commands do not send replies.
+
 ## add-chatwoot
 
 Register permitted Chatwoot inboxes from configured `[[chatwoot]]` profiles.

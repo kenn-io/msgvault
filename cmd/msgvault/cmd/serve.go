@@ -654,6 +654,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.InstagramComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Instagram comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledInstagramCommentsSources() {
+		if err := registerScheduledInstagramCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
 	for _, source := range cfg.Chatwoot {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,
