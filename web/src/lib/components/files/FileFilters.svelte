@@ -15,7 +15,7 @@
 
 <label class="field">
   <span>Filename</span>
-  <SearchInput value={filenameQuery} ariaLabel="Filter filename" placeholder="Filename" oninput={onFilenameQueryChange} />
+  <SearchInput value={filenameQuery} ariaLabel="Filter filename" placeholder="" oninput={onFilenameQueryChange} />
 </label>
 <fieldset class="field">
   <legend>Type</legend>

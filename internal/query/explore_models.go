@@ -76,8 +76,9 @@ type Context struct {
 	// AdditionalDomainGroups is the domain analogue of
 	// AdditionalParticipantGroups: each inner slice is OR'd internally, the
 	// groups are AND'd together and AND'd with the primary Domains group.
-	AdditionalDomainGroups [][]string `json:"additional_domain_groups,omitempty"`
-	MessageTypes           []string   `json:"message_types,omitempty"`
+	AdditionalDomainGroups [][]string  `json:"additional_domain_groups,omitempty"`
+	MessageTypes           []string    `json:"message_types,omitempty"`
+	Kinds                  []EntryKind `json:"kinds,omitempty"`
 	// MailingLists is an exact case-insensitive scalar membership group.
 	// AdditionalMailingListGroups preserves repeated API filter conjunctions;
 	// values within each group are OR'd, while groups are AND'd.

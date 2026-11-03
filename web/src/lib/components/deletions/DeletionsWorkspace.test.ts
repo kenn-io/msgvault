@@ -56,15 +56,15 @@ describe('DeletionsWorkspace', () => {
       { ...batch('hidden', 'cancelled', 3), account: 'personal@example.com' },
     ], seen);
     render(DeletionsWorkspace, { client, controller: new DeletionsController(client) });
-    expect(await screen.findByText('2 messages')).toBeDefined();
+    expect(await screen.findByRole('cell', { name: '2' })).toBeDefined();
     expect(screen.getByText('Staged')).toBeDefined();
     expect(screen.queryByText('b1')).toBeNull();
     expect(screen.getByText('msgvault delete-staged')).toBeDefined();
     expect(screen.queryByText(/manifest/i)).toBeNull();
     expect(screen.getAllByRole('button', { name: /^Open batch from/ })).toHaveLength(1);
-    expect(screen.queryByText('3 messages')).toBeNull();
+    expect(screen.queryByRole('cell', { name: '3' })).toBeNull();
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Show cancelled (1)' }));
-    expect(screen.getByText('3 messages')).toBeDefined();
+    expect(screen.getByRole('cell', { name: '3' })).toBeDefined();
     expect(screen.getByText('Cancelled')).toBeDefined();
     expect(screen.getAllByRole('button', { name: /^Open batch from/ })).toHaveLength(2);
     const table = screen.getByRole('table', { name: 'Staged deletions' });

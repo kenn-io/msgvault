@@ -52,6 +52,7 @@
     error: string | null;
     degraded: ExploreCacheUnavailable | null;
     facet: RelationshipFacet;
+    savedOnly: boolean;
     query: string;
     activeKey: string | null;
     selection: ExploreSelectionState;
@@ -81,6 +82,7 @@
     error,
     degraded,
     facet,
+    savedOnly,
     query,
     activeKey,
     selection,
@@ -166,7 +168,6 @@
       {#if facet === 'people'}
         <FilterDropdown
           label="Filter"
-          title="Filter people"
           sections={filterSections}
           badgeCount={filterCount}
           resetLabel="Clear filters"
@@ -191,7 +192,7 @@
         {/each}
       </div>
     {/if}
-    {#if countLabel}<span class="count" aria-live="polite">{countLabel}</span>{/if}
+    {#if countLabel && rows.length > 0 && !degraded}<span class="count" aria-live="polite">{countLabel}</span>{/if}
   </div>
 
   {#if degraded?.readiness === 'building'}
@@ -264,7 +265,7 @@
               <div class="body">
                 <div class="line">
                   <span class="name" title={row.label}>{row.label}</span>
-                  {#if row.saved}
+                  {#if row.saved && !savedOnly}
                     <Tooltip text="Saved"><span class="saved" role="img" aria-label="Saved"><BookmarkCheck size={12} aria-hidden="true" /></span></Tooltip>
                   {/if}
                   {#if row.lastAt}<span class="when" data-mono>{relativeDate(row.lastAt)}</span>{/if}

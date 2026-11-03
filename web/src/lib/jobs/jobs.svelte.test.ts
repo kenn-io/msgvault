@@ -10,7 +10,7 @@ import { OperationsController } from '../operations/controller.svelte';
 const active = canonical.runs.find(run => run.kind === 'visual_embedding') as OperationRunSummary;
 const knownJobs = [
   { name: 'failures', sources: [sourceStatus({ scheduler_last_error: 'Token expired' })], lanes: [jobLane('document_extraction')], details: ['Token expired', 'Upstream operation failed.'], health: 'failed' },
-  { name: 'running work', sources: [], lanes: [jobLane('visual_embedding', { active, latest: active })], details: ['Running'], health: 'running' },
+  { name: 'running work', sources: [], lanes: [jobLane('visual_embedding', { active, latest: active })], details: [''], health: 'running' },
 ];
 
 it.each(knownJobs.flatMap(fixture => ['sources', 'operations', 'history'].map(failedEndpoint => ({ ...fixture, failedEndpoint }))))('keeps known $name when $failedEndpoint cannot refresh', async ({ sources, lanes, details, health, failedEndpoint }) => {

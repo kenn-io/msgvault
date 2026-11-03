@@ -1,5 +1,5 @@
 import { disabledTaskLookup, taskOutboundMetadata } from '../tasks/fixtures.test-support';
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
@@ -110,7 +110,10 @@ describe('MessageCard', () => {
       }
     });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    const menu = screen.getByRole('button', { name: /^More actions for .+ on / });
+    const date = screen.getByRole('article').querySelector('time')!.textContent;
+    expect(menu.getAttribute('aria-label')).toBe(`More actions for Alice Example <alice@example.com> on ${date}`);
+    await fireEvent.click(menu);
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'text');
   });
@@ -126,7 +129,7 @@ describe('MessageCard', () => {
       }
     });
 
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Show formatted HTML' }));
     expect(onViewModeChange).toHaveBeenCalledWith(42, 'html');
   });
@@ -182,7 +185,7 @@ describe('MessageCard', () => {
 
     expect(container.querySelector('pre')?.textContent).toBe('Plain text fallback.');
     expect(container.querySelector('iframe')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^More actions for .+ on / })).toBeNull();
   });
 
   it('passes its message scope to meeting export', async () => {
@@ -195,7 +198,7 @@ describe('MessageCard', () => {
     render(MessageCard, {
       props: { client, message: detail({ messageType: 'meeting_transcript' }), expanded: true }
     });
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Export meeting…' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
     await expect(requests.find(request => request.url.endsWith('/context'))!.json()).resolves.toMatchObject({ message_ids: [42] });
@@ -210,7 +213,7 @@ describe('MessageCard', () => {
 
     expect(await screen.findByText('Review archived notes')).toBeDefined();
     expect(screen.queryByRole('region', { name: 'Action items' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     expect(screen.queryByRole('menuitem', { name: 'Export meeting…' })).toBeNull();
     await fireEvent.keyDown(document, { key: 'Escape' });
     await view.rerender({ message: detail({ messageType: '' }) });
@@ -221,7 +224,7 @@ describe('MessageCard', () => {
     await view.rerender({ message: detail({ messageType: 'meeting_note' }) });
     expect(screen.queryByRole('region', { name: 'Action items' })).toBeNull();
     expect(screen.queryByText('Review archived notes')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^More actions for .+ on / })).toBeNull();
   });
 
   it('falls back to plain text when HTML is rejected by sanitization', () => {
@@ -236,7 +239,7 @@ describe('MessageCard', () => {
     expect(screen.getByRole('alert').textContent).toMatch(/could not render HTML/i);
     expect(container.querySelector('pre')).not.toBeNull();
     expect(container.querySelector('iframe')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^More actions for .+ on / })).toBeNull();
   });
 
   it('requests recordings once for an expanded card with attachments', async () => {
@@ -268,11 +271,11 @@ it.each([{ state: 'ready', shown: true }, { state: 'disabled', shown: false }])(
   const view = render(MessageCard, { props: { message: detail({ messageType: 'imessage' }), expanded: true, client }, context });
   const sibling = render(MessageCard, { props: { message: detail({ id: 43, messageType: 'imessage' }), expanded: true, client }, context });
   if (shown) {
-    await fireEvent.click(await screen.findByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(await within(view.container).findByRole('button', { name: /^More actions for .+ on / }));
     expect(screen.getByRole('menuitem', { name: 'Add to task…' })).toBeDefined();
   } else {
     await waitFor(() => expect(readiness.absent).toBe(true));
-    expect(screen.queryByRole('button', { name: 'More actions for message 42' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^More actions for .+ on / })).toBeNull();
   }
   expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/kata/status'))).toHaveLength(1);
   sibling.unmount();
@@ -303,7 +306,7 @@ it('refreshes links after a Kata comment fails after saving evidence', async () 
   try {
     await screen.findByText('No linked tasks.');
     await screen.findByText('No linked Kata issues.');
-    await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
     await chooseSelectOption(await screen.findByRole('combobox', { name: /^Provider:/ }), 'Kata');
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
@@ -321,10 +324,10 @@ it('refreshes links after a Kata comment fails after saving evidence', async () 
 it('clears a download error when its menu reopens', async () => {
   const client = createAPIClient(async (input) => (input as Request).url.includes('/cli/message/raw') ? Response.json({}, { status: 404 }) : Response.json(disabledTaskLookup()));
   render(MessageCard, { message: detail(), expanded: true, client });
-  await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+  await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
   await fireEvent.click(screen.getByRole('menuitem', { name: 'Download original' }));
   await screen.findByText('The original message isn’t available.');
-  await fireEvent.click(screen.getByRole('button', { name: 'More actions for message 42' }));
+  await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
   expect(screen.queryByText('The original message isn’t available.')).toBeNull();
 });
 

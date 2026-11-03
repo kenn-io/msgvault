@@ -138,7 +138,6 @@
     {#if current.statusError}<p class="error" role="alert">{current.statusError}</p>{/if}
     {#if current.runsError}<p class="error" role="alert">{current.runsError}</p>{/if}
     {#if current.conflict}<p class="error" role="alert">{current.conflict}</p>{#if current.restartRequired}<Button size="sm" label="Restart" onclick={() => void controller.restart()} />{/if}{/if}
-    {#if current.actionPending}<p class="muted" role="status">Starting…</p>{/if}
     {#if current.actionConflict}<p class="error" role="alert">{current.actionConflict}</p>{/if}
     {#if current.actionError}<p class="error" role="alert">{current.actionError}</p>{/if}
   </div>

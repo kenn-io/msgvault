@@ -4,14 +4,14 @@
 
   import type { APIClient } from '../../api/client';
   import { createExploreAPI } from '../../explore/api';
-  import { CHAT_MESSAGE_TYPES, entryKindPresentation } from '../../explore/labels';
+  import { entryKindPresentation } from '../../explore/labels';
   import type { ExploreFilter } from '../../explore/models';
   import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
 
   interface KindOption {
     name: string;
-    values: string[];
+    value: string;
   }
 
   let {
@@ -39,7 +39,7 @@
   let kindsStatus = $state('');
   let controller: AbortController | undefined;
 
-  const kindValues = $derived(filters.find((filter) => filter.dimension === 'message_type')?.values ?? []);
+  const kindValues = $derived(filters.find((filter) => filter.dimension === 'kind')?.values ?? []);
   let dateError = $state('');
 
   async function loadKinds(): Promise<void> {
@@ -47,18 +47,12 @@
     kindsStatus = 'Loading kinds…';
     controller = new AbortController();
     try {
-      const loaded = await api.groups({ limit: 50 }, 'message_type', controller.signal);
+      const loaded = await api.groups({ limit: 50 }, 'kind', controller.signal);
       if (loaded.status !== 'ready') {
         kindsStatus = loaded.status === 'unavailable' ? 'Kinds unavailable' : 'Could not load kinds';
         return;
       }
-      // Several message types read as one kind, such as every chat network.
-      const byName = new Map<string, string[]>();
-      for (const row of loaded.result.rows) {
-        const name = entryKindPresentation('', row.key).name;
-        byName.set(name, CHAT_MESSAGE_TYPES.has(row.key) ? [...CHAT_MESSAGE_TYPES] : [...(byName.get(name) ?? []), row.key]);
-      }
-      kinds = [...byName].map(([name, values]) => ({ name, values }));
+      kinds = loaded.result.rows.map((row) => ({ name: entryKindPresentation(row.key).name, value: row.key }));
       kindsStatus = kinds.length ? '' : 'No message kinds';
     } catch {
       kindsStatus = 'Could not load kinds';
@@ -93,13 +87,13 @@
   onDestroy(() => controller?.abort());
 
   function kindChecked(option: KindOption): boolean {
-    return option.values.some((value) => kindValues.includes(value));
+    return kindValues.includes(option.value);
   }
 
   function toggleKind(option: KindOption, checked: boolean): void {
-    const values = checked ? [...new Set([...kindValues, ...option.values])] : kindValues.filter((value) => !option.values.includes(value));
-    const rest = filters.filter((filter) => filter.dimension !== 'message_type');
-    onChange(values.length > 0 ? [...rest, { dimension: 'message_type', values }] : rest);
+    const values = checked ? [...new Set([...kindValues, option.value])] : kindValues.filter((value) => value !== option.value);
+    const rest = filters.filter((filter) => filter.dimension !== 'kind');
+    onChange(values.length > 0 ? [...rest, { dimension: 'kind', values }] : rest);
   }
 
   function dateValue(dimension: 'after' | 'before'): string {

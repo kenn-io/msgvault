@@ -32,6 +32,7 @@
   let error = $state('');
   let controller: AbortController | undefined;
   const prefix = $derived(SOURCE_SETTING_PREFIX[source.source_type]);
+  const title = $derived(source.display_name || source.identifier);
   const failure = $derived(sourceFailure(source));
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
   const lastGood = $derived(source.last_successful_sync?.completed_at);
@@ -64,10 +65,10 @@
   }
 </script>
 
-<SidePanel title={source.display_name || source.identifier} {onclose}>
+<SidePanel {title} {onclose}>
   <div class="panel">
     <div class="summary">
-      <span class="type">{[sourceTypeLabel(source.source_type), source.identifier].filter(Boolean).join(' · ')}</span>
+      <span class="type">{[sourceTypeLabel(source.source_type), source.identifier !== title ? source.identifier : undefined].filter(Boolean).join(' · ')}</span>
       <div class="status">
         <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>
         <span class="muted">{lastGood ? `Last good sync ${formatDateTime(lastGood)}` : 'No good sync yet'}</span>
@@ -81,10 +82,10 @@
       </section>
     {/if}
     {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
-    {#if !source.can_sync && !syncing}
+    {#if source.source_type !== 'meeting_import' && !source.can_sync && !syncing}
       {@const command = syncCommand(source)}
       <section class="block" aria-label="Sync">
-        <span class="muted">{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : source.source_type === 'meeting_import' ? 'On demand' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
+        <span class="muted">{source.scheduler_queued && !syncRunning(source) ? 'Sync queued' : syncUnavailableLabel(source.sync_unavailable_reason)}</span>
         {#if command}<CommandLine {command} />{/if}
       </section>
     {/if}

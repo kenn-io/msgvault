@@ -25,7 +25,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
     const base = { id: `source:${source.id}`, name: source.display_name || source.identifier, target: { kind: 'source' as const } };
     if (syncRunning(source)) {
       const processed = source.active_sync?.messages_processed;
-      items.push({ ...base, state: 'running', detail: processed ? `${processed.toLocaleString()} messages so far` : 'Syncing', at: source.active_sync?.started_at ?? source.scheduler_started_at });
+      items.push({ ...base, state: 'running', detail: processed ? `${processed.toLocaleString()} messages so far` : '', at: source.active_sync?.started_at ?? source.scheduler_started_at });
     } else {
       const run = source.latest_sync;
       const failedAt = run?.completed_at ?? run?.started_at;
@@ -36,7 +36,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
           : '';
         items.push({ ...base, state: 'failed', detail: diagnostics || firstLine(source.scheduler_last_error, 'Sync failed'), at: runFailed ? failedAt ?? undefined : undefined });
       } else if (source.scheduler_queued || source.scheduler_pending) {
-        items.push({ ...base, state: 'queued', detail: 'Queued' });
+        items.push({ ...base, state: 'queued', detail: '' });
       }
     }
   }
@@ -48,7 +48,7 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
       ? { kind: 'setting', target: setup.target } : { kind: 'status', authority: lane.related_status! };
     const base = { id: lane.kind, name: OPERATION_KIND_LABELS[lane.kind], target };
     if (lane.active) {
-      items.push({ ...base, state: lane.active.state === 'queued' ? 'queued' : 'running', detail: operationStateChip(lane.active.state).label, at: lane.active.started_at });
+      items.push({ ...base, state: lane.active.state === 'queued' ? 'queued' : 'running', detail: '', at: lane.active.started_at });
     } else if (lane.configured && lane.latest && operationStateChip(lane.latest.state).tone === 'danger') {
       items.push({ ...base, target: { kind: 'history', operationKind: lane.kind, operationRunID: lane.latest.id }, state: 'failed', detail: firstLine(lane.latest.error?.message, 'Failed'), at: lane.latest.finished_at ?? lane.latest.started_at });
     }

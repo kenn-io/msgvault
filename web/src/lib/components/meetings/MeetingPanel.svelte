@@ -54,7 +54,7 @@
       <p role="alert">{controller.actionsError.message}</p>
       {#if controller.actionsError.recovery === 'reload' || controller.actionsError.recovery === 'retry'}<Button label="Reload meeting activity" onclick={reload} />{/if}
     {/if}
-    {#if controller.actions}<MeetingActions compact {client} evidence={controller.actions} {onOpenMeeting} />{/if}
+    {#if controller.actions}<MeetingActions compact {showHeading} {client} evidence={controller.actions} {onOpenMeeting} />{/if}
     {#if controller.actionsLoading}<p role="status">Loading action items…</p>{/if}
     {#if controller.actions?.next_cursor && !controller.actionsError}<Button label="Show more" disabled={controller.actionsLoading} onclick={() => void controller.loadMore()} />{/if}
   </div>
