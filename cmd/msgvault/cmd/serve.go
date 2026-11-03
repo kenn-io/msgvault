@@ -680,6 +680,19 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
 	for _, source := range cfg.Chatwoot {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,

@@ -1,0 +1,14 @@
+Add and sync provider sources
+
+Usage:
+  msgvault source [command]
+
+Available Commands:
+  facebook-comments Archive comments from a configured Facebook Page
+
+Flags:
+  -h, --help   help for source
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+
+Use "msgvault source [command] --help" for more information about a command.
