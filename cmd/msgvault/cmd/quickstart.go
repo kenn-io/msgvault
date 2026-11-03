@@ -29,8 +29,10 @@ Example:
 		if mcp {
 			text = mcpQuickstart(docs.AgentQuickstart)
 		}
-		_, err := fmt.Fprint(cmd.OutOrStdout(), text)
-		return err
+		if _, err := fmt.Fprint(cmd.OutOrStdout(), text); err != nil {
+			return fmt.Errorf("write quickstart guide: %w", err)
+		}
+		return nil
 	},
 }
 
