@@ -229,8 +229,8 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 	return nil
 }
 
-// buildRelationshipTimelineSQL builds the full timeline query.
-// The population is index-native: subject_facts reads one counterpart's
+// buildRelationshipTimelineSQL builds the full timeline query. The
+// population is index-native: subject_facts reads one counterpart's
 // message facts straight from relationship_activity (which bakes
 // occurred_at, entry_kind, chat classification, attachment counts, and
 // deletion state per message), so the whole-archive analytical_entries
@@ -241,7 +241,6 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // touched, because a join against it cannot push the page's ID filter
 // through the view's aggregate subqueries and materializes them for the
 // whole archive.
-//
 // Outer rows only need the subject's message facts and owner rows for with_owner.
 // Unlike Explore's per-conversation-lifetime chat grouping, chat messages
 // are grouped per local calendar day so a years-long conversation doesn't

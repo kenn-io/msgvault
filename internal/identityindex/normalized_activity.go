@@ -2,6 +2,15 @@ package identityindex
 
 import "fmt"
 
+// CanonicalParticipantsSQL resolves participants through their identity clusters.
+// Its arguments are trusted SQL relations from the cache builder or query engine.
+func CanonicalParticipantsSQL(participants, clusters string) string {
+	return fmt.Sprintf(`SELECT p.id::BIGINT AS participant_id,
+	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
+	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
+	FROM %s p LEFT JOIN %s c ON c.participant_id = p.id`, participants, clusters)
+}
+
 // OwnerCanonicalsSQL projects confirmed owners through a canonical participant relation.
 // Callers deduplicate the result where they combine or join owner sets.
 func OwnerCanonicalsSQL(owners, canon string) string {
@@ -36,11 +45,7 @@ WITH message_facts AS (
 	LEFT JOIN %s u ON u.message_id = m.id
 	WHERE year(m.sent_at) = %d
 ), canon AS (
-	SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
-	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
-	FROM read_parquet('%s') p
-	LEFT JOIN read_parquet('%s') c ON c.participant_id = p.id
+	%s
 ), owner_canon AS (
 	SELECT DISTINCT canonical_id FROM (%s)
 ), direct_edges AS (
@@ -88,7 +93,7 @@ FROM message_facts m`, EntryKindSQL("m.message_type"),
 		IsChatSQL("m.message_type", "coalesce(c.conversation_type, '')"),
 		messages, quoteSQLString(path("sources")),
 		quoteSQLString(path("conversations")), unsentMessages, occurredYear,
-		quoteSQLString(path("participants")), quoteSQLString(path("participant_clusters")),
+		CanonicalParticipantsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participants"))), fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("participant_clusters")))),
 		OwnerCanonicalsSQL(fmt.Sprintf("read_parquet('%s')", quoteSQLString(path("owner_participants"))), "canon"), recipients)
 }
 
@@ -141,12 +146,9 @@ WITH raw_activity AS NOT MATERIALIZED (SELECT * FROM %[1]s),
 facts AS NOT MATERIALIZED (SELECT * FROM raw_activity WHERE canonical_id IS NULL),
 direct AS NOT MATERIALIZED (SELECT * FROM raw_activity WHERE canonical_id IS NOT NULL),
 canon AS NOT MATERIALIZED (
-	SELECT p.id::BIGINT AS participant_id,
-	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
-	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
-	FROM %[3]s p LEFT JOIN %[4]s c ON c.participant_id = p.id
+	%[3]s
 ), owner_canon AS NOT MATERIALIZED (
-	SELECT DISTINCT canonical_id FROM (%[5]s)
+	SELECT DISTINCT canonical_id FROM (%[4]s)
 ), members AS NOT MATERIALIZED (
 	SELECT DISTINCT cp.conversation_id::BIGINT AS conversation_id,
 	       c.canonical_id, c.participant_domain,
@@ -154,7 +156,7 @@ canon AS NOT MATERIALIZED (
 	FROM %[2]s cp
 	LEFT JOIN canon c ON c.participant_id = cp.participant_id
 	LEFT JOIN owner_canon o ON o.canonical_id = c.canonical_id
-)%[6]s
+)%[5]s
 SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
        f.occurred_at, f.message_type, f.conversation_type, f.entry_kind,
        f.is_chat, f.is_from_me, f.attachment_count, f.has_attachments,
@@ -164,7 +166,7 @@ SELECT f.message_id, f.conversation_id, f.source_id, f.source_type,
        coalesce(d.is_author, false) AS is_author,
        (cm.is_owner OR coalesce(d.is_owner, false)) AS is_owner,
        f.occurred_year
-FROM facts f JOIN expanded_members cm ON cm.conversation_id = f.conversation_id%[7]s
+FROM facts f JOIN expanded_members cm ON cm.conversation_id = f.conversation_id%[6]s
 LEFT JOIN direct d ON d.message_id = f.message_id
                   AND d.occurred_year = f.occurred_year
                   AND d.canonical_id = cm.canonical_id
@@ -179,7 +181,7 @@ SELECT d.message_id, d.conversation_id, d.source_id, d.source_type,
        d.is_sender, d.is_author, d.is_owner, d.occurred_year
 FROM direct d
 WHERE NOT EXISTS (
-	SELECT 1 FROM expanded_members cm WHERE cm.conversation_id = d.conversation_id%[8]s
+	SELECT 1 FROM expanded_members cm WHERE cm.conversation_id = d.conversation_id%[7]s
 	AND cm.canonical_id = d.canonical_id
 	AND cm.participant_domain = d.participant_domain
 )
@@ -198,7 +200,7 @@ WHERE f.is_direct
               WHERE cm.conversation_id = f.conversation_id AND cm.canonical_id IS NULL)
    OR (NOT EXISTS (SELECT 1 FROM direct d WHERE d.message_id = f.message_id)
 	       AND NOT EXISTS (SELECT 1 FROM expanded_members cm
-	                       WHERE cm.conversation_id = f.conversation_id%[7]s
+	                       WHERE cm.conversation_id = f.conversation_id%[6]s
 	                         AND cm.canonical_id IS NOT NULL))
-)`, sparse, roster, participants, clusters, OwnerCanonicalsSQL(owners, "canon"), memberCTEs, factMemberKey, directMemberKey)
+)`, sparse, roster, CanonicalParticipantsSQL(participants, clusters), OwnerCanonicalsSQL(owners, "canon"), memberCTEs, factMemberKey, directMemberKey)
 }
