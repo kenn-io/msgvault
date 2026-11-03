@@ -14,7 +14,7 @@ func newPersonMeetingsCommand(deps meetingRecordsCommandDeps) *cobra.Command {
 	var from, to, cursor string
 	var limit int
 	var jsonOutput bool
-	command := &cobra.Command{Use: "meetings <person-ref>", Short: "List a person's archived invitations and meeting notes", Long: "List permitted invitation and transcript evidence for a numeric person ID, person:<id>, or participant:<id>. Defaults to the past 365 days. Windows are at most 400 days; omitted dates on continuation reuse the first page's window.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	command := &cobra.Command{Use: "meetings <person-ref>", Short: "List a person's archived invitations and meeting notes", Long: "List permitted invitation and transcript evidence for a numeric person ID, person:<id>, or participant:<id>. Windows are at most 400 days; omitted dates on continuation reuse the first page's window.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if _, _, err := store.ParsePersonMeetingRef(args[0]); err != nil {
 			return usageErr(cmd, err)
 		}
