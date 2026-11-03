@@ -125,7 +125,6 @@ jobs:
   checks:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
-      GOLANGCI_LINT_CACHE: ${{ github.workspace }}/golangci-lint
     needs: changes
     if: *go-changed
     runs-on: ubuntu-26.04
@@ -142,7 +141,7 @@ jobs:
         uses: $/.github/actions/go-cache-restore
         with:
           group: linux-checks
-          extra-path: ${{ env.GOLANGCI_LINT_CACHE }}
+          extra-path: .git/golangci-lint-cache
 
       - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
 
@@ -167,13 +166,21 @@ jobs:
         run: make openapi-check
 
       - name: Lint
-        run: make lint-ci
+        run: |
+          cache=$(git rev-parse --git-path golangci-lint-cache)
+          cmp -s .custom-gcl.yml "$cache/.custom-gcl.yml" || rm -rf "$cache"
+          mkdir -p "$cache"
+          cp .custom-gcl.yml "$cache/.custom-gcl.yml"
+          make lint-ci
 
       - name: Vulnerability check
         run: make vulncheck
 
       - name: Log cache sizes
-        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$GOLANGCI_LINT_CACHE"
+        if: >-
+          github.event_name == 'push' && github.ref == 'refs/heads/main'
+          && env.GO_CACHE_HIT != 'true'
+        run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
