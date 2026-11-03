@@ -45,8 +45,9 @@ type commentFrame struct {
 // responseRead is polling bookkeeping. Archive markers keep it durable without
 // making unchanged message content look edited to change-feed consumers.
 type responseRead struct {
-	SyncID  int64 `json:"sync_id"`
-	Request int   `json:"request"`
+	ArchiveUID string `json:"archive_uid,omitempty"`
+	SyncID     int64  `json:"sync_id"`
+	Request    int    `json:"request"`
 }
 
 func (read responseRead) newer(other responseRead) bool {
@@ -57,7 +58,27 @@ func (r *importRun) responseReadKey(id string) string {
 	return fmt.Sprintf("meta.poll_read:%d:%s", r.source.ID, id)
 }
 
+func (r *importRun) readArchiveUID(ctx context.Context) (string, error) {
+	if r.archiveUID == "" {
+		uid, err := r.imp.store.ArchiveUIDContext(ctx)
+		if err != nil {
+			return "", err
+		}
+		r.archiveUID = uid
+	}
+	return r.archiveUID, nil
+}
+
 func (r *importRun) loadResponseRead(ctx context.Context, id string, legacy responseRead) (responseRead, error) {
+	uid, err := r.readArchiveUID(ctx)
+	if err != nil {
+		return responseRead{}, err
+	}
+	// Subsets preserve native evidence, but their sync-run sequence is new.
+	// Unbound legacy references are usable only before a bound marker exists.
+	if (legacy.ArchiveUID != "" && legacy.ArchiveUID != uid) || legacy.SyncID > r.syncID {
+		legacy = responseRead{}
+	}
 	blob, found, err := r.imp.store.GetArchiveMarker(ctx, r.responseReadKey(id))
 	if err != nil || !found {
 		return legacy, err
@@ -65,6 +86,12 @@ func (r *importRun) loadResponseRead(ctx context.Context, id string, legacy resp
 	var read responseRead
 	if json.Unmarshal([]byte(blob), &read) != nil || read.SyncID < 0 || read.Request < 0 {
 		return responseRead{}, errors.New("invalid polling response marker")
+	}
+	if (read.ArchiveUID != "" && read.ArchiveUID != uid) || read.SyncID > r.syncID {
+		return legacy, nil
+	}
+	if legacy.ArchiveUID == "" && read.ArchiveUID != "" {
+		legacy = responseRead{}
 	}
 	if legacy.newer(read) {
 		return legacy, nil
@@ -76,6 +103,11 @@ func (r *importRun) saveResponseRead(ctx context.Context, id string, read respon
 	if r.state == nil || read.SyncID == 0 {
 		return nil
 	}
+	uid, err := r.readArchiveUID(ctx)
+	if err != nil {
+		return err
+	}
+	read.ArchiveUID = uid
 	blob, err := json.Marshal(read)
 	if err != nil {
 		return err

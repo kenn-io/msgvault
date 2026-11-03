@@ -95,15 +95,19 @@ func (imp *Importer) Register(ctx context.Context, app, page string) (*store.Sou
 }
 
 type importRun struct {
-	readSyncID  int64
-	readRequest int
-	imp         *Importer
-	app, page   string
-	source      *store.Source
-	state       *syncState
-	sum         *ImportSummary
-	maxRequests int
-	syncID      int64
+	archiveUID            string
+	readRequest           int
+	bodyTime, stateTime   int64
+	bodyOrder, stateOrder uint64
+	readSyncID            int64
+	freshBody             bool
+	imp                   *Importer
+	app, page             string
+	source                *store.Source
+	state                 *syncState
+	sum                   *ImportSummary
+	maxRequests           int
+	syncID                int64
 }
 
 func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOptions) (sum *ImportSummary, retErr error) {

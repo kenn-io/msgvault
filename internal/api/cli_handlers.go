@@ -1712,6 +1712,10 @@ func cliRunCommandAllowed(args []string) bool {
 	if IsCLIRunDraftLifecycle(args) {
 		return len(args) >= 2
 	}
+	if args[0] == "meta-webhooks" {
+		return len(args) >= 2 && (args[1] == "subscribe" || args[1] == "status" || args[1] == "replay")
+	}
+
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}

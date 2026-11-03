@@ -12,7 +12,7 @@ func (c *Client) VerifyPage(ctx context.Context, id string) (Page, error) {
 	if !ValidAccountID(id) {
 		return page, errors.New("invalid selected Page ID")
 	}
-	if err := c.get(ctx, "me", url.Values{"fields": {"id,name,category"}}, &page); err != nil {
+	if err := c.get(ctx, "me", url.Values{graphFieldsParam: {"id,name,category"}}, &page); err != nil {
 		return Page{}, err
 	}
 	// Category is Page-only evidence in the pinned SDK, not a token-type
@@ -27,7 +27,7 @@ func (c *Client) Posts(ctx context.Context, page string, edge PostEdge, after st
 	if !ValidAccountID(page) || !edge.valid() {
 		return ObjectPage{}, errors.New("invalid selected Page or discovery edge")
 	}
-	q := url.Values{"fields": {"id,message,created_time,from"}, "limit": {"100"}}
+	q := url.Values{graphFieldsParam: {"id,message,created_time,from"}, "limit": {"100"}}
 	if edge == AdsPosts {
 		q.Set("include_inline_create", "true")
 	}
@@ -39,7 +39,7 @@ func (c *Client) Comments(ctx context.Context, object, after string) (ObjectPage
 		return ObjectPage{}, errors.New("invalid Graph object ID")
 	}
 	return c.objects(ctx, url.PathEscape(object)+"/comments", after, url.Values{
-		"fields": {"id,message,created_time,from,parent"}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
+		graphFieldsParam: {"id,message,created_time,from,parent"}, "order": {"chronological"}, "filter": {"toplevel"}, "limit": {"100"},
 	})
 }
 
@@ -52,4 +52,28 @@ func (c *Client) objects(ctx context.Context, path, after string, q url.Values) 
 // and request size; no paging.next URL is retained or followed.
 func (c *Client) safeCursor(cursor string) bool {
 	return len(cursor) <= 4096 && strings.IndexFunc(cursor, func(r rune) bool { return r < 32 || r == 127 }) < 0 && !strings.Contains(cursor, c.token)
+}
+
+// Post reads a single root with the same wire fields polling uses.
+func (c *Client) Post(ctx context.Context, id string) (Object, error) {
+	return c.readNode(ctx, id, "id,message,created_time,from")
+}
+
+// Comment reads a comment and its provider-declared parent.
+func (c *Client) Comment(ctx context.Context, id string) (Object, error) {
+	return c.readNode(ctx, id, "id,message,created_time,from,parent")
+}
+
+func (c *Client) readNode(ctx context.Context, id, fields string) (Object, error) {
+	if !safeObjectID(id) {
+		return Object{}, errors.New("invalid Graph object ID")
+	}
+	var obj Object
+	if err := c.get(ctx, url.PathEscape(id), url.Values{graphFieldsParam: {fields}}, &obj); err != nil {
+		return Object{}, err
+	}
+	if obj.ID != id {
+		return Object{}, errors.New("graph object identity mismatch")
+	}
+	return obj, nil
 }
