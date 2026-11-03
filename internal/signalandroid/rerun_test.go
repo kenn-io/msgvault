@@ -111,11 +111,10 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, int64(4), summary.MessagesAdded)
 	})
-	t.Run("owner cannot be determined", func(t *testing.T) {
-		assert, require := assert.New(t), require.New(t)
-		_, _, err := importWith(t, signalfixture.OwnPhone, dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`)
-		require.Error(err)
-		assert.Contains(err.Error(), "cannot determine which account")
+	t.Run("group-only backup", func(t *testing.T) {
+		summary, _, err := importWith(t, signalfixture.OwnPhone, dropOutgoing, `DELETE FROM message WHERE thread_id <> 11`)
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), summary.MessagesAdded)
 	})
 	t.Run("owner number not recorded", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)

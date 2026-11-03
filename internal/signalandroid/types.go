@@ -1,8 +1,8 @@
 // Package signalandroid imports messages from a decrypted Signal Android
 // backup database into the msgvault unified schema.
 //
-// The input is the database.sqlite file, and optionally the Attachment_*.bin
-// files beside it, that signalbackup-tools writes when it unpacks a Signal
+// The input is database.sqlite with DatabaseVersion.sbf beside it, and optionally
+// the Attachment_*.bin files that signalbackup-tools writes when it unpacks a Signal
 // backup into a directory. The importer reads Signal Android database
 // versions 185 through 215.
 package signalandroid
@@ -10,6 +10,8 @@ package signalandroid
 import (
 	"database/sql"
 	"time"
+
+	"go.kenn.io/msgvault/internal/textimport"
 )
 
 // Identifier formats written by the importer. They depend only on Signal's
@@ -49,7 +51,7 @@ type ImportOptions struct {
 	// MaxAttachmentSize skips attachment files larger than this many bytes.
 	MaxAttachmentSize int64
 
-	// Limit stops after this many messages are written (0 = no limit).
+	// Limit stops after this many messages are written (0 = no limit; must be non-negative).
 	Limit int
 
 	// BatchSize is the number of messages read per query.
@@ -87,24 +89,10 @@ type ImportSummary struct {
 }
 
 // ImportProgress receives progress callbacks during an import.
-type ImportProgress interface {
-	OnStart()
-	OnChatStart(chatID, chatTitle string, messageCount int)
-	OnProgress(processed, added, skipped int64)
-	OnChatComplete(chatID string, messagesAdded int64)
-	OnComplete(summary *ImportSummary)
-	OnError(err error)
-}
+type ImportProgress = textimport.Progress[ImportSummary]
 
 // NullProgress ignores progress callbacks.
-type NullProgress struct{}
-
-func (NullProgress) OnStart()                        {}
-func (NullProgress) OnChatStart(string, string, int) {}
-func (NullProgress) OnProgress(int64, int64, int64)  {}
-func (NullProgress) OnChatComplete(string, int64)    {}
-func (NullProgress) OnComplete(*ImportSummary)       {}
-func (NullProgress) OnError(error)                   {}
+type NullProgress = textimport.NullProgress[ImportSummary]
 
 // sigRecipient is one row of the Signal recipient table.
 type sigRecipient struct {

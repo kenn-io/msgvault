@@ -71,7 +71,7 @@ func (s *Store) GetParticipantIdentityContext(
 		for i, id := range chunk {
 			args[i] = id
 		}
-		in := placeholders(len(chunk))
+		in := SQLPlaceholders(len(chunk))
 		if err := s.readParticipantIdentityMembers(ctx, &result.Members, in, args); err != nil {
 			return nil, err
 		}

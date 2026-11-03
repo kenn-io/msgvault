@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // fetchRecipients loads every recipient keyed by its local row ID.
@@ -185,7 +187,7 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 		s.attachmentColumn("data_size", "0"), s.attachmentColumn("width", "0"),
 		s.attachmentColumn("height", "0"), s.attachmentColumn("voice_note", "0"),
 		s.attachmentColumn("video_gif", "0"), s.attachmentColumn("sticker_pack_id", "''"),
-		s.attachmentTable, s.attachmentMessage, placeholders(len(messageIDs)),
+		s.attachmentTable, s.attachmentMessage, store.SQLPlaceholders(len(messageIDs)),
 		s.attachmentColumn("quote", "0"),
 		s.attachmentMessage, s.attachmentColumn("display_order", "0"),
 	)
@@ -218,7 +220,7 @@ func fetchReactions(ctx context.Context, db *sql.DB, s *schema, rootIDs []int64)
 	if !s.hasReactions || len(rootIDs) == 0 {
 		return out, nil
 	}
-	in := placeholders(len(rootIDs))
+	in := store.SQLPlaceholders(len(rootIDs))
 	query := fmt.Sprintf(`
 		SELECT COALESCE(m.original_message_id, m._id), r.author_id, r.emoji, COALESCE(r.date_sent, 0)
 		FROM reaction r
@@ -253,7 +255,7 @@ func fetchMentions(ctx context.Context, db *sql.DB, s *schema, messageIDs []int6
 	query := fmt.Sprintf(`
 		SELECT message_id, recipient_id, COALESCE(range_start, 0)
 		FROM mention WHERE message_id IN (%s)
-		ORDER BY message_id, range_start`, placeholders(len(messageIDs)))
+		ORDER BY message_id, range_start`, store.SQLPlaceholders(len(messageIDs)))
 	rows, err := db.QueryContext(ctx, query, int64Args(messageIDs)...)
 	if err != nil {
 		return nil, fmt.Errorf("query mentions: %w", err)
@@ -338,10 +340,6 @@ func scanAttachmentFiles(dir string) (map[int64]string, error) {
 		files[id] = entry.Name()
 	}
 	return files, nil
-}
-
-func placeholders(n int) string {
-	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
 }
 
 func int64Args(ids []int64) []any {

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
@@ -173,14 +174,5 @@ func attachmentMediaType(a sigAttachment) string {
 	case a.VideoGIF:
 		return "gif"
 	}
-	contentType := strings.ToLower(a.ContentType)
-	switch {
-	case strings.HasPrefix(contentType, "image/"):
-		return "image"
-	case strings.HasPrefix(contentType, "video/"):
-		return "video"
-	case strings.HasPrefix(contentType, "audio/"):
-		return "audio"
-	}
-	return "document"
+	return attachmentpolicy.MediaType(strings.ToLower(a.ContentType))
 }

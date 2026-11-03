@@ -35,17 +35,21 @@ signalbackup-tools has decrypted into a directory:
 
 Pass that directory or its database.sqlite file. Attachment files
 (Attachment_*.bin) are read from the same directory unless --attachments-dir
-names another one. msgvault reads Signal Android database version 185 and
-newer. Run the command again with a newer backup to add new messages; messages
-already in the archive are updated in place.
+names another one. msgvault reads Signal Android database versions 185 through
+215. Keep DatabaseVersion.sbf beside database.sqlite. Run the command again with
+a newer backup to add new messages; messages already in the archive are updated
+in place.
 
 Examples:
   msgvault import-signal --phone "+447700900000" ~/signal-backup
   msgvault import-signal --phone "+447700900000" ~/signal-backup/database.sqlite`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if flags.limit < 0 {
+				return errors.New("--limit must be non-negative")
+			}
 			if !isDaemonCLISubprocess() {
-				return runDaemonCLICommandHTTPFromCobra(cmd, args)
+				return runDaemonCLICommandHTTPFromCobraWithLocalFiles(cmd, args, nil)
 			}
 			return runSignalImport(cmd, args[0], flags)
 		},
@@ -54,7 +58,7 @@ Examples:
 	command.Flags().StringVar(&flags.displayName, "display-name", "", "display name for the phone owner")
 	command.Flags().StringVar(&flags.attachmentsDir, "attachments-dir", "",
 		"directory holding the Attachment_*.bin files (default: the database's directory)")
-	command.Flags().IntVar(&flags.limit, "limit", 0, "limit number of messages (for testing)")
+	command.Flags().IntVar(&flags.limit, "limit", 0, "maximum messages to write, including updates (0 imports all)")
 	command.Flags().BoolVar(&flags.noDefaultIdentity, "no-default-identity", false, noDefaultIdentityHelp)
 	_ = command.MarkFlagRequired("phone")
 	return command
@@ -92,12 +96,6 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 	if flags.phone == "" {
 		return usageErr(cmd, errors.New("--phone is required for Signal import (E.164 format, e.g., +447700900000)"))
 	}
-	// Normalize once: the source identifier and the confirmed owner identity
-	// must both be the E.164 form the importer stores.
-	phone := signalandroid.NormalizePhone(flags.phone)
-	if phone == "" {
-		return usageErr(cmd, fmt.Errorf("phone number must be in E.164 format (starting with +), got %q", flags.phone))
-	}
 	dbPath, filesDir, err := resolveSignalInput(input, flags.attachmentsDir)
 	if err != nil {
 		return err
@@ -125,14 +123,14 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 	}()
 
 	opts := signalandroid.DefaultOptions()
-	opts.Phone = phone
+	opts.Phone = flags.phone
 	opts.DisplayName = flags.displayName
 	opts.AttachmentFilesDir = filesDir
 	opts.AttachmentsDir = cfg.AttachmentsDir()
 	opts.Limit = flags.limit
 
 	fmt.Printf("Importing Signal messages from %s\n", dbPath)
-	fmt.Printf("Phone: %s\n", phone)
+	fmt.Printf("Phone: %s\n", flags.phone)
 	if flags.limit > 0 {
 		fmt.Printf("Limit: %d messages\n", flags.limit)
 	}
@@ -149,6 +147,11 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 	}
 
 	if !flags.noDefaultIdentity && summary.SourceID != 0 {
+		source, err := s.GetSourceByIDContext(ctx, summary.SourceID)
+		if err != nil {
+			return err
+		}
+		phone := source.Identifier
 		confirmDefaultIdentity(cmd.OutOrStdout(), s, summary.SourceID, phone, phone, "phone-e164", state.logger)
 	}
 	if summary.SourceID != 0 {
@@ -172,7 +175,7 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 	fmt.Printf("  Participants:   %d\n", summary.Participants)
 	fmt.Printf("  Reactions:      %d\n", summary.ReactionsAdded)
 	fmt.Printf("  Replies:        %d linked, %d unresolved\n", summary.RepliesLinked, summary.RepliesUnresolved)
-	fmt.Printf("  Attachments:    %d found, %d stored, %d without a file\n",
+	fmt.Printf("  Attachments:    %d found, %d stored, %d missing or skipped\n",
 		summary.AttachmentsFound, summary.AttachmentsStored, summary.AttachmentsMissing)
 	if summary.Errors > 0 {
 		fmt.Printf("  Errors:         %d\n", summary.Errors)

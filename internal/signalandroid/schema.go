@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/sqliteutil"
@@ -60,10 +63,15 @@ var requiredMessageColumns = []string{
 
 // detectSchema inspects the database and returns the column layout to read,
 // or ErrUnsupportedDatabase with the reason.
-func detectSchema(ctx context.Context, db *sql.DB) (*schema, error) {
-	var version int
-	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return nil, err
+func detectSchema(ctx context.Context, db *sql.DB, dbPath string) (*schema, error) {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(dbPath), "DatabaseVersion.sbf"))
+	if err != nil {
+		return nil, fmt.Errorf("%w: read DatabaseVersion.sbf beside database.sqlite: %v; export without --onlydb", ErrUnsupportedDatabase, err)
+	}
+	value, found := strings.CutPrefix(strings.TrimSpace(string(data)), "VERSION:uint32:")
+	version, err := strconv.ParseUint(value, 10, 32)
+	if !found || err != nil {
+		return nil, fmt.Errorf("%w: invalid DatabaseVersion.sbf", ErrUnsupportedDatabase)
 	}
 	if version > MaxDatabaseVersion {
 		return nil, fmt.Errorf("%w: database version %d is newer than the newest tested version %d", ErrUnsupportedDatabase, version, MaxDatabaseVersion)

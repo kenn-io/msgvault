@@ -2,6 +2,7 @@ package signalandroid
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,5 +19,6 @@ func writeTablesFixture(t *testing.T, ddl ...string) string {
 	_, err = db.Exec(strings.Join(ddl, ";\n"))
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "DatabaseVersion.sbf"), []byte("VERSION:uint32:215\n"), 0o600))
 	return path
 }

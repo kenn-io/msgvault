@@ -90,7 +90,7 @@ func TestReviewFutureBackupVersionRejected(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	changeFixture(t, dir, `PRAGMA user_version = 999999`)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), []byte("VERSION:uint32:999999\n"), 0o600))
 	opts := DefaultOptions()
 	opts.Phone = signalfixture.OwnPhone
 	_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
@@ -109,7 +109,7 @@ func TestReviewAttachmentStoreFailureIsError(t *testing.T) {
 	summary, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), summary.Errors)
-	assert.Equal(t, int64(1), summary.AttachmentsMissing)
+	assert.Equal(t, int64(2), summary.AttachmentsMissing)
 }
 
 func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {

@@ -45,7 +45,7 @@ func calendarRows(t *testing.T, st *Store, ids ...int64) []CalendarEventRow {
 	for i, id := range ids {
 		args[i] = id
 	}
-	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "e.message_id IN ("+placeholders(len(ids))+")", args, len(ids))
+	rows, err := queryCalendarEventRowsWithinBudget(ctx, st.db, "e.message_id IN ("+SQLPlaceholders(len(ids))+")", args, len(ids))
 	require.NoError(t, err)
 	return rows
 }

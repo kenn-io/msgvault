@@ -141,12 +141,14 @@ signalbackup-tools signal-2026-01-01-00-00-00.backup <passphrase> --output ~/sig
 msgvault import-signal ~/signal-backup --phone +14155551234
 ```
 
-The output directory holds `database.sqlite` and one `Attachment_*.bin` file per
-attachment. Pass the directory or the `database.sqlite` file. Add `--onlydb` to
-the signalbackup-tools command to skip the attachment files; the messages still
-import, and their attachments count as missing. Long text stored in an attachment
-needs its file to import the full text; without it, only the inline preview is
-available.
+The output directory holds `database.sqlite`, `DatabaseVersion.sbf`, and one
+`Attachment_*.bin` file per attachment. Keep `DatabaseVersion.sbf` beside the
+database so msgvault can check its version. Pass the directory or the
+`database.sqlite` file. Export without `--onlydb`, which also omits the required
+version file. Missing or oversize attachments
+and files that cannot be stored are skipped and counted; their messages still
+import. Long text stored in an attachment needs its file to import the full text; without it, only the inline preview is
+available on a first import. A rerun without the file keeps text already archived.
 
 ### Flags
 
@@ -155,14 +157,14 @@ available.
 | `--phone` | Yes | Your Signal phone number in E.164 format (must start with `+`) |
 | `--attachments-dir` | No | Directory holding the `Attachment_*.bin` files (default: the database's directory) |
 | `--display-name` | No | Display name for the phone owner |
-| `--limit` | No | Limit number of messages (for testing) |
+| `--limit` | No | Maximum messages to write, including updates (0 imports all; must be non-negative) |
 | `--no-default-identity` | No | Do not auto-confirm the phone number as this source's "me" identity |
 
 msgvault identifies the backup's own account from its messages: the author
 of sent messages and the recipient of received direct messages. It refuses the
-backup when that account has a different number than `--phone`, when the
-backup does not record that account's number, or when it holds no sent and no
-received direct messages.
+backup when that account has a different number than `--phone` or the backup
+does not record that account's number. Without sent or received direct
+messages, msgvault finds the owner through the recipient record matching `--phone`.
 
 ### What is imported
 
@@ -179,7 +181,8 @@ received direct messages.
 
 Contacts whose number Signal knows are matched by number, so they join the same
 person as their WhatsApp or SMS messages. Contacts Signal knows only by their
-account ID are recorded with a `signal_aci` identifier.
+account ID are recorded with a `signal_aci` identifier. If a later backup adds
+a phone number, their archived messages and group membership follow that contact.
 
 ### Run it again
 
@@ -191,13 +194,15 @@ backup restored on a new phone. Each rerun replaces a message's reactions with
 the ones in the backup, and a message whose text was removed loses its archived
 text.
 
-Messages deleted in Signal stay in your archive.
+Messages deleted in Signal, including messages later deleted for everyone, stay
+in your archive.
 
 ### Format limits
 
 msgvault reads Signal Android database versions 185 through 215. It refuses
-newer versions before writing to the archive. Older versions and databases
-missing required tables or columns also stop with an error.
+newer versions before writing to the archive. It reads the version from
+`DatabaseVersion.sbf`; a missing or invalid version file stops the import. Older
+versions and databases missing required tables or columns also stop with an error.
 
 These are left out:
 

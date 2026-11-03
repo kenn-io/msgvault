@@ -5,6 +5,8 @@ package whatsapp
 import (
 	"database/sql"
 	"time"
+
+	"go.kenn.io/msgvault/internal/textimport"
 )
 
 // waChat represents a chat/conversation from the WhatsApp jid + chat tables.
@@ -147,22 +149,8 @@ type ImportSummary struct {
 	Errors            int64
 }
 
-// ImportProgress provides callbacks for import progress reporting.
-type ImportProgress interface {
-	OnStart()
-	OnChatStart(chatJID string, chatTitle string, messageCount int)
-	OnProgress(processed, added, skipped int64)
-	OnChatComplete(chatJID string, messagesAdded int64)
-	OnComplete(summary *ImportSummary)
-	OnError(err error)
-}
+// ImportProgress receives progress callbacks during an import.
+type ImportProgress = textimport.Progress[ImportSummary]
 
-// NullProgress is a no-op implementation of ImportProgress.
-type NullProgress struct{}
-
-func (NullProgress) OnStart()                        {}
-func (NullProgress) OnChatStart(string, string, int) {}
-func (NullProgress) OnProgress(int64, int64, int64)  {}
-func (NullProgress) OnChatComplete(string, int64)    {}
-func (NullProgress) OnComplete(*ImportSummary)       {}
-func (NullProgress) OnError(error)                   {}
+// NullProgress ignores progress callbacks.
+type NullProgress = textimport.NullProgress[ImportSummary]

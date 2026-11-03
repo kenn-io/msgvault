@@ -68,7 +68,8 @@ func Write(t testing.TB, dir string, layout Layout, offset int64) string {
 	if layout == V185 {
 		version = 185
 	}
-	stmts := []string{fmt.Sprintf("PRAGMA user_version = %d", version),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), fmt.Appendf(nil, "VERSION:uint32:%d\n", version), 0o600))
+	stmts := []string{
 		fmt.Sprintf(`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, type INTEGER DEFAULT 0,
 			%s TEXT, %s TEXT, group_id TEXT, distribution_list_id INTEGER,
 			system_joined_name TEXT, profile_joined_name TEXT)`, layout.e164, layout.aci),

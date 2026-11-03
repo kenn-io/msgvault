@@ -91,7 +91,7 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 			assert.Equal(expectedMessages(), importedMessages(t, st))
 			assert.Equal(int64(6), summary.MessagesAdded)
 			assert.Equal(int64(0), summary.MessagesUpdated)
-			assert.Equal(int64(3), summary.MessagesSkipped, "SMS, call and group update")
+			assert.Equal(int64(4), summary.MessagesSkipped, "SMS, call, group update, and legacy group message")
 			assert.Equal(int64(3), summary.ChatsProcessed)
 			assert.Equal(int64(1), summary.ChatsSkipped)
 			assert.Equal(int64(1), summary.MessagesEdited)

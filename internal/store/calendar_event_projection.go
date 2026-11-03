@@ -105,7 +105,7 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	for _, column := range columns[1:] {
 		updates = append(updates, column+" = excluded."+column)
 	}
-	query := "INSERT INTO calendar_events (" + strings.Join(columns, ",") + ") VALUES (" + placeholders(len(columns)) + ") ON CONFLICT (message_id) DO UPDATE SET " + strings.Join(updates, ",")
+	query := "INSERT INTO calendar_events (" + strings.Join(columns, ",") + ") VALUES (" + SQLPlaceholders(len(columns)) + ") ON CONFLICT (message_id) DO UPDATE SET " + strings.Join(updates, ",")
 	if _, err := q.Exec(query, values...); err != nil {
 		return fmt.Errorf("write calendar projection: %w", err)
 	}
