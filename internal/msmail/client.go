@@ -48,7 +48,8 @@ type DeltaMessage struct {
 		Reason string `json:"reason"`
 	} `json:"@removed"`
 
-	archiveID int64 // set when the message is already in the vault
+	archiveID           int64 // set when the message is already in the vault
+	captureSentEnvelope bool  // refresh MIME before capturing a newly observed Sent envelope
 }
 
 const folderSelect = "?$top=100&$select=id,displayName,childFolderCount"

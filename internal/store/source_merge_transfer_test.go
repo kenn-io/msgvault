@@ -350,6 +350,71 @@ func TestMergeSourcesTransfersAndPreservesEvidence(t *testing.T) {
 	assert.Equal(result.MessagesMoved, again.MessagesMoved)
 }
 
+func TestMergeSourcesPreservesMicrosoftSentEnvelopeSnapshot(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	ctx := context.Background()
+	from, err := st.GetOrCreateSource("msmail", "history@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("msmail", "live@example.test")
+	require.NoError(err)
+	survivor := emailMergeFixtureMessage(t, st, into.ID, "live-message", []string{"visible@example.test"}, true)
+	duplicate := emailMergeFixtureMessage(t, st, from.ID, "history-message", []string{"visible@example.test"}, true)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET is_sent=TRUE WHERE id=?`), survivor)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET rfc822_message_id=? WHERE id IN (?, ?)`),
+		"<shared-sent-envelope@example.test>", survivor, duplicate)
+	require.NoError(err)
+	draftFolders, err := st.EnsureMicrosoftMailFoldersContext(ctx, into.ID, map[string]store.LabelInfo{
+		"drafts": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+	})
+	require.NoError(err)
+	draftLabel := draftFolders["drafts"]
+	_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, survivor, &draftLabel, nil)
+	require.NoError(err)
+	bccID, err := st.EnsureParticipant("private@example.test", "Private Recipient", "example.test")
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients(
+		message_id, participant_id, recipient_type, email_address
+	) VALUES (?, ?, 'bcc', ?)`), duplicate, bccID, "private@example.test")
+	require.NoError(err)
+	folders, err := st.EnsureMicrosoftMailFoldersContext(ctx, from.ID, map[string]store.LabelInfo{
+		"sent":    {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		"archive": {Name: "Archive", Type: "system"},
+	})
+	require.NoError(err)
+	sentLabel := folders["sent"]
+	_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, duplicate, &sentLabel, nil)
+	require.NoError(err)
+	archiveLabel := folders["archive"]
+	_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, duplicate, &archiveLabel, nil)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(
+		`DELETE FROM message_recipients WHERE message_id=? AND recipient_type='bcc'`), duplicate)
+	require.NoError(err)
+
+	result, err := st.MergeSourcesContext(ctx, store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+	require.Equal(int64(1), result.DuplicatesHidden)
+	got, err := st.SenderRelationships(ctx, []string{"private@example.test"}, nil)
+	require.NoError(err)
+	assert.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["private@example.test"])
+	candidates, err := st.LoadQueuedActivityCandidatesContext(ctx, 10)
+	require.NoError(err)
+	var survivorCandidate *store.ActivityCandidate
+	for i := range candidates {
+		if candidates[i].MessageID == survivor {
+			survivorCandidate = &candidates[i]
+			break
+		}
+	}
+	require.NotNil(survivorCandidate)
+	assert.False(survivorCandidate.Unsent, "the hidden Sent envelope overrides the retained Drafts label")
+}
+
 func TestMergeSourcesPreservesEquivalentIdentityTimestamp(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

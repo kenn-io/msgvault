@@ -889,6 +889,16 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		`message_id IN (SELECT id FROM selected_messages)`); err != nil {
 		return nil, fmt.Errorf("copy message_recipients: %w", err)
 	}
+	hasMicrosoftSentEnvelopes, err := sourceTableExists(tx, "msmail_sent_envelope_recipients")
+	if err != nil {
+		return nil, fmt.Errorf("check msmail_sent_envelope_recipients: %w", err)
+	}
+	if hasMicrosoftSentEnvelopes {
+		if _, err := copyByName(tx, "msmail_sent_envelope_recipients",
+			`message_id IN (SELECT id FROM selected_messages)`); err != nil {
+			return nil, fmt.Errorf("copy msmail_sent_envelope_recipients: %w", err)
+		}
+	}
 
 	// Derived account attribution copies with its delivery evidence and the
 	// confirmed identities its derivation reads, so a copied row stays

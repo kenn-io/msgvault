@@ -437,6 +437,59 @@ func TestImportSentItemsEstablishesKnownSenderRelationship(t *testing.T) {
 		"provider-observed Sent Items provenance must survive folder changes")
 }
 
+func TestImportingDraftThatMovesToSentRefreshesEnvelopeBeforeCapture(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "drafts", "sentitems")
+	f.put("draft-to-sent", "drafts")
+	message := func(recipient string) string {
+		return "From: me@example.test\r\nTo: " + recipient + "\r\n" +
+			"Subject: changed draft recipients\r\nMessage-ID: <draft-to-sent@example.test>\r\n" +
+			"Date: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody\r\n"
+	}
+	f.rawBodies["draft-to-sent"] = message("draft-only@example.test")
+	initial, err := f.sync(t, st)
+	requirements.NoError(err)
+
+	ids, err := st.MessageExistsBatch(initial.SourceID, []string{"draft-to-sent"})
+	requirements.NoError(err)
+	messageID := ids["draft-to-sent"]
+	requirements.NotZero(messageID)
+
+	// Expire only Sent Items so the next sync exercises its full-walk path.
+	// A known message moving from Drafts must refresh its MIME before the first
+	// provider-observed Sent envelope is saved.
+	f.rawBodies["draft-to-sent"] = message("actual-recipient@example.test")
+	f.put("draft-to-sent", "sentitems")
+	f.expired["sentitems"] = true
+	f.mimeCalls.Store(0)
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	assertions.EqualValues(1, f.mimeCalls.Load(), "the newly Sent message is refreshed once")
+
+	var savedRecipients []string
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT email_address
+		FROM msmail_sent_envelope_recipients WHERE message_id=? ORDER BY email_address`), messageID)
+	requirements.NoError(err)
+	for rows.Next() {
+		var address string
+		requirements.NoError(rows.Scan(&address))
+		savedRecipients = append(savedRecipients, address)
+	}
+	requirements.NoError(rows.Err())
+	requirements.NoError(rows.Close())
+	assertions.Equal([]string{"actual-recipient@example.test"}, savedRecipients)
+
+	got, err := st.SenderRelationships(t.Context(), []string{
+		"actual-recipient@example.test", "draft-only@example.test",
+	}, nil)
+	requirements.NoError(err)
+	assertions.Equal("known", got["actual-recipient@example.test"].Relationship)
+	assertions.Equal("none", got["draft-only@example.test"].Relationship)
+}
+
 func TestImportSentEnvelopeRecipientsSurviveDedupAndDeltaRefresh(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

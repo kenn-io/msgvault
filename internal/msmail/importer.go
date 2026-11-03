@@ -260,6 +260,7 @@ type syncer struct {
 	// drafts is the Drafts folder. A draft keeps its ID while it is edited,
 	// so a known draft is downloaded again when delta reports it.
 	drafts string
+	sent   string
 
 	// trash is the Deleted Items folder. delete-staged moves a message there
 	// and marks it deleted, and a sync keeps that mark.
@@ -290,6 +291,8 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 		}
 		system[id] = role
 		switch name {
+		case "sentitems":
+			s.sent = id
 		case "drafts":
 			s.drafts = id
 		case "deleteditems":
@@ -318,9 +321,10 @@ func (s *syncer) ensureLabels(ctx context.Context, folders []Folder) (map[string
 // them again. A message in Deleted Items keeps its mark, as a Gmail message in
 // Trash does. In an incremental round (seen is nil), known messages are also
 // downloaded again, because delta reports them only when they changed. A walk
-// (seen is not nil) returns every message, so it downloads again only drafts,
-// whose content can change under the same ID. Removed messages are looked up
-// with relocate. A walk collects the IDs of live messages in seen.
+// (seen is not nil) returns every message, so it downloads drafts and newly
+// observed Sent messages. The latter need authoritative MIME before their
+// first Sent envelope snapshot is saved. Removed messages are looked up with
+// relocate. A walk collects the IDs of live messages in seen.
 func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMessage, seen map[string]bool) error {
 	folderLabel := s.labels[folderID]
 	var live []DeltaMessage
@@ -341,6 +345,19 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 	if err != nil {
 		return err
 	}
+	var sentObserved map[int64]bool
+	if folderID == s.sent && s.sent != "" {
+		var messageIDs []int64
+		for _, message := range live {
+			if id := known[message.ID]; id > 0 {
+				messageIDs = append(messageIDs, id)
+			}
+		}
+		sentObserved, err = s.st.MicrosoftSentItemsObservedBatchContext(ctx, messageIDs)
+		if err != nil {
+			return err
+		}
+	}
 	var todo []DeltaMessage
 	for _, m := range live {
 		id, ok := known[m.ID]
@@ -350,6 +367,12 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 			}
 		}
 		if !ok {
+			todo = append(todo, m)
+			continue
+		}
+		if folderID == s.sent && s.sent != "" && !sentObserved[id] {
+			m.archiveID = id
+			m.captureSentEnvelope = true
 			todo = append(todo, m)
 			continue
 		}
@@ -389,9 +412,13 @@ func (s *syncer) afterStore(ctx context.Context, folderLabel int64, m DeltaMessa
 	// A new message's folder label is written with the MIME. Reconcile it here
 	// too so provider Sent Items provenance is saved before a later move can
 	// remove that label.
-	if m.archiveID == 0 {
-		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, &folderLabel, m.Categories); err != nil {
+	if m.archiveID == 0 || m.captureSentEnvelope {
+		changed, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, &folderLabel, m.Categories)
+		if err != nil {
 			return fmt.Errorf("save Microsoft message labels: %w", err)
+		}
+		if m.captureSentEnvelope && changed {
+			s.sum.Moved++
 		}
 	}
 	if s.opts.AttachmentsDir == "" {
@@ -477,13 +504,23 @@ func (s *syncer) retryMessages(ctx context.Context) error {
 			s.cursors[key] = parent // a folder this run did not list
 			continue
 		}
+		captureSentEnvelope := false
 		if messageID := known[id]; messageID != 0 {
-			if err := s.setFolder(ctx, messageID, s.labels[parent], info.Categories); err != nil {
-				return err
+			if parent == s.sent && s.sent != "" {
+				observed, err := s.st.MicrosoftSentItemsObservedBatchContext(ctx, []int64{messageID})
+				if err != nil {
+					return err
+				}
+				captureSentEnvelope = !observed[messageID]
+			}
+			if !captureSentEnvelope {
+				if err := s.setFolder(ctx, messageID, s.labels[parent], info.Categories); err != nil {
+					return err
+				}
 			}
 		}
 		// download clears the marker only after the message is stored.
-		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id]}}); err != nil {
+		if err := s.download(ctx, parent, []DeltaMessage{{ID: id, ReceivedDateTime: info.ReceivedDateTime, Categories: info.Categories, archiveID: known[id], captureSentEnvelope: captureSentEnvelope}}); err != nil {
 			s.cursors[key] = parent
 			return err
 		}
@@ -538,6 +575,16 @@ func (s *syncer) relocate(ctx context.Context, msgs map[string]int64) error {
 		}
 		// A folder this run did not list is picked up on the next sync.
 		if label, ok := s.labels[parent]; ok {
+			if parent == s.sent && s.sent != "" {
+				observed, err := s.st.MicrosoftSentItemsObservedBatchContext(ctx, []int64{msgID})
+				if err != nil {
+					return err
+				}
+				if !observed[msgID] {
+					s.cursors[retryPrefix+id] = parent
+					continue
+				}
+			}
 			if err := s.setFolder(ctx, msgID, label, info.Categories); err != nil {
 				return err
 			}

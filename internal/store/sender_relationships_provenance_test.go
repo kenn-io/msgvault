@@ -11,6 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
 func TestSenderRelationshipsRawImportOwnershipSurvivesSourceMerge(t *testing.T) {
@@ -53,4 +54,42 @@ func TestSenderRelationshipsRawImportOwnershipSurvivesSourceMerge(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestCopySubsetPreservesMicrosoftSentEnvelopeSnapshot(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+
+	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(
+		`UPDATE sources SET source_type='msmail' WHERE id=?`), f.Source.ID)
+	requirements.NoError(err)
+	messageID := senderRelationshipMessage(t, f, true, "to", "visible@example.test")
+	bccID := f.EnsureParticipant("private@example.test", "Private Recipient", "example.test")
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`INSERT INTO message_recipients(
+		message_id, participant_id, recipient_type, email_address
+	) VALUES (?, ?, 'bcc', ?)`), messageID, bccID, "private@example.test")
+	requirements.NoError(err)
+	folders, err := f.Store.EnsureMicrosoftMailFoldersContext(ctx, f.Source.ID, map[string]store.LabelInfo{
+		"sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+	})
+	requirements.NoError(err)
+	sentLabel := folders["sent"]
+	_, err = f.Store.ReconcileMicrosoftMailLabelsContext(ctx, messageID, &sentLabel, nil)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(
+		`DELETE FROM message_recipients WHERE message_id=? AND recipient_type='bcc'`), messageID)
+	requirements.NoError(err)
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = store.CopySubset(store.DBPathForTest(f.Store), destinationDir, 1, false)
+	requirements.NoError(err)
+	destination, err := store.Open(filepath.Join(destinationDir, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(destination.Close()) })
+
+	got, err := destination.SenderRelationships(ctx, []string{"private@example.test"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["private@example.test"])
 }

@@ -72,6 +72,45 @@ func TestSenderHistoryMessageIDsQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
 		"history paging should probe recipient envelopes by normalized address:\n%s", plan)
 	assertions.NotContains(plan, "USE TEMP B-TREE FOR ORDER BY",
 		"history paging should use the index's message ID order:\n%s", plan)
+	assertions.NotContains(plan, "CORRELATED SCALAR SUBQUERY",
+		"history paging must apply its row limit before checking Sent snapshots:\n%s", plan)
+}
+
+func TestSenderHistoryMessageIDsDeduplicatesSentSnapshots(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "sender-history-snapshot.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(s.Close()) })
+	requirements.NoError(s.InitSchema())
+	source, err := s.GetOrCreateSource("msmail", "owner@example.test")
+	requirements.NoError(err)
+	conversationID, err := s.EnsureConversationWithType(source.ID, "sender-history", "email_thread", "Sender history")
+	requirements.NoError(err)
+	messageID, err := s.UpsertMessage(&Message{
+		SourceID: source.ID, ConversationID: conversationID,
+		SourceMessageID: "sent-copy", MessageType: "email",
+	})
+	requirements.NoError(err)
+	participantID, err := s.EnsureParticipant("target@example.test", "Target", "example.test")
+	requirements.NoError(err)
+	_, err = s.db.ExecContext(t.Context(), s.Rebind(`INSERT INTO message_recipients(
+		message_id, participant_id, recipient_type, email_address
+	) VALUES (?, ?, 'to', ?)`), messageID, participantID, "target@example.test")
+	requirements.NoError(err)
+	_, err = s.db.ExecContext(t.Context(), s.Rebind(`INSERT INTO msmail_sent_envelope_recipients(
+		message_id, email_address
+	) VALUES (?, ?)`), messageID, "target@example.test")
+	requirements.NoError(err)
+
+	var ids []int64
+	err = s.withReadSnapshotContext(t.Context(), func(tx *loggedTx) error {
+		var readErr error
+		ids, readErr = s.senderHistoryMessageIDs(t.Context(), tx, "target@example.test", nil, 0, 0, 10)
+		return readErr
+	})
+	requirements.NoError(err)
+	assertions.Equal([]int64{messageID}, ids, "a live row and its preserved Sent snapshot describe one message")
 }
 
 func TestSenderSentEnvelopeHistoryMessageIDsQueryUsesAddressIndex(t *testing.T) {

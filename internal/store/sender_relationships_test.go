@@ -479,6 +479,39 @@ func TestSenderRelationshipsLimitsAndCancellation(t *testing.T) {
 	requirements.Error(err)
 }
 
+func TestSenderRelationshipsBoundsLiveRecipientsWhenSentSnapshotExists(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	messageID := senderRelationshipMessage(t, f, true, "to", "target@example.com")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE sources SET source_type='msmail' WHERE id=?`), f.Source.ID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO msmail_sent_envelope_recipients(
+		message_id, email_address
+	) VALUES (?, ?)`), messageID, "target@example.com")
+	requirements.NoError(err)
+
+	_, err = f.Store.DB().ExecContext(t.Context(), `WITH RECURSIVE digit(x) AS (
+		SELECT 0 UNION ALL SELECT x+1 FROM digit WHERE x<100
+	)
+	INSERT INTO participants(email_address, display_name, domain)
+	SELECT 'bulk-' || CAST(a.x*101+b.x AS TEXT) || '@example.test', 'Bulk Recipient', 'example.test'
+	FROM digit a CROSS JOIN digit b
+	WHERE a.x*101+b.x < 10001`)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO message_recipients(
+		message_id, participant_id, recipient_type, email_address
+	)
+	SELECT ?, id, 'to', email_address FROM participants
+	WHERE email_address LIKE 'bulk-%@example.test'`), messageID)
+	requirements.NoError(err)
+
+	got, err := f.Store.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
+	requirements.ErrorIs(err, store.ErrSenderRelationshipLimit)
+	assertions.Nil(got, "snapshot-backed messages still account for live-recipient rows read by activity loading")
+}
+
 func TestSenderRelationshipsContactReachabilityAndDraftExclusion(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -400,15 +400,30 @@ func (s *Store) senderHistoryMessageIDs(ctx context.Context, tx *loggedTx, key s
 		return nil, fmt.Errorf("read sender Sent envelope history entries: %w", err)
 	}
 	ids := make([]int64, 0, min(limit, len(recipientIDs)+len(sentIDs)))
+	appendID := func(id int64) {
+		if len(ids) == 0 || ids[len(ids)-1] != id {
+			ids = append(ids, id)
+		}
+	}
 	for i, j := 0, 0; len(ids) < limit; {
 		switch {
 		case i >= len(recipientIDs) && j >= len(sentIDs):
 			return ids, nil
-		case j >= len(sentIDs) || (i < len(recipientIDs) && recipientIDs[i] >= sentIDs[j]):
-			ids = append(ids, recipientIDs[i])
+		case i >= len(recipientIDs):
+			appendID(sentIDs[j])
+			j++
+		case j >= len(sentIDs):
+			appendID(recipientIDs[i])
 			i++
-		case i >= len(recipientIDs) || sentIDs[j] > recipientIDs[i]:
-			ids = append(ids, sentIDs[j])
+		case recipientIDs[i] > sentIDs[j]:
+			appendID(recipientIDs[i])
+			i++
+		case sentIDs[j] > recipientIDs[i]:
+			appendID(sentIDs[j])
+			j++
+		default:
+			appendID(recipientIDs[i])
+			i++
 			j++
 		}
 	}
@@ -426,8 +441,7 @@ func (s *Store) senderHistoryMessageIDsQuery(key string, sources []int64, exclud
 	args = append(args, sourceArgs...)
 	query := `SELECT mr.message_id FROM message_recipients mr
 		JOIN messages m ON m.id=mr.message_id
-		WHERE ` + senderRecipientAddress + `=?` + beforeFilter + `
-		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)` + scope + `
+		WHERE ` + senderRecipientAddress + `=?` + beforeFilter + scope + `
 		ORDER BY mr.message_id DESC LIMIT ?`
 	args = append(args, limit)
 	return query, args
@@ -510,6 +524,7 @@ func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids [
 	args := personMergeSnapshotIDArgs(ids)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
+	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	// Count every envelope and membership before the projector loads the same
 	// metadata, so a huge audience cannot cause an unbounded allocation.
 	query := `SELECT m.id, ` + senderRecipientAddress + `,
@@ -520,6 +535,10 @@ func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids [
 		UNION ALL SELECT sent.message_id, sent.email_address, 1
 		FROM msmail_sent_envelope_recipients sent
 		WHERE sent.message_id IN (` + marks + `)
+		UNION ALL SELECT m.id, '', 0 FROM messages m
+		JOIN message_recipients mr ON mr.message_id=m.id
+		WHERE m.id IN (` + marks + `)
+		AND EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
 		UNION ALL SELECT m.id, '', 0 FROM messages m
 		JOIN conversation_participants cp ON cp.conversation_id=m.conversation_id
 		WHERE m.id IN (` + marks + `)
