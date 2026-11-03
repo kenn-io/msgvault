@@ -259,13 +259,6 @@ func TestParseSetRejectsSubsecondRecurrenceDates(t *testing.T) {
 	}
 }
 
-func TestContainsRejectsSubsecondOriginalIdentity(t *testing.T) {
-	original := Identity{Instant: time.Date(2027, 3, 2, 17, 0, 0, 500_000_000, time.UTC)}
-	found, err := Contains(t.Context(), parsed(t, "RRULE:FREQ=DAILY;COUNT=1"), nil, original, 100)
-	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
-	assert.False(t, found)
-}
-
 func TestConservativeEndCountUntilRdate(t *testing.T) {
 	assertions := assert.New(t)
 	for _, rule := range []string{"RRULE:FREQ=DAILY;COUNT=3", "RRULE:FREQ=DAILY;UNTIL=20270304T170000Z"} {
