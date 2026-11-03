@@ -38,7 +38,7 @@ it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the 
   const predicate = kind === 'filtered' ? { filters: [{ dimension: 'source' as const, values: ['2'] }] } : {};
   state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
   await controller.openTarget('cluster:1', predicate);
-  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate,
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate,
     onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
   try {
     if (kind === 'missing') {
