@@ -9,6 +9,12 @@ retrieve attachments, and help you remember people and conversations. The
 server uses your selected daemon: without `[remote].url`, it starts or reuses
 the local daemon; with `[remote].url`, it uses that remote server.
 
+Unreleased: a running local MCP proxy rediscovers the daemon after idle shutdown
+or a restart, starting it when `daemon_auto_start` permits. It retries a request
+once after a connection fails before sending. Failures after connecting are not
+replayed. If recovery fails, the tool reports `daemon_unavailable` and suggests
+checking `msgvault daemon status`.
+
 MCP searches the archive, manages drafts, and can edit native email tags through the daemon.
 It cannot send email or read Google credentials. Semantic searches call your
 configured embedding endpoint, so use a local or self-hosted endpoint when search text must stay on

@@ -111,6 +111,9 @@ var stableCalendarTools = sync.OnceValue(func() []toolDefinition {
 				} else {
 					preview, err := previewCalendarMutation(ctx, h.calendar, request)
 					if err != nil {
+						if result := translateLocalDaemonError(err); result != nil {
+							return result, nil
+						}
 						return toolErrorResult(err.Error()), nil
 					}
 					requestJSON, err := json.Marshal(request, json.Deterministic(true))
@@ -145,6 +148,9 @@ var stableCalendarTools = sync.OnceValue(func() []toolDefinition {
 			}
 			result, err := h.calendar.ControlCalendar(ctx, request)
 			if err != nil {
+				if result := translateLocalDaemonError(err); result != nil {
+					return result, nil
+				}
 				return toolErrorResult(err.Error()), nil
 			}
 			if result == nil {

@@ -421,6 +421,9 @@ func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*too
 		Filename: strings.TrimSpace(filename), MIMEFamilies: families, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
+		if result := translateLocalDaemonError(err); result != nil {
+			return result, nil
+		}
 		return toolErrorResult("person file search failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 	}
 	return jsonResult(response)
@@ -521,7 +524,17 @@ type daemonAPIErrorCoder interface {
 	APIErrorCode() string
 }
 
+func translateLocalDaemonError(err error) *toolResult {
+	if _, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+		return toolErrorResult("daemon_unavailable: " + daemonclient.LocalDaemonUnavailableMessage)
+	}
+	return nil
+}
+
 func translateDaemonRequestError(err error) *toolResult {
+	if result := translateLocalDaemonError(err); result != nil {
+		return result
+	}
 	var coded daemonAPIErrorCoder
 	if !errors.As(err, &coded) {
 		return nil
