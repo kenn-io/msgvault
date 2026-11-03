@@ -109,5 +109,8 @@ func TestImportReplayPreservesGenericStoreReplyEdit(t *testing.T) {
 	assert.Equal(target.ID, after.ReplyToMessageID.Int64)
 	metadata, err := st.GetMessageMetadata(child.ID)
 	require.NoError(err)
-	assert.JSONEq(before.String, metadata.String, "generic edge edit must not reparent immutable provider metadata")
+	var previous, current objectMetadata
+	require.NoError(json.Unmarshal([]byte(before.String), &previous))
+	require.NoError(json.Unmarshal([]byte(metadata.String), &current))
+	assert.Equal(previous, current, "generic edge edit must not reparent immutable provider metadata")
 }

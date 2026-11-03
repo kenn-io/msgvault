@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -32,7 +33,7 @@ func safeObjectID(id string) bool {
 		!strings.ContainsAny(id, "/\\?#%") && strings.IndexFunc(id, unicode.IsControl) < 0
 }
 
-// Client is GET-only and binds credentials to one fixed Graph origin.
+// Client binds credentials to one fixed Graph origin.
 type Client struct {
 	token, origin string
 	http          *http.Client
@@ -57,18 +58,60 @@ func newClient(token, origin string, h *http.Client) (*Client, error) {
 }
 
 // APIError retains no provider text, URLs, request headers or token.
-type APIError struct{ Status int }
+type APIError struct{ Status, Code, Subcode int }
 
-func (e *APIError) Error() string { return fmt.Sprintf("graph request failed (HTTP %d)", e.Status) }
+func (e *APIError) Error() string {
+	if e.Code == 0 {
+		return fmt.Sprintf("graph request failed (HTTP %d)", e.Status)
+	}
+	if e.Subcode == 0 {
+		return fmt.Sprintf("graph request failed (HTTP %d, code %d)", e.Status, e.Code)
+	}
+	return fmt.Sprintf("graph request failed (HTTP %d, code %d, subcode %d)", e.Status, e.Code, e.Subcode)
+}
+
+func (e *APIError) Permission() bool { return e.Code == 10 || (e.Code >= 200 && e.Code <= 299) }
+func (e *APIError) Throttled() bool {
+	return e.Code == 4 || e.Code == 17 || e.Code == 32 || e.Code == 613 || (e.Code >= 80000 && e.Code <= 80014)
+}
+func (e *APIError) TokenExpired() bool { return e.Code == 190 }
+func (e *APIError) NotFound() bool     { return e.Code == 100 }
 
 // APIErrorCode lets CLI diagnostics classify a refused provider read without
 // interpreting discarded response bodies or inferring cursor expiry.
 func (e *APIError) APIErrorCode() string { return "source_scope_unavailable" }
 
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.origin+"/"+graphVersion+"/"+path+"?"+q.Encode(), nil)
+	return c.do(ctx, http.MethodGet, path, q, nil, "", out)
+}
+
+func (c *Client) post(ctx context.Context, path string, form url.Values, out any) error {
+	return c.do(ctx, http.MethodPost, path, nil, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded", out)
+}
+
+func (c *Client) postJSON(ctx context.Context, path string, body any, out any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return errors.New("invalid Graph request body")
+	}
+	return c.do(ctx, http.MethodPost, path, nil, bytes.NewReader(data), "application/json", out)
+}
+
+func (c *Client) delete(ctx context.Context, path string, out any) error {
+	return c.do(ctx, http.MethodDelete, path, nil, nil, "", out)
+}
+
+func (c *Client) do(ctx context.Context, method, path string, q url.Values, body io.Reader, contentType string, out any) error {
+	target := c.origin + "/" + graphVersion + "/" + path
+	if len(q) > 0 {
+		target += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target, body)
 	if err != nil {
 		return errors.New("invalid Graph request")
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	resp, err := c.http.Do(req)
@@ -81,7 +124,22 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return &APIError{Status: resp.StatusCode}
+		apiErr := &APIError{Status: resp.StatusCode}
+		const errorLimit = 64 << 10
+		data, readErr := io.ReadAll(io.LimitReader(resp.Body, errorLimit+1))
+		if readErr != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var wire struct {
+			Error struct {
+				Code    int `json:"code"`
+				Subcode int `json:"error_subcode"`
+			} `json:"error"`
+		}
+		if readErr == nil && len(data) <= errorLimit && json.Unmarshal(data, &wire) == nil {
+			apiErr.Code, apiErr.Subcode = wire.Error.Code, wire.Error.Subcode
+		}
+		return apiErr
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil && ctx.Err() != nil {
