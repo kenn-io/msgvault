@@ -2060,7 +2060,7 @@ func TestGetMessage(t *testing.T) {
 		assert.Equal(t, []query.Address{{Email: "sender@example.com", Name: "Test Sender"}}, msg.From)
 	})
 
-	t.Run("HTML without stored plain text returns HTML slice", func(t *testing.T) {
+	t.Run("html-only body returns html slice", func(t *testing.T) {
 		assert := assert.New(t)
 		htmlBody := "<p>Hello <strong>world</strong></p>"
 		eng2 := &querytest.MockEngine{

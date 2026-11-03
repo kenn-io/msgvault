@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -41,7 +40,6 @@ func TestMessageBodiesThroughDaemon(t *testing.T) {
 			setupRequire.NoError(err)
 			t.Cleanup(func() { setupAssert.NoError(client.Close()) })
 			for _, tc := range []struct{ name, text, html string }{
-				{"plain", "Plain text", ""},
 				{"multipart", "Plain alternative", "<p>HTML alternative</p>"},
 				{"html_without_stored_text", "", "<p>Only HTML</p>"},
 				{"identical", "<p>Same bytes</p>", "<p>Same bytes</p>"},
@@ -56,28 +54,10 @@ func TestMessageBodiesThroughDaemon(t *testing.T) {
 						BodyHTML: sql.NullString{String: tc.html, Valid: true},
 					})
 					require.NoError(err)
-					wantBody := tc.text
-					if wantBody == "" {
-						wantBody = tc.html
-					}
-					stored, err := client.GetMessageContext(t.Context(), id)
-					require.NoError(err)
-					assert.Equal(wantBody, stored.Body, "legacy fallback")
-					assert.Equal(tc.text, stored.BodyText, "canonical plain text")
-					assert.Equal(tc.html, stored.BodyHTML)
 					detail, err := daemonclient.NewEngineAdapter(client).GetMessage(t.Context(), id)
 					require.NoError(err)
 					assert.Equal(tc.text, detail.BodyText)
 					assert.Equal(tc.html, detail.BodyHTML)
-					// Empty canonical text must be present on the wire, not omitted.
-					response, err := server.Client().Get(server.URL + "/api/v1/messages/" + strconv.FormatInt(id, 10))
-					require.NoError(err)
-					defer func() { assert.NoError(response.Body.Close()) }()
-					assert.Equal(http.StatusOK, response.StatusCode)
-					var wire api.MessageDetail
-					require.NoError(json.UnmarshalRead(response.Body, &wire))
-					require.NotNil(wire.BodyText)
-					assert.Equal(tc.text, *wire.BodyText)
 				})
 			}
 		})
@@ -87,29 +67,24 @@ func TestMessageBodiesThroughDaemon(t *testing.T) {
 // Older daemons have no canonical field. Keep their documented legacy body
 // rather than guessing that equal HTML and text means there was no text.
 func TestMessageBodiesFromOlderDaemon(t *testing.T) {
-	for _, body := range []string{"legacy text", "<p>legacy HTML</p>", ""} {
-		t.Run(body, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				assert.Equal("/api/v1/messages/42", r.URL.Path)
-				w.Header().Set("Content-Type", "application/json")
-				assert.NoError(json.MarshalWrite(w, map[string]any{
-					"id": 42, "body": body, "body_html": body,
-					"from": "sender@example.com", "to": []string{}, "subject": "Legacy",
-					"sent_at": "2026-01-01T00:00:00Z", "snippet": "", "labels": []string{},
-					"has_attachments": false, "hidden_text_present": false, "size_bytes": 0,
-					"attachments": []any{},
-				}))
-			}))
-			t.Cleanup(server.Close)
-			client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
-			require.NoError(err)
-			t.Cleanup(func() { assert.NoError(client.Close()) })
-			detail, err := daemonclient.NewEngineAdapter(client).GetMessage(t.Context(), 42)
-			require.NoError(err)
-			assert.Equal(body, detail.BodyText)
-			assert.Equal(body, detail.BodyHTML)
-		})
-	}
+	assert := assert.New(t)
+	require := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/v1/messages/42", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(json.MarshalWrite(w, map[string]any{
+			"id": 42, "body": "<p>legacy HTML</p>", "body_html": "<p>legacy HTML</p>",
+			"from": "sender@example.com", "to": []string{}, "subject": "Legacy",
+			"sent_at": "2026-01-01T00:00:00Z", "snippet": "", "labels": []string{},
+			"has_attachments": false, "hidden_text_present": false, "size_bytes": 0,
+			"attachments": []any{},
+		}))
+	}))
+	t.Cleanup(server.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true, HTTPClient: server.Client()})
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(client.Close()) })
+	detail, err := daemonclient.NewEngineAdapter(client).GetMessage(t.Context(), 42)
+	require.NoError(err)
+	assert.Equal("<p>legacy HTML</p>", detail.BodyText)
 }

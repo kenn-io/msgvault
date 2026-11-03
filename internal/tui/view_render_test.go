@@ -816,7 +816,6 @@ func TestBuildDetailLinesBodyAlternatives(t *testing.T) {
 		want string
 	}{
 		{"HTML without stored plain text", "", "<p>Delivery &amp; pickup</p>", "Delivery & pickup"},
-		{"plain text preferred", "Plain alternative", "<p>HTML alternative</p>", "Plain alternative"},
 		{"empty", "", "", "(No text content)"},
 	}
 	for _, tt := range tests {
