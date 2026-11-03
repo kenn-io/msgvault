@@ -1832,6 +1832,7 @@ func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 	t.Cleanup(func() { checkpointMinInterval = oldInterval })
 
 	f := newFakeBeeper(t)
+	f.pageSize = 1
 	base := time.Now().Add(-90 * 24 * time.Hour).UTC().Truncate(time.Second)
 	ch := &fakeChat{
 		ID: "!ckpt:beeper.local", AccountID: "signal", Network: "Signal", Title: "Ckpt", Type: "single",
@@ -1840,16 +1841,16 @@ func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 			{"id": "@signal_ann:beeper.local", "fullName": "Ann"},
 		},
 	}
-	// >25 pages so a mid-chat checkpoint fires; the newest message replies to
-	// a parent near the beginning of history, far beyond the interrupt point.
-	for i := range 600 {
+	// 40 one-message pages cross the 25-page checkpoint. After 27 pages,
+	// c39 through c13 have been seen, while reply parent c5 is still unseen.
+	for i := range 40 {
 		m := fakeMsg{
 			ID: "c" + strconv.Itoa(i), SortKey: i,
 			Timestamp: base.Add(time.Duration(i) * time.Minute),
 			Text:      "ckpt " + strconv.Itoa(i),
 			SenderID:  "@signal_ann:beeper.local", SenderName: "Ann",
 		}
-		if i == 599 {
+		if i == 39 {
 			m.LinkedMessageID = "c5"
 		}
 		ch.Msgs = append(ch.Msgs, m)
@@ -1892,7 +1893,7 @@ func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 	require.NotNil(cs)
 	require.NotEmpty(cs.Oldest, "persisted state must carry the advanced cursor")
 	require.False(cs.Done)
-	require.Equal([][2]string{{"c599", "c5"}}, cs.PendingReplies,
+	require.Equal([][2]string{{"c39", "c5"}}, cs.PendingReplies,
 		"persisted state must carry the reply pairs its cursor has walked past")
 
 	// The resumed run completes the chat and links the pair.
@@ -1903,7 +1904,7 @@ func TestBackfillCheckpointCarriesPendingReplies(t *testing.T) {
 		`SELECT id FROM messages WHERE source_message_id = ?`), "c5").Scan(&parentID))
 	var linked sql.NullInt64
 	require.NoError(st.DB().QueryRow(st.Rebind(
-		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "c599").Scan(&linked))
+		`SELECT reply_to_message_id FROM messages WHERE source_message_id = ?`), "c39").Scan(&linked))
 	require.True(linked.Valid)
 	require.Equal(parentID, linked.Int64)
 }
