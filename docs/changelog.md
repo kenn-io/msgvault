@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-03
 title: Changelog
 description: Release history for msgvault
 ---
@@ -8,6 +8,15 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Instagram mentions and tags](usage/instagram-comments.md#mentions-and-tags) adds opt-in, resumable tag polling as searchable conversations; webhook mention discovery and replies are pending.
+
+- [Instagram comment sync](usage/instagram-comments.md) archives linked professional
+  account media comments and replies for search and existing person linking.
+  Sending and ad-only discovery are not included.
+- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
+  nested replies on organic, visitor, and ad posts returned for a selected Page.
+  Search the archive and link commenters through existing people tools. This
+  does not send messages or include Instagram or ad-creative discovery.
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
