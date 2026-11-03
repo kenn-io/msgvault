@@ -158,6 +158,32 @@ func TestExploreGroupsMessageTypeCollapsesLegacyRowsIntoEmail(t *testing.T) {
 	assertions.Equal(result.Rows[0].Count, drilled.TotalCount, "drill-down filter must reproduce the group count")
 }
 
+func TestExploreMessageTypeGroupsUseLatestConversationMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	base := time.Date(2026, 7, 18, 10, 0, 0, 0, time.UTC)
+	b.AddMessage(MessageOpt{SourceID: source, ConversationID: 101, Subject: "Older SMS", MessageType: "sms", SentAt: base})
+	b.AddMessage(MessageOpt{SourceID: source, ConversationID: 101, Subject: "Newer MMS", MessageType: "mms", SentAt: base.Add(time.Hour)})
+	engine := b.BuildEngine()
+
+	groups, err := engine.ExploreGroups(context.Background(), ExploreGroupRequest{
+		Explore: ExploreRequest{}, Dimension: messageTypeDimension, Page: PageSpec{Limit: 50},
+	})
+	require.NoError(err)
+	require.Len(groups.Rows, 1)
+	assert.Equal("mms", groups.Rows[0].Key)
+	assert.Equal(int64(1), groups.Rows[0].Count)
+
+	entries, err := engine.Explore(context.Background(), ExploreRequest{
+		Context: Context{MessageTypes: []string{"sms"}}, Page: PageSpec{Limit: 50},
+	})
+	require.NoError(err)
+	require.Len(entries.Rows, 1)
+	assert.Equal("sms", entries.Rows[0].MessageType)
+}
+
 // TestExploreGroupsGroupKeyReturnsExactGroupRegardlessOfRank pins the
 // exact-key lookup group detail hydration depends on: the requested group
 // must be returned even when other groups outrank it, so a top-N page can

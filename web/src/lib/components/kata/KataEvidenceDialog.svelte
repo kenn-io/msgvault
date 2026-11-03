@@ -7,11 +7,12 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
-  let { client, selector, defaultTitle = '', onclose = () => undefined }: {
+  let { client, selector, defaultTitle = '', onclose = () => undefined, oncreated = () => undefined }: {
     client: APIClient;
     selector: EvidenceSelector;
     defaultTitle?: string;
     onclose?: () => void;
+    oncreated?: () => void;
   } = $props();
 
   let mode = $state<'create' | 'link'>('create');
@@ -43,6 +44,7 @@
   const actionOptions = [{ value: 'create', label: 'Create issue' }, { value: 'link', label: 'Add to existing issue' }];
 
   $effect(() => { void prepare(start, narrowed); });
+  $effect(() => { if (receipt) untrack(oncreated); });
   onMount(() => appShortcuts.pushScope('kata-evidence-dialog'));
   onDestroy(() => { generation++; controller?.abort(); });
 

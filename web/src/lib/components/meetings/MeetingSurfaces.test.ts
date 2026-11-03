@@ -126,7 +126,7 @@ describe('meeting panel surfaces', () => {
     const filters = [{ dimension: 'message_type' as const, values: ['meeting_transcript'] }, { dimension: 'source' as const, values: ['3'] }, { dimension: 'domain' as const, values: ['exact.example'] }];
     state.commitNavigation({ workspace: 'everything', groupingChain: presentation === 'groups' ? ['domain'] : [], filters, query: 'planning', searchMode: 'full_text' });
     const view = render(AppShell, { client, state });
-    await screen.findByText('4 meetings');
+    await screen.findByText(/^4 meetings(?: ·|$)/);
     expect(metrics[0]).toMatchObject({ explore: { predicate: { ...state.predicate(), filters }, cache_revision: 'everything-cache', search_provenance: { lexical_index_revision: 'lexical-1' } } });
     view.unmount(); state.destroy();
   });
@@ -195,7 +195,7 @@ it('reloads a failed meeting overview from a freshly loaded matching authority e
   const view = render(AppShell, { client, state });
   try {
     await fireEvent.click(await screen.findByRole('button', { name: 'Reload meeting activity' }));
-    expect(await screen.findByText('4 meetings')).toBeDefined();
+    expect(await screen.findByText(/^4 meetings(?: ·|$)/)).toBeDefined();
     expect(listLoads).toBe(2);
     expect(metrics).toHaveLength(2);
     expect(metrics[1]).toEqual(metrics[0]);

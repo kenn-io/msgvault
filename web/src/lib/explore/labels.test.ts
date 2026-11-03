@@ -95,6 +95,8 @@ describe('entryKindPresentation', () => {
     ['telegram', 'Conversation'],
     ['chat', 'Conversation'],
     ['meeting_transcript', 'Meeting'],
+    ['meeting_note', 'Meeting'],
+    ['meeting_minutes', 'Meeting'],
     ['calendar_event', 'Calendar event'],
     ['email', 'Email'],
     ['', 'Item'],

@@ -8,6 +8,13 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### API schema 3.38.0
+
+- Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.38.0 adds optional participant IDs to messages in conversation responses.
+- Canonical `kind` filters select Email, Conversation, Event, Meeting, and Item entries. Conversation classification includes older chat messages whose stored message type is empty.
+
+### Other changes
+
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Import Telegram Desktop JSON exports with senders, replies, edit markers, and available media using [`import-telegram`](usage/text-messages.md#import-telegram). Overlapping exports add new messages while preserving archived content.
 
