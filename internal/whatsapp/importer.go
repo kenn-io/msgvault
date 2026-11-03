@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -37,7 +38,7 @@ func (imp *Importer) Import(ctx context.Context, waDBPath string, opts ImportOpt
 	startTime := time.Now()
 	summary := &ImportSummary{}
 
-	waDB, err := openReadOnlyDatabase(ctx, waDBPath)
+	waDB, err := sqliteutil.OpenReadOnlyDatabase(ctx, waDBPath)
 	if err != nil {
 		return nil, fmt.Errorf("open whatsapp db: %w", err)
 	}

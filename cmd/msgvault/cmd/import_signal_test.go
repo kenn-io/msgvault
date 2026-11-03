@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
 func TestResolveSignalInput(t *testing.T) {
@@ -40,34 +40,6 @@ func TestResolveSignalInput(t *testing.T) {
 	assert.Contains(err.Error(), "attachments directory not found")
 }
 
-// writeSignalCommandFixture writes a minimal Signal Android database: one
-// direct chat with a received and a sent message.
-func writeSignalCommandFixture(t *testing.T) string {
-	t.Helper()
-	require := require.New(t)
-	dir := t.TempDir()
-	db, err := sql.Open("sqlite3", filepath.Join(dir, "database.sqlite"))
-	require.NoError(err)
-	defer func() { require.NoError(db.Close()) }()
-	_, err = db.Exec(`
-		CREATE TABLE recipient (_id INTEGER PRIMARY KEY, e164 TEXT, aci TEXT, group_id TEXT, profile_joined_name TEXT);
-		CREATE TABLE thread (_id INTEGER PRIMARY KEY, recipient_id INTEGER);
-		CREATE TABLE message (_id INTEGER PRIMARY KEY, date_sent INTEGER, date_received INTEGER,
-			thread_id INTEGER, from_recipient_id INTEGER, to_recipient_id INTEGER, type INTEGER, body TEXT,
-			quote_id INTEGER DEFAULT 0, quote_author INTEGER DEFAULT 0,
-			latest_revision_id INTEGER, original_message_id INTEGER);
-		INSERT INTO recipient VALUES
-			(1, '+15555550100', '0f0f0f0f-0000-4000-8000-000000000001', NULL, 'Owner'),
-			(2, '+15555550101', '0f0f0f0f-0000-4000-8000-000000000002', NULL, 'Alice Example');
-		INSERT INTO thread VALUES (1, 2);
-		INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body)
-		VALUES (1, 1700000000000, 1700000000001, 1, 2, 1, 10485780, 'hello'),
-		       (2, 1700000060000, 1700000060001, 1, 1, 2, 10485783, 'hi');
-	`)
-	require.NoError(err)
-	return dir
-}
-
 func TestImportSignalConfirmsNormalizedPhone(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	markDaemonCLISubprocessForTest(t)
@@ -83,7 +55,9 @@ func TestImportSignalConfirmsNormalizedPhone(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	command.SetErr(&output)
-	command.SetArgs([]string{"import-signal", writeSignalCommandFixture(t), "--phone", "+1 555 555 0100"})
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	command.SetArgs([]string{"import-signal", dir, "--phone", "+1 555 555 0100"})
 	require.NoError(command.Execute())
 
 	st, err := store.OpenForTest(cfg.DatabaseDSN())

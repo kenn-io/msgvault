@@ -27,7 +27,7 @@ func fetchRecipients(ctx context.Context, db *sql.DB, s *schema) (map[int64]sigR
 			return nil, fmt.Errorf("scan recipient: %w", err)
 		}
 		r.ACI = normalizeACI(r.ACI)
-		r.E164 = normalizeE164(r.E164)
+		r.E164 = NormalizePhone(r.E164)
 		r.Name = strings.TrimSpace(r.Name)
 		recipients[r.ID] = r
 	}
@@ -62,7 +62,7 @@ func fetchGroupTitles(ctx context.Context, db *sql.DB, s *schema) (map[string]st
 }
 
 // fetchGroupMembers returns the recipient IDs of a group's current members,
-// from group_membership or, in older databases, the groups.members list.
+// from group_membership.
 func fetchGroupMembers(ctx context.Context, db *sql.DB, s *schema, groupID string) ([]int64, error) {
 	if s.hasGroupMembership {
 		rows, err := db.QueryContext(ctx,
@@ -84,24 +84,7 @@ func fetchGroupMembers(ctx context.Context, db *sql.DB, s *schema, groupID strin
 		}
 		return members, nil
 	}
-	if !s.hasGroups || !s.groupsMembers {
-		return nil, nil
-	}
-	var list sql.NullString
-	err := db.QueryRowContext(ctx, `SELECT members FROM groups WHERE group_id = ?`, groupID).Scan(&list)
-	if err == sql.ErrNoRows || !list.Valid {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("query group members: %w", err)
-	}
-	var members []int64
-	for field := range strings.SplitSeq(list.String, ",") {
-		if id, err := strconv.ParseInt(strings.TrimSpace(field), 10, 64); err == nil {
-			members = append(members, id)
-		}
-	}
-	return members, nil
+	return nil, nil
 }
 
 // fetchThreads lists the chats that hold at least one message.
@@ -144,7 +127,7 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 		       COALESCE(o.from_recipient_id, m.from_recipient_id),
 		       COALESCE(o.date_sent, m.date_sent),
 		       COALESCE(o.date_received, m.date_received),
-		       m.date_sent, m.type, m.body,
+		       m.date_sent, m.thread_id, m.type, m.body,
 		       COALESCE(m.quote_id, 0), COALESCE(m.quote_author, 0),
 		       COALESCE(%s, 0), COALESCE(%s, 0), COALESCE(%s, 0),
 		       COALESCE(%s, -1), COALESCE(%s, 0), COALESCE(%s, 0)
@@ -169,7 +152,7 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 	for rows.Next() {
 		var m sigMessage
 		if err := rows.Scan(&m.RowID, &m.OriginalRowID, &m.AuthorID, &m.DateSent, &m.DateReceived,
-			&m.RevisionSent, &m.Type, &m.Body, &m.QuoteID, &m.QuoteAuthor,
+			&m.RevisionSent, &m.ThreadID, &m.Type, &m.Body, &m.QuoteID, &m.QuoteAuthor,
 			&m.StoryType, &m.ParentStoryID, &m.RemoteDeleted,
 			&m.ScheduledDate, &m.ViewOnce, &m.RevisionNumber); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)

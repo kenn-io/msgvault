@@ -222,7 +222,7 @@ func localPolicyInput(candidate store.IdentityMatchCandidate, summaries store.Pe
 	leftStable := map[string]map[string]bool{}
 	for _, identifier := range summaries.Left.Identifiers {
 		switch identifier.Type {
-		case "beeper", "apple_id", "whatsapp", "imessage":
+		case "beeper", "apple_id", "whatsapp", "signal", "signal_aci", "imessage":
 			key := identifier.Type + "\x00" + identifier.ServiceSlug + "\x00" + identifier.ScopeKind + "\x00" + identifier.ScopeValue
 			if leftStable[key] == nil {
 				leftStable[key] = map[string]bool{}

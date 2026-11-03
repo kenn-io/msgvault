@@ -13,6 +13,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -73,13 +74,13 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 	require := require.New(t)
 
 	missingPath := filepath.Join(t.TempDir(), "missing.sqlite")
-	_, err := openReadOnlyDatabase(context.Background(), missingPath)
+	_, err := sqliteutil.OpenReadOnlyDatabase(context.Background(), missingPath)
 	require.Error(err)
 	_, err = os.Stat(missingPath)
 	require.ErrorIs(err, os.ErrNotExist)
 
 	path := filepath.Join(t.TempDir(), "source # data.sqlite")
-	createDSN, err := sqliteDatabaseDSN(path, "")
+	createDSN, err := sqliteutil.DatabaseDSN(path, "")
 	require.NoError(err)
 	db, err := sql.Open("sqlite3", createDSN)
 	require.NoError(err)
@@ -93,7 +94,7 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 	`)
 	require.NoError(err)
 
-	readOnly, err := openReadOnlyDatabase(context.Background(), path)
+	readOnly, err := sqliteutil.OpenReadOnlyDatabase(context.Background(), path)
 	require.NoError(err)
 	defer func() { require.NoError(readOnly.Close()) }()
 	var count int

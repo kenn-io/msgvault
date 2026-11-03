@@ -99,7 +99,7 @@ func (r *Reader) inspect(ctx context.Context) error {
 	}
 	r.columns = map[string]map[string]bool{}
 	for _, table := range []string{"meetings", "meeting_participants", "meeting_folders", "meeting_participant_suppressions"} {
-		columns, err := tableColumns(ctx, r.db, table)
+		columns, err := sqliteutil.TableColumns(ctx, r.db, table)
 		if err != nil {
 			return fmt.Errorf("inspect Muesli database %s: %w", r.path, err)
 		}
@@ -111,25 +111,6 @@ func (r *Reader) inspect(ctx context.Context) error {
 		}
 	}
 	return nil
-}
-
-// tableColumns returns the column names of table, or an empty set when the
-// table does not exist.
-func tableColumns(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `SELECT name FROM pragma_table_info(?)`, table)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	columns := map[string]bool{}
-	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
-			return nil, err
-		}
-		columns[name] = true
-	}
-	return columns, rows.Err()
 }
 
 func (r *Reader) has(table, column string) bool {

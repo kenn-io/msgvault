@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
 type importedMessage struct {
@@ -24,7 +25,7 @@ func runImport(t *testing.T, st *store.Store, dbDir, attachmentsDir string) *Imp
 	t.Helper()
 	require := require.New(t)
 	opts := DefaultOptions()
-	opts.Phone = ownPhone
+	opts.Phone = signalfixture.OwnPhone
 	opts.AttachmentFilesDir = dbDir
 	opts.AttachmentsDir = attachmentsDir
 	summary, err := NewImporter(st, nil).Import(context.Background(), filepath.Join(dbDir, "database.sqlite"), opts)
@@ -59,30 +60,30 @@ func importedMessages(t *testing.T, st *store.Store) map[string]importedMessage 
 func ms(v int64) string { return strconv.FormatInt(v, 10) }
 
 func expectedMessages() map[string]importedMessage {
-	direct := "signal:aci:" + aliceACI
+	direct := "signal:aci:" + signalfixture.AliceACI
 	return map[string]importedMessage{
-		aliceACI + ":" + ms(tAlice1): {conversation: direct, body: "Hello from Alice"},
-		ownACI + ":" + ms(tReply): {
-			conversation: direct, body: "Replying", fromMe: true, replyTo: aliceACI + ":" + ms(tAlice1),
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TAlice1): {conversation: direct, body: "Hello from Alice"},
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TReply): {
+			conversation: direct, body: "Replying", fromMe: true, replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TAlice1),
 		},
 		// The edit keeps the original's identity and carries the newest text.
-		ownACI + ":" + ms(tEditOld): {conversation: direct, body: "First draft", fromMe: true, edited: true},
-		aliceACI + ":" + ms(tQuoteDraft): {
-			conversation: direct, body: "Nice draft", replyTo: ownACI + ":" + ms(tEditOld),
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld): {conversation: direct, body: "First draft", fromMe: true, edited: true},
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.AliceACI + ":" + ms(signalfixture.TQuoteDraft): {
+			conversation: direct, body: "Nice draft", replyTo: "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld),
 		},
-		bobACI + ":" + ms(tGroup): {
-			conversation: "signal:group:" + groupB64, body: "Hi @Alice Example, look\n\nBeach",
+		"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup): {
+			conversation: "signal:group:" + signalfixture.GroupB64, body: "Hi @Alice Example, look\n\nBeach",
 		},
-		carolPhone + ":" + ms(tCarol): {conversation: "signal:e164:" + carolPhone, body: "Carol here"},
+		"signal:aci:0f0f0f0f-0000-4000-8000-000000000004:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol): {conversation: "signal:aci:" + signalfixture.CarolACI, body: "Carol here"},
 	}
 }
 
 func TestImportMapsSignalDatabase(t *testing.T) {
-	for name, layout := range map[string]fixtureLayout{"current": layoutCurrent, "v185": layoutV185} {
+	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v185": signalfixture.V185} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			dbDir := t.TempDir()
-			writeSignalFixture(t, dbDir, layout, 0)
+			signalfixture.Write(t, dbDir, layout, 0)
 			st := testutil.NewTestStore(t)
 
 			summary := runImport(t, st, dbDir, t.TempDir())
@@ -105,12 +106,12 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 			require.NoError(st.DB().QueryRow(st.Rebind(
 				`SELECT source_type, identifier FROM sources WHERE id = ?`), summary.SourceID).Scan(&sourceType, &identifier))
 			assert.Equal("signal", sourceType)
-			assert.Equal(ownPhone, identifier)
+			assert.Equal(signalfixture.OwnPhone, identifier)
 
 			var groupTitle, groupType string
 			require.NoError(st.DB().QueryRow(st.Rebind(
 				`SELECT COALESCE(title, ''), conversation_type FROM conversations WHERE source_conversation_id = ?`),
-				"signal:group:"+groupB64).Scan(&groupTitle, &groupType))
+				"signal:group:"+signalfixture.GroupB64).Scan(&groupTitle, &groupType))
 			assert.Equal("Example Group", groupTitle)
 			assert.Equal("group_chat", groupType)
 		})
@@ -120,7 +121,7 @@ func TestImportMapsSignalDatabase(t *testing.T) {
 func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	dbDir := t.TempDir()
-	writeSignalFixture(t, dbDir, layoutCurrent, 0)
+	signalfixture.Write(t, dbDir, signalfixture.Current, 0)
 	st := testutil.NewTestStore(t)
 	runImport(t, st, dbDir, t.TempDir())
 
@@ -144,8 +145,8 @@ func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
 		return got
 	}()
 	assert.Equal([]reaction{
-		{ownACI + ":" + ms(tEditOld), "\u2764", alicePhone},
-		{bobACI + ":" + ms(tGroup), "\U0001F44D", alicePhone},
+		{"signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld), "\u2764", signalfixture.AlicePhone},
+		{"signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup), "\U0001F44D", signalfixture.AlicePhone},
 	}, reactions)
 
 	// Bob has no visible number: his participant carries his ACI.
@@ -153,7 +154,7 @@ func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COALESCE(p.display_name, '') FROM participants p
 		JOIN participant_identifiers pi ON pi.participant_id = p.id
-		WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, bobACI).Scan(&bobName))
+		WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.BobACI).Scan(&bobName))
 	assert.Equal("Bob Example", bobName)
 
 	// Alice is matched by number and also carries her ACI.
@@ -161,14 +162,14 @@ func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COALESCE(p.phone_number, '') FROM participants p
 		JOIN participant_identifiers pi ON pi.participant_id = p.id
-		WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, aliceACI).Scan(&aliceByACI))
-	assert.Equal(alicePhone, aliceByACI)
+		WHERE pi.identifier_type = ? AND pi.identifier_value = ?`), ACIIdentifierType, signalfixture.AliceACI).Scan(&aliceByACI))
+	assert.Equal(signalfixture.AlicePhone, aliceByACI)
 
 	var groupMembers int
 	require.NoError(st.DB().QueryRow(st.Rebind(`
 		SELECT COUNT(*) FROM conversation_participants cp
 		JOIN conversations c ON c.id = cp.conversation_id
-		WHERE c.source_conversation_id = ?`), "signal:group:"+groupB64).Scan(&groupMembers))
+		WHERE c.source_conversation_id = ?`), "signal:group:"+signalfixture.GroupB64).Scan(&groupMembers))
 	assert.Equal(3, groupMembers)
 
 	var mime, mediaType, partKey string
@@ -178,7 +179,7 @@ func TestImportStoresReactionsParticipantsAndAttachments(t *testing.T) {
 		SELECT a.mime_type, COALESCE(a.media_type, ''), a.size, COALESCE(a.width, 0),
 		       COALESCE(a.source_part_key, ''), m.has_attachments
 		FROM attachments a JOIN messages m ON m.id = a.message_id
-		WHERE m.source_message_id = ?`), bobACI+":"+ms(tGroup)).Scan(&mime, &mediaType, &size, &width, &partKey, &hasAttachments))
+		WHERE m.source_message_id = ?`), "signal:group:ABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v8:"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)).Scan(&mime, &mediaType, &size, &width, &partKey, &hasAttachments))
 	assert.Equal("image/jpeg", mime)
 	assert.Equal("image", mediaType)
 	assert.Equal(int64(len("photo bytes")), size)
@@ -192,12 +193,12 @@ func TestReimportAddsNothingAfterRestore(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	attachmentsDir := t.TempDir()
 	first := t.TempDir()
-	writeSignalFixture(t, first, layoutCurrent, 0)
+	signalfixture.Write(t, first, signalfixture.Current, 0)
 	runImport(t, st, first, attachmentsDir)
 
 	// The same history restored on another phone gets new local row IDs.
 	restored := t.TempDir()
-	writeSignalFixture(t, restored, layoutCurrent, 7000)
+	signalfixture.Write(t, restored, signalfixture.Current, 7000)
 	summary := runImport(t, st, restored, attachmentsDir)
 
 	assert.Equal(int64(0), summary.MessagesAdded)
@@ -217,7 +218,7 @@ func TestReimportAddsNothingAfterRestore(t *testing.T) {
 func TestImportRejectsAnotherAccountsBackup(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	dbDir := t.TempDir()
-	path := writeSignalFixture(t, dbDir, layoutCurrent, 0)
+	path := signalfixture.Write(t, dbDir, signalfixture.Current, 0)
 	opts := DefaultOptions()
 	opts.Phone = "+15555550199"
 	_, err := NewImporter(testutil.NewTestStore(t), nil).Import(context.Background(), path, opts)
@@ -263,7 +264,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			path := writeTablesFixture(t, tt.ddl...)
 			opts := DefaultOptions()
-			opts.Phone = ownPhone
+			opts.Phone = signalfixture.OwnPhone
 			_, err := NewImporter(testutil.NewTestStore(t), nil).Import(context.Background(), path, opts)
 			require.ErrorIs(err, ErrUnsupportedDatabase)
 			assert.Contains(err.Error(), tt.want)
@@ -274,9 +275,9 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 func TestImportLimitStopsAfterWrites(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	dbDir := t.TempDir()
-	path := writeSignalFixture(t, dbDir, layoutCurrent, 0)
+	path := signalfixture.Write(t, dbDir, signalfixture.Current, 0)
 	opts := DefaultOptions()
-	opts.Phone = ownPhone
+	opts.Phone = signalfixture.OwnPhone
 	opts.Limit = 2
 	st := testutil.NewTestStore(t)
 	summary, err := NewImporter(st, nil).Import(context.Background(), path, opts)
@@ -294,18 +295,18 @@ func TestSkipReason(t *testing.T) {
 		row  sigMessage
 		want string
 	}{
-		{"incoming signal message", sigMessage{Type: typeIncoming}, ""},
-		{"outgoing signal message", sigMessage{Type: typeOutgoing}, ""},
-		{"plain sms", sigMessage{Type: typeSMSIncoming}, "sms"},
-		{"call", sigMessage{Type: typeCallIncoming}, "event"},
-		{"group update", sigMessage{Type: typeGroupUpdate}, "event"},
-		{"expiration timer", sigMessage{Type: typeIncoming | expirationTimerBit}, "event"},
-		{"payment notification", sigMessage{Type: typeIncoming | 0x300000000}, "event"},
+		{"incoming signal message", sigMessage{Type: signalfixture.TypeIncoming}, ""},
+		{"outgoing signal message", sigMessage{Type: signalfixture.TypeOutgoing}, ""},
+		{"plain sms", sigMessage{Type: signalfixture.TypeSMSIncoming}, "sms"},
+		{"call", sigMessage{Type: signalfixture.TypeCallIncoming}, "event"},
+		{"group update", sigMessage{Type: signalfixture.TypeGroupUpdate}, "event"},
+		{"expiration timer", sigMessage{Type: signalfixture.TypeIncoming | expirationTimerBit}, "event"},
+		{"payment notification", sigMessage{Type: signalfixture.TypeIncoming | 0x300000000}, "event"},
 		{"draft", sigMessage{Type: 27 | secureMessageBit}, "event"},
-		{"story", sigMessage{Type: typeIncoming, StoryType: 1}, "story"},
-		{"story reply", sigMessage{Type: typeIncoming, ParentStoryID: 9}, "story"},
-		{"deleted for everyone", sigMessage{Type: typeIncoming, RemoteDeleted: 1}, "deleted"},
-		{"scheduled", sigMessage{Type: typeOutgoing, ScheduledDate: 1}, "scheduled"},
+		{"story", sigMessage{Type: signalfixture.TypeIncoming, StoryType: 1}, "story"},
+		{"story reply", sigMessage{Type: signalfixture.TypeIncoming, ParentStoryID: 9}, "story"},
+		{"deleted for everyone", sigMessage{Type: signalfixture.TypeIncoming, RemoteDeleted: 1}, "deleted"},
+		{"scheduled", sigMessage{Type: signalfixture.TypeOutgoing, ScheduledDate: 1}, "scheduled"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -317,15 +318,15 @@ func TestSkipReason(t *testing.T) {
 
 func TestIdentifiers(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	id, ok := groupV2Identifier(groupV2IDPrefix + groupHex)
+	id, ok := groupV2Identifier(groupV2IDPrefix + signalfixture.GroupHex)
 	require.True(ok)
-	assert.Equal(groupB64, id)
+	assert.Equal(signalfixture.GroupB64, id)
 
 	_, ok = groupV2Identifier("__textsecure_group__!00ff")
 	assert.False(ok)
 
-	assert.Equal(aliceACI, normalizeACI("ACI:"+"0F0F0F0F-0000-4000-8000-000000000002"))
-	assert.Empty(normalizeACI("PNI:" + aliceACI))
+	assert.Equal(signalfixture.AliceACI, normalizeACI("ACI:"+"0F0F0F0F-0000-4000-8000-000000000002"))
+	assert.Empty(normalizeACI("PNI:" + signalfixture.AliceACI))
 	assert.Empty(normalizeACI("00000000-0000-0000-0000-000000000000"))
 
 	_, _, ok = conversationIdentity(sigRecipient{})

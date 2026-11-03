@@ -4,7 +4,7 @@
 // The input is the database.sqlite file, and optionally the Attachment_*.bin
 // files beside it, that signalbackup-tools writes when it unpacks a Signal
 // backup into a directory. The importer reads Signal Android database
-// version 185 and newer.
+// versions 185 through 215.
 package signalandroid
 
 import (
@@ -26,9 +26,8 @@ const (
 	// rawFormat names the JSON stored in message_raw.
 	rawFormat = "signal_android_json"
 
-	directACIPrefix  = "signal:aci:"
-	directE164Prefix = "signal:e164:"
-	groupPrefix      = "signal:group:"
+	directACIPrefix = "signal:aci:"
+	groupPrefix     = "signal:group:"
 )
 
 // ImportOptions configures a Signal import.
@@ -125,6 +124,7 @@ type sigThread struct {
 // sigMessage is a visible message row: the latest revision of a message,
 // with the identity fields of its original revision.
 type sigMessage struct {
+	ThreadID       int64          `json:"thread_id"`
 	RowID          int64          `json:"row_id"`
 	OriginalRowID  sql.NullInt64  `json:"original_row_id,omitzero"`
 	AuthorID       int64          `json:"author_recipient_id"`

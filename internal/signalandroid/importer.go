@@ -6,11 +6,14 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
 	"go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const reactionTypeEmoji = "emoji"
@@ -49,7 +52,7 @@ type run struct {
 	participants    map[int64]int64
 	participantErrs map[int64]error
 	// seenIDs maps each message ID written in this run to its Signal row, so
-	// a second row claiming the same author and timestamp is reported
+	// a second row claiming the same chat, author, and timestamp is reported
 	// instead of overwriting the first.
 	seenIDs map[string]int64
 	quotes  []pendingQuote
@@ -62,7 +65,7 @@ type run struct {
 // adds new ones.
 func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptions) (*ImportSummary, error) {
 	startTime := time.Now()
-	phone := normalizeE164(opts.Phone)
+	phone := NormalizePhone(opts.Phone)
 	if phone == "" {
 		return nil, errors.New("phone number must be in E.164 format (starting with +)")
 	}
@@ -74,7 +77,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		opts.MaxAttachmentSize = DefaultOptions().MaxAttachmentSize
 	}
 
-	db, err := openReadOnlyDatabase(ctx, dbPath)
+	db, err := sqliteutil.OpenReadOnlyDatabase(ctx, dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open signal database: %w", err)
 	}
@@ -100,7 +103,7 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	if err := r.resolveSelf(ctx); err != nil {
 		return nil, err
 	}
-	if opts.AttachmentFilesDir != "" && opts.AttachmentsDir != "" {
+	if opts.AttachmentFilesDir != "" {
 		if r.files, err = scanAttachmentFiles(opts.AttachmentFilesDir); err != nil {
 			return nil, err
 		}
@@ -127,8 +130,10 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 
 	var syncErr error
 	defer func() {
-		// Save the final counters before closing the run, so readers of
-		// the sync run see every added and updated message.
+		// Refresh committed work even when the import was interrupted.
+		if err := r.imp.store.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
+			imp.progress.OnError(fmt.Errorf("recompute conversation stats: %w", err))
+		}
 		r.checkpoint()
 		if syncErr != nil {
 			_ = r.imp.store.FailSync(syncID, syncErr.Error())
@@ -164,9 +169,6 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 	if err := r.linkQuotes(ctx); err != nil {
 		syncErr = err
 		return nil, err
-	}
-	if err := r.imp.store.RecomputeConversationStats(source.ID); err != nil {
-		imp.progress.OnError(fmt.Errorf("recompute conversation stats: %w", err))
 	}
 	r.summary.Duration = time.Since(startTime)
 	imp.progress.OnComplete(r.summary)
@@ -207,7 +209,7 @@ func (r *run) resolveSelf(ctx context.Context) error {
 	}
 	r.selfToken = self.ACI
 	if r.selfToken == "" {
-		r.selfToken = r.opts.Phone
+		return fmt.Errorf("%w: the account owner has no Signal account ID", ErrUnsupportedDatabase)
 	}
 	return nil
 }
@@ -217,44 +219,15 @@ func (r *run) ensureSelf(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("ensure self participant: %w", err)
 	}
-	// The owner stays the phone participant even when an older ACI-only
-	// participant cannot be merged into it.
-	if _, err := r.bindACI(ctx, pid, r.recipients[r.selfRecipientID].ACI); err != nil {
-		r.summary.Errors++
-		r.imp.progress.OnError(fmt.Errorf("own Signal identity: %w", err))
+	if aci := r.recipients[r.selfRecipientID].ACI; aci != "" {
+		if err := r.imp.store.SetParticipantIdentifierContext(ctx, pid, ACIIdentifierType, aci); err != nil {
+			return err
+		}
 	}
 	r.selfParticipant = pid
 	r.participants[r.selfRecipientID] = pid
 	r.summary.Participants++
 	return nil
-}
-
-// bindACI records a Signal ACI on the participant found by phone number and
-// returns the participant to attribute the recipient to. If an earlier import
-// created a separate ACI-only participant for the same account (its number
-// was hidden then), that participant is merged into the phone participant
-// through the Store merge path, so its bindings, conversation memberships and
-// message references move with it. When the merge is refused, for example
-// because the two participants belong to different curated people, the
-// ACI-only participant keeps its identifier and stays the attribution, and
-// the error is returned for reporting.
-func (r *run) bindACI(ctx context.Context, phoneParticipant int64, aci string) (int64, error) {
-	if aci == "" {
-		return phoneParticipant, nil
-	}
-	existing, _, err := r.imp.store.ParticipantByIdentifierContext(ctx, ACIIdentifierType, aci)
-	if err != nil {
-		return 0, fmt.Errorf("look up Signal identity: %w", err)
-	}
-	if existing != 0 && existing != phoneParticipant {
-		if err := r.imp.store.MergeParticipantsContext(ctx, existing, phoneParticipant); err != nil {
-			return existing, fmt.Errorf("merge Signal identity into phone participant: %w", err)
-		}
-	}
-	if err := r.imp.store.SetParticipantIdentifierContext(ctx, phoneParticipant, ACIIdentifierType, aci); err != nil {
-		return 0, fmt.Errorf("record Signal identity: %w", err)
-	}
-	return phoneParticipant, nil
 }
 
 // participant returns the participant of a Signal recipient, creating it on
@@ -272,19 +245,8 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	case !found || recipient.GroupID != "":
 	case recipient.E164 != "":
 		pid, err = r.imp.store.EnsureParticipantByPhone(recipient.E164, recipient.Name, SourceType)
-		if err == nil {
-			bound, bindErr := r.bindACI(ctx, pid, recipient.ACI)
-			switch {
-			case bound != 0 && bindErr != nil:
-				// Reconciliation was refused; keep the existing attribution.
-				r.summary.Errors++
-				r.imp.progress.OnError(fmt.Errorf("reconcile Signal recipient %d: %w", recipientID, bindErr))
-				pid = bound
-			case bindErr != nil:
-				err = bindErr
-			default:
-				pid = bound
-			}
+		if err == nil && recipient.ACI != "" {
+			err = r.imp.store.SetParticipantIdentifierContext(ctx, pid, ACIIdentifierType, recipient.ACI)
 		}
 	case recipient.ACI != "":
 		pid, err = r.imp.store.EnsureParticipantByIdentifierContext(ctx, ACIIdentifierType, recipient.ACI, recipient.Name)
@@ -302,26 +264,12 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	return pid, pid != 0, err
 }
 
-// legacyToken returns the number-based token earlier imports used for a
-// recipient that now has an ACI, or "" when its token did not change.
-func (r *run) legacyToken(recipientID int64) string {
-	recipient := r.recipients[recipientID]
-	phone := recipient.E164
-	if recipientID == r.selfRecipientID {
-		phone = r.opts.Phone
-	}
-	if recipient.ACI == "" || phone == "" {
-		return ""
-	}
-	return phone
-}
-
 // token returns the identity token of a recipient for message IDs.
 func (r *run) token(recipientID int64) string {
 	if recipientID == r.selfRecipientID {
 		return r.selfToken
 	}
-	return identityToken(r.recipients[recipientID])
+	return r.recipients[recipientID].ACI
 }
 
 func (r *run) displayName(recipientID int64) string {
@@ -363,14 +311,6 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 		title = r.groups[chat.GroupID]
 	}
 	r.summary.ChatsProcessed++
-	if convType == "direct_chat" && chat.ACI != "" && chat.E164 != "" {
-		// An earlier import knew this contact only by number. Move that
-		// conversation to the ACI identity instead of starting a second one.
-		if _, err := r.imp.store.ReassignSourceConversationIDContext(
-			ctx, r.sourceID, directE164Prefix+chat.E164, sourceConvID); err != nil {
-			return fmt.Errorf("move conversation %s to its Signal account ID: %w", sourceConvID, err)
-		}
-	}
 	conversationID, err := r.imp.store.EnsureConversationWithTypeContext(ctx, r.sourceID, sourceConvID, convType, title)
 	if err != nil {
 		r.summary.Errors++
@@ -417,7 +357,7 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 			break
 		}
 		afterRowID = messages[len(messages)-1].RowID
-		added, err := r.importBatch(ctx, conversationID, messages, senders)
+		added, err := r.importBatch(ctx, conversationID, sourceConvID, messages, senders)
 		if err != nil {
 			return err
 		}
@@ -438,8 +378,8 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 // pendingMessage is a message row that passed the filters, with its ID.
 type pendingMessage struct {
 	row      sigMessage
+	chatID   string
 	id       string
-	legacyID string
 	rootID   int64
 	senderID int64
 }
@@ -448,16 +388,14 @@ type pendingMessage struct {
 // is written, so the quoted message's newest revision no longer has to
 // precede the reply.
 type pendingQuote struct {
-	childID        string
-	parentID       string
-	legacyParentID string
+	childID  string
+	parentID string
 }
 
-func (r *run) importBatch(ctx context.Context, conversationID int64, messages []sigMessage, senders map[int64]struct{}) (int64, error) {
+func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvID string, messages []sigMessage, senders map[int64]struct{}) (int64, error) {
 	var pending []pendingMessage
 	var ids []string
 	var lookupRows []int64
-	var legacyIDs []string
 	for _, m := range messages {
 		r.summary.MessagesProcessed++
 		if skipReason(m) != "" {
@@ -477,19 +415,14 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 		if m.OriginalRowID.Valid {
 			rootID = m.OriginalRowID.Int64
 		}
-		id := messageID(token, m.DateSent)
+		id := messageID(sourceConvID, token, m.DateSent)
 		if previous, seen := r.seenIDs[id]; seen && previous != rootID {
 			r.summary.DuplicateIDs++
 			r.summary.MessagesSkipped++
 			continue
 		}
 		r.seenIDs[id] = rootID
-		legacyID := ""
-		if legacy := r.legacyToken(author); legacy != "" {
-			legacyID = messageID(legacy, m.DateSent)
-			legacyIDs = append(legacyIDs, legacyID)
-		}
-		pending = append(pending, pendingMessage{row: m, id: id, legacyID: legacyID, rootID: rootID, senderID: author})
+		pending = append(pending, pendingMessage{row: m, chatID: sourceConvID, id: id, rootID: rootID, senderID: author})
 		ids = append(ids, id)
 		lookupRows = append(lookupRows, m.RowID)
 		if m.OriginalRowID.Valid {
@@ -500,10 +433,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 		return 0, nil
 	}
 
-	if err := r.migrateLegacyIDs(conversationID, pending, legacyIDs); err != nil {
-		return 0, err
-	}
-	existing, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, ids)
+	existing, err := r.imp.store.MessageExistsBatchContext(ctx, r.sourceID, ids)
 	if err != nil {
 		return 0, fmt.Errorf("look up archived Signal messages: %w", err)
 	}
@@ -545,12 +475,12 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 		if len(rowAttachments) == 0 && p.row.OriginalRowID.Valid {
 			rowAttachments = attachments[p.row.OriginalRowID.Int64]
 		}
-		_, isExisting := existing[p.id]
+		archivedID, isExisting := existing[p.id]
 		var rowReactions []sigReaction
 		if reactionsRead {
 			rowReactions = reactions[p.rootID]
 		}
-		if err := r.writeMessage(ctx, conversationID, p, rowAttachments,
+		if err := r.writeMessage(ctx, conversationID, archivedID, p, rowAttachments,
 			reactionsRead, rowReactions, mentions[p.row.RowID]); err != nil {
 			if ctx.Err() != nil {
 				return added, ctx.Err()
@@ -574,7 +504,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, messages []
 }
 
 func (r *run) writeMessage(
-	ctx context.Context, conversationID int64, p pendingMessage,
+	ctx context.Context, conversationID, archivedID int64, p pendingMessage,
 	attachments []sigAttachment, reactionsRead bool, reactions []sigReaction, mentions []sigMention,
 ) error {
 	m := p.row
@@ -582,6 +512,17 @@ func (r *run) writeMessage(
 	body := ""
 	if m.Body.Valid {
 		body = applyMentions(m.Body.String, mentions, r.displayName)
+	}
+	for _, a := range attachments {
+		if a.ContentType == "text/x-signal-plain" {
+			if name, ok := r.files[a.ID]; ok {
+				full, err := os.ReadFile(filepath.Join(r.opts.AttachmentFilesDir, name))
+				if err != nil {
+					return fmt.Errorf("read long text: %w", err)
+				}
+				body = applyMentions(string(full), mentions, r.displayName)
+			}
+		}
 	}
 	for _, a := range attachments {
 		if a.Caption != "" && a.Caption != body {
@@ -610,7 +551,7 @@ func (r *run) writeMessage(
 		ReceivedAt:      millisTime(m.DateReceived),
 		SenderID:        senderID,
 		IsFromMe:        isOutgoing(m.Type),
-		Snippet:         sql.NullString{String: snippet(body), Valid: body != ""},
+		Snippet:         sql.NullString{String: textutil.PrefixRunes(body, snippetRunes), Valid: body != ""},
 		// Signal marks a message sent only once the server accepted it;
 		// outbox, sending and failed messages did not leave the phone.
 		IsSent:                  sql.NullBool{Bool: isSent(m.Type), Valid: true},
@@ -618,31 +559,24 @@ func (r *run) writeMessage(
 		PreserveAttachmentStats: true,
 		ArchivedAt:              time.Now(),
 	}
-	messageID, err := st.UpsertMessageContext(ctx, &msg)
+	raw, err := json.Marshal(m, json.Deterministic(true))
 	if err != nil {
 		return err
 	}
-	// Write the body even when it is empty: a newer revision without text
-	// must clear the archived text and its search entry.
-	if err := st.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{}); err != nil {
-		return fmt.Errorf("store body: %w", err)
+	writes, err := r.prepareAttachments(ctx, archivedID, attachments)
+	if err != nil {
+		return err
 	}
-	if raw, err := json.Marshal(m, json.Deterministic(true)); err == nil {
-		_ = st.UpsertMessageRawWithFormatContext(ctx, messageID, raw, rawFormat)
+	senderAddr := r.recipients[p.senderID].E164
+	if p.senderID == r.selfRecipientID {
+		senderAddr = r.opts.Phone
 	}
-	if m.OriginalRowID.Valid {
-		r.summary.MessagesEdited++
-		if err := st.SetMessageEditedStateContext(ctx, messageID, true); err != nil {
-			return fmt.Errorf("mark edited: %w", err)
-		}
+	data := store.MessagePersistData{
+		Message: &msg, BodyText: sql.NullString{String: body, Valid: body != ""},
+		RawMIME: raw, RawFormat: rawFormat, Edited: m.OriginalRowID.Valid,
+		MIMEAttachmentReplacement: writes,
+		FTS:                       &store.FTSDoc{Body: body, FromAddr: senderAddr},
 	}
-
-	if len(attachments) > 0 {
-		if err := r.writeAttachments(ctx, messageID, attachments); err != nil {
-			return err
-		}
-	}
-	r.queueQuote(p.id, m)
 	if reactionsRead {
 		// The backup holds each message's current reactions; replace the
 		// archived set so removed and changed reactions disappear.
@@ -662,55 +596,31 @@ func (r *run) writeMessage(
 				CreatedAt: millisTime(reaction.DateSent).Time,
 			})
 		}
-		// When a reactor could not be resolved, replacing would drop their
-		// archived reaction, so the archived set stays.
 		if complete {
-			if err := st.ReplaceReactionsContext(ctx, messageID, refs); err != nil {
-				r.summary.Errors++
-				r.imp.progress.OnError(fmt.Errorf("store reactions: %w", err))
-			} else {
-				r.summary.ReactionsAdded += int64(len(refs))
-			}
+			data.Reactions = &refs
 		}
 	}
-	if body != "" {
-		senderAddr := r.recipients[p.senderID].E164
-		if p.senderID == r.selfRecipientID {
-			senderAddr = r.opts.Phone
-		}
-		if err := st.UpsertFTSContext(ctx, messageID, "", body, senderAddr, "", ""); err != nil {
-			r.summary.Errors++
-			r.imp.progress.OnError(fmt.Errorf("index message: %w", err))
-		}
-	}
-	return nil
-}
-
-// migrateLegacyIDs renames messages an earlier import stored under a
-// number-based ID to their ACI-based ID, for authors whose ACI is now known.
-func (r *run) migrateLegacyIDs(conversationID int64, pending []pendingMessage, legacyIDs []string) error {
-	if len(legacyIDs) == 0 {
-		return nil
-	}
-	archived, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, legacyIDs)
+	_, err = st.PersistMessageContext(ctx, &data)
 	if err != nil {
-		return fmt.Errorf("look up number-based Signal messages: %w", err)
+		return err
 	}
-	for _, p := range pending {
-		if _, ok := archived[p.legacyID]; !ok || p.legacyID == "" {
-			continue
-		}
-		if err := r.imp.store.MigrateSourceMessageID(r.sourceID, conversationID, p.legacyID, p.id); err != nil {
-			return fmt.Errorf("move Signal message to its account ID: %w", err)
-		}
+	if data.Edited {
+		r.summary.MessagesEdited++
 	}
+	if data.Reactions != nil {
+		r.summary.ReactionsAdded += int64(len(*data.Reactions))
+	}
+	if writes != nil {
+		r.summary.AttachmentsStored += int64(len(*writes))
+	}
+	r.queueQuote(ctx, p.chatID, p.id, m)
 	return nil
 }
 
 // queueQuote records a reply's quoted message for linkQuotes. Signal records
 // a quote as the quoted message's author and sent timestamp, which is that
 // message's ID here.
-func (r *run) queueQuote(childID string, m sigMessage) {
+func (r *run) queueQuote(ctx context.Context, chatID, childID string, m sigMessage) {
 	if m.QuoteID <= 0 || m.QuoteAuthor <= 0 {
 		return
 	}
@@ -719,12 +629,20 @@ func (r *run) queueQuote(childID string, m sigMessage) {
 		r.summary.RepliesUnresolved++
 		return
 	}
-	q := pendingQuote{childID: childID, parentID: messageID(token, m.QuoteID)}
-	if legacy := r.legacyToken(m.QuoteAuthor); legacy != "" {
-		// A quoted message that is no longer in this backup may still be
-		// archived under the number-based ID an earlier import gave it.
-		q.legacyParentID = messageID(legacy, m.QuoteID)
+	// Quotes can name any revision. Resolve its original timestamp in this chat.
+	timestamp := m.QuoteID
+	var original int64
+	err := r.db.QueryRowContext(ctx, `SELECT COALESCE(o.date_sent, m.date_sent)
+  FROM message m LEFT JOIN message o ON o._id = m.original_message_id
+  WHERE m.thread_id = ? AND m.from_recipient_id = ? AND m.date_sent = ? LIMIT 1`, m.ThreadID, m.QuoteAuthor, m.QuoteID).Scan(&original)
+	if err == nil {
+		timestamp = original
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		r.summary.Errors++
+		r.imp.progress.OnError(fmt.Errorf("resolve quoted revision: %w", err))
+		return
 	}
+	q := pendingQuote{childID: childID, parentID: messageID(chatID, token, timestamp)}
 	r.quotes = append(r.quotes, q)
 }
 
@@ -735,28 +653,17 @@ func (r *run) linkQuotes(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		candidates := []string{q.parentID}
-		if q.legacyParentID != "" {
-			candidates = append(candidates, q.legacyParentID)
-		}
-		found, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, candidates)
+		found, err := r.imp.store.ArchivedSourceMessageIDs(r.sourceID, []string{q.parentID})
 		if err != nil {
 			r.summary.Errors++
 			r.imp.progress.OnError(fmt.Errorf("look up quoted message: %w", err))
 			continue
 		}
-		parentID := ""
-		for _, id := range candidates {
-			if _, ok := found[id]; ok {
-				parentID = id
-				break
-			}
-		}
-		if parentID == "" {
+		if _, ok := found[q.parentID]; !ok {
 			r.summary.RepliesUnresolved++
 			continue
 		}
-		if err := r.imp.store.SetReplyToContext(ctx, r.sourceID, q.childID, parentID); err != nil {
+		if err := r.imp.store.SetReplyToContext(ctx, r.sourceID, q.childID, q.parentID); err != nil {
 			r.summary.Errors++
 			r.imp.progress.OnError(fmt.Errorf("link reply: %w", err))
 			continue
@@ -766,23 +673,38 @@ func (r *run) linkQuotes(ctx context.Context) error {
 	return nil
 }
 
-// writeAttachments stores the attachment files found next to the database.
-// An attachment without a file (a backup unpacked without media, or a
-// download that never finished) is counted as missing; an earlier import's
-// stored copy stays in place.
-func (r *run) writeAttachments(ctx context.Context, messageID int64, attachments []sigAttachment) error {
-	stored := 0
+// prepareAttachments builds the snapshot before committing the message. Missing
+// files retain the archived attachment at the same source part key.
+func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachments []sigAttachment) (*[]store.AttachmentWrite, error) {
+	var writes []store.AttachmentWrite
+	if archivedID != 0 {
+		refs, err := r.imp.store.MessageMIMEAttachmentsContext(ctx, archivedID)
+		if err != nil {
+			return nil, err
+		}
+		for _, ref := range refs {
+			writes = append(writes, store.AttachmentWrite{Filename: ref.Filename, MIMEType: ref.MimeType,
+				StoragePath: ref.StoragePath, ContentHash: ref.ContentHash, Size: int64(ref.Size),
+				MediaType: ref.MediaType, Width: ref.Width, Height: ref.Height,
+				Role: ref.Role, RoleSource: ref.RoleSource, SourcePartKey: ref.SourcePartKey})
+		}
+	}
 	for i, a := range attachments {
+		if a.ContentType == "text/x-signal-plain" {
+			continue
+		}
 		r.summary.AttachmentsFound++
 		name, ok := r.files[a.ID]
-		if !ok {
+		if !ok || r.opts.AttachmentsDir == "" {
 			r.summary.AttachmentsMissing++
 			continue
 		}
 		storagePath, contentHash, size, err := export.StoreAttachmentFromPath(
 			r.opts.AttachmentsDir, filepath.Join(r.opts.AttachmentFilesDir, name), r.opts.MaxAttachmentSize)
-		if err != nil || storagePath == "" {
-			r.summary.AttachmentsMissing++
+		if err != nil {
+			return nil, fmt.Errorf("store attachment %d: %w", a.ID, err)
+		}
+		if storagePath == "" {
 			continue
 		}
 		mediaType := attachmentMediaType(a)
@@ -790,24 +712,25 @@ func (r *run) writeAttachments(ctx context.Context, messageID int64, attachments
 		if mediaType == "sticker" {
 			role, roleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
 		}
-		if err := r.imp.store.UpsertAttachmentRecord(ctx, messageID, store.AttachmentWrite{
-			Filename: a.FileName, MIMEType: a.ContentType, StoragePath: storagePath,
-			ContentHash: contentHash, Size: size, MediaType: mediaType,
-			Width: a.Width, Height: a.Height,
-			Role: role, RoleSource: roleSource,
-			SourcePartKey: fmt.Sprintf("signal:attachment:%d", i),
-		}); err != nil {
-			return fmt.Errorf("store attachment: %w", err)
+		write := store.AttachmentWrite{Filename: a.FileName, MIMEType: a.ContentType, StoragePath: storagePath,
+			ContentHash: contentHash, Size: size, MediaType: mediaType, Width: a.Width, Height: a.Height,
+			Role: role, RoleSource: roleSource, SourcePartKey: fmt.Sprintf("signal:attachment:%d", i)}
+		replaced := false
+		for j := range writes {
+			if writes[j].SourcePartKey == write.SourcePartKey {
+				writes[j] = write
+				replaced = true
+				break
+			}
 		}
-		stored++
-		r.summary.AttachmentsStored++
-	}
-	if stored > 0 {
-		if err := r.imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
-			return fmt.Errorf("recompute attachment stats: %w", err)
+		if !replaced {
+			writes = append(writes, write)
 		}
 	}
-	return nil
+	if len(writes) == 0 {
+		return nil, nil
+	}
+	return &writes, nil
 }
 
 func millisTime(ms int64) sql.NullTime {

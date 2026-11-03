@@ -94,7 +94,9 @@ type MessageDeliveryEvidence struct {
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
 	// Edited records a source edit atomically with the message.
-	Edited                    bool
+	Edited bool
+	// Reactions replaces the provider reaction snapshot when non-nil.
+	Reactions                 *[]ReactionRef
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -2150,6 +2152,11 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 			q := boundQuerier{ctx: ctx, q: tx}
 			if data.MIMEAttachmentReplacement != nil {
 				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+					return err
+				}
+			}
+			if data.Reactions != nil {
+				if err := s.replaceReactionsWith(q, id, *data.Reactions); err != nil {
 					return err
 				}
 			}
@@ -6194,20 +6201,24 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // ReplaceReactionsContext honors cancellation during ReplaceReactions.
 func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, reactions []ReactionRef) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
+		return s.replaceReactionsWith(boundQuerier{ctx: ctx, q: tx}, messageID, reactions)
+	})
+}
+
+func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []ReactionRef) error {
+	if _, err := q.Exec(`DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
+		return err
+	}
+	for _, r := range reactions {
+		if r.ParticipantID == 0 {
+			continue
+		}
+		if _, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
+			VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
 			return err
 		}
-		for _, r := range reactions {
-			if r.ParticipantID == 0 {
-				continue
-			}
-			if _, err := tx.ExecContext(ctx, s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
-				VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
+	}
+	return nil
 }
 
 // UpsertMessageRawWithFormat stores compressed raw data with an explicit format.

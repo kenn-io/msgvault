@@ -144,7 +144,9 @@ msgvault import-signal ~/signal-backup --phone +14155551234
 The output directory holds `database.sqlite` and one `Attachment_*.bin` file per
 attachment. Pass the directory or the `database.sqlite` file. Add `--onlydb` to
 the signalbackup-tools command to skip the attachment files; the messages still
-import, and their attachments count as missing.
+import, and their attachments count as missing. Long text stored in an attachment
+needs its file to import the full text; without it, only the inline preview is
+available.
 
 ### Flags
 
@@ -166,7 +168,7 @@ received direct messages.
 
 - **Chats:** direct chats and groups, with group titles and current members.
 - **Messages:** text with `@` mentions spelled out, sender, and sent and received
-  times.
+  times. Long text stored in an attachment is imported in full and indexed for search.
 - **Edits:** an edited message keeps one archive entry with its newest text and
   is marked as edited.
 - **Replies:** a reply links to the message it quotes when that message is in
@@ -182,25 +184,20 @@ account ID are recorded with a `signal_aci` identifier.
 ### Run it again
 
 Run the command with each newer backup. Every message is identified by its
-author's Signal account ID and its sent timestamp, the way Signal itself
-identifies messages, so a rerun adds new messages and updates existing ones
-(edits, reactions, attachments) without duplicating them. This holds for a
+chat, author's Signal account ID, and original sent timestamp. A rerun adds
+new messages and updates existing edits, reactions, and attachments without
+duplicating messages. This holds for a
 backup restored on a new phone. Each rerun replaces a message's reactions with
 the ones in the backup, and a message whose text was removed loses its archived
 text.
 
-A contact Signal knows only by number gets the number in place of the account
-ID. When a later backup knows that contact's account ID, the rerun moves the
-chat and the contact's messages to the account ID instead of duplicating them.
-When a contact known only by account ID later shows a number, the rerun merges
-the two participants. Messages deleted in Signal stay in your archive.
+Messages deleted in Signal stay in your archive.
 
 ### Format limits
 
-msgvault reads Signal Android database version 185 and newer. An older
-database stops the import with an error that names the missing table or
-column; restore the backup in a current Signal Android release and make a new
-backup.
+msgvault reads Signal Android database versions 185 through 215. It refuses
+newer versions before writing to the archive. Older versions and databases
+missing required tables or columns also stop with an error.
 
 These are left out:
 

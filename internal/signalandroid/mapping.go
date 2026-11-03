@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
@@ -86,39 +86,15 @@ func normalizeACI(raw string) string {
 	value := strings.TrimSpace(raw)
 	value = strings.TrimPrefix(strings.TrimPrefix(value, "ACI:"), "aci:")
 	value = strings.ToLower(value)
-	if !isUUID(value) || value == "00000000-0000-0000-0000-000000000000" {
+	if len(value) != 36 || uuid.Validate(value) != nil || value == "00000000-0000-0000-0000-000000000000" {
 		return ""
 	}
 	return value
 }
 
-func isUUID(value string) bool {
-	if len(value) != 36 {
-		return false
-	}
-	for i, r := range value {
-		switch i {
-		case 8, 13, 18, 23:
-			if r != '-' {
-				return false
-			}
-		default:
-			if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-				return false
-			}
-		}
-	}
-	return true
-}
-
 // NormalizePhone returns the E.164 form of a phone number given with its
 // country code, or "" for anything else. Import uses it for --phone.
 func NormalizePhone(raw string) string {
-	return normalizeE164(raw)
-}
-
-// normalizeE164 returns an E.164 phone number, or "" for anything else.
-func normalizeE164(raw string) string {
 	raw = strings.TrimSpace(raw)
 	if !strings.HasPrefix(raw, "+") {
 		return ""
@@ -130,19 +106,9 @@ func normalizeE164(raw string) string {
 	return phone
 }
 
-// identityToken returns the recipient's stable identity: its ACI, or its
-// E.164 number for a contact Signal knows only by number. Empty means the
-// recipient has neither.
-func identityToken(r sigRecipient) string {
-	if r.ACI != "" {
-		return r.ACI
-	}
-	return r.E164
-}
-
-// messageID returns the stable source message ID "<author>:<date_sent>".
-func messageID(authorToken string, dateSent int64) string {
-	return authorToken + ":" + strconv.FormatInt(dateSent, 10)
+// messageID includes the stable chat identity, author, and original sent time.
+func messageID(chatID, authorToken string, dateSent int64) string {
+	return chatID + ":" + authorToken + ":" + strconv.FormatInt(dateSent, 10)
 }
 
 // conversationIdentity maps a chat recipient to its source conversation ID
@@ -158,9 +124,6 @@ func conversationIdentity(r sigRecipient) (sourceConvID, convType string, ok boo
 	}
 	if r.ACI != "" {
 		return directACIPrefix + r.ACI, "direct_chat", true
-	}
-	if r.E164 != "" {
-		return directE164Prefix + r.E164, "direct_chat", true
 	}
 	return "", "", false
 }
@@ -198,14 +161,6 @@ func applyMentions(body string, mentions []sigMention, nameOf func(int64) string
 		b.WriteRune(r)
 	}
 	return b.String()
-}
-
-// snippet returns the first 100 runes of text.
-func snippet(text string) string {
-	if utf8.RuneCountInString(text) <= snippetRunes {
-		return text
-	}
-	return string([]rune(text)[:snippetRunes])
 }
 
 // attachmentMediaType classifies an attachment for msgvault's media views.
