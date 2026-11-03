@@ -193,7 +193,7 @@ func BenchmarkRelationshipScaleQueries(b *testing.B) {
 	if root == "" {
 		b.Skip("run BenchmarkRelationshipScaleBuild with a scratch directory first")
 	}
-	for _, name := range []string{"Calendar", "Timeline", "PersonActivity", "MessageActivity"} {
+	for _, name := range []string{"Calendar", "Timeline", "PersonActivity", "MessageActivity", "DomainPeople"} {
 		b.Run(name, func(b *testing.B) {
 			engine, err := NewDuckDBEngine(root, "", nil)
 			require.NoError(b, err)
@@ -218,6 +218,17 @@ func BenchmarkRelationshipScaleQueries(b *testing.B) {
 					require.NoError(b, err)
 					require.Len(b, result.Rows, 25)
 					require.Equal(b, int64(6601), result.TotalCount)
+				case "DomainPeople":
+					// A domain-scoped people search first narrows the archive
+					// to the messages with an edge on that domain. Its one
+					// contact also writes in the group chat, so the search
+					// reaches every chat member.
+					result, err := engine.SearchPeople(b.Context(), PersonSearchRequest{
+						Explore: ExploreRequest{Context: Context{Domains: []string{"domain-7.example.test"}}},
+						Page:    PageSpec{Limit: 50},
+					})
+					require.NoError(b, err)
+					require.Equal(b, int64(304), result.TotalCount)
 				case "PersonActivity", "MessageActivity":
 					filter := "canonical_id = 2"
 					want := int64(8600)
