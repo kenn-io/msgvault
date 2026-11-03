@@ -394,7 +394,9 @@ import (
 // 3.39.0 adds the optional account to staged deletion list summaries.
 // 3.40.0 adds timezone-aware daily message grouping and sent_only group filtering.
 // It also filters participant timelines to events and meetings attended by the owner.
-const APISchemaVersion = "3.40.0"
+// 3.41.0 adds body_text for a single message's stored plain-text body, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset.
+// Older servers omit body_text; body keeps its HTML fallback.
+const APISchemaVersion = "3.41.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

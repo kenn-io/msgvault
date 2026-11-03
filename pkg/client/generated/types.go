@@ -8001,11 +8001,14 @@ type MergeRequest struct {
 }
 
 type MessageDetail struct {
-	Attachments    []AttachmentInfo    `json:"attachments" validate:"required"`
-	Bcc            []string            `json:"bcc,omitempty"`
-	Body           string              `json:"body" validate:"required"`
-	BodyHTML       *string             `json:"body_html,omitzero"`
-	BodyOmitted    *bool               `json:"body_omitted,omitempty"`
+	Attachments []AttachmentInfo `json:"attachments" validate:"required"`
+	Bcc         []string         `json:"bcc,omitempty"`
+	Body        string           `json:"body" validate:"required"`
+	BodyHTML    *string          `json:"body_html,omitzero"`
+	BodyOmitted *bool            `json:"body_omitted,omitempty"`
+
+	// BodyText Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback.
+	BodyText       *string             `json:"body_text,omitzero"`
 	Calendar       *CalendarProjection `json:"calendar,omitempty"`
 	Cc             []string            `json:"cc,omitempty"`
 	ConversationID *int64              `json:"conversation_id,omitempty"`
