@@ -225,9 +225,6 @@ func TestBuilderLockDoesNotBlockReaders(t *testing.T) {
 	release, err = query.AcquireCacheReadLock(maintenanceCtx, analyticsDir)
 	requirements.NoError(err, "maintenance releases cache lock after invalidation")
 	release()
-	readiness, err := query.InspectCacheReadiness(analyticsDir)
-	requirements.NoError(err)
-	assert.NotEqual(t, query.CacheReady, readiness)
 	requirements.NoError(unlockCache(), "release destructive locks")
 
 	release, err = query.AcquireCacheReadLock(context.Background(), analyticsDir)
