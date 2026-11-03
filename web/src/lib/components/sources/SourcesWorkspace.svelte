@@ -414,7 +414,7 @@
     </div>{/if}
   {#if initialLoading}<p class="muted" role="status">Loading…</p>
   {:else if sources.length === 0 && contacts.length === 0}
-    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" /><CommandLine command={ADD_SOURCE_COMMAND} />{/if}
+    {#if !loading && !contactsLoading && !statusError && !contactsError}<EmptyState title="No sources yet" />{/if}
   {:else}
     <Table ariaLabel="Sources" zebra={false} class="source-table" unsorted>
       {#snippet header()}
