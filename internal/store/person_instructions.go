@@ -233,12 +233,12 @@ func instructionScopeTx(ctx context.Context, tx *loggedTx, personID int64, conta
 	}
 	return string(encoded), scope.NormalizedValue, nil
 }
-func appendPersonInstructionEventTx(ctx context.Context, tx *loggedTx, i *PersonInstruction, action personfacts.InstructionAction, actor string, detail any) error {
+func appendPersonInstructionEventTx(ctx context.Context, tx *loggedTx, i *PersonInstruction, action personfacts.InstructionAction, actor string, at time.Time, detail any) error {
 	data, err := json.Marshal(detail)
 	if err != nil {
 		return fmt.Errorf("marshal instruction event: %w", err)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO person_instruction_events(person_id,instruction_id,instruction_key,action,actor,detail_json) VALUES (?,?,?,?,?,?)`, i.PersonID, i.ID, i.InstructionKey, action, actor, string(data))
+	_, err = tx.ExecContext(ctx, `INSERT INTO person_instruction_events(person_id,instruction_id,instruction_key,action,actor,detail_json,created_at) VALUES (?,?,?,?,?,?,?)`, i.PersonID, i.ID, i.InstructionKey, action, actor, string(data), personFactPortableTime(at))
 	if err != nil {
 		return fmt.Errorf("append instruction event: %w", err)
 	}
@@ -265,7 +265,7 @@ func expirePersonInstructionKeyTx(ctx context.Context, tx *loggedTx, personID in
 		if _, err := tx.ExecContext(ctx, `UPDATE person_instructions SET status=?,review_state=?,revision=revision+1,updated_at=? WHERE id=?`, next.Status, next.ReviewState, now, row.ID); err != nil {
 			return fmt.Errorf("expire person instruction key: %w", err)
 		}
-		if err := appendPersonInstructionEventTx(ctx, tx, &row, personfacts.InstructionActionExpire, "system:expiry", map[string]string{"reason": "valid_until"}); err != nil {
+		if err := appendPersonInstructionEventTx(ctx, tx, &row, personfacts.InstructionActionExpire, "system:expiry", now, map[string]string{"reason": "valid_until"}); err != nil {
 			return err
 		}
 	}
@@ -278,7 +278,7 @@ func supersedePersonInstructionTx(ctx context.Context, tx *loggedTx, i *PersonIn
 	if _, err := tx.ExecContext(ctx, `UPDATE person_instructions SET status='superseded',review_state='none',revision=revision+1,updated_at=? WHERE id=?`, at, i.ID); err != nil {
 		return fmt.Errorf("supersede instruction: %w", err)
 	}
-	return appendPersonInstructionEventTx(ctx, tx, i, personfacts.InstructionActionSupersede, actor, map[string]any{})
+	return appendPersonInstructionEventTx(ctx, tx, i, personfacts.InstructionActionSupersede, actor, at, map[string]any{})
 }
 func (s *Store) AddPersonInstructionContext(ctx context.Context, in PersonInstructionInput) (*PersonInstruction, error) {
 	in.Actor = strings.TrimSpace(in.Actor)
@@ -336,7 +336,7 @@ func (s *Store) AddPersonInstructionContext(ctx context.Context, in PersonInstru
 			if err != nil {
 				return err
 			}
-			return appendPersonInstructionEventTx(ctx, tx, result, personfacts.InstructionActionPropose, in.Actor, map[string]string{"origin": "owner", "text": in.Text})
+			return appendPersonInstructionEventTx(ctx, tx, result, personfacts.InstructionActionPropose, in.Actor, now, map[string]string{"origin": "owner", "text": in.Text})
 		})
 		return result, err
 	})
@@ -416,7 +416,7 @@ func (s *Store) DecidePersonInstructionContext(ctx context.Context, d PersonInst
 				if exists {
 					return ErrInstructionDuplicate
 				}
-				if err := appendPersonInstructionEventTx(ctx, tx, &old, personfacts.InstructionActionEdit, d.Actor, map[string]string{
+				if err := appendPersonInstructionEventTx(ctx, tx, &old, personfacts.InstructionActionEdit, d.Actor, now, map[string]string{
 					"new_key": current.InstructionKey, "old_text": old.Text, "new_text": current.Text,
 				}); err != nil {
 					return err
@@ -479,7 +479,7 @@ func (s *Store) DecidePersonInstructionContext(ctx context.Context, d PersonInst
 			if err != nil {
 				return err
 			}
-			if err := appendPersonInstructionEventTx(ctx, tx, current, d.Action, d.Actor, map[string]string{"reason": strings.TrimSpace(d.Reason)}); err != nil {
+			if err := appendPersonInstructionEventTx(ctx, tx, current, d.Action, d.Actor, now, map[string]string{"reason": strings.TrimSpace(d.Reason)}); err != nil {
 				return err
 			}
 			followOns := []PersonInstructionFollowOn{}

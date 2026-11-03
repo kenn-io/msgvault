@@ -1955,3 +1955,84 @@ func TestExactSplitReparentsPostMergeInstructionEvents(t *testing.T) {
 		assert.Equal(split.NewPerson.ID, personID, action)
 	}
 }
+
+func TestMergeConfirmSplitMergePrefersRestoredConfirmation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	carol := mustPromotedPerson(t, st, "carol@example.com", "carol")
+	aliceInstruction := addTestInstruction(t, st, alice.ID, "iPhone")
+	bobInstruction := addTestInstruction(t, st, bob.ID, "iphone")
+	carolInstruction := addTestInstruction(t, st, carol.ID, "IPHONE")
+	assert.Equal(aliceInstruction.InstructionKey, bobInstruction.InstructionKey)
+	assert.Equal(aliceInstruction.InstructionKey, carolInstruction.InstructionKey)
+
+	firstProposal := time.Date(2020, time.January, 1, 0, 0, 0, 0, time.UTC)
+	secondProposal := time.Date(2020, time.January, 2, 0, 0, 0, 0, time.UTC)
+	thirdProposal := time.Date(2020, time.January, 3, 0, 0, 0, 0, time.UTC)
+	setInstructionEventCreatedAt(t, st, aliceInstruction.ID, "propose", firstProposal)
+	setInstructionEventCreatedAt(t, st, bobInstruction.ID, "propose", secondProposal)
+	setInstructionEventCreatedAt(t, st, carolInstruction.ID, "propose", thirdProposal)
+
+	firstMerge, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	mergedInstruction := testInstruction(t, st, aliceInstruction.ID)
+	assert.Equal("call me iphone", mergedInstruction.Text)
+	decision, err := st.DecidePersonInstructionContext(t.Context(), store.PersonInstructionDecision{
+		InstructionID: mergedInstruction.ID, ExpectedRevision: mergedInstruction.Revision,
+		Action: personfacts.InstructionActionConfirm, Actor: "owner",
+	})
+	require.NoError(err)
+
+	split := splitInstructionMerge(t, st, firstMerge, bob.ParticipantIDs)
+	require.True(split.ExactReversal)
+	restored := testInstruction(t, st, bobInstruction.ID)
+	assert.Equal(split.NewPerson.ID, restored.PersonID)
+	assert.Equal(decision.Instruction.ConfirmedAt, restored.ConfirmedAt)
+
+	_, err = mergeInstructionPeople(t.Context(), t, st, split.NewPerson.ID, carol.ID)
+	require.NoError(err)
+	winner := testInstruction(t, st, bobInstruction.ID)
+	assert.Equal("call me iphone", winner.Text)
+	assert.Equal("iphone", winner.ValueText)
+	assert.Equal(decision.Instruction.ConfirmedAt, winner.ConfirmedAt)
+}
+
+func TestMergeCollisionUsesLatestEventIDWhenDecisionTimesTie(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	alice := mustPromotedPerson(t, st, "alice@example.com", "alice")
+	bob := mustPromotedPerson(t, st, "bob@example.com", "bob")
+	survivor := addTestInstruction(t, st, alice.ID, "iPhone")
+	absorbed := addTestInstruction(t, st, bob.ID, "iphone")
+	survivorConfirmID := insertTestInstructionEvent(t, st, survivor, "confirm")
+	absorbedConfirmID := insertTestInstructionEvent(t, st, absorbed, "confirm")
+	require.Greater(absorbedConfirmID, survivorConfirmID)
+
+	decisionAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	proposalAt := decisionAt.Add(-time.Hour)
+	survivorCreatedAt := decisionAt.Add(-2 * time.Hour)
+	absorbedCreatedAt := decisionAt.Add(-3 * time.Hour)
+	setInstructionEventCreatedAt(t, st, survivor.ID, "propose", proposalAt)
+	setInstructionEventCreatedAt(t, st, absorbed.ID, "propose", proposalAt)
+	setInstructionEventCreatedAt(t, st, survivor.ID, "confirm", decisionAt)
+	setInstructionEventCreatedAt(t, st, absorbed.ID, "confirm", decisionAt)
+	for _, row := range []struct {
+		id        int64
+		createdAt time.Time
+	}{{survivor.ID, survivorCreatedAt}, {absorbed.ID, absorbedCreatedAt}} {
+		_, err := st.DB().ExecContext(t.Context(), st.Rebind(
+			"UPDATE person_instructions SET created_at=?,confirmed_at=?,confirmed_by='owner' WHERE id=?",
+		), row.createdAt, decisionAt, row.id)
+		require.NoError(err)
+	}
+
+	_, err := mergeInstructionPeople(t.Context(), t, st, alice.ID, bob.ID)
+	require.NoError(err)
+	winner := testInstruction(t, st, survivor.ID)
+	assert.Equal("call me iphone", winner.Text)
+	assert.Equal("iphone", winner.ValueText)
+}

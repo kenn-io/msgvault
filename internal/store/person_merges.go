@@ -2586,23 +2586,36 @@ func instructionLive(i PersonInstruction) bool {
 	return i.Status == personfacts.InstructionStatusProposed || i.Status == personfacts.InstructionStatusActive || i.Status == personfacts.InstructionStatusSuspended
 }
 
-func personInstructionOwnerDecisionTimeTx(
-	ctx context.Context, tx *loggedTx, instructionID int64,
-) (time.Time, error) {
+type personInstructionOwnerDecisionOrder struct {
+	decidedAt time.Time
+	eventID   int64
+}
+
+func personInstructionOwnerDecisionOrderTx(
+	ctx context.Context, tx *loggedTx, instruction PersonInstruction,
+) (personInstructionOwnerDecisionOrder, error) {
+	var order personInstructionOwnerDecisionOrder
 	var decidedAt sql.NullTime
-	err := tx.QueryRowContext(ctx, `SELECT created_at FROM person_instruction_events
+	var eventID sql.NullInt64
+	err := tx.QueryRowContext(ctx, `SELECT id,created_at FROM person_instruction_events
 		WHERE instruction_id=? AND action IN ('propose','edit','confirm','unsure','adopt')
-		ORDER BY created_at DESC,id DESC LIMIT 1`, instructionID).Scan(&decidedAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		return time.Time{}, nil
+		ORDER BY created_at DESC,id DESC LIMIT 1`, instruction.ID).Scan(&eventID, &decidedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return order, fmt.Errorf("read person instruction owner decision order: %w", err)
 	}
-	if err != nil {
-		return time.Time{}, fmt.Errorf("read person instruction owner decision time: %w", err)
+	if decidedAt.Valid {
+		order.decidedAt = decidedAt.Time
 	}
-	if !decidedAt.Valid {
-		return time.Time{}, nil
+	if eventID.Valid {
+		order.eventID = eventID.Int64
 	}
-	return decidedAt.Time, nil
+	// Exact splits can restore confirmed_at to an instruction while its
+	// confirmation event remains with the surviving instruction. Keep that
+	// owner decision in the ordering even when this row has only older events.
+	if instruction.ConfirmedAt != nil && instruction.ConfirmedAt.After(order.decidedAt) {
+		order.decidedAt = *instruction.ConfirmedAt
+	}
+	return order, nil
 }
 
 func expirePersonInstructionsBeforeMergeTx(
@@ -2660,17 +2673,20 @@ func (s *Store) movePersonInstructionsTx(ctx context.Context, tx *loggedTx, merg
 		if existing, ok := live[row.InstructionKey]; ok && instructionLive(row) {
 			source, sourceName := existing, "survivor"
 			aRank, sRank := instructionLifecycleRank(row), instructionLifecycleRank(existing)
-			absorbedDecisionAt, err := personInstructionOwnerDecisionTimeTx(ctx, tx, row.ID)
+			absorbedDecision, err := personInstructionOwnerDecisionOrderTx(ctx, tx, row)
 			if err != nil {
-				return fmt.Errorf("read absorbed instruction owner decision time: %w", err)
+				return fmt.Errorf("read absorbed instruction owner decision order: %w", err)
 			}
-			survivorDecisionAt, err := personInstructionOwnerDecisionTimeTx(ctx, tx, existing.ID)
+			survivorDecision, err := personInstructionOwnerDecisionOrderTx(ctx, tx, existing)
 			if err != nil {
-				return fmt.Errorf("read survivor instruction owner decision time: %w", err)
+				return fmt.Errorf("read survivor instruction owner decision order: %w", err)
 			}
-			if aRank > sRank || (aRank == sRank && (absorbedDecisionAt.After(survivorDecisionAt) ||
-				(absorbedDecisionAt.Equal(survivorDecisionAt) && (row.CreatedAt.After(existing.CreatedAt) ||
-					(row.CreatedAt.Equal(existing.CreatedAt) && row.ID > existing.ID))))) {
+			if aRank > sRank || (aRank == sRank && (absorbedDecision.decidedAt.After(survivorDecision.decidedAt) ||
+				(absorbedDecision.decidedAt.Equal(survivorDecision.decidedAt) &&
+					(absorbedDecision.eventID > survivorDecision.eventID ||
+						(absorbedDecision.eventID == survivorDecision.eventID &&
+							(row.CreatedAt.After(existing.CreatedAt) ||
+								(row.CreatedAt.Equal(existing.CreatedAt) && row.ID > existing.ID))))))) {
 				source, sourceName = row, "absorbed"
 			}
 			spec := personMergeTableRegistry[personInstructionsTableName]
@@ -2759,7 +2775,7 @@ func (s *Store) movePersonInstructionsTx(ctx context.Context, tx *loggedTx, merg
 			destination.PersonID = survivorID
 		}
 		moved[destination.ID] = true
-		if err = appendPersonInstructionEventTx(ctx, tx, &destination, personfacts.InstructionActionMergeMoved, "system", detail); err != nil {
+		if err = appendPersonInstructionEventTx(ctx, tx, &destination, personfacts.InstructionActionMergeMoved, "system", now, detail); err != nil {
 			return err
 		}
 	}

@@ -2788,7 +2788,8 @@ func (s *Store) markSplitPersonInstructionsTx(ctx context.Context, tx *loggedTx,
 	if _, err := tx.ExecContext(ctx, `UPDATE person_instruction_events SET person_id=? WHERE instruction_id IN (SELECT id FROM person_instructions WHERE person_id=?)`, newPersonID, newPersonID); err != nil {
 		return fmt.Errorf("reparent split instruction events: %w", err)
 	}
-	rows, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, time.Now().UTC(), newPersonID)
+	now := personFactPortableTime(time.Now().UTC())
+	rows, err := listPersonInstructionRows(ctx, tx, personInstructionSelect+` WHERE i.person_id=? ORDER BY i.id`, now, newPersonID)
 	if err != nil {
 		return err
 	}
@@ -2803,7 +2804,7 @@ func (s *Store) markSplitPersonInstructionsTx(ctx context.Context, tx *loggedTx,
 		if _, err = tx.ExecContext(ctx, `UPDATE person_instructions SET review_state=? WHERE id=?`, reviewState, row.ID); err != nil {
 			return fmt.Errorf("mark split instruction: %w", err)
 		}
-		if err = appendPersonInstructionEventTx(ctx, tx, &row, personfacts.InstructionActionSplitMoved, "system", map[string]any{}); err != nil {
+		if err = appendPersonInstructionEventTx(ctx, tx, &row, personfacts.InstructionActionSplitMoved, "system", now, map[string]any{}); err != nil {
 			return err
 		}
 	}
@@ -2962,7 +2963,7 @@ func (s *Store) supersedeRestoredPersonSplitCollisionTx(
 	}
 	if err := appendPersonInstructionEventTx(
 		ctx, tx, conflicting, personfacts.InstructionActionSupersede, "system:split",
-		map[string]string{"reason": "post_merge_confirmation"},
+		now, map[string]string{"reason": "post_merge_confirmation"},
 	); err != nil {
 		return err
 	}
