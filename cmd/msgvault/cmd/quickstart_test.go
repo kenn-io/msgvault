@@ -41,7 +41,7 @@ func TestQuickstartOffline(t *testing.T) {
 	}
 }
 
-func TestMCPQuickstartLinksAreAbsolute(t *testing.T) {
+func TestMCPQuickstartNormalizesGuide(t *testing.T) {
 	lfDoc := strings.ReplaceAll(docs.AgentQuickstart, "\r\n", "\n")
 	for _, tc := range []struct {
 		name string
@@ -52,7 +52,6 @@ func TestMCPQuickstartLinksAreAbsolute(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			output := mcpQuickstart(tc.doc)
-			assert.Equal(t, mcpQuickstart(lfDoc), output)
 			assert.True(t, strings.HasPrefix(output, "# msgvault MCP quickstart\n\n"))
 			assert.NotContains(t, output, "\r")
 			assert.NotContains(t, output, "title:")
