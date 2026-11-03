@@ -70,13 +70,13 @@ it.each([
       await waitFor(() => expect(onClose).toHaveBeenCalledOnce());
       expect(await screen.findByText('People merged. Identity cache refresh failed.')).toBeDefined();
       expect(onOpenPerson).toHaveBeenCalledWith(7);
-      expect(onReconcile).toHaveBeenLastCalledWith(context);
+      expect(onReconcile).toHaveBeenLastCalledWith(context, false, expect.objectContaining({ survivor: expect.objectContaining({ id: 7 }) }));
       expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST')).toHaveLength(0);
       return;
     }
     await modal.onSuccess({ result: mergeResult(profile(7)), survivor: profile(7), responseETag: '"person-7-r5"' });
     await waitFor(() => expect(onOpenPerson).toHaveBeenCalledWith(7));
-    expect(onReconcile).toHaveBeenLastCalledWith(context);
+    expect(onReconcile).toHaveBeenLastCalledWith(context, false, expect.objectContaining({ survivor: expect.objectContaining({ id: 7 }) }));
     const promotions = requests.filter(request => new URL(request.url).pathname === '/api/v1/people' && request.method === 'POST');
     expect(promotions).toHaveLength(promote ? outcome === 'retry and merge' ? 2 : 1 : 0);
     if (promote) expect(await promotions[0]!.json()).toEqual({ participant_id: 2 });

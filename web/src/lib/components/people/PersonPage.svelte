@@ -5,6 +5,7 @@
   import type { DirectoryController } from '../../directory/controller.svelte';
   import PersonDetails from './PersonDetails.svelte';
   import PersonRecordActions from '../directory/PersonRecordActions.svelte';
+  import type { PersonMergeSuccess } from '../../directory/person-merge';
   import type { MessagesTable } from '../../explore/loader.svelte';
   import type { MeetingRef } from '../../api/generated/models';
   import { contextPredicate, type RelationshipsController, type RelationshipsMergeContext } from '../../relationships/controller.svelte';
@@ -27,7 +28,7 @@
     details = $bindable(false), selectedDate = $bindable<string | null>(null), domainYear = $bindable<number | null>(null),
     sort = $bindable<FileSearchSort>({ field: 'occurred_at', direction: 'desc' }), filenameQuery = $bindable(''), mimeFamilies = $bindable<FileMIMEFamily[]>([]) }:
     { client: APIClient; directory: DirectoryController; onRecordDeleted?: (personID: number) => void; onSplitCommitted?: (context: import('../../directory/person-merge-history-controller.svelte').PersonSplitCommittedContext) => void | Promise<void>; onOpenCardDAVConflict?: (id: number) => void; onOpenCardDAVSettings?: () => void; controller: RelationshipsController; target: string | null; filesOpen: boolean; predicate: ExplorePredicate; durablePersonID?: number | null;
-      onReconcilePersonMerge: (context: RelationshipsMergeContext, participantsLinked?: boolean) => Promise<void>; onIdentityChange?: () => Promise<void>;
+      onReconcilePersonMerge: (context: RelationshipsMergeContext, participantsLinked?: boolean, success?: PersonMergeSuccess) => Promise<void>; onIdentityChange?: () => Promise<void>;
       onFilesToggle: (value: boolean) => void; onBack?: () => void;
       onOpenDirectoryPerson?: (id: number) => void; onAnnounce?: (message: string) => void; onOpenPerson?: (id: number) => void;
       sweepConfigured?: boolean; onConfigureVisualSearch?: () => void; onOpenMeeting?: (meeting: MeetingRef) => void; onOpenSettings?: (category?: string) => void; onOpenFileItem?: (key: string) => void;

@@ -9,7 +9,7 @@
   import { showFlash } from '@kenn-io/kit-ui';
   let { client, controller, personID: currentPersonID, participantID: currentParticipantID, name, onReconcile, onOpenPerson, onLinked, onClose }:
     { client: APIClient; controller: RelationshipsController; personID: number | null; participantID: number | null; name: string;
-      onReconcile: (context: RelationshipsMergeContext, participantsLinked?: boolean) => Promise<void>; onOpenPerson?: (id: number) => void; onLinked?: (a: number, b: number, outcome: LinkOutcome) => void; onClose: () => void } = $props();
+      onReconcile: (context: RelationshipsMergeContext, participantsLinked?: boolean, success?: PersonMergeSuccess) => Promise<void>; onOpenPerson?: (id: number) => void; onLinked?: (a: number, b: number, outcome: LinkOutcome) => void; onClose: () => void } = $props();
   let conflict = $state<ValidatedPersonMergeRequired>();
   // The operation keeps the people it opened with, even after navigation disposes the dialog.
   const [personID, participantID] = untrack(() => [currentPersonID, currentParticipantID]);
@@ -57,8 +57,9 @@
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
     close(); if (success.result.cache_state === 'stale') showFlash('People merged. Identity cache refresh failed.', { tone: 'warning', durationMs: 8000 });
+    const reconciliation = onReconcile(context, false, success);
     onOpenPerson?.(success.survivor.id);
-    await onReconcile(context);
+    await reconciliation;
   }
 </script>
 {#if conflict}

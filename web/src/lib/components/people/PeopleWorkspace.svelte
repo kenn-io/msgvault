@@ -110,7 +110,7 @@
     if (id === null || directory.selectedPersonID !== id || !person) return;
     const targets = person.participant_ids.map((participant) => `cluster:${participant}`);
     const next = targets.includes(page.target ?? '') ? page.target : targets[0] ?? null;
-    if (next !== page.target && !controller.detailMissing) onReplaceNavigation({ relationshipTarget: next });
+    if (next !== page.target) onReplaceNavigation({ relationshipTarget: next });
   });
   async function open(key: string): Promise<void> {
     onNavigate({ directoryPersonID: key.startsWith('person:') ? Number(key.slice(7)) : null, relationshipTarget: key.startsWith('person:') ? null : key, relationshipFiles: false });
@@ -195,7 +195,10 @@
     await directory.reloadFirstPage();
     if (directory.selectedPersonID === selectedProfileID) await directory.refreshSelectedPerson();
   }
-  async function reconcilePersonMerge(context: RelationshipsMergeContext): Promise<void> {
+  async function reconcilePersonMerge(context: RelationshipsMergeContext, success: PersonMergeSuccess | undefined = undefined): Promise<void> {
+    if (success && soloPerson === success.result.merge.absorbed_person_id) {
+      onReplaceNavigation({ directoryPersonID: success.survivor.id });
+    }
     await Promise.all([controller.reconcilePersonMerge(context), refreshProfiles()]);
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
@@ -251,7 +254,7 @@
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
     onRecordDeleted={(deletedID) => void peopleDeleted([deletedID])}
     onSplitCommitted={async (context) => { onDuplicatesChanged(); onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
-    onReconcilePersonMerge={(context, participantsLinked) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context)}
+    onReconcilePersonMerge={(context, participantsLinked, success) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context, success)}
     onIdentityChange={() => { onDuplicatesChanged(); return directory.reloadFirstPage(); }} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
 {/snippet}
