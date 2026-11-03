@@ -98,7 +98,7 @@ func filenameObservedStore(t *testing.T) (*Store, *filenamePostingObserver) {
 	pg := IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB"))
 	var st *Store
 	if pg {
-		st = newPGStoreInternal(t, os.Getenv("MSGVAULT_TEST_DB"))
+		st = newPGStoreInternal(t)
 		path = st.dbPath
 	} else {
 		var err error

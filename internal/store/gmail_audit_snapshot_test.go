@@ -199,11 +199,11 @@ func newGmailAuditSnapshotSQLiteStore(
 }
 
 func newGmailAuditSnapshotPostgresStore(
-	t *testing.T, dbURL string, gate *gmailAuditSnapshotGate,
+	t *testing.T, gate *gmailAuditSnapshotGate,
 ) *Store {
 	t.Helper()
 	require := require.New(t)
-	base := newPGStoreInternal(t, dbURL)
+	base := newPGStoreInternal(t)
 	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(err)
 	db := sql.OpenDB(&gmailAuditSnapshotConnector{
@@ -266,7 +266,7 @@ func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	var st *Store
 	if IsPostgresURL(dbURL) {
-		st = newGmailAuditSnapshotPostgresStore(t, dbURL, gate)
+		st = newGmailAuditSnapshotPostgresStore(t, gate)
 	} else {
 		st = newGmailAuditSnapshotSQLiteStore(t, gate)
 	}

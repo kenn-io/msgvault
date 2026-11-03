@@ -29,7 +29,7 @@ func TestMergeSourcesExecutionLockOwnership(t *testing.T) {
 			require := require.New(t)
 			var st *Store
 			if dbURL := os.Getenv("MSGVAULT_TEST_DB"); IsPostgresURL(dbURL) {
-				st = newPGStoreInternal(t, dbURL)
+				st = newPGStoreInternal(t)
 			} else {
 				st = openTestStore(t)
 			}
@@ -98,7 +98,7 @@ func TestSourceRemovalLockSerializesWithMerge(t *testing.T) {
 	require := require.New(t)
 	var st *Store
 	if dbURL := os.Getenv("MSGVAULT_TEST_DB"); IsPostgresURL(dbURL) {
-		st = newPGStoreInternal(t, dbURL)
+		st = newPGStoreInternal(t)
 	} else {
 		st = openTestStore(t)
 	}
@@ -151,7 +151,7 @@ func TestSourceRemovalLockDoesNotRecoverRunningSync(t *testing.T) {
 	require := require.New(t)
 	var st *Store
 	if dbURL := os.Getenv("MSGVAULT_TEST_DB"); IsPostgresURL(dbURL) {
-		st = newPGStoreInternal(t, dbURL)
+		st = newPGStoreInternal(t)
 	} else {
 		st = openTestStore(t)
 	}

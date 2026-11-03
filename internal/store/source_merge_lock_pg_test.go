@@ -15,7 +15,8 @@ func TestMergeSourcesWithTwoPostgresConnections(t *testing.T) {
 	for _, dryRun := range []bool{true, false} {
 		t.Run(fmt.Sprintf("dry_run_%t", dryRun), func(t *testing.T) {
 			require := require.New(t)
-			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+			skipUnlessPostgresInternal(t)
+			st := newPGStoreInternal(t)
 			from, err := st.GetOrCreateSource("gmail", "history@example.test")
 			require.NoError(err)
 			into, err := st.GetOrCreateSource("gmail", "live@example.test")
@@ -79,7 +80,8 @@ func TestSourceExecutionLifecycleCheckHonorsCancellation(t *testing.T) {
 		t.Run(fmt.Sprintf("merge_%t", merge), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+			skipUnlessPostgresInternal(t)
+			st := newPGStoreInternal(t)
 			from, err := st.GetOrCreateSource("gmail", "history@example.test")
 			require.NoError(err)
 			into, err := st.GetOrCreateSource("gmail", "live@example.test")
@@ -130,7 +132,8 @@ func TestRemoveSourceRechecksMergeHistoryAfterIdentityLock(t *testing.T) {
 		t.Run(fmt.Sprintf("destination_%t", removeDestination), func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+			skipUnlessPostgresInternal(t)
+			st := newPGStoreInternal(t)
 			from, err := st.GetOrCreateSource("gmail", "history@example.test")
 			require.NoError(err)
 			into, err := st.GetOrCreateSource("gmail", "live@example.test")
@@ -173,7 +176,8 @@ func TestRemoveSourceRechecksMergeHistoryAfterIdentityLock(t *testing.T) {
 func TestExistingSourceLookupDoesNotWaitForMaintenance(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 	source, err := st.GetOrCreateSource("gmail", "existing@example.test")
 	require.NoError(err)
 	blocker, err := st.DB().BeginTx(t.Context(), nil)

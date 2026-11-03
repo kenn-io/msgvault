@@ -27,7 +27,7 @@ func TestPersonFactEmploymentCrossedOrganizationChainsSerialize(t *testing.T) {
 	var st *Store
 	if postgres {
 		gate = newPersonFactOrganizationCrossedLockGate(2)
-		st = newPersonFactOrganizationCrossedLockStore(t, dbURL, gate)
+		st = newPersonFactOrganizationCrossedLockStore(t, gate)
 	} else {
 		st, _, _ = newPersonFactProjectionStore(t)
 	}
@@ -114,7 +114,7 @@ func TestPersonFactEmploymentIncomingAndHistoricalOrganizationsShareLockOrder(t 
 	var st *Store
 	if postgres {
 		gate = newPersonFactOrganizationCrossedLockGate(1)
-		st = newPersonFactOrganizationCrossedLockStore(t, dbURL, gate)
+		st = newPersonFactOrganizationCrossedLockStore(t, gate)
 	} else {
 		st, _, _ = newPersonFactProjectionStore(t)
 	}
@@ -175,7 +175,7 @@ func TestPersonFactEmploymentNonIDCandidateSnapshotPrecedesOrganizationMutation(
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			gate := newPersonFactOrganizationCandidateGate(2)
-			st := newPersonFactOrganizationCandidateGateStore(t, dbURL, gate)
+			st := newPersonFactOrganizationCandidateGateStore(t, gate)
 			personID := createTrackedPersonFactPerson(t, st, "candidate-race-"+mode)
 			target := projectionTargetBySlug(t, st, "employment")
 			candidate := createPersonFactOrganization(
@@ -288,7 +288,7 @@ func TestPersonFactEmploymentOrganizationTableLockWaitsForMergeMutation(t *testi
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	gate := newPersonFactOrganizationCrossedLockGate(2)
-	st := newPersonFactOrganizationCrossedLockStore(t, dbURL, gate)
+	st := newPersonFactOrganizationCrossedLockStore(t, gate)
 	personID := createTrackedPersonFactPerson(t, st, "candidate-upgrade-race")
 	target := projectionTargetBySlug(t, st, "employment")
 	survivor := createPersonFactOrganization(
@@ -627,10 +627,10 @@ func (r *personFactOrganizationCrossedLockRows) Next(values []driver.Value) erro
 }
 
 func newPersonFactOrganizationCrossedLockStore(
-	t *testing.T, dbURL string, gate *personFactOrganizationCrossedLockGate,
+	t *testing.T, gate *personFactOrganizationCrossedLockGate,
 ) *Store {
 	t.Helper()
-	base := newPGStoreInternal(t, dbURL)
+	base := newPGStoreInternal(t)
 	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(t, err)
 	db := sql.OpenDB(&personFactOrganizationCrossedLockConnector{
@@ -818,10 +818,10 @@ func (r *personFactOrganizationCandidateGateRows) Next(values []driver.Value) er
 }
 
 func newPersonFactOrganizationCandidateGateStore(
-	t *testing.T, dbURL string, gate *personFactOrganizationCandidateGate,
+	t *testing.T, gate *personFactOrganizationCandidateGate,
 ) *Store {
 	t.Helper()
-	base := newPGStoreInternal(t, dbURL)
+	base := newPGStoreInternal(t)
 	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(t, err)
 	db := sql.OpenDB(&personFactOrganizationCandidateGateConnector{

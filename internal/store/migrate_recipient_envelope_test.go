@@ -438,8 +438,8 @@ func TestInitSchema_LegacyRecipientRebuildRestoresActivityTriggers(t *testing.T)
 func TestEnsureRecipientEnvelopeUniqueIndex_PGLegacyConstraintDrop(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
-	st := newPGStoreInternal(t, dbURL)
+	skipUnlessPostgresInternal(t)
+	st := newPGStoreInternal(t)
 
 	// Roll back to the legacy shape: clear the ledger entry, drop the new
 	// unique index, and reattach the old table-level UNIQUE. The constraint

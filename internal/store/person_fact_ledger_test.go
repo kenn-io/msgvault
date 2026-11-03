@@ -600,7 +600,7 @@ func newPersonFactLedgerStore(t *testing.T) (*Store, int64) {
 	var st *Store
 	testDB := os.Getenv("MSGVAULT_TEST_DB")
 	if IsPostgresURL(testDB) {
-		st = newPGStoreInternal(t, testDB)
+		st = newPGStoreInternal(t)
 	} else {
 		var err error
 		st, err = OpenForTest(filepath.Join(t.TempDir(), "fact-ledger.db"))

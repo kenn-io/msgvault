@@ -164,10 +164,10 @@ func (r *dailyNoteGateRows) Close() error {
 }
 
 func newGatedPostgresStore(
-	t *testing.T, dbURL string, gate *dailyNoteListGate,
+	t *testing.T, gate *dailyNoteListGate,
 ) *Store {
 	t.Helper()
-	base := newPGStoreInternal(t, dbURL)
+	base := newPGStoreInternal(t)
 	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(t, err)
 	baseConnector := stdlib.GetConnector(*config)
@@ -191,7 +191,7 @@ func TestDailyNotePersonListingUsesOneSnapshot(t *testing.T) {
 	require := require.New(t)
 	gate := newDailyNoteListGate()
 	defer gate.releaseSecond()
-	st := newGatedPostgresStore(t, dbURL, gate)
+	st := newGatedPostgresStore(t, gate)
 
 	firstParticipant, err := st.EnsureParticipant(
 		"snapshot-first@example.invalid", "Test First", "example.invalid",

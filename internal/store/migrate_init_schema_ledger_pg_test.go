@@ -9,10 +9,10 @@ import (
 )
 
 func TestInitSchemaAddsVersionToLegacyLedgerPostgres(t *testing.T) {
-	dbURL := skipUnlessPostgresInternal(t)
+	skipUnlessPostgresInternal(t)
 	assert := assert.New(t)
 	require := require.New(t)
-	st := newPGStoreInternal(t, dbURL)
+	st := newPGStoreInternal(t)
 
 	_, err := st.DB().Exec(`ALTER TABLE applied_migrations DROP COLUMN version`)
 	require.NoError(err, "remove the version column from the legacy ledger")

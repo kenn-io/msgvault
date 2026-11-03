@@ -1780,7 +1780,7 @@ func TestPersonFactEmploymentAutomaticAndDeclaredMutationSerializePostgres(t *te
 	require := require.New(t)
 	gate := newPersonFactEmploymentLockOrderGate(personFactEmploymentStageOrganization)
 	defer gate.release()
-	st := newPersonFactEmploymentPostgresGateStore(t, dbURL, gate)
+	st := newPersonFactEmploymentPostgresGateStore(t, gate)
 	personID, target, organization := newPersonFactEmploymentLockOrderFixture(t, st, "postgres")
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
@@ -1848,7 +1848,7 @@ func TestPersonFactEmploymentNonIDTableLockDeadlockRetriesPostgres(t *testing.T)
 	requirements := require.New(t)
 	gate := newPersonFactEmploymentLockOrderGate(personFactEmploymentStageOrganization)
 	t.Cleanup(gate.release)
-	st := newPersonFactEmploymentPostgresGateStore(t, dbURL, gate)
+	st := newPersonFactEmploymentPostgresGateStore(t, gate)
 	personID, target, organization := newPersonFactEmploymentLockOrderFixture(
 		t, st, "non-id-deadlock")
 	var deadlocksBefore int64
@@ -2128,11 +2128,11 @@ func newPersonFactEmploymentSQLiteGateStore(
 }
 
 func newPersonFactEmploymentPostgresGateStore(
-	t *testing.T, dbURL string, gate *personFactEmploymentLockOrderGate,
+	t *testing.T, gate *personFactEmploymentLockOrderGate,
 ) *Store {
 	t.Helper()
 	require := require.New(t)
-	base := newPGStoreInternal(t, dbURL)
+	base := newPGStoreInternal(t)
 	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(err)
 	db := sql.OpenDB(&personFactEmploymentGateConnector{

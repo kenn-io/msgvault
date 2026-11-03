@@ -75,7 +75,7 @@ func TestStore_RFC822IDBackfillStreamsAcrossBoundedPages(t *testing.T) {
 func newRFC822IDBackfillBackendStore(t *testing.T) *Store {
 	t.Helper()
 	if dbURL := os.Getenv("MSGVAULT_TEST_DB"); IsPostgresURL(dbURL) {
-		return newPGStoreInternal(t, dbURL)
+		return newPGStoreInternal(t)
 	}
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "bounded-rfc822-backfill.db"))
 	require.NoError(t, err)
@@ -297,9 +297,9 @@ func TestStore_ApplyRFC822IDBackfillSQLiteReservesWriterBeforeValidation(t *test
 func TestStore_ApplyRFC822IDBackfillPostgresLocksAscendingAndRollsBackDrift(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	dbURL := skipUnlessPostgresInternal(t)
+	skipUnlessPostgresInternal(t)
 	gate := newRFC822IDBackfillPostgresRowGate()
-	st := newRFC822IDBackfillPostgresGateStore(t, dbURL, gate)
+	st := newRFC822IDBackfillPostgresGateStore(t, gate)
 	firstID, secondID, sourceID, plan := newInternalRFC822IDBackfillPlan(t, st, "pg-lock")
 
 	connA, err := st.db.Conn(t.Context())
@@ -369,10 +369,10 @@ func TestStore_ApplyRFC822IDBackfillPostgresLocksAscendingAndRollsBackDrift(t *t
 }
 
 func newRFC822IDBackfillPostgresGateStore(
-	t *testing.T, dbURL string, gate *rfc822IDBackfillPostgresRowGate,
+	t *testing.T, gate *rfc822IDBackfillPostgresRowGate,
 ) *Store {
 	t.Helper()
-	base := newPGStoreInternal(t, dbURL)
+	base := newPGStoreInternal(t)
 	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(t, err)
 	db := sql.OpenDB(&rfc822IDBackfillGateConnector{

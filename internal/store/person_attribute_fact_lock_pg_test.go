@@ -268,7 +268,7 @@ func TestPostgreSQLDefinitionExposureSerializesBeforePeople(t *testing.T) {
 				assert := assert.New(t)
 				gate := newPersonFactEmploymentLockOrderGate(personFactEmploymentStagePerson)
 				defer gate.release()
-				st := newPersonFactEmploymentPostgresGateStore(t, dbURL, gate)
+				st := newPersonFactEmploymentPostgresGateStore(t, gate)
 				first := inferencePerson(t, st, "catalog-writer@example.com")
 				contributor := inferencePerson(t, st, "catalog-contributor@example.com")
 				inferenceNote(t, st, contributor.ID, ProvenanceExtraction, "Seed")
