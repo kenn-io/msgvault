@@ -918,8 +918,7 @@ func (b *parquetBuilder) build() (string, func()) {
 	b.ensurePersonDisplayNamesTable()
 
 	value, _ := parquetTemplates.LoadOrStore(b.contentKey(), &parquetTemplate{})
-	template, ok := value.(*parquetTemplate)
-	require.True(b.t, ok, "parquet template cache entry type")
+	template := value.(*parquetTemplate)
 	func() {
 		template.mu.Lock()
 		defer template.mu.Unlock()
