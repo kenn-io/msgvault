@@ -1392,8 +1392,8 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	filter := doc.Components.Schemas.Map()["ExploreFilter"]
 	requirements.NotNil(filter)
 	requirements.NotNil(filter.Properties["dimension"])
-	assertions.ElementsMatch(
-		[]any{"source", "participant", "domain", "mailing_list", "message_type", "after", "before", "deletion", "identity", "account"},
+	assertions.Equal(
+		[]any{"source", "participant", "domain", "message_type", "kind", "mailing_list", "after", "before", "deletion", "identity", "account"},
 		filter.Properties["dimension"].Enum,
 	)
 	clientFilter := openAPIClientDocument().Components.Schemas.Map()["ExploreFilter"]
@@ -1401,7 +1401,7 @@ func TestOpenAPIDocumentsAllExplorationOperations(t *testing.T) {
 	requirements.NotNil(clientFilter.Properties["dimension"])
 	assertions.Equal([]any{
 		"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType",
-		"ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
+		"ExploreFilterDimensionKind", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore",
 		"ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount",
 	}, clientFilter.Properties["dimension"].Extensions["x-enum-names"])
 	for schemaName, properties := range map[string][]string{

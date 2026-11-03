@@ -6,6 +6,9 @@ describe('meeting scopes', () => {
     { name: 'no filters', filters: undefined, want: false },
     { name: 'meetings only', filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }], want: true },
     { name: 'meetings and email', filters: [{ dimension: 'message_type', values: ['meeting_transcript', 'email'] }], want: false },
+    { name: 'canonical meetings', filters: [{ dimension: 'kind', values: ['meeting'] }], want: true },
+    { name: 'mixed canonical kinds', filters: [{ dimension: 'kind', values: ['meeting', 'email'] }], want: false },
+    { name: 'an empty kind', filters: [{ dimension: 'kind', values: [] }], want: false },
     { name: 'another dimension', filters: [{ dimension: 'source', values: ['meeting_transcript'] }], want: false },
     {
       name: 'a narrower type filter beside a mixed one',
@@ -34,6 +37,23 @@ describe('meeting scopes', () => {
       { dimension: 'source', values: ['2', '3'] }, { dimension: 'after', values: ['2026-01-01T00:00:00Z'] },
       { dimension: 'before', values: ['2026-03-01T00:00:00Z'] }
     ] })).toEqual({ kind: 'direct', scope: { participant_id: 7, source_ids: [2, 3], after: '2026-01-01T00:00:00Z', before: '2026-03-01T00:00:00Z' } });
+  });
+
+  it.each([
+    { kinds: ['meeting'], scope: { participant_id: 7 } },
+    { kinds: ['meeting', 'email'], scope: { participant_id: 7 } },
+    { kinds: ['email'], scope: { participant_id: 7, message_ids: [] } },
+  ])('preserves the meeting intersection of kind filters $kinds', ({ kinds, scope }) => {
+    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [
+      { dimension: 'kind', values: kinds },
+    ] })).toEqual({ kind: 'direct', scope });
+  });
+
+  it('keeps contradictory kind filters as match-none', () => {
+    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [
+      { dimension: 'kind', values: ['email'] },
+      { dimension: 'kind', values: ['meeting'] },
+    ] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_ids: [] } });
   });
 
   it('intersects repeated source and date filters for an exact domain', () => {
