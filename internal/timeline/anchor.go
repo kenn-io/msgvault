@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -15,6 +16,7 @@ type anchorTarget struct {
 	at                        time.Time
 	messageID, conversationID int64
 	callIdentityKey           string
+	callPrecision             string
 	copyKey                   string
 	display                   store.MessageDisplay
 	occurrence                *store.CalendarOccurrence
@@ -162,20 +164,53 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			})
 			c.gap("calls", identity.err, false)
 			target.callIdentityKey = identity.value
+			if target.callIdentityKey != "" {
+				at := d.OccurredAt.UTC()
+				after := at.AddDate(0, 0, -1)
+				before := at.AddDate(0, 0, 2)
+				calls := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+					return c.readCalls(ctx, store.LogicalCallQuery{
+						After: after, Before: before, DateAfter: after.Format(time.DateOnly), DateBefore: before.Format(time.DateOnly), Limit: 500,
+					})
+				})
+				c.gap("calls", calls.err, false)
+				for _, call := range calls.value {
+					if call.IdentityKey != target.callIdentityKey {
+						continue
+					}
+					target.callPrecision = call.Precision
+					if call.Precision == string(activitydate.PrecisionDay) {
+						target.at = call.OccurredAt.UTC()
+					}
+					break
+				}
+			}
 		}
 	}
 	return target, nil
 }
-func anchorWindow(at time.Time, loc *time.Location) Window {
-	date := at.In(loc).Format(time.DateOnly)
+func anchorWindow(target anchorTarget, loc *time.Location) Window {
+	date := target.at.In(loc).Format(time.DateOnly)
+	if target.callPrecision == string(activitydate.PrecisionDay) {
+		date = target.at.UTC().Format(time.DateOnly)
+	}
 	from, _ := addCivilDate(date, -31)
 	to, _ := addCivilDate(date, 31)
 	return Window{From: from, To: to}
 }
 
 func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
-	from := target.at.In(c.loc).AddDate(0, 0, -days)
-	to := target.at.In(c.loc).AddDate(0, 0, days).Add(time.Nanosecond)
+	center := target.at.In(c.loc)
+	if target.callPrecision == string(activitydate.PrecisionDay) {
+		var err error
+		center, _, err = civilDateBoundary(target.at.UTC().Format(time.DateOnly), c.loc)
+		if err != nil {
+			c.gap("anchor", err, false)
+			return nil
+		}
+	}
+	from := center.AddDate(0, 0, -days)
+	to := center.AddDate(0, 0, days).Add(time.Nanosecond)
 	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, MergeCopies: c.req.IncludeCold || target.copyKey != ""}
 	if c.req.Conversation {
 		q.ConversationID = target.conversationID
@@ -186,6 +221,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	var calendar readResult[store.CalendarOccurrencePage]
 	var calls readResult[[]store.LogicalCall]
 	var notes readResult[[]store.DailyNoteEntry]
+	dateBefore, dateErr := addCivilDate(to.In(c.loc).Format(time.DateOnly), 1)
 	parallel(c.ctx,
 		func() {
 			if c.src.Activity != nil {
@@ -224,8 +260,15 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Calls != nil && !c.req.Conversation {
+				if dateErr != nil {
+					calls.err = dateErr
+					return
+				}
 				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, ParticipantIDs: c.participants, Limit: 500})
+					return c.readCalls(ctx, store.LogicalCallQuery{
+						After: from, Before: to, DateAfter: from.In(c.loc).Format(time.DateOnly), DateBefore: dateBefore,
+						ParticipantIDs: c.participants, Limit: 500,
+					})
 				})
 			}
 		},
@@ -358,7 +401,7 @@ func (c *composer) buildAnchor(target anchorTarget) {
 			if anchorMatches(e, target) {
 				continue
 			}
-			if e.Time.Before(target.at) {
+			if c.compareEntryToAnchor(e, target) < 0 {
 				before++
 			} else {
 				after++
@@ -382,13 +425,13 @@ func (c *composer) buildAnchor(target anchorTarget) {
 		c.t.Anchor.Filtered = true
 		entries = append(entries, c.anchorFallback(target))
 	}
-	c.sortAndContinue("history", entries, false)
+	c.sortAnchorEntries(entries)
 	pivot := slices.IndexFunc(entries, func(e Entry) bool { return e.Anchor })
 	if pivot >= 0 {
 		entries = entries[max(0, pivot-c.req.Before):min(len(entries), pivot+1+c.req.After)]
 	} else {
 		pivot = 0
-		for pivot < len(entries) && entries[pivot].Time.Before(target.at) {
+		for pivot < len(entries) && c.compareEntryToAnchor(entries[pivot], target) < 0 {
 			pivot++
 		}
 		entries = entries[max(0, pivot-c.req.Before):min(len(entries), pivot+c.req.After)]
@@ -397,6 +440,42 @@ func (c *composer) buildAnchor(target anchorTarget) {
 	if !c.req.Scope.Owner {
 		c.ownerGaps()
 	}
+}
+
+func (c *composer) sortAnchorEntries(entries []Entry) {
+	for _, entry := range entries {
+		date := entry.Time.In(c.loc).Format(time.DateOnly)
+		precision := "1"
+		if entry.Call != nil && entry.Call.Precision == string(activitydate.PrecisionDay) && entry.Call.Date != "" {
+			date = entry.Call.Date
+			precision = "0"
+		}
+		key := date + "|" + precision + "|" + entry.Time.UTC().Format(sortTimeLayout) + "|" + entry.Kind + "|" + entry.Key
+		c.keys["history|"+entry.Key] = key
+	}
+	slices.SortFunc(entries, func(a, b Entry) int {
+		return compare(c.keys["history|"+a.Key], c.keys["history|"+b.Key])
+	})
+}
+
+func (c *composer) compareEntryToAnchor(entry Entry, target anchorTarget) int {
+	entryPrecision := activitydate.PrecisionTimestamp
+	if entry.Call != nil && entry.Call.Precision == string(activitydate.PrecisionDay) {
+		entryPrecision = activitydate.PrecisionDay
+	}
+	targetPrecision := activitydate.PrecisionTimestamp
+	if target.callPrecision == string(activitydate.PrecisionDay) {
+		targetPrecision = activitydate.PrecisionDay
+	}
+	order := activitydate.Compare(entry.Time, entryPrecision, target.at, targetPrecision, c.loc)
+	if order != 0 || target.callPrecision != string(activitydate.PrecisionDay) {
+		return order
+	}
+	targetEntry := Entry{
+		Kind: "call", Key: target.callIdentityKey, Time: target.at,
+		Call: &CallEntry{Precision: string(activitydate.PrecisionDay), Date: target.at.UTC().Format(time.DateOnly)},
+	}
+	return compare(c.historyKey(entry), c.historyKey(targetEntry))
 }
 
 func (c *composer) conversationEntries(conversation int64, from, to time.Time) []Entry {

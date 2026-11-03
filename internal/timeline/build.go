@@ -60,7 +60,7 @@ func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
 			if target.at.IsZero() {
 				return resolveWindow(req, at, loc)
 			}
-			return anchorWindow(target.at, loc), nil
+			return anchorWindow(target, loc), nil
 		}
 	}
 	window, err := windowAt(now)

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -130,6 +131,88 @@ func TestMergeContactOrdersMixedPrecisionByTimelineCivilDate(t *testing.T) {
 			assertions.Equal("day", person.LastAtPrecision)
 		})
 	}
+}
+
+func TestRelationshipCallRosterDeduplicatesSavedAliases(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	p := f.savePerson()
+	alias, err := f.Store.EnsureParticipantByPhone("+12025550102", "Alice", "signal")
+	requirements.NoError(err)
+	_, err = f.Store.LinkParticipants(f.peer, alias)
+	requirements.NoError(err)
+	f.callWithParticipants(f.now.Add(-time.Hour), []callhistory.Participant{
+		{ID: f.peer, Participation: "invited"},
+		{ID: alias, Participation: "joined"},
+	})
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	call := got.History[0].Call
+	requirements.NotNil(call)
+	assertions.Equal(1, call.PeopleCount)
+	assertions.Len(call.People, 1)
+	assertions.Equal(p, call.People[0].PersonID)
+	assertions.Equal("joined", call.People[0].Participation)
+	assertions.True(call.People[0].Credited)
+}
+
+func TestRelationshipDayPrecisionCallTodayBeforeUTCAnchor(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.src.Location = time.FixedZone("east", 9*60*60)
+	now := time.Date(2026, 10, 22, 15, 30, 0, 0, time.UTC)
+	f.src.Clock = func() time.Time { return now }
+	p := f.savePerson()
+	date := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
+	f.dayCall(date)
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.NotNil(got.Person)
+	assertions.Equal(1, got.Person.InteractionCount)
+	requirements.Len(got.History, 1)
+	assertions.Equal("2026-10-23", got.History[0].Call.Date)
+	assertions.Equal(date, *got.Person.LastAt)
+}
+
+func TestRelationshipHistoryOrdersDayPrecisionByCivilDate(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	location, err := time.LoadLocation("America/Los_Angeles")
+	requirements.NoError(err)
+	f.src.Location = location
+	now := time.Date(2026, 10, 23, 20, 0, 0, 0, time.UTC)
+	f.src.Clock = func() time.Time { return now }
+	p := f.savePerson()
+	date := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
+	f.dayCall(date)
+	f.add(time.Date(2026, 10, 23, 6, 0, 0, 0, time.UTC), false)
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.Len(got.History, 2)
+	assertions.Equal("call", got.History[0].Kind)
+	assertions.Equal("2026-10-23", got.History[0].Call.Date)
+	assertions.Equal("burst", got.History[1].Kind)
+
+	c := composer{
+		t:         &Timeline{},
+		loc:       location,
+		keys:      map[string]string{},
+		positions: map[string]string{},
+	}
+	entries := []Entry{got.History[0], got.History[1]}
+	c.sortAndContinue("history", entries, true)
+	requirements.Len(entries, 2)
+	assertions.Equal("call", entries[0].Kind)
+	assertions.Equal("burst", entries[1].Kind)
+	c.positions["history"] = c.keys["history|"+entries[0].Key]
+	remaining := c.afterPosition("history", entries)
+	requirements.Len(remaining, 1)
+	assertions.Equal("burst", remaining[0].Kind)
 }
 
 func TestRelationshipSlowFreshnessLeavesTimeForHistoryHydration(t *testing.T) {

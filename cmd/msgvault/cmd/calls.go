@@ -102,7 +102,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		var after, before string
 		command := &cobra.Command{Use: name, Short: description, Args: cobra.NoArgs}
 		command.Flags().Int64Var(&q.PersonID, "person-id", 0, "Person ID")
-		command.Flags().IntVar(&q.Limit, "limit", 50, "Maximum rows (1–100)")
+		command.Flags().IntVar(&q.Limit, "limit", 50, "Results (1–100)")
 		command.Flags().StringVar(&after, "after", "", "Inclusive RFC3339 time")
 		command.Flags().StringVar(&before, "before", "", "Exclusive RFC3339 time")
 		if summary {

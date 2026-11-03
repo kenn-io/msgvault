@@ -1,4 +1,4 @@
-# Alice T1 · UTC (default)
+# Alice T1 · UTC (set [activity].timezone)
 ⚠ mail stale failed → msgvault sync
 ⚠ activity reconciling
 ⚠ incomplete
@@ -10,7 +10,7 @@ initiation: contact 2 · owner 1
 "Talked about plans"
 - "Review"
 
-Open (1)
+Open
 - owed Alice T1 4d · #51
 coverage incomplete
 1 unparseable

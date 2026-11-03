@@ -290,6 +290,36 @@ func TestAnchorSecondCallObservationUsesLogicalCall(t *testing.T) {
 	assertions.Equal(messageRef(secondID), got.Anchor.Ref)
 }
 
+func TestAnchorDayPrecisionCallUsesCivilDate(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	loc, err := time.LoadLocation("America/Vancouver")
+	requirements.NoError(err)
+	f := newTimelineFixture(t)
+	f.src.Location = loc
+	f.src.Clock = func() time.Time { return time.Date(2026, 10, 26, 12, 0, 0, 0, loc) }
+	previous := f.add(time.Date(2026, 10, 21, 20, 0, 0, 0, loc), false)
+	callID := f.dayCall(time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC))
+	future := f.add(time.Date(2026, 10, 25, 12, 0, 0, 0, loc), false)
+	f.project()
+	req := anchorRequest(messageRef(callID))
+	req.Before, req.After = 0, 1
+	req.BeforeSet, req.AfterSet = true, true
+
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	assertions.Equal(time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC), got.Anchor.Time)
+	assertions.Equal("2026-09-21", got.Window.From)
+	assertions.Equal("2026-11-22", got.Window.To)
+	requirements.Len(got.History, 2)
+	assertions.True(got.History[0].Anchor)
+	assertions.Equal(messageRef(callID), got.History[0].Ref)
+	requirements.NotNil(got.History[1].Burst)
+	assertions.Contains(got.History[1].Burst.LatestMessageIDs, future)
+	assertions.NotContains(got.History[1].Burst.LatestMessageIDs, previous)
+	assertions.Equal("2026-10-25", got.History[1].Time.In(loc).Format(time.DateOnly))
+}
+
 func TestAnchorCalendarOccurrenceExcludedByTierFilterRemainsFilteredAnchor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

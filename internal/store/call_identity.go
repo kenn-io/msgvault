@@ -243,13 +243,23 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q ContactQuery)
 		candidateSubject, subjectArgs = messageExportInClause("r.participant_id", q.Subject.ParticipantIDs)
 		subject, _ = messageExportInClause("p.participant_id", q.Subject.ParticipantIDs)
 	}
+	loc := q.Location
+	if loc == nil {
+		loc = time.UTC
+	}
+	localNow := q.Now.In(loc)
+	dayBefore := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	upperBound := q.Now.UTC()
+	if dayBefore.After(upperBound) {
+		upperBound = dayBefore
+	}
 	// Select only this subject's identities, then include all their active evidence
 	// so another observation can override credit without changing the call date.
 	ctes, args := callScopedIdentityCTEs(ctx, `c.message_id IN (SELECT r.message_id FROM message_recipients r
  WHERE r.recipient_type IN ('call_joined','call_invited','call_unknown')
  AND `+candidateSubject+`)`, subjectArgs...)
 	args = append(args, subjectArgs...)
-	args = append(args, q.Now.UTC())
+	args = append(args, upperBound)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+ctes+`
 	 SELECT i.identity_key, i.occurred_at, MAX(p.incoming), MAX(p.outgoing),
 	 (SELECT m.metadata FROM active evidence JOIN messages m ON m.id = evidence.message_id
@@ -262,11 +272,7 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q ContactQuery)
 		return result, fmt.Errorf("aggregate call contact: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	loc := q.Location
-	if loc == nil {
-		loc = time.UTC
-	}
-	now := q.Now.In(loc)
+	now := localNow
 	for rows.Next() {
 		var identity string
 		var timestamp requiredTimestamp
@@ -283,6 +289,13 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q ContactQuery)
 			return ContactAggregate{}, fmt.Errorf("decode call contact evidence: %w", err)
 		}
 		at := timestamp.Time.UTC()
+		if evidence.Precision == activityDatePrecisionDay {
+			if !at.Before(dayBefore) {
+				continue
+			}
+		} else if at.After(q.Now.UTC()) {
+			continue
+		}
 		precision := ""
 		if evidence.Precision == activityDatePrecisionDay {
 			precision = activityDatePrecisionDay

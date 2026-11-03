@@ -159,7 +159,15 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 					return c.src.Calls.CallContactAggregateContext(ctx, q)
 				})
 				logicalCalls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond), ParticipantIDs: c.participants, Limit: 500})
+					dateBefore, err := addCivilDate(c.t.Now.In(c.loc).Format(time.DateOnly), 1)
+					if err != nil {
+						return nil, err
+					}
+					dateAfter := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
+					return c.readCalls(ctx, store.LogicalCallQuery{
+						After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond),
+						DateAfter: dateAfter, DateBefore: dateBefore, ParticipantIDs: c.participants, Limit: 500,
+					})
 				})
 			}
 		},
@@ -294,7 +302,13 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
 	entries = c.filterSubject(entries)
-	entries = slices.DeleteFunc(entries, func(e Entry) bool { return e.Time.After(c.t.Now) })
+	entries = slices.DeleteFunc(entries, func(e Entry) bool {
+		precision := activitydate.PrecisionTimestamp
+		if e.Call != nil && e.Call.Precision == string(activitydate.PrecisionDay) {
+			precision = activitydate.PrecisionDay
+		}
+		return activitydate.Compare(e.Time, precision, c.t.Now, activitydate.PrecisionTimestamp, c.loc) > 0
+	})
 	c.sortAndContinue("history", entries, true)
 	entries = c.afterPosition("history", entries)
 	if len(entries) > 20 {
@@ -331,7 +345,7 @@ func mergeContactTime(dst **time.Time, dstPrecision *string, src *time.Time, src
 	if *dst != nil {
 		order = activitydate.Compare(*src, activitydate.DatePrecision(srcPrecision), **dst, activitydate.DatePrecision(*dstPrecision), loc)
 	}
-	morePrecise := order == 0 && *dst != nil && *dstPrecision == "day" && srcPrecision != "day"
+	morePrecise := order == 0 && *dst != nil && *dstPrecision == string(activitydate.PrecisionDay) && srcPrecision != string(activitydate.PrecisionDay)
 	if *dst == nil || first && order < 0 || !first && order > 0 || morePrecise {
 		at := src.UTC()
 		*dst = &at

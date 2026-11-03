@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -348,6 +349,11 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		entries = append(entries, e)
 	}
 	seen := map[string]bool{}
+	visibleLinkedTranscripts := map[int64]bool{}
+	windowFrom, windowTo := time.Time{}, time.Time{}
+	if c.req.Mode == ModeDay {
+		windowFrom, windowTo = c.bounds()
+	}
 	for _, o := range occurrences {
 		info := identity.ByOccurrence[o.Ref]
 		key := info.Key
@@ -421,9 +427,19 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if o.AllDay {
 			date = o.StartDate
 		}
+		if c.req.Mode == ModeDay {
+			if date < c.t.Window.From {
+				date = c.t.Window.From
+			} else if date > c.t.Window.To {
+				date = c.t.Window.To
+			}
+		}
 		c.entryDates[e.Key] = date
-		if c.req.Mode != ModeDay || date >= c.t.Window.From && date <= c.t.Window.To {
+		if c.req.Mode != ModeDay || calendarEntryOverlapsWindow(o, windowFrom, windowTo) {
 			entries = append(entries, e)
+			for _, id := range linked {
+				visibleLinkedTranscripts[id] = true
+			}
 		}
 		until := c.t.Now.Add(48 * time.Hour)
 		if c.req.Mode == ModeRelationship {
@@ -438,7 +454,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	}
 	for _, m := range messages {
 		info, ok := identity.ByTranscript[m.MessageID]
-		if !ok || len(info.ExactOccurrenceRefs) > 0 {
+		if !ok || visibleLinkedTranscripts[m.MessageID] {
 			continue
 		}
 		d, ok := display[m.MessageID]
@@ -476,13 +492,14 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			person.Credited = p.Credited
 			people = append(people, person)
 		}
+		people = mergeDuplicateCallPeople(people)
 		people = c.tierPeople(people)
 		if !c.admitTier(people) {
 			continue
 		}
 		ref := messageRef(call.MessageID)
 		callEntry := &CallEntry{Outcome: call.Outcome, DurationSeconds: call.DurationSeconds, Precision: call.Precision, People: people, PeopleCount: len(people)}
-		if call.Precision == "day" {
+		if call.Precision == string(activitydate.PrecisionDay) {
 			callEntry.Date = call.OccurredAt.UTC().Format(time.DateOnly)
 			c.entryDates[call.IdentityKey] = callEntry.Date
 		}
@@ -509,6 +526,17 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 	}
 	return entries, upcoming
 }
+func calendarEntryOverlapsWindow(o store.CalendarOccurrence, from, to time.Time) bool {
+	if o.AllDay {
+		endDate := to.Format(time.DateOnly)
+		if to.Hour() != 0 || to.Minute() != 0 || to.Second() != 0 || to.Nanosecond() != 0 {
+			endDate = time.Date(to.Year(), to.Month(), to.Day()+1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
+		}
+		return o.StartDate < endDate && o.EndDate > from.Format(time.DateOnly)
+	}
+	return from.Before(to) && o.Start.Before(to) && (o.End.After(from) || o.Start.Equal(o.End) && !o.Start.Before(from))
+}
+
 func displaySnippet(d store.MessageDisplay) string {
 	if d.HiddenText {
 		return ""
@@ -586,6 +614,36 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	}
 	return c.tierPeople(people)
 }
+func mergeDuplicateCallPeople(people []Person) []Person {
+	merged := make([]Person, 0, len(people))
+	indexes := make(map[string]int, len(people))
+	for _, person := range people {
+		key := ""
+		if person.PersonID > 0 {
+			key = fmt.Sprintf("person:%d", person.PersonID)
+		} else if person.ParticipantID > 0 {
+			key = fmt.Sprintf("participant:%d", person.ParticipantID)
+		}
+		index, exists := indexes[key]
+		if key == "" || !exists {
+			if key != "" {
+				indexes[key] = len(merged)
+			}
+			merged = append(merged, person)
+			continue
+		}
+		current := &merged[index]
+		if current.Name == "" {
+			current.Name = person.Name
+		}
+		current.Credited = current.Credited || person.Credited
+		if (current.Participation != "joined" && person.Participation == "joined") || (current.Participation == "unknown" && person.Participation == "invited") {
+			current.Participation = person.Participation
+		}
+	}
+	return merged
+}
+
 func (c *composer) participantPerson(participant, person int64) Person {
 	p := Person{PersonID: person, ParticipantID: participant, TierSource: "none"}
 	if c.src.People != nil {
@@ -629,8 +687,13 @@ func reverseDigits(value string) string {
 func chronologicalKey(e Entry) string {
 	return e.Time.UTC().Format(sortTimeLayout) + "|" + e.Kind + "|" + e.Key
 }
-func historyKey(e Entry) string {
-	return reverseDigits(e.Time.UTC().Format(sortTimeLayout)) + "|" + e.Kind + "|" + e.Key
+func (c *composer) historyKey(e Entry) string {
+	date := e.Time.In(c.loc).Format(time.DateOnly)
+	if e.Call != nil && e.Call.Precision == string(activitydate.PrecisionDay) && e.Call.Date != "" {
+		date := e.Call.Date
+		return reverseDigits(date) + "|0|" + e.Kind + "|" + e.Key
+	}
+	return reverseDigits(date) + "|1|" + reverseDigits(e.Time.UTC().Format(sortTimeLayout)) + "|" + e.Kind + "|" + e.Key
 }
 func rankKey(e Entry) string {
 	tier := 3
@@ -678,7 +741,7 @@ func (c *composer) sortAndContinue(section string, entries []Entry, descending b
 	for _, e := range entries {
 		key := chronologicalKey(e)
 		if descending {
-			key = historyKey(e)
+			key = c.historyKey(e)
 		}
 		c.keys[section+"|"+e.Key] = key
 	}

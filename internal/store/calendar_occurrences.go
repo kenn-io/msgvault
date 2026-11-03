@@ -181,7 +181,7 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 	}
 	boundedOnly := map[calendarSeriesKey]bool{}
 	for _, row := range rows {
-		if row.Event.Kind != "series" {
+		if row.Event.Kind != "series" || row.DeletedFromSource {
 			continue
 		}
 		e := row.Event

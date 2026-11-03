@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"go.kenn.io/msgvault/internal/activitydate"
 )
 
 // Markdown renders compact rows. Sender-controlled text is flattened and escaped.
@@ -251,7 +253,7 @@ func entryRow(e Entry, loc *time.Location) string {
 			body += " \"" + textLine(e.Message.Snippet, 80) + "\""
 		}
 	case e.Call != nil:
-		if e.Call.Precision == "day" && e.Call.Date != "" {
+		if e.Call.Precision == string(activitydate.PrecisionDay) && e.Call.Date != "" {
 			clock = e.Call.Date
 		}
 		body = clock + " call " + singleLine(e.Call.Outcome, 80) + " " + peopleNames(e.Call.People, e.Call.PeopleCount)
@@ -335,7 +337,7 @@ func dateTextWithPrecision(t *time.Time, loc *time.Location, precision string) s
 	if t == nil {
 		return "unknown"
 	}
-	if precision == "day" {
+	if precision == string(activitydate.PrecisionDay) {
 		return t.UTC().Format(time.DateOnly)
 	}
 	return dateText(t, loc)

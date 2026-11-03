@@ -67,6 +67,23 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 }
 
+func TestListCalendarOccurrencesKeepsOnlyArchivedExceptionsFromDeletedMaster(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
+	_, exception := calendarFixture(t, st, "moved", `{"id":"moved","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-09T17:00:00Z"},"start":{"dateTime":"2027-03-10T19:00:00Z"},"end":{"dateTime":"2027-03-10T20:00:00Z"}}`)
+	_, err := st.db.Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), time.Date(2027, 3, 11, 0, 0, 0, 0, time.UTC), master)
+	requirements.NoError(err)
+
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(exception, page.Occurrences[0].MessageID)
+	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
+	assertions.Equal("2027-03-10T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+}
+
 func TestCalendarOccurrenceAliasUsesLatestProviderUpdate(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

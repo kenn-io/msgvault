@@ -78,6 +78,28 @@ func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	assertions.Equal("Planning", entries[0].Meeting.Title.Text)
 	requirements.NoError(entries[0].Validate())
 }
+func TestBuildDayKeepsLinkedOvernightMeetingInsideWindow(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	uid := "overnight@example.org"
+	event := f.calendar("overnight", fmt.Sprintf(`{"id":"overnight","iCalUID":%q,"summary":"Overnight planning","start":{"dateTime":"2026-10-21T23:00:00Z"},"end":{"dateTime":"2026-10-22T13:00:00Z"}}`, uid))
+	note := f.transcript("overnight-notes", uid, f.now.Add(-2*time.Hour))
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,occurrence_key,decision,created_at) VALUES (?,?,'','link',?)`), note, uid, f.now)
+	requirements.NoError(err)
+	f.project()
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	requirements.Len(got.Days, 1)
+	assertions.Equal("2026-10-22", got.Days[0].Date)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	assertions.Equal("meeting", entries[0].Kind)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), entries[0].AnchorRef)
+	assertions.Equal(time.Date(2026, 10, 21, 23, 0, 0, 0, time.UTC), entries[0].Meeting.Start)
+	assertions.Equal([]int64{note}, entries[0].Meeting.LinkedTranscriptIDs)
+}
+
 func TestBuildDayOverlappingCallDoesNotSetAttended(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

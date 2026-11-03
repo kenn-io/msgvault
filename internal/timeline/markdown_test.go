@@ -65,7 +65,7 @@ func TestMarkdownSingleDayDoesNotRepeatDateHeading(t *testing.T) {
 	v.History, v.Upcoming, v.OpenLoops = nil, nil, nil
 	v.Days = []Day{{Date: "2026-10-22", Calls: []Entry{call}}}
 	got := Markdown(v)
-	assertions.Contains(got, "# 2026-10-22 · UTC\n")
+	assertions.Contains(got, "# 2026-10-22 · UTC (set [activity].timezone)\n")
 	assertions.NotContains(got, "Thu Oct 22")
 }
 func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {

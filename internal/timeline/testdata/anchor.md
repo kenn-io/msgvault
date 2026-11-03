@@ -1,9 +1,9 @@
-# Around #31 · UTC (default)
+# Around #31 · UTC (set [activity].timezone)
 ⚠ mail stale failed → msgvault sync
 ⚠ activity reconciling
 ⚠ incomplete
 
-Open (1)
+Open
 - owed Alice T1 4d · #51
 coverage incomplete
 1 unparseable

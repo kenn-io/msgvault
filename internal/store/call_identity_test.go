@@ -359,6 +359,27 @@ func TestCallContactAggregateBoundsResolvedIdentityByRequestClock(t *testing.T) 
 	}
 }
 
+func TestCallContactAggregateIncludesCurrentCivilDayBeforeUTCAnchor(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newLogicalCallFixture(t)
+	person, _, err := f.st.CreatePersonFromParticipant(f.peer)
+	requirements.NoError(err)
+	today := time.Date(2026, 10, 2, 0, 0, 0, 0, time.UTC)
+	f.put(t, "today", func(o *callhistory.Observation) { o.OccurredAt, o.Precision = today, "day" })
+	q := store.ContactQuery{
+		Subject:  store.ActivitySubject{PersonID: person.ID},
+		Now:      time.Date(2026, 10, 1, 15, 30, 0, 0, time.UTC),
+		Location: time.FixedZone("east", 9*60*60),
+	}
+
+	got, err := f.st.CallContactAggregateContext(t.Context(), q)
+	requirements.NoError(err)
+	requirements.NotNil(got.LastAt)
+	assertions.Equal(1, got.Count)
+	assertions.Equal(today, *got.LastAt)
+	assertions.Equal("day", got.LastAtPrecision)
+}
+
 func TestCallContactAggregateOrdersMixedPrecisionByCivilDate(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newLogicalCallFixture(t)
