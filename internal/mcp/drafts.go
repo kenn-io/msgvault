@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/sensitive"
+	"go.kenn.io/msgvault/internal/vector/preprocess"
 )
 
 // DraftRunner runs managed draft commands with the caller's daemon credential.
@@ -152,12 +153,26 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 	}
 }
 
-func draftSensitiveFindings(args map[string]any) []sensitive.Finding {
-	return append(sensitive.Scan(stringArgument(args, "subject")), sensitive.Scan(stringArgument(args, "body"))...)
+type draftFinding struct {
+	sensitive.Finding
+	Quoted bool `json:"quoted,omitzero"`
+}
+
+func draftSensitiveFindings(args map[string]any) []draftFinding {
+	var findings []draftFinding
+	for _, finding := range sensitive.Scan(stringArgument(args, "subject")) {
+		findings = append(findings, draftFinding{Finding: finding})
+	}
+	body := stringArgument(args, "body")
+	masked := preprocess.MaskReplyQuotes(body)
+	for _, finding := range sensitive.Scan(body) {
+		findings = append(findings, draftFinding{Finding: finding, Quoted: strings.TrimSpace(masked[finding.Start:finding.End]) == ""})
+	}
+	return findings
 }
 
 // Prompts contain category labels and masked hints, never full sensitive values.
-func sensitiveDraftConfirmationMessage(toolName string, findings []sensitive.Finding) string {
+func sensitiveDraftConfirmationMessage(toolName string, findings []draftFinding) string {
 	seen := make(map[string]bool)
 	var labels []string
 	for _, category := range []struct{ kind, label string }{
@@ -175,6 +190,9 @@ func sensitiveDraftConfirmationMessage(toolName string, findings []sensitive.Fin
 			if finding.Hint != "" {
 				label += " " + finding.Hint
 			}
+			if finding.Quoted {
+				label += " (in quoted text)"
+			}
 			if !seen[label] {
 				labels = append(labels, label)
 				seen[label] = true
@@ -185,7 +203,7 @@ func sensitiveDraftConfirmationMessage(toolName string, findings []sensitive.Fin
 }
 
 // Preserve receipts if decoration fails: the mutation already succeeded.
-func addSensitiveDraftWarnings(raw jsontext.Value, findings []sensitive.Finding) jsontext.Value {
+func addSensitiveDraftWarnings(raw jsontext.Value, findings []draftFinding) jsontext.Value {
 	if len(findings) == 0 {
 		return raw
 	}
