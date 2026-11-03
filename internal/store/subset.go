@@ -423,6 +423,15 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 			ON CONFLICT (key) DO UPDATE SET value = excluded.value`, beeperReanchorMarkerPrefix); err != nil {
 			return nil, fmt.Errorf("copy Beeper re-anchor markers: %w", err)
 		}
+		if _, err := tx.Exec(`INSERT INTO archive_metadata (key, value)
+			SELECT key, value FROM src.archive_metadata
+			WHERE key IN (
+				SELECT 'meta.dm_graph_observed:' || CAST(source_id AS TEXT) || ':' || source_message_id
+				FROM src.messages WHERE id IN (SELECT id FROM selected_messages)
+			)
+			ON CONFLICT (key) DO UPDATE SET value = excluded.value`); err != nil {
+			return nil, fmt.Errorf("copy selected Meta inbox observation markers: %w", err)
+		}
 	}
 
 	if err := tx.QueryRow(

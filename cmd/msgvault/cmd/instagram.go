@@ -82,7 +82,7 @@ func registerScheduledInstagramCommentsJob(sched *scheduler.Scheduler, source co
 func newAddInstagramCommentsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use: "add [identifier]", Short: "Register a linked Instagram account",
-		Long: "Verify Page identity and linked professional account, then register selected [[instagram_comments]] profiles. With no identifier, register all configured profiles. The Page token is read only from the named daemon environment variable.",
+		Long: "Omit identifier to register all [[instagram_comments]] profiles. Page tokens come from the named daemon environment variable.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -118,7 +118,7 @@ func newSyncInstagramCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Instagram comments and replies",
-		Long: "Sync Instagram professional account comments for registered [[instagram_comments]] profiles. Read available media, comments and replies with resumable progress; ordinary media discovery does not promise ad-only coverage. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
+		Long: "Ad-only media may be absent. Tokens come from the daemon environment. Partial imports stay searchable and resume on the next sync; missing or inaccessible objects never delete archived history.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))

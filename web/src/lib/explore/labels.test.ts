@@ -92,6 +92,8 @@ describe('entryKindPresentation', () => {
     ['chatwoot', 'Conversation'],
     ['facebook_comments', 'Conversation'],
     ['instagram_comments', 'Conversation'],
+    ['facebook_messages', 'Conversation'],
+    ['instagram_messages', 'Conversation'],
     ['fbmessenger', 'Conversation'],
     ['matrix', 'Conversation'],
     ['telegram', 'Conversation'],

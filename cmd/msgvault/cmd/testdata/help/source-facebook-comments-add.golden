@@ -1,4 +1,4 @@
-Verify Page identity and register selected [[facebook_comments]] profiles. With no identifier, register all configured profiles. The Page token is read only from the named daemon environment variable.
+Omit identifier to register all [[facebook_comments]] profiles. Page tokens come from the named daemon environment variable.
 
 Usage:
   msgvault source facebook-comments add [identifier] [flags]

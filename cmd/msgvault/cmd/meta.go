@@ -87,7 +87,7 @@ func registerScheduledFacebookCommentsJob(sched *scheduler.Scheduler, source con
 func newAddFacebookCommentsCmd() *cobra.Command {
 	return &cobra.Command{
 		Use: "add [identifier]", Short: "Register a configured Facebook Page for comment sync",
-		Long: "Verify Page identity and register selected [[facebook_comments]] profiles. With no identifier, register all configured profiles. The Page token is read only from the named daemon environment variable.",
+		Long: "Omit identifier to register all [[facebook_comments]] profiles. Page tokens come from the named daemon environment variable.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -123,7 +123,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Facebook Page comments and nested replies",
-		Long: "Sync Facebook Page comments for registered [[facebook_comments]] profiles. Scan returned organic, visitor and ad posts, retaining independent resumable progress for each surface. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
+		Long: "Includes available organic, visitor and ad posts. Tokens come from the daemon environment. Partial imports stay searchable and resume on the next sync; missing or inaccessible objects never delete archived history.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))

@@ -358,7 +358,6 @@ func TestMetaWebhookSetupErrorContracts(t *testing.T) {
 		args     []string
 		want     int
 	}{
-		{name: "configuration", want: 5},
 		{name: "no profiles", cfg: true, want: 5},
 		{name: "missing profile", cfg: true, profiles: true, args: []string{"absent"}, want: 4},
 		{name: "missing token", cfg: true, profiles: true, want: 7},

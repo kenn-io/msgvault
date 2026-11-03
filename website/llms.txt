@@ -56,6 +56,8 @@ below, or replace a page's trailing slash with `.md`: `/docs/setup/` becomes
 - [Facebook Page comments](https://msgvault.io/docs/usage/facebook-comments.md): `source facebook-comments add` and `source facebook-comments sync`, coverage, and cursor recovery (unreleased)
 - [Meta webhooks](https://msgvault.io/docs/usage/meta-webhooks.md): signed Page feed receiver; `meta-webhooks subscribe|status|replay` for subscriptions, delivery backlog, and replay (unreleased)
 - [Instagram comments](https://msgvault.io/docs/usage/instagram-comments.md): `source instagram-comments add` and `source instagram-comments sync`, linked professional account comments and resumable media conversations (unreleased)
+- [Messenger inbox](https://msgvault.io/docs/usage/facebook-messages.md): recent Page inbox backfill, live events, and explicit person linking (unreleased). Use `source facebook-messages add` and `source facebook-messages sync`.
+- [Instagram inbox](https://msgvault.io/docs/usage/instagram-messages.md): linked professional inbox capture, access requirements, and coverage limits (unreleased). Use `source instagram-messages add` and `source instagram-messages sync`.
 - [Matrix](https://msgvault.io/docs/usage/matrix.md)
 - [Slack](https://msgvault.io/docs/usage/slack.md)
 - [Meeting Notes and Transcripts](https://msgvault.io/docs/usage/meetings.md)

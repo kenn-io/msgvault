@@ -11,10 +11,16 @@ import (
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const rawFormat = "facebook-comment-json"
 const objectMetadataVersion = 1
+const metaMessageSnippetRunes = store.MetaMessageSnippetRunes
+
+func metaMessageSnippet(text string) string {
+	return textutil.PrefixRunes(text, metaMessageSnippetRunes)
+}
 
 var errInvalidObject = errors.New("invalid comment object")
 
@@ -250,7 +256,7 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	}
 	msg := &store.Message{SourceID: r.source.ID, SourceMessageID: obj.ID, MessageType: r.imp.sourceType(),
 		SentAt: sent, SenderID: sql.NullInt64{Int64: sender, Valid: sender != 0}, IsFromMe: self,
-		ReplyToMessageID: reply, Snippet: sql.NullString{String: obj.Message, Valid: true}, SizeEstimate: int64(len(obj.Message)),
+		ReplyToMessageID: reply, Snippet: sql.NullString{String: metaMessageSnippet(obj.Message), Valid: true}, SizeEstimate: int64(len(obj.Message)),
 	}
 	data := &store.MessagePersistData{
 		Message: msg, Conversation: &store.ConversationPersistData{SourceConversationID: root, ConversationType: "public_comments", Title: title, Participants: participants, PreserveExistingParticipants: true},

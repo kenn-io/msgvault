@@ -188,6 +188,28 @@ func TestImportPageComments(t *testing.T) {
 	assert.Equal("edited example", body)
 }
 
+func TestImportLongCommentKeepsFullBodyAndSearchWithBoundedSnippet(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, f, imp, src := setupImport(t)
+	body := strings.Repeat("synthetic comment text ", 30) + "fullbodysearchmarker"
+	f.comments["100_200"] = []Object{*comment("100_201", "100_200", body)}
+
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	got := message(t, st, src.ID, "100_201")
+	fullBody, err := st.GetMessageBodyText(got.ID)
+	require.NoError(err)
+	assert.Equal(body, fullBody)
+	var snippet string
+	require.NoError(st.DB().QueryRow(`SELECT snippet FROM messages WHERE id=?`, got.ID).Scan(&snippet))
+	assert.LessOrEqual(len([]rune(snippet)), metaMessageSnippetRunes)
+	assert.Equal(string([]rune(body)[:metaMessageSnippetRunes]), snippet)
+	var hits int
+	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'fullbodysearchmarker'`).Scan(&hits))
+	assert.Equal(1, hits, "the full body remains searchable after the preview is bounded")
+}
+
 func TestImportCachedOrganicCommentKeepsNewerSameRunAdSnapshot(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, fixture, imp, src := setupImport(t)

@@ -26,6 +26,11 @@ All notable changes to msgvault, grouped by release.
 ### Other changes
 
 - [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed comments, with owner subscription, status, and replay commands. Other fields are held for a future release.
+- Archive recent [Messenger](usage/facebook-messages.md) and [Instagram inbox](usage/instagram-messages.md)
+  messages as searchable chats, and link their participants manually.
+  Backfill is capped at 20 messages per thread; the Meta webhook receiver adds
+  live messages, echoes, reactions, Messenger edits, and Instagram deletion marks.
+
 - [Instagram comment sync](usage/instagram-comments.md) archives linked professional
   account media comments and replies for search and existing person linking.
   Sending and ad-only discovery are not included.

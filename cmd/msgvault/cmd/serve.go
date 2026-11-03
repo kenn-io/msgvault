@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -664,6 +665,28 @@ func runServe(cmd *cobra.Command, args []string) error {
 			return runConfiguredInstagramCommentsSync(ctx, s, source)
 		})); err != nil {
 			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
+	for _, inbox := range []struct {
+		platform  meta.DMPlatform
+		profiles  []config.MetaMessagesSource
+		scheduled []config.MetaMessagesSource
+	}{
+		{meta.PlatformMessenger, cfg.FacebookMessages, cfg.ScheduledFacebookMessagesSources()},
+		{meta.PlatformInstagram, cfg.InstagramMessages, cfg.ScheduledInstagramMessagesSources()},
+	} {
+		for _, source := range inbox.profiles {
+			if source.Enabled && source.Schedule == "" {
+				logger.Warn("inbox profile is enabled but has no schedule", "platform", inbox.platform, "profile", source.Identifier)
+			}
+		}
+		for _, source := range inbox.scheduled {
+			if err := registerScheduledMetaMessagesJob(sched, inbox.platform, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredMetaMessagesSync(ctx, s, inbox.platform, source)
+			})); err != nil {
+				logger.Error("failed to schedule inbox sync", "platform", inbox.platform, "profile", source.Identifier, "error", err)
+			}
 		}
 	}
 

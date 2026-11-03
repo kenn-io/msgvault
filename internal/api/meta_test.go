@@ -29,3 +29,38 @@ func TestMetaWebhookCommandsAllowedForOwnerOnly(t *testing.T) {
 		assert.False(t, delegatedCLIRunAdmitted(command, &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}}))
 	}
 }
+
+func TestCLIRunAllowsMessagesCommands(t *testing.T) {
+	assert := assert.New(t)
+
+	for _, provider := range []string{"facebook-messages", "instagram-messages"} {
+		for _, operation := range []string{"add", "sync"} {
+			assert.True(cliRunCommandAllowed([]string{"source", provider, operation, "example"}))
+		}
+		assert.False(cliRunCommandAllowed([]string{"source", provider}))
+		assert.False(cliRunCommandAllowed([]string{"source", provider, "delete"}))
+	}
+}
+func TestDelegatedGrantCannotRunMessagesSync(t *testing.T) {
+	assert := assert.New(t)
+
+	for _, provider := range []string{"facebook-messages", "instagram-messages"} {
+		for _, operation := range []string{"add", "sync"} {
+			assert.False(delegatedCLIRunAdmitted([]string{"source", provider, operation, "example"}, &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate}}))
+		}
+	}
+}
+func TestSchedulerJobNameForMessagesSources(t *testing.T) {
+	assert := assert.New(t)
+
+	for _, tc := range []struct{ kind, id string }{{"facebook_messages", "app:9:page:100"}, {"instagram_messages", "app:9:page:100:instagram:1784"}} {
+		name, ok := SchedulerJobNameForSource(tc.kind, tc.id)
+		assert.True(ok)
+		assert.Equal(tc.kind+":"+tc.id, name)
+		assert.True(isSourceSyncJobName(name))
+		classification := classifySourceScheduling(tc.kind, tc.id)
+		assert.Equal(sourceScheduleGeneric, classification.kind)
+		_, ok = SchedulerJobNameForSource(tc.kind, "example")
+		assert.False(ok)
+	}
+}

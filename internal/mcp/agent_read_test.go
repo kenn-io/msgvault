@@ -1,9 +1,11 @@
 package mcp
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -23,6 +25,8 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	msgexport "go.kenn.io/msgvault/internal/export"
+	"go.kenn.io/msgvault/internal/meta"
+	"go.kenn.io/msgvault/internal/metawebhook"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -140,6 +144,80 @@ func TestAgentReadsThroughMCPSDK(t *testing.T) {
 		assertions.Contains(task5SDKResultText(result), "glacier")
 		assertions.Contains(task5SDKResultText(result), source.Identifier)
 	}
+}
+
+func TestSearchOnlyAgentListsBoundedInboxEditSnippet(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	dmSource := meta.DMSource{AppID: "9", PageID: "100", Platform: meta.PlatformMessenger}
+	source, err := st.GetOrCreateSource(dmSource.Platform.SourceType(), dmSource.Identifier())
+	requirements.NoError(err)
+	handler := meta.NewDMHandler(st, func(_ context.Context, app, object, entry string) (meta.DMSource, *store.Source, error) {
+		if app != dmSource.AppID || object != "page" || entry != dmSource.PageID {
+			return meta.DMSource{}, nil, meta.ErrDMSourceUnrouted
+		}
+		registered, err := st.GetSourceByTypeAndIdentifier(dmSource.Platform.SourceType(), dmSource.Identifier())
+		return dmSource, registered, err
+	})
+	apply := func(field string, payload map[string]any) {
+		value, err := json.Marshal(payload)
+		requirements.NoError(err)
+		outcomes := handler.Handle(t.Context(), dmSource.AppID, []metawebhook.Item{{Object: "page", EntryID: dmSource.PageID, Field: field, Value: value}})
+		requirements.Len(outcomes, 1)
+		requirements.Equal(metawebhook.Applied, outcomes[0].Class)
+	}
+	apply("messages", map[string]any{
+		"sender":    map[string]string{"id": "300", "name": "Example Customer"},
+		"recipient": map[string]string{"id": dmSource.PageID},
+		"timestamp": int64(1793577600123),
+		"message":   map[string]string{"mid": "m_1", "text": "original inbox"},
+	})
+	const secretTail = "SEARCH_ONLY_SECRET"
+	editText := strings.Repeat("x", 500) + secretTail
+	apply("message_edits", map[string]any{
+		"sender":       map[string]string{"id": "300", "name": "Example Customer"},
+		"recipient":    map[string]string{"id": dmSource.PageID},
+		"timestamp":    int64(1793577602123),
+		"message_edit": map[string]any{"mid": "m_1", "text": editText, "num_edit": 1},
+	})
+
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Server.APIKey = "owner"
+	cfg.Server.AgentAccess = true
+	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
+	server := httptest.NewServer(srv.Router())
+	t.Cleanup(server.Close)
+	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = owner.Close() })
+	grant, err := owner.IssueAgentToken(t.Context(), "search-only", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
+	requirements.NoError(err)
+	agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
+	requirements.NoError(err)
+	t.Cleanup(func() { _ = agent.Close() })
+	session := task5ConnectClient(t, agentServeOptions(t, agent), true)
+	tools, err := session.ListTools(t.Context(), nil)
+	requirements.NoError(err)
+	var names []string
+	for _, tool := range tools.Tools {
+		names = append(names, tool.Name)
+	}
+	assertions.Contains(names, ToolListMessages)
+	assertions.NotContains(names, ToolGetMessage)
+	result, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: ToolListMessages, Arguments: map[string]any{}})
+	requirements.NoError(err)
+	requirements.NotNil(result)
+	assertions.False(result.IsError, task5SDKResultText(result))
+	listed := task5SDKResultText(result)
+	assertions.Contains(listed, strings.Repeat("x", 500))
+	assertions.NotContains(listed, secretTail)
+	var messageID int64
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id=? AND source_message_id=? AND message_type=?`), source.ID, "m_1", dmSource.Platform.SourceType()).Scan(&messageID))
+	archivedBody, err := st.GetMessageBodyText(messageID)
+	requirements.NoError(err)
+	assertions.Equal(editText, archivedBody)
 }
 
 // agentServeOptions mirrors the delegated stdio setup: it reads the grant from the daemon.
