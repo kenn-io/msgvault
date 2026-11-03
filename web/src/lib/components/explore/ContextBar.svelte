@@ -92,7 +92,7 @@
     ...(sort?.note ? [{ value: '__note', label: sort.note, disabled: true }] : [])
   ]);
   const hasChips = $derived(
-    Boolean(query) || Boolean(lockedFilter) || filters.length > 0 || extraChips.length > 0 || groupingChain.length > 0
+    Boolean(query) || filters.length > 0 || extraChips.length > 0 || groupingChain.length > 0
   );
 
   function selectGrouping(value: string): void {
@@ -144,11 +144,6 @@
 
   {#if hasChips}
     <div class="context-chips">
-      {#if lockedFilter}
-        <Chip size="sm" uppercase={false} class="chip chip--filter">
-          {filterDimensionLabel(lockedFilter.dimension)}: {lockedFilter.values.map((value) => filterValueLabel(lockedFilter.dimension, value)).join(', ')}
-        </Chip>
-      {/if}
       {#if query}
         <Chip size="sm" uppercase={false} class="chip" title={`${searchModeLabel(searchMode)}: “${query}”`}>
           {searchModeLabel(searchMode)}: “{query}”
