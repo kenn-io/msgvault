@@ -39,6 +39,29 @@ func TestDuckDBEngine_QuerySQL(t *testing.T) {
 	assert.Equal(1, result.RowCount)
 }
 
+func TestRefreshRelationshipQuerySetsWithoutNormalizedActivity(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	db, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(db.Close()) })
+	dir := t.TempDir()
+	activityDir := filepath.Join(dir, "relationship_activity")
+	require.NoError(os.MkdirAll(activityDir, 0o700))
+	// A root-level cache can support archive SQL without normalized owner columns.
+	_, err = db.Exec(`COPY (SELECT 7::BIGINT AS message_id, NULL::BIGINT AS canonical_id, true AS unsent)
+		TO '` + escapePath(filepath.Join(activityDir, "rows.parquet")) + `' (FORMAT PARQUET)`)
+	require.NoError(err)
+	require.NoError(refreshRelationshipQuerySets(t.Context(), db, dir))
+	var messageID int64
+	require.NoError(db.QueryRow("SELECT message_id FROM relationship_unsent_messages").Scan(&messageID))
+	assert.Equal(int64(7), messageID)
+	var owners int64
+	require.NoError(db.QueryRow("SELECT count(*) FROM relationship_owner_canonicals").Scan(&owners))
+	assert.Zero(owners)
+}
+
 func TestRegisterViews_BaseViews(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

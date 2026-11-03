@@ -472,6 +472,10 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	if analyticsDir == "" {
 		return nil
 	}
+	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	if err != nil {
+		return fmt.Errorf("find relationship activity: %w", err)
+	}
 	path := filepath.Join(analyticsDir, identityindex.DatasetActivity, "**", "*.parquet")
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
@@ -482,18 +486,23 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	if err != nil {
 		return errors.Join(fmt.Errorf("load unsent message IDs: %w", err), tx.Rollback())
 	}
-	canon := "(" + identityindex.CanonicalParticipantsSQL(
-		fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipants, "*.parquet"))),
-		fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet"))),
-	) + ")"
-	owners := fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")))
-	// Source-native is_from_me messages can identify an owner absent from owner_participants.
-	_, err = tx.ExecContext(ctx, fmt.Sprintf(`CREATE OR REPLACE TEMP TABLE relationship_owner_canonicals AS
+	ownerSQL := "SELECT NULL::BIGINT AS canonical_id WHERE false"
+	// Match the expanded view: unpartitioned caches have no normalized activity.
+	if len(activityFiles) > 0 {
+		canon := "(" + identityindex.CanonicalParticipantsSQL(
+			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipants, "*.parquet"))),
+			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet"))),
+		) + ")"
+		owners := fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")))
+		// Source-native is_from_me messages can identify an owner absent from owner_participants.
+		ownerSQL = fmt.Sprintf(`
   %s
   UNION
   SELECT canonical_id FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
   WHERE canonical_id IS NOT NULL AND is_owner`,
-		identityindex.OwnerCanonicalsSQL(owners, canon), quoteIdentitySQLPath(path)))
+			identityindex.OwnerCanonicalsSQL(owners, canon), quoteIdentitySQLPath(path))
+	}
+	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_canonicals AS "+ownerSQL)
 	if err != nil {
 		return errors.Join(fmt.Errorf("load relationship owner canonicals: %w", err), tx.Rollback())
 	}
