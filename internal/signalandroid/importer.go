@@ -521,22 +521,22 @@ func (r *run) writeMessage(
 			found++
 			if name, ok := r.files[a.ID]; ok {
 				full, err := os.ReadFile(filepath.Join(r.opts.AttachmentFilesDir, name))
-				if err != nil {
-					return fmt.Errorf("read long text: %w", err)
+				if err == nil {
+					body = applyMentions(string(full), mentions, r.displayName)
+					continue
 				}
-				body = applyMentions(string(full), mentions, r.displayName)
-			} else {
-				missing++
-				if archivedID != 0 {
-					archived, archivedRaw, err := st.GetMessageBodyAndRawContext(ctx, archivedID)
-					if err != nil {
-						return fmt.Errorf("read archived long text: %w", err)
-					}
-					var prev sigMessage
-					if json.Unmarshal(archivedRaw, &prev) == nil && prev.RowID == m.RowID && prev.Body == m.Body {
-						body = archived
-						preservedBody = true
-					}
+				r.summary.Errors++
+				r.imp.progress.OnError(fmt.Errorf("read long text: %w", err))
+			}
+			missing++
+			if archivedID != 0 {
+				archived, archivedRaw, err := st.GetMessageBodyAndRawContext(ctx, archivedID)
+				if err != nil {
+					return fmt.Errorf("read archived long text: %w", err)
+				}
+				var prev sigMessage
+				if json.Unmarshal(archivedRaw, &prev) == nil && prev.RevisionDateSent == m.RevisionDateSent && prev.Body == m.Body {
+					body, preservedBody = archived, true
 				}
 			}
 		}
@@ -595,8 +595,8 @@ func (r *run) writeMessage(
 		Conversation: &conversation,
 		Message:      &msg, BodyText: sql.NullString{String: body, Valid: body != ""},
 		RawMIME: raw, RawFormat: rawFormat, Edited: m.OriginalRowID.Valid,
-		Attachments: writes,
-		FTS:         &store.FTSDoc{Body: body, FromAddr: senderAddr},
+		Attachments: writes, PreserveLabels: true,
+		FTS: &store.FTSDoc{Body: body, FromAddr: senderAddr},
 	}
 	parentID, err := r.quotedMessageID(ctx, p.chatID, m)
 	if err != nil {

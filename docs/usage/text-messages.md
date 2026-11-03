@@ -194,7 +194,7 @@ keep their identities, including after a backup is restored on a new phone. Each
 the ones in the backup, and a message whose text was removed loses its archived
 text.
 
-When a long-text file is missing, msgvault keeps archived full text only if it starts with the backup's nonempty text preview. Otherwise, it archives the latest preview, so an edit replaces the previous revision's text even when its full-text file is missing.
+When a long-text file is missing, msgvault keeps archived full text only when the revision's sent timestamp and raw text preview match the archived raw record. This match survives restored backups with different row IDs. Otherwise, it archives the latest preview, so an edit replaces the previous revision's text even when its full-text file is missing.
 
 Each message commits with its text, attachments, reactions, and sender membership.
 If a reaction's author conflicts with existing people, that message keeps its previous snapshot and the import reports an error.

@@ -125,7 +125,7 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 	query := fmt.Sprintf(`
 		SELECT m._id, m.original_message_id,
 		       COALESCE(o.from_recipient_id, m.from_recipient_id),
-		       COALESCE(o.date_sent, m.date_sent),
+		       COALESCE(o.date_sent, m.date_sent), m.date_sent,
 		       COALESCE(o.date_received, m.date_received),
 		       m.thread_id, m.type, m.body,
 		       COALESCE(m.quote_id, 0), COALESCE(m.quote_author, 0),
@@ -149,7 +149,7 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 	var messages []sigMessage
 	for rows.Next() {
 		var m sigMessage
-		if err := rows.Scan(&m.RowID, &m.OriginalRowID, &m.AuthorID, &m.DateSent, &m.DateReceived,
+		if err := rows.Scan(&m.RowID, &m.OriginalRowID, &m.AuthorID, &m.DateSent, &m.RevisionDateSent, &m.DateReceived,
 			&m.ThreadID, &m.Type, &m.Body, &m.QuoteID, &m.QuoteAuthor,
 			&m.StoryType, &m.ParentStoryID, &m.RemoteDeleted,
 			&m.ScheduledDate); err != nil {

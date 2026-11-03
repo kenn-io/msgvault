@@ -111,20 +111,21 @@ type sigThread struct {
 // sigMessage is a visible message row: the latest revision of a message,
 // with the identity fields of its original revision.
 type sigMessage struct {
-	ThreadID      int64          `json:"thread_id"`
-	RowID         int64          `json:"row_id"`
-	OriginalRowID sql.NullInt64  `json:"original_row_id,omitzero"`
-	AuthorID      int64          `json:"author_recipient_id"`
-	DateSent      int64          `json:"date_sent"`
-	DateReceived  int64          `json:"date_received"`
-	Type          int64          `json:"type"`
-	Body          sql.NullString `json:"body"`
-	QuoteID       int64          `json:"quote_id,omitzero"`
-	QuoteAuthor   int64          `json:"quote_author,omitzero"`
-	StoryType     int64          `json:"story_type,omitzero"`
-	ParentStoryID int64          `json:"parent_story_id,omitzero"`
-	RemoteDeleted int64          `json:"remote_deleted,omitzero"`
-	ScheduledDate int64          `json:"scheduled_date,omitzero"`
+	ThreadID         int64          `json:"thread_id"`
+	RowID            int64          `json:"row_id"`
+	OriginalRowID    sql.NullInt64  `json:"original_row_id,omitzero"`
+	AuthorID         int64          `json:"author_recipient_id"`
+	DateSent         int64          `json:"date_sent"`
+	RevisionDateSent int64          `json:"revision_date_sent"`
+	DateReceived     int64          `json:"date_received"`
+	Type             int64          `json:"type"`
+	Body             sql.NullString `json:"body"`
+	QuoteID          int64          `json:"quote_id,omitzero"`
+	QuoteAuthor      int64          `json:"quote_author,omitzero"`
+	StoryType        int64          `json:"story_type,omitzero"`
+	ParentStoryID    int64          `json:"parent_story_id,omitzero"`
+	RemoteDeleted    int64          `json:"remote_deleted,omitzero"`
+	ScheduledDate    int64          `json:"scheduled_date,omitzero"`
 }
 
 // sigAttachment is one attachment row.

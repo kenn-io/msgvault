@@ -6232,19 +6232,15 @@ func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []Rea
 		kind, value string
 	}
 	seen := make(map[identity]bool)
-	keep := []string{"FALSE"}
-	args := []any{messageID}
+	keep, args := []string{}, []any{messageID}
 	var added int64
 	for _, r := range reactions {
-		if r.ParticipantID == 0 {
-			continue
-		}
 		key := identity{r.ParticipantID, r.Type, r.Value}
-		if seen[key] {
+		if r.ParticipantID == 0 || seen[key] {
 			continue
 		}
 		seen[key] = true
-		keep = append(keep, `(participant_id = ? AND reaction_type = ? AND reaction_value = ?)`)
+		keep = append(keep, `(CAST(? AS BIGINT), CAST(? AS TEXT), CAST(? AS TEXT))`)
 		args = append(args, r.ParticipantID, r.Type, r.Value)
 		var exists bool
 		if err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM reactions WHERE message_id = ? AND participant_id = ? AND reaction_type = ? AND reaction_value = ?)`, messageID, r.ParticipantID, r.Type, r.Value).Scan(&exists); err != nil {
@@ -6258,7 +6254,11 @@ func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []Rea
 			added++
 		}
 	}
-	if _, err := q.Exec(`DELETE FROM reactions WHERE message_id = ? AND NOT (`+strings.Join(keep, " OR ")+`)`, args...); err != nil {
+	query := `DELETE FROM reactions WHERE message_id = ?`
+	if len(keep) > 0 {
+		query += ` AND (participant_id, reaction_type, reaction_value) NOT IN (VALUES ` + strings.Join(keep, ", ") + `)`
+	}
+	if _, err := q.Exec(query, args...); err != nil {
 		return 0, err
 	}
 	return added, nil
