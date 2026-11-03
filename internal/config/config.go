@@ -586,6 +586,7 @@ type Config struct {
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
 	FacebookComments   []FacebookCommentsSource        `toml:"facebook_comments"`
+	InstagramComments  []InstagramCommentsSource       `toml:"instagram_comments"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -1123,6 +1124,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "instagram_comments" {
+			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "facebook_comments" {
 			return nil, fmt.Errorf("unknown Facebook comments config key %q", key.String())
 		}
@@ -1281,6 +1285,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		return nil, err
 	}
 	if err := cfg.validateFacebookCommentsSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateInstagramCommentsSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()

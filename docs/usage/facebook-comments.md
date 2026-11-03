@@ -100,7 +100,7 @@ to a person you already maintain. No separate customer database is created.
 
 This integration archives returned text and identity/context metadata. It does
 not download post/comment media, manage Facebook personal-profile comments,
-or promise complete coverage of every ad variant. Instagram professional
-comments, ad-creative discovery, and explicit public replies are separate
-work. Threads uses its own authorization and source; a Page token does not
-authorize Threads.
+or promise complete coverage of every ad variant. Use [Instagram comments](instagram-comments.md)
+for linked professional accounts. Ad-creative discovery and public replies
+remain separate work. Threads uses its own authorization and source; a Page
+token does not authorize Threads.

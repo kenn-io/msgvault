@@ -181,7 +181,8 @@ function kindPresentation(icon: string, label: string): EntryKindPresentation {
 const CHAT_MESSAGE_TYPES = new Set([
   'chat', 'text', 'google_chat', 'whatsapp', 'imessage', 'sms', 'mms', 'rcs',
   'google_voice_text', 'teams', 'discord', 'beeper', 'slack', 'inline', 'fbmessenger', 'matrix', 'chatwoot',
-  'facebook_comments'
+  'facebook_comments',
+  'instagram_comments'
 ]);
 
 // The server-assigned kind wins; the message type covers rows and archive messages without one.
