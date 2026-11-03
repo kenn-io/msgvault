@@ -136,11 +136,11 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	}
 	recipients := []store.RecipientSet{}
 	participants := []store.ConversationParticipantRef{}
-	if sender == 0 && exists && prior.SenderID.Valid {
+	if exists && prior.SenderID.Valid && (sender == 0 || sender == prior.SenderID.Int64 && fromName == "") {
 		sender = prior.SenderID.Int64
 		self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
 		// Preserve stronger prior evidence when the current Graph projection omits
-		// its author. An absent field is not a provider retraction.
+		// its author or author name. An absent field is not a provider retraction.
 		previous, err := r.imp.store.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
 		if err != nil {
 			return err

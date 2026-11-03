@@ -238,8 +238,18 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			var hits int
 			require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'searchableorchard'`).Scan(&hits))
 			assert.Equal(1, hits)
-			reads := f.mediaReads.Load()
 			knownUsername := f.comments[0].From.Username
+			f.comments[0].From.Username = ""
+			updated, err := imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
+			require.NoError(err)
+			assert.Zero(updated.MessagesAdded)
+			var retainedName string
+			require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, child.ID).Scan(&retainedName))
+			assert.Equal(knownUsername, retainedName, "same Instagram author ID without a username must retain its known snapshot")
+			var indexedName string
+			require.NoError(st.DB().QueryRow(`SELECT from_addr FROM messages_fts WHERE message_id = ?`, child.ID).Scan(&indexedName))
+			assert.Equal(knownUsername, indexedName)
+			reads := f.mediaReads.Load()
 			f.media[0].Owner, f.comments[0].From = nil, nil
 			f.comments = append(f.comments, IGComment{ID: "402", Text: "Late comment on old media"})
 			sum, err := imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
@@ -251,7 +261,6 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			assert.Equal(child.SenderID, message(t, st, src.ID, "400").SenderID)
 			assert.Equal(root.IsFromMe, message(t, st, src.ID, "300").IsFromMe)
 			assert.Equal(root.ID, message(t, st, src.ID, "402").ReplyToMessageID.Int64)
-			var retainedName string
 			require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id = ? AND recipient_type = 'from'`, child.ID).Scan(&retainedName))
 			assert.Equal(knownUsername, retainedName, "missing author projection must preserve its identifier-only snapshot")
 		})
