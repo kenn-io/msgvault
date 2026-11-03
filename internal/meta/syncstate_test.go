@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 const checkpointV2Fixture = `{"version":2,"source":"app:9:page:100","next_surface":"ads_posts","phases":{"posts":{},"visitor_posts":{},"ads_posts":{}}}`
@@ -156,4 +157,47 @@ func TestImportRefusesNewestIncompatibleCheckpointAndFullRecovers(t *testing.T) 
 			assert.Equal(original, message(t, st, src.ID, "100_200").ID)
 		})
 	}
+}
+
+func TestLoadStateSurvivesWebhookCompletion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st, _, imp, src := setupImport(t)
+	summary, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+	require.NoError(err)
+	require.True(summary.Partial)
+	before, err := loadState(t.Context(), st, src, false)
+	require.NoError(err)
+	require.NotEqual(freshSourceState(src), before)
+	execution, err := st.AcquireSyncExecutionContext(t.Context(), src.ID)
+	require.NoError(err)
+	defer func() { require.NoError(execution.Release()) }()
+	run, err := execution.StartSyncContext(t.Context(), WebhookSyncType, "")
+	require.NoError(err)
+	require.NoError(st.CompleteSyncContext(t.Context(), run, ""))
+	after, err := loadState(t.Context(), st, src, false)
+	require.NoError(err)
+	assert.Equal(before.Phases, after.Phases)
+	assert.Equal(before.NextSurface, after.NextSurface)
+}
+
+func TestLoadStateInstagramSurvivesWebhookCompletion(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewSQLiteTestStore(t)
+	src, err := st.GetOrCreateSource(InstagramSourceType, "app:9:page:100:instagram:200")
+	require.NoError(err)
+	state := freshSourceState(src)
+	state.Phases[instagramMediaEdge].After = "opaque-ig-cursor"
+	blob, err := json.Marshal(state)
+	require.NoError(err)
+	run, err := st.StartSync(src.ID, InstagramSourceType)
+	require.NoError(err)
+	require.NoError(st.PauseSyncWithCheckpoint(run, &store.Checkpoint{PageToken: string(blob)}))
+	other, err := st.StartSync(src.ID, "instagram_comments_webhook")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(other, ""))
+	got, err := loadState(t.Context(), st, src, false)
+	require.NoError(err)
+	assert.Equal(state, got)
 }
