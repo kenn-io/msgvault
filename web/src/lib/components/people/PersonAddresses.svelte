@@ -194,8 +194,9 @@
             ? `${text.title} identifier for ${memberName ? `${memberName} (profile ${identifier.participant_id})` : `profile ${identifier.participant_id}`}`
             : identifier.display_value?.trim() || identifier.value}
           {@const relation = isOtherMember ? (edges.some((edge) => edge.link_origin) ? '' : 'linked') : 'this profile'}
-          <DetailRow label={identifier.service_label || (identifier.type === 'email' ? 'Email' : identifier.type === 'phone' ? 'Phone' : 'Address')}>
-            <details aria-label={`Identity ${chipName}`}><summary>{opaque ? text.title : identifier.display_value?.trim() || identifier.value}</summary><p>{[text.subtitle, relation, text.detail, identifierTooltip(identifier), identifier.service_slug, identifier.scope_kind, identifier.scope_value].filter(Boolean).join(' · ')}</p></details>
+          {@const label = identifier.service_label || (identifier.type === 'email' ? 'Email' : identifier.type === 'phone' ? 'Phone' : 'Address')}
+          <DetailRow label={label === text.title ? undefined : label}>
+            <details aria-label={`Identity ${chipName}`}><summary>{text.title}</summary><p>{[text.subtitle, relation, text.detail, identifierTooltip(identifier), identifier.service_slug].filter(Boolean).join(' · ')}</p></details>
             {#snippet actions()}
               <Button label="Copy" ariaLabel={`Copy ${opaque ? chipName : identifier.value}`} size="sm" onclick={() => void copyIdentifier(identifier.value)} />
               {#if isOtherMember && confirmingParticipantID !== identifier.participant_id}<Button label="Unlink" ariaLabel={`Unlink ${chipName}`} size="sm" onclick={() => startUnlink(identifier.participant_id)} />{/if}

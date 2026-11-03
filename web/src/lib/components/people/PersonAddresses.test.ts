@@ -66,6 +66,16 @@ function baseProps(overrides: Record<string, unknown> = {}) {
 }
 
 describe('PersonAddresses', () => {
+  it('shows each address and its source once when expanded', async () => {
+    render(PersonAddresses, baseProps());
+    const email = screen.getByLabelText('Identity Alice');
+    await fireEvent.click(within(email).getByText('Alice'));
+    expect(email.querySelector('p')?.textContent).toBe('this profile · alice@example.com · email · primary · stored identifier');
+    const phone = screen.getByLabelText('Identity +15550100001');
+    await fireEvent.click(within(phone).getByText('+15550100001'));
+    expect(phone.querySelector('p')?.textContent).toBe('this profile · phone · secondary · stored identifier');
+  });
+
   it('offers unlink only for another clustered member', async () => {
     const view = render(PersonAddresses, baseProps({ detail: clusteredPerson() }));
     expect(screen.getByLabelText('Identity Alice').textContent).toContain('this profile');
@@ -108,6 +118,9 @@ describe('PersonAddresses', () => {
       const chip = copy.closest('.detail-row');
       expect(chip?.textContent).toContain('WhatsApp');
       expect(chip?.textContent).toContain('local-whatsapp_ba_example');
+      expect(within(chip as HTMLElement).getAllByText('WhatsApp')).toHaveLength(1);
+      await fireEvent.click(within(chip as HTMLElement).getByText('WhatsApp'));
+      expect(chip?.querySelector('p')?.textContent).toBe('Alias Example · linked · beeper-user-34 · account: local-whatsapp_ba_example · beeper · primary · stored identifier');
       expect(chip?.querySelector('summary')?.textContent).not.toContain('beeper-user-34');
       await fireEvent.click(copy);
       await waitFor(() => expect(writeText).toHaveBeenCalledWith('beeper-user-34'));

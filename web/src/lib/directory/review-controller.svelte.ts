@@ -140,10 +140,11 @@ export class DirectoryReviewController {
   async setIdentityState(identityState: IdentityReviewState): Promise<void> {
     if (this.identityState === identityState && this.initialized) return;
     const generation = this.reviewContextGeneration;
-    if (this.pending) await this.settleDecision();
+    const result = this.pending ? await this.settleDecision() : undefined;
     if (generation !== this.reviewContextGeneration) return;
     this.commit({ identityState });
     this.resetIdentityContext(identityState);
+    if (result && !result.ok && result.kind !== 'merge_required') this.decisionError = result.message;
     void this.loadIdentityPage(0, identityState);
   }
   async loadIdentityPage(

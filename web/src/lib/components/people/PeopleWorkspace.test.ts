@@ -852,6 +852,28 @@ it('Escape dismisses bulk Delete while retaining the selected saved person', asy
   } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
 });
 
+it.each(['Synthetic One', ''])('identifies a failed bulk deletion with display name %j', async displayName => {
+  const deletes: Request[] = [];
+  const client = clientFor({
+    '/api/v1/people/directory': () => Response.json({ people: [directoryPerson(7, { display_name: displayName })] }),
+    '/api/v1/people/7': request => { deletes.push(request); throw new Error('Connection lost'); },
+  });
+  const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client), state = new ExploreState(null);
+  const reviews = new DirectoryReviewController(client);
+  state.commitNavigation({ workspace: 'relationships', relationshipSaved: true });
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, reviews, onDuplicatesChanged: vi.fn(), urlState: state.current, target: null, filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(await screen.findByRole('checkbox', { name: `Select ${displayName || 'Person 7'}` }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete people' });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Confirm delete' }));
+    expect(await screen.findByText(`0 deleted. ${displayName || 'Person 7'}: Connection lost`)).toBeDefined();
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]!.method).toBe('DELETE');
+    expect(deletes[0]!.headers.get('If-Match')).toBe('"person-7-r4"');
+  } finally { view.unmount(); reviews.destroy(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it('refreshes duplicates after Details unlink and deletion of only loaded saved profiles', async () => {
   const saved = profile(9, 2, [1, 2]);
   let unlinked = false;

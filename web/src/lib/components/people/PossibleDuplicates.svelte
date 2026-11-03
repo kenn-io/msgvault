@@ -35,7 +35,7 @@
         return 'Both are saved as different people, so merging needs a choice of which to keep.';
       case undefined:
       case '':
-        return 'This match needs a decision first.';
+        return '';
       default:
         return blocker.replaceAll('_', ' ').replace(/^./, (letter) => letter.toUpperCase()) + '.';
     }
@@ -115,7 +115,7 @@
                 <div class="text">
                   {#if summary && summary !== 'failed'}
                     <span class="name">{summary.name}</span>
-                    <span class="detail">{summary.address}</span>
+                    {#if summary.address !== summary.name}<span class="detail">{summary.address}</span>{/if}
                     <span class="detail" data-mono>{joinParts([summary.lastAt ? formatRelativeTime(summary.lastAt) : '', summary.count === undefined ? '' : messageCount(summary.count)])}</span>
                   {:else}
                     <span class="name placeholder" aria-hidden="true">&nbsp;</span>

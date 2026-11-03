@@ -150,7 +150,7 @@
         const result = await deletePerson({ id }, { ...page.client, headers: { 'If-Match': `"person-${id}-r${profile.revision}"` } });
         if (result.response.status === 204) { deleted.push(id); selection.explicitKeys.delete(`person:${id}`); }
         else failures.push(`${profile.display_name || `Person ${id}`}: ${result.error?.message ?? 'Could not delete.'}`);
-      } catch (cause) { failures.push(`Person ${id}: ${cause instanceof Error ? cause.message : 'Could not delete.'}`); }
+      } catch (cause) { failures.push(`${profile.display_name || `Person ${id}`}: ${cause instanceof Error ? cause.message : 'Could not delete.'}`); }
     }
     await directory.removeDeletedPeople(deleted);
     await peopleDeleted(deleted);

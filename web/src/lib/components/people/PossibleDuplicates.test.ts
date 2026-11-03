@@ -66,6 +66,18 @@ it.each([
   } finally { view.unmount(); controller.destroy(); }
 });
 
+it.each(['observed@example.com', 'Observed example'])('shows an address once when the displayed name is %s', name => {
+  const controller = new DirectoryReviewController(createAPIClient(async () => { throw new Error('Unexpected request'); }));
+  controller.rows = [pair];
+  controller.summaries.set('participant:1', { id: 1, name, address: 'observed@example.com', count: 1, lastAt: null });
+  controller.summaries.set('participant:2', { id: 2, name: 'Other example', address: 'other@example.com', count: 1, lastAt: null });
+  const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
+  try {
+    expect(screen.getAllByText('observed@example.com')).toHaveLength(1);
+    expect(screen.getByText(name)).toBeDefined();
+  } finally { view.unmount(); controller.destroy(); }
+});
+
 it.each([
   { state: 'rejected', pending: false, label: /^Kept separate ·/ },
   { state: 'accepted', pending: false, label: /^Merged ·/ },
@@ -98,5 +110,35 @@ it('returns focus to a merged pair once across same-page reloads', async () => {
     await controller.loadIdentityPage();
     await tick();
     expect(document.activeElement).toBe(secondChoice);
+  } finally { view.unmount(); controller.destroy(); }
+});
+
+it('keeps a queued decision failure visible after switching to History', async () => {
+  let finishDecision!: (response: Response) => void;
+  const decisionResponse = new Promise<Response>(resolve => { finishDecision = resolve; });
+  const decisions: Request[] = [];
+  const controller = new DirectoryReviewController(createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const url = new URL(request.url);
+    if (request.method === 'POST') { decisions.push(request); return decisionResponse; }
+    if (url.pathname.endsWith('/identity/match-candidates')) return Response.json({ candidates: url.searchParams.get('state') === 'accepted,rejected' ? [] : [pair], offset: 0, limit: 11 });
+    return Response.json({ id: Number(url.pathname.split('/').at(-1)), display_label: 'Synthetic person', identifiers: [], activity_count: 3 });
+  }));
+  await controller.loadIdentityPage();
+  controller.setDecisionDraft(pair.id, 'Keep this note for retry');
+  await controller.queueDecision(pair, 'reject');
+  const view = render(PossibleDuplicates, { controller, onDecide: vi.fn() });
+  try {
+    await fireEvent.click(screen.getByRole('radio', { name: 'History' }));
+    await waitFor(() => expect(decisions).toHaveLength(1));
+    expect(new URL(decisions[0]!.url).pathname).toBe(`/api/v1/identity/match-candidates/${pair.id}/review/reject`);
+    expect(await decisions[0]!.json()).toEqual({ review_token: pair.review_token, notes: 'Keep this note for retry' });
+    finishDecision(Response.json({ error: 'unavailable', message: 'Decision unavailable. Try again.' }, { status: 503 }));
+    await screen.findByText('Nothing decided yet');
+    expect(screen.getByRole('alert').textContent).toBe('Decision unavailable. Try again.');
+    await fireEvent.click(screen.getByRole('radio', { name: 'To review' }));
+    await screen.findByRole('button', { name: 'Keep separate' });
+    expect(screen.getByRole('textbox', { name: 'Decision notes', hidden: true })).toHaveProperty('value', 'Keep this note for retry');
+    expect(decisions).toHaveLength(1);
   } finally { view.unmount(); controller.destroy(); }
 });
