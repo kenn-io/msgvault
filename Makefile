@@ -404,7 +404,7 @@ web-browser-install: web-install
 		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
 	fi
 
-# These specs mock the API; Playwright's webServer builds the app.
+# These specs don't start the repo-root msgvault daemon, so no build prerequisite is needed; Playwright's webServer builds the app.
 web-test-browser: web-browser-install
 	cd web && bun run test:browser
 
