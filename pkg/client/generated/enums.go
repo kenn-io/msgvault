@@ -522,6 +522,77 @@ func (c CardDAVStatusResponseRepairReason) Validate() error {
 	}
 }
 
+type CommentActionBodyAction string
+
+const (
+	CommentActionBodyActionDelete CommentActionBodyAction = "delete"
+	Hide                          CommentActionBodyAction = "hide"
+	Unhide                        CommentActionBodyAction = "unhide"
+)
+
+// Validate checks if the CommentActionBodyAction value is valid
+func (c CommentActionBodyAction) Validate() error {
+	switch c {
+	case CommentActionBodyActionDelete, Hide, Unhide:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommentActionBodyAction value, got: %v", c))
+	}
+}
+
+type CommentActionBodyResolveUnknown string
+
+const (
+	NotSent CommentActionBodyResolveUnknown = "not-sent"
+	Sent    CommentActionBodyResolveUnknown = "sent"
+)
+
+// Validate checks if the CommentActionBodyResolveUnknown value is valid
+func (c CommentActionBodyResolveUnknown) Validate() error {
+	switch c {
+	case NotSent, Sent:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommentActionBodyResolveUnknown value, got: %v", c))
+	}
+}
+
+type CommentTriageBodyExpect string
+
+const (
+	Handled CommentTriageBodyExpect = "handled"
+	Open    CommentTriageBodyExpect = "open"
+	Skipped CommentTriageBodyExpect = "skipped"
+)
+
+// Validate checks if the CommentTriageBodyExpect value is valid
+func (c CommentTriageBodyExpect) Validate() error {
+	switch c {
+	case Handled, Open, Skipped:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommentTriageBodyExpect value, got: %v", c))
+	}
+}
+
+type CommentTriageBodyState string
+
+const (
+	CommentTriageBodyStateHandled CommentTriageBodyState = "handled"
+	CommentTriageBodyStateOpen    CommentTriageBodyState = "open"
+	CommentTriageBodyStateSkipped CommentTriageBodyState = "skipped"
+)
+
+// Validate checks if the CommentTriageBodyState value is valid
+func (c CommentTriageBodyState) Validate() error {
+	switch c {
+	case CommentTriageBodyStateHandled, CommentTriageBodyStateOpen, CommentTriageBodyStateSkipped:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid CommentTriageBodyState value, got: %v", c))
+	}
+}
+
 type ConnectionSyncOutcomeStatus string
 
 const (
@@ -1504,13 +1575,13 @@ const (
 	ItemErrors                          OperationPublicCounterName = "item_errors"
 	OperationPublicCounterNameCreated   OperationPublicCounterName = "created"
 	OperationPublicCounterNameFailed    OperationPublicCounterName = "failed"
+	OperationPublicCounterNameSkipped   OperationPublicCounterName = "skipped"
 	OperationPublicCounterNameSucceeded OperationPublicCounterName = "succeeded"
 	OperationPublicCounterNameUpdated   OperationPublicCounterName = "updated"
 	Processed                           OperationPublicCounterName = "processed"
 	ProjectedWrites                     OperationPublicCounterName = "projected_writes"
 	Removed                             OperationPublicCounterName = "removed"
 	Requested                           OperationPublicCounterName = "requested"
-	Skipped                             OperationPublicCounterName = "skipped"
 	Started                             OperationPublicCounterName = "started"
 	Suppressed                          OperationPublicCounterName = "suppressed"
 	Truncated                           OperationPublicCounterName = "truncated"
@@ -1519,7 +1590,7 @@ const (
 // Validate checks if the OperationPublicCounterName value is valid
 func (o OperationPublicCounterName) Validate() error {
 	switch o {
-	case Added, Attempted, Books, IdentityRejected, ItemErrors, OperationPublicCounterNameCreated, OperationPublicCounterNameFailed, OperationPublicCounterNameSucceeded, OperationPublicCounterNameUpdated, Processed, ProjectedWrites, Removed, Requested, Skipped, Started, Suppressed, Truncated:
+	case Added, Attempted, Books, IdentityRejected, ItemErrors, OperationPublicCounterNameCreated, OperationPublicCounterNameFailed, OperationPublicCounterNameSkipped, OperationPublicCounterNameSucceeded, OperationPublicCounterNameUpdated, Processed, ProjectedWrites, Removed, Requested, Started, Suppressed, Truncated:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid OperationPublicCounterName value, got: %v", o))

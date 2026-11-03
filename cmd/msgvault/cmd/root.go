@@ -412,13 +412,13 @@ func Execute() error {
 func ExecuteContext(ctx context.Context) error {
 	ensureHelpLayout(rootCmd)
 	ensureSilenceUsageWrapped(rootCmd)
-	return executeRootContext(ctx, rootCmd)
+	return executeRootContext(ctx, rootCmd, os.Args[1:])
 }
 
 // executeRootContext gives one root execution a private owner for parsed
 // options, loaded configuration and cleanup resources. The Cobra registry is
 // shared by the process, so callers still serialize full tree executions.
-func executeRootContext(ctx context.Context, root *cobra.Command) error {
+func executeRootContext(ctx context.Context, root *cobra.Command, rawArgs ...[]string) error {
 	if root == nil {
 		return errors.New("nil root command")
 	}
@@ -441,7 +441,10 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 	}()
 	defer recoverAndLogPanic(inv)
 
-	err := root.ExecuteContext(root.Context())
+	command, err := root.ExecuteContextC(root.Context())
+	if err != nil && isCommentCLICommand(command) {
+		err = classifyCommentCLIError(command, err)
+	}
 	warnDaemonConfigError(root, inv.cfg, err)
 
 	// Record the exit outcome so users can see the per-run
@@ -456,6 +459,16 @@ func executeRootContext(ctx context.Context, root *cobra.Command) error {
 		}
 	}
 	if err != nil {
+		if diagnostic, ok := errors.AsType[interface {
+			error
+			ReportCLIError(args []string)
+		}](err); ok {
+			var args []string
+			if len(rawArgs) > 0 {
+				args = rawArgs[0]
+			}
+			diagnostic.ReportCLIError(args)
+		}
 		return fmt.Errorf("execute command: %w", err)
 	}
 	return nil

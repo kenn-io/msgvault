@@ -4288,3 +4288,30 @@ CREATE TABLE IF NOT EXISTS document_extraction_ranges (
     char_count BIGINT NOT NULL CHECK (char_count >= 0),
     PRIMARY KEY (extraction_id, first_page)
 );
+
+-- Meta comment action receipts. Provider writes never hold a DB transaction.
+CREATE TABLE IF NOT EXISTS meta_comment_actions (
+ id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+ action_key TEXT NOT NULL UNIQUE,
+ source_id BIGINT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+ source_identifier TEXT NOT NULL,
+ message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
+ target_comment_id TEXT NOT NULL,
+ target_author_id TEXT,
+ action TEXT NOT NULL CHECK (action IN ('public_reply','private_reply','hide','unhide','delete')),
+ body TEXT NOT NULL DEFAULT '',
+ state TEXT NOT NULL CHECK (state IN ('claimed','dispatched','succeeded','failed','unknown')),
+ error_code TEXT,
+ remote_id TEXT,
+ remote_recipient_id TEXT,
+ reply_message_id BIGINT REFERENCES messages(id) ON DELETE SET NULL,
+ row_revision BIGINT NOT NULL DEFAULT 1 CHECK (row_revision > 0),
+ created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ dispatched_at TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_meta_comment_actions_private
+ ON meta_comment_actions(source_id,target_comment_id) WHERE action='private_reply' AND state<>'failed';
+CREATE INDEX IF NOT EXISTS idx_meta_comment_actions_message ON meta_comment_actions(message_id);
+CREATE INDEX IF NOT EXISTS idx_meta_comment_actions_deleted
+ ON meta_comment_actions(source_id,source_identifier,target_comment_id) WHERE action='delete' AND state='succeeded';

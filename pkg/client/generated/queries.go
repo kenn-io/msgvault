@@ -414,6 +414,20 @@ func (v VerifyCLIQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(v))
 }
 
+type ListCommentQueueQuery struct {
+	// Source Exact archive source identifier
+	Source *string `json:"source,omitempty"`
+
+	// State open (default), handled, skipped or all
+	State *string `json:"state,omitempty"`
+
+	// Limit Rows per page, 1–200 (default 50)
+	Limit *int64 `json:"limit,omitempty"`
+
+	// BeforeID Last-seen message ID in ascending sent_at/id order
+	BeforeID *int64 `json:"before_id,omitempty"`
+}
+
 type ListCommunicationServicesQuery struct {
 	// IncludeInactive Include inactive catalog entries
 	IncludeInactive *bool `json:"include_inactive,omitempty"`

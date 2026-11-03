@@ -99,6 +99,80 @@ type ActionCoverage struct {
 	Unsupported  int64 `json:"unsupported"`
 }
 
+type ActionError struct {
+	AbuseWarning        *bool         `json:"abuse_warning,omitempty"`
+	Code                string        `json:"code" validate:"required"`
+	Message             string        `json:"message" validate:"required"`
+	RequiredPermissions []string      `json:"required_permissions,omitempty"`
+	Result              *ActionResult `json:"result,omitempty"`
+}
+
+func (a ActionError) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Code, "required"); err != nil {
+		errors = errors.Append("Code", err)
+	}
+	if err := typesValidator.Var(a.Message, "required"); err != nil {
+		errors = errors.Append("Message", err)
+	}
+	if a.Result != nil {
+		if v, ok := any(a.Result).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Result", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+func (s ActionError) Error() string {
+	return "unmapped client error"
+}
+
+type ActionResult struct {
+	Action     string                `json:"action" validate:"required"`
+	Confirm    string                `json:"confirm" validate:"required"`
+	Disclosure MetaCommentDisclosure `json:"disclosure"`
+	DryRun     bool                  `json:"dry_run"`
+	MessageID  int64                 `json:"message_id"`
+	Receipt    *Receipt              `json:"receipt,omitempty"`
+	SourceID   int64                 `json:"source_id"`
+	Visibility string                `json:"visibility" validate:"required"`
+	Warnings   []string              `json:"warnings,omitempty"`
+}
+
+func (a ActionResult) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(a.Action, "required"); err != nil {
+		errors = errors.Append("Action", err)
+	}
+	if err := typesValidator.Var(a.Confirm, "required"); err != nil {
+		errors = errors.Append("Confirm", err)
+	}
+	if v, ok := any(a.Disclosure).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Disclosure", err)
+		}
+	}
+	if a.Receipt != nil {
+		if v, ok := any(a.Receipt).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Receipt", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(a.Visibility, "required"); err != nil {
+		errors = errors.Append("Visibility", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ActionRow struct {
 	Action  Action     `json:"action"`
 	Meeting MeetingRef `json:"meeting"`
@@ -2905,6 +2979,170 @@ type CodexModel struct {
 }
 
 func (c CodexModel) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CommentActionBody struct {
+	Action         CommentActionBodyAction          `json:"action" validate:"required"`
+	Body           *string                          `json:"body,omitzero"`
+	Confirm        *string                          `json:"confirm,omitzero"`
+	DryRun         *bool                            `json:"dry_run,omitempty"`
+	ResolveUnknown *CommentActionBodyResolveUnknown `json:"resolve_unknown,omitempty"`
+}
+
+func (c CommentActionBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(c.Action).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Action", err)
+		}
+	}
+	if c.ResolveUnknown != nil {
+		if v, ok := any(c.ResolveUnknown).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResolveUnknown", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CommentQueueAuthor struct {
+	DisplayName   string `json:"display_name" validate:"required"`
+	ParticipantID int64  `json:"participant_id"`
+}
+
+func (c CommentQueueAuthor) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
+}
+
+type CommentQueueItem struct {
+	Actions               []Receipt          `json:"actions" validate:"required"`
+	Ad                    bool               `json:"ad"`
+	Author                CommentQueueAuthor `json:"author"`
+	CommentID             string             `json:"comment_id" validate:"required"`
+	ConversationID        int64              `json:"conversation_id"`
+	DeletedFromSource     bool               `json:"deleted_from_source"`
+	MessageID             int64              `json:"message_id"`
+	Moderation            string             `json:"moderation" validate:"required"`
+	PageReplied           bool               `json:"page_replied"`
+	ParentMessageID       int64              `json:"parent_message_id"`
+	PrivateReplyOpenUntil *time.Time         `json:"private_reply_open_until" validate:"required"`
+	Provider              string             `json:"provider" validate:"required"`
+	SentAt                *time.Time         `json:"sent_at" validate:"required"`
+	Snippet               string             `json:"snippet" validate:"required"`
+	SourceID              int64              `json:"source_id"`
+	SourceIdentifier      string             `json:"source_identifier" validate:"required"`
+	Triage                string             `json:"triage" validate:"required"`
+}
+
+func (c CommentQueueItem) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Actions, "required"); err != nil {
+		errors = errors.Append("Actions", err)
+	}
+	for i, item := range c.Actions {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Actions[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(c.Author).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Author", err)
+		}
+	}
+	if err := typesValidator.Var(c.CommentID, "required"); err != nil {
+		errors = errors.Append("CommentID", err)
+	}
+	if err := typesValidator.Var(c.Moderation, "required"); err != nil {
+		errors = errors.Append("Moderation", err)
+	}
+	if c.PrivateReplyOpenUntil != nil {
+		if err := typesValidator.Var(c.PrivateReplyOpenUntil, "required"); err != nil {
+			errors = errors.Append("PrivateReplyOpenUntil", err)
+		}
+	}
+	if err := typesValidator.Var(c.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if c.SentAt != nil {
+		if err := typesValidator.Var(c.SentAt, "required"); err != nil {
+			errors = errors.Append("SentAt", err)
+		}
+	}
+	if err := typesValidator.Var(c.Snippet, "required"); err != nil {
+		errors = errors.Append("Snippet", err)
+	}
+	if err := typesValidator.Var(c.SourceIdentifier, "required"); err != nil {
+		errors = errors.Append("SourceIdentifier", err)
+	}
+	if err := typesValidator.Var(c.Triage, "required"); err != nil {
+		errors = errors.Append("Triage", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CommentQueueResponse struct {
+	Items        []CommentQueueItem `json:"items" validate:"required"`
+	NextBeforeID *int64             `json:"next_before_id,omitempty"`
+}
+
+func (c CommentQueueResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Items, "required"); err != nil {
+		errors = errors.Append("Items", err)
+	}
+	for i, item := range c.Items {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Items[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CommentTriageBody struct {
+	Expect *CommentTriageBodyExpect `json:"expect,omitempty"`
+	State  CommentTriageBodyState   `json:"state" validate:"required"`
+}
+
+func (c CommentTriageBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if c.Expect != nil {
+		if v, ok := any(c.Expect).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Expect", err)
+			}
+		}
+	}
+	if v, ok := any(c.State).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("State", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CommentTriageResponse struct {
+	State string `json:"state" validate:"required"`
+}
+
+func (c CommentTriageResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
@@ -8404,6 +8642,20 @@ func (m MessagingRoutePage) Validate() error {
 	return errors
 }
 
+type MetaCommentDisclosure struct {
+	AssetID           string `json:"asset_id" validate:"required"`
+	AuthorDisplayName string `json:"author_display_name" validate:"required"`
+	Body              string `json:"body" validate:"required"`
+	CommentID         string `json:"comment_id" validate:"required"`
+	PageOrAccountName string `json:"page_or_account_name" validate:"required"`
+	Provider          string `json:"provider" validate:"required"`
+	Public            bool   `json:"public"`
+}
+
+func (m MetaCommentDisclosure) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
 type Metrics struct {
 	ArchiveUID      string          `json:"archive_uid" validate:"required"`
 	DurationByBasis []BasisTotals   `json:"duration_by_basis" validate:"required"`
@@ -13849,6 +14101,23 @@ func (q QueryResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type Receipt struct {
+	Action          string    `json:"action" validate:"required"`
+	ArchiveComplete bool      `json:"archive_complete"`
+	CreatedAt       time.Time `json:"created_at" validate:"required"`
+	ErrorCode       *string   `json:"error_code,omitzero"`
+	ID              int64     `json:"id"`
+	RecipientID     *string   `json:"recipient_id,omitzero"`
+	RemoteID        *string   `json:"remote_id,omitzero"`
+	ReplyMessageID  *int64    `json:"reply_message_id,omitempty"`
+	State           string    `json:"state" validate:"required"`
+	UpdatedAt       time.Time `json:"updated_at" validate:"required"`
+}
+
+func (r Receipt) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
 type Reference struct {

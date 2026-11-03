@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-03
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -20,6 +20,7 @@ appear in full under Inherited Flags.
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
+| Moderate and triage Facebook comments | [comment moderate](#comment-moderate), [comment triage](#comment-triage), [comment queue](#comment-queue), [comment actions](#comment-actions) |
 | Inspect staged room policy | [policy](#policy) |
 | Organize accounts | [identity](#identity), [collection](#collection), [update-account](#update-account), [merge-account](#merge-account) |
 | Read meeting evidence | [meetings](#meetings), [meeting workflow](usage/meetings.md) |
@@ -278,6 +279,76 @@ Credentials are stored in `tokens/imap_<hash>.json` with restricted file permiss
 After adding an account, sync it with `msgvault sync-full`. IMAP accounts use the same `sync` and `sync-full` commands as Gmail. See [Setup Guide](/docs/setup/#add-an-imap-account) for a walkthrough.
 
 ---
+
+Comment commands use the `comment` group. Successes go to stdout. Human errors
+end with a `hint:` line on stderr. With `--json`, the final diagnostic is one
+JSON object on stderr containing `error.code`, `message`, `hint`, and `exit_code`;
+uncertain action failures also include the partial receipt in `error.details`.
+Exit classes are 2 for usage, 3 for invalid values, 4 for missing resources,
+5 for uninitialized features, 6 for conflicting state, 7 for unavailable
+providers or authentication failures, and 1 for other failures.
+
+## comment moderate
+
+Hide, unhide, or delete an archived Facebook comment (unreleased). Requires
+owner authorization and daemon API schema 3.35.0 or newer, an enabled profile,
+and explicit [action opt-ins](configuration.md#facebook-comments). A dry run
+works without write opt-ins or a token and makes no provider request.
+
+```bash
+msgvault comment moderate <message-id> --hide|--unhide|--delete [--dry-run] [--confirm TOKEN] [--resolve-unknown sent|not-sent] [--json]
+```
+
+Choose exactly one action. Delete requires the `confirm` token from a dry run
+and preserves archived history. The token binds the exact archived target and
+action. `--resolve-unknown` cannot be combined with `--dry-run`: inspect the
+provider and receipts before recording `sent` or `not-sent`. Resolution makes
+no provider call; `not-sent` allows a later explicit attempt. Unknown outcomes
+are never retried automatically. `--json` prints coded errors with any partial
+receipt and the command still exits nonzero.
+
+See [comment actions](usage/facebook-comments.md#comment-actions) for permissions,
+recovery, and MCP confirmation.
+
+## comment triage
+
+Set a comment's local `open`, `handled`, or `skipped` label without changing
+Facebook. Requires owner authorization and daemon API schema 3.35.0 or newer.
+
+```bash
+msgvault comment triage <message-id> --state open|handled|skipped [--expect STATE] [--json]
+```
+
+`--expect` requires the current state to match before the update. Later imports
+preserve triage labels. No provider-write opt-in or token is needed.
+
+## comment queue
+
+List archived Facebook comments by local triage state. Requires owner
+authorization and daemon API schema 3.35.0 or newer.
+
+```bash
+msgvault comment queue [--source IDENTIFIER] [--state open|handled|skipped|all] [--limit N] [--before-id ID] [--json]
+```
+
+`--source` matches the exact archive identifier, such as `app:9:page:100`.
+State defaults to `open`; limit defaults to 50 and must be 1–200. Results sort
+by sent time and then ID, ascending. Continue with `--before-id` set to the
+last-seen message ID (`next_before_id` in JSON). The Page's own comments are
+excluded. Deleted comments appear only with `--state all`.
+
+## comment actions
+
+Read receipts for an archived Facebook comment. Requires owner authorization
+and daemon API schema 3.35.0 or newer. Reading receipts never retries an action.
+
+```bash
+msgvault comment actions <message-id> [--json]
+```
+
+Receipts include their state and any remote IDs or archive evidence.
+See [comment actions](usage/facebook-comments.md#comment-actions) before
+resolving an unknown outcome.
 
 ## message-tags
 
@@ -1536,6 +1607,69 @@ the source message has since been deleted. See
 [Discord](/docs/usage/discord/#attachment-backfill-and-limits).
 
 ---
+
+## source facebook-comments add
+
+Register the Page selected by a configured `[[facebook_comments]]` profile
+(unreleased). The daemon reads its named token environment variable and checks
+Page identity before writing the source or confirmed owner identity.
+
+```bash
+msgvault source facebook-comments add [identifier]
+```
+
+No identifier selects all configured profiles. An unknown explicit label fails;
+it never selects another profile or falls back to an email sync. See
+[Facebook Page comments](usage/facebook-comments.md).
+
+---
+
+## source facebook-comments sync
+
+Archive returned organic, visitor, and ad-post comments and nested replies for
+registered Facebook Pages (unreleased). No identifier selects all configured
+profiles. Partial writes are retained and included in cache refreshes even
+when another surface fails. This command does not send replies.
+
+```bash
+msgvault source facebook-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--max-requests` | `1000` | Positive maximum API reads per Page, including identity validation; unfinished scans resume |
+| `--full` | `false` | Explicitly restart selected source scans from fresh cursors, preserving and updating existing rows |
+| `--build-cache` | `false` | Queue a cache refresh even when automatic builds are disabled or delayed |
+| `--no-build-cache` | `false` | Skip the post-sync cache refresh |
+
+See [coverage and resuming](usage/facebook-comments.md#understand-coverage-and-resuming)
+for independent surface progress, request costs, and expired-cursor recovery.
+
+---
+
+## source instagram-comments add
+
+Register the professional account linked to the selected Page, using a
+configured `[[instagram_comments]]` profile (unreleased). No identifier selects
+all configured profiles. Tokens are read on the daemon host.
+
+```bash
+msgvault source instagram-comments add [identifier]
+```
+
+## source instagram-comments sync
+
+Archive returned media captions, comments, and replies from registered linked
+professional accounts (unreleased). A positive request budget includes Page
+and account verification. Partial writes remain searchable, and `--full`
+restarts cursors without deleting rows. No identifier selects all profiles.
+
+```bash
+msgvault source instagram-comments sync [identifier] [--max-requests 1000] [--full]
+```
+
+See [Instagram comments](usage/instagram-comments.md) for setup, identity,
+resuming, and coverage limits. These commands do not send replies.
 
 ## add-chatwoot
 
@@ -5187,9 +5321,15 @@ interrupted pass.
 
 ## gc
 
-Permanently purge **all source-deleted messages** from a SQLite archive,
+Permanently purge source-deleted messages from a SQLite archive,
 compact the database, and remove loose attachment blobs no remaining message
 references. Active messages and messages hidden only by deduplication remain.
+Managed drafts and unresolved comment actions retain the messages needed for
+local recovery, including a comment's parent chain. Resolve those operations
+before purging their messages.
+Surviving Facebook and Instagram comments also retain their archived ancestors,
+so cleanup preserves their parent links and action targets. Those ancestors
+become purgeable when no surviving comment or unresolved receipt needs them.
 This does not contact providers and does not run on PostgreSQL.
 
 ```bash

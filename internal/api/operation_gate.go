@@ -437,6 +437,7 @@ var readOnlyPostRoutePatterns = []string{
 	cardDAVAccountTestPath,
 	kataEvidencePreparePath,
 	"/api/v1/messages/{id}/tags",
+	"/api/v1/messages/{id}/comment-actions",
 	"/api/v1/explore",
 	"/api/v1/explore/groups",
 	"/api/v1/explore/preflight",
@@ -546,6 +547,9 @@ func operationGateRequest(r *http.Request, auth requestAuthentication) (bool, st
 		return false, "", nil
 	}
 	if readOnlyPostRouteRequest(r) {
+		return false, "", nil
+	}
+	if commentTriageRouteRequest(r) {
 		return false, "", nil
 	}
 	if genericSyncTriggerRequest(r) {

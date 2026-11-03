@@ -13,6 +13,9 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	if err := preserveMergedIMAPDrafts(ctx, tx, from, into); err != nil {
 		return fmt.Errorf("preserve merged IMAP draft evidence: %w", err)
 	}
+	if err := preserveMergedMetaCommentReplies(ctx, tx, from); err != nil {
+		return fmt.Errorf("preserve merged comment reply evidence: %w", err)
+	}
 	conversations := map[int64]int64{}
 	for _, c := range plan.conversations {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO source_merge_conversations(conversation_id, original_source_id, original_conversation_id, destination_conversation_id) VALUES (?, ?, ?, ?) ON CONFLICT (conversation_id) DO UPDATE SET destination_conversation_id = excluded.destination_conversation_id`, c.id, from, c.providerID, c.destination); err != nil {
@@ -83,20 +86,21 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
  AND EXISTS (SELECT 1 FROM sources s WHERE s.id = labels.source_id AND s.source_type = 'gmail')`, from, into); err != nil {
 		return err
 	}
-	// Incoming labels are archive organization, not destination provider label IDs.
-	rows, err := tx.QueryContext(ctx, `SELECT l.id, l.name, COALESCE(l.system_role, ''), EXISTS(SELECT 1 FROM source_merge_preserved_labels p WHERE p.label_id = l.id) FROM labels l WHERE l.source_id = ? ORDER BY l.id`, from)
+	// Provider label IDs are source-local; reserved comment triage IDs retain
+	// their meaning across sources, independently of their display names.
+	rows, err := tx.QueryContext(ctx, `SELECT l.id, l.name, COALESCE(l.system_role, ''), COALESCE(l.source_label_id, ''), EXISTS(SELECT 1 FROM source_merge_preserved_labels p WHERE p.label_id = l.id) FROM labels l WHERE l.source_id = ? ORDER BY l.id`, from)
 	if err != nil {
 		return err
 	}
 	type label struct {
-		id         int64
-		name, role string
-		preserved  bool
+		id                        int64
+		name, role, sourceLabelID string
+		preserved                 bool
 	}
 	var labels []label
 	for rows.Next() {
 		var l label
-		if err := rows.Scan(&l.id, &l.name, &l.role, &l.preserved); err != nil {
+		if err := rows.Scan(&l.id, &l.name, &l.role, &l.sourceLabelID, &l.preserved); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -107,12 +111,20 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 	}
 	for _, l := range labels {
 		var target int64
-		var targetRole string
-		err := tx.QueryRowContext(ctx, `SELECT id, COALESCE(system_role, '') FROM labels WHERE source_id = ? AND name = ?`, into, l.name).Scan(&target, &targetRole)
+		var targetRole, targetKey string
+		triage := isCommentTriageLabel(l.sourceLabelID)
+		err := sql.ErrNoRows
+		if triage {
+			err = tx.QueryRowContext(ctx, `SELECT id, COALESCE(system_role, ''), COALESCE(source_label_id, '') FROM labels WHERE source_id = ? AND source_label_id = ? ORDER BY id LIMIT 1`, into, l.sourceLabelID).Scan(&target, &targetRole, &targetKey)
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRowContext(ctx, `SELECT id, COALESCE(system_role, ''), COALESCE(source_label_id, '') FROM labels WHERE source_id = ? AND name = ?`, into, l.name).Scan(&target, &targetRole, &targetKey)
+		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err == nil && (targetRole != l.role || l.preserved) {
+		sameTriage := triage && targetKey == l.sourceLabelID
+		if err == nil && !sameTriage && (targetRole != l.role || l.preserved || triage || isCommentTriageLabel(targetKey)) {
 			// Sharing a name does not prove the same provider role. Keep the
 			// incoming role without changing the destination label's meaning.
 			// Previously archived roles also stay separate across later merges.
@@ -130,7 +142,11 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 			}
 		}
 		if target == 0 {
-			if _, err := tx.ExecContext(ctx, `UPDATE labels SET source_id = ?, name = ?, source_label_id = NULL WHERE id = ?`, into, l.name, l.id); err != nil {
+			var sourceLabelID any
+			if triage {
+				sourceLabelID = l.sourceLabelID
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE labels SET source_id = ?, name = ?, source_label_id = ? WHERE id = ?`, into, l.name, sourceLabelID, l.id); err != nil {
 				return err
 			}
 			if l.role != "" {
