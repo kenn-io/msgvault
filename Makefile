@@ -629,7 +629,7 @@ help:
 	@echo "  web-generate   - Regenerate browser API types from the OpenAPI schema"
 	@echo "  web-check      - Check browser types and generated API artifacts"
 	@echo "  web-test       - Run browser application unit tests"
-	@echo "  web-test-browser - Run browser application Playwright tests"
+	@echo "  web-test-browser - Run browser and virtualizer Playwright tests"
 	@echo "  web-build      - Build the browser application"
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"
