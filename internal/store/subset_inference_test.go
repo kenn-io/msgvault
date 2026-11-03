@@ -127,3 +127,64 @@ func TestCopySubsetPreservesInferenceDebtWithoutApproval(t *testing.T) {
 		})
 	}
 }
+
+// A merged enrichment-created person keeps its inferred name row as the owner
+// of display_name. A profile subset must carry that ownership, or retiring the
+// copied name leaves the stale display name exported as FN. A subset without
+// profiles must not turn the inferred name into a declared display name.
+func TestCopySubsetPreservesInferredDisplayNameOwner(t *testing.T) {
+	tests := []struct {
+		name        string
+		options     CopySubsetOptions
+		wantRetired bool
+	}{
+		{name: "profiles", options: CopySubsetOptions{IncludeProfiles: true}, wantRetired: true},
+		{name: "identity only"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			ctx := t.Context()
+			sourcePath := createTestSourceDB(t, t.TempDir(), 5)
+			source, err := Open(sourcePath)
+			require.NoError(err)
+			created, err := source.CreateStandalonePersonContext(ctx, PersonCreateInput{
+				Name: "Alex Agent", Source: ProvenanceEnrichment,
+			})
+			require.NoError(err)
+			promoted, _, err := source.CreatePersonFromParticipant(1)
+			require.NoError(err)
+			_, err = source.MergePersonsContext(ctx, PersonMergeRequest{
+				SurvivorID: created.ID, AbsorbedID: promoted.ID,
+				ExpectedSurvivorRevision: created.Revision, ExpectedAbsorbedRevision: promoted.Revision,
+				IdempotencyKey: "subset-display-name-owner", Actor: "test",
+			})
+			require.NoError(err)
+			require.NoError(source.Close())
+
+			dstDir := filepath.Join(t.TempDir(), "dst")
+			_, err = CopySubsetWithOptions(sourcePath, dstDir, 5, test.options)
+			require.NoError(err)
+			destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+			require.NoError(err)
+			t.Cleanup(func() { _ = destination.Close() })
+
+			names, err := destination.ListPersonNamesContext(ctx, created.ID, true)
+			require.NoError(err)
+			if !test.wantRetired {
+				assert.Empty(names)
+				copied, err := destination.GetPersonContext(ctx, created.ID)
+				require.NoError(err)
+				assert.Nil(copied.DisplayName,
+					"an inferred display name whose name row is not copied must not become a declared name")
+				return
+			}
+			require.Len(names, 1)
+			require.NoError(destination.SupersedePersonNameContext(ctx, created.ID, names[0].Envelope.ID, nil))
+			retired, err := destination.GetPersonContext(ctx, created.ID)
+			require.NoError(err)
+			assert.Nil(retired.DisplayName, "the copied inferred name row must retain ownership of its mirror")
+		})
+	}
+}

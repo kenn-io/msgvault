@@ -389,7 +389,8 @@ import (
 // 3.35.0 adds archived calendar occurrence listing.
 // 3.36.0 adds stored plaintext range counts to document indexing status.
 // 3.37.0 omits first_at and last_at on person summaries with no sent or received messages, and returns participants with no sent or received messages instead of 404.
-const APISchemaVersion = "3.37.0"
+// 3.38.0 adds standalone person creation at POST /api/v1/people/create.
+const APISchemaVersion = "3.38.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

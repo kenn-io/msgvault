@@ -75,6 +75,44 @@ func TestSchemaVersionDocbankUpgrade(t *testing.T) {
 	assert.Zero(count)
 }
 
+func TestSchemaVersionAddsDisplayNameOwnerOnUpgrade(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	s := testutil.NewTestStore(t)
+	_, err := s.DB().Exec(s.Rebind("UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'"),
+		strconv.Itoa(store.SchemaVersion-1))
+	require.NoError(err)
+	var ownerColumns int
+	require.NoError(s.DB().QueryRow(displayNameOwnerColumnCountQuery()).Scan(&ownerColumns))
+	if ownerColumns > 0 {
+		_, err = s.DB().Exec(`ALTER TABLE persons DROP COLUMN display_name_source_name_id`)
+		require.NoError(err)
+	}
+	_, err = s.DB().Exec(`INSERT INTO persons (vcard_uid, display_name)
+		VALUES ('legacy-name-owner-upgrade', 'Legacy Example')`)
+	require.NoError(err)
+
+	require.NoError(s.InitSchemaContext(t.Context()))
+	ownerColumns = 0
+	require.NoError(s.DB().QueryRow(displayNameOwnerColumnCountQuery()).Scan(&ownerColumns))
+	assert.Equal(1, ownerColumns)
+	var displayName string
+	require.NoError(s.DB().QueryRow(`SELECT display_name FROM persons
+		WHERE vcard_uid = 'legacy-name-owner-upgrade'`).Scan(&displayName))
+	assert.Equal("Legacy Example", displayName,
+		"schema upgrade keeps the existing curated display name")
+}
+
+func displayNameOwnerColumnCountQuery() string {
+	if store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		return `SELECT COUNT(*) FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = 'persons'
+			AND column_name = 'display_name_source_name_id'`
+	}
+	return `SELECT COUNT(*) FROM pragma_table_info('persons')
+		WHERE name = 'display_name_source_name_id'`
+}
+
 func TestSchemaVersionSQLiteFailedUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -258,6 +296,7 @@ var (
 		16: "62de77a40a4f77177c2bab8d38ee3df0c1c269ca2818c11ae95ad3f0a7e23656",
 		17: "b8cd27ce189a5c7be16d8bef6208a46e622cf796362eb40ba19043fd5fa08bdf",
 		18: "aa3901c4c46a3dbf2575830f2ff6fc16f2f9f66ce8e2c395c8657663db56b8f0",
+		19: "563412c4c87743a4166ca741c2b92c0fe9315cf6c8e7fd9c63e6e821496dfe37",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -278,6 +317,7 @@ var (
 		16: "ccfde395fe0b24f87e1a32375c67eab640f768083de3e3e5ef965ab918b08903",
 		17: "08e0d79f0aced4f968ff10240fbd16b8af90bab114e8ac15e2dde7500c8eed86",
 		18: "0b50a4dde53b4c696b678b26f07bf34d09809231d76c264603a00fc1865b9f07",
+		19: "69b74bed1d1be006a51e8ea5ec3f9c6d709f4425dc2d7605efa2fbc0689c89c9",
 	}
 )
 

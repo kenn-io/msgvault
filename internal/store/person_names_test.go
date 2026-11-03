@@ -158,6 +158,46 @@ func TestAddPersonNameRejectsInvalidInput(t *testing.T) {
 	require.ErrorIs(err, store.ErrPersonNotFound)
 }
 
+func TestAddPersonNameRejectsMalformedVCardText(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		input store.PersonNameInput
+	}{
+		{
+			name: "formatted value with carriage return",
+			input: store.PersonNameInput{
+				NameKind: store.PersonNameFormatted, Formatted: new("Alice\rExample"),
+				OriginalValue: "Alice Example",
+			},
+		},
+		{
+			name: "structured value with NUL",
+			input: store.PersonNameInput{
+				NameKind:   store.PersonNameStructured,
+				FamilyName: new("Example\x00Name"), GivenName: new("Alice"),
+			},
+		},
+		{
+			name: "phonetic parameter with newline",
+			input: store.PersonNameInput{
+				NameKind:   store.PersonNamePhonetic,
+				FamilyName: new("Example"), GivenName: new("Alice"),
+				PhoneticSystem: new("IPA\nX-EVIL:true"),
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			st := storetest.New(t).Store
+			personID := newTestPerson(t, st)
+			test.input.Envelope.Source = store.ProvenanceUser
+
+			_, err := st.AddPersonNameContext(t.Context(), personID, test.input)
+			require.Error(err)
+		})
+	}
+}
+
 func partialDate(year, month, day int) store.PartialDate {
 	date := store.PartialDate{}
 	if year != 0 {

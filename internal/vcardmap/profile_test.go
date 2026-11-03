@@ -72,6 +72,19 @@ func TestProjectTemporalValuesUseVCardWireSyntax(t *testing.T) {
 		projectedByOwner(t, properties, "person_attribute_values", 4, "value").Property.RawValue)
 }
 
+func TestProjectPersonPropertiesPreservesDisplayNameWhitespaceInDerivedFN(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	displayName := " Alex "
+	snapshot := store.PersonVCardSnapshot{Profile: store.PersonProfile{
+		Person: store.Person{ID: 1, DisplayName: &displayName},
+	}}
+
+	properties, _, err := projectPersonProperties(snapshot)
+	require.NoError(err)
+	assert.Equal(" Alex ", projectedByOwner(t, properties, "persons", 1, "display_name").Property.RawValue)
+}
+
 func TestPersonNotesProjectToVCard(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

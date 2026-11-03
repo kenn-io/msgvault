@@ -18,6 +18,7 @@ import (
 const (
 	migrationDirectoryProjectionV1 = "directory_projection_v1"
 	personNamesTableName           = "person_names"
+	personAddressesTableName       = "person_addresses"
 )
 
 // ensureDirectoryProjectionInfrastructure installs the durable, Go-canonical
