@@ -16,8 +16,8 @@ func TestOutputMessageTextBodyAlternatives(t *testing.T) {
 			for _, tc := range []struct {
 				name, text, html, snippet, want string
 			}{
-				{"HTML-only", "", "<p>Full delivery details</p>", "Short preview", "Full delivery details"},
-				{"HTML-only without snippet", "", "<p>Full delivery details</p>", "", "Full delivery details"},
+				{"HTML without stored plain text", "", "<p>Full delivery details</p>", "Short preview", "Full delivery details"},
+				{"HTML without stored plain text or snippet", "", "<p>Full delivery details</p>", "", "Full delivery details"},
 				{"plain text preferred", "Plain delivery details", "<p>HTML alternative</p>", "Short preview", "Plain delivery details"},
 				{"HTML without readable text", "", "<img src=x.png>", "Photo from Bob", "Photo from Bob"},
 			} {

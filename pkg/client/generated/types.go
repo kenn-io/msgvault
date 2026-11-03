@@ -8007,7 +8007,7 @@ type MessageDetail struct {
 	BodyHTML    *string          `json:"body_html,omitzero"`
 	BodyOmitted *bool            `json:"body_omitted,omitempty"`
 
-	// BodyText Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback.
+	// BodyText Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback.
 	BodyText       *string             `json:"body_text,omitzero"`
 	Calendar       *CalendarProjection `json:"calendar,omitempty"`
 	Cc             []string            `json:"cc,omitempty"`

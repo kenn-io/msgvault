@@ -342,7 +342,7 @@ type MessageDetail struct {
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
 	Body     string  `json:"body"`
-	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback."`
+	BodyText *string `json:"body_text,omitzero" nullable:"false" doc:"Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback."`
 	BodyHTML string  `json:"body_html,omitempty"`
 	IsFromMe bool    `json:"is_from_me,omitzero"`
 	// BodyOmitted marks a conversation-window message whose body was left

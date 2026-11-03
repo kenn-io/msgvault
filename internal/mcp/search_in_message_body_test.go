@@ -13,7 +13,7 @@ func TestSearchInMessageBodyAlternatives(t *testing.T) {
 	for _, tc := range []struct {
 		name, text, html, format string
 	}{
-		{"HTML-only", "", "<p>Résumé</p>\n<p>delivery package</p>", bodyFormatHTML},
+		{"HTML without stored plain text", "", "<p>Résumé</p>\n<p>delivery package</p>", bodyFormatHTML},
 		{"plain text preferred", "plain delivery", "<p>HTML delivery</p>", bodyFormatText},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

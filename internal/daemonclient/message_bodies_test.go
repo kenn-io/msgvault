@@ -21,7 +21,7 @@ import (
 )
 
 // Exercise both production detail handlers and both client conversion layers.
-// HTML-only and identical alternatives cannot be distinguished from legacy body.
+// HTML without stored plain text and identical alternatives cannot be distinguished from legacy body.
 func TestMessageBodiesThroughDaemon(t *testing.T) {
 	for _, withEngine := range []bool{false, true} {
 		t.Run(map[bool]string{false: "store", true: "engine"}[withEngine], func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestMessageBodiesThroughDaemon(t *testing.T) {
 			for _, tc := range []struct{ name, text, html string }{
 				{"plain", "Plain text", ""},
 				{"multipart", "Plain alternative", "<p>HTML alternative</p>"},
-				{"html_only", "", "<p>Only HTML</p>"},
+				{"html_without_stored_text", "", "<p>Only HTML</p>"},
 				{"identical", "<p>Same bytes</p>", "<p>Same bytes</p>"},
 				{"empty", "", ""},
 			} {

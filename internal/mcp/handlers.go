@@ -1695,10 +1695,7 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 	bodyFormat := bodyFormatText
 	switch requestedBodyFormat {
 	case bodyFormatAuto:
-		if fullBody == "" && msg.BodyHTML != "" {
-			fullBody = msg.BodyHTML
-			bodyFormat = bodyFormatHTML
-		}
+		fullBody, bodyFormat = automaticMessageBody(msg)
 	case bodyFormatText:
 	case bodyFormatHTML:
 		fullBody = msg.BodyHTML
@@ -1899,10 +1896,7 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 		return toolErrorResult("message not found"), nil
 	}
 
-	body := msg.BodyText
-	if body == "" {
-		body = msg.BodyHTML
-	}
+	body, _ := automaticMessageBody(msg)
 	allMatches := findTermMatches(body, queryStr)
 	total := int64(len(allMatches))
 	if offset >= len(allMatches) {
@@ -1916,6 +1910,14 @@ func (h *handlers) searchInMessage(ctx context.Context, req toolRequest) (*toolR
 		paginatedResponse: newPaginatedResponse(allMatches[offset:end], total, offset),
 		HiddenTextPresent: msg.HiddenTextPresent,
 	})
+}
+
+// automaticMessageBody keeps HTML raw so search offsets match get_message windows.
+func automaticMessageBody(msg *query.MessageDetail) (string, string) {
+	if msg.BodyText == "" && msg.BodyHTML != "" {
+		return msg.BodyHTML, bodyFormatHTML
+	}
+	return msg.BodyText, bodyFormatText
 }
 
 func findTermMatches(body, term string) []messageMatch {

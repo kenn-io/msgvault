@@ -11,7 +11,7 @@ export interface MessageDetail {
   body: string;
   body_html?: string;
   body_omitted?: boolean;
-  /** Canonical plain-text body, including an empty string for HTML-only mail. Older servers may omit this field; body retains its legacy HTML fallback. */
+  /** Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback. */
   body_text?: string;
   /** Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0. */
   calendar?: CalendarProjection;

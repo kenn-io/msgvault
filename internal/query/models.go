@@ -8,7 +8,6 @@ import (
 	"maps"
 	"time"
 
-	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -105,14 +104,6 @@ type MessageDetail struct {
 	// Metadata
 	Labels      []string         `json:"labels"`
 	Attachments []AttachmentInfo `json:"attachments"`
-}
-
-// TextBody returns plain text, falling back to text extracted from HTML.
-func (m *MessageDetail) TextBody() string {
-	if m.BodyText != "" {
-		return m.BodyText
-	}
-	return mime.StripHTML(m.BodyHTML)
 }
 
 // Address represents an email address with optional display name.
