@@ -44,6 +44,9 @@ __pycache__/
 .gocache/
 .gopath/
 
+# Test events gotestsum records for CI artifacts
+/gotestsum/
+
 # IDE
 .idea/
 .vscode/
