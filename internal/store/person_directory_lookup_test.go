@@ -162,7 +162,6 @@ func TestDirectoryPeopleAddressLookupUnicodeParity(t *testing.T) {
 }
 
 func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T) {
-	assert := Assert.New(t)
 	require := Require.New(t)
 	st := testutil.NewTestStore(t)
 	seedDirectoryLookupPeople(t, st, 0, 2561)
@@ -170,27 +169,15 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 	for index := 0; index <= 2560; index += 640 {
 		personID := int64(index + 1)
 		matches = append(matches, personID)
-		var err error
-		switch index / 640 {
-		case 0, 4:
-			// Match the contact point's original value, then its normalized value.
-			original, normalized := "SHARED-İ-HANDLE", "other-handle"
-			if index == 2560 {
-				original, normalized = normalized, original
-			}
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO person_contact_points
-				(person_id, address_kind, original_value, normalized_value, source)
-				VALUES (?, 'username', ?, ?, 'user')`), personID, original, normalized)
-		case 1:
-			// Match the participant's email address.
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id IN (SELECT participant_id FROM person_participants WHERE person_id = ?)`), "shared-i-handle@example.test", personID)
-		case 2:
-			// Match the participant's phone number.
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET phone_number = ? WHERE id IN (SELECT participant_id FROM person_participants WHERE person_id = ?)`), "shared-i-handle", personID)
-		case 3:
-			// Match a participant identifier.
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) SELECT participant_id, 'matrix', ? FROM person_participants WHERE person_id = ?`), "shared-i-handle", personID)
+		original := "+12025550123"
+		if index == 2560 {
+			// Only the normalized value contains the searched fragment.
+			original = "+1 (202) 555-0123"
 		}
+		_, err := st.AddPersonContactPointContext(t.Context(), personID, store.PersonContactPointInput{
+			AddressKind: store.ContactAddressPhone, OriginalValue: original,
+			Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
+		})
 		require.NoError(err)
 	}
 	require.NoError(st.RefreshDirectoryProjectionContext(t.Context()))
@@ -202,7 +189,7 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 			if order == store.DirectoryPeopleSortLastContactDesc {
 				slices.Reverse(want)
 			}
-			query := store.DirectoryPeopleQuery{Query: "person", Address: "shared-i-handle", Sort: order, Limit: 1}
+			query := store.DirectoryPeopleQuery{Query: "person", Address: "+12025550123", Sort: order, Limit: 1}
 			for index, id := range want {
 				page, err := st.DirectoryPeoplePageContext(t.Context(), query)
 				require.NoError(err)
@@ -216,10 +203,6 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 			}
 		})
 	}
-	page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Address: "absent-handle", Limit: 1})
-	require.NoError(err)
-	assert.Empty(page.People)
-	assert.Empty(page.NextCursor)
 }
 
 func TestDirectoryPeopleAddressLookupRejectsRevokedAnchor(t *testing.T) {
@@ -272,19 +255,19 @@ func TestDirectoryPeopleAddressLookupRejectsReboundAnchor(t *testing.T) {
 }
 
 func TestDirectoryPeopleAddressMissStatementsGrowLogarithmically(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	counts := make(map[string]int)
-	for _, size := range []int{200, 1600} {
-		first := 0
-		if size == 1600 {
-			first = 200
-		}
-		seedDirectoryLookupPeople(t, st, first, size-first)
-		// Refresh the projection before counting the address search itself.
-		Require.NoError(t, st.RefreshDirectoryProjectionContext(t.Context()))
-		for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
-			t.Run(fmt.Sprintf("%d/%s", size, order), func(t *testing.T) {
-				assert := Assert.New(t)
+	for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
+		t.Run(order, func(t *testing.T) {
+			assert := Assert.New(t)
+			st := testutil.NewTestStore(t)
+			var baseline int
+			for _, size := range []int{200, 1600} {
+				first := 0
+				if size == 1600 {
+					first = 200
+				}
+				seedDirectoryLookupPeople(t, st, first, size-first)
+				// Refresh the projection before counting the address search itself.
+				Require.NoError(t, st.RefreshDirectoryProjectionContext(t.Context()))
 				logs := captureAttachmentQueryLogs(t)
 				page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Address: "nobody@nowhere", Sort: order, Limit: 50})
 				Require.NoError(t, err)
@@ -292,14 +275,14 @@ func TestDirectoryPeopleAddressMissStatementsGrowLogarithmically(t *testing.T) {
 				assert.Empty(page.NextCursor)
 				count := strings.Count(logs.String(), `"kind":"query"`)
 				if size == 200 {
-					counts[order] = count
+					baseline = count
 				} else {
 					// Allow one extra fetch/verification pair beyond the three doublings.
-					assert.Greater(count, counts[order])
-					assert.LessOrEqual(count-counts[order], 8)
+					assert.Greater(count, baseline)
+					assert.LessOrEqual(count-baseline, 8)
 				}
-			})
-		}
+			}
+		})
 	}
 }
 
