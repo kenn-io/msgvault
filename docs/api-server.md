@@ -1773,7 +1773,7 @@ Full message details including body and attachment metadata.
 
 The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the plain-text body when one exists; for HTML-only messages, it falls back to the HTML body so callers still receive message content.
 
-API schema 3.35.0 adds `body_text` to this single-message endpoint. It preserves the canonical plain-text body and is an empty string for HTML-only mail. Clients talking to older servers that omit `body_text` can use `body` as the legacy fallback. Conversation windows keep their existing `body` and `body_html` representation.
+API schema 3.41.0 adds `body_text` to this single-message endpoint. It preserves the canonical plain-text body and is an empty string for HTML-only mail. Clients talking to older servers that omit `body_text` can use `body` as the legacy fallback. Conversation windows keep their existing `body` and `body_html` representation.
 
 ---
 
