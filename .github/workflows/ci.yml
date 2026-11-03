@@ -125,7 +125,7 @@ jobs:
   checks:
     env:
       DOWNLOAD_RETRY: kit-retry 3 5
-      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
+      GOLANGCI_LINT_CACHE: ${{ github.workspace }}/golangci-lint
     needs: changes
     if: *go-changed
     runs-on: ubuntu-26.04
