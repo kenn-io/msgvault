@@ -99,7 +99,7 @@ func (s *Store) ClaimMetaCommentActionContext(ctx context.Context, c MetaComment
 		if a.State != metaCommentActionFailed {
 			return nil
 		}
-		result, updateErr := tx.ExecContext(ctx, s.Rebind(`UPDATE meta_comment_actions SET state='claimed',error_code=NULL,remote_id=NULL,remote_recipient_id=NULL,reply_message_id=NULL,dispatched_at=NULL,row_revision=row_revision+1,updated_at=? WHERE id=? AND row_revision=? AND state='failed'`), time.Now().UTC(), a.ID, a.RowRevision)
+		result, updateErr := tx.ExecContext(ctx, s.Rebind(`UPDATE meta_comment_actions SET state='claimed',error_code=NULL,remote_id=NULL,remote_recipient_id=NULL,reply_message_id=NULL,dispatched_at=NULL,target_author_id=COALESCE(target_author_id,NULLIF(?,'')),row_revision=row_revision+1,updated_at=? WHERE id=? AND row_revision=? AND state='failed'`), c.TargetAuthorID, time.Now().UTC(), a.ID, a.RowRevision)
 		if updateErr != nil {
 			return fmt.Errorf("reclaim comment action: %w", updateErr)
 		}
@@ -215,4 +215,42 @@ func (s *Store) MetaCommentTargetContext(ctx context.Context, id int64) (m MetaC
 		err = ErrMessageNotFound
 	}
 	return
+}
+
+// HasRecentPrivateCommentReplyContext compares archived sender identities within
+// one source; the opaque provider recipient ID never participates in linking.
+func (s *Store) HasRecentPrivateCommentReplyContext(ctx context.Context, sourceID, messageID int64, since time.Time) (bool, error) {
+	return s.HasRecentPrivateCommentReplyToAuthorContext(ctx, sourceID, messageID, "", since)
+}
+
+// HasRecentPrivateCommentReplyToAuthorContext keeps the source-scoped provider
+// author evidence usable after GC removes the answered comment. Older receipts
+// without that evidence can still use their archived sender identity.
+func (s *Store) HasRecentPrivateCommentReplyToAuthorContext(ctx context.Context, sourceID, messageID int64, authorID string, since time.Time) (bool, error) {
+	var exists bool
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT EXISTS (
+ SELECT 1 FROM meta_comment_actions a WHERE a.source_id=? AND a.action='private_reply'
+ AND a.state<>'failed' AND COALESCE(a.dispatched_at,a.created_at)>=?
+ AND (a.message_id IS NULL OR a.message_id<>?)
+ AND (a.target_author_id=NULLIF(?,'') OR ((a.target_author_id IS NULL OR ?='')
+ AND EXISTS (SELECT 1 FROM messages m WHERE m.id=a.message_id
+ AND m.source_id=a.source_id AND m.sender_id=(SELECT sender_id FROM messages WHERE id=? AND source_id=?)))))`), sourceID, since.UTC(), messageID, authorID, authorID, messageID, sourceID).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("read recent private comment reply: %w", err)
+	}
+	return exists, nil
+}
+
+const succeededMetaCommentReplyQuery = `SELECT EXISTS (SELECT 1 FROM meta_comment_actions
+		WHERE source_id=? AND source_identifier=? AND action='public_reply' AND state='succeeded' AND remote_id=?)`
+
+// HasSucceededMetaCommentReplyContext proves ownership of one remote reply
+// within the exact dispatch source, independently of provider actor ID families.
+func (s *Store) HasSucceededMetaCommentReplyContext(ctx context.Context, sourceID int64, sourceIdentifier, remoteID string) (bool, error) {
+	var sent bool
+	err := s.db.QueryRowContext(ctx, s.Rebind(succeededMetaCommentReplyQuery), sourceID, sourceIdentifier, remoteID).Scan(&sent)
+	if err != nil {
+		return false, fmt.Errorf("read sent comment reply ownership: %w", err)
+	}
+	return sent, nil
 }

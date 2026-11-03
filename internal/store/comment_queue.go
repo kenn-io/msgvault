@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 type CommentTriageState string
@@ -183,8 +185,20 @@ func (s *Store) ListCommentQueueContext(ctx context.Context, f CommentQueueFilte
 	if f.State != "all" {
 		query += ` AND m.deleted_from_source_at IS NULL`
 	}
+	timestampKey := func(column string) string {
+		if s.IsPostgreSQL() {
+			return column
+		}
+		return sqliteutil.TimestampKeyFunction + "(" + column + ")"
+	}
 	if f.BeforeID != 0 {
-		query += ` AND EXISTS (SELECT 1 FROM messages cursor WHERE cursor.id=? AND ((cursor.sent_at IS NULL AND m.sent_at IS NOT NULL) OR m.sent_at>cursor.sent_at OR ((m.sent_at=cursor.sent_at OR (m.sent_at IS NULL AND cursor.sent_at IS NULL)) AND m.id>cursor.id)))`
+		messageSentAt := timestampKey("m.sent_at")
+		cursorSentAt := timestampKey("cursor.sent_at")
+		query += ` AND EXISTS (SELECT 1 FROM messages cursor WHERE cursor.id=? AND (
+			(cursor.sent_at IS NULL AND m.sent_at IS NOT NULL)
+			OR (cursor.sent_at IS NOT NULL AND m.sent_at IS NOT NULL AND ` + messageSentAt + `>` + cursorSentAt + `)
+			OR (((cursor.sent_at IS NULL AND m.sent_at IS NULL) OR (cursor.sent_at IS NOT NULL AND m.sent_at IS NOT NULL AND ` + messageSentAt + `=` + cursorSentAt + `)) AND m.id>cursor.id)
+		))`
 		args = append(args, f.BeforeID)
 	}
 	query += `) SELECT * FROM queue`
@@ -192,7 +206,7 @@ func (s *Store) ListCommentQueueContext(ctx context.Context, f CommentQueueFilte
 		query += ` WHERE triage=?`
 		args = append(args, f.State)
 	}
-	query += ` ORDER BY CASE WHEN sent_at IS NULL THEN 0 ELSE 1 END,sent_at,message_id LIMIT ?`
+	query += ` ORDER BY CASE WHEN sent_at IS NULL THEN 0 ELSE 1 END,` + timestampKey("sent_at") + `,message_id LIMIT ?`
 	args = append(args, f.Limit)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {

@@ -47,13 +47,13 @@ func configuredFacebookCommentsClient(source config.FacebookCommentsSource) (*me
 	return client, nil
 }
 
-func registerFacebookCommentsProfile(ctx context.Context, st *store.Store, source config.FacebookCommentsSource) (*store.Source, error) {
+func registerFacebookCommentsProfile(ctx context.Context, st *store.Store, source config.FacebookCommentsSource) error {
 	client, err := configuredFacebookCommentsClient(source)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	registered, err := meta.NewImporter(st, client).Register(ctx, source.AppID, source.PageID)
-	return registered, metaSourceStateError(err, "facebook-comments")
+	_, err = meta.NewImporter(st, client).Register(ctx, source.AppID, source.PageID)
+	return metaSourceStateError(err, "facebook-comments")
 }
 
 func importFacebookCommentsProfile(ctx context.Context, st *store.Store, source config.FacebookCommentsSource, options meta.ImportOptions) (sum *meta.ImportSummary, err error) {
@@ -86,8 +86,8 @@ func registerScheduledFacebookCommentsJob(sched *scheduler.Scheduler, source con
 
 func newAddFacebookCommentsCmd() *cobra.Command {
 	return &cobra.Command{
-		Use: "add [identifier]", Short: "Register a configured Facebook Page for comment sync",
-		Long: "Verify Page identity and register selected [[facebook_comments]] profiles. With no identifier, register all configured profiles. The Page token is read only from the named daemon environment variable.",
+		Use: "add [identifier]", Short: "Register a configured Facebook Page",
+		Long: "With no identifier, registers all configured Facebook Pages. Tokens come from the named daemon environment variable.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			state := invocationFromCommand(cmd)
 			if state == nil || state.cfg == nil {
@@ -107,12 +107,12 @@ func newAddFacebookCommentsCmd() *cobra.Command {
 			defer cleanup()
 			var errs []error
 			for _, profile := range profiles {
-				source, err := registerFacebookCommentsProfile(cmd.Context(), st, profile)
+				err := registerFacebookCommentsProfile(cmd.Context(), st, profile)
 				if err != nil {
 					errs = append(errs, fmt.Errorf("facebook profile %s: %w", profile.Identifier, err))
 					continue
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Facebook Page %s for %s (source %d)\n", profile.PageID, profile.Identifier, source.ID)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Registered Facebook Page %s for %s\n", profile.PageID, profile.Identifier)
 			}
 			return errors.Join(errors.Join(errs...), runPostSourceCreateMigrationsForInvocation(st, state))
 		},
@@ -123,7 +123,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 	options := meta.ImportOptions{MaxRequests: meta.DefaultMaxRequests}
 	cmd := &cobra.Command{
 		Use: "sync [identifier]", Short: "Archive Facebook Page comments and nested replies",
-		Long: "Sync Facebook Page comments for registered [[facebook_comments]] profiles. Scan returned organic, visitor and ad posts, retaining independent resumable progress for each surface. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.",
+		Long: "Sync registered Facebook Pages.",
 		Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 			if options.MaxRequests <= 0 {
 				return opserr.Invalid(errors.New("--max-requests must be positive"))
@@ -144,7 +144,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Saving Facebook comment checkpoints...")
+			ctx, stop := withInterruptCancel(cmd, "\nInterrupted.")
 			defer stop()
 			var errs []error
 			for _, profile := range profiles {
@@ -168,7 +168,7 @@ func newSyncFacebookCommentsCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().IntVar(&options.MaxRequests, "max-requests", meta.DefaultMaxRequests, "maximum API reads per Page, including identity checks")
-	cmd.Flags().BoolVar(&options.Full, "full", false, "restart selected source scans with fresh cursors; preserve and update archived rows")
+	cmd.Flags().BoolVar(&options.Full, "full", false, "Rescan selected sources; preserve archived history")
 	return cmd
 }
 

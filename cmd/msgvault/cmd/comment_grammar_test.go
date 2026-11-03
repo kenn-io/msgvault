@@ -38,6 +38,9 @@ func TestCommentGroupedPathsAndDiagnostics(t *testing.T) {
 		{[]string{"moderate", "0", "--hide", "--json"}, 3, "validation"},
 		{[]string{"moderate", "7", "--typo", "--json"}, 2, "usage"},
 		{[]string{"queue", "--limit", "bad", "--json"}, 3, "validation"},
+		{[]string{"reply", "7", "--body", "Example reply", "--json"}, 2, "usage"},
+		{[]string{"reply", "7", "--visibility", "invalid", "--body", "Example reply", "--json"}, 3, "validation"},
+		{[]string{"reply", "7", "--visibility", "public", "--json"}, 2, "usage"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			assert := assert.New(t)
@@ -71,7 +74,7 @@ func TestCommentGroupedPathsAndDiagnostics(t *testing.T) {
 	assertions.Empty(stderr)
 	root := &cobra.Command{Use: "msgvault"}
 	root.AddCommand(newCommentGroup(b))
-	for _, name := range []string{"moderate", "triage", "queue", "actions"} {
+	for _, name := range []string{"reply", "moderate", "triage", "queue", "actions"} {
 		leaf, rest, err := root.Find([]string{"comment", name})
 		requirements.NoError(err)
 		assertions.Empty(rest)
@@ -147,6 +150,7 @@ func TestCommentJSONModeRespectsFlagValues(t *testing.T) {
 	for _, args := range [][]string{
 		{"queue", "--source", "--json", "--limit", "bad"},
 		{"queue", "--json", "--typo", "--json=false"},
+		{"reply", "7", "--body", "--json", "--visibility", "invalid"},
 	} {
 		out, stderr, err := groupedCommentCLI(t, &cliCommentBackend{}, args...)
 		require.Error(t, err)

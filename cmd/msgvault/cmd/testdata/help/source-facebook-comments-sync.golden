@@ -1,11 +1,11 @@
-Sync Facebook Page comments for registered [[facebook_comments]] profiles. Scan returned organic, visitor and ad posts, retaining independent resumable progress for each surface. Tokens come from the daemon environment. Partial writes stay searchable; missing or inaccessible objects never delete archived history.
+Sync registered Facebook Pages.
 
 Usage:
   msgvault source facebook-comments sync [identifier] [flags]
 
 Flags:
       --build-cache        refresh analytics cache after this sync
-      --full               restart selected source scans with fresh cursors; preserve and update archived rows
+      --full               Rescan selected sources; preserve archived history
   -h, --help               help for sync
       --max-requests int   maximum API reads per Page, including identity checks (default 1000)
       --no-build-cache     skip analytics cache refresh after this sync

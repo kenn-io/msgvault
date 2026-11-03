@@ -201,3 +201,35 @@ func TestLoadStateInstagramSurvivesWebhookCompletion(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(state, got)
 }
+
+func TestSaveResponseReadRejectsSupersededSync(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, _, imp, src := setupImport(t)
+	oldSyncID, err := st.StartSync(src.ID, SourceType)
+	require.NoError(err)
+	oldImporter := *imp
+	oldImporter.store = st.ScopedToSync(src.ID, oldSyncID)
+	oldRun := &importRun{imp: &oldImporter, source: src, state: freshState(src.Identifier)}
+	commentID := "100_200_300"
+	require.NoError(oldRun.saveResponseRead(t.Context(), commentID, responseRead{SyncID: oldSyncID, Request: 1}))
+	require.NoError(st.FailSync(oldSyncID, "synthetic supersession"))
+
+	newSyncID, err := st.StartSync(src.ID, SourceType)
+	require.NoError(err)
+	t.Cleanup(func() { _ = st.FailSync(newSyncID, "test complete") })
+	newImporter := *imp
+	newImporter.store = st.ScopedToSync(src.ID, newSyncID)
+	newRun := &importRun{imp: &newImporter, source: src, state: freshState(src.Identifier)}
+	currentRead := responseRead{SyncID: newSyncID, Request: 2}
+	require.NoError(newRun.saveResponseRead(t.Context(), commentID, currentRead))
+
+	err = oldRun.saveResponseRead(t.Context(), commentID, responseRead{SyncID: oldSyncID, Request: 9})
+	require.ErrorIs(err, store.ErrSyncRunSuperseded)
+
+	blob, found, err := st.GetArchiveMarker(t.Context(), oldRun.responseReadKey(commentID))
+	require.NoError(err)
+	require.True(found)
+	var saved responseRead
+	require.NoError(json.Unmarshal([]byte(blob), &saved))
+	assert.Equal(currentRead, saved)
+}

@@ -27,8 +27,8 @@ func newCommentCommand(name string, backend commentActionBackend) *cobra.Command
 	var req meta.ActionRequest
 	var filter api.CommentQueueRequest
 	var hide, unhide, remove, asJSON bool
-	var state, expect string
-	descriptions := map[string]string{"moderate": "Hide, unhide or delete an archived Facebook comment", "triage": "Set a comment's local triage state", "queue": "List archived comments by triage state", "actions": "Read action receipts for an archived comment"}
+	var state, expect, visibility string
+	descriptions := map[string]string{"reply": "Reply publicly or privately to an archived Facebook comment", "moderate": "Hide, unhide or delete an archived Facebook comment", "triage": "Set a comment's local triage state", "queue": "List archived comments by triage state", "actions": "Read action receipts for an archived comment"}
 	cmd := &cobra.Command{Use: name + " <message-id>", Short: descriptions[name], Args: func(cmd *cobra.Command, args []string) error {
 		return commentUsageError(cmd, cobra.ExactArgs(1)(cmd, args))
 	}, SilenceErrors: true, SilenceUsage: true}
@@ -73,6 +73,25 @@ func newCommentCommand(name string, backend commentActionBackend) *cobra.Command
 					return commentUsageError(cmd, errors.New("--resolve-unknown cannot be combined with --dry-run"))
 				}
 			}
+		case "reply":
+			if visibility == "" {
+				return commentUsageError(cmd, errors.New("--visibility is required"))
+			}
+			if !slices.Contains([]string{"public", "private"}, visibility) {
+				return newCommentCLIError(cmd, "validation", 3, errors.New("--visibility must be public or private"))
+			}
+			if req.Body == "" {
+				return commentUsageError(cmd, errors.New("--body is required"))
+			}
+			req.Action = meta.ActionKind(visibility + "_reply")
+			if req.ResolveUnknown != "" {
+				if !slices.Contains([]string{"sent", "not-sent"}, req.ResolveUnknown) {
+					return newCommentCLIError(cmd, "validation", 3, errors.New("--resolve-unknown must be sent or not-sent"))
+				}
+				if req.DryRun {
+					return commentUsageError(cmd, errors.New("--resolve-unknown cannot be combined with --dry-run"))
+				}
+			}
 		case "triage":
 			if state == "" {
 				return commentUsageError(cmd, errors.New("--state is required"))
@@ -108,7 +127,7 @@ func newCommentCommand(name string, backend commentActionBackend) *cobra.Command
 		}
 		var result any
 		switch name {
-		case "moderate":
+		case "moderate", "reply":
 			result, err = client.RunCommentAction(cmd.Context(), id, req)
 		case "triage":
 			var got string
@@ -126,12 +145,19 @@ func newCommentCommand(name string, backend commentActionBackend) *cobra.Command
 	cmd.Flags().BoolVar(&asJSON, "json", false, "Output result or coded partial error as JSON")
 	switch name {
 	case "moderate":
-		cmd.Flags().BoolVar(&hide, "hide", false, "Hide the comment")
-		cmd.Flags().BoolVar(&unhide, "unhide", false, "Unhide the comment")
+		cmd.Flags().BoolVar(&hide, "hide", false, "")
+		cmd.Flags().BoolVar(&unhide, "unhide", false, "")
 		cmd.Flags().BoolVar(&remove, "delete", false, "Delete from Facebook; keep archived history")
+	case "reply":
+		cmd.Flags().StringVar(&visibility, "visibility", "", "public or private (required)")
+		cmd.Flags().StringVar(&req.Body, "body", "", "")
+	}
+	if name == "moderate" || name == "reply" {
 		cmd.Flags().BoolVar(&req.DryRun, "dry-run", false, "Preview locally and print the confirmation token")
 		cmd.Flags().StringVar(&req.Confirm, "confirm", "", "Confirmation token from a dry run")
 		cmd.Flags().StringVar(&req.ResolveUnknown, "resolve-unknown", "", "Resolve an uncertain action as sent or not-sent after inspection")
+	}
+	switch name {
 	case "triage":
 		cmd.Flags().StringVar(&state, "state", "", "Local state: open, handled or skipped")
 		cmd.Flags().StringVar(&expect, "expect", "", "Require this current triage state")
@@ -165,11 +191,20 @@ func printCommentResult(cmd *cobra.Command, result any, asJSON bool, callErr err
 		case *meta.ActionResult:
 			if value != nil {
 				fmt.Fprintf(&out, "Comment %s by %s on %s\n", safe(value.Disclosure.CommentID), safe(value.Disclosure.AuthorName), safe(value.Disclosure.AssetName))
+				if value.Visibility != "" {
+					fmt.Fprintf(&out, "%s reply: %s\n", safe(value.Visibility), safe(value.Disclosure.Body))
+				}
+				for _, warning := range value.Warnings {
+					if warning == "prior_private_reply_to_author" {
+						warning = "A private reply to this author was already recorded in the past seven days."
+					}
+					fmt.Fprintf(&out, "Warning: %s\n", safe(warning))
+				}
 				if value.DryRun {
 					fmt.Fprintf(&out, "Confirm: %s\n", safe(value.Confirm))
 				}
 				if value.Receipt != nil {
-					fmt.Fprintf(&out, "Receipt %d: %s\n", value.Receipt.ID, safe(value.Receipt.State))
+					fmt.Fprintf(&out, "Receipt: %s\n", safe(value.Receipt.State))
 				}
 			}
 		case api.CommentTriageResponse:
@@ -186,7 +221,7 @@ func printCommentResult(cmd *cobra.Command, result any, asJSON bool, callErr err
 			}
 		case []meta.Receipt:
 			for _, row := range value {
-				fmt.Fprintf(&out, "%d\t%s\t%s\t%s\n", row.ID, safe(string(row.Action)), safe(row.State), safe(row.ErrorCode))
+				fmt.Fprintf(&out, "%s\t%s\t%s\n", safe(string(row.Action)), safe(row.State), safe(row.ErrorCode))
 			}
 		}
 		if _, err := fmt.Fprint(cmd.OutOrStdout(), out.String()); err != nil {
@@ -210,7 +245,7 @@ func newCommentGroup(backend commentActionBackend) *cobra.Command {
 		}
 		return commentUsageError(cmd, err)
 	})
-	for _, name := range []string{"moderate", "triage", "queue", "actions"} {
+	for _, name := range []string{"reply", "moderate", "triage", "queue", "actions"} {
 		group.AddCommand(newCommentCommand(name, backend))
 	}
 	return group

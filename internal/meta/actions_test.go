@@ -37,8 +37,14 @@ func actionFixture(t *testing.T) (*store.Store, *store.Source, int64, *Actions, 
 	id := message(t, st, src.ID, "100_200_300").ID
 	graph := &actionGraph{status: 200, response: `{"success":true}`}
 	client := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(t, r.URL.RawQuery)
 		assert.NoError(t, r.ParseForm())
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/v26.0/me", r.URL.Path)
+			assert.Equal(t, "id,name,category", r.URL.Query().Get("fields"))
+			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+			return
+		}
+		assert.Empty(t, r.URL.RawQuery)
 		graph.mu.Lock()
 		graph.calls++
 		graph.method = r.Method

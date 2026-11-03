@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/daemonclient"
@@ -11,6 +12,7 @@ import (
 )
 
 const (
+	ToolReplyToComment      = "reply_to_comment"
 	ToolModerateComment     = "moderate_comment"
 	ToolUpdateCommentTriage = "update_comment_triage"
 	ToolListCommentQueue    = "list_comment_queue"
@@ -39,6 +41,11 @@ func commentToolDefinition(name string) toolDefinition {
 	properties := map[string]*jsonschema.Schema{"message_id": safeIDSchema("Archived comment message ID")}
 	var definition toolDefinition
 	switch name {
+	case ToolReplyToComment:
+		properties["visibility"] = stringSchema("Reply visibility; choose explicitly", "public", "private")
+		properties["body"] = stringSchema("Exact reply text")
+		properties["dry_run"] = booleanSchema("Preview locally without sending")
+		definition = explicitlyConfirmedWriteDefinition(name, "Reply publicly or send one private message about an archived comment. Requires explicit client confirmation. Private replies are limited to one per comment within seven days. Inspect uncertain outcomes and resolve through the CLI before retrying.", closedObject(properties, "message_id", "visibility", "body"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall, toolSecurityWrite)
 	case ToolModerateComment:
 		properties["action"] = stringSchema("Moderation action", "hide", "unhide", "delete")
 		properties["dry_run"] = booleanSchema("Preview locally without changing the provider")
@@ -68,6 +75,34 @@ func (h *handlers) commentActionsCall(ctx context.Context, req toolRequest) (*to
 	}
 	var value any
 	switch req.toolName {
+	case ToolReplyToComment:
+		visibility, _ := args["visibility"].(string)
+		body, _ := args["body"].(string)
+		dry, _ := args["dry_run"].(bool)
+		if (visibility != "public" && visibility != "private") || body == "" {
+			return toolErrorResult("visibility must be public or private and body must be nonempty"), nil
+		}
+		input := meta.ActionRequest{MessageID: id, Action: meta.ActionKind(visibility + "_reply"), Body: body, DryRun: true}
+		preview, e := h.commentActions.RunCommentAction(ctx, id, input)
+		if e != nil || dry {
+			return commentToolResult(preview, e)
+		}
+		if preview == nil {
+			return toolErrorResult("Comment preview is unavailable"), nil
+		}
+		d := preview.Disclosure
+		prompt := fmt.Sprintf("Publish a PUBLIC reply as %s to %s:\n%s", d.AssetName, d.AuthorName, d.Body)
+		if visibility == "private" {
+			prompt = fmt.Sprintf("Send ONE PRIVATE message to %s as %s:\n%s", d.AuthorName, d.AssetName, d.Body)
+		}
+		if visibility == "private" && slices.Contains(preview.Warnings, "prior_private_reply_to_author") {
+			prompt += "\nWarning: a private reply to this author was already recorded in the past seven days."
+		}
+		if e := req.confirmUserAction(ctx, prompt); e != nil {
+			return confirmationToolError(e)
+		}
+		input.DryRun, input.Confirm = false, preview.Confirm
+		value, err = h.commentActions.RunCommentAction(ctx, id, input)
 	case ToolModerateComment:
 		action, _ := args["action"].(string)
 		dry, _ := args["dry_run"].(bool)
@@ -81,7 +116,7 @@ func (h *handlers) commentActionsCall(ctx context.Context, req toolRequest) (*to
 				return toolErrorResult("Comment preview is unavailable"), nil
 			}
 			d := preview.Disclosure
-			if e := req.confirmUserAction(ctx, fmt.Sprintf("Delete comment %s by %s on %s. History stays archived.", d.CommentID, d.AuthorName, d.AssetName)); e != nil {
+			if e := req.confirmUserAction(ctx, fmt.Sprintf("Delete comment by %s on %s. History stays archived.", d.AuthorName, d.AssetName)); e != nil {
 				return confirmationToolError(e)
 			}
 			input.Confirm = preview.Confirm

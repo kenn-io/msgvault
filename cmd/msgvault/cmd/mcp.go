@@ -204,8 +204,8 @@ func delegatedMCPServeOptions(ctx context.Context, st *daemonclient.Client) (mcp
 	return opts, nil
 }
 
-// commentActionsMinAPISchemaVersion adds owner-only comment moderation and triage.
-const commentActionsMinAPISchemaVersion = "3.38.0"
+// commentActionsMinAPISchemaVersion includes public and private reply actions.
+const commentActionsMinAPISchemaVersion = "3.39.0"
 
 // messageTagsMinAPISchemaVersion adds native email tag reads and edits.
 const messageTagsMinAPISchemaVersion = "3.15.0"

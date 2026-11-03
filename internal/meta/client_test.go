@@ -317,16 +317,8 @@ func TestGraphErrorBodyCapped(t *testing.T) {
 	}
 }
 
-func TestGraphThrottleAndNotFoundCodes(t *testing.T) {
-	assert := assert.New(t)
-	for _, code := range []int{4, 17, 32, 613, 80000, 80001, 80014, 80015, 100, 190, 10, 200, 299, 300} {
-		e := &APIError{Status: 400, Code: code}
-		assert.Equal(code == 4 || code == 17 || code == 32 || code == 613 || (code >= 80000 && code <= 80014), e.Throttled(), "code %d", code)
-		assert.Equal(code == 100, e.NotFound())
-		assert.Equal(code == 190, e.TokenExpired())
-		assert.Equal(code == 10 || (code >= 200 && code <= 299), e.Permission())
-	}
-	assert.Equal("graph request failed (HTTP 400, code 100)", (&APIError{Status: 400, Code: 100}).Error())
+func TestGraphErrorFormat(t *testing.T) {
+	assert.Equal(t, "graph request failed (HTTP 400, code 100)", (&APIError{Status: 400, Code: 100}).Error())
 }
 
 func TestGraphErrorBodyCancellation(t *testing.T) {

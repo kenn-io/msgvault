@@ -4,7 +4,7 @@ Usage:
   msgvault source facebook-comments [command]
 
 Available Commands:
-  add         Register a configured Facebook Page for comment sync
+  add         Register a configured Facebook Page
   sync        Archive Facebook Page comments and nested replies
 
 Flags:

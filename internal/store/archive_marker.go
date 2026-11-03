@@ -11,9 +11,19 @@ import (
 // previous value. Markers record durable operator-visible conditions, such as
 // a source that must be re-anchored before it syncs again.
 func (s *Store) SetArchiveMarker(ctx context.Context, key, value string) error {
-	if _, err := s.db.ExecContext(ctx, s.Rebind(`
+	write := func(q querier) error {
+		_, err := q.Exec(s.Rebind(`
 		INSERT INTO archive_metadata (key, value) VALUES (?, ?)
-		ON CONFLICT (key) DO UPDATE SET value = excluded.value`), key, value); err != nil {
+		ON CONFLICT (key) DO UPDATE SET value = excluded.value`), key, value)
+		return err
+	}
+	var err error
+	if s.syncGeneration != nil {
+		err = s.withSyncSourceWriteContext(ctx, s.syncGeneration.sourceID, write)
+	} else {
+		err = write(boundQuerier{ctx: ctx, q: s.db})
+	}
+	if err != nil {
 		return fmt.Errorf("set archive marker %s: %w", key, err)
 	}
 	return nil

@@ -54,9 +54,6 @@ func (a *storeAPIAdapter) RunCommentAction(ctx context.Context, id int64, req me
 			if err != nil {
 				return nil, err
 			}
-			if _, err := client.VerifyPage(ctx, profile.PageID); err != nil {
-				return nil, err
-			}
 			return client, nil
 		},
 	})

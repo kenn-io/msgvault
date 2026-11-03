@@ -77,11 +77,28 @@ func TestFacebookRegistrationRejectsIdentityBeforeWriting(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "synthetic-page-token")
 	facebookHTTPFixture(t, true)
-	_, err := registerFacebookCommentsProfile(t.Context(), st, facebookProfile())
+	err := registerFacebookCommentsProfile(t.Context(), st, facebookProfile())
 	require.Error(t, err)
 	sources, err := st.ListSources(meta.SourceType)
 	require.NoError(t, err)
 	assert.Empty(t, sources)
+}
+
+func TestFacebookRegistrationOutputOmitsSourceID(t *testing.T) {
+	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "synthetic-page-token")
+	facebookHTTPFixture(t, false)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg.Vector.Enabled = false
+	cfg.FacebookComments = []config.FacebookCommentsSource{facebookProfile()}
+	cmd := newAddFacebookCommentsCmd()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
+	require.NoError(t, cmd.RunE(cmd, []string{"example-page"}))
+	assert.Equal(t, "Registered Facebook Page 100 for example-page\n", output.String())
 }
 
 func TestFacebookConfiguredCredentialsSelectionDelegationFlagsAndHelp(t *testing.T) {
@@ -109,6 +126,13 @@ func TestFacebookConfiguredCredentialsSelectionDelegationFlagsAndHelp(t *testing
 	require.NoError(cmd.Execute())
 	assert.Contains(output.String(), "--max-requests")
 	assert.Contains(output.String(), "Facebook")
+	output.Reset()
+	cmd = newAddFacebookCommentsCmd()
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--help"})
+	require.NoError(cmd.Execute())
+	assert.Contains(output.String(), "With no identifier, registers all configured Facebook Pages.")
+	assert.Contains(output.String(), "Tokens come from the named daemon environment variable.")
 }
 
 func TestFacebookManualPartialWritesContinueAcrossProfiles(t *testing.T) {
@@ -125,7 +149,7 @@ func TestFacebookManualPartialWritesContinueAcrossProfiles(t *testing.T) {
 	cfg.FacebookComments = []config.FacebookCommentsSource{first, second}
 	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	for _, profile := range cfg.FacebookComments {
-		_, err := registerFacebookCommentsProfile(t.Context(), st, profile)
+		err := registerFacebookCommentsProfile(t.Context(), st, profile)
 		require.NoError(err)
 	}
 	cmd := newSyncFacebookCommentsCmd()
@@ -155,7 +179,7 @@ func TestFacebookPartialWritesRefreshScheduledCache(t *testing.T) {
 	t.Setenv("EXAMPLE_FACEBOOK_PAGE_TOKEN", "synthetic-page-token")
 	facebookHTTPFixture(t, false)
 	src := facebookProfile()
-	_, err := registerFacebookCommentsProfile(t.Context(), st, src)
+	err := registerFacebookCommentsProfile(t.Context(), st, src)
 	require.NoError(t, err)
 	cfg := lifecycleTestConfig(t.TempDir())
 	cfg.Data.DataDir = t.TempDir()
