@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-const loopsMinAPISchemaVersion = "3.31.0"
+const loopsMinAPISchemaVersion = "3.38.0"
 
 func init() {
 	rootCmd.AddCommand(newLoopsCommand())
