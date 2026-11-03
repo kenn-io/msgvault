@@ -435,14 +435,22 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 	return nil
 }
 
+func hasNormalizedRelationshipActivity(analyticsDir string) (bool, error) {
+	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	if err != nil {
+		return false, fmt.Errorf("find relationship activity: %w", err)
+	}
+	return len(activityFiles) > 0, nil
+}
+
 // The normalized relationship view is used by internal query paths even when
 // legacy analytical views are disabled.
 func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDir string) error {
-	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	hasActivity, err := hasNormalizedRelationshipActivity(analyticsDir)
 	if err != nil {
-		return fmt.Errorf("find relationship activity: %w", err)
+		return err
 	}
-	if len(activityFiles) > 0 {
+	if hasActivity {
 		parquet := func(dataset string, hive bool) string {
 			glob := filepath.Join(analyticsDir, dataset, "*.parquet")
 			options := ""
@@ -472,9 +480,9 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	if analyticsDir == "" {
 		return nil
 	}
-	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	hasActivity, err := hasNormalizedRelationshipActivity(analyticsDir)
 	if err != nil {
-		return fmt.Errorf("find relationship activity: %w", err)
+		return err
 	}
 	path := filepath.Join(analyticsDir, identityindex.DatasetActivity, "**", "*.parquet")
 	tx, err := db.BeginTx(ctx, nil)
@@ -488,7 +496,7 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	}
 	ownerSQL := "SELECT NULL::BIGINT AS canonical_id WHERE false"
 	// Match the expanded view: unpartitioned caches have no normalized activity.
-	if len(activityFiles) > 0 {
+	if hasActivity {
 		canon := "(" + identityindex.CanonicalParticipantsSQL(
 			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipants, "*.parquet"))),
 			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet"))),

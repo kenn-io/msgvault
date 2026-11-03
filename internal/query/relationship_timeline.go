@@ -241,7 +241,6 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // touched, because a join against it cannot push the page's ID filter
 // through the view's aggregate subqueries and materializes them for the
 // whole archive.
-// Outer rows only need the subject's message facts and owner rows for with_owner.
 // Unlike Explore's per-conversation-lifetime chat grouping, chat messages
 // are grouped per local calendar day so a years-long conversation doesn't
 // collapse into a single burst. The "?" after the fact conditions binds
@@ -289,6 +288,7 @@ WITH subject_facts AS (
         any_value(a.has_attachments) AS has_attachments,
         bool_or(a.is_owner AND a.is_direct) AS with_owner
     FROM relationship_activity_expanded a
+    -- Outer rows only need the subject's message facts and owner rows for with_owner.
     WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)
       AND a.message_id IN (
         SELECT f.message_id

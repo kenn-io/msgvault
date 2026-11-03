@@ -343,64 +343,61 @@ func TestRelationshipCalendarDeduplicatesLinkedAliasEdgesPerMessage(t *testing.T
 }
 
 func TestRelationshipCalendarAndTimelineReadOnlySubjectAndOwnerRows(t *testing.T) {
-	for _, rosterSize := range []int{150} {
-		t.Run(fmt.Sprintf("members=%d", rosterSize), func(t *testing.T) {
-			b := NewTestDataBuilder(t)
-			source := b.AddSourceWithType("owner@example.test", "imessage")
-			owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
-			b.AddOwnerParticipant(source, owner)
-			members := []int64{owner}
-			for i := range rosterSize {
-				member := b.AddParticipant(fmt.Sprintf("person-%d@example.test", i), "example.test", "Person")
-				members = append(members, member)
-			}
-			for _, member := range members {
-				b.AddConversationParticipant(900, member)
-			}
-			start := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-			const messages = 200
-			for i := range messages {
-				sender := members[i%151]
-				id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "group_chat",
-					MessageType: "imessage", SentAt: start.Add(time.Duration(i) * time.Minute), IsFromMe: sender == owner, SenderID: &sender})
-				b.AddFrom(id, sender, "Sender")
-				if sender == owner {
-					b.AddTo(id, members[1], "Person")
-				}
-			}
-			engine := b.BuildEngine()
-			t.Run("Calendar", func(t *testing.T) {
-				profile, err := profileQuery(t, engine, func() error {
-					response, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: members[1], Year: 2025})
-					if err == nil {
-						require.NotEmpty(t, response.Days)
-						assert.Equal(t, int64(4), response.Days[0].Total)
-						assert.Equal(t, int64(2), response.Days[0].Sent)
-						assert.Equal(t, int64(2), response.Days[0].Received)
-						assert.Equal(t, int64(4), response.Days[0].Chat)
-					}
-					return err
-				})
-				require.NoError(t, err)
-				require.Positive(t, profile.maxCardinality())
-				assert.Less(t, profile.maxCardinality(), 10*messages)
-			})
-			t.Run("Timeline", func(t *testing.T) {
-				profile, err := profileQuery(t, engine, func() error {
-					response, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: members[1]})
-					if err == nil {
-						assert.Equal(t, int64(1), response.TotalCount)
-						require.Len(t, response.Rows, 1)
-						assert.Equal(t, int64(200), response.Rows[0].MessageCount)
-					}
-					return err
-				})
-				require.NoError(t, err)
-				require.Positive(t, profile.maxCardinality())
-				assert.Less(t, profile.maxCardinality(), 10*messages)
-			})
-		})
+	const rosterSize = 150
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.test", "imessage")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	b.AddOwnerParticipant(source, owner)
+	members := []int64{owner}
+	for i := range rosterSize {
+		member := b.AddParticipant(fmt.Sprintf("person-%d@example.test", i), "example.test", "Person")
+		members = append(members, member)
 	}
+	for _, member := range members {
+		b.AddConversationParticipant(900, member)
+	}
+	start := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	const messages = 200
+	for i := range messages {
+		sender := members[i%151]
+		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 900, ConversationType: "group_chat",
+			MessageType: "imessage", SentAt: start.Add(time.Duration(i) * time.Minute), IsFromMe: sender == owner, SenderID: &sender})
+		b.AddFrom(id, sender, "Sender")
+		if sender == owner {
+			b.AddTo(id, members[1], "Person")
+		}
+	}
+	engine := b.BuildEngine()
+	t.Run("Calendar", func(t *testing.T) {
+		profile, err := profileQuery(t, engine, func() error {
+			response, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: members[1], Year: 2025})
+			if err == nil {
+				require.NotEmpty(t, response.Days)
+				assert.Equal(t, int64(4), response.Days[0].Total)
+				assert.Equal(t, int64(2), response.Days[0].Sent)
+				assert.Equal(t, int64(2), response.Days[0].Received)
+				assert.Equal(t, int64(4), response.Days[0].Chat)
+			}
+			return err
+		})
+		require.NoError(t, err)
+		require.Positive(t, profile.maxCardinality())
+		assert.Less(t, profile.maxCardinality(), 10*messages)
+	})
+	t.Run("Timeline", func(t *testing.T) {
+		profile, err := profileQuery(t, engine, func() error {
+			response, err := engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: members[1]})
+			if err == nil {
+				assert.Equal(t, int64(1), response.TotalCount)
+				require.Len(t, response.Rows, 1)
+				assert.Equal(t, int64(200), response.Rows[0].MessageCount)
+			}
+			return err
+		})
+		require.NoError(t, err)
+		require.Positive(t, profile.maxCardinality())
+		assert.Less(t, profile.maxCardinality(), 10*messages)
+	})
 }
 
 func TestRelationshipCalendarKeepsSourceNativeOwnerWithoutOwnerParticipants(t *testing.T) {
