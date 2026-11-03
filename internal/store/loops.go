@@ -686,6 +686,11 @@ func (s *Store) ClearLoopDecisionContext(ctx context.Context, messageID int64) (
 
 func (s *Store) putLoopDecision(ctx context.Context, d LoopDecision, questions []LoopMessage) (LoopDecision, error) {
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
+		// Take the maintenance gate before loop_decisions, in the same order
+		// as BeginExclusive, so source maintenance cannot deadlock with us.
+		if err := s.lockSyncMaintenanceGate(ctx, tx); err != nil {
+			return err
+		}
 		allDone := len(questions) > 0
 		for _, question := range questions {
 			var until any
