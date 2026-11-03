@@ -177,9 +177,7 @@ jobs:
         run: make vulncheck
 
       - name: Log cache sizes
-        if: >-
-          github.event_name == 'push' && github.ref == 'refs/heads/main'
-          && env.GO_CACHE_HIT != 'true'
+        if: github.event_name != 'pull_request'
         run: du -sh "$(go env GOCACHE)" "$(go env GOMODCACHE)" "$(git rev-parse --git-path golangci-lint-cache)"
 
       - name: Save Go caches
