@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // Wrapping the dialect selects the historical scan path without changing its
@@ -20,6 +21,7 @@ type metadataScanDialect struct{ SQLiteQueryDialect }
 
 func metadataSearchDB(tb testing.TB) *sql.DB {
 	tb.Helper()
+	dbtest.SkipIfPostgres(tb, "SQLite fixtures require SQLite")
 	st, err := store.OpenForTest(filepath.Join(tb.TempDir(), "metadata.db"))
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, st.Close()) })
@@ -55,6 +57,7 @@ func metadataPlan(t *testing.T, e *SQLiteEngine, q *search.Query) string {
 }
 
 func TestMetadataSearchIndexedPlan(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	e := NewSQLiteEngine(metadataSearchDB(t))
 	for _, q := range []*search.Query{{TextTerms: []string{"eedle"}}, {TextTerms: []string{"ÉCOLE"}, AccountIDs: []int64{1}}} {
@@ -74,6 +77,7 @@ func TestMetadataSearchIndexedPlan(t *testing.T) {
 }
 
 func TestMetadataSearchLiteralFields(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	e := NewSQLiteEngine(metadataSearchDB(t))
@@ -97,6 +101,7 @@ func TestMetadataSearchLiteralFields(t *testing.T) {
 }
 
 func TestMetadataSearchUnavailableIndex(t *testing.T) {
+	t.Parallel()
 	for _, damage := range []string{`DROP TABLE recipients_metadata_fts`, `DELETE FROM archive_metadata WHERE key='metadata_fts_version'`, `UPDATE archive_metadata SET value='0' WHERE key='metadata_fts_version'`} {
 		t.Run(damage, func(t *testing.T) {
 			require := require.New(t)
@@ -123,6 +128,7 @@ func TestMetadataSearchUnavailableIndex(t *testing.T) {
 // A setup without FTS5 removes the readiness marker and stops index
 // maintenance while a long-running engine may already be using the index.
 func TestMetadataSearchStopsUsingDisabledIndex(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	db := metadataSearchDB(t)
@@ -147,6 +153,7 @@ func TestMetadataSearchStopsUsingDisabledIndex(t *testing.T) {
 // The real SQLite authorizer lets cancellation land at a particular query
 // phase without a throughput race or a fake database implementation.
 func TestMetadataSearchCancellationDuringAggregates(t *testing.T) {
+	t.Parallel()
 	for _, phase := range []string{"count", "sum"} {
 		t.Run(phase, func(t *testing.T) {
 			require := require.New(t)

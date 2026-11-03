@@ -14,6 +14,7 @@ import (
 )
 
 func TestDuckDBTextSnapshotRevisionUsesCommittedCacheMarker(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -58,6 +59,7 @@ func TestDuckDBTextSnapshotRevisionUsesCommittedCacheMarker(t *testing.T) {
 }
 
 func TestDuckDBTextSnapshotRevisionTracksHybridSQLiteTimeline(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -114,6 +116,7 @@ func TestDuckDBTextSnapshotRevisionTracksHybridSQLiteTimeline(t *testing.T) {
 }
 
 func TestDuckDBListConversationMessagesUsesIDTiebreakerForEqualTimestamps(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@chat.test", "whatsapp")
 	participantID := b.AddPhoneParticipant("+15550000011", "Alice")
@@ -192,6 +195,7 @@ func buildTextContactsEngine(t *testing.T) *DuckDBEngine {
 // clause, which DuckDB could not optimize over a large messages dataset; this
 // asserts the view returns the expected non-email contacts.
 func TestDuckDBTextAggregate_Contacts(t *testing.T) {
+	t.Parallel()
 	engine := buildTextContactsEngine(t)
 	ctx := context.Background()
 
@@ -248,6 +252,7 @@ func TestDuckDBTextAggregate_Contacts(t *testing.T) {
 // In particular, an owner-authored latest message must not hide a conversation
 // that contains a selected cluster member.
 func TestDuckDBListConversationsParticipantMembership(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 type mixedArchiveBrowserFixture struct {
@@ -17,6 +18,8 @@ type mixedArchiveBrowserFixture struct {
 }
 
 func TestWriteMixedArchiveBrowserFixture(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "Parquet fixtures run on DuckDB only")
+	t.Parallel()
 	require := require.New(t)
 	fixture := buildMixedArchiveBrowserFixture(t)
 	require.Equal(int64(100_000), fixture.RawChatMessageCount)

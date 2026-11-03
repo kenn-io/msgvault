@@ -7,6 +7,7 @@ import (
 )
 
 func TestIsKnownMessageType(t *testing.T) {
+	t.Parallel()
 	known := []string{"email", "calendar_event", "sms", "mms", "rcs", "whatsapp", "imessage", "teams", "matrix", "telegram"}
 	for _, mt := range known {
 		assert.True(t, IsKnownMessageType(mt), "%q should be known", mt)
@@ -19,6 +20,7 @@ func TestIsKnownMessageType(t *testing.T) {
 }
 
 func TestKnownMessageTypesIncludesTextTypes(t *testing.T) {
+	t.Parallel()
 	// Every text message type must also be a known message type, otherwise
 	// the search --message-type validation would reject valid text filters.
 	for _, mt := range TextMessageTypes {
