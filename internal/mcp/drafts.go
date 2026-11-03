@@ -155,6 +155,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 
 type draftFinding struct {
 	sensitive.Finding
+
 	Quoted bool `json:"quoted,omitzero"`
 }
 
