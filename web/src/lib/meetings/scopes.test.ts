@@ -39,6 +39,23 @@ describe('meeting scopes', () => {
     ] })).toEqual({ kind: 'direct', scope: { participant_id: 7, source_ids: [2, 3], after: '2026-01-01T00:00:00Z', before: '2026-03-01T00:00:00Z' } });
   });
 
+  it.each([
+    { kinds: ['meeting'], scope: { participant_id: 7 } },
+    { kinds: ['meeting', 'email'], scope: { participant_id: 7 } },
+    { kinds: ['email'], scope: { participant_id: 7, message_ids: [] } },
+  ])('preserves the meeting intersection of kind filters $kinds', ({ kinds, scope }) => {
+    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [
+      { dimension: 'kind', values: kinds },
+    ] })).toEqual({ kind: 'direct', scope });
+  });
+
+  it('keeps contradictory kind filters as match-none', () => {
+    expect(relationshipMeetingScope({ participant_id: 7 }, { filters: [
+      { dimension: 'kind', values: ['email'] },
+      { dimension: 'kind', values: ['meeting'] },
+    ] })).toEqual({ kind: 'direct', scope: { participant_id: 7, message_ids: [] } });
+  });
+
   it('intersects repeated source and date filters for an exact domain', () => {
     expect(relationshipMeetingScope({ domains: ['exact.example'] }, { filters: [
       { dimension: 'source', values: ['2', '3'] }, { dimension: 'source', values: ['3', '4'] },

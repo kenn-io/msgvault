@@ -46,6 +46,8 @@ export function relationshipMeetingScope(identity: Pick<MeetingScopeRequest, 'pa
       if (!previous || (key === 'after' ? Date.parse(values[0]!) > Date.parse(previous) : Date.parse(values[0]!) < Date.parse(previous))) scope[key] = values[0];
     } else if (filter.dimension === 'message_type') {
       if (!values.includes('meeting_transcript')) scope.message_ids = [];
+    } else if (filter.dimension === 'kind') {
+      if (!values.includes('meeting')) scope.message_ids = [];
     } else if (filter.dimension === 'deletion') {
       if (values.length !== 1 || !['any', 'active', 'deleted'].includes(values[0]!)) throw unsupportedFilters();
       const deletion = values[0] as MeetingScopeRequest['deletion'];
