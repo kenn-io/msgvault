@@ -33,8 +33,51 @@ func TestSenderContactRelationshipsQueryUsesNormalizedEnvelopeIndex(t *testing.T
 	requirements.NoError(rows.Err())
 
 	plan := strings.Join(details, "\n")
-	assertions.Contains(plan, "SEARCH mr USING INDEX idx_message_recipients_email_address_normalized",
+	assertions.Contains(plan, "SEARCH mr USING",
+		"contact and archive-history lookup should use an address lookup rather than scan the recipient index:\n%s", plan)
+	assertions.Contains(plan, "idx_message_recipients_email_address_normalized",
 		"contact and archive-history lookup should probe historical recipient envelopes by normalized address:\n%s", plan)
+}
+
+func TestSenderOutboundCandidateQueryUsesNormalizedEnvelopeIndex(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "sender-outbound-query.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(s.Close()) })
+	requirements.NoError(s.InitSchema())
+
+	query, args := s.senderOutboundCandidateQuery([]string{"one@example.test", "target@example.test"}, nil, 0, 0, 257)
+	rows, err := s.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query, args...)
+	requirements.NoError(err)
+	defer func() { requirements.NoError(rows.Close()) }()
+
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		requirements.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	requirements.NoError(rows.Err())
+
+	plan := strings.Join(details, "\n")
+	assertions.Contains(plan, "SEARCH mr USING",
+		"outbound-history lookup should use an address lookup rather than scan the recipient index:\n%s", plan)
+	assertions.Contains(plan, "idx_message_recipients_email_address_normalized",
+		"outbound-history lookup should probe recipient envelopes by normalized address:\n%s", plan)
+}
+
+func TestSenderKnownRelationshipKeysRequireArchiveHistory(t *testing.T) {
+	assertions := assert.New(t)
+	evidence := map[string]SenderRelationshipEvidence{
+		"new@example.test":     {Relationship: "none"},
+		"seen@example.test":    {Relationship: "none", SeenInArchive: true},
+		"contact@example.test": {Relationship: "contact", SeenInArchive: true},
+	}
+
+	got := senderKnownRelationshipKeys([]string{"new@example.test", "seen@example.test", "contact@example.test"}, evidence)
+	assertions.Equal([]string{"seen@example.test"}, got)
 }
 
 func FuzzNativeIMAPMailboxIDsAreNotRawImporterIDs(f *testing.F) {

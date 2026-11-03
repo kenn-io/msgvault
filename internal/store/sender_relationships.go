@@ -186,6 +186,15 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 	// Resolve every requested address in set-based joins. Correlated EXISTS
 	// subqueries here made the database walk message history again for each
 	// address in a batch.
+	recipientJoin := `JOIN message_recipients mr ON ` + senderRecipientAddress + `=requested.address`
+	recipientAddressFilter := ""
+	if !s.IsPostgreSQL() {
+		// SQLite may otherwise reorder this join and scan the full covering
+		// index. CROSS JOIN keeps requested as the outer loop so each address
+		// probes the normalized-address index.
+		recipientJoin = `CROSS JOIN message_recipients mr`
+		recipientAddressFilter = ` AND ` + senderRecipientAddress + `=requested.address`
+	}
 	archiveUseCTE := ""
 	archiveUseJoin := ""
 	contactHistory := "real_history.address IS NOT NULL"
@@ -221,8 +230,8 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 	query := `WITH requested(address) AS (VALUES ` + values + `),
 		recipient_history(address, message_id) AS (
 			SELECT requested.address, m.id FROM requested
-			JOIN message_recipients mr ON ` + senderRecipientAddress + `=requested.address
-			JOIN messages m ON m.id=mr.message_id WHERE 1=1` + scope + `
+			` + recipientJoin + `
+			JOIN messages m ON m.id=mr.message_id WHERE 1=1` + recipientAddressFilter + scope + `
 		),
 		real_history(address) AS (
 			SELECT history.address FROM recipient_history history
@@ -254,12 +263,7 @@ func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys
 	var before int64
 	inspected := 0
 	for {
-		pending := make([]string, 0, len(keys))
-		for _, key := range keys {
-			if result[key].Relationship == "none" {
-				pending = append(pending, key)
-			}
-		}
+		pending := senderKnownRelationshipKeys(keys, result)
 		if len(pending) == 0 {
 			return nil
 		}
@@ -313,22 +317,19 @@ func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys
 	}
 }
 
-func (s *Store) senderOutboundCandidateIDs(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded, before int64, limit int) ([]int64, error) {
-	scope, sourceArgs := senderSourceScope(sources, excluded)
-	args := append([]any{}, sourceArgs...)
+func senderKnownRelationshipKeys(keys []string, evidence map[string]SenderRelationshipEvidence) []string {
+	pending := make([]string, 0, len(keys))
 	for _, key := range keys {
-		args = append(args, key)
+		current := evidence[key]
+		if current.Relationship == "none" && current.SeenInArchive {
+			pending = append(pending, key)
+		}
 	}
-	chat := senderOneToOneChat
-	query := `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id
-		JOIN conversations c ON c.id=m.conversation_id
-		WHERE ` + s.senderNativeOwnershipSQL() + ` AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-		AND m.list_id IS NULL AND NOT ` + s.activityUnsentSQL() + scope + `
-		AND (c.conversation_type='email_thread' OR (` + chat + `))
-		AND EXISTS (SELECT 1 FROM message_recipients mr
-		WHERE mr.message_id=m.id AND mr.recipient_type IN ('to','cc','bcc') AND ` + senderRecipientAddress + ` IN (` + int64Placeholders(len(keys)) + `))
-		AND (?=0 OR m.id<?) ORDER BY m.id DESC LIMIT ?`
-	args = append(args, before, before, limit)
+	return pending
+}
+
+func (s *Store) senderOutboundCandidateIDs(ctx context.Context, tx *loggedTx, keys []string, sources []int64, excluded, before int64, limit int) ([]int64, error) {
+	query, args := s.senderOutboundCandidateQuery(keys, sources, excluded, before, limit)
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read sender outbound candidates: %w", err)
@@ -343,6 +344,42 @@ func (s *Store) senderOutboundCandidateIDs(ctx context.Context, tx *loggedTx, ke
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (s *Store) senderOutboundCandidateQuery(keys []string, sources []int64, excluded, before int64, limit int) (string, []any) {
+	values := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
+	args := make([]any, 0, len(keys)+len(sources)+3)
+	for _, key := range keys {
+		args = append(args, key)
+	}
+	scope, sourceArgs := senderSourceScope(sources, excluded)
+	args = append(args, sourceArgs...)
+	recipientJoin := `JOIN message_recipients mr ON ` + senderRecipientAddress + `=requested.address`
+	recipientAddressFilter := ""
+	if !s.IsPostgreSQL() {
+		// SQLite may otherwise scan the recipient index before filtering by
+		// address. Keep requested outside so candidate lookup starts at the
+		// normalized-address index.
+		recipientJoin = `CROSS JOIN message_recipients mr`
+		recipientAddressFilter = ` AND ` + senderRecipientAddress + `=requested.address`
+	}
+	chat := senderOneToOneChat
+	query := `WITH requested(address) AS (VALUES ` + values + `),
+		candidate_messages(message_id) AS (
+			SELECT m.id FROM requested ` + recipientJoin + `
+			JOIN messages m ON m.id=mr.message_id
+			JOIN sources src ON src.id=m.source_id
+			JOIN conversations c ON c.id=m.conversation_id
+			WHERE mr.recipient_type IN ('to','cc','bcc')` + recipientAddressFilter + `
+			AND ` + s.senderNativeOwnershipSQL() + ` AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+			AND m.list_id IS NULL AND NOT ` + s.activityUnsentSQL() + scope + `
+			AND (c.conversation_type='email_thread' OR (` + chat + `))
+			AND (?=0 OR m.id<?)
+			GROUP BY m.id ORDER BY m.id DESC LIMIT ?
+		)
+		SELECT message_id FROM candidate_messages ORDER BY message_id DESC`
+	args = append(args, before, before, limit)
+	return query, args
 }
 
 func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids []int64) (map[int64][]string, error) {

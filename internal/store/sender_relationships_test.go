@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -113,7 +114,7 @@ func TestSenderRelationshipsExcludeUnsentListBroadcastDeletedAndAddressOwnership
 			address := "target@example.com"
 			recipients := []string{address}
 			if kind == "broadcast" {
-				for i := 0; i < 30; i++ {
+				for i := range 30 {
 					recipients = append(recipients, fmt.Sprintf("audience%d@example.com", i))
 				}
 			}
@@ -199,20 +200,20 @@ func TestSenderRelationshipsMissingEnvelopeCannotTrustMergedAddress(t *testing.T
 }
 
 func TestSenderRelationshipsLimitsAndCancellation(t *testing.T) {
-	assertions := assert.New(t)
+	requirements := require.New(t)
 	f := storetest.New(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	_, err := f.Store.SenderRelationships(ctx, []string{"target@example.com"}, nil)
-	assertions.ErrorIs(err, context.Canceled)
+	requirements.ErrorIs(err, context.Canceled)
 	_, err = f.Store.SenderRelationships(t.Context(), make([]string, store.MaxSenderRelationshipAddresses+1), nil)
-	assertions.ErrorIs(err, store.ErrSenderRelationshipLimit)
+	requirements.ErrorIs(err, store.ErrSenderRelationshipLimit)
 	_, err = f.Store.SenderRelationships(t.Context(), []string{"a\x00@example.com"}, nil)
-	assertions.Error(err)
+	requirements.Error(err)
 	_, err = f.Store.SenderRelationships(t.Context(), []string{"target@example.com"}, []int64{-1})
-	assertions.Error(err)
+	requirements.Error(err)
 	_, err = f.Store.SenderRelationships(t.Context(), []string{strings.Repeat("x", 513)}, nil)
-	assertions.Error(err)
+	requirements.Error(err)
 }
 
 func TestSenderRelationshipsContactReachabilityAndDraftExclusion(t *testing.T) {
@@ -268,7 +269,7 @@ func TestSenderRelationshipsDraftOnlyContactWithoutSnapshot(t *testing.T) {
 
 func TestSenderRelationshipsChatRequiresNativeOneToOne(t *testing.T) {
 	for _, members := range []int{2, 3} {
-		t.Run(fmt.Sprint(members), func(t *testing.T) {
+		t.Run(strconv.Itoa(members), func(t *testing.T) {
 			requirements := require.New(t)
 			f := storetest.New(t)
 			owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
@@ -317,7 +318,7 @@ func TestSenderRelationshipsHistoryBudgetIsExplicit(t *testing.T) {
 		SELECT id,?,'to','target@example.com' FROM messages WHERE source_id=? AND source_message_id LIKE 'budget-%'`), target, f.Source.ID)
 	requirements.NoError(err)
 	got, err := f.Store.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
-	assertions.ErrorIs(err, store.ErrSenderRelationshipLimit)
+	requirements.ErrorIs(err, store.ErrSenderRelationshipLimit)
 	assertions.Nil(got, "partial evidence must not escape as a definitive result")
 }
 
