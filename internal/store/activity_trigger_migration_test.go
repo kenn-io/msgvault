@@ -115,7 +115,6 @@ func TestPostgresActivityTriggersInstallAfterCombinedTriggerMigration(t *testing
 	require.NoError(err)
 
 	var revision int64
-	//nolint:gosec // The query is a fixed test literal; Rebind only changes placeholders.
 	err = st.DB().QueryRowContext(t.Context(), st.Rebind(`
 		SELECT revision
 		FROM activity_projection_queue

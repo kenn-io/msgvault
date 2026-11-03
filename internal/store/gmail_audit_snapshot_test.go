@@ -314,7 +314,7 @@ func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	// The concurrent-repair stand-in: rewrite the second message's envelope
 	// while the page load is between its records, then commit on another
 	// connection.
-	_, err = st.DB().ExecContext( //nolint:gosec // The SQL is static; Rebind only changes placeholders.
+	_, err = st.DB().ExecContext(
 		t.Context(), st.Rebind(`
 		UPDATE message_recipients SET email_address = 'rewritten-sender@example.test'
 		WHERE message_id = ? AND recipient_type = 'from'
@@ -340,7 +340,7 @@ func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	// The rewrite really committed: a fresh read outside the page observes it,
 	// so the assertion above proves snapshot coherence, not a lost write.
 	var committed string
-	require.NoError(st.DB().QueryRowContext( //nolint:gosec // The SQL is static; Rebind only changes placeholders.
+	require.NoError(st.DB().QueryRowContext(
 		t.Context(), st.Rebind(`
 		SELECT email_address FROM message_recipients
 		WHERE message_id = ? AND recipient_type = 'from'
