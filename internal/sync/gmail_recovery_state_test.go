@@ -194,6 +194,7 @@ func TestGmailRecoveryItemErrorsDoNotBlockCompletion(t *testing.T) {
 }
 
 func TestGmailRecoveryCrashWorker(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	path := os.Getenv("MSGVAULT_TEST_RECOVERY_CRASH_DB")
 	if path == "" {
 		return

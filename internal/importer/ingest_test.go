@@ -56,6 +56,7 @@ func TestThreadKeyPreservesLegacyMalformedMessageIDBehavior(t *testing.T) {
 }
 
 func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
@@ -129,6 +130,7 @@ func TestIngestRawMessage_SanitizesAddressFields(t *testing.T) {
 }
 
 func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -182,6 +184,7 @@ func TestIngestRawMessage_SalvagesHeadersAfterFatalMIMEParse(t *testing.T) {
 }
 
 func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
@@ -251,6 +254,7 @@ func TestIngestRawMessage_InvalidUTF8_RecipientLinkage(t *testing.T) {
 }
 
 func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)
@@ -286,6 +290,7 @@ func TestIngestRawMessage_ResolvesImplausibleDateFromReceivedChain(t *testing.T)
 }
 
 func TestIngestRawMessage_LeavesCanonicalDateUnsetWhenNoDateIsPlausible(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewSQLiteTestStore(t)

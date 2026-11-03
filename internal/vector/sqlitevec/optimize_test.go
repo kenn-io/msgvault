@@ -287,6 +287,7 @@ func TestPrepareAcceleratorDetectsConcurrentSourceChange(t *testing.T) {
 }
 
 func TestAcceleratorWorkerCanBeKilledAndRetried(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	path := filepath.Join(t.TempDir(), "vectors.db")
 	backend, err := Open(t.Context(), Options{Path: path, Dimension: 64})
 	require.NoError(t, err)

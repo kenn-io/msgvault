@@ -61,6 +61,7 @@ func TestImportMbox_GoogleGroupsMetadataQuality(t *testing.T) {
 // Losing those IDs splits replies; losing group labels makes a multi-group
 // archive impossible to filter by group.
 func TestImportMbox_GoogleGroups(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.New(t)
 	tmp := t.TempDir()
@@ -110,6 +111,7 @@ func TestImportMbox_GoogleGroups(t *testing.T) {
 }
 
 func TestImportMbox_GoogleGroupsHeadersInOrdinaryMail(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "archive.db"))

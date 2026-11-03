@@ -283,6 +283,7 @@ func TestDuckDBEngine_SearchFromAddrs(t *testing.T) {
 // TestDuckDBEngine_SearchListIDFallback catches the sqlite_scan fallback
 // silently ignoring List-Id predicates before it ranks result rows.
 func TestDuckDBEngine_SearchListIDFallback(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
@@ -527,6 +528,7 @@ func TestDuckDBEngine_SearchDeletionScope(t *testing.T) {
 // TestDuckDBEngine_SearchDeletionScopeSQLiteScanner exercises the alternate
 // DuckDB sqlite_scanner path instead of the direct SQLite delegation.
 func TestDuckDBEngine_SearchDeletionScopeSQLiteScanner(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	t.Parallel()
 	require := require.New(t)
 	dbPath := filepath.Join(t.TempDir(), "scope.db")
@@ -2018,6 +2020,7 @@ func TestDuckDBEngine_SearchFastMessageTypeFilter(t *testing.T) {
 }
 
 func TestDuckDBEngine_SearchFallbackMessageTypeEmailIncludesLegacyRows(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)

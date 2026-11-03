@@ -10,9 +10,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestMetadataReadOnlyOpenDuringWriter(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -53,6 +55,7 @@ func TestMetadataReadOnlyOpenDuringWriter(t *testing.T) {
 }
 
 func TestMetadataReadOnlyRequiresExistingVectorFile(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	path := filepath.Join(t.TempDir(), "missing.db")
 	_, err := Open(t.Context(), Options{Path: path, MetadataReadOnly: true})
 	require.ErrorContains(t, err, "existing vectors.db required")

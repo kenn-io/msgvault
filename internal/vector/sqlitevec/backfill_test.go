@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -33,6 +34,7 @@ func embedGenOf(t *testing.T, db *sql.DB, id int64) (val int64, isNull bool) {
 // closed before returning so a subsequent Open holds the only handles.
 func seedEmbeddedMain(ctx context.Context, t *testing.T) (mainPath, vecPath string) {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	mainPath = filepath.Join(dir, "msgvault.db")
 	vecPath = filepath.Join(dir, "vectors.db")
@@ -192,6 +194,7 @@ func TestBackfillEmbedGen_StampAndMarkAtomic_BothPresentOnSuccess(t *testing.T) 
 // re-embeds it, while a normal embedded message with no pending row ends
 // embed_gen=active. pending_embeddings (in vectors.db) is dropped by Open after.
 func TestBackfillEmbedGen_PreservesActiveGenPendingReembedSignal(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(
 		t,
 	)
@@ -306,6 +309,7 @@ VALUES (1, 1, 1, 'm1', 'email'), (2, 1, 1, 'm2', 'email');
 // a chance to consult it. The drop moved out of Migrate into
 // the Open writable path.
 func TestOpen_DropsDeadPendingEmbeddings(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	require.NoError(
 		RegisterExtension(), "RegisterExtension")

@@ -27,7 +27,6 @@ func TestSearchPipeOR(t *testing.T) {
 	})
 	t.Run("parent AccountAddrs", func(t *testing.T) {
 		require := require.New(t)
-		dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 		db := dbtest.NewTestDB(t, "../store/schema.sql")
 		source := db.AddSource(dbtest.SourceOpts{Identifier: "test@example.com"})
 		conversation := db.AddConversation(dbtest.ConversationOpts{SourceID: source})

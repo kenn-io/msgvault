@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/vectorcheckpoints"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -58,6 +59,7 @@ func TestBackend_CreateActivateRetire(t *testing.T) {
 }
 
 func TestBackend_ActivateGenerationIfConvergedRejectsStaleJournal(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	mainDB, err := sql.Open("sqlite3", mainPath)
@@ -113,6 +115,7 @@ func TestBackend_ActivateGenerationIfConvergedRejectsStaleJournal(t *testing.T) 
 // the no-missing gates trivially, and the sequence-bound activation must
 // refuse rather than demote the serving generation for an empty index.
 func TestBackend_ActivateGenerationIfConvergedRefusesEmptySourceScope(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	mainDB, err := sql.Open("sqlite3", mainPath)
@@ -467,6 +470,7 @@ func TestBackend_ActivateGeneration_NullSeededAtActivatesWithCoverage(t *testing
 }
 
 func TestBackend_CreateGeneration_ScopeLimitsCoverage(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.
 		New(t)
@@ -633,6 +637,7 @@ func TestBackend_CoverageGate_SkipsDeletedMessages(t *testing.T) {
 // excludes dedup-hidden messages (deleted_at IS NOT NULL): only the live
 // message counts toward "missing".
 func TestBackend_CoverageGate_SkipsDedupHidden(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	ctx := context.Background()
 
@@ -1760,6 +1765,7 @@ func TestBackend_LoadVector_NoActive(t *testing.T) {
 // messages hidden by dedup (deleted_at IS NOT NULL), not just those
 // deleted from source. Uses a minimal main DB without FTS5.
 func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1808,6 +1814,7 @@ func TestBackend_Search_ExcludesDedupHidden(t *testing.T) {
 // filteredMessageIDs excludes messages with deleted_at set.
 // Uses a minimal main DB without FTS5.
 func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx := context.Background()
@@ -1861,6 +1868,7 @@ func TestBackend_FilteredMessageIDs_ExcludesDedupHidden(t *testing.T) {
 }
 
 func TestFilteredMessageIDsRejectsLegacyListIDSchemaWithUpgradeGuidance(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	ctx := context.Background()
 	db, err := sql.Open("sqlite3", ":memory:")
 	require.NoError(t, err, "open legacy main db")

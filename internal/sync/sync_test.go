@@ -2185,6 +2185,7 @@ func (a *recoveryProfileSequenceAPI) GetProfile(context.Context) (*gmail.Profile
 }
 
 func TestFullRecoversCheckpointAfterSyncOwnerExit(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	t.Parallel()
 	requirements := require.New(t)
 	checks := assert.New(t)

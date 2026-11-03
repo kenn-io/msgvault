@@ -9,10 +9,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
 func TestReadyAcceleratorFailsClosedAfterLegacyWrite(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	ctx := context.Background()
 	backend, err := Open(ctx, Options{
 		Path:      filepath.Join(t.TempDir(), "vectors.db"),

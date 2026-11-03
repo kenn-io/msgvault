@@ -24,6 +24,7 @@ import (
 )
 
 func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -113,6 +114,7 @@ func TestImportMbox_IngestsMessagesThreadsAndAttachments(t *testing.T) {
 }
 
 func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -165,6 +167,7 @@ func TestImportMbox_NoAttachmentsStillRecordsAttachmentMetadata(t *testing.T) {
 // TestImportMboxPersistsListID catches an offline MIME import that parses the
 // List-Id header but drops it before the shared message persistence boundary.
 func TestImportMboxPersistsListID(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.New(t)
 	tmp := t.TempDir()
@@ -196,6 +199,7 @@ func TestImportMboxPersistsListID(t *testing.T) {
 }
 
 func TestImportMbox_IsIdempotentAcrossPathChanges(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -273,6 +277,7 @@ func TestParseFromLineDate_NamedTimezone(t *testing.T) {
 }
 
 func TestImportMbox_InvalidInput_ReturnsErrorAndFailsSync(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -296,6 +301,7 @@ func TestImportMbox_InvalidInput_ReturnsErrorAndFailsSync(t *testing.T) {
 }
 
 func TestImportMbox_IdenticalRawMessagesAreImportedSeparately(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -344,6 +350,7 @@ func TestImportMbox_IdenticalRawMessagesAreImportedSeparately(t *testing.T) {
 }
 
 func TestImportMbox_RerunRepairsMissingRawInsteadOfSkipping(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -407,6 +414,7 @@ func TestImportMbox_RerunRepairsMissingRawInsteadOfSkipping(t *testing.T) {
 }
 
 func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -485,6 +493,7 @@ func TestImportMbox_RerunRetriesAttachmentsAfterStoreFailure(t *testing.T) {
 }
 
 func TestImportMbox_ErrorsCauseSyncFailed(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
@@ -532,6 +541,7 @@ func TestImportMbox_ErrorsCauseSyncFailed(t *testing.T) {
 }
 
 func TestImportMbox_SoftErrorsDoNotFailSync(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
@@ -578,6 +588,7 @@ func TestImportMbox_SoftErrorsDoNotFailSync(t *testing.T) {
 }
 
 func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -698,6 +709,7 @@ func TestImportMbox_CheckpointDoesNotAdvancePastFailedIngest(t *testing.T) {
 }
 
 func TestImportMbox_InvalidResumeOffsetBeyondEOF_FailsSync(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 
@@ -739,6 +751,7 @@ func TestImportMbox_InvalidResumeOffsetBeyondEOF_FailsSync(t *testing.T) {
 }
 
 func TestImportMbox_RejectsLiveSyncOwner(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "msgvault.db")
@@ -761,6 +774,7 @@ func TestImportMbox_RejectsLiveSyncOwner(t *testing.T) {
 }
 
 func TestImportMbox_ResumesCheckpointAfterWorkerExit(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.New(t)
 	tmp := t.TempDir()
@@ -792,6 +806,7 @@ func TestImportMbox_ResumesCheckpointAfterWorkerExit(t *testing.T) {
 }
 
 func TestImportMbox_HardErrorsStopsMultiFileLoop(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	// Verify that when ImportMbox reports HardErrors, the caller's
 	// multi-file loop should break. This simulates the control flow
@@ -890,6 +905,7 @@ func (h *cancelOnLogMessageHandler) WithGroup(name string) slog.Handler {
 }
 
 func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	tmp := t.TempDir()
 

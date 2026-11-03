@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 )
 
@@ -404,6 +405,7 @@ func TestDocumentPaginationAndWatermarksSQLite(t *testing.T) {
 }
 
 func TestDocumentJournalDisablesAfterLastContextualGenerationSQLite(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	mainPath := filepath.Join(dir, "main.db")
 	st, err := store.OpenForTest(mainPath)
@@ -468,6 +470,7 @@ func TestDocumentJournalDisablesAfterLastContextualGenerationSQLite(t *testing.T
 }
 
 func TestDocumentJournalCleanupWaitsForWriterSQLite(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
@@ -518,6 +521,7 @@ func TestDocumentJournalCleanupWaitsForWriterSQLite(t *testing.T) {
 }
 
 func TestDocumentJournalCleanupFailureDoesNotMaskLifecycleSQLite(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	assert := assert.New(t)
 	require := require.New(t)
 	dir := t.TempDir()
