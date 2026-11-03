@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/export"
@@ -513,8 +512,7 @@ func (r *run) writeMessage(
 	m := p.row
 	st := r.imp.store
 	var found, missing int64
-	body := ""
-	preservedBody := false
+	body, preservedBody := "", false
 	if m.Body.Valid {
 		body = applyMentions(m.Body.String, mentions, r.displayName)
 	}
@@ -530,11 +528,12 @@ func (r *run) writeMessage(
 			} else {
 				missing++
 				if archivedID != 0 {
-					archived, err := st.GetMessageBodyText(archivedID)
+					archived, archivedRaw, err := st.GetMessageBodyAndRawContext(ctx, archivedID)
 					if err != nil {
 						return fmt.Errorf("read archived long text: %w", err)
 					}
-					if body != "" && strings.HasPrefix(archived, body) {
+					var prev sigMessage
+					if json.Unmarshal(archivedRaw, &prev) == nil && prev.RowID == m.RowID && prev.Body == m.Body {
 						body = archived
 						preservedBody = true
 					}
