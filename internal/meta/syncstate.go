@@ -14,6 +14,7 @@ import (
 type syncState struct {
 	Version     int                      `json:"version"`
 	Source      string                   `json:"source"`
+	Platform    string                   `json:"platform,omitempty"`
 	NextSurface PostEdge                 `json:"next_surface"`
 	Phases      map[PostEdge]*phaseState `json:"phases"`
 }
@@ -45,7 +46,7 @@ func freshState(source string) *syncState {
 }
 
 func (st *syncState) complete() bool {
-	for _, edge := range postEdges {
+	for _, edge := range st.edges() {
 		if !st.Phases[edge].Done {
 			return false
 		}
@@ -53,9 +54,23 @@ func (st *syncState) complete() bool {
 	return true
 }
 
+func (st *syncState) edges() []PostEdge {
+	if st.Platform == "instagram" {
+		return instagramEdges[:]
+	}
+	return postEdges[:]
+}
+
+func freshSourceState(src *store.Source) *syncState {
+	if src.SourceType == InstagramSourceType {
+		return &syncState{Version: 1, Platform: "instagram", Source: src.Identifier, NextSurface: instagramMediaEdge, Phases: map[PostEdge]*phaseState{instagramMediaEdge: {}}}
+	}
+	return freshState(src.Identifier)
+}
+
 func loadState(ctx context.Context, st *store.Store, src *store.Source, full bool) (*syncState, error) {
 	if full {
-		return freshState(src.Identifier), nil
+		return freshSourceState(src), nil
 	}
 	var blob string
 	var priorID int64
@@ -75,21 +90,21 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 		blob = checkpoint.CursorBefore.String
 	}
 	if blob == "" {
-		return freshState(src.Identifier), nil
+		return freshSourceState(src), nil
 	}
 	var state syncState
 	if json.Unmarshal([]byte(blob), &state) != nil || !state.valid(src.Identifier) {
-		return nil, errors.New("invalid Facebook checkpoint; restart this source with --full")
+		return nil, errors.New("invalid comment checkpoint; restart this source with --full")
 	}
 	if state.complete() {
-		fresh := freshState(src.Identifier)
+		fresh := freshSourceState(src)
 		fresh.NextSurface = state.NextSurface
 		return fresh, nil
 	}
 	// A successful independent surface is rechecked after another surface's
 	// failure. A budget-only pause retains all finished surfaces until the
 	// remaining surfaces have had a turn, so bounded runs also make progress.
-	for _, edge := range postEdges {
+	for _, edge := range state.edges() {
 		p := state.Phases[edge]
 		if p.Done && p.Rescan {
 			state.Phases[edge] = &phaseState{}
@@ -99,17 +114,19 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 }
 
 func (st *syncState) valid(source string) bool {
-	if st.Version != 2 || st.Source != source || !st.NextSurface.valid() || len(st.Phases) != len(postEdges) {
+	_, instagram := ParseInstagramSourceIdentifier(source)
+	if st.Source != source || (instagram && (st.Platform != "instagram" || st.Version != 1 || st.NextSurface != instagramMediaEdge)) ||
+		(!instagram && (st.Platform != "" || st.Version != 2 || !st.NextSurface.valid())) || len(st.Phases) != len(st.edges()) {
 		return false
 	}
 	cursorOK := func(s string) bool { return len(s) <= 4096 && !strings.ContainsAny(s, "\r\n\x00") }
-	for _, edge := range postEdges {
+	for _, edge := range st.edges() {
 		p := st.Phases[edge]
 		if p == nil || len(p.Posts) > pageLimit || len(p.Stack) > 128 || !cursorOK(p.After) {
 			return false
 		}
 		for _, post := range p.Posts {
-			if !safeObjectID(post.ID) {
+			if !safeObjectID(post.ID) || (instagram && (post.InstagramMedia == nil || post.InstagramMedia.ID != post.ID)) {
 				return false
 			}
 		}
@@ -121,7 +138,7 @@ func (st *syncState) valid(source string) bool {
 				return false
 			}
 			for _, obj := range f.Pending {
-				if !safeObjectID(obj.ID) {
+				if !safeObjectID(obj.ID) || (instagram && (obj.InstagramComment == nil || obj.InstagramComment.ID != obj.ID)) {
 					return false
 				}
 			}
