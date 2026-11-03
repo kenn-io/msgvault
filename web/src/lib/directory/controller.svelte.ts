@@ -243,9 +243,9 @@ export class DirectoryController {
         await this.loadFirstPage();
         if (!this.isCurrentPromotion(generation, controller)) return stalePromotionResult();
         this.commit({ directoryPersonID: personID }, 'push');
-        const result = { ok: true, personID } satisfies DirectoryPromotionResult;
-        this.promotionResult = result;
-        return result;
+        this.promotionResult = { ok: true, personID };
+        this.onWrite();
+        return this.promotionResult;
       }
       const code = errorCode(response.error);
       const message = errorMessage(response.error, response.response.status);

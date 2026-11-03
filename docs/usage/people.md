@@ -75,9 +75,9 @@ operation. A link into one saved profile extends its participant bindings. A
 candidate that spans two different saved profiles needs a separate person
 merge review.
 
-In the Web UI, a stale decision closes its dialog and refreshes the queue.
-Review the changed evidence, then reopen the decision. Your draft notes remain
-available; the open dialog never silently replaces the token you reviewed.
+In the Web UI, open **People → Filter → Possible duplicates**. A stale decision
+refreshes the pair. Review its changed evidence before choosing **Merge** or
+**Keep separate** again. Your draft notes remain available.
 
 Review notes are private profile data. Avoid putting unnecessary personal
 details in them. The matching CLI and token-guarded API are documented in the

@@ -18,6 +18,7 @@
 </script>
 
 <script lang="ts">
+  import { messageCount } from '../../util/format';
   import { Button, Checkbox, Chip, CopyButton, PageHeader, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
   import { getDeletion } from '../../api/generated/api/api';
@@ -100,9 +101,6 @@
     } finally { cancelling = false; }
   }
 
-  function count(value: number): string {
-    return `${value.toLocaleString()} ${value === 1 ? 'message' : 'messages'}`;
-  }
   const cancellable = (status: string): boolean => status === 'pending' || status === 'in_progress';
 </script>
 
@@ -181,7 +179,7 @@
       </div>
       {#if panelDetail?.description}<p>{panelDetail.description}</p>{/if}
       <section class="block" aria-label="Messages">
-        <h3>{count(selectedBatch.message_count)}</h3>
+        <h3>{messageCount(selectedBatch.message_count)}</h3>
         {#if panelDetail?.summary}
           <span class="muted">
             {formatBytes(panelDetail.summary.total_size_bytes)}{#if panelDetail.summary.date_range?.[0]} · {panelDetail.summary.date_range[0].slice(0, 10)} to {panelDetail.summary.date_range[1]?.slice(0, 10)}{/if}
@@ -219,7 +217,7 @@
 
 {#if confirmCancel}
   <Dialog title="Cancel deletion batch?" onclose={() => { if (!cancelling) confirmCancel = undefined; }} primaryLabel={cancelling ? 'Cancelling…' : 'Cancel batch'} primaryDisabled={cancelling} onprimary={() => void cancelManifest()}>
-    <p>Cancel deletion of {count(confirmCancel.message_count)} from the source?</p>
+    <p>Cancel deletion of {messageCount(confirmCancel.message_count)} from the source?</p>
     <Button label="Keep staged" disabled={cancelling} onclick={() => confirmCancel = undefined} />
     {#if error}<p role="alert">{error}</p>{/if}
   </Dialog>

@@ -32,13 +32,11 @@ test('page content uses its header gap across workspaces', async ({ page }) => {
   await page.route('**/api/v1/identity/match-candidates**', (route) => route.fulfill({ json: { candidates: [], limit: 100, offset: 0 } }));
   await page.route('**/api/v1/person-relationship-reviews**', (route) => route.fulfill({ json: { reviews: [] } }));
   const gaps: Record<string, number> = {};
-  for (const label of ['People', 'Directory', 'Reviews', 'Messages', 'Files', 'Sources', 'Deletions', 'Settings']) {
+  for (const label of ['People', 'Messages', 'Files', 'Sources', 'Deletions', 'Settings']) {
     await selectWorkspace(page, label);
     if (label === 'People') await expect(page.getByText('No people yet', { exact: true })).toBeVisible();
-    if (label === 'Directory') await expect(page.getByText('No people found', { exact: true })).toBeVisible();
     if (label === 'Messages') await expect(page.getByRole('grid', { name: 'Messages results' }).getByText(row.title, { exact: true })).toBeVisible();
     if (label === 'Files') await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();
-    if (label === 'Reviews') await expect(page.getByText('No identity matches in this queue.', { exact: true })).toBeVisible();
     if (label === 'Deletions') {
       await page.getByRole('table', { name: 'Staged deletions' }).getByRole('button', { name: /^Open batch from/ }).click();
       const panel = page.getByRole('dialog', { name: /^Staged / });
@@ -236,10 +234,11 @@ test('chips keep pill corners and removable chips keep visible insets', async ({
   }));
   expect(wrapping).toEqual({ clipped: false, wrapped: true });
   await expect(queryChip.getByRole('button', { name: 'Remove search', exact: true })).toBeVisible();
-  await selectWorkspace(page, 'Directory');
-  await page.getByRole('button', { name: 'Filters', exact: true }).click();
+  await selectWorkspace(page, 'People');
+  await page.getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.getByText('Profile filters', { exact: true }).click();
   await page.getByRole('textbox', { name: 'Category filter' }).fill('Archive');
-  const filter = page.locator('.filter-chips .chip');
+  const filter = page.locator('.chips .kit-chip').filter({ hasText: 'Archive' });
   await expect(filter).toBeVisible();
   const directoryGeometry = await filter.evaluate((element) => {
     const range = document.createRange(); range.selectNodeContents(element.querySelector('.kit-chip__label')!);

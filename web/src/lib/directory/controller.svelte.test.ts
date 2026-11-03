@@ -1,20 +1,11 @@
 import { emptyProfile } from './profile-fixtures.test-support';
-import { pathOf } from './entity-fixtures.test-support';
+import { directoryPerson as fixtureDirectoryPerson, pathOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryController } from './controller.svelte';
 
-function directoryPerson(id: number) {
-  return {
-    id,
-    revision: 1,
-    contact_state: 'active',
-    categories: [],
-    organizations: [],
-    display_name: `Person ${id}`
-  };
-}
+const directoryPerson = (id: number) => fixtureDirectoryPerson(id, { revision: 1, display_name: `Person ${id}` });
 
 function detailResponse(path: string, personID = 7): Response {
   if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [] });
@@ -1092,8 +1083,9 @@ describe('DirectoryController', () => {
     expect(new URL(directoryRequests[2]!.url).searchParams.get('cursor')).toBeNull();
   });
 
-  it.each([200, 201])('treats %i promotion as successful and refreshes page one', async (status) => {
+  it.each([200, 201])('treats %i promotion as successful, refreshes page one, and notifies the write owner', async (status) => {
     const commits: Array<Record<string, unknown>> = [];
+    const onWrite = vi.fn();
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -1103,13 +1095,14 @@ describe('DirectoryController', () => {
       if (pathOf(request) === '/api/v1/people/42') return detailResponse(pathOf(request), 42);
       return detailResponse(pathOf(request), 42);
     });
-    const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch));
+    const controller = new DirectoryController(createAPIClient(fetchFn), (patch) => commits.push(patch), onWrite);
 
     await expect(controller.promote(11)).resolves.toEqual({ ok: true, personID: 42 });
     expect(controller.promotionResult).toEqual({ ok: true, personID: 42 });
     expect(commits).toContainEqual({ directoryPersonID: 42 });
     await expect(requests[0]!.clone().json()).resolves.toEqual({ participant_id: 11 });
     expect(controller.rows).toEqual([directoryPerson(42)]);
+    expect(onWrite).toHaveBeenCalledOnce();
   });
 
   it('exposes person binding conflicts without selecting a person', async () => {

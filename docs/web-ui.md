@@ -17,13 +17,13 @@ you do not need a separate web application process.
 | Who have I been in contact with? | People |
 | Where is an attachment, image, or video? | Files |
 | What do I know about this person? | People → Details |
-| Which identity matches or profile facts need my decision? | Reviews |
+| Which identity matches or profile facts need my decision? | People: Possible duplicates or Facts |
 | Can I return to this search later? | Saved views under Messages and Files |
 | Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
 | What is staged for deletion? | Staged deletions |
 | How do I change the daemon's configuration? | Settings |
 
-The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory and Reviews remain available through the command palette. **Staged deletions** appears while a listed batch is pending, running, or failed. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
+The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. **Staged deletions** appears while a listed batch is pending, running, or failed. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
 
 The top bar holds global search and **Display**. Display sets theme and density for this tab. On the ungrouped Messages table, it also shows **Columns**. **Reader position** appears when the results are at least 960 pixels wide. **Use Settings defaults** clears temporary theme and density choices. [Settings](#settings-and-restart-behavior) holds the saved defaults.
 
@@ -204,8 +204,7 @@ Each expanded message lists its files, recordings, linked tasks, and Kata issues
 
 Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
 Select meeting rows to export their context as JSON or Markdown, with transcripts
-included only when requested. Participant/domain reading panes, Directory, and
-People show meeting metrics and recorded actions for their current scope.
+included only when requested. People and domain views show meeting metrics and recorded actions for their current scope.
 **Open archived meeting** opens the source evidence; Back restores the originating
 view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
 for selection limits, source coverage, unknown duration, and action filters.
@@ -262,7 +261,7 @@ separate choices.
 ## People and domains
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Relationships workspace showing a selected person's activity calendar and email timeline in dark theme" loading="lazy">
+  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="People workspace showing a selected person's activity calendar and email timeline in dark theme" loading="lazy">
   <figcaption>Select a person to explore their activity and messages.</figcaption>
 </figure>
 
@@ -271,9 +270,9 @@ does not merge records merely because their display names match. Select a
 person to inspect contextual activity across email, chat, calendar events, and
 meeting notes, plus the files associated with that person. Message filters continue to scope both Messages and Files.
 
-People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show curated Directory profiles, including people with no archived messages. Select **Same person** after checking multiple observed people to link their identities.
+People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show saved profiles, including people with no archived messages. Select **Merge** after checking multiple observed people to link their identities. Select saved profiles to delete them in bulk.
 
-A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Tasks, Facts, and Briefs. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Directory and Reviews are also available in the People header.
+A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Tasks, Facts, and Briefs. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Choose **Merge with…** beside the person’s menu to find another saved profile or observed person.
 For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster. Profiles without archived activity open Details.
 
 The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to narrow Messages and its conversation reader. Details keeps that day selected; select it again or choose **Clear date** to restore the shared date filters. Editing a message filter also clears the day without copying its bounds to Files. People and domains use your browser's local time zone. Domain days count individual sent messages, including chats that span several days. Calendars summarize the whole person or domain; message filters narrow the table and Files. Switching people, years, or to Files clears the day selection. Messages groups chats by conversation; a selected day limits the opened conversation to that day.
@@ -283,16 +282,14 @@ that mean “me,” explicit durable profile promotion, display-name overrides, 
 typed profile attributes are separate curated operations; see [People,
 Profiles, and Source Identities](/docs/usage/people/).
 
-### Directory and Reviews
+### Saved profiles and possible duplicates
 
-Directory holds durable people: the profiles you explicitly curate and keep
-across sources. Search by name, email, or organization. **Filters** opens a
-panel with Contact state, Category, Organization, Primary channel, and two date
+Choose **Filter → Saved** for the profiles you curate across sources. Search by name, email, or organization. **Filter → Profile filters** opens a panel with Contact state, Category, Organization, Primary channel, and two date
 fields, **Last contacted after** and **Last contacted before**. Each active
 filter also appears as a chip; select its remove button to drop it. The order
 menu sorts by Name, Most recently contacted, or Least recently contacted.
 
-Selecting a Directory row opens the same person page as People: **Messages** and the calendar when the person has archived activity, **Details** otherwise. On Details, each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Editing a row opens its editor below the fields; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
+Selecting a saved profile opens **Messages** and the calendar when the person has archived activity, or **Details** otherwise. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Edit a row in place; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
 Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 nodes and 500 connections. An always-present list groups the same connections by hop for keyboard and screen reader use.
 
@@ -300,14 +297,9 @@ Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last t
 
 Manage organizations, connection types, and custom field definitions under **Settings → People**. Catalog edits save immediately.
 
-Reviews brings together identity matches, facts, and imported
-relationships; the **Review type** control switches between them. Inspect the
-evidence before accepting or rejecting a candidate. Conflicts between existing
-profiles require an explicit merge decision. Facts starts with a person: search
-by name in the **Person** field to see that person's evidence, claims,
-decisions, and pins. **Open person profile** opens their person page in People.
-Merge history and reversal follow the boundaries documented in
-[People](/docs/usage/people/).
+Choose **Filter → Possible duplicates** to compare names, addresses, activity, and evidence. The People badge counts waiting pairs, showing **500+** at 500. **Merge** and **Keep separate** offer Undo before recording the decision; **History** lists earlier decisions. Two saved profiles require a survivor choice, followed by confirmation of the refreshed pair. **Evidence and notes** keeps the reviewed details and decision note beside the pair.
+
+Facts lives in the person's Details. Choose **Show** to inspect evidence, claims, decisions, and pins. Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Addresses lists joined identities with **Unlink**. To separate saved profiles after a merge, open **More actions → History**, inspect the merge, and choose **Split merged profile**. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting

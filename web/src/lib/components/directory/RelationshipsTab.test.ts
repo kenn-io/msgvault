@@ -1,9 +1,19 @@
-import { requestOf, pathOf, controllerWith } from '../../directory/entity-fixtures.test-support';
+import { controllerWith as entityControllerWith, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { createAPIClient } from '../../api/client';
+import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
 import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
+
+function controllerWith(fetchFn: typeof fetch, personID = 7) {
+  return entityControllerWith(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (request.method === 'GET' && pathOf(request) === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [] });
+    return fetchFn(input, init);
+  }, personID);
+}
 
 function relationship(id = 41, revision = 1, overrides: Record<string, unknown> = {}) {
   return {
@@ -37,8 +47,11 @@ function relationshipType(overrides: Record<string, unknown> = {}) {
 }
 
 describe('RelationshipsTab', () => {
-  it('renders connections without the shared type catalog', () => {
-    const { client, controller } = controllerWith(vi.fn());
+  it('renders curated connections', () => {
+    const { client, controller } = controllerWith(async input => {
+      const path = pathOf(requestOf(input));
+      throw new Error(`Unexpected ${path}`);
+    });
     controller.relationships = [
       view(41, 'outgoing', 'mentors', 'Synthetic Learner'),
       view(42, 'incoming', 'is mentored by', 'Synthetic Guide'),
@@ -55,6 +68,29 @@ describe('RelationshipsTab', () => {
     expect(screen.queryByText(/outgoing|incoming/)).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Edit relationship' })).toHaveLength(3);
     expect(screen.getAllByRole('button', { name: 'Delete relationship' })).toHaveLength(3);
+  });
+
+  it('refreshes imported connections when the surviving person reloads in place', async () => {
+    vi.stubEnv('TZ', 'UTC');
+    let merged = false;
+    const imported = { id: 71, person_id: 7, matched_person_id: 141, raw_related_value: 'absorbed@example.com', raw_related_type: 'X-CUSTOM_friend', value_kind: 'text', status: 'accepted', source: 'vcard_import', created_at: '2026-08-01T12:00:00Z', updated_at: '2026-08-01T12:00:00Z', reviewed_at: '2026-08-02T12:00:00Z' };
+    const client = createAPIClient(async input => {
+      const path = pathOf(requestOf(input));
+      if (path === '/api/v1/person-relationship-reviews') return Response.json({ reviews: [{ ...imported, id: 70, raw_related_value: 'existing@example.com' }, ...(merged ? [imported] : [])] });
+      if (path === '/api/v1/people/7/relationships') return Response.json({ relationships: [] });
+      throw new Error(`Unexpected ${path}`);
+    });
+    const controller = new DirectoryEntityController(client, 7);
+    const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
+    try {
+      await screen.findByText('existing@example.com');
+      expect(screen.getByText('Accepted')).toBeDefined();
+      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X-CUSTOM_friend · Vcard import · Text · Aug 1, 2026 · Aug 2, 2026');
+      merged = true;
+      await controller.refreshRelationships();
+      expect(await screen.findByText('absorbed@example.com')).toBeDefined();
+      expect(screen.getAllByText('Accepted')).toHaveLength(2);
+    } finally { rendered.unmount(); controller.destroy(); vi.unstubAllEnvs(); }
   });
 
   it('renders the shared type catalog without person connections and keeps system types read-only', () => {
@@ -381,7 +417,10 @@ describe('RelationshipsTab', () => {
   });
 
   it('closes an unchanged relationship edit without sending an empty patch', async () => {
-    const fetchFn = vi.fn<typeof fetch>();
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = requestOf(input);
+      throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
+    });
     const { client, controller } = controllerWith(fetchFn);
     controller.relationships = [view(41, 'outgoing', 'mentors', 'Synthetic Learner', {
       relationship: relationship(41, 1, { notes: 'Opening note', end_date: { year: 2026, month: 6 } })

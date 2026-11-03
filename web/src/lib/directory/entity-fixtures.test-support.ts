@@ -1,5 +1,9 @@
+import { person } from './person-fixtures.test-support';
+import type { DirectoryPersonSummary } from '../api/generated/models/directoryPersonSummary';
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
+
+export { person, mergeResult } from './person-fixtures.test-support';
 
 export function requestOf(input: RequestInfo | URL): Request {
   return input instanceof Request ? input : new Request(input);
@@ -63,4 +67,13 @@ export function collection(rows = [employment()], projection = { employment_id: 
 export function controllerWith(fetchFn: typeof fetch, personID = 7) {
   const client = createAPIClient(fetchFn);
   return { client, controller: new DirectoryEntityController(client, personID) };
+}
+
+export function directoryPerson(id: number, overrides: Partial<DirectoryPersonSummary> = {}): DirectoryPersonSummary {
+  const detail = person(id);
+  return { id, revision: detail.revision, display_name: detail.display_name, categories: [], organizations: [], carddav_bindings: [], contact_state: 'active', vcard_uid: detail.vcard_uid, ...overrides };
+}
+
+export function candidate(id: number, state = 'candidate') {
+  return { id, left_id: id * 10, left_kind: 'participant', right_id: id * 10 + 1, right_kind: 'participant', basis: 'email', source: 'user', state, actionable: state === 'candidate' || state === 'conflict', application_pending: false, review_token: `token-${id}-${state}`, evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
 }

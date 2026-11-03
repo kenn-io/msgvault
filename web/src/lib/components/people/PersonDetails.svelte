@@ -13,8 +13,8 @@
   import PersonNetwork from '../directory/PersonNetwork.svelte';
   import PersonAgenda from '../directory/PersonAgenda.svelte';
   import PersonBriefCard from '../directory/PersonBriefCard.svelte';
-  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, sweepConfigured, onOpenMeeting, onReviewFacts }:
-    { client: APIClient; directory: DirectoryController; personID: number; onOpenPerson?: (id: number) => void; onReviewFacts?: (personID: number) => void;
+  let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, sweepConfigured, onOpenMeeting }:
+    { client: APIClient; directory: DirectoryController; personID: number; onOpenPerson?: (id: number) => void;
       onOpenMeeting?: (meeting: import('../../api/generated/models').MeetingRef) => void; sweepConfigured?: boolean; onAnnounce?: (text: string) => void; onOpenSettings?: (category?: string) => void } = $props();
   let organizationRequest = $state<{ id: number; key: number }>();
   let requestKey = 0;
@@ -48,7 +48,7 @@
       <PersonNetwork controller={entity} {onOpenPerson} onOpenOrganization={(id) => organizationRequest = { id, key: ++requestKey }} />
     {/if}
     <PersonAgenda {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
-    <PersonFacts {client} {personID} refreshKey={profile.person} {onReviewFacts} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
+    <PersonFacts {client} {personID} refreshKey={profile.person} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
     <PersonBriefCard {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
     {#if profile.person && profile.person.participant_ids.length > 0}<MeetingPanel {client} scope={{ kind: 'direct', scope: { person_id: personID } }} refreshKey={String(profile.person.revision)} {onOpenMeeting} />{/if}
   {/if}

@@ -1,30 +1,17 @@
-import { requestOf } from './entity-fixtures.test-support';
+import { person, requestOf } from './entity-fixtures.test-support';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import * as requestID from '../api/request-id';
 import { createAPIClient } from '../api/client';
 import type {
-  Person as GeneratedPerson,
   PersonMergeDetail as GeneratedPersonMergeDetail,
   PersonSplitResult as GeneratedPersonSplitResult,
 } from '../api/generated/models';
 import { PERSON_MERGE_HISTORY_LIMIT, PersonMergeHistoryController } from './person-merge-history-controller.svelte';
 
-type Person = GeneratedPerson;
 type PersonMergeDetail = GeneratedPersonMergeDetail;
 
 afterEach(() => vi.restoreAllMocks());
-
-function person(id: number, revision = 4, name = `Synthetic Person ${id}`): Person {
-  return {
-    id,
-    revision,
-    display_name: name,
-    participant_ids: [701, 702],
-    created_at: '2026-08-01T00:00:00Z',
-    updated_at: '2026-08-02T00:00:00Z',
-    vcard_uid: `synthetic-${id}`,
-  };
-}
 
 function detail(
   overrides: Partial<PersonMergeDetail['merge']> = {},
@@ -74,8 +61,8 @@ function splitResult(exact = true): GeneratedPersonSplitResult {
     exact_reversal: exact,
     cache_state: 'ready',
     identity_revision: 8,
-    source_person: person(12, 5, 'Synthetic Source'),
-    new_person: person(19, 1, 'Synthetic Restored'),
+    source_person: person(12, 5, [701, 702], 'Synthetic Source'),
+    new_person: person(19, 1, [701, 702], 'Synthetic Restored'),
     split: {
       id: 55,
       merge_id: 41,
@@ -157,13 +144,13 @@ describe('PersonMergeHistoryController', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
       if (path === '/api/v1/people/12' && request.method === 'GET') {
-        return Response.json(person(12, 4, 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
+        return Response.json(person(12, 4, [701, 702], 'Synthetic Source'), { headers: { ETag: '"person-12-r4"' } });
       }
       return Response.json(splitResult(), {
         headers: { ETag: '"person-12-r5"', 'X-New-Person-ETag': '"person-19-r1"' },
       });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('123-456-789-12');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
 
     await controller.selectMerge(41);
@@ -175,7 +162,7 @@ describe('PersonMergeHistoryController', () => {
     const post = requests.find((request) => request.method === 'POST')!;
     expect(new URL(post.url).pathname).toBe('/api/v1/people/12/split');
     expect(post.headers.get('If-Match')).toBe('"person-12-r4"');
-    expect(post.headers.get('Idempotency-Key')).toBe('11111111-1111-4111-8111-111111111111');
+    expect(post.headers.get('Idempotency-Key')).toBe('123-456-789-12');
     await expect(post.clone().json()).resolves.toEqual({ merge_id: 41, participant_ids: [701] });
   });
 
@@ -184,7 +171,7 @@ describe('PersonMergeHistoryController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       if (new URL(request.url).pathname === '/api/v1/people/12') {
-        return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+        return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       }
       return Response.json(detail({}, zeroLineage ? [] : undefined));
     });
@@ -203,7 +190,7 @@ describe('PersonMergeHistoryController', () => {
     expect(regular.confirmSplit()).toBe(false);
   });
 
-  it('reuses a UUID only after a thrown transport failure of the unchanged confirmation', async () => {
+  it('reuses a request ID only after a thrown transport failure of the unchanged confirmation', async () => {
     const requests: Request[] = [];
     let postAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -211,12 +198,14 @@ describe('PersonMergeHistoryController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       postAttempts += 1;
       if (postAttempts === 1) throw new TypeError('connection reset');
       return Response.json(splitResult());
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    const createRequestID = vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -226,14 +215,15 @@ describe('PersonMergeHistoryController', () => {
     await controller.submitSplit();
     await controller.submitSplit();
 
+    expect(createRequestID).toHaveBeenCalledOnce();
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '11111111-1111-4111-8111-111111111111',
+      '123-456-789-12',
+      '123-456-789-12',
     ]);
   });
 
-  it('rotates the UUID and requires reconfirmation after a thrown non-transport exception', async () => {
+  it('rotates the request ID and requires reconfirmation after a thrown non-transport exception', async () => {
     const requests: Request[] = [];
     let postAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -241,14 +231,14 @@ describe('PersonMergeHistoryController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       postAttempts += 1;
       if (postAttempts === 1) throw new SyntaxError('invalid response JSON');
       return Response.json(splitResult());
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+    vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -262,7 +252,7 @@ describe('PersonMergeHistoryController', () => {
 
     expect(
       requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
-    ).toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
+    ).toEqual(['123-456-789-12', '234-567-890-23']);
   });
 
   it('atomically reloads exact source/detail only for the recognized stale code and requires reconfirmation', async () => {
@@ -280,7 +270,7 @@ describe('PersonMergeHistoryController', () => {
       if (path === '/api/v1/people/12') {
         sourceReads += 1;
         const revision = sourceReads === 1 ? 4 : 5;
-        return Response.json(person(12, revision), { headers: { ETag: `"person-12-r${revision}"` } });
+        return Response.json(person(12, revision, [701, 702], 'Synthetic Person 12'), { headers: { ETag: `"person-12-r${revision}"` } });
       }
       return Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 });
     });
@@ -318,11 +308,11 @@ describe('PersonMergeHistoryController', () => {
       }
       if (path === '/api/v1/people/12') {
         sourceReads += 1;
-        if (sourceReads === 2) return Response.json(person(12, 5, 'Unpublishable Source'));
+        if (sourceReads === 2) return Response.json(person(12, 5, [701, 702], 'Unpublishable Source'));
         if (sourceReads === 3)
           return Response.json({ error: 'unavailable', message: 'Source still unavailable' }, { status: 503 });
         const revision = sourceReads === 1 ? 4 : 6;
-        return Response.json(person(12, revision, revision === 4 ? 'Synthetic Source' : 'Fresh Synthetic Source'), {
+        return Response.json(person(12, revision, [701, 702], revision === 4 ? 'Synthetic Source' : 'Fresh Synthetic Source'), {
           headers: { ETag: `"person-12-r${revision}"` },
         });
       }
@@ -331,9 +321,9 @@ describe('PersonMergeHistoryController', () => {
         ? Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 })
         : Response.json(splitResult());
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+    vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -375,7 +365,7 @@ describe('PersonMergeHistoryController', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts).toHaveLength(2);
     expect(posts[1]!.headers.get('If-Match')).toBe('"person-12-r6"');
-    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('22222222-2222-4222-8222-222222222222');
+    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('234-567-890-23');
   });
 
   it.each([
@@ -388,12 +378,12 @@ describe('PersonMergeHistoryController', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       return Response.json({ error, message: 'Application failure' }, { status });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+    vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
     await controller.openSplit();
@@ -406,7 +396,7 @@ describe('PersonMergeHistoryController', () => {
     expect(requests.filter((request) => request.method === 'GET')).toHaveLength(2);
     expect(
       requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
-    ).toEqual(['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222']);
+    ).toEqual(['123-456-789-12', '234-567-890-23']);
   });
 
   it('commits once, keeps malformed receipt tags out of state, and reports reconciliation separately', async () => {
@@ -417,7 +407,7 @@ describe('PersonMergeHistoryController', () => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (request.method === 'GET') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (request.method === 'GET') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       return Response.json(splitResult(false), { headers: { ETag: 'bad', 'X-New-Person-ETag': 'also-bad' } });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7, reconcile);
@@ -446,7 +436,7 @@ describe('PersonMergeHistoryController', () => {
       const request = requestOf(input);
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
-      if (path === '/api/v1/people/12') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       if (request.method === 'POST') return Response.json(splitResult());
       return Response.json({ merges: [], limit: 100, offset: 0 });
     });
@@ -505,7 +495,7 @@ describe('PersonMergeHistoryController', () => {
       }
       if (path.endsWith('/snapshot')) return lateSnapshot.promise;
       if (request.method === 'POST') return lateSplit.promise;
-      if (path === '/api/v1/people/12') return Response.json(person(12), { headers: { ETag: '"person-12-r4"' } });
+      if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
       return Response.json({ merges: [], limit: 100, offset: 0 });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);

@@ -679,7 +679,7 @@ test('list filters clear hidden selections and each mode offers only supported c
 });
 
 for (const previous of ['Alice', 'no person']) {
-  test(`opening a Directory selection shows its messages after ${previous}`, async ({ page }) => {
+  test(`opening a saved person shows its messages after ${previous}`, async ({ page }) => {
     await prepare(page);
     const profiles = [
       { id: 91, display_name: 'Alice Example', organizations: [], categories: [], contact_state: 'active', revision: 1, participant_ids: [1], carddav_bindings: [], vcard_uid: 'example-91' },
@@ -715,8 +715,7 @@ for (const previous of ['Alice', 'no person']) {
     if (previous === 'Alice') {
       await list.getByText('Alice Example', { exact: true }).click();
     }
-    await page.getByRole('button', { name: 'Directory', exact: true }).click();
-    await page.getByRole('grid', { name: 'Directory people' }).getByText('Bob Example', { exact: true }).click();
+    await list.getByText('Bob Example', { exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Bob Example', exact: true })).toBeVisible();
     await page.getByRole('radio', { name: 'Messages', exact: true }).click();
     await expect(list.getByRole('row', { name: /Bob Example/ })).toHaveAttribute('aria-selected', 'true');

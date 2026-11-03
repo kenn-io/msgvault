@@ -1,3 +1,4 @@
+import { candidate } from '../../directory/entity-fixtures.test-support';
 import type { SavedView } from '../../api/generated/models';
 
 export function view(id: number, name: string, presentation = 'table'): SavedView {
@@ -11,3 +12,5 @@ export function view(id: number, name: string, presentation = 'table'): SavedVie
     canonical_state: { filters: [], grouping: [], presentation, sort: [], columns: [] },
   };
 }
+
+export const pair = { ...candidate(17), left_id: 1, right_id: 2, review_token: 'review-17' };

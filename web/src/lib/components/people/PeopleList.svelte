@@ -64,6 +64,8 @@
     sortOptions: Array<{ value: string; label: string }>;
     /** Linking requires observed people, in addition to a selection count. */
     canMerge: boolean;
+    canDelete?: boolean;
+    onDelete?: () => void;
     onFacetChange: (facet: RelationshipFacet) => void;
     onSortChange: (value: string) => void;
     onOpen: (key: string) => void;
@@ -93,6 +95,8 @@
     sort,
     sortOptions,
     canMerge,
+    canDelete = false,
+    onDelete,
     onFacetChange,
     onSortChange,
     onOpen,
@@ -283,7 +287,8 @@
   {#if selection.count > 0}
     <div class="selection-bar"><span>{selection.count} selected</span>
       <Button label="Select loaded" onclick={selectAllLoaded} /><Button label="Clear selection" onclick={() => selection.clear()} />
-      <Button label="Same person" disabled={!canMerge} onclick={onMerge} />
+      <Button label="Merge" disabled={!canMerge} onclick={onMerge} />
+      {#if canDelete}<Button label="Delete" tone="danger" onclick={onDelete} />{/if}
     </div>
   {/if}
 </aside>

@@ -272,7 +272,7 @@ These links follow the same rules as other automatic identity links:
 - If the identities already belong to two different people, msgvault leaves
   them apart and records a conflict. So does an address that another card or
   `id` from the same source already claims in archived observations.
-  Review conflicts in the Web [Directory review queues](/docs/web-ui/#directory-and-reviews).
+  Review conflicts in the Web [People: Possible duplicates](/docs/web-ui/#saved-profiles-and-possible-duplicates).
 - Rejecting a proposed link keeps that pair apart. The same identities can
   still connect through another identity of the same person.
 
@@ -1081,7 +1081,7 @@ store is readable. Unknown phones do not create archive identities. An email
 shared by so many cards that its phones exceed the 50-identity transfer limit
 gets no suggestions; its meetings still import.
 
-Inspect the suggested email and phone in Directory's identity review or the CLI:
+Inspect the suggested email and phone in People’s Possible duplicates or the CLI:
 
 ```bash
 msgvault identity matches list

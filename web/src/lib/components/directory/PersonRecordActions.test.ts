@@ -151,11 +151,11 @@ describe('PersonRecordActions', () => {
     const trigger = screen.getByRole('button', { name: 'More actions' });
 
     await choose('History');
-    const dialog = await screen.findByRole('dialog', { name: 'Profile history' });
+    const dialog = await screen.findByRole('dialog', { name: 'History' });
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Profile history' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'History' })).toBeNull());
     expect(document.activeElement).toBe(trigger);
   });
 });

@@ -1,4 +1,4 @@
-import { pathOf } from './entity-fixtures.test-support';
+import { pathOf, person } from './entity-fixtures.test-support';
 import { emptyProfile } from './profile-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -6,20 +6,8 @@ import { createAPIClient } from '../api/client';
 import type { AttributeDefinition, DirectoryReadBundle, PersonAttributeValue } from './models';
 import { DirectoryProfileController } from './profile-controller.svelte';
 
-function person(id = 7, revision = 3, displayName = 'Test User') {
-  return {
-    id,
-    revision,
-    display_name: displayName,
-    participant_ids: [],
-    created_at: '2026-08-01T00:00:00Z',
-    updated_at: '2026-08-01T00:00:00Z',
-    vcard_uid: `person-${id}`
-  };
-}
-
 function profile(id = 7, revision = 3) {
-  return emptyProfile(person(id, revision));
+  return emptyProfile(person(id, revision, [], 'Test User'));
 }
 
 function attributes(id = 7) {
@@ -28,7 +16,7 @@ function attributes(id = 7) {
 
 function bundle(id = 7): DirectoryReadBundle {
   return {
-    person: person(id),
+    person: person(id, 3, [], 'Test User'),
     structuredProfile: profile(id),
     attributes: attributes(id),
     etags: { person: '"person-7-r3"', structuredProfile: '"profile-7-r3"' },
@@ -52,8 +40,8 @@ describe('DirectoryProfileController', () => {
     const patches: Request[] = [];
     const definition = { id: 1, universal_id: '00000000-0000-4000-8000-000000000001', object_type: 'person', slug: 'note', label: 'Note', value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 0, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true, is_sensitive: false, is_active: true, revision: 1 };
     const value = { id: 41, person_id: 7, definition_id: 1, definition_slug: 'note', ordinal: 0, value: { type: 'text', text: 'A note' }, active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z', source: 'user' };
-    const person = () => ({ id: 7, revision: linked ? 4 : cause === 'pending structured PATCH' && patches.length === 0 ? 2 : 3, display_name: 'Synthetic Person', participant_ids: linked ? [11, 12] : [11], vcard_uid: 'synthetic-7', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' });
-    const profile = () => ({ person: person(), names: cause === 'pending structured PATCH' && patches.length > 0 ? [{ person_id: 7, name_kind: 'nickname', formatted: 'Saved nickname', original_value: 'Saved nickname', is_derived: false, envelope: { id: 81, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} } }] : [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
+    const currentPerson = () => person(7, linked ? 4 : cause === 'pending structured PATCH' && patches.length === 0 ? 2 : 3, linked ? [11, 12] : [11], 'Synthetic Person');
+    const profile = () => ({ person: currentPerson(), names: cause === 'pending structured PATCH' && patches.length > 0 ? [{ person_id: 7, name_kind: 'nickname', formatted: 'Saved nickname', original_value: 'Saved nickname', is_derived: false, envelope: { id: 81, ordinal: 0, source: 'user', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', vcard: {} } }] : [], contact_points: [], addresses: [], dates: [], categories: [], media: [] });
     const client = createAPIClient(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = pathOf(request);
@@ -64,9 +52,9 @@ describe('DirectoryProfileController', () => {
         if (request.headers.get('If-Match') !== '"person-7-r4"') return Response.json({ error: 'person_revision_conflict', message: 'Reload this profile.' }, { status: 409 });
       }
       if (path === '/api/v1/people/7/contact-state') return Response.json({ person_id: 7, interaction_count: linked ? 1 : 3, last_contact_at: linked ? '2026-08-01T00:00:00Z' : '2026-08-15T00:00:00Z', cadence_status: linked ? 'overdue' : 'ok', computed_at: '2026-08-20T00:00:00Z', stale: false });
-      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+      if (path === '/api/v1/people/7') return Response.json(currentPerson(), { headers: { ETag: `"person-7-r${currentPerson().revision}"` } });
       if (path === '/api/v1/people/7/profile') {
-        const response = Response.json(profile(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+        const response = Response.json(profile(), { headers: { ETag: `"person-7-r${currentPerson().revision}"` } });
         if (holdProfileRead) { holdProfileRead = false; staleProfile = response; return pendingReload; }
         return response;
       }
@@ -159,7 +147,7 @@ describe('DirectoryProfileController', () => {
         const days = current[0]?.value.integer;
         return Response.json({ ...contactState, cadence_status: days === undefined ? 'unknown' : days === 4 ? 'ok' : 'overdue', cadence_due_at: days === 4 ? '2026-08-05T00:00:00Z' : days === 2 ? '2026-08-03T00:00:00Z' : undefined });
       }
-      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
+      if (path === '/api/v1/people/7') return Response.json(person(7, 3, [], 'Test User'), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [{ definition, current, history: [superseded] }] });
       if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
@@ -195,7 +183,7 @@ describe('DirectoryProfileController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict', message: 'changed elsewhere' }, { status: 409 });
-      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: '"profile-7-r4"' } });
       if (pathOf(request).endsWith('/attributes')) return attributesUnavailable
         ? Response.json({ message: 'attributes unavailable' }, { status: 503 })
@@ -258,7 +246,7 @@ describe('DirectoryProfileController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'PATCH') return Response.json({ error: 'precondition_required', message: 'read again' }, { status: 428 });
-      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: '"profile-7-r4"' } });
       if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
       return Response.json({ definitions: [] });
@@ -284,7 +272,7 @@ describe('DirectoryProfileController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'PATCH') return Response.json({ error: 'person_revision_conflict', message: 'changed elsewhere' }, { status: 409 });
-      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/profile')) {
         profileReloads += 1;
         return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: profileReloads === 1 ? '"profile-7-r3"' : '"profile-7-r4"' } });
@@ -326,7 +314,7 @@ describe('DirectoryProfileController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'PATCH') return Response.json({ error: 'precondition_required', message: 'read again' }, { status: 428 });
-      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/profile')) return Response.json({ error: 'unavailable', message: 'profile reload unavailable' }, { status: 503 });
       if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
       return Response.json({ definitions: [] });
@@ -343,7 +331,7 @@ describe('DirectoryProfileController', () => {
 
   it('renames with the person ETag and invalidates only the changed Directory row', async () => {
     const invalidated: number[] = [];
-    const fetchFn = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(person(7, 4, 'Alice Example')), { headers: { ETag: '"person-7-r4"' } }));
+    const fetchFn = vi.fn<typeof fetch>(async () => new Response(JSON.stringify(person(7, 4, [], 'Alice Example')), { headers: { ETag: '"person-7-r4"' } }));
     const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle(), {
       invalidateRow: (id) => {
         invalidated.push(id);
@@ -366,7 +354,7 @@ describe('DirectoryProfileController', () => {
       if ((input instanceof Request ? input : new Request(input)).method !== 'PATCH') return Response.json({ error: 'unavailable', message: 'Refresh unavailable' }, { status: 503 });
       write += 1;
       return write === 1
-        ? new Response(JSON.stringify(person(7, 4, 'Alice Example')), { headers: { ETag: '"person-7-r4"' } })
+        ? new Response(JSON.stringify(person(7, 4, [], 'Alice Example')), { headers: { ETag: '"person-7-r4"' } })
         : new Response(JSON.stringify(profile(7, 5)), { headers: { ETag: '"person-7-r5"' } });
     });
     const controller = new DirectoryProfileController(createAPIClient(fetchFn), 7, bundle());
@@ -494,7 +482,7 @@ describe('DirectoryProfileController', () => {
     expect(controller.draft).toEqual({ kind: 'rename', body: { display_name: 'Later name' } });
     expect(controller.conflict).toMatchObject({ code: 'mutation_in_progress' });
 
-    resolveFirst?.(new Response(JSON.stringify(person(7, 4, 'First name')), { headers: { ETag: '"person-7-r4"' } }));
+    resolveFirst?.(new Response(JSON.stringify(person(7, 4, [], 'First name')), { headers: { ETag: '"person-7-r4"' } }));
     await first;
     expect(controller.draft).toEqual({ kind: 'rename', body: { display_name: 'Later name' } });
     expect(controller.conflict).toMatchObject({ code: 'mutation_in_progress' });
@@ -526,7 +514,7 @@ describe('DirectoryProfileController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'PATCH') return new Promise<Response>((resolve) => { resolvePatch = resolve; });
-      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
       return Response.json({ definitions: [] });
@@ -568,7 +556,7 @@ describe('DirectoryProfileController', () => {
     expect(controller.draft).toBeNull();
     expect(controller.conflict).toBeNull();
 
-    resolvePerson?.(new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } }));
+    resolvePerson?.(new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } }));
     await expect(reload).resolves.toEqual({ ok: true });
     expect(controller.personETag).toBe('"person-7-r4"');
     expect(controller.canWritePerson).toBe(true);
@@ -647,7 +635,7 @@ describe('DirectoryProfileController', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       if (request.method === 'PATCH') return patchResponse();
-      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } });
+      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile(7, 4)), { headers: { ETag: '"person-7-r4"' } });
       if (pathOf(request).endsWith('/attributes')) return Response.json(attributes());
       return Response.json({ definitions: [] });
@@ -759,7 +747,7 @@ describe('DirectoryProfileController', () => {
         reads += 1;
         return reads === 1 ? pending : Response.json({ definitions: [current] });
       }
-      if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: '"person-7-r3"' } });
+      if (path === '/api/v1/people/7') return Response.json(person(7, 3, [], 'Test User'), { headers: { ETag: '"person-7-r3"' } });
       if (path.endsWith('/profile')) return Response.json(profile(), { headers: { ETag: '"profile-7-r3"' } });
       if (path.endsWith('/attributes')) return Response.json(attributes());
       if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: '2026-08-20T00:00:00Z', stale: false });
@@ -858,7 +846,7 @@ describe('DirectoryProfileController', () => {
     };
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person()), { headers: { ETag: '"person-7-r3"' } });
+      if (pathOf(request) === '/api/v1/people/7') return new Response(JSON.stringify(person(7, 3, [], 'Test User')), { headers: { ETag: '"person-7-r3"' } });
       if (pathOf(request).endsWith('/profile')) return new Response(JSON.stringify(profile()), { headers: { ETag: '"person-7-r3"' } });
       if (pathOf(request).endsWith('/attributes')) return Response.json(values);
       return Response.json({ definitions: [] });
@@ -889,7 +877,7 @@ describe('DirectoryProfileController', () => {
     const reload = controller.reload();
     await vi.waitFor(() => expect(resolvePerson).toBeDefined());
     controller.destroy();
-    resolvePerson?.(new Response(JSON.stringify(person(7, 4)), { headers: { ETag: '"person-7-r4"' } }));
+    resolvePerson?.(new Response(JSON.stringify(person(7, 4, [], 'Test User')), { headers: { ETag: '"person-7-r4"' } }));
     await reload;
 
     expect(controller.personETag).toBe('"person-7-r3"');

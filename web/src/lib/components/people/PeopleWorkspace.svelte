@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { appShortcuts, ROOT_SCOPE, Button, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
+  import { appShortcuts, ROOT_SCOPE, Button, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
+  import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
@@ -11,13 +12,16 @@
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
   import PeopleList, { type PeopleRow } from './PeopleList.svelte';
+  import { messageCount } from '../../util/format';
+  import PossibleDuplicates from './PossibleDuplicates.svelte';
+  import type { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import PersonPage from './PersonPage.svelte';
   import { RELATIONSHIP_DAY_HISTORY_KEY, relationshipDayHistory } from '../../relationships/reader-history';
   import type { ComponentProps } from 'svelte';
 
-  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
-  let { directory, urlState, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
-    PageProps & { directory: DirectoryController; urlState: ExploreURLState; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
+  type PageProps = Omit<ComponentProps<typeof PersonPage>, 'directory' | 'onRecordDeleted' | 'onSplitCommitted' | 'onIdentityChange' | 'onBack' | 'onReconcilePersonMerge' | 'details' | 'selectedDate' | 'domainYear' | 'sort' | 'filenameQuery' | 'mimeFamilies'>;
+  let { reviews, onDuplicatesChanged, directory, urlState, restorationEpoch = 0, onNavigate, onReplaceNavigation, onDraftNavigation, onShowAllChange, ...page }:
+    PageProps & { reviews: DirectoryReviewController; onDuplicatesChanged: () => void; directory: DirectoryController; urlState: ExploreURLState; restorationEpoch?: number; onReplaceNavigation: (patch: Partial<ExploreURLState>) => void;
       onNavigate: (patch: Partial<ExploreURLState>) => void; onDraftNavigation: (patch: Partial<ExploreURLState>) => void; onShowAllChange: (value: boolean) => void } = $props();
   const query = $derived(urlState.identityQuery ?? '');
   const controller = $derived(page.controller);
@@ -40,6 +44,9 @@
   const saved = $derived(urlState.relationshipSaved);
   let filterOpen = $state(false);
   const sort = $derived(urlState.relationshipSort);
+  let confirmDelete = $state(false);
+  $effect(() => { if (confirmDelete) return appShortcuts.pushScope('people-bulk-delete'); });
+  const selectedSaved = $derived(directory.rows.filter(person => selection.isSelected(`person:${person.id}`)));
   let bulkPending = $state(false);
   let bulkMessage = $state<string | null>(null);
   let bulkConflict = $state<ValidatedPersonMergeRequired>();
@@ -52,16 +59,18 @@
   const rankedList = $derived(facet === 'people' && !directoryMode && sort === 'closest' && query.trim() === '');
   const soloPerson = $derived(urlState.directoryPersonID);
   const predicateKey = $derived(JSON.stringify(page.predicate));
+  // The directory outlives this view, so a new mount reloads its retained rows once.
+  let appliedRestorationEpoch: number | undefined;
   $effect(() => {
     controller.facet = facet; controller.showAll = showAll; controller.query = query;
-    controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };
+    controller.sort = sort === 'name' ? { field: 'display_label', direction: 'asc' } : sort === 'last_contact_asc' ? { field: 'latest_at', direction: 'asc' } : sort === 'recent' ? { field: 'latest_at', direction: 'desc' } : { field: 'activity_count', direction: 'desc' };
     void predicateKey;
-    if (!directoryMode) untrack(() => void controller.loadList(page.predicate));
+    if (!directoryMode && !urlState.peopleDuplicates) untrack(() => void controller.loadList(page.predicate));
   });
   $effect(() => {
-    if (!directoryMode) return;
-    const filters = { ...urlState, directoryQuery: query, directorySort: sort === 'recent' ? 'last_contact_desc' : 'name' } as const;
-    untrack(() => directory.applyURLState(filters, false, false));
+    if (!directoryMode || urlState.peopleDuplicates) return;
+    const filters = { ...urlState, directoryQuery: query, directorySort: sort === 'last_contact_asc' ? 'last_contact_asc' : sort === 'recent' ? 'last_contact_desc' : 'name' } as const;
+    untrack(() => directory.applyURLState(filters, appliedRestorationEpoch !== (appliedRestorationEpoch = restorationEpoch), false));
   });
   $effect(() => { void [facet, query, sort, directoryMode, predicateKey, showAll, urlState.directoryContactState, urlState.directoryCategory, urlState.directoryOrganization, urlState.directoryPrimaryChannel, urlState.directoryLastContactAfter, urlState.directoryLastContactBefore]; untrack(() => selection.clear()); });
   onMount(() => {
@@ -78,10 +87,10 @@
     }
     if ('domain' in row) {
       const domain = row as DomainSummary;
-      return { key: `domain:${domain.domain}`, label: domain.domain, detail: `${domain.activity_count.toLocaleString()} ${domain.activity_count === 1 ? 'message' : 'messages'}`, lastAt: domain.last_at, saved: false, domain: true };
+      return { key: `domain:${domain.domain}`, label: domain.domain, detail: messageCount(domain.activity_count), lastAt: domain.last_at, saved: false, domain: true };
     }
     const person = row as PersonSummary;
-    return { key: `cluster:${person.id}`, label: person.display_label, detail: `${person.activity_count.toLocaleString()} ${person.activity_count === 1 ? 'message' : 'messages'}`, lastAt: person.last_at, saved: Boolean(person.profile), domain: false };
+    return { key: `cluster:${person.id}`, label: person.display_label, detail: messageCount(person.activity_count), lastAt: person.last_at, saved: Boolean(person.profile), domain: false };
   }));
   const loading = $derived(directoryMode ? directory.loading : controller.listLoading);
   const hasMore = $derived(Boolean(directoryMode ? directory.cursor : controller.listCursor));
@@ -94,7 +103,7 @@
   $effect(() => {
     const id = selectedProfileID;
     if (id === null) void target;
-    untrack(() => void directory.loadSelection(id));
+    untrack(() => { if (id === null || directory.selectedPersonID !== id) void directory.loadSelection(id); });
   });
   $effect(() => {
     const id = soloPerson, person = directory.detail?.person;
@@ -107,7 +116,7 @@
     onNavigate({ directoryPersonID: key.startsWith('person:') ? Number(key.slice(7)) : null, relationshipTarget: key.startsWith('person:') ? null : key, relationshipFiles: false });
   }
   function escape(event: KeyboardEvent): void {
-    if (event.key !== 'Escape' || !hasPerson || appShortcuts.activeScope() !== ROOT_SCOPE) return;
+    if (event.key !== 'Escape' || !hasPerson || urlState.peopleDuplicates || appShortcuts.activeScope() !== ROOT_SCOPE) return;
     if ((event.target as Element | null)?.closest('input, textarea, select, [contenteditable]') || document.querySelector('.kit-popover-card')) return;
     close();
     event.preventDefault();
@@ -119,6 +128,7 @@
   }
   function reset(): void { onNavigate({ relationshipSaved: false, relationshipShowAll: false, directoryContactState: '', directoryCategory: '', directoryOrganization: '', directoryPrimaryChannel: '', directoryLastContactAfter: '', directoryLastContactBefore: '' }); }
   const filterSections = $derived<FilterDropdownSection[]>([{ items: [
+    { id: 'duplicates', active: false, label: 'Possible duplicates', onSelect: () => onNavigate({ peopleDuplicates: true, identityState: 'candidate' }) },
     { id: 'saved', label: 'Saved', active: saved, closeOnSelect: false, onSelect: () => onNavigate({ relationshipSaved: !saved }) },
     ...(rankedList ? [{ id: 'one-way', label: 'Include one-way senders', active: showAll, closeOnSelect: false, onSelect: () => onShowAllChange(!showAll) }] : []),
     { id: 'profile', label: 'Profile filters', active: profileFilters, onSelect: () => filterOpen = !filterOpen },
@@ -130,6 +140,27 @@
       .filter((key) => urlState[key]).map((key) => ({ id: key, label: key === 'directoryContactState' ? contactStateLabel(urlState[key]) : key === 'directoryPrimaryChannel' ? channelLabel(urlState[key]) : key === 'directoryLastContactAfter' ? `Last contacted after ${formatDay(urlState[key])}` : key === 'directoryLastContactBefore' ? `Last contacted before ${formatDay(urlState[key])}` : urlState[key], onremove: () => onNavigate({ [key]: '' }) })),
   ] : []);
   function loadMore(): void { if (directoryMode) void directory.loadNextPage(); else void controller.loadMoreList(); }
+  async function deleteSelected(): Promise<void> {
+    if (bulkPending || selectedSaved.length === 0) return;
+    bulkPending = true;
+    const deleted: number[] = [], failures: string[] = [];
+    for (const profile of selectedSaved) {
+      const id = profile.id;
+      try {
+        const result = await deletePerson({ id }, { ...page.client, headers: { 'If-Match': `"person-${id}-r${profile.revision}"` } });
+        if (result.response.status === 204) { deleted.push(id); selection.explicitKeys.delete(`person:${id}`); }
+        else failures.push(`${profile.display_name || `Person ${id}`}: ${result.error?.message ?? 'Could not delete.'}`);
+      } catch (cause) { failures.push(`${profile.display_name || `Person ${id}`}: ${cause instanceof Error ? cause.message : 'Could not delete.'}`); }
+    }
+    await directory.removeDeletedPeople(deleted);
+    await peopleDeleted(deleted);
+    bulkMessage = `${deleted.length} deleted.${failures.length ? ` ${failures.join(' ')}` : ''}`;
+    bulkPending = false; confirmDelete = false;
+  }
+  async function peopleDeleted(ids: number[]): Promise<void> {
+    onDuplicatesChanged();
+    if (selectedProfileID !== null && ids.includes(selectedProfileID)) close();
+  }
   async function startBulk(): Promise<void> {
     const ids = [...selection.explicitKeys].map((key) => /^cluster:([1-9][0-9]*)$/.exec(key)?.[1]).filter((id): id is string => id !== undefined).map(Number);
     if (ids.length < 2 || bulkPending || bulkConflict) return;
@@ -145,7 +176,7 @@
         const next = bulkIDs[bulkCompleted + 1]!;
         const result = await controller.linkParticipants(bulkIDs[0]!, next);
         if (result.ok || result.code === 'already_linked') {
-          if (result.ok) { staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null; await directory.refreshSelectedPerson(); }
+          if (result.ok) { onDuplicatesChanged(); staleLink = result.cacheState === 'stale' ? { a: bulkIDs[0]!, b: next } : null; await directory.refreshSelectedPerson(); }
           bulkCompleted += 1; continue;
         }
         if (result.code === 'merge_required') { bulkConflict = result.conflict; return; }
@@ -159,12 +190,16 @@
       if (bulkCompleted > 0) await directory.reloadFirstPage();
     }
   }
+  async function refreshProfiles(): Promise<void> {
+    onDuplicatesChanged();
+    await directory.reloadFirstPage();
+    if (directory.selectedPersonID === selectedProfileID) await directory.refreshSelectedPerson();
+  }
   async function reconcilePersonMerge(context: RelationshipsMergeContext, success: PersonMergeSuccess | undefined = undefined): Promise<void> {
     if (success && soloPerson === success.result.merge.absorbed_person_id) {
       onReplaceNavigation({ directoryPersonID: success.survivor.id });
     }
-    await Promise.all([controller.reconcilePersonMerge(context), directory.reloadFirstPage()]);
-    await directory.refreshSelectedPerson();
+    await Promise.all([controller.reconcilePersonMerge(context), refreshProfiles()]);
   }
   async function merged(success: PersonMergeSuccess): Promise<void> {
     bulkPending = true; bulkConflict = undefined;
@@ -176,6 +211,7 @@
   async function retryLink(): Promise<void> {
     if (!staleLink || bulkPending) return;
     bulkPending = true; const result = await controller.linkParticipants(staleLink.a, staleLink.b); bulkPending = false;
+    if (result.ok) onDuplicatesChanged();
     if (result.ok && result.cacheState === 'ready') { staleLink = null; if (bulkCompleted === bulkIDs.length - 1) bulkMessage = 'Identity cache refreshed.'; }
   }
 </script>
@@ -201,7 +237,8 @@
         countLabel={`${(directoryMode ? rows.length : controller.listTotalCount ?? rows.length).toLocaleString()}${hasMore && directoryMode ? '+' : ''} ${facet === 'domains' ? (rows.length === 1 && !hasMore ? 'domain' : 'domains') : (rows.length === 1 && !hasMore ? 'person' : 'people')}`}
         error={directoryMode ? directory.error ?? directory.pageError : controller.listError} degraded={directoryMode ? null : controller.degraded}
         {facet} savedOnly={saved} {query} {activeKey} {selection} {filterSections} filterCount={chips.length} onResetFilters={reset} {chips} sort={directoryMode && sort === 'closest' ? 'name' : sort}
-        sortOptions={[...(!directoryMode ? [{ value: 'closest', label: 'Closest' }] : []), { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }]}
+        sortOptions={[...(!directoryMode ? [{ value: 'closest', label: 'Closest' }] : []), { value: 'recent', label: 'Most recent' }, { value: 'name', label: 'Name' }, ...(directoryMode || sort === 'last_contact_asc' ? [{ value: 'last_contact_asc', label: 'Least recently contacted' }] : [])]}
+        canDelete={selectedSaved.length > 0 && [...selection.explicitKeys].every(key => key.startsWith('person:'))} onDelete={() => confirmDelete = true}
         canMerge={selection.count >= 2 && [...selection.explicitKeys].every((key) => key.startsWith('cluster:'))}
         onFacetChange={(value) => onNavigate({ relationshipFacet: value, directoryPersonID: null, relationshipTarget: null, relationshipFiles: false })} onSortChange={(value) => onNavigate({ relationshipSort: value as ExploreURLState['relationshipSort'] })} onOpen={(key) => void open(key)}
         onLoadMore={loadMore} onRetry={() => directoryMode ? void directory.reloadFirstPage() : void controller.loadList(page.predicate)} onMerge={() => void startBulk()} />
@@ -211,25 +248,31 @@
   </div>
 {/snippet}
 {#snippet person()}
-  {#if selectedProfileID !== null && directory.selectedPersonID !== selectedProfileID}
+  {#if soloPerson !== null && directory.selectedPersonID !== soloPerson}
     <section class="solo"><p role="status">Loading person…</p><Button label="Back to People" onclick={close} /></section>
   {:else}
   <PersonPage {...page} {directory} bind:details bind:selectedDate bind:domainYear bind:sort={fileSort} bind:filenameQuery bind:mimeFamilies
-    onRecordDeleted={(deletedID) => { if (deletedID === selectedProfileID) close(); }}
-    onSplitCommitted={async (context) => { onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
-    onReconcilePersonMerge={reconcilePersonMerge} onIdentityChange={() => directory.reloadFirstPage()} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
+    onRecordDeleted={(deletedID) => void peopleDeleted([deletedID])}
+    onSplitCommitted={async (context) => { onDuplicatesChanged(); onReplaceNavigation({ directoryPersonID: context.sourcePersonID }); await directory.reconcilePersonSplit(context); await controller.reconcilePersonMerge(controller.personMergeContextSnapshot()); }}
+    onReconcilePersonMerge={(context, participantsLinked, success) => participantsLinked ? refreshProfiles() : reconcilePersonMerge(context, success)}
+    onIdentityChange={() => { onDuplicatesChanged(); return directory.reloadFirstPage(); }} durablePersonID={soloPerson} onBack={narrow ? close : undefined} />
   {/if}
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
-  <div class="heading"><PageHeader title="People">{#snippet actions()}<Button label="Directory" onclick={() => onNavigate({ workspace: 'directory', directoryPersonID: null, relationshipTarget: null })} /><Button label="Reviews" onclick={() => onNavigate({ workspace: 'directory_review' })} />{/snippet}</PageHeader></div>
+  <div class="heading"><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
+  {#if urlState.peopleDuplicates}
+    <PossibleDuplicates controller={reviews} onDecide={(candidate, decision) => reviews.queueDecision(candidate, decision)} />
+  {:else}
   <div class="body">
     {#if narrow}{#if hasPerson}<div class="solo-page" tabindex="-1">{@render person()}</div>{:else}{@render list()}{/if}
     {:else}<SplitPane ariaLabel="Resize people list" storageKey="msgvault.people.list-pane.size" initialSize={380} minPrimary={300} maxPrimary={480}>
       {#snippet primary()}{@render list()}{/snippet}{#snippet secondary()}{@render person()}{/snippet}
     </SplitPane>{/if}
   </div>
+  {/if}
   {#if bulkConflict}<PersonBindingConflictModal client={page.client} conflict={bulkConflict} onOpenProfile={(id) => page.onOpenDirectoryPerson?.(id)} onSuccess={merged} onClose={() => { bulkConflict = undefined; bulkMessage = `${bulkCompleted} of ${bulkIDs.length - 1} linked. Linking stopped.`; }} />{/if}
+  {#if confirmDelete}<Modal title="Delete people" onclose={() => { if (!bulkPending) confirmDelete = false; }}><p>This permanently deletes {selectedSaved.length} saved profiles, their contact points, and profile history. Archived messages stay.</p>{#snippet footer()}<Button label="Cancel" disabled={bulkPending} onclick={() => confirmDelete = false} /><Button label={bulkPending ? 'Deleting…' : 'Confirm delete'} disabled={bulkPending} tone="danger" onclick={() => void deleteSelected()} />{/snippet}</Modal>{/if}
 </main>
 <style>
   .people { display: flex; min-height: 0; height: 100%; flex-direction: column; background: var(--bg-canvas); }

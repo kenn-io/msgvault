@@ -3,13 +3,14 @@ import { expect, it, vi } from 'vitest';
 import { openTypeahead } from '../../../test/kit-ui';
 import { createAPIClient } from '../../api/client';
 import { DirectoryController } from '../../directory/controller.svelte';
+import { DirectoryReviewController } from '../../directory/review-controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
 import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
 import { emptyCalendar } from './fixtures.test-support';
 
-it('Back from Directory opens the survivor after Details absorbs the open saved profile', async () => {
+it('Back opens the survivor after Details absorbs the open saved profile', async () => {
   const when = '2026-07-19T10:00:00Z';
   const one = { id: 7, revision: 4, display_name: 'Synthetic One', participant_ids: [1], vcard_uid: 'synthetic-7', created_at: when, updated_at: when };
   const two = { ...one, id: 9, revision: 2, display_name: 'Synthetic Two', participant_ids: [2], vcard_uid: 'synthetic-9' };
@@ -53,29 +54,31 @@ it('Back from Directory opens the survivor after Details absorbs the open saved 
   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7, relationshipTarget: 'cluster:1' });
   const controller = new RelationshipsController(client, () => 'UTC'), directory = new DirectoryController(client);
   await controller.openTarget('cluster:1', {});
-  const props = () => ({ client, controller, directory, urlState: state.current, target: state.current.relationshipTarget, filesOpen: false, predicate: {},
+  const onOpenDirectoryPerson = vi.fn((id: number) => state.commitNavigation({ workspace: 'relationships', directoryPersonID: id, relationshipTarget: null, relationshipFiles: false }));
+  const props = () => ({ client, controller, directory, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: state.current.relationshipTarget, filesOpen: false, predicate: {},
     onNavigate: vi.fn(), onReplaceNavigation: (patch: Parameters<typeof state.replaceCommittedNavigation>[0]) => {
       state.replaceCommittedNavigation(patch);
-      void view.rerender({ urlState: state.current, target: state.current.relationshipTarget });
-    }, onOpenDirectoryPerson: (id: number) => state.commitNavigation({ workspace: 'directory', directoryPersonID: id }),
+      void Promise.resolve().then(() => view.rerender({ urlState: state.current, target: state.current.relationshipTarget }));
+    }, onOpenDirectoryPerson,
     onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() });
   let view = render(PeopleWorkspace, { props: props() });
   try {
     await screen.findByRole('heading', { name: 'Synthetic One' });
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Same person…' }));
-    await fireEvent.input(await openTypeahead('Search people to link'), { target: { value: 'Synthetic Two' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Synthetic Two' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Two/ }));
-    await fireEvent.click(screen.getByRole('button', { name: 'These are the same person' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
     await screen.findByRole('dialog', { name: 'Resolve person merge' });
     await fireEvent.click(screen.getByRole('radio', { name: 'Synthetic Two (Person 9)' }));
     await fireEvent.click(screen.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }));
     await fireEvent.click(screen.getByRole('button', { name: 'Merge into selected survivor' }));
-    await waitFor(() => expect(state.current.workspace).toBe('directory'));
+    await waitFor(() => expect(onOpenDirectoryPerson).toHaveBeenCalledWith(9));
     view.unmount();
     await act(async () => {
+      const popped = new Promise<void>(resolve => window.addEventListener('popstate', () => resolve(), { once: true }));
       window.history.back();
-      await waitFor(() => expect(state.current.workspace).toBe('relationships'));
+      await popped;
     });
     view = render(PeopleWorkspace, { props: props() });
     expect(state.current.directoryPersonID).toBe(9);

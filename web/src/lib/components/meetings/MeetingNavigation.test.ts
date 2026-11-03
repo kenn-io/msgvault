@@ -340,7 +340,7 @@ describe('meeting archive reader navigation', () => {
    const { client } = handler();
    window.history.replaceState(null, '', '/');
    const state = new ExploreState(window);
-   state.commitNavigation({ workspace: 'directory', directoryPersonID: 7 });
+   state.commitNavigation({ workspace: 'relationships', directoryPersonID: 7 });
    const view = render(AppShell, { client, state });
    try {
      await fireEvent.click(await screen.findByRole('radio', { name: 'Messages' }));

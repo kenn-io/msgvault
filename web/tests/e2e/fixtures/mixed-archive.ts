@@ -1,3 +1,4 @@
+import { person, merge } from '../../../src/lib/directory/person-fixtures.test-support';
 import { stubOperationStatus } from '../../kit-ui';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, unlinkSync } from 'node:fs';
@@ -69,11 +70,6 @@ export type CapturedTrackingRequest = {
   tracked?: boolean;
 };
 
-export type CapturedRelationshipReviewRequest = {
-  method: string;
-  path: string;
-  status: string | null;
-};
 
 type InstalledMixedArchive = MixedArchiveFixture & {
   trackingRequests: CapturedTrackingRequest[];
@@ -656,7 +652,7 @@ function reviewCandidate(id: number, overrides: Partial<IdentityMatchCandidate> 
   return {
     id,
     left_id: id * 10,
-    left_kind: 'beeper_user',
+    left_kind: 'participant',
     right_id: id * 10 + 1,
     right_kind: 'participant',
     basis: 'stable_provider_id',
@@ -699,17 +695,13 @@ function reviewCandidate(id: number, overrides: Partial<IdentityMatchCandidate> 
  */
 export async function installDirectoryReviewArchive(page: Page) {
   const archive = await installMixedArchive(page);
-  const candidates = [reviewCandidate(17), reviewCandidate(18), reviewCandidate(19)];
+  const candidates = [reviewCandidate(17), reviewCandidate(18), reviewCandidate(19, { left_id: 701, right_id: 901, actionable: false, blocker: 'person_merge_required' })];
   const people = new Map([
     [7, reviewPerson(7, 4, 'Synthetic One')],
     [9, reviewPerson(9, 2, 'Synthetic Two')],
   ]);
   let phase: 'premerge' | 'postmerge' | 'postsplit' = 'premerge';
   const requests: CapturedReviewRequest[] = [];
-  const decisionGates = new Map<number, { promise: Promise<void>; release: () => void }>();
-  const decisionFailures = new Map<number, string>();
-  const relationshipRequests: CapturedRelationshipReviewRequest[] = [];
-  let failNextRelationshipRead = false;
   let factCatalogMode: 'ready' | 'deferred' | 'failed' | 'malformed' = 'ready';
   let factCatalogGate: Promise<void> | null = null;
 
@@ -723,13 +715,8 @@ export async function installDirectoryReviewArchive(page: Page) {
     const request = route.request();
     const url = new URL(request.url());
     const status = url.searchParams.get('status');
-    relationshipRequests.push({ method: request.method(), path: url.pathname, status });
-    if (failNextRelationshipRead) {
-      failNextRelationshipRead = false;
-      return route.fulfill({ status: 503, json: { error: 'unavailable', message: 'forbidden-remote-error-marker' } });
-    }
     const reviews =
-      status === 'pending'
+      status === 'pending' || status === null && url.searchParams.get('person_id') === '7'
         ? [
             {
               id: 41,
@@ -964,8 +951,8 @@ export async function installDirectoryReviewArchive(page: Page) {
     const offset = Number(url.searchParams.get('offset') ?? 0);
     return route.fulfill({
       json: {
-        candidates: candidates.filter((candidate) => candidate.state === state),
-        limit: 100,
+        candidates: candidates.filter((candidate) => state.split(',').includes(candidate.state)).slice(offset, offset + Number(url.searchParams.get('limit') ?? 100)),
+        limit: Number(url.searchParams.get('limit') ?? 100),
         offset,
       },
     });
@@ -993,16 +980,6 @@ export async function installDirectoryReviewArchive(page: Page) {
       });
     }
 
-    const gate = decisionGates.get(candidateID);
-    if (gate) {
-      decisionGates.delete(candidateID);
-      await gate.promise;
-    }
-    const failure = decisionFailures.get(candidateID);
-    if (failure) {
-      decisionFailures.delete(candidateID);
-      return route.fulfill({ status: 503, json: { error: 'unavailable', message: failure } });
-    }
     if (candidateID === 19 && decision === 'accept') {
       return route.fulfill({
         status: 409,
@@ -1106,6 +1083,7 @@ export async function installDirectoryReviewArchive(page: Page) {
         mergedCandidate.decided_by = 'synthetic-reviewer';
         mergedCandidate.updated_at = mergedCandidate.decided_at;
       }
+      for (const candidate of candidates) candidate.review_token = `review-${candidate.id}-postmerge`;
       phase = 'postmerge';
       return route.fulfill({
         headers: { ETag: '"person-7-r5"' },
@@ -1135,6 +1113,7 @@ export async function installDirectoryReviewArchive(page: Page) {
       const restored = reviewPerson(19, 1, 'Synthetic Restored');
       restored.participant_ids = [901];
       people.set(19, restored);
+      for (const candidate of candidates) candidate.review_token = `review-${candidate.id}-postsplit`;
       phase = 'postsplit';
       return route.fulfill({
         headers: { ETag: '"person-7-r6"', 'X-New-Person-ETag': '"person-19-r1"' },
@@ -1212,10 +1191,6 @@ export async function installDirectoryReviewArchive(page: Page) {
     archive,
     candidates,
     requests,
-    relationshipRequests,
-    failNextRelationshipRead(): void {
-      failNextRelationshipRead = true;
-    },
     deferFactCatalog(): () => void {
       let release = () => undefined;
       factCatalogMode = 'deferred';
@@ -1230,48 +1205,19 @@ export async function installDirectoryReviewArchive(page: Page) {
     malformFactCatalog(): void {
       factCatalogMode = 'malformed';
     },
-    holdNextDecision(candidateID: number): () => void {
-      let release = () => undefined;
-      const promise = new Promise<void>((resolve) => {
-        release = resolve;
-      });
-      decisionGates.set(candidateID, { promise, release });
-      return release;
-    },
-    failNextDecision(candidateID: number, message: string): void {
-      decisionFailures.set(candidateID, message);
-    },
   };
 }
 
 function reviewPerson(id: number, revision: number, displayName: string): Person {
   return {
-    id,
-    revision,
-    display_name: displayName,
-    participant_ids: id === 7 ? [701, 702] : [901],
-    vcard_uid: `synthetic-${id}`,
+    ...person(id, revision, id === 7 ? [701, 702] : [901], displayName),
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-02T00:00:00Z',
   };
 }
 
 function reviewMerge(): PersonMerge {
-  return {
-    id: 41,
-    survivor_person_id: 7,
-    absorbed_person_id: 9,
-    current_person_id: 7,
-    survivor_vcard_uid: 'synthetic-7',
-    absorbed_vcard_uid: 'synthetic-9',
-    survivor_revision_before: 4,
-    absorbed_revision_before: 2,
-    survivor_revision_after: 5,
-    actor: 'web',
-    snapshot_version: 1,
-    snapshot_sha256: 'synthetic-digest',
-    created_at: '2026-01-03T12:00:00Z',
-  };
+  return { ...merge(person(7, 5)), created_at: '2026-01-03T12:00:00Z' };
 }
 
 function reviewMergeDetail(splitCompleted = false): PersonMergeDetail {

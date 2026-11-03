@@ -2,13 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { SavedView } from '../../api/generated/models';
-import { view } from './fixtures.test-support';
+import { pair, view } from './fixtures.test-support';
 import { ShellData } from './shell-data.svelte';
 
 interface Answers {
   views?: SavedView[];
   failing?: string[];
   deletions?: Promise<Response>;
+  waiting?: boolean;
 }
 
 function setup(answers: Answers = {}) {
@@ -18,6 +19,7 @@ function setup(answers: Answers = {}) {
     requests.push(request);
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: answers.waiting ? [pair] : [] });
     if (path === '/api/v1/deletions') return answers.deletions ?? Response.json({ manifests: [] });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
@@ -221,16 +223,47 @@ it('restores the visible view and reports a failed delete', async () => {
   expect(data.views).toContainEqual(saved);
 });
 
-it('refreshes jobs on the timer and deletions on explicit refresh', async () => {
+it('polls jobs and duplicate counts and refreshes deletions explicitly', async () => {
   vi.useFakeTimers();
-  const { data, requests } = setup();
+  const answers = { waiting: false };
+  const { data, requests } = setup(answers);
   try {
     await data.refresh();
     data.start();
+    answers.waiting = true;
     await vi.advanceTimersByTimeAsync(30_000);
+    expect(data.duplicateCount).toBe(1);
+    const queries = requests.filter(request => new URL(request.url).pathname.endsWith('/identity/match-candidates')).map(request => new URL(request.url).search);
+    expect(queries).toEqual(Array(2).fill('?state=candidate%2Cconflict&limit=500&offset=0'));
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(1);
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/sources/status')).toHaveLength(1);
     await data.refresh();
     expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(2);
   } finally { data.stop(); vi.useRealTimers(); }
+});
+
+it.each(['failed refresh', 'late earlier read'])('keeps the current duplicate count after a %s', async outcome => {
+  let finish!: (response: Response) => void;
+  let reads = 0;
+  const data = new ShellData(createAPIClient(async () => {
+    reads += 1;
+    if (outcome === 'failed refresh') return reads === 1 ? Response.json({ candidates: [pair] }) : Response.json({ error: 'unavailable' }, { status: 503 });
+    return reads === 1 ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json({ candidates: [] });
+  }));
+  try {
+    if (outcome === 'failed refresh') {
+      await data.refreshDuplicates();
+      expect(data.duplicateCount).toBe(1);
+      await data.refreshDuplicates();
+      expect(data.duplicateCount).toBe(1);
+      return;
+    }
+    const initial = data.refreshDuplicates();
+    await vi.waitFor(() => expect(reads).toBe(1));
+    await data.refreshDuplicates();
+    expect(data.duplicateCount).toBe(0);
+    finish(Response.json({ candidates: [pair] }));
+    await initial;
+    expect(data.duplicateCount).toBe(0);
+  } finally { data.stop(); }
 });

@@ -1,6 +1,8 @@
 <script lang="ts">
   import { formatPartialDate as dateText } from '../../directory/dates';
   import { appShortcuts, Button, Checkbox, Modal, IconButton } from '@kenn-io/kit-ui';
+  import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
+  import { untrack, onDestroy } from 'svelte';
   import Pencil from '@lucide/svelte/icons/pencil';
   import X from '@lucide/svelte/icons/x';
 
@@ -10,6 +12,8 @@
   import PersonRelationshipEditor from './PersonRelationshipEditor.svelte';
   import DetailRow from '../people/DetailRow.svelte';
   import { sentenceCase } from '../../explore/labels';
+  import { formatContactDate } from '../../directory/labels';
+  import { historySource } from './history-format';
   import RelationshipTypeEditor from './RelationshipTypeEditor.svelte';
 
   interface Props {
@@ -21,6 +25,9 @@
   }
 
   let { client, controller, personID, catalogOnly = false, onOpenPerson }: Props = $props();
+  const imports = new RelationshipReviewController(untrack(() => client));
+  $effect(() => { const id = personID; if (!catalogOnly && controller.relationships) untrack(() => imports.personID === id ? void imports.load() : imports.applyPerson(id)); });
+  onDestroy(() => imports.destroy());
   let relationshipEditor = $state<PersonRelationshipView | null | undefined>(undefined);
   let relationshipTypeEditor = $state<RelationshipType | null | undefined>(undefined);
   let deletingRelationship = $state<PersonRelationshipView>();
@@ -123,7 +130,7 @@
       </div>
     {/if}
     {#if controller.relationshipsLoading}<p class="muted" role="status">Loading relationships…</p>{/if}
-    {#if controller.relationships.length === 0 && !controller.relationshipsLoading && !controller.errors.relationships}
+    {#if controller.relationships.length === 0 && imports.rows.length === 0 && !controller.relationshipsLoading && !controller.errors.relationships}
       <p class="muted">No connections yet</p>
     {:else if controller.relationships.length > 0}
       <div class="records">
@@ -138,6 +145,14 @@
         {/each}
       </div>
     {/if}
+    {#if imports.loading}<p role="status">Loading imported connections…</p>{/if}
+    {#if imports.error}<p role="alert">{imports.error}<Button label="Retry imported connections" size="sm" onclick={() => void imports.retry()} /></p>{/if}
+    {#each imports.rows as row (row.id)}
+      <DetailRow label={sentenceCase(row.status)} description={[row.raw_related_type, historySource(row.source), sentenceCase(row.value_kind), row.updated_at && formatContactDate(row.updated_at), row.reviewed_at && formatContactDate(row.reviewed_at)].filter(Boolean).join(' · ')}>
+        {row.raw_related_value}
+        {#if row.matched_person_id && !controller.relationships.some(view => row.status === 'accepted' && view.counterpart_person_id === row.matched_person_id)}<Button label="Open person" size="sm" onclick={() => onOpenPerson?.(row.matched_person_id!)} />{/if}
+      </DetailRow>
+    {/each}
   {:else}
     <header><h3>Connection types</h3><Button size="sm" label="Add type" onclick={() => relationshipTypeEditor = null} /></header>
     {#if controller.relationshipTypesLoading}<p class="muted" role="status">Loading relationship types…</p>

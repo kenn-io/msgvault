@@ -98,8 +98,8 @@
 </script>
 
 <Modal
-  title="Profile history"
-  ariaLabel="Profile history"
+  title="History"
+  ariaLabel="History"
   closeLabel="Close profile history"
   onclose={onClose}
   maxWidth="min(760px, calc(100vw - 32px))"

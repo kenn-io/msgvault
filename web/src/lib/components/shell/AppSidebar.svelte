@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { KbdBadge, Tooltip } from '@kenn-io/kit-ui';
+  import { Chip, KbdBadge, Tooltip } from '@kenn-io/kit-ui';
   import CircleHelp from '@lucide/svelte/icons/circle-help';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
@@ -22,6 +22,7 @@
     onOpenJob: (target: JobTarget) => void;
     views?: SavedView[];
     deletionsStaged?: boolean;
+    duplicateCount?: number;
     viewsError?: string;
     onRetryViews?: () => void;
     onNavigate: (id: ExploreWorkspace) => void;
@@ -42,6 +43,7 @@
     onOpenJob,
     views = [],
     deletionsStaged = false,
+    duplicateCount = 0,
     viewsError = undefined,
     onRetryViews = undefined,
     onNavigate,
@@ -85,12 +87,13 @@
             <button
               type="button"
               class="sidebar__item"
-              aria-label={item.label}
-              aria-current={(item.id === active || item.id === 'relationships' && (active === 'directory' || active === 'directory_review')) ? 'page' : undefined}
+              aria-label={item.id === 'relationships' && duplicateCount > 0 ? `${item.label} ${duplicateCount >= 500 ? '500+' : duplicateCount}` : item.label}
+              aria-current={(item.id === active) ? 'page' : undefined}
               onclick={() => onNavigate(item.id)}
             >
               <Icon size={18} aria-hidden="true" />
               {#if !collapsed}<span class="sidebar__label">{item.label}</span>{/if}
+              {#if item.id === 'relationships' && duplicateCount > 0}<Chip size="sm">{duplicateCount >= 500 ? '500+' : duplicateCount}</Chip>{/if}
             </button>
           </Tooltip>
           {#if item.id === 'everything' && !collapsed && viewsError}

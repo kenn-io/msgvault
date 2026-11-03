@@ -255,7 +255,7 @@ describe('Explore URL state', () => {
 
   it('drops an impossible Directory date when reading the URL', () => {
     window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryLastContactAfter: '2026-02-31', directoryLastContactBefore: '2026-03-01'
+      workspace: 'relationships', directoryLastContactAfter: '2026-02-31', directoryLastContactBefore: '2026-03-01'
     }))}`);
     const state = new ExploreState(window);
     try {
@@ -313,80 +313,14 @@ describe('Explore URL state', () => {
     state.destroy();
   });
 
-  it('restores the conflict identity review queue from URL state', () => {
-    const restored = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'directory_review',
-      reviewKind: 'identity',
-      identityState: 'conflict'
-    }));
-
-    expect(restored).toMatchObject({
-      workspace: 'directory_review',
-      reviewKind: 'identity',
-      identityState: 'conflict'
-    });
+  it('opens old review bookmarks in People', () => {
+    expect(parseExploreURLState('?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'directory_review', identityState: 'rejected' })))).toMatchObject({ workspace: 'relationships', peopleDuplicates: true, identityState: 'rejected' });
+    expect(parseExploreURLState('?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: 7 })))).toMatchObject({ workspace: 'relationships', peopleDuplicates: false, directoryPersonID: 7 });
   });
-
-  it('keeps the selected person when sharing a Fact review', () => {
-    const restored = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'directory_review',
-      reviewKind: 'fact',
-      directoryPersonID: 7,
-      directoryQuery: 'Alex',
-    }));
-
-    expect(restored).toMatchObject({
-      workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: 7, directoryQuery: '',
-    });
-  });
-
-  it('round-trips the imported relationship queue and normalizes its state independently', () => {
-    const restored = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'directory_review',
-      reviewKind: 'relationship',
-      relationshipReviewState: 'accepted'
-    }));
-
-    expect(restored).toMatchObject({
-      workspace: 'directory_review',
-      reviewKind: 'relationship',
-      relationshipReviewState: 'accepted'
-    });
-
-    const invalid = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'directory_review',
-      reviewKind: 'relationship',
-      relationshipReviewState: 'future-state'
-    } as unknown as ExploreURLState));
-    expect(invalid.relationshipReviewState).toBe('pending');
-  });
-
-  it('normalizes invalid review filters without dropping future URL fields', () => {
-    const restored = parseExploreURLState(serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'directory_review',
-      reviewKind: 'future-review-kind',
-      identityState: 'future-identity-state',
-      futureReviewLayout: 'compact'
-    } as unknown as ExploreURLState));
-
-    expect(restored).toMatchObject({
-      workspace: 'directory_review',
-      reviewKind: 'identity',
-      identityState: 'candidate',
-      relationshipReviewState: 'pending',
-      futureReviewLayout: 'compact'
-    });
-  });
-
   it('restores Directory query, filters, and selection', () => {
     const restored = parseExploreURLState(serializeExploreURLState({
       ...defaultExploreURLState,
-      workspace: 'directory',
+      workspace: 'relationships',
       directoryQuery: 'alcie',
       directoryContactState: 'active',
       directoryCategory: 'friend',
@@ -399,7 +333,7 @@ describe('Explore URL state', () => {
     }));
 
     expect(restored).toMatchObject({
-      workspace: 'directory',
+      workspace: 'relationships',
       directoryQuery: 'alcie',
       directoryContactState: 'active',
       directoryCategory: 'friend',
@@ -1076,24 +1010,23 @@ describe('relationships workspace state', () => {
     });
   });
 
-  it('clears the carried search query when entering the Relationships workspace', async () => {
+  it.each([
+    { entry: 'search', previous: { workspace: 'everything', query: 'quarterly plan' }, cleared: { workspace: 'relationships', query: '' } },
+    { entry: 'Possible duplicates', previous: { workspace: 'relationships', peopleDuplicates: true }, cleared: { workspace: 'relationships', peopleDuplicates: false } },
+  ] as const)('commitWorkspace(relationships) clears carried $entry and Back restores it', async ({ entry, previous, cleared }) => {
     window.history.replaceState(null, '', '/');
     const state = new ExploreState(window);
-    state.commitWorkspace('everything');
-    state.commitSearch('quarterly plan', 'full_text');
-
+    state.commitNavigation(previous);
     state.commitWorkspace('relationships');
-
-    expect(state.current.workspace).toBe('relationships');
-    expect(state.current.query).toBe('');
-    expect(state.predicate()).not.toHaveProperty('query');
-    expect(state.predicate()).not.toHaveProperty('search_mode');
-    expect(parseExploreURLState(window.location.search).query).toBe('');
-
+    expect(state.current).toMatchObject(cleared);
+    if (entry === 'search') {
+      expect(state.predicate()).not.toHaveProperty('query');
+      expect(state.predicate()).not.toHaveProperty('search_mode');
+      expect(parseExploreURLState(window.location.search).query).toBe('');
+    }
     window.history.back();
     await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current.workspace).toBe('everything');
-    expect(state.current.query).toBe('quarterly plan');
+    expect(state.current).toMatchObject(previous);
     state.destroy();
   });
 
@@ -1133,29 +1066,45 @@ describe('relationships workspace state', () => {
 
 describe('ExploreState history ownership', () => {
 
-  it('restores Directory filters and selection on browser back and forward', async () => {
-    window.history.replaceState(null, '', serializeExploreURLState({
-      ...defaultExploreURLState,
-      workspace: 'directory',
-      directoryQuery: 'alice',
-      directoryContactState: 'active',
-      directoryPersonID: 7
-    }));
+  it('restores a legacy Directory history snapshot to Saved People after Domains', async () => {
+    const search = '?workspace=directory';
+    window.history.replaceState({
+      exploreSearch: search,
+      exploreState: {
+        ...defaultExploreURLState,
+        workspace: 'directory',
+        relationshipFacet: 'domains',
+        directoryQuery: 'alice',
+        directoryCategory: 'friend',
+        directoryPersonID: 7
+      }
+    }, '', search);
     const state = new ExploreState(window);
-
-    state.commitRestorableNavigation({
-      directoryQuery: 'bob',
-      directoryCategory: 'friend',
-      directoryPersonID: 9
-    });
-    window.history.back();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current).toMatchObject({ workspace: 'directory', directoryQuery: 'alice', directoryContactState: 'active', directoryPersonID: 7 });
-
-    window.history.forward();
-    await new Promise((resolve) => window.addEventListener('popstate', resolve, { once: true }));
-    expect(state.current).toMatchObject({ workspace: 'directory', directoryQuery: 'bob', directoryCategory: 'friend', directoryPersonID: 9 });
-    state.destroy();
+    try {
+      state.commitRestorableNavigation({ workspace: 'relationships', relationshipFacet: 'domains', relationshipTarget: 'domain:example.com', directoryQuery: 'bob', directoryPersonID: 9 });
+      window.history.back();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current).toMatchObject({
+        workspace: 'relationships',
+        relationshipFacet: 'people',
+        relationshipSaved: true,
+        directoryQuery: 'alice',
+        directoryCategory: 'friend',
+        directoryPersonID: 7
+      });
+      window.history.forward();
+      await new Promise(resolve => window.addEventListener('popstate', resolve, { once: true }));
+      expect(state.current).toMatchObject({
+        workspace: 'relationships',
+        relationshipFacet: 'domains',
+        relationshipTarget: 'domain:example.com',
+        directoryQuery: 'bob',
+        directoryCategory: 'friend',
+        directoryPersonID: 9
+      });
+    } finally {
+      state.destroy();
+    }
   });
 
   it('uses remembered mode only when the URL has no explicit mode and remembers user changes', () => {

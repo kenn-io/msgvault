@@ -21,6 +21,6 @@
   button { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   h2 button:hover { text-decoration: underline; }
   .avatar { display: flex; }
-  .actions { margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--control-gap); }
+  .actions { flex-direction: row; align-items: center; margin-left: auto; display: flex; flex-wrap: wrap; gap: var(--control-gap); }
   span { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 </style>

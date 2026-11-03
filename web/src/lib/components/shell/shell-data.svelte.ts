@@ -1,5 +1,6 @@
 import {
   deleteSavedView,
+  listIdentityMatchCandidates,
   listSavedViews,
   patchSavedView,
 } from '../../api/generated/api/api';
@@ -31,6 +32,7 @@ export class ShellData {
   get views(): SavedView[] {
     return this.#ordered.filter(view => view.id !== this.pending?.id && !this.#deleting.includes(view.id));
   }
+  duplicateCount = $state(0);
   pending = $state<SavedView>();
   error = $state<string>();
   readonly deletions: DeletionsController;
@@ -40,6 +42,7 @@ export class ShellData {
   #client: APIClient;
   #timer: ReturnType<typeof setInterval> | undefined;
   #controller: AbortController | undefined;
+  #duplicateRequest = 0;
 
   constructor(client: APIClient, operations = new OperationsController(client)) {
     this.#client = client;
@@ -47,10 +50,10 @@ export class ShellData {
     this.jobs = new JobsStore(client, operations);
   }
 
-  /** Jobs poll while visible; saved views refresh on entry, focus, and writes. */
+  /** Jobs and the duplicate count poll while visible; saved views refresh on entry, focus, and writes. */
   start(): void {
     this.#timer = setInterval(() => {
-      if (typeof document === 'undefined' || document.visibilityState === 'visible') void this.jobs.refresh();
+      if (typeof document === 'undefined' || document.visibilityState === 'visible') { void this.jobs.refresh(); void this.refreshDuplicates(); }
     }, REFRESH_MS);
   }
 
@@ -58,6 +61,7 @@ export class ShellData {
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;
     this.#controller?.abort();
+    ++this.#duplicateRequest;
     this.deletions.destroy();
     this.jobs.dispose();
   }
@@ -67,12 +71,21 @@ export class ShellData {
     const controller = (this.#controller = new AbortController());
     const client = { ...this.#client, signal: controller.signal };
     void this.refreshDeletions();
+    const duplicates = this.refreshDuplicates(controller.signal);
     const views = await this.#loadViews(client);
     if (controller.signal.aborted) return;
     this.error = views ? undefined : "Couldn't load saved views.";
     if (views) this.#ordered = views;
+    await duplicates;
   }
 
+  async refreshDuplicates(signal?: AbortSignal): Promise<void> {
+    const request = ++this.#duplicateRequest;
+    try {
+      const result = await listIdentityMatchCandidates({ state: 'candidate,conflict', limit: 500, offset: 0 }, { ...this.#client, signal });
+      if (result.data && !signal?.aborted && request === this.#duplicateRequest) this.duplicateCount = result.data.candidates?.length ?? 0;
+    } catch { /* Keep the last count while offline. */ }
+  }
   refreshDeletions(): Promise<void> { return this.deletions.refresh(); }
 
   async #loadViews(client: APIClient): Promise<SavedView[] | undefined> {

@@ -23,6 +23,7 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
   if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+  if (path === '/api/v1/identity/match-candidates') return Response.json({ candidates: [] });
   return fetchFn(input, init);
 }, telemetryEvents);
 

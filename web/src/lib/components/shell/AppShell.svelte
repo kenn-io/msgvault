@@ -45,8 +45,6 @@
   import { contextPredicate, RelationshipsController } from '../../relationships/controller.svelte';
   import { DirectoryController } from '../../directory/controller.svelte';
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
-  import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
-  import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
   import { defaultOperationsState, OperationsController } from '../../operations/controller.svelte';
   import type { OperationSettingsTarget } from '../../operations/labels';
   import type { OperationRunDetail, OperationsURLState } from '../../operations/models';
@@ -72,8 +70,6 @@
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
   import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
-  import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
-  import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
   import ArchivedMeetingReader from '../meetings/ArchivedMeetingReader.svelte';
   import { ArchiveMeetingNavigation, archiveMeetingSelection, parseArchiveMeetingSelection } from '../../meetings/archive-navigation.svelte';
@@ -94,6 +90,7 @@
   import type { JobTarget } from '../../jobs/jobs';
   import type { SavedView } from '../../api/generated/models';
   import RunHistoryDialog from './RunHistoryDialog.svelte';
+  import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
 
   const media = mediaReadiness();
   const visual = visualReadiness();
@@ -236,7 +233,7 @@
   }
   function openDirectoryPerson(personID: number): void {
     beforeCommit();
-    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false });
+    exploreState.commitNavigation({ workspace: 'relationships', directoryPersonID: personID, peopleDuplicates: false, relationshipTarget: null, relationshipFiles: false });
   }
   function announceOperation(message: string): void {
     operationAnnouncement = { key: ++operationAnnouncementKey, message };
@@ -289,6 +286,10 @@
   async function flashViewError(result: Promise<string | undefined>): Promise<void> {
     const error = await result;
     if (error) showFlash(error, { tone: 'danger', durationMs: 8000 });
+  }
+  function flashDecisionError(message: string): void {
+    if (exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates) announceOperation(message);
+    else showFlash(message, { tone: 'danger', durationMs: 8000, action: { label: 'Review duplicates', onclick: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true }) } });
   }
   type RelatedOperationStatus = NonNullable<OperationRunDetail['related_status']>;
 
@@ -363,17 +364,25 @@
   const directoryController = new DirectoryController(
     untrack(() => client),
     (patch, history) => (history === 'replace' ? replaceCommittedDraft(patch) : commitNavigation(patch)),
-    () => { void relationshipsController.loadList(exploreState.predicate()); },
+    () => { void relationshipsController.loadList(exploreState.predicate()); void identityChanged(); },
   );
   const directoryReviewController = new DirectoryReviewController(
     untrack(() => client),
     (patch) => commitNavigation(patch),
+    async result => {
+      if (!result.ok && result.kind !== 'merge_required') flashDecisionError(result.message);
+      if (result.ok) await reconcileIdentity();
+    },
   );
-  const relationshipReviewController = new RelationshipReviewController(
-    untrack(() => client),
-    (patch) => commitNavigation(patch),
-  );
-  const factLedgerController = new FactLedgerController(untrack(() => client));
+  async function reconcileIdentity(): Promise<void> {
+    await Promise.all([shellData.refreshDuplicates(), directoryController.loadFirstPage(), directoryController.refreshSelectedPerson(), relationshipsController.reconcilePersonMerge(relationshipsController.personMergeContextSnapshot())]);
+  }
+  async function identityChanged(): Promise<void> {
+    await Promise.all([
+      shellData.refreshDuplicates(),
+      directoryReviewController.invalidate(exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates),
+    ]);
+  }
   let cardDAVSettingsRequest = $state<CardDAVSettingsRequest>();
   let cardDAVSettingsRequestKey = 0;
   const settingsNavigationTarget = $derived(exploreState.current.workspace === 'settings'
@@ -393,28 +402,38 @@
   let flashRoot = $state<HTMLElement>();
   $effect(() => {
     const view = shellData.pending;
-    if (!view) return;
-    const flashID = untrack(() => showFlash(`Deleted ${view.name}`, {
-      durationMs: 8000,
-      action: { label: 'Undo', onclick: () => void undoViewDeletion(view) },
-    }));
-    const expire = () => void flashViewError(shellData.expireDelete());
+    if (view) return untrack(() => stageUndo(`Deleted ${view.name}`, () => undoViewDeletion(view), () => void flashViewError(shellData.expireDelete())));
+  });
+  $effect(() => {
+    const queued = directoryReviewController.pending;
+    if (queued) return untrack(() => stageUndo(queued.decision === 'accept' ? 'Merge queued' : 'Keep separate queued', () => undoDuplicateDecision(queued.candidate.id), () => void directoryReviewController.settleDecision()));
+  });
+
+  /** The flash only offers Undo; the timer and pagehide make the staged change final. */
+  function stageUndo(message: string, undo: () => Promise<void>, expire: () => void): () => void {
+    const flashID = showFlash(message, { durationMs: 8000, action: { label: 'Undo', onclick: () => void undo() } });
     const timer = setTimeout(expire, 8000);
+    const refocus = (target: () => HTMLElement | null | undefined) => void tick().then(() => document.activeElement === document.body && target()?.focus());
     window.addEventListener('pagehide', expire);
-    void tick().then(() => {
-      if (document.activeElement === document.body) flashRoot?.querySelector<HTMLElement>('.kit-flash-banner__action')?.focus();
-    });
+    refocus(() => [...flashRoot?.querySelectorAll<HTMLElement>('.kit-flash-banner__action') ?? []].at(-1));
     return () => {
       clearTimeout(timer);
       window.removeEventListener('pagehide', expire);
       dismissFlash(flashID);
+      refocus(() => shellRoot?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]') ?? navigationFocusTarget());
     };
-  });
+  }
 
   async function undoViewDeletion(view: SavedView): Promise<void> {
     await shellData.undoDelete();
     await tick();
     shellRoot?.querySelector<HTMLElement>(`[data-saved-view-id="${view.id}"] .saved-view__open`)?.focus();
+  }
+
+  async function undoDuplicateDecision(candidateID: number): Promise<void> {
+    directoryReviewController.undoDecision();
+    await tick();
+    document.getElementById(`duplicate-${candidateID}`)?.focus();
   }
 
   let sidebarCollapsed = $state(readSidebarCollapsed());
@@ -539,9 +558,7 @@
   // An epoch is a monotonically increasing restoration event, not a boolean
   // mode. Capture the initial value so ordinary URL commits do not turn into
   // repeated page-one reloads merely because the initial epoch is positive.
-  let appliedDirectoryRestorationEpoch = untrack(() => exploreState.restorationEpoch);
-  let appliedDirectoryReviewRestorationEpoch = untrack(() => exploreState.restorationEpoch);
-  let appliedFactLedgerRestorationEpoch = untrack(() => exploreState.restorationEpoch);
+  let appliedDirectoryReviewContext = untrack(() => ({ epoch: exploreState.restorationEpoch, active: false }));
   $effect(() => {
     const defaults = appearanceDefaults;
     untrack(() => appearance.setDefaults(defaults));
@@ -551,55 +568,14 @@
   // component tests, but normal app navigation reaches the controller here.
   $effect(() => {
     const restorationEpoch = exploreState.restorationEpoch;
-    const historyRestoration = restorationEpoch !== appliedDirectoryRestorationEpoch;
-    appliedDirectoryRestorationEpoch = restorationEpoch;
-    if (exploreState.current.workspace !== 'directory') return;
-    const personID = exploreState.current.directoryPersonID;
-    if (personID !== null) { untrack(() => replaceCommittedNavigation({ workspace: 'relationships', directoryPersonID: personID, relationshipTarget: null, relationshipFiles: false })); return; }
-    const directoryState = {
-      directoryQuery: exploreState.current.directoryQuery,
-      directoryContactState: exploreState.current.directoryContactState,
-      directoryCategory: exploreState.current.directoryCategory,
-      directoryOrganization: exploreState.current.directoryOrganization,
-      directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
-      directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
-      directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
-      directorySort: exploreState.current.directorySort,
-      directoryPersonID: exploreState.current.directoryPersonID,
-    };
-    untrack(() => directoryController.applyURLState(directoryState, historyRestoration));
-  });
-  // Review offsets are ephemeral like Directory cursors. A Back/Forward
-  // restoration always starts its restored queue at page zero, while an
-  // ordinary workspace round trip keeps the AppShell-owned request/page.
-  $effect(() => {
-    const restorationEpoch = exploreState.restorationEpoch;
-    const historyRestoration = restorationEpoch !== appliedDirectoryReviewRestorationEpoch;
-    appliedDirectoryReviewRestorationEpoch = restorationEpoch;
-    const relationshipState = exploreState.current.relationshipReviewState;
-    const factActive =
-      exploreState.current.workspace === 'directory_review' && exploreState.current.reviewKind === 'fact';
-    const factHistoryRestoration = factActive && restorationEpoch !== appliedFactLedgerRestorationEpoch;
-    if (factActive) appliedFactLedgerRestorationEpoch = restorationEpoch;
-    untrack(() =>
-      factLedgerController.applyContext(factActive, exploreState.current.directoryPersonID, factHistoryRestoration),
-    );
-    if (exploreState.current.workspace !== 'directory_review') {
-      untrack(() => relationshipReviewController.applyContext(false, relationshipState, historyRestoration));
-      return;
-    }
-    const reviewState = {
-      reviewKind: exploreState.current.reviewKind,
-      identityState: exploreState.current.identityState,
-    };
-    untrack(() => directoryReviewController.applyURLState(reviewState, historyRestoration));
-    untrack(() =>
-      relationshipReviewController.applyContext(
-        reviewState.reviewKind === 'relationship',
-        relationshipState,
-        historyRestoration,
-      ),
-    );
+    const active = exploreState.current.workspace === 'relationships' && exploreState.current.peopleDuplicates;
+    const historyRestoration = !appliedDirectoryReviewContext.active || restorationEpoch !== appliedDirectoryReviewContext.epoch;
+    appliedDirectoryReviewContext = { epoch: restorationEpoch, active };
+    const identityState = exploreState.current.identityState;
+    untrack(() => {
+      void directoryReviewController.settleDecision();
+      if (active) directoryReviewController.applyURLState({ identityState }, historyRestoration);
+    });
   });
   $effect(() => {
     const mode = getThemeMode();
@@ -1043,25 +1019,13 @@
       }));
     }),
   );
-  const reviewWorkspaceCommand: AppCommand = {
-    id: 'workspace:directory-review',
-    label: 'Open Reviews',
-    section: 'Navigate',
-    keywords: 'Navigate Reviews Directory identity matches fact review',
-    keys: [],
-    combos: [],
-    scopes: [],
-    destructive: false,
-    review: false,
-    run: () => commitWorkspace('directory_review'),
-  };
   const commandRegistry = $derived([
     ...createCommandRegistry(commandHandlers),
-    reviewWorkspaceCommand,
     ...groupingCommands,
   ]);
   const shellCommands = $derived([
-    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['directory', 'deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
+    { id: 'go:duplicates', label: 'Possible duplicates', section: 'Go to', run: () => commitNavigation({ workspace: 'relationships', peopleDuplicates: true, identityState: 'candidate' }) },
+    ...[...NAVIGATION_ITEMS, SETTINGS_ITEM, ...(['deletions'] as const).map(id => ({ id, label: workspaceLabel(id) }))].map(({ id, label }) => ({ id: `go:${id}`, label, section: 'Go to', run: () => openWorkspaceTab(id) })),
     ...shellData.views.filter(view => !viewIncompatibility(view)).map(view => ({ id: `view:${view.id}`, label: view.name, section: 'Saved views', run: () => void openSavedView(viewState(view)) })),
     { id: 'display', label: 'Display', section: 'Appearance', run: () => { displayOpen = true; } },
     ...(['theme', 'density'] as const).filter(kind => appearance.temporary[kind] !== undefined).map(kind => ({ id: `display:reset-${kind}`, label: `Use Settings ${kind}`, section: 'Appearance', run: () => appearance.clearTemporary(kind) }))
@@ -1227,8 +1191,6 @@
     relationshipsController.destroy();
     directoryController.destroy();
     directoryReviewController.destroy();
-    relationshipReviewController.destroy();
-    factLedgerController.destroy();
     operationsController.destroy();
     void flashViewError(shellData.expireDelete());
     if (ownsState) exploreState.destroy();
@@ -1247,6 +1209,7 @@
       collapsed={sidebarCollapsed}
       showCollapseToggle
       jobs={shellData.jobs}
+      duplicateCount={shellData.duplicateCount}
       views={shellData.views}
       deletionsStaged={shellData.deletionsStaged}
       viewsError={shellData.error}
@@ -1271,6 +1234,7 @@
           </IconButton>
         </span>
       {/if}
+      {#if exploreState.current.workspace !== 'relationships' || !exploreState.current.peopleDuplicates}
       <SearchBar
         workspace={exploreState.current.workspace}
         query={exploreState.current.workspace === 'relationships' ? exploreState.current.identityQuery ?? '' : exploreState.current.query}
@@ -1282,6 +1246,7 @@
         onSubmit={submitGlobalSearch}
         filterLabel={exploreState.current.relationshipFacet === 'domains' ? 'Filter domains' : 'Filter people'}
       />
+      {/if}
       <div class="app-top-bar__end" aria-label="Appearance controls">
         <DisplayMenu
           bind:open={displayOpen}
@@ -1321,10 +1286,13 @@
           onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
           sweepConfigured={operationsController.snapshot.statusError ? undefined : operationsController.snapshot.statusLanes.flatMap(lane => lane.kinds).find(kind => kind.kind === 'person_sweep')?.configured}
+          reviews={directoryReviewController}
+          onDuplicatesChanged={() => void identityChanged()}
           directory={directoryController}
           onOpenCardDAVConflict={openCardDAVConflict}
           onOpenCardDAVSettings={openCardDAVSettings}
           urlState={exploreState.current}
+          restorationEpoch={exploreState.restorationEpoch}
           onNavigate={commitNavigation}
           onReplaceNavigation={replaceCommittedNavigation}
           onDraftNavigation={replaceCommittedDraft}
@@ -1355,39 +1323,10 @@
           onOpenPerson={openRelationship}
           onOpenSettings={(category) => commitNavigation(category ? { workspace: 'settings', settingsCategory: category, settingsAuthority: '' } : tasksSettingsDestination())}
           onOpenDirectoryPerson={openDirectoryPerson}
-          onReviewFacts={(personID) => commitNavigation({ workspace: 'directory_review', reviewKind: 'fact', directoryPersonID: personID })}
           onAnnounce={announceOperation}
           onOpenFileItem={openFileItem}
           onOpenFileConversation={openFileConversation}
           onOpenMeeting={(meeting) => void openArchivedMeeting(meeting)}
-        />
-      {:else if exploreState.current.workspace === 'directory'}
-        <DirectoryWorkspace
-          {client}
-          controller={directoryController}
-          onOpenPerson={openDirectoryPerson}
-          state={{
-            directoryQuery: exploreState.current.directoryQuery,
-            directoryContactState: exploreState.current.directoryContactState,
-            directoryCategory: exploreState.current.directoryCategory,
-            directoryOrganization: exploreState.current.directoryOrganization,
-            directoryPrimaryChannel: exploreState.current.directoryPrimaryChannel,
-            directoryLastContactAfter: exploreState.current.directoryLastContactAfter,
-            directoryLastContactBefore: exploreState.current.directoryLastContactBefore,
-            directorySort: exploreState.current.directorySort,
-            directoryPersonID: exploreState.current.directoryPersonID,
-          }}
-        />
-      {:else if exploreState.current.workspace === 'directory_review'}
-        <DirectoryReviewWorkspace
-          controller={directoryReviewController}
-          relationshipController={relationshipReviewController}
-          factController={factLedgerController}
-          directoryPersonID={exploreState.current.directoryPersonID}
-          {client}
-          onSelectFactPerson={(personID) => commitNavigation({ directoryPersonID: personID })}
-          onOpenPerson={openDirectoryPerson}
-          onAnnounce={announceOperation}
         />
       {:else if exploreState.current.workspace === 'files'}
         <main class="files-shell" aria-label="Files">
@@ -1589,6 +1528,7 @@
         collapsed={false}
         showCollapseToggle={false}
         jobs={shellData.jobs}
+        duplicateCount={shellData.duplicateCount}
         views={shellData.views}
         deletionsStaged={shellData.deletionsStaged}
         viewsError={shellData.error}
@@ -1631,6 +1571,14 @@
     onConfigure={openVisualAttachmentSettings} />
 {/if}
 <div bind:this={flashRoot}><FlashBanner /></div>
+{#if exploreState.current.workspace === 'relationships' && directoryReviewController.mergeRequired}
+  {@const merge = directoryReviewController.mergeRequired}
+  {#key merge.candidateID}<PersonBindingConflictModal {client} conflict={merge.conflict}
+    onOpenProfile={(id) => { directoryReviewController.mergeRequired = null; openDirectoryPerson(id); }}
+    onSuccess={async success => { if (exploreState.current.directoryPersonID === success.result.merge.absorbed_person_id) replaceCommittedNavigation({ directoryPersonID: success.survivor.id }); await reconcileIdentity(); await directoryReviewController.completePersonMerge(merge.candidateID, success); }}
+    onClose={() => directoryReviewController.mergeRequired = null} />{/key}
+{/if}
+
 
 <CommandPalette bind:open={paletteOpen} commands={paletteCommands} ariaLabel="Messages commands" onrun={runPalette} />
 
