@@ -285,6 +285,7 @@ func (s *Store) selectDirectoryPeopleTx(ctx context.Context, tx *loggedTx, query
 			break
 		}
 		rawAfter = &directoryRawCandidateCursor{quality: lastRaw.quality, sortKey: lastRaw.sortKey, orderName: lastRaw.orderName, personID: lastRaw.summary.ID}
+		chunkSize *= 2
 	}
 	if len(verified) > target {
 		verified = verified[:target]
@@ -426,25 +427,28 @@ func (s *Store) verifyDirectoryCandidatesTx(ctx context.Context, tx *loggedTx, c
 // Address matching uses the same Go lowercase rules on both backends. Values
 // are streamed for one bounded candidate chunk under the serving snapshot.
 func (s *Store) verifyDirectoryCandidateAddressesTx(ctx context.Context, tx *loggedTx, candidates []directoryPersonCandidate, address string) ([]directoryPersonCandidate, error) {
-	ids := make([]any, len(candidates))
+	ids := make([]int64, len(candidates))
 	for index, candidate := range candidates {
 		ids[index] = candidate.summary.ID
 	}
-	in := ` IN (` + directoryPlaceholders(len(ids)) + `)`
-	points := ` FROM person_contact_points cp WHERE cp.person_id` + in + `
+	membership, idArgs, err := s.meetingIDsMembership("person_id", ids)
+	if err != nil {
+		return nil, err
+	}
+	points := ` FROM person_contact_points cp WHERE ` + membership + `
 		AND cp.active_until IS NULL AND cp.superseded_at IS NULL AND cp.address_kind <> 'language'`
-	members := ` FROM person_participants pp JOIN participants p ON p.id = pp.participant_id WHERE pp.person_id` + in
+	members := ` FROM person_participants pp JOIN participants p ON p.id = pp.participant_id WHERE ` + membership
 	parts := []string{
 		`SELECT cp.person_id, cp.original_value` + points,
 		`SELECT cp.person_id, cp.normalized_value` + points,
 		`SELECT pp.person_id, COALESCE(p.email_address, '')` + members,
 		`SELECT pp.person_id, COALESCE(p.phone_number, '')` + members,
 		`SELECT pp.person_id, identifier.identifier_value FROM person_participants pp
-			JOIN participant_identifiers identifier ON identifier.participant_id = pp.participant_id WHERE pp.person_id` + in,
+			JOIN participant_identifiers identifier ON identifier.participant_id = pp.participant_id WHERE ` + membership,
 	}
-	args := make([]any, 0, len(ids)*len(parts))
+	args := make([]any, 0, len(idArgs)*len(parts))
 	for range parts {
-		args = append(args, ids...)
+		args = append(args, idArgs...)
 	}
 	rows, err := tx.QueryContext(ctx, strings.Join(parts, ` UNION ALL `), args...)
 	if err != nil {
@@ -488,11 +492,15 @@ func (s *Store) verifyDirectoryCandidateTokensTx(ctx context.Context, tx *logged
 	if len(candidates) == 0 {
 		return candidates, nil
 	}
-	ids, tokens := make([]any, 0, len(candidates)), make(map[int64][]string, len(candidates))
+	ids, tokens := make([]int64, 0, len(candidates)), make(map[int64][]string, len(candidates))
 	for _, candidate := range candidates {
 		ids = append(ids, candidate.summary.ID)
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT person_id, token_key FROM directory_person_tokens WHERE person_id IN (`+directoryPlaceholders(len(ids))+`)`, ids...)
+	membership, args, err := s.meetingIDsMembership("person_id", ids)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT person_id, token_key FROM directory_person_tokens WHERE `+membership, args...)
 	if err != nil {
 		return nil, fmt.Errorf("load directory candidate tokens: %w", err)
 	}

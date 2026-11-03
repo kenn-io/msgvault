@@ -2,6 +2,8 @@ package store_test
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -164,38 +166,50 @@ func TestDirectoryPeopleAddressLookupRefillsSparsePagesInEveryOrder(t *testing.T
 	require := Require.New(t)
 	st := testutil.NewTestStore(t)
 	var matches []int64
-	for index := range 70 {
-		person := createDirectoryPerson(t, st, fmt.Sprintf("Person %03d", index), fmt.Sprintf("person-%03d@example.test", index), "friend", "active", "Example Co")
+	for index := range 2561 {
+		person := createDirectoryPerson(t, st, fmt.Sprintf("Person %04d", index), fmt.Sprintf("person-%04d@example.test", index), "friend", "active", "Example Co")
 		_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE person_contact_state SET last_contact_at = ? WHERE person_id = ?`),
 			time.Date(2026, 1, 1, 0, index, 0, 0, time.UTC), person.ID)
 		require.NoError(err)
-		if index == 34 || index == 69 {
-			_, err := st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
-				AddressKind: store.ContactAddressUsername, OriginalValue: "shared-handle",
+		if index%640 != 0 {
+			continue
+		}
+		matches = append(matches, person.ID)
+		switch index / 640 {
+		case 0, 4:
+			_, err = st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{
+				AddressKind: store.ContactAddressUsername, OriginalValue: "SHARED-İ-HANDLE",
 				Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser},
 			})
-			require.NoError(err)
-			matches = append(matches, person.ID)
+		case 1:
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET email_address = ? WHERE id IN (SELECT participant_id FROM person_participants WHERE person_id = ?)`), "shared-i-handle@example.test", person.ID)
+		case 2:
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE participants SET phone_number = ? WHERE id IN (SELECT participant_id FROM person_participants WHERE person_id = ?)`), "shared-i-handle", person.ID)
+		case 3:
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO participant_identifiers (participant_id, identifier_type, identifier_value) SELECT participant_id, 'matrix', ? FROM person_participants WHERE person_id = ?`), "shared-i-handle", person.ID)
 		}
+		require.NoError(err)
 	}
 	for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
 		t.Run(order, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := Require.New(t)
-			want := []int64{matches[0], matches[1]}
+			want := append([]int64(nil), matches...)
 			if order == store.DirectoryPeopleSortLastContactDesc {
-				want = []int64{matches[1], matches[0]}
+				slices.Reverse(want)
 			}
-			query := store.DirectoryPeopleQuery{Query: "person", Address: "shared-handle", Sort: order, Limit: 1}
-			first, err := st.DirectoryPeoplePageContext(t.Context(), query)
-			require.NoError(err)
-			assert.Equal(want[:1], directoryPersonIDs(first.People))
-			require.NotEmpty(first.NextCursor)
-			query.Cursor = first.NextCursor
-			second, err := st.DirectoryPeoplePageContext(t.Context(), query)
-			require.NoError(err)
-			assert.Equal(want[1:], directoryPersonIDs(second.People))
-			assert.Empty(second.NextCursor)
+			query := store.DirectoryPeopleQuery{Query: "person", Address: "shared-i-handle", Sort: order, Limit: 1}
+			for index, id := range want {
+				page, err := st.DirectoryPeoplePageContext(t.Context(), query)
+				require.NoError(err)
+				assert.Equal([]int64{id}, directoryPersonIDs(page.People))
+				if index == len(want)-1 {
+					assert.Empty(page.NextCursor)
+				} else {
+					require.NotEmpty(page.NextCursor)
+				}
+				query.Cursor = page.NextCursor
+			}
 		})
 	}
 	page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Address: "absent-handle", Limit: 1})
@@ -251,4 +265,36 @@ func TestDirectoryPeopleAddressLookupRejectsReboundAnchor(t *testing.T) {
 	query.Cursor = page.NextCursor
 	_, err = f.store.DirectoryPeoplePageContext(t.Context(), query)
 	assert.ErrorIs(err, store.ErrInvalidDirectoryCursor)
+}
+
+func TestDirectoryPeopleAddressMissStatementsGrowLogarithmically(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	counts := make(map[string]int)
+	for index := range 1600 {
+		createDirectoryPerson(t, st, fmt.Sprintf("Person %04d", index), fmt.Sprintf("person-%04d@example.test", index), "friend", "active", "Example Co")
+		if index != 199 && index != 1599 {
+			continue
+		}
+		// Refresh the projection before counting the address search itself.
+		_, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Limit: 1})
+		Require.NoError(t, err)
+		for _, order := range []string{store.DirectoryPeopleSortName, store.DirectoryPeopleSortLastContactAsc, store.DirectoryPeopleSortLastContactDesc} {
+			t.Run(fmt.Sprintf("%d/%s", index+1, order), func(t *testing.T) {
+				assert := Assert.New(t)
+				logs := captureAttachmentQueryLogs(t)
+				page, err := st.DirectoryPeoplePageContext(t.Context(), store.DirectoryPeopleQuery{Address: "nobody@nowhere", Sort: order, Limit: 50})
+				Require.NoError(t, err)
+				assert.Empty(page.People)
+				assert.Empty(page.NextCursor)
+				count := strings.Count(logs.String(), `"kind":"query"`)
+				if index == 199 {
+					counts[order] = count
+				} else {
+					// Three doublings add at most three fetch/verification pairs.
+					assert.Greater(count, counts[order])
+					assert.LessOrEqual(count-counts[order], 6)
+				}
+			})
+		}
+	}
 }
