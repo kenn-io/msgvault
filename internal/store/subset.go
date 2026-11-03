@@ -800,6 +800,9 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if err := copyMessages(tx); err != nil {
 		return nil, err
 	}
+	if err := copySubsetMetaCommentActions(tx); err != nil {
+		return nil, err
+	}
 	// Merge-protection markers are portable owning-row state. Copy them from
 	// the selected messages directly so they remain useful even when a subset
 	// omits the detailed merge provenance that originally justified them.
@@ -2547,6 +2550,50 @@ func copyMessages(tx *sql.Tx) error {
 	if _, err := copyByName(tx, "messages",
 		`id IN (SELECT id FROM selected_messages)`); err != nil {
 		return fmt.Errorf("copy messages: %w", err)
+	}
+	return nil
+}
+
+// copySubsetMetaCommentActions keeps provider-write idempotency receipts that
+// are still connected to a selected target or reply. Message references are
+// cleared when their endpoints fall outside the subset.
+func copySubsetMetaCommentActions(tx *sql.Tx) error {
+	exists, err := sourceTableExists(tx, "meta_comment_actions")
+	if err != nil {
+		return fmt.Errorf("inspect Meta comment action schema: %w", err)
+	}
+	if !exists {
+		return nil
+	}
+	if _, err := copyByName(tx, "meta_comment_actions", `
+		source_id IN (SELECT source_id FROM selected_message_sources)
+		AND (
+			message_id IN (SELECT id FROM selected_messages)
+			OR reply_message_id IN (SELECT id FROM selected_messages)
+			OR EXISTS (
+				SELECT 1 FROM src.messages target
+				WHERE target.id IN (SELECT id FROM selected_messages)
+				  AND target.source_id = src.meta_comment_actions.source_id
+				  AND target.source_message_id = src.meta_comment_actions.target_comment_id
+			)
+			OR EXISTS (
+				SELECT 1 FROM src.messages reply
+				WHERE reply.id IN (SELECT id FROM selected_messages)
+				  AND reply.source_id = src.meta_comment_actions.source_id
+				  AND reply.source_message_id = src.meta_comment_actions.remote_id
+			)
+		)`); err != nil {
+		return fmt.Errorf("copy Meta comment action receipts: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE meta_comment_actions SET message_id=NULL
+		WHERE message_id IS NOT NULL
+		  AND message_id NOT IN (SELECT id FROM messages)`); err != nil {
+		return fmt.Errorf("clear excluded Meta action target references: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE meta_comment_actions SET reply_message_id=NULL
+		WHERE reply_message_id IS NOT NULL
+		  AND reply_message_id NOT IN (SELECT id FROM messages)`); err != nil {
+		return fmt.Errorf("clear excluded Meta action reply references: %w", err)
 	}
 	return nil
 }

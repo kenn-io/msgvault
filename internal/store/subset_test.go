@@ -1456,6 +1456,112 @@ func TestCopySubset_Basic(t *testing.T) {
 	assert.False(hasViolation, "foreign key violations found in destination database")
 }
 
+func TestCopySubsetPreservesMetaCommentActionsWithinSelectedMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	sourcePath := filepath.Join(t.TempDir(), "msgvault.db")
+	source, err := Open(sourcePath)
+	require.NoError(err)
+	closed := false
+	t.Cleanup(func() {
+		if !closed {
+			_ = source.Close()
+		}
+	})
+	require.NoError(source.InitSchema())
+	metaSource, err := source.GetOrCreateSource(
+		"facebook_comments", "app:9:page:100")
+	require.NoError(err)
+	conversationID, err := source.EnsureConversation(
+		metaSource.ID, "100_200", "Synthetic post")
+	require.NoError(err)
+
+	sourceMessageIDs := []string{
+		"comment-0", "comment-1", "comment-2", "comment-3",
+	}
+	messageIDs := make([]int64, len(sourceMessageIDs))
+	for i, sourceMessageID := range sourceMessageIDs {
+		messageIDs[i], err = source.UpsertMessage(&Message{
+			SourceID:        metaSource.ID,
+			ConversationID:  conversationID,
+			SourceMessageID: sourceMessageID,
+			MessageType:     "facebook_comments",
+			SentAt:          sql.NullTime{Time: time.Date(2026, time.January, i+1, 12, 0, 0, 0, time.UTC), Valid: true},
+		})
+		require.NoError(err)
+	}
+
+	claimFor := func(index int, actionKey, action, body string) MetaCommentActionClaim {
+		return MetaCommentActionClaim{
+			ActionKey:        actionKey,
+			SourceID:         metaSource.ID,
+			SourceIdentifier: metaSource.Identifier,
+			MessageID:        messageIDs[index],
+			TargetCommentID:  sourceMessageIDs[index],
+			Action:           action,
+			Body:             body,
+		}
+	}
+	finish := func(claim MetaCommentActionClaim, state, remoteID string, replyMessageID int64) MetaCommentAction {
+		row, existing, claimErr := source.ClaimMetaCommentActionContext(ctx, claim)
+		require.NoError(claimErr)
+		require.False(existing)
+		row, claimErr = source.MarkMetaCommentActionDispatchedContext(ctx, row.ID, row.RowRevision)
+		require.NoError(claimErr)
+		row, claimErr = source.FinishMetaCommentActionContext(ctx, row.ID, row.RowRevision,
+			MetaCommentActionOutcome{State: state, RemoteID: remoteID, ReplyMessageID: replyMessageID})
+		require.NoError(claimErr)
+		return row
+	}
+
+	selectedReplyClaim := claimFor(3, "selected-reply", "public_reply", "Synthetic reply")
+	selectedReply := finish(selectedReplyClaim, "succeeded", "reply-3", messageIDs[0])
+	unknownClaim := claimFor(2, "selected-unknown", "public_reply", "Unknown reply")
+	unknown := finish(unknownClaim, "unknown", "", 0)
+	carriedReplyClaim := claimFor(1, "carried-reply", "public_reply", "Archived reply")
+	finish(carriedReplyClaim, "succeeded", sourceMessageIDs[2], messageIDs[2])
+	excludedClaim := claimFor(0, "excluded-action", "hide", "")
+	finish(excludedClaim, "succeeded", "", 0)
+	require.NoError(source.Close())
+	closed = true
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 2, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	gotSelectedReply, err := destination.GetMetaCommentActionByKeyContext(
+		ctx, selectedReplyClaim.ActionKey)
+	require.NoError(err)
+	assert.Equal("succeeded", gotSelectedReply.State)
+	assert.Equal(sql.NullInt64{Int64: messageIDs[3], Valid: true}, gotSelectedReply.MessageID)
+	assert.False(gotSelectedReply.ReplyMessageID.Valid,
+		"a reference to a reply outside the subset must be cleared")
+	claimed, existing, err := destination.ClaimMetaCommentActionContext(ctx, selectedReplyClaim)
+	require.NoError(err)
+	assert.True(existing)
+	assert.Equal(selectedReply.ID, claimed.ID)
+
+	gotUnknown, err := destination.GetMetaCommentActionByKeyContext(ctx, unknownClaim.ActionKey)
+	require.NoError(err)
+	assert.Equal("unknown", gotUnknown.State)
+	blocked, existing, err := destination.ClaimMetaCommentActionContext(ctx, unknownClaim)
+	require.ErrorIs(err, ErrMetaCommentActionUnknown)
+	assert.True(existing)
+	assert.Equal(unknown.ID, blocked.ID)
+
+	gotCarriedReply, err := destination.GetMetaCommentActionByKeyContext(ctx, carriedReplyClaim.ActionKey)
+	require.NoError(err)
+	assert.False(gotCarriedReply.MessageID.Valid,
+		"a reference to a target outside the subset must be cleared")
+	assert.Equal(sql.NullInt64{Int64: messageIDs[2], Valid: true}, gotCarriedReply.ReplyMessageID)
+	_, err = destination.GetMetaCommentActionByKeyContext(ctx, excludedClaim.ActionKey)
+	require.ErrorIs(err, ErrMetaCommentActionNotFound)
+}
+
 func TestCopySubsetCopiesPortableSourceMergeMarkersForSelectedRows(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
