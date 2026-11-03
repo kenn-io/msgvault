@@ -70,7 +70,7 @@ func calendarUIDExpression(d Dialect, column string) string {
 func calendarEventUIDExpression(d Dialect, metadata, providerID, sourceType string) string {
 	var providerUID string
 	if d.DriverName() == postgresDriverName {
-		providerUID = `CASE WHEN ` + sourceType + `='caldav' AND ` + providerID + ` ~ '^\\["([^"\\\\]|\\\\.)*","([^"\\\\]|\\\\.)*"\\]$' THEN (` + providerID + `::jsonb ->> 0) END`
+		providerUID = `CASE WHEN ` + sourceType + `='caldav' AND ` + providerID + ` ~ '^\["([^"\\]|\\.)*","([^"\\]|\\.)*"\]$' THEN (` + providerID + `::jsonb ->> 0) END`
 	} else {
 		providerUID = `CASE WHEN ` + sourceType + `='caldav' AND json_valid(` + providerID + `) AND json_type(` + providerID + `)='array' THEN json_extract(` + providerID + `, '$[0]') END`
 	}
@@ -644,6 +644,50 @@ func readCalendarCancellationEvidence(ctx context.Context, r contextRowQuerier, 
 	case "gcal_json":
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			evidence.diagnostic = fmt.Sprintf("decode cancellation evidence: %s", err)
+			return evidence, nil
+		}
+	case calevent.CalDAVRawFormat:
+		var selector calevent.CalDAVMetadata
+		if err := json.Unmarshal(metadata, &selector); err != nil {
+			evidence.diagnostic = fmt.Sprintf("decode CalDAV cancellation metadata: %s", err)
+			return evidence, nil
+		}
+		if selector.EventID == "" {
+			evidence.diagnostic = "decode CalDAV cancellation evidence: component selector missing or ambiguous"
+			return evidence, nil
+		}
+		zone := selector.TimeZone
+		if zone == "" {
+			zone = "UTC"
+		}
+		components, decodeErr := calevent.ParseCalDAVResource(ctx, raw, zone)
+		if decodeErr != nil {
+			evidence.diagnostic = fmt.Sprintf("decode CalDAV cancellation evidence: %s", decodeErr)
+			return evidence, nil
+		}
+		for _, component := range components {
+			if component.Event.ProviderEventID != selector.EventID {
+				continue
+			}
+			fields = make(map[string]any)
+			for key, present := range map[string]bool{
+				"summary":     component.Present.Summary,
+				"attendees":   component.Present.Attendees,
+				"organizer":   component.Present.Organizer,
+				"start":       component.Present.Start,
+				"end":         component.Present.End,
+				"location":    component.Present.Location,
+				"description": component.Present.Description,
+				"join_url":    component.Present.URL,
+			} {
+				if present {
+					fields[key] = true
+				}
+			}
+			break
+		}
+		if fields == nil {
+			evidence.diagnostic = "decode CalDAV cancellation evidence: component selector missing or ambiguous"
 			return evidence, nil
 		}
 	default:

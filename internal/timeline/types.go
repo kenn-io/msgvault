@@ -218,6 +218,7 @@ type BurstEntry struct {
 	Snippet          UntrustedText `json:"untrusted_text"`
 	LatestMessageIDs []int64       `json:"latest_message_ids"`
 	Copies           map[int64]int `json:"copies,omitempty"`
+	copyKeys         map[string]struct{}
 }
 type MessageEntry struct {
 	PeopleCount     int           `json:"people_count"`
@@ -231,6 +232,8 @@ type CallEntry struct {
 	PeopleTruncated bool     `json:"people_truncated,omitzero"`
 	Outcome         string   `json:"outcome"`
 	DurationSeconds *float64 `json:"duration_seconds"`
+	Precision       string   `json:"precision,omitempty"`
+	Date            string   `json:"date,omitempty"`
 	People          []Person `json:"people"`
 }
 type LoopEntry struct {

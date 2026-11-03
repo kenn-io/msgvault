@@ -58,7 +58,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		return nil
 	}
 	importCommand := &cobra.Command{
-		Use: "import [file|-]", Short: "Import one supplied JSON observation (default: stdin)",
+		Use: "import [file|-]", Short: "Import one JSON observation (default: stdin)",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			input := cmd.InOrStdin()
@@ -101,7 +101,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		var q store.CallQuery
 		var after, before string
 		command := &cobra.Command{Use: name, Short: description, Args: cobra.NoArgs}
-		command.Flags().Int64Var(&q.PersonID, "person-id", 0, "Filter by durable person ID")
+		command.Flags().Int64Var(&q.PersonID, "person-id", 0, "Person ID")
 		command.Flags().IntVar(&q.Limit, "limit", 50, "Maximum rows (1–100)")
 		command.Flags().StringVar(&after, "after", "", "Inclusive RFC3339 time")
 		command.Flags().StringVar(&before, "before", "", "Exclusive RFC3339 time")

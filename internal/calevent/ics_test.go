@@ -194,6 +194,21 @@ func TestICSDecode(t *testing.T) {
 	}
 }
 
+func TestICSPercentEncodedMailtoMatchesOrganizerAndParticipants(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:encoded@example.test\r\n" +
+		"DTSTART:20270302T120000Z\r\nORGANIZER:mailto:Owner%2BCalendar@Example.test\r\n" +
+		"ATTENDEE:mailto:owner+calendar@example.test\r\n" +
+		"ATTENDEE;CN=Guest:mailto:Guest%2BCalendar@Example.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	components, err := ParseICS([]byte(raw), "", "UTC")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	requirements.Len(components[0].Event.Attendees, 2)
+	assertions.Equal("owner+calendar@example.test", components[0].Event.Attendees[0].Email)
+	assertions.Equal("organizer", components[0].Event.Attendees[0].Role)
+	assertions.Equal("guest+calendar@example.test", components[0].Event.Attendees[1].Email)
+}
+
 func TestICSComponentRawDropsNonEventSiblings(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +

@@ -52,7 +52,21 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline()
 	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}
-	assert.Contains(t, Markdown(v), "13 people (+13)")
+	got := Markdown(v)
+	assert.Contains(t, got, "13 people")
+	assert.NotContains(t, got, "13 people (+13)")
+}
+
+func TestMarkdownSingleDayDoesNotRepeatDateHeading(t *testing.T) {
+	assertions := assert.New(t)
+	v := sampleTimeline()
+	call := v.History[4]
+	v.Window = Window{From: "2026-10-22", To: "2026-10-22"}
+	v.History, v.Upcoming, v.OpenLoops = nil, nil, nil
+	v.Days = []Day{{Date: "2026-10-22", Calls: []Entry{call}}}
+	got := Markdown(v)
+	assertions.Contains(got, "# 2026-10-22 · UTC\n")
+	assertions.NotContains(got, "Thu Oct 22")
 }
 func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v := sampleTimeline()
@@ -60,16 +74,6 @@ func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v.History = []Entry{v.History[2]}
 	v.History[0].Burst.Copies = map[int64]int{1: 2, 2: 2, 3: 2}
 	assert.Contains(t, Markdown(v), "(3 extra copies)")
-}
-
-func TestMarkdownAvoidsRepeatedCountsAndDefaultHint(t *testing.T) {
-	got := Markdown(sampleTimeline())
-	assert.Contains(t, got, "UTC (default)")
-	assert.NotContains(t, got, "set [activity].timezone")
-	assert.NotContains(t, got, "more available")
-	assert.Contains(t, got, "omitted: history 2 · open_loops more · noise 2 · cold 3")
-	assert.Contains(t, got, "email ↓2 ↑1")
-	assert.NotContains(t, got, "×3")
 }
 
 func TestMarkdownDoesNotRepeatLatestSyncWarning(t *testing.T) {

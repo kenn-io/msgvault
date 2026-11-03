@@ -119,6 +119,21 @@ func (f *timelineFixture) callWithParticipants(at time.Time, participants []call
 	require.NoError(f.T, err)
 	return id
 }
+func (f *timelineFixture) dayCall(date time.Time) int64 {
+	f.T.Helper()
+	f.serial++
+	o := callhistory.Observation{
+		RecordID: strconv.Itoa(f.serial), Version: 1, Provider: "google_calendar", Account: "example",
+		Kind: "scheduled_meeting", Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown",
+		OccurredAt: date, Timezone: "America/Vancouver", Precision: "day",
+		Participants: []callhistory.Participant{{ID: f.peer, Participation: "invited"}}, Raw: []byte(`{}`),
+	}
+	src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(f.T, err)
+	id, err := f.Store.PutCallObservationContext(f.T.Context(), src.ID, o)
+	require.NoError(f.T, err)
+	return id
+}
 func (f *timelineFixture) savePerson() int64 {
 	f.T.Helper()
 	p, _, err := f.Store.CreatePersonFromParticipant(f.peer)

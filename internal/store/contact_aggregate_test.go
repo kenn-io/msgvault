@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
@@ -232,4 +233,28 @@ func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("unknown", status)
 	assertions.Nil(due)
+}
+
+func TestCadenceForPersonReusesReadSnapshot(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineActivityFixture(t)
+	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+	requirements.NoError(err)
+	days := int64(21)
+	_, err = f.Store.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser})
+	requirements.NoError(err)
+
+	f.Store.DB().SetMaxOpenConns(1)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	snapshotCtx, release, err := f.Store.BeginReadSnapshotContext(ctx)
+	requirements.NoError(err)
+	defer release()
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	last := now.AddDate(0, 0, -30)
+	status, due, err := f.Store.CadenceForPersonContext(snapshotCtx, person.ID, &last, now)
+	requirements.NoError(err)
+	requirements.Equal("overdue", status)
+	requirements.NotNil(due)
+	requirements.Equal(last.AddDate(0, 0, 21), *due)
 }

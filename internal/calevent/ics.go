@@ -701,8 +701,8 @@ func addICSDateDays(date string, days int) (string, error) {
 }
 
 func icsEmail(p *ical.Prop) string {
-	if p == nil || !strings.HasPrefix(strings.ToLower(p.Value), "mailto:") {
+	if p == nil {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(p.Value[len("mailto:"):]))
+	return calDAVEmail(p)
 }

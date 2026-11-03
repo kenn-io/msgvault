@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,25 @@ func TestBuildDayShowsAnsweredCallWithoutParticipantRoster(t *testing.T) {
 	assertions.Equal("answered", entries[0].Call.Outcome)
 	assertions.Zero(entries[0].Call.PeopleCount)
 	assertions.Empty(entries[0].Call.People)
+}
+
+func TestBuildDayPreservesDateOnlyCallDateInVancouver(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	loc, err := time.LoadLocation("America/Vancouver")
+	requirements.NoError(err)
+	f.src.Location = loc
+	f.dayCall(time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC))
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	requirements.Len(got.Days, 1)
+	assertions.Equal("2026-10-22", got.Days[0].Date)
+	requirements.Len(got.Days[0].Calls, 1)
+	assertions.Equal("day", got.Days[0].Calls[0].Call.Precision)
+	assertions.Equal("2026-10-22", got.Days[0].Calls[0].Call.Date)
+	assertions.Contains(Markdown(got), "2026-10-22 call")
+	assertions.NotContains(Markdown(got), "17:00 call")
 }
 func TestBuildDayRecurringSeriesMovedOccurrence(t *testing.T) {
 	assertions := assert.New(t)
@@ -329,6 +349,23 @@ func TestBuildDayUpcomingNext48h(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, got.Upcoming, 2)
 }
+
+func TestBuildDayUpcomingIncludesAllDayEventAcrossTimezoneDateBoundary(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	location, err := time.LoadLocation("Asia/Tokyo")
+	requirements.NoError(err)
+	f.src.Location = location
+	f.now = time.Date(2026, 10, 22, 16, 0, 0, 0, time.UTC)
+	f.src.Clock = func() time.Time { return f.now }
+	f.calendar("tokyo-all-day", `{"id":"tokyo-all-day","summary":"Tokyo planning","start":{"date":"2026-10-24"},"end":{"date":"2026-10-25"}}`)
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	requirements.Len(got.Upcoming, 1)
+	assertions.Equal("Tokyo planning", got.Upcoming[0].Meeting.Title.Text)
+}
+
 func TestBuildDaySubjectFilterAppliesToEntriesAndUpcoming(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -1,9 +1,9 @@
-# 2026-10-21 – 2026-10-22 · UTC (default)
+# 2026-10-21 – 2026-10-22 · UTC (set [activity].timezone)
 ⚠ mail stale failed → msgvault sync
 ⚠ activity reconciling
 ⚠ incomplete
 
-Open (1)
+Open
 - owed Alice T1 4d · #51
 coverage incomplete
 1 unparseable

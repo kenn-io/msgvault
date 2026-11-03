@@ -337,7 +337,13 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if hidden {
 			snippet = ""
 		}
-		e := Entry{Kind: entryKindBurst, Key: b.Key, Ref: fmt.Sprintf("conv:%d", b.ConversationID), AnchorRef: b.Key, Time: b.LastAt, Open: append(c.open("list_messages", map[string]any{"conversation_id": b.ConversationID}), c.messageOpen(b.AnchorMessageID)...), HiddenText: hidden, Burst: &BurstEntry{Channel: string(b.Channel), People: people, PeopleCount: len(people), Inbound: b.Inbound, Outbound: b.Outbound, FirstAt: b.FirstAt, LastAt: b.LastAt, Snippet: UntrustedText{Text: snippet}, LatestMessageIDs: b.LatestMessageIDs, Copies: b.CopyCounts}}
+		copyKeys := make(map[string]struct{}, len(b.Messages))
+		for _, message := range b.Messages {
+			if message.CopyKey != "" {
+				copyKeys[message.CopyKey] = struct{}{}
+			}
+		}
+		e := Entry{Kind: entryKindBurst, Key: b.Key, Ref: fmt.Sprintf("conv:%d", b.ConversationID), AnchorRef: b.Key, Time: b.LastAt, Open: append(c.open("list_messages", map[string]any{"conversation_id": b.ConversationID}), c.messageOpen(b.AnchorMessageID)...), HiddenText: hidden, Burst: &BurstEntry{Channel: string(b.Channel), People: people, PeopleCount: len(people), Inbound: b.Inbound, Outbound: b.Outbound, FirstAt: b.FirstAt, LastAt: b.LastAt, Snippet: UntrustedText{Text: snippet}, LatestMessageIDs: b.LatestMessageIDs, Copies: b.CopyCounts, copyKeys: copyKeys}}
 		c.entryDates[e.Key] = b.LocalDate
 		entries = append(entries, e)
 	}
@@ -475,7 +481,12 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		ref := messageRef(call.MessageID)
-		e := Entry{Kind: "call", Key: call.IdentityKey, Ref: ref, AnchorRef: ref, Time: call.OccurredAt, HiddenText: d.HiddenText, Open: c.messageOpen(call.MessageID), Call: &CallEntry{Outcome: call.Outcome, DurationSeconds: call.DurationSeconds, People: people, PeopleCount: len(people)}}
+		callEntry := &CallEntry{Outcome: call.Outcome, DurationSeconds: call.DurationSeconds, Precision: call.Precision, People: people, PeopleCount: len(people)}
+		if call.Precision == "day" {
+			callEntry.Date = call.OccurredAt.UTC().Format(time.DateOnly)
+			c.entryDates[call.IdentityKey] = callEntry.Date
+		}
+		e := Entry{Kind: "call", Key: call.IdentityKey, Ref: ref, AnchorRef: ref, Time: call.OccurredAt, HiddenText: d.HiddenText, Open: c.messageOpen(call.MessageID), Call: callEntry}
 		entries = append(entries, e)
 	}
 	for _, note := range notes {

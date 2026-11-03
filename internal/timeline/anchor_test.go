@@ -208,6 +208,35 @@ func TestAnchorOldestMessageInBurstIsNotFiltered(t *testing.T) {
 	assertions.False(got.History[0].Filtered)
 }
 
+func TestAnchorNonselectedEmailCopyMatchesCollapsedBurst(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	copyID := sql.NullString{String: "<shared@example.test>", Valid: true}
+	selected := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
+		m.RFC822MessageID = copyID
+	})
+	copyConversation, err := f.Store.EnsureConversation(f.Source.ID, "copy-thread", "Shared message")
+	requirements.NoError(err)
+	alias := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
+		m.ConversationID = copyConversation
+		m.RFC822MessageID = copyID
+	})
+	assertions.Less(selected, alias)
+	f.project()
+	req := anchorRequest(messageRef(alias))
+
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	assertions.Equal(messageRef(alias), got.Anchor.Ref)
+	assertions.False(got.Anchor.Filtered)
+	requirements.Len(got.History, 1)
+	assertions.Equal(entryKindBurst, got.History[0].Kind)
+	assertions.True(got.History[0].Anchor)
+	assertions.False(got.History[0].Filtered)
+}
+
 func TestAnchorSecondCallObservationUsesLogicalCall(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

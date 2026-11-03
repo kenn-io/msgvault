@@ -22,7 +22,7 @@ func Markdown(t *Timeline) string {
 	}
 	zone := t.Timezone
 	if t.TimezoneIsDefault {
-		zone += " (default)"
+		zone += " (set [activity].timezone)"
 	}
 	heading := t.Window.To
 	if t.Window.From != t.Window.To {
@@ -84,7 +84,7 @@ func Markdown(t *Timeline) string {
 		}
 	}
 	if t.OpenLoops != nil {
-		fmt.Fprintf(&b, "\nOpen (%d)\n", len(t.OpenLoops.Items))
+		b.WriteString("\nOpen\n")
 		rows(t.OpenLoops.Items)
 		if t.OpenLoops.CoverageIncomplete {
 			b.WriteString("coverage incomplete\n")
@@ -96,12 +96,25 @@ func Markdown(t *Timeline) string {
 	for _, d := range t.Days {
 		date, _ := time.Parse(time.DateOnly, d.Date)
 		label := date.Format("Mon Jan 02")
+		singleDay := t.Mode == ModeDay && t.Window.From == t.Window.To && d.Date == t.Window.To
 		if d.Summary != nil {
-			fmt.Fprintf(&b, "\n%s · %d meetings · %d people (%s)\n", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			if singleDay {
+				fmt.Fprintf(&b, "\n%d meetings · %d people", d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)))
+			} else {
+				fmt.Fprintf(&b, "\n%s · %d meetings · %d people", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)))
+			}
+			if len(d.Summary.People) > 0 {
+				fmt.Fprintf(&b, " (%s)", peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			}
+			b.WriteByte('\n')
 			count++
 			continue
 		}
-		fmt.Fprintf(&b, "\n%s\n", label)
+		if singleDay {
+			b.WriteByte('\n')
+		} else {
+			fmt.Fprintf(&b, "\n%s\n", label)
+		}
 		rows(d.Meetings)
 		rows(d.Bursts)
 		var other []string
@@ -238,6 +251,9 @@ func entryRow(e Entry, loc *time.Location) string {
 			body += " \"" + textLine(e.Message.Snippet, 80) + "\""
 		}
 	case e.Call != nil:
+		if e.Call.Precision == "day" && e.Call.Date != "" {
+			clock = e.Call.Date
+		}
 		body = clock + " call " + singleLine(e.Call.Outcome, 80) + " " + peopleNames(e.Call.People, e.Call.PeopleCount)
 		if e.Call.DurationSeconds != nil {
 			body += fmt.Sprintf(" %.0fs", *e.Call.DurationSeconds)

@@ -47,6 +47,13 @@ type CalDAVEvent struct {
 	ExplicitAttendees                          []gcalmodel.Attendee
 	Summary, OrganizerName                     string
 	Description, Location, URL, OrganizerEmail string
+	Present                                    CalDAVFieldPresence
+}
+
+type CalDAVFieldPresence struct {
+	Summary, Attendees, Organizer bool
+	Start, End                    bool
+	Description, Location, URL    bool
 }
 
 // Keep one decoded resource while its components pass through the projection writer.
@@ -203,7 +210,19 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 			return CalDAVEvent{}, fmt.Errorf("duplicate CalDAV %s", name)
 		}
 	}
-	item := CalDAVEvent{Event: Event{CalendarTimeZone: calendarZone, Kind: "single", Status: "confirmed"}}
+	item := CalDAVEvent{
+		Event: Event{CalendarTimeZone: calendarZone, Kind: "single", Status: "confirmed"},
+		Present: CalDAVFieldPresence{
+			Summary:     p.Get("SUMMARY") != nil,
+			Attendees:   p.Get("ATTENDEE") != nil,
+			Organizer:   p.Get("ORGANIZER") != nil,
+			Start:       p.Get("DTSTART") != nil,
+			End:         p.Get("DTEND") != nil,
+			Description: p.Get("DESCRIPTION") != nil,
+			Location:    p.Get("LOCATION") != nil,
+			URL:         p.Get("URL") != nil,
+		},
+	}
 	e := &item.Event
 	var uid string
 	for _, field := range []struct {

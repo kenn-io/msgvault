@@ -60,7 +60,7 @@ func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...stri
 	return data, id
 }
 
-func caldavEventFixture(t *testing.T, st *Store, key, raw string) (int64, int64) {
+func caldavEventFixture(t *testing.T, st *Store, key, raw string, selectedEventIDs ...string) (int64, int64) {
 	t.Helper()
 	const identifier = "https://calendar.example.org/calendars/synthetic"
 	source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, identifier)
@@ -68,12 +68,25 @@ func caldavEventFixture(t *testing.T, st *Store, key, raw string) (int64, int64)
 	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, `{"calendar_url":"https://calendar.example.org/calendars/synthetic","time_zone":"UTC"}`))
 	components, err := calevent.ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
 	require.NoError(t, err)
-	require.Len(t, components, 1)
-	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: components[0].Event.ProviderEventID, TimeZone: "UTC"}, json.Deterministic(true))
+	var selected calevent.CalDAVEvent
+	if len(selectedEventIDs) == 0 {
+		require.Len(t, components, 1)
+		selected = components[0]
+	} else {
+		require.Len(t, selectedEventIDs, 1)
+		for _, component := range components {
+			if component.Event.ProviderEventID == selectedEventIDs[0] {
+				selected = component
+				break
+			}
+		}
+		require.Equal(t, selectedEventIDs[0], selected.Event.ProviderEventID)
+	}
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: selected.Event.ProviderEventID, TimeZone: "UTC"}, json.Deterministic(true))
 	require.NoError(t, err)
 	data := &MessagePersistData{
-		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: components[0].Summary, Valid: true}},
-		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: components[0].Summary},
+		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: selected.Summary, Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: selected.Summary},
 		RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
 		Metadata: &sql.NullString{String: string(metadata), Valid: true},
 	}

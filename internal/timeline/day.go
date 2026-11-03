@@ -128,7 +128,13 @@ func (c *composer) collectDay() dayRead {
 		func() {
 			if c.req.Scope.Owner && c.src.Calls != nil {
 				r.calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, Limit: 500})
+					dateBefore, err := addCivilDate(c.t.Window.To, 1)
+					if err != nil {
+						return nil, err
+					}
+					return c.readCalls(ctx, store.LogicalCallQuery{
+						After: from, Before: to, DateAfter: c.t.Window.From, DateBefore: dateBefore, Limit: 500,
+					})
 				})
 			}
 		},
@@ -154,7 +160,7 @@ func (c *composer) readCalendar(from, to time.Time) readResult[store.CalendarOcc
 	return readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrencePage, error) {
 		result := store.CalendarOccurrencePage{}
 		limit := 500
-		query := store.CalendarOccurrenceQuery{From: from, To: to, Limit: &limit}
+		query := store.CalendarOccurrenceQuery{From: from.In(c.loc), To: to.In(c.loc), Limit: &limit}
 		for {
 			page, err := c.src.Calendar.ListCalendarOccurrencesContext(ctx, query)
 			result.Occurrences = append(result.Occurrences, page.Occurrences...)

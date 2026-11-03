@@ -15,6 +15,7 @@ type anchorTarget struct {
 	at                        time.Time
 	messageID, conversationID int64
 	callIdentityKey           string
+	copyKey                   string
 	display                   store.MessageDisplay
 	occurrence                *store.CalendarOccurrence
 }
@@ -149,6 +150,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		return target, ErrUndatedAnchor
 	}
 	target.display = d
+	target.copyKey = d.CopyKey
 	target.at = d.OccurredAt.In(c.loc)
 	target.conversationID = d.ConversationID
 	if c.src.Calls != nil {
@@ -174,7 +176,7 @@ func anchorWindow(at time.Time, loc *time.Location) Window {
 func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	from := target.at.In(c.loc).AddDate(0, 0, -days)
 	to := target.at.In(c.loc).AddDate(0, 0, days).Add(time.Nanosecond)
-	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, MergeCopies: c.req.IncludeCold}
+	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, MergeCopies: c.req.IncludeCold || target.copyKey != ""}
 	if c.req.Conversation {
 		q.ConversationID = target.conversationID
 	}
@@ -277,6 +279,11 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 func anchorMatches(e Entry, target anchorTarget) bool {
 	if e.Key == target.ref.Ref || e.Ref == target.ref.Ref || target.occurrence != nil && e.Ref == target.occurrence.Ref {
 		return true
+	}
+	if e.Burst != nil && target.copyKey != "" {
+		if _, ok := e.Burst.copyKeys[target.copyKey]; ok {
+			return true
+		}
 	}
 	if target.callIdentityKey != "" && e.Call != nil && e.Key == target.callIdentityKey {
 		return true

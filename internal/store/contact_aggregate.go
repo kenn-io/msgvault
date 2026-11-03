@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"time"
@@ -194,7 +193,7 @@ func (s *Store) CadenceForPersonContext(ctx context.Context, personID int64, las
 		return "", nil, fmt.Errorf("%w: cadence requires person and clock", ErrInvalidActivityRequest)
 	}
 	state := ContactState{LastContactAt: lastContactAt}
-	err := s.withTxOptionsContext(ctx, &sql.TxOptions{ReadOnly: true}, func(tx *loggedTx) error {
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
 		values, err := listCurrentContactFrequencyTx(ctx, tx, personID)
 		if err != nil {
 			return err

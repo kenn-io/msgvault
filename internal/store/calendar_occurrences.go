@@ -904,11 +904,39 @@ func (s *Store) calendarOccurrenceContent(ctx context.Context, row, master Calen
 	if cancellation.raw != nil {
 		content, err = decodeCalendarContent(ctx, cancellation.format, cancellation.raw, cancellation.metadata, row.Event.CalendarTimeZone)
 	}
-	if err != nil || !cancellation.sparse || (content.Location != "" && content.Description != "" && content.JoinURL != "") {
+	if err != nil || !cancellation.sparse {
 		return content, err
 	}
+	if cancellation.format == calevent.CalDAVRawFormat {
+		locationMissing := cancellation.fields["location"] == nil
+		descriptionMissing := cancellation.fields["description"] == nil
+		joinURLMissing := cancellation.fields["join_url"] == nil
+		if !locationMissing && !descriptionMissing && !joinURLMissing {
+			return content, nil
+		}
+		inherited, err := readCalendarContent(ctx, s.db, master)
+		if err != nil {
+			return content, err
+		}
+		if locationMissing {
+			content.Location = inherited.Location
+		}
+		if descriptionMissing {
+			content.Description = inherited.Description
+		}
+		if joinURLMissing {
+			content.JoinURL = inherited.JoinURL
+		}
+		return content, nil
+	}
+	if content.Location != "" && content.Description != "" && content.JoinURL != "" {
+		return content, nil
+	}
 	inherited, err := readCalendarContent(ctx, s.db, master)
-	return calevent.Content{Location: cmp.Or(content.Location, inherited.Location), Description: cmp.Or(content.Description, inherited.Description), JoinURL: cmp.Or(content.JoinURL, inherited.JoinURL)}, err
+	if err != nil {
+		return content, err
+	}
+	return calevent.Content{Location: cmp.Or(content.Location, inherited.Location), Description: cmp.Or(content.Description, inherited.Description), JoinURL: cmp.Or(content.JoinURL, inherited.JoinURL)}, nil
 }
 
 func (s *Store) calendarOccurrenceAnchor(ctx context.Context, ref string) (CalendarEventRow, calrecur.Identity, bool, error) {

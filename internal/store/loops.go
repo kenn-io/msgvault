@@ -760,7 +760,7 @@ type LoopMessageEvidence struct {
 func (s *Store) ReadLoopMessageEvidenceSnapshotContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, bool, error) {
 	var e LoopMessageEvidence
 	var facts sql.NullString
-	err := ReadDBContext(ctx, s.db.DB).QueryRowContext(ctx, `SELECT facts FROM loop_message_evidence
+	err := s.db.QueryRowContext(ctx, `SELECT facts FROM loop_message_evidence
 	WHERE message_id = ? AND rule_version = ?`, id, version).Scan(&facts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return e, false, nil

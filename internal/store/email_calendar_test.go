@@ -443,6 +443,7 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 		forged                                              bool
 	}{
 		{"matching claimed organizer", "ORGANIZER;CN=Owner;SENT-BY=\"mailto:service@example.org\":mailto:OWNER@EXAMPLE.COM", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Different;SENT-BY=\"mailto:other@example.net\":mailto:owner@example.com", "cancelled", "", 1, false},
+		{"percent-encoded organizer mailbox", "ORGANIZER:mailto:owner%2Bcalendar@example.com", "owner+calendar@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner+calendar@example.com", "cancelled", "", 1, false},
 		// Accepted outcome: continuity uses unauthenticated addresses. A stranger
 		// who copies the visible ORGANIZER can cancel the event.
 		{"AcceptedSpoofedOrganizerCancellation", "ORGANIZER:mailto:owner@example.com", "stranger@example.net", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner@example.com", "cancelled", "", 1, false},
