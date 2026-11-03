@@ -29,6 +29,15 @@ func TestImportMessageCaptureUsesTrustedFormatAndIngestionTime(t *testing.T) {
 			const family = "msgvault.import_message_archived"
 			_, err := f.Store.ConfigureMCPEvents(t.Context(), store.MCPEventsConfig{Enabled: true, Principal: owner, ImportNotifications: true, Capabilities: []store.MCPEventCapability{{Family: family, SourceType: "eml", Kinds: []string{"message"}}, {Family: "msgvault.message_archived", SourceType: "gmail", Kinds: []string{"message"}}}})
 			require.NoError(err)
+			resource, err := f.Store.GetMCPResource(t.Context(), "source", f.Source.ID)
+			require.NoError(err)
+			require.NoError(f.Store.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{SourceID: f.Source.ID, SourceReference: resource.Reference, SourceType: "gmail", NativeIdentity: f.Source.Identifier, Known: true, MessageRead: true}))
+			liveStore := f.Store.WithIngestContext(store.IngestContext{Mode: store.IngestLive})
+			_, err = liveStore.PersistMessageContext(t.Context(), &store.MessagePersistData{Message: f.NewMessage().WithSourceMessageID("synthetic-live-before-import").Build(), BodyText: sql.NullString{String: "Synthetic live message", Valid: true}})
+			require.NoError(err)
+			var liveBefore int
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&liveBefore))
+			require.Equal(1, liveBefore, "the authorized live Gmail write proves the event capability is active")
 			execution, err := f.Store.AcquireSyncExecutionContext(t.Context(), f.Source.ID)
 			require.NoError(err)
 			t.Cleanup(func() { Assert.NoError(t, execution.Release()) })
@@ -46,7 +55,7 @@ func TestImportMessageCaptureUsesTrustedFormatAndIngestionTime(t *testing.T) {
 			require.NoError(err)
 			var liveCount, importCount int
 			require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&liveCount))
-			assert.Zero(liveCount, "a custom Gmail source label cannot change trusted offline provenance")
+			assert.Equal(liveBefore, liveCount, "a custom Gmail source label cannot change trusted offline provenance")
 			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM mcp_event_log WHERE family=?`), family).Scan(&importCount))
 			if !notify {
 				assert.Zero(importCount)

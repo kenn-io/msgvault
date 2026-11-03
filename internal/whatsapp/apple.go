@@ -141,10 +141,11 @@ func (imp *Importer) importApple(
 		return nil, fmt.Errorf("begin Apple WhatsApp import: %w", err)
 	}
 	summary.ImportRunID = run.ID
-	imp.store, err = imp.store.WithImportRun(ownershipCtx, run.ID)
+	runStore, err := imp.store.WithImportRun(ownershipCtx, run.ID)
 	if err != nil {
 		return nil, fmt.Errorf("bind Apple WhatsApp import: %w", err)
 	}
+	imp.store = runStore
 
 	imp.progress.OnStart()
 

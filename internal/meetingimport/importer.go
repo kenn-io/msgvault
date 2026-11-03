@@ -133,10 +133,11 @@ func (i *Importer) Import(ctx context.Context, req Request) (result Result, retE
 		return result, fmt.Errorf("begin meeting import: %w", err)
 	}
 	result.ImportRunID = run.ID
-	i.store, err = i.store.WithImportRun(ownershipCtx, run.ID)
+	runStore, err := i.store.WithImportRun(ownershipCtx, run.ID)
 	if err != nil {
 		return result, fmt.Errorf("bind meeting import: %w", err)
 	}
+	i.store = runStore
 
 	var organizer *meetingarchive.Person
 	if snapshot.Organizer != nil {

@@ -115,7 +115,23 @@ func TestNativePSTFormatAuthorityIsIndependentOfCustomSourceType(t *testing.T) {
 	}}
 	_, err := st.ConfigureMCPEvents(t.Context(), cfg)
 	require.NoError(err)
-	result, err := ImportPst(t.Context(), st.WithIngestContext(store.IngestContext{Mode: store.IngestLive}), nativeSyntheticPST(t), PstImportOptions{SourceType: "gmail", Identifier: "owner@example.net", NoResume: true, NotifyImports: true})
+	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
+	require.NoError(err)
+	sourceResource, err := st.GetMCPResource(t.Context(), "source", source.ID)
+	require.NoError(err)
+	require.NoError(st.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{
+		SourceID: source.ID, SourceReference: sourceResource.Reference, SourceType: "gmail",
+		NativeIdentity: source.Identifier, Known: true, MessageRead: true,
+	}))
+	liveStore := st.WithIngestContext(store.IngestContext{Mode: store.IngestLive})
+	require.NoError(IngestRawMessage(t.Context(), liveStore, source.ID, source.Identifier, "", nil,
+		"gmail-live-synthetic", "gmail-live-synthetic-hash",
+		[]byte("From: sender@example.net\r\nTo: owner@example.net\r\nSubject: Synthetic live mail\r\nMessage-ID: <live@example.net>\r\n\r\nSynthetic live body"),
+		time.Date(2025, time.January, 2, 3, 4, 5, 0, time.UTC), slog.Default()))
+	var liveBefore int
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&liveBefore))
+	require.Equal(1, liveBefore, "the authorized live Gmail write proves the event capability is active")
+	result, err := ImportPst(t.Context(), liveStore, nativeSyntheticPST(t), PstImportOptions{SourceType: "gmail", Identifier: "owner@example.net", NoResume: true, NotifyImports: true})
 	require.NoError(err)
 	require.NotNil(result)
 	require.False(result.HardErrors)
@@ -125,23 +141,10 @@ func TestNativePSTFormatAuthorityIsIndependentOfCustomSourceType(t *testing.T) {
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT import_format FROM import_runs WHERE id=?`), result.ImportRunID).Scan(&format))
 	assert.Equal("pst", format)
 	var live, imports int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&live))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&live))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.import_message_archived'`).Scan(&imports))
-	assert.Zero(live, "the PST import does not inherit the caller's live ingestion mode")
+	assert.Equal(liveBefore, live, "PST import does not add live events when native Gmail authority is active")
 	assert.Equal(1, imports)
-	sourceResource, err := st.GetMCPResource(t.Context(), "source", result.SourceID)
-	require.NoError(err)
-	require.NoError(st.ObserveNativeSourcePermission(t.Context(), store.NativeSourcePermission{
-		SourceID: result.SourceID, SourceReference: sourceResource.Reference, SourceType: "gmail",
-		NativeIdentity: "owner@example.net", Known: true, MessageRead: true,
-	}))
-	liveStore := st.WithIngestContext(store.IngestContext{Mode: store.IngestLive})
-	require.NoError(IngestRawMessage(t.Context(), liveStore, result.SourceID, "owner@example.net", "", nil,
-		"gmail-live-synthetic", "gmail-live-synthetic-hash",
-		[]byte("From: sender@example.net\r\nTo: owner@example.net\r\nSubject: Synthetic live mail\r\nMessage-ID: <live@example.net>\r\n\r\nSynthetic live body"),
-		time.Now().UTC(), slog.Default()))
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM mcp_event_log WHERE family='msgvault.message_archived'`).Scan(&live))
-	assert.Equal(1, live, "the configured live capability accepts a normal live write")
 }
 
 func TestNativePSTReplyNotificationsWaitForThreadReconciliation(t *testing.T) {

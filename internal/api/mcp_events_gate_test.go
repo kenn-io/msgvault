@@ -172,9 +172,9 @@ func TestMCPEventsCallbackVerificationReleasesDaemonOperationGate(t *testing.T) 
 	assert.True(acquired, "daemon operation gate must be available during callback verification")
 }
 
-// The generic POST gate must not wrap discovery: the service acquires the
-// same real serial gate around its bounded Store operation.
-func TestMCPEventsResourceDiscoveryTakesDaemonGateOnce(t *testing.T) {
+// Discovery bypasses the generic archive-operation gate; its bounded Store
+// operation uses Store fences while a manual sync holds that gate.
+func TestMCPEventsResourceDiscoveryBypassesHeldArchiveGate(t *testing.T) {
 	assert, require := Assert.New(t), Require.New(t)
 	f := storetest.New(t)
 	gate := NewSerialOperationGate()
@@ -183,8 +183,10 @@ func TestMCPEventsResourceDiscoveryTakesDaemonGateOnce(t *testing.T) {
 	svc, err := mcpevents.New(t.Context(), f.Store, mcpevents.Options{OwnerKey: testSessionAPIKey, WithOperation: srv.MCPEventsOperation})
 	require.NoError(err)
 	srv.SetMCPEvents(svc)
-	// Bound a wait for real request completion; double admission cannot finish
-	// until cancellation releases the outer gate.
+	releaseSync, held := gate.BeginLabeledWorkContext(t.Context(), "manual sync")
+	require.True(held)
+	t.Cleanup(releaseSync)
+	// Bound a wait for real request completion while the archive gate is held.
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/api/v1/mcp/events/resources", bytes.NewBufferString(`{"kind":"source"}`))
