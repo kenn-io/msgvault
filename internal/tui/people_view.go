@@ -521,6 +521,8 @@ func (m Model) peopleOverviewRelationshipLines() []string {
 	year := m.peopleState.relationshipYear
 	heading := relationshipAlignedLine("● Relationship", strconv.Itoa(year), max(m.width, 1))
 	switch {
+	case m.peopleState.contact != nil && m.peopleState.contact.ActivityCount == 0:
+		return []string{"", "No sent or received messages with this contact yet."}
 	case m.peopleState.relationshipLoading && m.peopleState.relationshipCalendar == nil:
 		return []string{"", heading, m.spinnerIndicator() + " Loading relationship activity..."}
 	case m.peopleState.relationshipErr != nil:

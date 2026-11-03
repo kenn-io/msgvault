@@ -5,7 +5,7 @@
     listSourceStatus as generatedListSourceStatus,
     triggerSync as generatedTriggerSync,
   } from '../../api/generated/api/api';
-  import { Button, Chip, Table, TableHeaderCell } from '@kenn-io/kit-ui';
+  import { Button, Chip, PageHeader, Table, TableHeaderCell } from '@kenn-io/kit-ui';
   import { onDestroy, onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { CardDAVConnectionResponse, SourceStatus } from '../../api/generated/models';
@@ -17,7 +17,6 @@
   import Dialog from '../common/Dialog.svelte';
   import { EmptyState } from '@kenn-io/kit-ui';
   import { operationStateChip } from '../../operations/labels';
-  import PageHeader from '../shell/PageHeader.svelte';
   import CommandLine from './CommandLine.svelte';
   import ContactPanel from './ContactPanel.svelte';
   import SourcePanel from './SourcePanel.svelte';
@@ -553,7 +552,7 @@
 {/if}
 
 <style>
-  .sources > :global(.page-header) {
+  .sources > :global(.kit-page-header) {
     --page-header-parent-gap: var(--section-gap);
   }
 

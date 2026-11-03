@@ -78,7 +78,7 @@ See [`.github/SECURITY_BOT.md`](.github/SECURITY_BOT.md) for details.
 
 ## Supply Chain
 
-- **Dependabot** monitors Go modules and GitHub Actions for updates
+- **Renovate** monitors Go modules and GitHub Actions for updates
 - **govulncheck** runs on every PR (call-graph aware, Go vulnerability database)
 - **CODEOWNERS** requires maintainer approval for go.mod, go.sum, and .github/ changes
-- **GitHub Actions pinned to commit SHAs** to prevent tag-based supply chain attacks
+- **GitHub Actions pinned in `.github/workflows/actions.lock`**, which records the commit for every action, including actions that other actions call, to prevent tag-based supply chain attacks

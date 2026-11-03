@@ -2,10 +2,8 @@ package store_test
 
 import (
 	"database/sql"
-	"fmt"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,9 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
-
-var activityQueryPGSchemaSequence atomic.Uint64
 
 func TestDayContextUsesOnePostgresSnapshotAcrossIndependentSubpages(t *testing.T) {
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
@@ -25,7 +22,7 @@ func TestDayContextUsesOnePostgresSnapshotAcrossIndependentSubpages(t *testing.T
 	}
 	require := require.New(t)
 	assert := assert.New(t)
-	first, second, admin := newActivityQueryPostgresStores(t, dbURL)
+	first, second, admin := newActivityQueryPostgresStores(t)
 
 	source, err := first.GetOrCreateSource("gmail", "synthetic@example.invalid")
 	require.NoError(err)
@@ -123,37 +120,16 @@ func TestDayContextUsesOnePostgresSnapshotAcrossIndependentSubpages(t *testing.T
 	}
 }
 
-func newActivityQueryPostgresStores(
-	t *testing.T,
-	dbURL string,
-) (*store.Store, *store.Store, *sql.DB) {
+func newActivityQueryPostgresStores(t *testing.T) (*store.Store, *store.Store, *sql.DB) {
 	t.Helper()
 	require := require.New(t)
-	schema := fmt.Sprintf(
-		"msgvault_activity_query_%d_%d",
-		time.Now().UnixNano(),
-		activityQueryPGSchemaSequence.Add(1),
-	)
-	admin, err := sql.Open("pgx", dbURL)
+	first := testutil.NewTestStore(t)
+	second, err := store.Open(store.DBPathForTest(first))
 	require.NoError(err)
-	_, err = admin.ExecContext(t.Context(), "CREATE SCHEMA "+schema)
+	t.Cleanup(func() { _ = second.Close() })
+	admin, err := sql.Open("pgx", store.DBPathForTest(first))
 	require.NoError(err)
-	separator := "?"
-	if strings.Contains(dbURL, "?") {
-		separator = "&"
-	}
-	testURL := dbURL + separator + "search_path=" + schema
-	first, err := store.Open(testURL)
-	require.NoError(err)
-	second, err := store.Open(testURL)
-	require.NoError(err)
-	require.NoError(first.InitSchema())
-	t.Cleanup(func() {
-		_ = first.Close()
-		_ = second.Close()
-		_, _ = admin.Exec("DROP SCHEMA " + schema + " CASCADE")
-		_ = admin.Close()
-	})
+	t.Cleanup(func() { _ = admin.Close() })
 	return first, second, admin
 }
 

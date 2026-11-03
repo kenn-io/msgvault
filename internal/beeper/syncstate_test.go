@@ -8,6 +8,7 @@ import (
 )
 
 func TestLoadSyncStateEmpty(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	s, err := LoadSyncState("")
@@ -18,6 +19,7 @@ func TestLoadSyncStateEmpty(t *testing.T) {
 }
 
 func TestSyncStateMerge(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	base := NewSyncState()
 	base.EnsureChat("!a:x").Newest = "10"
@@ -46,6 +48,7 @@ func TestSyncStateMerge(t *testing.T) {
 }
 
 func TestSyncStateMergePreservesExplicitDoneReset(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	base := NewSyncState()
 	base.EnsureChat("!reopened:x").Done = true
@@ -60,6 +63,7 @@ func TestSyncStateMergePreservesExplicitDoneReset(t *testing.T) {
 }
 
 func TestSyncStateMergeNil(t *testing.T) {
+	t.Parallel()
 	base := NewSyncState()
 	base.EnsureChat("!a:x").Newest = "10"
 	base.Merge(nil)
@@ -67,6 +71,7 @@ func TestSyncStateMergeNil(t *testing.T) {
 }
 
 func TestSyncStateMergeFillsAnchor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := NewSyncState()
@@ -78,6 +83,7 @@ func TestSyncStateMergeFillsAnchor(t *testing.T) {
 }
 
 func TestSyncStateMergePreservesExplicitTailScanClears(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	base := NewSyncState()
 	base.TailScanStarted = "2026-01-01T00:00:00Z"

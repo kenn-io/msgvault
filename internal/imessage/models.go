@@ -28,4 +28,10 @@ type ImportSummary struct {
 	// DatesCleared counts existing archived dates removed for invalid source timestamps.
 	DatesCleared int
 	Skipped      int
+	// AttachmentFailures counts imported messages whose attachment capture failed.
+	AttachmentFailures int
+	// AttachmentsUnavailable counts attachments whose file could not be read locally.
+	AttachmentsUnavailable int
+	// AttachmentsSkipped counts attachments left out by the media policy.
+	AttachmentsSkipped int
 }

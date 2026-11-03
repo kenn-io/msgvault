@@ -5,10 +5,8 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -201,38 +199,20 @@ func newGmailAuditSnapshotSQLiteStore(
 }
 
 func newGmailAuditSnapshotPostgresStore(
-	t *testing.T, dbURL string, gate *gmailAuditSnapshotGate,
+	t *testing.T, gate *gmailAuditSnapshotGate,
 ) *Store {
 	t.Helper()
 	require := require.New(t)
-	schemaName := fmt.Sprintf("msgvault_test_gmail_audit_snapshot_%d", time.Now().UnixNano())
-	admin, err := sql.Open("pgx", dbURL)
-	require.NoError(err)
-	t.Cleanup(func() { _ = admin.Close() })
-	_, err = admin.ExecContext(t.Context(), "CREATE SCHEMA "+schemaName)
-	require.NoError(err)
-	t.Cleanup(func() {
-		_, _ = admin.ExecContext(context.Background(), "DROP SCHEMA "+schemaName+" CASCADE")
-	})
-
-	separator := "?"
-	if strings.Contains(dbURL, "?") {
-		separator = "&"
-	}
-	testURL := dbURL + separator + "search_path=" + schemaName
-	config, err := postgresConnConfig(testURL, false)
+	base := newPGStoreInternal(t)
+	config, err := postgresConnConfig(base.dbPath, false)
 	require.NoError(err)
 	db := sql.OpenDB(&gmailAuditSnapshotConnector{
 		Connector: stdlib.GetConnector(*config), gate: gate,
 	})
 	db.SetMaxOpenConns(8)
 	db.SetMaxIdleConns(4)
-	dialect := &PostgreSQLDialect{}
-	require.NoError(dialect.InitConn(db))
-	st := &Store{db: newLoggedDB(db, dialect.Rebind), dbPath: testURL, dialect: dialect}
-	t.Cleanup(func() { _ = st.Close() })
-	require.NoError(st.InitSchemaContext(t.Context()))
-	return st
+	replaceTestStoreDB(t, base, db)
+	return base
 }
 
 func seedGmailAuditSnapshotMessage(
@@ -286,7 +266,7 @@ func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	var st *Store
 	if IsPostgresURL(dbURL) {
-		st = newGmailAuditSnapshotPostgresStore(t, dbURL, gate)
+		st = newGmailAuditSnapshotPostgresStore(t, gate)
 	} else {
 		st = newGmailAuditSnapshotSQLiteStore(t, gate)
 	}
@@ -334,7 +314,7 @@ func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	// The concurrent-repair stand-in: rewrite the second message's envelope
 	// while the page load is between its records, then commit on another
 	// connection.
-	_, err = st.DB().ExecContext( //nolint:gosec // The SQL is static; Rebind only changes placeholders.
+	_, err = st.DB().ExecContext(
 		t.Context(), st.Rebind(`
 		UPDATE message_recipients SET email_address = 'rewritten-sender@example.test'
 		WHERE message_id = ? AND recipient_type = 'from'
@@ -360,7 +340,7 @@ func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	// The rewrite really committed: a fresh read outside the page observes it,
 	// so the assertion above proves snapshot coherence, not a lost write.
 	var committed string
-	require.NoError(st.DB().QueryRowContext( //nolint:gosec // The SQL is static; Rebind only changes placeholders.
+	require.NoError(st.DB().QueryRowContext(
 		t.Context(), st.Rebind(`
 		SELECT email_address FROM message_recipients
 		WHERE message_id = ? AND recipient_type = 'from'

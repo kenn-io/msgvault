@@ -40,6 +40,33 @@ type calFakeServer struct {
 	incPages         map[string]string // keyed by incoming syncToken
 }
 
+func TestRealClientSyncOffsetFreeTime(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	cs := &calFakeServer{
+		calendarListJSON: `{"items":[{"id":"primary","accessRole":"owner","timeZone":"America/New_York"}]}`,
+		fullPages:        map[string]string{"": `{"items":[{"id":"offset-free","status":"confirmed","start":{"dateTime":"2027-03-02T09:00:00","timeZone":"America/New_York"},"end":{"dateTime":"2027-03-02T10:00:00","timeZone":"America/New_York"}}],"nextSyncToken":"synced"}`},
+	}
+	srv := cs.start(t)
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	syncer := New(realCalClient(t, srv), st, Options{AccountEmail: testAccount}).WithLogger(quietLogger())
+	_, err := syncer.Full(t.Context())
+	requirements.NoError(err)
+	src, err := st.GetSourceByIdentifier(testAccount + "/primary")
+	requirements.NoError(err)
+	event, ok := loadEvent(t, st, src.ID, "offset-free")
+	requirements.True(ok)
+	requirements.True(event.sentAt.Valid)
+	assertions.Equal("2027-03-02T14:00:00Z", event.sentAt.Time.UTC().Format(time.RFC3339))
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("2027-03-02T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T15:00:00Z", page.Occurrences[0].End.Format(time.RFC3339))
+}
+
 func (cs *calFakeServer) start(t *testing.T) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

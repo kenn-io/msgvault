@@ -153,6 +153,12 @@ func TestExploreListingFastPathMatchesLegacy(t *testing.T) {
 			Context: Context{Domains: []string{"example.com"}, AdditionalDomainGroups: [][]string{{"corp.example"}}},
 			Page:    PageSpec{Limit: 50},
 		}},
+		{name: "participant sender recipient and roster membership", request: ExploreRequest{
+			Context: Context{ParticipantIDs: []int64{ids.alice}}, Page: PageSpec{Limit: 50},
+		}},
+		{name: "participant small page", request: ExploreRequest{
+			Context: Context{ParticipantIDs: []int64{ids.alice}}, Page: PageSpec{Limit: 2, Offset: 1},
+		}},
 		{name: "domain page beyond end", request: ExploreRequest{
 			Context: Context{Domains: []string{"example.com"}}, Page: PageSpec{Limit: 3, Offset: 500},
 		}},
@@ -285,6 +291,10 @@ func TestSearchFilesFastPathMatchesLegacy(t *testing.T) {
 			Explore: ExploreRequest{Context: Context{Before: &before}},
 			Page:    PageSpec{Limit: 50},
 		}},
+		{name: "explore participant filter", request: FileSearchRequest{
+			Explore: ExploreRequest{Context: Context{ParticipantIDs: []int64{ids.alice}}},
+			Page:    PageSpec{Limit: 50},
+		}},
 		{name: "explore deletion filter", request: FileSearchRequest{
 			Explore: ExploreRequest{Context: Context{Deletion: DeletionActive}},
 			Page:    PageSpec{Limit: 50},
@@ -357,4 +367,26 @@ func TestExploreFastPathBoundsParticipantEnrichment(t *testing.T) {
 	}
 	check(profile)
 	require.Positive(matchedOperators, "profile must include participant list enrichment")
+}
+
+// A participant filter matches the participant as sender, as recipient, and
+// as a conversation roster member, and nothing else.
+func TestExploreParticipantFilterMatchesSenderRecipientAndRoster(t *testing.T) {
+	assert := assert.New(t)
+	engine, ids := buildFastPathEquivalenceEngine(t)
+	response, err := engine.Explore(context.Background(), ExploreRequest{
+		Context: Context{ParticipantIDs: []int64{ids.alice}},
+		Page:    PageSpec{Limit: 50},
+	})
+	require.NoError(t, err)
+	titles := make([]string, 0, len(response.Rows))
+	for _, row := range response.Rows {
+		assert.Contains(row.ParticipantIDs, ids.alice, "row %s must include the filtered participant", row.Key)
+		titles = append(titles, row.Title)
+	}
+	// Sender of the report, the deleted thread, and the event; cc on "hello
+	// there"; roster member of the Family group chat. The direct chat and
+	// the participant-less draft and meeting do not involve Alice.
+	assert.ElementsMatch([]string{"Quarterly report", "hello there", "Old thread", "Standup", "Family"}, titles)
+	assert.Equal(int64(5), response.TotalCount)
 }

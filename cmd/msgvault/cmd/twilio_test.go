@@ -391,7 +391,7 @@ func TestTwilioDaemonDispatchesRegisteredScheduledSource(t *testing.T) {
 	})
 	waitForServeHealth(t, cfg.Server.APIPort, errCh)
 	base := fmt.Sprintf("http://127.0.0.1:%d", cfg.Server.APIPort)
-	client := &http.Client{Timeout: time.Second}
+	client := &http.Client{Timeout: serveLifecycleTestTimeout}
 	response, err := client.Post(base+"/api/v1/sync/work?source_type=twilio", "application/json", nil)
 	require.NoError(err)
 	require.NoError(response.Body.Close())

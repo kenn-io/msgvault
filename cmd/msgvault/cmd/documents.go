@@ -1046,7 +1046,7 @@ func runDocumentStatus(
 			RemainingOwners: response.ActiveRebuild.RemainingOwners,
 		}
 	}
-	storesPlaintext := status.StoredPlaintextChunks > 0
+	storesPlaintext := status.StoredPlaintextChunks > 0 || status.StoredPlaintextRanges > 0
 	var estimatedSuccessfulCost *float64
 	if documentsConfig.EstimatedCostUSDPerKUnits > 0 {
 		cost := float64(status.ProcessedProviderUnits) / 1000 * documentsConfig.EstimatedCostUSDPerKUnits

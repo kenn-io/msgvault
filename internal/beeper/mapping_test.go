@@ -11,6 +11,7 @@ import (
 )
 
 func TestMapMessageSizeEstimate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		msg  Message
@@ -32,6 +33,7 @@ func TestMapMessageSizeEstimate(t *testing.T) {
 }
 
 func TestBodyText(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		msg  Message
@@ -61,6 +63,7 @@ func TestBodyText(t *testing.T) {
 }
 
 func TestMessageHTML(t *testing.T) {
+	t.Parallel()
 	attachments := []Attachment{{Transcription: &Transcription{Transcription: "<b>quoted</b> & plain\nsecond line"}}}
 	for _, tc := range []struct {
 		name, text, want string
@@ -78,6 +81,7 @@ func TestMessageHTML(t *testing.T) {
 // some messages and plain text for others, with no field distinguishing them.
 // The inputs are shapes observed from a live account across bridges.
 func TestBodyTextHTML(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		text string
@@ -132,6 +136,7 @@ func TestBodyTextHTML(t *testing.T) {
 }
 
 func TestMapMessageDropsMatrixReplyFallbackFromSnippet(t *testing.T) {
+	t.Parallel()
 	formatted := `<mx-reply><blockquote>quoted parent text</blockquote></mx-reply><p>fresh reply</p>`
 	msg, body := mapMessage(&Message{ID: "reply", Type: "TEXT", Text: formatted}, 1, 1)
 	assert.Equal(t, "fresh reply", body)
@@ -141,6 +146,7 @@ func TestMapMessageDropsMatrixReplyFallbackFromSnippet(t *testing.T) {
 // TestSharedLink covers telling a forwarded link preview apart from media the
 // sender composed: the share's whole body is the URL it previews.
 func TestSharedLink(t *testing.T) {
+	t.Parallel()
 	att := []Attachment{{FileName: "image.jpg"}}
 	tests := []struct {
 		name string
@@ -173,6 +179,7 @@ func TestSharedLink(t *testing.T) {
 }
 
 func TestShareMetadata(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	att := []Attachment{{FileName: "image.jpg"}}
 	assert.Empty(attachmentMetadataJSON(&Message{Type: typeImage, Attachments: att}, &att[0]))
@@ -187,6 +194,7 @@ func TestShareMetadata(t *testing.T) {
 }
 
 func TestMapMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	ts := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
@@ -217,12 +225,14 @@ func TestMapMessage(t *testing.T) {
 }
 
 func TestMapMessageSnippetTruncation(t *testing.T) {
+	t.Parallel()
 	long := strings.Repeat("é", 150)
 	msg, _ := mapMessage(&Message{ID: "1", Timestamp: time.Now(), Text: long}, 1, 1)
 	assert.Len(t, []rune(msg.Snippet.String), 100)
 }
 
 func TestConversationType(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	assert.Equal("direct_chat", conversationType("single"))
 	assert.Equal("group_chat", conversationType("group"))

@@ -70,6 +70,7 @@ nav = [
     {"Go library" = "guides/embedding.md"},
     {"External credential providers" = "guides/credential-providers.md"},
     {"MCP Server" = "usage/chat.md"},
+    {"Agent Quickstart" = "guides/agent-quickstart.md"},
     {"Agent Skills" = "guides/agent-skills.md"},
     {"FAQ" = "faq.md"},
   ]},

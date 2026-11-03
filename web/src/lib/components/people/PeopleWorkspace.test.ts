@@ -19,6 +19,36 @@ function clientFor(routes: Record<string, (request: Request) => Promise<Response
 }
 const profile = (id: number, revision: number, participant_ids: number[]) => ({ id, revision, participant_ids, display_name: id === 7 ? 'Synthetic One' : 'Synthetic Two', created_at: when, updated_at: when, vcard_uid: `synthetic-${id}` });
 
+it.each(['missing', 'draft', 'filtered'])('preserves the %s person state in the redesigned page', async (kind) => {
+  const client = clientFor({
+    '/api/v1/participants/1': () => kind === 'missing'
+      ? Response.json({ error: 'participant_not_found' }, { status: 404 })
+      : Response.json({ id: 1, display_label: 'Synthetic contact', identifiers: [], activity_count: kind === 'draft' ? 0 : 1,
+        ...(kind === 'draft' ? {} : { first_at: when, last_at: when }), file_count: 0, source_counts: [], cache_revision: 'cache-1' }),
+    '/api/v1/participants/1/summary': () => Response.json({ error: 'No matching activity' }, { status: 404 }),
+    '/api/v1/relationships/1/calendar': async request => Response.json(emptyCalendar((await request.json()).year)),
+  });
+  const controller = new RelationshipsController(client, () => 'UTC');
+  const directory = new DirectoryController(client);
+  const state = new ExploreState(null);
+  const predicate = kind === 'filtered' ? { filters: [{ dimension: 'source' as const, values: ['2'] }] } : {};
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1' });
+  await controller.openTarget('cluster:1', predicate);
+  const view = render(PeopleWorkspace, { props: { client, controller, directory, urlState: state.current, target: 'cluster:1', filesOpen: false, predicate,
+    onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    if (kind === 'missing') {
+      expect(await screen.findByText('Person or domain not found')).toBeDefined();
+      expect(screen.queryByRole('region', { name: 'Relationship activity calendar' })).toBeNull();
+    } else {
+      expect(await screen.findByRole('heading', { name: 'Synthetic contact', exact: true })).toBeDefined();
+      expect(Boolean(screen.queryByRole('region', { name: 'Relationship activity calendar' }))).toBe(kind === 'filtered');
+      await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+      expect(await screen.findByText(kind === 'draft' ? 'No sent or received messages with this contact yet.' : '0 items')).toBeDefined();
+    }
+  } finally { view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
 it('keeps the day across Details and the file filter across Files', async () => {
   const observers = new Map<Element, ResizeObserverCallback>();
   vi.stubGlobal('ResizeObserver', class {

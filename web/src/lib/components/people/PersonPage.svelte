@@ -90,7 +90,7 @@
     {#if controller.timelineError}
       <div class="summary-error" role="alert"><span>{controller.timelineError}</span><Button label="Retry" onclick={() => target && controller.openTarget(target, predicate)} /></div>
     {/if}
-    {#if !filesOpen && !details}
+    {#if !filesOpen && !details && controller.headerState === 'normal'}
       <div class="calendar">
         {#if domain}
           <DomainCalendar bind:year={domainYear} {client} {domain} revision={detail.cache_revision} firstAt={controller.firstContactAt} lastAt={controller.lastContactAt} {selectedDate} onDateChange={(date) => selectedDate = date} />
@@ -108,7 +108,7 @@
         onchange={(value) => { details = value === 'details'; if (!details && filesOpen !== (value === 'files')) onFilesToggle(value === 'files'); }} />
     </div>
     <div class="details" hidden={!details}>
-      <RelationshipHeader {detail} loading={false} missing={false} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
+      <RelationshipHeader {detail} loading={false} headerState={controller.headerState} {client} {onOpenDirectory} {onOpenDirectoryPerson} {onAnnounce}
         loadAttributes={async (id) => (await listPersonAttributes({ id }, { history: false }, client)).data?.attributes ?? []}
         capturePersonMergeContext={() => controller.personMergeContextSnapshot()}
         {onReconcilePersonMerge}
