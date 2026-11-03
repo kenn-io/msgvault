@@ -90,6 +90,9 @@ func buildCodexIsolationExecutableFixture(
 		"-X=main.markerBase64=" + base64.StdEncoding.EncodeToString([]byte(fixture.marker)),
 		"-X=main.secret=" + fixture.secret,
 	}
+	// This read makes Go's test cache rerun the test when the child's inputs change.
+	_, err := os.ReadDir(filepath.Join("testdata", "codexfixture"))
+	require.NoError(t, err)
 	command := exec.CommandContext(
 		t.Context(), "go", "build", "-trimpath", "-ldflags", strings.Join(linkerValues, " "), "-o", path, ".",
 	)

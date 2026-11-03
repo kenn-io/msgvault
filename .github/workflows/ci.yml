@@ -206,6 +206,12 @@ jobs:
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
 
+      # Go's test cache keys repo files by mtime.
+      # Checkout rewrites them, so derive stable times from file contents.
+      - &stable-mtimes
+        name: Stabilize tracked file times
+        run: go run ./scripts/stable-mtimes
+
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
         run: make test-unsharded TEST_TIMEOUT=17m
@@ -517,6 +523,8 @@ jobs:
           CGO_CFLAGS: "-IC:/msys64/mingw64/include -fgnu89-inline"
           CGO_LDFLAGS: "-Wl,--allow-multiple-definition"
         run: go build -tags "fts5 sqlite_vec" -o msgvault.exe ./cmd/msgvault
+
+      - *stable-mtimes
 
       - name: Test
         shell: pwsh
@@ -857,6 +865,8 @@ jobs:
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
+
+      - *stable-mtimes
 
       # This lane uses a stock postgres:16 image (no pgvector extension), so it
       # must NOT build the pgvector tag — those tests CREATE EXTENSION "vector"

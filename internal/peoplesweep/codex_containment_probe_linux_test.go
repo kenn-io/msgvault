@@ -177,6 +177,9 @@ func TestCodexPinnedArtifactPacketOnlyStructuredInference(t *testing.T) {
 func buildCodexProxyBridge(ctx context.Context, t *testing.T) string {
 	t.Helper()
 	bridge := filepath.Join(t.TempDir(), "msgvault-codex-bridge")
+	// This read makes Go's test cache rerun the test when the child's inputs change.
+	_, err := os.ReadDir(filepath.Join("..", "..", "cmd", "msgvault-codex-bridge"))
+	require.NoError(t, err)
 	command := exec.CommandContext(ctx, "go", "build", "-o", bridge, "go.kenn.io/msgvault/cmd/msgvault-codex-bridge")
 	command.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
 	output, err := command.CombinedOutput()

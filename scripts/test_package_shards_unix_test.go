@@ -19,6 +19,9 @@ func TestPackageShardsUnix(t *testing.T) {
 	r := require.New(t)
 	script, err := filepath.Abs("test-package-shards.sh")
 	r.NoError(err)
+	// This read makes Go's test cache rerun the test when the child's inputs change.
+	_, err = os.ReadFile(script)
+	r.NoError(err)
 	bash, err := exec.LookPath("bash")
 	r.NoError(err)
 	dir := filepath.Join(t.TempDir(), "package with spaces")
