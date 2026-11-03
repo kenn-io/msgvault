@@ -233,6 +233,93 @@ func TestBuildDayIncludeColdCollapsesCanonicalEmailCopies(t *testing.T) {
 	assertions.Equal(2, entries[0].Burst.Copies[entries[0].Burst.LatestMessageIDs[0]])
 }
 
+func TestBuildIncludesColdMeetingTranscriptsAcrossModes(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	const key = "cold-meeting"
+	id := f.transcript(key, "", f.now.Add(-time.Hour))
+	source, err := f.Store.GetOrCreateSource("meeting_import", "notes@example.com")
+	requirements.NoError(err)
+	requirements.NoError(f.seedConversationPolicy(t.Context(), source.ID, key))
+	f.project()
+	displays, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
+	requirements.NoError(err)
+	conversationID := displays[id].ConversationID
+
+	cases := []struct {
+		name    string
+		request Request
+		entries func(*Timeline) []Entry
+		anchor  bool
+	}{
+		{name: "day", request: dayRequest(), entries: func(got *Timeline) []Entry { return allDayEntries(got) }},
+		{name: "relationship", request: relationshipRequest("email:alice@example.com"), entries: func(got *Timeline) []Entry { return got.History }},
+		{name: "message anchor", request: anchorRequest(messageRef(id)), entries: func(got *Timeline) []Entry { return got.History }, anchor: true},
+		{name: "conversation anchor", request: anchorRequest(fmt.Sprintf("conv:%d", conversationID)), entries: func(got *Timeline) []Entry { return got.History }, anchor: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			req := tc.request
+			req.IncludeCold = true
+			req.IncludeNoise = true
+			got, err := Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			entries := tc.entries(got)
+			requirements.Len(entries, 1)
+			assertions.Equal("transcript", entries[0].Kind)
+			assertions.Equal(messageRef(id), entries[0].Ref)
+			assertions.Equal(tc.anchor, entries[0].Anchor)
+			assertions.Zero(got.Omitted.Cold)
+		})
+	}
+}
+
+func TestBuildReappliesNoiseAfterColdCopyMergeAcrossModes(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	warmID := f.PersistEmail(storetest.EmailSpec{Thread: "warm-copy", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Shared message", Body: "Synthetic copy", SentAt: f.now.Add(-time.Hour)})
+	coldID := f.PersistEmail(storetest.EmailSpec{Thread: "cold-copy", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Shared message", Body: "Synthetic copy", SentAt: f.now.Add(-time.Hour)})
+	warmListID := f.PersistEmail(storetest.EmailSpec{Thread: "warm-copy", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "List update", Body: "Synthetic list message", SentAt: f.now.Add(-2 * time.Hour)})
+	coldListID := f.PersistEmail(storetest.EmailSpec{Thread: "cold-copy", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "List update", Body: "Synthetic list message", SentAt: f.now.Add(-2 * time.Hour)})
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET rfc822_message_id=? WHERE id IN (?,?)`), "<shared@example.test>", warmID, coldID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='updates.example.test' WHERE id IN (?,?)`), warmListID, coldListID)
+	requirements.NoError(err)
+	requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, "cold-copy"))
+	f.src.Filters.Exclusions.ExcludeListMessages = true
+	f.project()
+
+	cases := []struct {
+		name    string
+		request Request
+		entries func(*Timeline) []Entry
+	}{
+		{name: "day", request: dayRequest(), entries: func(got *Timeline) []Entry { return allDayEntries(got) }},
+		{name: "relationship", request: relationshipRequest("email:alice@example.com"), entries: func(got *Timeline) []Entry { return got.History }},
+		{name: "anchor", request: anchorRequest(messageRef(warmID)), entries: func(got *Timeline) []Entry { return got.History }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			req := tc.request
+			req.IncludeCold = true
+			got, err := Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			requirements.Len(tc.entries(got), 1)
+			assertions.Equal(1, got.Omitted.Noise)
+
+			req.IncludeNoise = true
+			got, err = Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			assertions.Len(tc.entries(got), 2)
+			assertions.Zero(got.Omitted.Noise)
+		})
+	}
+}
+
 func TestBuildDayUpcomingNext48h(t *testing.T) {
 	f := newTimelineFixture(t)
 	for i, at := range []string{"2026-10-23T11:00:00Z", "2026-10-24T11:00:00Z", "2026-10-24T13:00:00Z"} {

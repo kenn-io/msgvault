@@ -34,7 +34,7 @@ func TestColdActivityMessagesKeysetScopeAndGroupNoise(t *testing.T) {
 			requirements.NoError(err)
 		}
 	}
-	f.add(t, room, f.Source.ID, at, false, "<cold-copy@example.com>")
+	countedCopyID := f.add(t, room, f.Source.ID, at, false, "<cold-copy@example.com>")
 	for i := range 2 {
 		id := f.add(t, room, f.Source.ID, at.Add(24*time.Hour+time.Duration(i)*time.Second), false, "")
 		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='updates.example.com' WHERE id=?`), id)
@@ -74,6 +74,7 @@ func TestColdActivityMessagesKeysetScopeAndGroupNoise(t *testing.T) {
 			requirements.Less(pageNumber, 9, "keyset failed to finish")
 		}
 		want := slices.Clone(ids)
+		want[0] = countedCopyID // The non-list copy is the counted representative.
 		if descending {
 			slices.Reverse(want)
 		}

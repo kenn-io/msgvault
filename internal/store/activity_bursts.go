@@ -58,6 +58,7 @@ type ActivityBurstMessage struct {
 	OccurredAt   time.Time
 	Direction    ActivityDirection
 	Counted      bool
+	NonNoise     bool
 	CopyCount    int
 	Counterparts []ActivityMessageCounterpart
 }
@@ -178,7 +179,8 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 		if q.MergeCopies {
 			page.Bursts[indices[m.ID]].Messages = append(page.Bursts[indices[m.ID]].Messages, ActivityBurstMessage{
 				MessageID: m.ID, CopyKey: m.CopyKey, OccurredAt: m.OccurredAt, Direction: m.Direction,
-				Counted: m.Counted, CopyCount: m.CopyCount, Counterparts: m.Counterparts,
+				Counted: m.Counted, NonNoise: (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender,
+				CopyCount: m.CopyCount, Counterparts: m.Counterparts,
 			})
 		}
 		for _, cp := range m.Counterparts {

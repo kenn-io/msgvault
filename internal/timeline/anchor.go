@@ -77,6 +77,22 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
 		}
 		target.messageID = r.value
+		if target.messageID <= 0 && c.req.IncludeCold && c.src.Cold != nil {
+			filters := c.filters()
+			filters.IncludeNoise = true
+			cold := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.ActivityMessage, error) {
+				return c.src.Cold.ListColdActivityMessagesContext(ctx, store.MessageQuery{
+					ConversationID: ref.ID, Descending: true, Limit: 1, Filters: filters,
+				})
+			})
+			if cold.err != nil {
+				c.gap("anchor", cold.err, false)
+				return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
+			}
+			if len(cold.value) > 0 {
+				target.messageID = cold.value[0].MessageID
+			}
+		}
 		target.conversationID = ref.ID
 	case entryKindMessage:
 		target.messageID = ref.ID
@@ -144,7 +160,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		q.ConversationID = target.conversationID
 	}
 	var activity readResult[activityWindow]
-	var cold readResult[store.BurstPage]
+	var cold readResult[coldActivityWindow]
 	var coldCount readResult[int]
 	var calendar readResult[store.CalendarOccurrencePage]
 	var calls readResult[[]store.LogicalCall]
@@ -166,8 +182,12 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
+					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+						if c.req.Conversation {
+							page, err := c.src.Cold.ListColdActivityBurstsContext(ctx, q)
+							return coldActivityWindow{BurstPage: page}, err
+						}
+						return c.readColdActivity(ctx, q)
 					})
 				} else {
 					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
@@ -219,7 +239,10 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	if target.occurrence != nil {
 		occurrences = append(slices.Clone(occurrences), *target.occurrence)
 	}
-	entries, _ := c.mergeEntries(mergeBursts(activity.value.bursts, cold.value.Bursts), activity.value.meetings, occurrences, calls.value, notes.value)
+	bursts, mergeNoise := mergeBurstsWithNoise(activity.value.bursts, cold.value.Bursts, c.req.IncludeNoise)
+	c.t.Omitted.Noise += mergeNoise
+	meetings := append(slices.Clone(activity.value.meetings), cold.value.meetings...)
+	entries, _ := c.mergeEntries(bursts, meetings, occurrences, calls.value, notes.value)
 	return c.filterSubject(entries)
 }
 func anchorMatches(e Entry, target anchorTarget) bool {

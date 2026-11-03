@@ -18,44 +18,65 @@ type activityWindow struct {
 	more     bool
 }
 
+type coldActivityWindow struct {
+	store.BurstPage
+	meetings []store.ActivityMessage
+}
+
+func (c *composer) readMeetingMessages(ctx context.Context, bursts []store.ActivityBurst, q store.BurstQuery, read func(context.Context, store.MessageQuery) ([]store.ActivityMessage, error)) ([]store.ActivityMessage, error) {
+	seen := map[int64]bool{}
+	result := []store.ActivityMessage{}
+	from, to := c.bounds()
+	for _, burst := range bursts {
+		if burst.Channel != store.ChannelMeeting || seen[burst.ConversationID] || burst.ConversationID <= 0 {
+			continue
+		}
+		seen[burst.ConversationID] = true
+		query := store.MessageQuery{ConversationID: burst.ConversationID, Limit: 500, Filters: q.Filters}
+		if q.FromDate != "" {
+			query.After, query.Before = &from, &to
+		} else {
+			query.After, query.Before = q.After, q.Before
+		}
+		for {
+			messages, err := read(ctx, query)
+			result = append(result, messages...)
+			if err != nil {
+				return result, err
+			}
+			if len(messages) < query.Limit {
+				break
+			}
+			last := messages[len(messages)-1]
+			query.AfterKey = &store.ActivityKey{OccurredAt: last.OccurredAt, MessageID: last.MessageID}
+		}
+	}
+	return result, nil
+}
+
 func (c *composer) readActivity(q store.BurstQuery) (activityWindow, error) {
 	page, err := c.src.Activity.ListActivityBurstsContext(c.ctx, q)
 	result := activityWindow{bursts: page.Bursts, noise: page.NoiseOmitted, more: page.NextKey != nil}
 	if err != nil {
 		return result, err
 	}
-	seen := map[int64]bool{}
-	from, to := c.bounds()
-	for _, burst := range page.Bursts {
-		if burst.Channel != store.ChannelMeeting || seen[burst.ConversationID] || burst.ConversationID <= 0 {
-			continue
-		}
-		seen[burst.ConversationID] = true
-		mq := store.MessageQuery{ConversationID: burst.ConversationID, Limit: 500, Filters: q.Filters}
-		if q.FromDate != "" {
-			mq.After, mq.Before = &from, &to
-		} else {
-			mq.After, mq.Before = q.After, q.Before
-		}
-		for {
-			messages, err := c.src.Activity.ListActivityMessagesContext(c.ctx, mq)
-			if err != nil {
-				return result, err
-			}
-			result.meetings = append(result.meetings, messages...)
-			if len(messages) < mq.Limit {
-				break
-			}
-			last := messages[len(messages)-1]
-			mq.AfterKey = &store.ActivityKey{OccurredAt: last.OccurredAt, MessageID: last.MessageID}
-		}
+	result.meetings, err = c.readMeetingMessages(c.ctx, page.Bursts, q, c.src.Activity.ListActivityMessagesContext)
+	return result, err
+}
+
+func (c *composer) readColdActivity(ctx context.Context, q store.BurstQuery) (coldActivityWindow, error) {
+	page, err := c.src.Cold.ListColdActivityBurstsContext(ctx, q)
+	result := coldActivityWindow{BurstPage: page}
+	if err != nil {
+		return result, err
 	}
-	return result, nil
+	result.meetings, err = c.readMeetingMessages(ctx, page.Bursts, q, c.src.Cold.ListColdActivityMessagesContext)
+	return result, err
 }
 
 type dayRead struct {
 	activity           readResult[activityWindow]
-	cold               readResult[store.BurstPage]
+	cold               readResult[coldActivityWindow]
 	coldCount          readResult[int]
 	calendar, upcoming readResult[store.CalendarOccurrencePage]
 	calls              readResult[[]store.LogicalCall]
@@ -81,8 +102,8 @@ func (c *composer) collectDay() dayRead {
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
+					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+						return c.readColdActivity(ctx, query)
 					})
 				} else {
 					r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
@@ -219,13 +240,15 @@ func (c *composer) buildDay() {
 	} else {
 		c.ownerGaps()
 	}
-	bursts := mergeBursts(r.activity.value.bursts, r.cold.value.Bursts)
+	bursts, mergeNoise := mergeBurstsWithNoise(r.activity.value.bursts, r.cold.value.Bursts, c.req.IncludeNoise)
+	c.t.Omitted.Noise += mergeNoise
 	if len(bursts) > maxBursts {
 		bursts = bursts[:maxBursts]
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: "days", Code: "partial"})
 	}
 	occurrences := append(slices.Clone(r.calendar.value.Occurrences), r.upcoming.value.Occurrences...)
-	entries, upcoming := c.mergeEntries(bursts, r.activity.value.meetings, occurrences, r.calls.value, r.notes.value)
+	meetings := append(slices.Clone(r.activity.value.meetings), r.cold.value.meetings...)
+	entries, upcoming := c.mergeEntries(bursts, meetings, occurrences, r.calls.value, r.notes.value)
 	if c.req.With != "" {
 		entries = c.filterSubject(entries)
 		upcoming = c.filterSubject(upcoming)

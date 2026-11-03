@@ -25,6 +25,27 @@ func mergeBursts(full, cold []store.ActivityBurst) []store.ActivityBurst {
 	return mergeBurstRows(full, cold)
 }
 
+func mergeBurstsWithNoise(full, cold []store.ActivityBurst, includeNoise bool) ([]store.ActivityBurst, int) {
+	merged := mergeBursts(full, cold)
+	if includeNoise || !activityBurstsHaveMessages(full, cold) {
+		return merged, 0
+	}
+	visible := make([]store.ActivityBurst, 0, len(merged))
+	omitted := 0
+	for _, burst := range merged {
+		nonNoise := false
+		for _, message := range burst.Messages {
+			nonNoise = nonNoise || message.NonNoise
+		}
+		if burst.Inbound+burst.Outbound == 0 || !nonNoise {
+			omitted += len(burst.Messages)
+			continue
+		}
+		visible = append(visible, burst)
+	}
+	return visible, omitted
+}
+
 func activityBurstsHaveMessages(groups ...[]store.ActivityBurst) bool {
 	for _, group := range groups {
 		for _, burst := range group {

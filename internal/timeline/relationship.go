@@ -114,7 +114,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var messages, calls readResult[store.ContactAggregate]
 	var transcripts readResult[[]int64]
 	var history readResult[activityWindow]
-	var cold readResult[store.BurstPage]
+	var cold readResult[coldActivityWindow]
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
@@ -142,8 +142,8 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, historyQuery)
+					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+						return c.readColdActivity(ctx, historyQuery)
 					})
 				} else {
 					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
@@ -228,13 +228,15 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		}
 	}
 	c.calendarGaps(upcoming, "upcoming")
-	bursts := mergeBursts(history.value.bursts, cold.value.Bursts)
+	bursts, mergeNoise := mergeBurstsWithNoise(history.value.bursts, cold.value.Bursts, c.req.IncludeNoise)
+	c.t.Omitted.Noise += mergeNoise
 	slices.Reverse(bursts)
 	if len(bursts) > maxBursts {
 		bursts = bursts[:maxBursts]
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: "history", Code: "partial"})
 	}
-	entries, future := c.mergeEntries(bursts, history.value.meetings, occurrences, logicalCalls.value, nil)
+	meetings := append(slices.Clone(history.value.meetings), cold.value.meetings...)
+	entries, future := c.mergeEntries(bursts, meetings, occurrences, logicalCalls.value, nil)
 	c.t.Upcoming = c.filterSubject(future)
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)

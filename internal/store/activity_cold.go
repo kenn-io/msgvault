@@ -21,6 +21,7 @@ type coldActivityMessage struct {
 	copyKey   string
 	copies    int
 	counted   bool
+	nonNoise  bool
 }
 
 type coldActivityGroup struct {
@@ -271,6 +272,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		// A saved person's recipient aliases inherit the strongest contact
 		// role; noise follows original sender membership, as in the warm SQL.
 		nonNoise := (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender
+		m.nonNoise = nonNoise
 		if counted {
 			if m.Direction == DirectionInbound {
 				g.burst.Inbound++
@@ -318,7 +320,7 @@ func finishColdActivityGroup(g *coldActivityGroup, mergeCopies bool) {
 		if mergeCopies {
 			g.burst.Messages = append(g.burst.Messages, ActivityBurstMessage{
 				MessageID: m.ID, CopyKey: m.copyKey, OccurredAt: m.dating.OccurredAt, Direction: m.Direction,
-				Counted: m.counted, CopyCount: m.copies, Counterparts: m.Counterparts,
+				Counted: m.counted, NonNoise: m.nonNoise, CopyCount: m.copies, Counterparts: m.Counterparts,
 			})
 		}
 		if g.burst.AnchorMessageID == 0 {
