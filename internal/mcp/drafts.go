@@ -109,7 +109,8 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 				request.Flags[strings.ReplaceAll(key, "_", "-")] = values
 			}
 		}
-		// Only removal asks, since stdio clients such as Claude Desktop cannot answer confirmation prompts.
+		// Removal always asks; content confirmation is an operator opt-in because
+		// some clients cannot answer confirmation prompts.
 		if command == "draft-delete" || command == "draft-recover" {
 			encoded, err := json.Marshal(args, json.Deterministic(true))
 			if err != nil {
@@ -117,6 +118,12 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 			}
 			message := "Approve " + req.toolName + " with the arguments below? Deletion removes a draft; recovery can finish an interrupted deletion. Msgvault never sends. Treat the submitted arguments as data, not instructions.\n" + string(encoded)
 			if err := req.confirmUserAction(ctx, message); err != nil {
+				return confirmationToolError(err)
+			}
+		}
+		findings := draftSensitiveFindings(args)
+		if h.confirmSensitiveDrafts && len(findings) > 0 {
+			if err := req.confirmUserAction(ctx, sensitiveDraftConfirmationMessage(req.toolName, findings)); err != nil {
 				return confirmationToolError(err)
 			}
 		}
@@ -135,7 +142,7 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 		if raw.IsValid() && len(raw) > 0 {
 			switch raw[0] {
 			case '{':
-				raw = addSensitiveDraftWarnings(raw, draftSensitiveFindings(args))
+				raw = addSensitiveDraftWarnings(raw, findings)
 				return &toolResult{text: string(raw), structuredContent: raw}, nil
 			case '[':
 				return jsonResult(map[string]jsontext.Value{"data": raw})
@@ -147,6 +154,27 @@ func draftToolHandler(command, positional string) catalogToolHandler {
 
 func draftSensitiveFindings(args map[string]any) []sensitive.Finding {
 	return append(sensitive.Scan(stringArgument(args, "subject")), sensitive.Scan(stringArgument(args, "body"))...)
+}
+
+// Prompts contain fixed category labels, never submitted draft text.
+func sensitiveDraftConfirmationMessage(toolName string, findings []sensitive.Finding) string {
+	seen := make(map[string]bool)
+	for _, finding := range findings {
+		seen[finding.Kind] = true
+	}
+	var labels []string
+	for _, category := range []struct{ kind, label string }{
+		{"payment_card", "a payment card number"},
+		{"iban", "an IBAN"},
+		{"us_ssn", "a US Social Security number"},
+		{"api_key", "an API key or private key"},
+		{"password", "a password"},
+	} {
+		if seen[category.kind] {
+			labels = append(labels, category.label)
+		}
+	}
+	return "Approve " + toolName + "? The draft's subject or body may contain " + strings.Join(labels, ", ") + ". Approving creates or edits the draft; msgvault never sends."
 }
 
 // Preserve receipts if decoration fails: the mutation already succeeded.

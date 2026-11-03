@@ -184,6 +184,8 @@ type ServeOptions struct {
 	Calendar CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
+	// ConfirmSensitiveDrafts requires client approval before writing flagged draft content.
+	ConfirmSensitiveDrafts bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
 	// mode, a read tool is listed only when the grant holds its permission.
 	GrantPermissions []string
@@ -388,39 +390,40 @@ func newMCPServerWithPolicy(
 		opts.downloads = &downloadCache{}
 	}
 	h := &handlers{
-		embeddingStatus:      opts.EmbeddingStatus,
-		delegatedOnly:        opts.DelegatedOnly,
-		downloads:            opts.downloads,
-		engine:               opts.Engine,
-		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
-		attachmentsDir:       opts.AttachmentsDir,
-		attachmentReader:     opts.AttachmentReader,
-		manifestSaver:        opts.ManifestSaver,
-		hybridSearcher:       opts.HybridSearcher,
-		similarSearcher:      opts.SimilarSearcher,
-		dataDir:              opts.DataDir,
-		documentSearcher:     opts.DocumentSearcher,
-		mediaSearcher:        opts.MediaSearcher,
-		personFileSearcher:   opts.PersonFileSearcher,
-		peopleBackend:        opts.PeopleBackend,
-		directoryBackend:     opts.DirectoryBackend,
-		hybridEngine:         opts.HybridEngine,
-		vectorCfg:            opts.VectorCfg,
-		backend:              opts.Backend,
-		visualSearcher:       opts.VisualSearcher,
-		savedViews:           opts.SavedViews,
-		meetings:             opts.Meetings,
-		calendar:             opts.Calendar,
-		personAgendaBackend:  opts.PersonAgendaBackend,
-		personTierBackend:    opts.PersonTierBackend,
-		kata:                 opts.Kata,
-		identityReview:       opts.IdentityReview,
-		personCardDAV:        opts.PersonCardDAV,
-		messageTags:          opts.MessageTags,
-		identityScoring:      opts.IdentityScoring,
-		drafts:               opts.Drafts,
-		contactRoutesBackend: opts.ContactRoutesBackend,
-		chatDiscoveryBackend: opts.ChatDiscoveryBackend,
+		embeddingStatus:        opts.EmbeddingStatus,
+		delegatedOnly:          opts.DelegatedOnly,
+		confirmSensitiveDrafts: opts.ConfirmSensitiveDrafts,
+		downloads:              opts.downloads,
+		engine:                 opts.Engine,
+		archiveSQLQuerier:      opts.ArchiveSQLQuerier,
+		attachmentsDir:         opts.AttachmentsDir,
+		attachmentReader:       opts.AttachmentReader,
+		manifestSaver:          opts.ManifestSaver,
+		hybridSearcher:         opts.HybridSearcher,
+		similarSearcher:        opts.SimilarSearcher,
+		dataDir:                opts.DataDir,
+		documentSearcher:       opts.DocumentSearcher,
+		mediaSearcher:          opts.MediaSearcher,
+		personFileSearcher:     opts.PersonFileSearcher,
+		peopleBackend:          opts.PeopleBackend,
+		directoryBackend:       opts.DirectoryBackend,
+		hybridEngine:           opts.HybridEngine,
+		vectorCfg:              opts.VectorCfg,
+		backend:                opts.Backend,
+		visualSearcher:         opts.VisualSearcher,
+		savedViews:             opts.SavedViews,
+		meetings:               opts.Meetings,
+		calendar:               opts.Calendar,
+		personAgendaBackend:    opts.PersonAgendaBackend,
+		personTierBackend:      opts.PersonTierBackend,
+		kata:                   opts.Kata,
+		identityReview:         opts.IdentityReview,
+		personCardDAV:          opts.PersonCardDAV,
+		messageTags:            opts.MessageTags,
+		identityScoring:        opts.IdentityScoring,
+		drafts:                 opts.Drafts,
+		contactRoutesBackend:   opts.ContactRoutesBackend,
+		chatDiscoveryBackend:   opts.ChatDiscoveryBackend,
 	}
 
 	for _, definition := range operationCatalog(opts, h) {
