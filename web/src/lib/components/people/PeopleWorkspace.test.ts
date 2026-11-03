@@ -8,7 +8,7 @@ import { createAPIClient } from '../../api/client';
 import { RelationshipsController } from '../../relationships/controller.svelte';
 import { DirectoryController } from '../../directory/controller.svelte';
 import { ExploreState } from '../../explore/state.svelte';
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { meetingAction, meetingActions, meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import PeopleWorkspace from './PeopleWorkspace.svelte';
 import { employment, organizationProfile } from '../../directory/entity-fixtures.test-support';
 import { emptyCalendar } from './fixtures.test-support';
@@ -997,4 +997,70 @@ it.each([true, false])('keeps the reopened People selection when an earlier merg
     expect(screen.queryByText('Loading person…')).toBeNull();
     expect(directory.rows.find(person => person.id === 7)?.revision).toBe(5);
   } finally { finishRefresh(); view.unmount(); controller.destroy(); directory.destroy(); state.destroy(); }
+});
+
+it('refreshes linked identities after a pending attribute save fails and keeps its draft and conflict', async () => {
+  let linked = false;
+  let attributeRequest: Request | undefined;
+  let releaseSave!: (response: Response) => void;
+  const saving = new Promise<Response>(resolve => { releaseSave = resolve; });
+  const links: unknown[] = [];
+  const person = () => ({ id: 7, revision: linked ? 2 : 1, display_name: 'Saved Person', participant_ids: linked ? [1, 2] : [1], vcard_uid: 'saved-7', created_at: when, updated_at: when });
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'location', label: 'Location', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', ownership: 'user', display_order: 1, is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 };
+  const client = createAPIClient(async input => {
+    const request = input as Request;
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/identity/links') { links.push(await request.json()); linked = true; return Response.json({ identity_revision: 2, cache_state: 'ready' }); }
+    if (path === '/api/v1/people/directory') return Response.json({ people: [] });
+    if (path === '/api/v1/participants/search') return Response.json({ rows: [{ id: 2, display_label: 'Bob Example', identifiers: [], activity_count: 1, file_count: 0, source_counts: [], first_at: when, last_at: when }], total_count: 1, cache_revision: 'cache-1', search_provenance: {} });
+    if (path === '/api/v1/participants/1') return Response.json({ id: 1, display_label: 'Saved Person', identifiers: [], profile: person(), first_at: when, last_at: when, activity_count: 1, file_count: 0, source_counts: [] });
+    if (path === '/api/v1/people/7') return Response.json(person(), { headers: { ETag: `"person-7-r${person().revision}"` } });
+    if (path.endsWith('/profile')) return Response.json(emptyProfile(person()), { headers: { ETag: `"person-7-r${person().revision}"` } });
+    if (path.endsWith('/attributes/location') && request.method === 'PUT') { attributeRequest = request; return saving; }
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
+    if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: linked ? 2 : 1, computed_at: when, stale: false });
+    if (path.endsWith('/employments')) return Response.json({ employments: [] });
+    if (path.endsWith('/relationships')) return Response.json({ relationships: [] });
+    if (path.endsWith('/network')) return Response.json({ root_person_id: 7, depth: 1, nodes: [], edges: [], truncated: false });
+    if (path.endsWith('/calendar')) return Response.json(emptyCalendar(2026));
+    if (path === '/api/v1/meetings/actions') return Response.json(meetingActions({ rows: [meetingAction({ action: { ordinal: 0, locator: 'action:0', origin: 'source', title: linked ? 'Linked follow-up' : 'Original follow-up', status: 'pending' } })] }));
+    return meetingFixtureResponse(path) ?? Response.json({ rows: [], total_count: 0, cache_revision: 'cache-1', search_provenance: {} });
+  });
+  const directory = new DirectoryController(client), controller = new RelationshipsController(client, () => 'UTC');
+  await directory.loadSelection(7);
+  await controller.openTarget('cluster:1', {});
+  const refresh = vi.spyOn(directory, 'refreshSelectedPerson');
+  const state = new ExploreState(null);
+  state.commitNavigation({ workspace: 'relationships', relationshipTarget: 'cluster:1', directoryPersonID: 7 });
+  const view = render(PeopleWorkspace, { props: { client, directory, controller, reviews: new DirectoryReviewController(client), onDuplicatesChanged: vi.fn(), urlState: state.current, target: 'cluster:1', filesOpen: false, predicate: {}, onNavigate: vi.fn(), onReplaceNavigation: vi.fn(), onDraftNavigation: vi.fn(), onShowAllChange: vi.fn(), onFilesToggle: vi.fn(), onFiltersChange: vi.fn() } });
+  try {
+    await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
+    await screen.findByText('Original follow-up');
+    await screen.findByText('1 interaction');
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    await fireEvent.click(await screen.findByRole('menuitem', { name: 'Location' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Location' }), { target: { value: 'Example City' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save attribute' }));
+    await waitFor(() => expect(attributeRequest).toBeDefined());
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge with…' }));
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Bob' } });
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: /Bob Example/ }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await waitFor(() => expect(links).toEqual([{ participant_a: 1, participant_b: 2 }]));
+    await waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+    expect(directory.profile!.mutationPending).toBe(true);
+    releaseSave(Response.json({ error: 'attribute_value_conflict', message: 'Location changed elsewhere', current_value_id: 99 }, { status: 409 }));
+    await refresh.mock.results[0]!.value;
+    expect(await screen.findByText('Linked follow-up')).toBeDefined();
+    expect(await screen.findByText('2 interactions')).toBeDefined();
+    expect(directory.profile!.person!.participant_ids).toEqual([1, 2]);
+    expect(screen.getByRole('textbox', { name: 'Location' })).toHaveProperty('value', 'Example City');
+    expect(directory.profile!.draft).toMatchObject({ kind: 'setAttribute', slug: 'location', body: { value: { type: 'text', text: 'Example City' } } });
+    expect(directory.profile!.conflict).toMatchObject({ code: 'attribute_conflict', message: 'Location changed elsewhere', currentValueID: 99 });
+    expect(screen.getByRole('button', { name: 'Reload attributes' })).toBeDefined();
+  } finally {
+    releaseSave(Response.json({ error: 'unavailable' }, { status: 503 }));
+    view.unmount(); controller.destroy(); directory.destroy(); state.destroy();
+  }
 });
