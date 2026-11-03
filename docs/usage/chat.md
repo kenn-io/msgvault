@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-02"
+last_edited: "2026-11-03"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---

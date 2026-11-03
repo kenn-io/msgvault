@@ -1,7 +1,7 @@
 ---
 title: Agent quickstart
 description: Connect an agent to msgvault and work safely with an archive.
-last_edited: "2026-11-01"
+last_edited: "2026-11-03"
 ---
 
 Use msgvault's MCP server to find and read conversations, analyze archive
