@@ -1737,6 +1737,40 @@ keys, and invalid schedules are rejected. The source identifier is
 `app:<app_id>:page:<page_id>`; scheduled jobs use
 `facebook_comments:<source-identifier>`, independently of email account dispatch.
 
+### `[meta_webhooks]` {#meta-webhooks}
+
+Enable the unreleased signed Meta receiver inside `msgvault serve`. See
+[Meta webhooks](usage/meta-webhooks.md) for HTTPS setup, permissions, and replay.
+
+```toml
+[meta_webhooks]
+listen_addr = "127.0.0.1:8791"
+max_body_bytes = 8388608
+max_spool_bytes = 1073741824
+done_retention = "720h"
+
+[[meta_webhooks.apps]]
+app_id = "9"
+app_secret_env = "EXAMPLE_META_APP_SECRET"
+verify_token_env = "EXAMPLE_META_VERIFY_TOKEN"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `listen_addr` | empty (disabled) | Dedicated listener; use loopback when the HTTPS proxy is local |
+| `max_body_bytes` | `8388608` | Positive body cap; larger requests get 413 |
+| `max_spool_bytes` | `1073741824` | Positive spool cap; capacity failures get 503 |
+| `done_retention` | `720h` | Positive duration for completed deliveries; held and failed are retained |
+| `apps[].app_id` | required | Unique positive decimal app ID without leading zeros |
+| `apps[].app_secret_env` | required | Daemon environment variable containing the app secret |
+| `apps[].verify_token_env` | required | Daemon environment variable containing the chosen verify token |
+
+Configure an address and at least one app together. The address must have a
+valid host/port, port 1–65535, and differ from `[server]`. Unknown keys,
+duplicate or malformed app IDs, invalid environment variable names, and
+non-positive limits or retention are rejected. Secrets stay in the daemon
+environment; missing variables disable the listener and are named in status.
+
 ### `[[instagram_comments]]` {#instagram-comments}
 
 Select a professional Instagram account linked to an explicitly selected Page

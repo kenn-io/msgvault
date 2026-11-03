@@ -97,3 +97,9 @@ type API interface {
 	Posts(ctx context.Context, pageID string, edge PostEdge, after string) (ObjectPage, error)
 	Comments(ctx context.Context, parentID string, after string) (ObjectPage, error)
 }
+
+// ObjectReader supplies bounded ancestor reads independently of polling edges.
+type ObjectReader interface {
+	Post(ctx context.Context, id string) (Object, error)
+	Comment(ctx context.Context, id string) (Object, error)
+}

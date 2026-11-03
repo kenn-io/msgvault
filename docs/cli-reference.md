@@ -1576,6 +1576,66 @@ for independent surface progress, request costs, and expired-cursor recovery.
 
 ---
 
+## meta-webhooks subscribe
+
+Install or check webhook fields for selected `[[facebook_comments]]` profiles
+(unreleased). No identifier selects all configured profiles. The daemon checks
+the token's app, preserves existing fields, and confirms the result by reading
+the subscription again. Delegated grants are refused.
+
+```bash
+msgvault meta-webhooks subscribe [identifier] [--fields feed] [--check] [--json]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--fields` | `feed` | Comma-separated Page fields; Messenger fields require explicit selection |
+| `--check` | `false` | Read only; exit 1 when the app or a requested field is missing |
+| `--json` | `false` | Print structured subscription results |
+
+Permission refusals name `pages_manage_metadata` and `pages_show_list`, plus
+`pages_messaging` for Messenger fields. See [setup and routing](usage/meta-webhooks.md#connect-the-receiver).
+
+---
+
+## meta-webhooks status
+
+Show listener health, spool counts and capacity, held categories, receiver
+counters, and the last completed polling run per Page (unreleased).
+
+```bash
+msgvault meta-webhooks status [--json]
+```
+
+Reads disk through the daemon without Graph calls or writes. Diagnostic
+conditions keep exit status 0. Snapshots older than two minutes are reported as
+`daemon not running or no snapshot`. Owner only; delegated grants are refused.
+
+---
+
+## meta-webhooks replay
+
+Ask the daemon worker to requeue retained deliveries with attempts reset
+(unreleased). The CLI waits up to 45 seconds for the worker's result.
+
+```bash
+msgvault meta-webhooks replay [--app 9] [--state held] [--dry-run] [--json]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--app` | all | Filter by decimal app ID |
+| `--state` | `held,failed` | Repeatable or comma-separated: `held`, `failed`, `done` |
+| `--delivery` | all | Filter by lowercase SHA-256 delivery ID |
+| `--since` | none | Filter by receipt time, in RFC3339 |
+| `--dry-run` | `false` | Have the worker count matches without moving them |
+| `--json` | `false` | Print `count` and `dry_run` |
+
+A timeout exits 1; the filed request may still execute after recovery.
+Delegated grants are refused. See [replay and recovery](usage/meta-webhooks.md#inspect-and-replay-deliveries).
+
+---
+
 ## source instagram-comments add
 
 Register the professional account linked to the selected Page, using a

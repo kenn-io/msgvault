@@ -32,6 +32,17 @@ type graphFixture struct {
 	beforeRequest        func(string)
 }
 
+func graphWireObject(obj Object) map[string]any {
+	wire := map[string]any{"id": obj.ID, "message": obj.Message, "created_time": obj.CreatedTime}
+	if obj.From != nil {
+		wire["from"] = map[string]any{"id": obj.From.ID, "name": obj.From.Name}
+	}
+	if obj.Parent != nil {
+		wire["parent"] = map[string]any{"id": obj.Parent.ID, "name": obj.Parent.Name}
+	}
+	return wire
+}
+
 func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 	t.Helper()
 	f := &graphFixture{posts: []Object{{ID: "100_200", Message: "Example post", From: &Actor{ID: "100", Name: "Example Page"}}}, comments: map[string][]Object{}, denied: map[string]bool{}}
@@ -50,11 +61,39 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			f.beforeRequest(path)
 		}
 		if f.denied[path] {
-			http.Error(w, "synthetic denial", http.StatusForbidden)
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = fmt.Fprint(w, `{"error":{"code":200}}`)
 			return
 		}
 		if path == "me" {
 			_, _ = fmt.Fprint(w, `{"id":"100","name":"Example Page","category":"Community"}`)
+			return
+		}
+		if !strings.Contains(path, "/") {
+			for _, obj := range f.posts {
+				if obj.ID == path {
+					blob, err := json.Marshal(graphWireObject(obj))
+					if !assert.NoError(t, err) {
+						return
+					}
+					_, _ = w.Write(blob)
+					return
+				}
+			}
+			for _, objects := range f.comments {
+				for _, obj := range objects {
+					if obj.ID == path {
+						blob, err := json.Marshal(graphWireObject(obj))
+						if !assert.NoError(t, err) {
+							return
+						}
+						_, _ = w.Write(blob)
+						return
+					}
+				}
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprint(w, `{"error":{"code":100}}`)
 			return
 		}
 		var data []Object
@@ -82,7 +121,11 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 		if data == nil {
 			data = []Object{}
 		}
-		response := map[string]any{"data": data[start:end]}
+		wire := make([]map[string]any, 0, end-start)
+		for _, obj := range data[start:end] {
+			wire = append(wire, graphWireObject(obj))
+		}
+		response := map[string]any{"data": wire}
 		if end < len(data) {
 			response["paging"] = map[string]any{"cursors": map[string]string{"after": strconv.Itoa(end)}, "next": "https://graph.facebook.com/unused"}
 		}
@@ -1103,6 +1146,33 @@ func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
 			afterBody, err := st.GetMessageBodyText(before.ID)
 			require.NoError(err)
 			assert.Equal(body, afterBody)
+		})
+	}
+}
+
+func TestImportUnchangedSnapshotRepairsBodyAndSearch(t *testing.T) {
+	for _, repair := range []string{"body", "search"} {
+		t.Run(repair, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, fixture, imp, src := setupImport(t)
+			fixture.comments["100_200"] = []Object{*comment("100_201", "100_200", "orchard example")}
+			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			row := message(t, st, src.ID, "100_201")
+			if repair == "body" {
+				require.NoError(st.UpsertMessageBodyContext(t.Context(), row.ID, sql.NullString{String: "stale body", Valid: true}, sql.NullString{}))
+			} else {
+				require.NoError(st.UpsertFTSContext(t.Context(), row.ID, "", "stale body", "", "", ""))
+			}
+			summary, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			assert.Equal(1, summary.MessagesUpdated)
+			body, err := st.GetMessageBodyText(row.ID)
+			require.NoError(err)
+			assert.Equal("orchard example", body)
+			var hits int
+			require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH 'orchard'`).Scan(&hits))
+			assert.Equal(1, hits)
 		})
 	}
 }
