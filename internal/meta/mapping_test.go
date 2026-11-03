@@ -41,7 +41,7 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 	f.comments["100_200"][0].Message = updatedBody
 	f.comments["100_200"][0].From.Name = updatedActor
 	replay()
-	body, err := st.GetMessageBodyText(child.ID)
+	body, err := st.GetMessageBodyText(t.Context(), child.ID)
 	require.NoError(err)
 	assert.Equal(updatedBody, body)
 	var fromName string
@@ -56,7 +56,7 @@ func TestImportReplayKeepsAnalyticsCacheCurrent(t *testing.T) {
 		_, err := st.DB().Exec(corruption, child.ID)
 		require.NoError(err)
 		replay()
-		body, err = st.GetMessageBodyText(child.ID)
+		body, err = st.GetMessageBodyText(t.Context(), child.ID)
 		require.NoError(err)
 		assert.Equal(updatedBody, body)
 		require.NoError(st.DB().QueryRow(fromSnapshotSQL, child.ID).Scan(&fromName))
@@ -103,5 +103,8 @@ func TestImportReplayPreservesGenericStoreReplyEdit(t *testing.T) {
 	assert.Equal(target.ID, after.ReplyToMessageID.Int64)
 	metadata, err := st.GetMessageMetadata(child.ID)
 	require.NoError(err)
-	assert.JSONEq(before.String, metadata.String, "generic edge edit must not reparent immutable provider metadata")
+	var previous, current objectMetadata
+	require.NoError(json.Unmarshal([]byte(before.String), &previous))
+	require.NoError(json.Unmarshal([]byte(metadata.String), &current))
+	assert.Equal(previous, current, "generic edge edit must not reparent immutable provider metadata")
 }

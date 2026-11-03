@@ -24,6 +24,7 @@ type ImportOptions struct {
 type ImportSummary struct {
 	MessagesProcessed int
 	MessagesAdded     int
+	MessagesUpdated   int
 	Requests          int
 	Partial           bool
 }
@@ -94,6 +95,8 @@ func (imp *Importer) Register(ctx context.Context, app, page string) (*store.Sou
 }
 
 type importRun struct {
+	readSyncID  int64
+	readRequest int
 	imp         *Importer
 	app, page   string
 	source      *store.Source
@@ -107,7 +110,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 	if !ValidAccountID(app) || !ValidAccountID(page) || opts.MaxRequests < 0 {
 		return nil, errors.New("invalid Facebook import options")
 	}
-	source, err := imp.store.GetSourceByTypeAndIdentifier(imp.sourceType(), imp.sourceIdentifier(app, page))
+	source, err := imp.store.GetSourceByTypeAndIdentifier(ctx, imp.sourceType(), imp.sourceIdentifier(app, page))
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +155,7 @@ func (imp *Importer) Import(ctx context.Context, app, page string, opts ImportOp
 			}
 			retErr = errors.Join(retErr, imp.store.InterruptSyncWithCheckpoint(ctx, syncID, retErr, checkpoint))
 		} else if sum.Partial {
-			retErr = imp.store.PauseSyncWithCheckpoint(syncID, checkpoint)
+			retErr = imp.store.PauseSyncWithCheckpoint(ctx, syncID, checkpoint)
 		} else {
 			retErr = scoped.store.CompleteSyncAndUpdateSourceCursorContext(ctx, syncID, source.ID, checkpoint.PageToken)
 		}
@@ -225,7 +228,13 @@ func (r *importRun) checkpoint() (*store.Checkpoint, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &store.Checkpoint{PageToken: string(data), MessagesAdded: int64(r.sum.MessagesAdded), MessagesProcessed: int64(r.sum.MessagesProcessed)}, nil
+	cp := r.counters()
+	cp.PageToken = string(data)
+	return cp, nil
+}
+
+func (r *importRun) counters() *store.Checkpoint {
+	return &store.Checkpoint{MessagesAdded: int64(r.sum.MessagesAdded), MessagesUpdated: int64(r.sum.MessagesUpdated), MessagesProcessed: int64(r.sum.MessagesProcessed)}
 }
 
 func (r *importRun) save(ctx context.Context) error {
@@ -266,6 +275,7 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			}
 		} else if len(p.Posts) > 0 {
 			post := p.Posts[0]
+			r.readSyncID, r.readRequest = p.ReadSyncID, p.ReadRequest
 			if err := r.persist(ctx, post, post.ID, "", edge); err != nil {
 				return fmt.Errorf("%s post %q: %w", r.providerName(), post.ID, err)
 			}
@@ -278,7 +288,7 @@ func (r *importRun) phase(ctx context.Context, edge PostEdge) error {
 			if err != nil {
 				return err
 			}
-			p.Posts = page.Data
+			p.Posts, p.ReadSyncID, p.ReadRequest = page.Data, r.syncID, r.sum.Requests
 			p.After = page.After
 			p.Exhausted = page.After == ""
 		}
@@ -297,7 +307,7 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 		if err != nil {
 			return fmt.Errorf("%s comments for %q: %w", r.providerName(), f.Parent, err)
 		}
-		f.Pending, f.Next, f.Loaded = page.Data, page.After, true
+		f.Pending, f.Next, f.Loaded, f.ReadSyncID, f.ReadRequest = page.Data, page.After, true, r.syncID, r.sum.Requests
 		return nil
 	}
 	if len(f.Pending) > 0 {
@@ -310,6 +320,7 @@ func (r *importRun) comments(ctx context.Context, p *phaseState, edge PostEdge) 
 		if len(p.Stack) >= 128 {
 			return fmt.Errorf("%s comment %q: facebook reply traversal exceeds bounded depth", r.providerName(), child.ID)
 		}
+		r.readSyncID, r.readRequest = f.ReadSyncID, f.ReadRequest
 		if err := r.persist(ctx, child, f.Root, f.Parent, edge); err != nil {
 			return fmt.Errorf("%s comment %q: %w", r.providerName(), child.ID, err)
 		}

@@ -74,7 +74,7 @@ func TestInstagramReplayRefusesChangedContext(t *testing.T) {
 			f.comments[0].Text = "must not overwrite refused context"
 			_, err = imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
 			require.ErrorContains(err, `"400"`)
-			body, err := st.GetMessageBodyText(prior.ID)
+			body, err := st.GetMessageBodyText(t.Context(), prior.ID)
 			require.NoError(err)
 			assert.Equal("searchableorchard", body)
 			assert.Equal(prior.ReplyToMessageID, message(t, st, src.ID, "400").ReplyToMessageID)

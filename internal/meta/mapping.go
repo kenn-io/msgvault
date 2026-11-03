@@ -1,6 +1,7 @@
 package meta
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -15,6 +16,8 @@ const rawFormat = "facebook-comment-json"
 const objectMetadataVersion = 1
 
 type objectMetadata struct {
+	BodyReadRequest    int    `json:"body_read_request,omitempty"`
+	BodySyncID         int64  `json:"body_sync_id,omitempty"`
 	Version            int    `json:"version"`
 	AppID              string `json:"app_id"`
 	PageID             string `json:"page_id"`
@@ -65,23 +68,43 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	}
 	prior, exists := existing[obj.ID]
 	meta := objectMetadata{Version: objectMetadataVersion, AppID: r.app, PageID: r.page, PostID: root, ParentID: parent}
-	var previousMetadata sql.NullString
 	if r.imp.instagram != "" {
 		meta.PostID, meta.MediaID, meta.InstagramAccountID = "", root, r.imp.instagram
 	}
+	var previousMetadata []byte
+	read := responseRead{SyncID: r.readSyncID, Request: r.readRequest}
 	if exists {
-		previousMetadata, err = r.imp.store.GetMessageMetadataContext(ctx, prior.ID)
+		savedMeta, err := r.imp.store.GetMessageMetadataContext(ctx, prior.ID)
 		if err != nil {
 			return err
 		}
 		var storedMeta objectMetadata
-		if !previousMetadata.Valid || json.Unmarshal([]byte(previousMetadata.String), &storedMeta) != nil || !storedMeta.matches(r.app, r.page, r.imp.instagram, root) || storedMeta.ParentID != parent {
+		if !savedMeta.Valid || json.Unmarshal([]byte(savedMeta.String), &storedMeta) != nil || !storedMeta.matches(r.app, r.page, r.imp.instagram, root) || storedMeta.ParentID != parent {
 			return errors.New("comment object already belongs to a different root or parent")
 		}
 		if storedMeta.Version != objectMetadataVersion {
 			return errors.New("unsupported comment object metadata version")
 		}
+		if r.state != nil {
+			// Read legacy metadata too, so already cached checkpoints retain
+			// their ordering when polling switches to operational markers.
+			recorded, err := r.loadResponseRead(ctx, obj.ID, responseRead{SyncID: storedMeta.BodySyncID, Request: storedMeta.BodyReadRequest})
+			if err != nil {
+				return err
+			}
+			if recorded.newer(read) {
+				obj, err = mergeCachedEvidence(prior, obj)
+				if err != nil {
+					return err
+				}
+				read = recorded
+			}
+		}
 		meta = storedMeta
+		previousMetadata, err = json.Marshal(storedMeta)
+		if err != nil {
+			return err
+		}
 	}
 	switch edge {
 	case Posts, instagramMediaEdge:
@@ -136,17 +159,20 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 	}
 	recipients := []store.RecipientSet{}
 	participants := []store.ConversationParticipantRef{}
-	if sender == 0 && exists && prior.SenderID.Valid {
-		sender = prior.SenderID.Int64
-		self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
-		// Preserve stronger prior evidence when the current Graph projection omits
-		// its author. An absent field is not a provider retraction.
-		previous, err := r.imp.store.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
-		if err != nil {
-			return err
+	if exists && prior.SenderID.Valid {
+		if sender == 0 {
+			sender = prior.SenderID.Int64
+			self = prior.SourceIsFromMe.Valid && prior.SourceIsFromMe.Bool
 		}
-		if len(previous) > 0 {
-			fromName = previous[0].FromName
+		// Missing author fields do not retract evidence for the same sender.
+		if sender == prior.SenderID.Int64 && fromName == "" {
+			previous, err := r.imp.store.GetMessagesSummariesByIDsContext(ctx, []int64{prior.ID})
+			if err != nil {
+				return err
+			}
+			if len(previous) > 0 {
+				fromName = previous[0].FromName
+			}
 		}
 	}
 	if sender != 0 {
@@ -200,52 +226,110 @@ func (r *importRun) persist(ctx context.Context, obj Object, root, parent string
 		RawMIME: raw, RawFormat: r.objectFormat(), Recipients: recipients, PreserveLabels: true,
 		FTS: &store.FTSDoc{Body: obj.Message, FromAddr: fromName},
 	}
-	unchanged := false
 	if exists {
-		unchanged, err = r.messageUnchanged(ctx, prior, previousMetadata, data)
+		unchanged, err := r.snapshotMatches(ctx, prior, data)
 		if err != nil {
 			return err
 		}
-	}
-	if unchanged {
-		conversationID, err := r.imp.store.EnsureConversationWithTypeContext(ctx, r.source.ID, root, data.Conversation.ConversationType, title)
-		if err != nil {
-			return err
-		}
-		unchanged = conversationID == prior.ConversationID
 		if unchanged {
-			for _, member := range participants {
-				if err := r.imp.store.EnsureConversationParticipantContext(ctx, conversationID, member.ParticipantID, member.Role); err != nil {
-					return err
+			conversationID, err := r.imp.store.EnsureConversationWithTypeContext(ctx, r.source.ID, root, data.Conversation.ConversationType, title)
+			if err != nil {
+				return err
+			}
+			unchanged = conversationID == prior.ConversationID
+			if unchanged {
+				for _, member := range participants {
+					if err := r.imp.store.EnsureConversationParticipantContext(ctx, conversationID, member.ParticipantID, member.Role); err != nil {
+						return err
+					}
 				}
 			}
 		}
-	}
-	if !unchanged {
-		if _, err := r.imp.store.PersistMessageContext(ctx, data); err != nil {
-			return err
+		if unchanged {
+			if err = r.saveResponseRead(ctx, obj.ID, read); err != nil {
+				return err
+			}
+			// Receipt ordering and node freshness remain durable even when the
+			// provider returns the same body and author snapshot.
+			if !bytes.Equal(previousMetadata, metadata) {
+				if err = r.imp.store.SetMessageMetadataContext(ctx, prior.ID, *data.Metadata); err != nil {
+					return err
+				}
+			}
+			r.sum.MessagesProcessed++
+			return nil
 		}
+	}
+	// Record the observation before content: a failed marker write must not
+	// leave a new body exposed to an older response on the next resume.
+	if err = r.saveResponseRead(ctx, obj.ID, read); err != nil {
+		return err
+	}
+	_, err = r.imp.store.PersistMessageContext(ctx, data)
+	if err != nil {
+		return err
 	}
 	r.sum.MessagesProcessed++
 	if !exists {
 		r.sum.MessagesAdded++
+	} else {
+		r.sum.MessagesUpdated++
 	}
 	return nil
 }
 
-func (r *importRun) messageUnchanged(ctx context.Context, prior store.StoredMessage, metadata sql.NullString, data *store.MessagePersistData) (bool, error) {
+// Cached responses can fill missing identity and creation evidence without
+// replacing the newer provider body or any already known sender/date.
+func mergeCachedEvidence(prior store.StoredMessage, cached Object) (Object, error) {
+	var current Object
+	var err error
+	switch {
+	case cached.InstagramMedia != nil:
+		media := new(IGMedia)
+		err = json.Unmarshal(prior.Raw, media)
+		if !prior.SenderID.Valid && (media.Owner == nil || media.Owner.ID == "") {
+			media.Owner = cached.InstagramMedia.Owner
+		}
+		current = Object{ID: media.ID, Message: media.Caption, CreatedTime: media.Timestamp, InstagramMedia: media}
+	case cached.InstagramComment != nil:
+		comment := new(IGComment)
+		err = json.Unmarshal(prior.Raw, comment)
+		if !prior.SenderID.Valid && (comment.From == nil || comment.From.ID == "") {
+			comment.From = cached.InstagramComment.From
+		}
+		current = Object{ID: comment.ID, Message: comment.Text, CreatedTime: comment.Timestamp, InstagramComment: comment}
+	default:
+		err = json.Unmarshal(prior.Raw, &current)
+		if !prior.SenderID.Valid && (current.From == nil || current.From.ID == "") {
+			current.From = cached.From
+		}
+	}
+	if err != nil || current.ID != cached.ID {
+		return Object{}, errors.New("invalid archived object evidence")
+	}
+	if !prior.SentAt.Valid && current.CreatedTime == "" {
+		current.CreatedTime = cached.CreatedTime
+		if current.InstagramMedia != nil {
+			current.InstagramMedia.Timestamp = cached.CreatedTime
+		}
+		if current.InstagramComment != nil {
+			current.InstagramComment.Timestamp = cached.CreatedTime
+		}
+	}
+	return current, nil
+}
+
+func (r *importRun) snapshotMatches(ctx context.Context, prior store.StoredMessage, data *store.MessagePersistData) (bool, error) {
 	msg := data.Message
 	if prior.SenderID != msg.SenderID || !prior.SourceIsFromMe.Valid || prior.SourceIsFromMe.Bool != msg.IsFromMe ||
-		prior.MessageType != msg.MessageType || prior.Subject != msg.Subject || prior.Snippet != msg.Snippet ||
-		prior.SizeEstimate != msg.SizeEstimate || prior.InternalDate != msg.InternalDate ||
+		prior.MessageType != msg.MessageType || prior.Subject != msg.Subject || prior.InternalDate != msg.InternalDate ||
 		prior.SentAt.Valid != msg.SentAt.Valid || (prior.SentAt.Valid && !prior.SentAt.Time.Equal(msg.SentAt.Time)) ||
-		!meetingarchive.JSONEvidenceEqual(prior.Raw, data.RawMIME) ||
-		!meetingarchive.JSONEvidenceEqual([]byte(metadata.String), []byte(data.Metadata.String)) {
+		prior.Snippet != msg.Snippet || prior.SizeEstimate != msg.SizeEstimate || !meetingarchive.JSONEvidenceEqual(prior.Raw, data.RawMIME) {
 		return false, nil
 	}
-	contentMatches, err := r.imp.store.MessageContentMatchesContext(ctx, prior.ID, data.BodyText, *data.FTS)
-	if err != nil || !contentMatches {
-		return false, err
+	matches, err := r.imp.store.MessageContentMatchesContext(ctx, prior.ID, data.BodyText, *data.FTS)
+	if err != nil || !matches {
+		return matches, err
 	}
 	return r.imp.store.MessageRecipientsMatchContext(ctx, prior.ID, data.Recipients)
 }

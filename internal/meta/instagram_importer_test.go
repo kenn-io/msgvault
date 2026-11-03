@@ -215,7 +215,7 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			}
 			assert.True(stored["300"].SentAt.Valid)
 			assert.Equal(2000, stored["300"].SentAt.Time.Year())
-			body, err := st.GetMessageBodyText(child.ID)
+			body, err := st.GetMessageBodyText(t.Context(), child.ID)
 			require.NoError(err)
 			assert.Equal("searchableorchard", body)
 			var title string
@@ -249,6 +249,18 @@ func TestInstagramImportMediaRepliesAndLateComments(t *testing.T) {
 			assert.Greater(f.mediaReads.Load(), reads)
 			assert.Equal(child.ID, message(t, st, src.ID, "400").ID)
 			assert.Equal(child.SenderID, message(t, st, src.ID, "400").SenderID)
+			var displayName, indexedName string
+			require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`, child.ID).Scan(&displayName))
+			require.NoError(st.DB().QueryRow(`SELECT from_addr FROM messages_fts WHERE rowid=?`, child.ID).Scan(&indexedName))
+			assert.Equal("example_business", displayName)
+			assert.Equal("example_business", indexedName)
+			f.comments[0].From = &IGCommentFromUser{ID: "200"}
+			_, err = imp.ImportInstagram(t.Context(), "9", "100", "200", ImportOptions{})
+			require.NoError(err)
+			require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`, child.ID).Scan(&displayName))
+			require.NoError(st.DB().QueryRow(`SELECT from_addr FROM messages_fts WHERE rowid=?`, child.ID).Scan(&indexedName))
+			assert.Equal("example_business", displayName, "same author without username retains saved evidence")
+			assert.Equal("example_business", indexedName)
 			assert.Equal(root.IsFromMe, message(t, st, src.ID, "300").IsFromMe)
 			assert.Equal(root.ID, message(t, st, src.ID, "402").ReplyToMessageID.Int64)
 			var retainedName string

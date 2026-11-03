@@ -5,6 +5,9 @@ import "context"
 
 const SourceType = "facebook_comments"
 
+// WebhookSyncType keeps event runs independent of polling checkpoints.
+const WebhookSyncType = "facebook_comments_webhook"
+
 // PostEdge limits discovery to the supported Page surfaces. It is never an
 // arbitrary path or a URL supplied by configuration or provider pagination.
 type PostEdge string

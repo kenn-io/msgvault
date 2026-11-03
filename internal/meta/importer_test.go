@@ -29,6 +29,7 @@ type graphFixture struct {
 	rejectCursor         string
 	freshCommentReads    int
 	paths                []string
+	beforeRequest        func(string)
 }
 
 func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
@@ -45,6 +46,9 @@ func newGraphFixture(t *testing.T) (*graphFixture, *Client) {
 			f.freshCommentReads++
 		}
 		path := strings.TrimPrefix(r.URL.Path, "/v26.0/")
+		if f.beforeRequest != nil {
+			f.beforeRequest(path)
+		}
 		if f.denied[path] {
 			http.Error(w, "synthetic denial", http.StatusForbidden)
 			return
@@ -121,7 +125,7 @@ func TestImportPageComments(t *testing.T) {
 	require.NoError(err)
 	assert.False(sum.Partial)
 	got := message(t, st, src.ID, "100_201")
-	body, err := st.GetMessageBodyText(got.ID)
+	body, err := st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Equal("searchable example", body)
 	assert.Equal(SourceType, got.MessageType)
@@ -136,9 +140,209 @@ func TestImportPageComments(t *testing.T) {
 	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 	require.NoError(err)
 	assert.Equal(got.ID, message(t, st, src.ID, "100_201").ID)
-	body, err = st.GetMessageBodyText(got.ID)
+	body, err = st.GetMessageBodyText(t.Context(), got.ID)
 	require.NoError(err)
 	assert.Equal("edited example", body)
+}
+
+func TestImportCachedOrganicCommentKeepsNewerSameRunAdSnapshot(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, fixture, imp, src := setupImport(t)
+	fixture.ads = fixture.posts
+	fixture.comments["100_200"] = []Object{
+		*comment("100_201", "100_200", "first example"),
+		*comment("100_202", "100_200", "old organic example"),
+	}
+	failed := false
+	fixture.beforeRequest = func(path string) {
+		if path != "100_201/comments" {
+			return
+		}
+		if !failed {
+			// Pause the cached organic traversal before its second comment.
+			// The later ad response in this same run observes the edit.
+			failed = true
+			fixture.denied[path] = true
+			fixture.comments["100_200"][1].Message = "new ad example"
+			fixture.comments["100_200"][1].From = nil
+			fixture.comments["100_200"][1].CreatedTime = ""
+		} else {
+			delete(fixture.denied, path)
+		}
+	}
+	summary, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.ErrorContains(err, "comments for \"100_201\"")
+	require.True(summary.Partial)
+	checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
+	require.NoError(err)
+	var state syncState
+	require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+	require.True(state.Phases[AdsPosts].Done)
+	require.Len(state.Phases[Posts].Stack[0].Pending, 1)
+	row := message(t, st, src.ID, "100_202")
+	body, err := st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	require.Equal("new ad example", body)
+	stored, err := st.StoredMessagesContext(t.Context(), src.ID, rawFormat, []string{row.SourceMessageID})
+	require.NoError(err)
+	require.False(stored[row.SourceMessageID].SenderID.Valid)
+	require.False(stored[row.SourceMessageID].SentAt.Valid)
+	summary, err = imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+	require.NoError(err)
+	require.True(summary.Partial)
+	body, err = st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	assert.Equal("new ad example", body, "a cached response must not overwrite a later response from the same run")
+	stored, err = st.StoredMessagesContext(t.Context(), src.ID, rawFormat, []string{row.SourceMessageID})
+	require.NoError(err)
+	assert.True(stored[row.SourceMessageID].SenderID.Valid, "cached responses still supply missing author evidence")
+	assert.True(stored[row.SourceMessageID].SentAt.Valid, "cached responses still supply missing creation evidence")
+	var matches int
+	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages_fts WHERE messages_fts MATCH '"new ad example"'`).Scan(&matches))
+	assert.Equal(1, matches, "bounded resume must retain the newer searchable text")
+	fixture.comments["100_200"][1].Message = "fresh reconciled example"
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	body, err = st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	assert.Equal("fresh reconciled example", body)
+}
+
+func TestImportCachedAdCommentKeepsNewerOrganicSnapshot(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, fixture, imp, src := setupImport(t)
+	fixture.ads = fixture.posts
+	fixture.denied["100/visitor_posts"] = true
+	fixture.comments["100_200"] = []Object{
+		*comment("100_201", "100_200", "first example"),
+		*comment("100_202", "100_200", "old cached example"),
+	}
+	// Organic completes, visitor access fails, and the ad response is cached
+	// before the budget pauses its first child's reply traversal.
+	summary, err := imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 8})
+	require.ErrorContains(err, "visitor_posts")
+	require.True(summary.Partial)
+	checkpoint, err := st.GetLatestCheckpointedSync(src.ID)
+	require.NoError(err)
+	var state syncState
+	require.NoError(json.Unmarshal([]byte(checkpoint.CursorBefore.String), &state))
+	require.Len(state.Phases[AdsPosts].Stack, 2)
+	require.Len(state.Phases[AdsPosts].Stack[0].Pending, 1)
+	fixture.comments["100_200"][1].Message = "new organic example"
+	summary, err = imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 6})
+	require.ErrorContains(err, "visitor_posts")
+	require.True(summary.Partial)
+	row := message(t, st, src.ID, "100_202")
+	body, err := st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	require.Equal("new organic example", body)
+	delete(fixture.denied, "100/visitor_posts")
+	summary, err = imp.Import(t.Context(), "9", "100", ImportOptions{MaxRequests: 2})
+	require.NoError(err)
+	require.True(summary.Partial)
+	body, err = st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	assert.Equal("new organic example", body, "older cached ad reads must preserve a later organic snapshot")
+	fixture.comments["100_200"][1].Message = "fresh reconciled example"
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	body, err = st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	assert.Equal("fresh reconciled example", body, "fresh reads still reconcile the archived body")
+}
+
+func TestImportPollingCacheProgress(t *testing.T) {
+	for _, anonymous := range []bool{false, true} {
+		t.Run(fmt.Sprintf("anonymous=%t", anonymous), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, fixture, imp, src := setupImport(t)
+			obj := comment("100_201", "100_200", "original example")
+			if anonymous {
+				obj.From, fixture.posts[0].From = nil, nil
+			}
+			fixture.comments["100_200"] = []Object{*obj}
+			_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			var before, after int64
+			require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&before))
+			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			require.NoError(st.DB().QueryRow(`SELECT COALESCE(MAX(seq), 0) FROM cache_related_change_journal`).Scan(&after))
+			assert.Equal(before, after, "unchanged polling must not invalidate analytics through recipient replacement")
+			fixture.comments["100_200"][0].Message = "updated example"
+			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+			require.NoError(err)
+			latest, err := st.GetLatestSync(src.ID)
+			require.NoError(err)
+			assert.Equal(int64(1), latest.MessagesUpdated, "anonymous edits also need a durable cache rebuild signal")
+			body, err := st.GetMessageBodyText(t.Context(), message(t, st, src.ID, "100_201").ID)
+			require.NoError(err)
+			assert.Equal("updated example", body)
+		})
+	}
+}
+
+func TestImportUnchangedPollingDoesNotEmitContentEdits(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, fixture, imp, src := setupImport(t)
+	fixture.comments["100_200"] = []Object{*comment("100_201", "100_200", "original example")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	row := message(t, st, src.ID, "100_201")
+	person, _, err := st.CreatePersonFromParticipant(row.SenderID.Int64)
+	require.NoError(err)
+	_, err = st.SetPersonTrackingContext(t.Context(), person.ID, true)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE messages SET content_changed_at='2000-01-01 00:00:00.000' WHERE id=?`, row.ID)
+	require.NoError(err)
+	var before, after string
+	require.NoError(st.DB().QueryRow(`SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&before))
+	sequence, err := st.LatestPersonSweepChangeSequence(t.Context())
+	require.NoError(err)
+	for range 2 {
+		_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+		require.NoError(err)
+	}
+	require.NoError(st.DB().QueryRow(`SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&after))
+	assert.Equal(before, after, "polling freshness is operational state, not a content edit")
+	changes, err := st.ScanPersonSweepChanges(t.Context(), person.ID, sequence, 1000)
+	require.NoError(err)
+	assert.Empty(changes, "unchanged polling must not requeue a tracked person's evidence")
+	sequence, err = st.LatestPersonSweepChangeSequence(t.Context())
+	require.NoError(err)
+	fixture.comments["100_200"][0].Message = "edited example"
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	require.NoError(st.DB().QueryRow(`SELECT content_changed_at FROM messages WHERE id=?`, row.ID).Scan(&after))
+	assert.NotEqual(before, after)
+	changes, err = st.ScanPersonSweepChanges(t.Context(), person.ID, sequence, 1000)
+	require.NoError(err)
+	assert.NotEmpty(changes, "actual provider edits must still notify tracked people")
+}
+
+func TestImportResponseMarkerFailureKeepsPriorBody(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, fixture, imp, src := setupImport(t)
+	fixture.comments["100_200"] = []Object{*comment("100_201", "100_200", "original example")}
+	_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	row := message(t, st, src.ID, "100_201")
+	_, err = st.DB().Exec(fmt.Sprintf(`CREATE TRIGGER fail_poll_marker BEFORE UPDATE ON archive_metadata
+		WHEN NEW.key='meta.poll_read:%d:100_201' BEGIN SELECT RAISE(ABORT, 'synthetic marker unavailable'); END`, src.ID))
+	require.NoError(err)
+	fixture.comments["100_200"][0].Message = "edited example"
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.ErrorContains(err, "synthetic marker unavailable")
+	body, err := st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	assert.Equal("original example", body, "content must wait for its durable read ordering")
+	_, err = st.DB().Exec(`DROP TRIGGER fail_poll_marker`)
+	require.NoError(err)
+	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+	require.NoError(err)
+	body, err = st.GetMessageBodyText(t.Context(), row.ID)
+	require.NoError(err)
+	assert.Equal("edited example", body, "the cached response resumes after storage recovers")
 }
 
 func TestImportResumeAfterBudget(t *testing.T) {
@@ -239,11 +443,18 @@ func TestImportMissingAuthor(t *testing.T) {
 	require.NoError(err)
 	known := message(t, st, src.ID, c.ID).SenderID
 	require.True(known.Valid)
-	c.From = nil
-	f.comments["100_200"] = []Object{*c}
-	_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
-	require.NoError(err)
-	assert.Equal(known, message(t, st, src.ID, c.ID).SenderID)
+	for _, author := range []*Actor{nil, {ID: "300"}} {
+		c.From = author
+		f.comments["100_200"] = []Object{*c}
+		_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
+		require.NoError(err)
+		assert.Equal(known, message(t, st, src.ID, c.ID).SenderID)
+		var displayName, indexedName string
+		require.NoError(st.DB().QueryRow(`SELECT display_name FROM message_recipients WHERE message_id=? AND recipient_type='from'`, message(t, st, src.ID, c.ID).ID).Scan(&displayName))
+		require.NoError(st.DB().QueryRow(`SELECT from_addr FROM messages_fts WHERE rowid=?`, message(t, st, src.ID, c.ID).ID).Scan(&indexedName))
+		assert.Equal("Example Customer", displayName)
+		assert.Equal("Example Customer", indexedName)
+	}
 }
 
 type recordingCommentErrorAPI struct {
@@ -715,7 +926,7 @@ func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
 				_, err := imp.Import(t.Context(), "9", "100", ImportOptions{})
 				require.NoError(err)
 				row := message(t, st, src.ID, target)
-				originalBody, err := st.GetMessageBodyText(row.ID)
+				originalBody, err := st.GetMessageBodyText(t.Context(), row.ID)
 				require.NoError(err)
 				saved, err := st.GetMessageMetadata(row.ID)
 				require.NoError(err)
@@ -737,7 +948,7 @@ func TestImportRefusesUnknownMetadataVersionBeforeReplay(t *testing.T) {
 				if sum != nil {
 					assert.True(sum.Partial)
 				}
-				body, readErr := st.GetMessageBodyText(row.ID)
+				body, readErr := st.GetMessageBodyText(t.Context(), row.ID)
 				require.NoError(readErr)
 				assert.Equal(originalBody, body, "unknown metadata must be refused before changing that object")
 				after, readErr := st.GetMessageMetadata(row.ID)
@@ -882,14 +1093,14 @@ func TestImportDeclaredParentPreservesArchivedRelationships(t *testing.T) {
 				f.comments["100_201"][0].Message = "must not reparent existing child"
 			}
 			before := message(t, st, src.ID, id)
-			body, err := st.GetMessageBodyText(before.ID)
+			body, err := st.GetMessageBodyText(t.Context(), before.ID)
 			require.NoError(err)
 			_, err = imp.Import(t.Context(), "9", "100", ImportOptions{})
 			require.Error(err)
 			after := message(t, st, src.ID, id)
 			assert.Equal(before.ReplyToMessageID, after.ReplyToMessageID)
 			assert.Equal(before.ConversationID, after.ConversationID)
-			afterBody, err := st.GetMessageBodyText(before.ID)
+			afterBody, err := st.GetMessageBodyText(t.Context(), before.ID)
 			require.NoError(err)
 			assert.Equal(body, afterBody)
 		})

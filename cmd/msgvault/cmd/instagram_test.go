@@ -90,7 +90,7 @@ func TestInstagramConfiguredCommandsAndPartialWrites(t *testing.T) {
 	assert.Contains(err.Error(), "instagram profile second")
 	assert.Contains(output.String(), "Partial coverage")
 	for _, source := range cfg.InstagramComments {
-		row, err := st.GetSourceByTypeAndIdentifier(meta.InstagramSourceType, meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID))
+		row, err := st.GetSourceByTypeAndIdentifier(t.Context(), meta.InstagramSourceType, meta.InstagramSourceIdentifier(source.AppID, source.PageID, source.InstagramAccountID))
 		require.NoError(err)
 		ids, err := st.MessageExistsBatch(row.ID, []string{"300", "400"})
 		require.NoError(err)
