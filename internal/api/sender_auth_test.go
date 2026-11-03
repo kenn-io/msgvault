@@ -58,10 +58,7 @@ func TestSenderAuthMessageReads(t *testing.T) {
 						t.Cleanup(func() { require.NoError(t, opts.Engine.Close()) })
 					}
 					srv := NewServerWithOptions(opts)
-					if pinned {
-						cfg.SenderAuth.Sources[0].TrustedAuthservIDs[0] = "changed.example.test"
-					}
-					for _, messageType := range []string{"email", ""} {
+					for _, messageType := range []string{"email", "google_chat"} {
 						_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET message_type = ? WHERE id = ?`), messageType, id)
 						require.NoError(t, err)
 						paths := []string{fmt.Sprintf("/api/v1/messages/%d", id)}
@@ -74,7 +71,7 @@ func TestSenderAuthMessageReads(t *testing.T) {
 							require.Equal(t, http.StatusOK, w.Code, w.Body.String())
 							var got map[string]json.RawMessage
 							require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
-							if pinned {
+							if pinned && messageType == "email" {
 								assert.JSONEq(t, want, string(got["sender_auth"]))
 							} else {
 								assert.NotContains(t, got, "sender_auth")

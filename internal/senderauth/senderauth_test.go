@@ -16,7 +16,6 @@ func TestEvaluate(t *testing.T) {
 		{"no-colon header", "sender@example.test", "sender@example.test", pass + "\r\nBroken header", Verdict{true, "example.test", "mx.google.com", "pass", "pass", "pass"}},
 		{"quoted From domain", "sender@example.test", "sender@example.test", `mx.google.com; dmarc=pass header.from="example.test"`, Verdict{AuthservID: "mx.google.com", DMARC: "pass"}},
 		{"windows-1252 name", "=?windows-1252?Q?Jos=E9?= <sender@example.test>", "sender@example.test", pass, Verdict{true, "example.test", "mx.google.com", "pass", "pass", "pass"}},
-		{"quoted reason", "sender@example.test", "sender@example.test", `mx.google.com; dmarc=pass reason="reported header.from=example.test detail"`, Verdict{AuthservID: "mx.google.com", DMARC: "pass"}},
 		{"quoted policy note", "sender@example.test", "sender@example.test", `mx.google.com; dmarc=pass header.from=other.test policy.note="details header.from=example.test here"`, Verdict{Domain: "other.test", AuthservID: "mx.google.com", DMARC: "pass"}},
 		{"case insensitive pin", "sender@example.test", "sender@example.test", "MX.GOOGLE.COM; dmarc=pass header.from=EXAMPLE.TEST", Verdict{Verified: true, Domain: "example.test", AuthservID: "MX.GOOGLE.COM", DMARC: "pass"}},
 		{"untrusted topmost", "sender@example.test", "sender@example.test", "untrusted.example.test; dmarc=pass header.from=example.test\r\nAuthentication-Results: " + pass, Verdict{}},

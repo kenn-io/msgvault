@@ -17,7 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 )
 
-// Prefix short type names from packages that share the API schema namespace.
+// Calendar, Muesli, and person tier types have short names such as Person,
+// Result, and Signals. Prefix only those packages' types to preserve existing
+// wire names.
 func prefixedSchemaName(t reflect.Type, hint string) string {
 	original := t
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {

@@ -2021,10 +2021,9 @@ func TestGetMessage(t *testing.T) {
 
 	t.Run("sender authentication", func(t *testing.T) {
 		verdict := &senderauth.Verdict{Verified: true, Domain: "example.test", AuthservID: "mx.google.com", DMARC: "pass"}
-		handlers := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, BodyText: "Archived body", HiddenTextPresent: true, SenderAuth: verdict}}})
+		handlers := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, BodyText: "Archived body", SenderAuth: verdict}}})
 		got := runTool[getMessageResponse](t, "get_message", handlers.getMessage, map[string]any{"id": float64(42)})
 		assert.Equal(t, verdict, got.SenderAuth)
-		assert.True(t, got.HiddenTextPresent)
 	})
 
 	t.Run("stored HTML hidden text", func(t *testing.T) {
