@@ -956,7 +956,7 @@ func calendarProjectionFromGenerated(calendar *generated.CalendarProjection) *st
 	}
 }
 
-func senderAuthFromGenerated(v *generated.Verdict) *senderauth.Verdict {
+func senderAuthFromGenerated(v *generated.SenderAuthVerdict) *senderauth.Verdict {
 	if v == nil {
 		return nil
 	}

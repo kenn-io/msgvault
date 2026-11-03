@@ -2863,7 +2863,7 @@ components:
         rfc822_message_id:
           type: string
         sender_auth:
-          $ref: "#/components/schemas/Verdict"
+          $ref: "#/components/schemas/SenderAuthVerdict"
         sent_at:
           format: date-time
           type: string
@@ -8227,7 +8227,7 @@ components:
           format: int64
           type: integer
         sender_auth:
-          $ref: "#/components/schemas/Verdict"
+          $ref: "#/components/schemas/SenderAuthVerdict"
         sent_at:
           type: string
         size_bytes:
@@ -14941,6 +14941,23 @@ components:
         - kind
         - message_id
       type: object
+    SenderAuthVerdict:
+      properties:
+        authserv_id:
+          type: string
+        dkim:
+          type: string
+        dmarc:
+          type: string
+        domain:
+          type: string
+        spf:
+          type: string
+        verified:
+          type: boolean
+      required:
+        - verified
+      type: object
     SenderCount:
       additionalProperties: false
       properties:
@@ -16720,23 +16737,6 @@ components:
           type: boolean
       required:
         - status
-      type: object
-    Verdict:
-      properties:
-        authserv_id:
-          type: string
-        dkim:
-          type: string
-        dmarc:
-          type: string
-        domain:
-          type: string
-        spf:
-          type: string
-        verified:
-          type: boolean
-      required:
-        - verified
       type: object
     VirtualAccount:
       properties:

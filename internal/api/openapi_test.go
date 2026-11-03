@@ -28,6 +28,20 @@ const (
 	openAPIClientGeneratedDir = "../../pkg/client/generated"
 )
 
+func TestOpenAPISenderAuthSchemaName(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	for _, document := range []*huma.OpenAPI{OpenAPIDocument(), openAPIClientDocument()} {
+		schemas := document.Components.Schemas.Map()
+		requirements.NotNil(schemas["SenderAuthVerdict"])
+		for _, name := range []string{"MessageDetail", "CliMessageResponse"} {
+			requirements.NotNil(schemas[name])
+			property := schemas[name].Properties["sender_auth"]
+			requirements.NotNil(property)
+			assertions.Equal("#/components/schemas/SenderAuthVerdict", property.Ref)
+		}
+	}
+}
+
 func TestNullableObjectReferenceSchemas(t *testing.T) {
 	t.Parallel()
 	requirements := require.New(t)
