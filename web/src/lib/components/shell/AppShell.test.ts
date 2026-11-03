@@ -510,9 +510,10 @@ describe('AppShell', () => {
   }
 
   it.each([
-    { workspace: 'files', outcome: 'clears stale file filters and sort' },
-    { workspace: 'everything', outcome: 'focuses the Files grid' },
-  ] as const)('opens a saved Files view from $workspace and $outcome', async ({ workspace }) => {
+    { workspace: 'files', via: 'sidebar', outcome: 'clears stale file filters and sort' },
+    { workspace: 'everything', via: 'sidebar', outcome: 'focuses the Files grid' },
+    { workspace: 'everything', via: 'palette', outcome: 'focuses the Files grid' },
+  ] as const)('opens a saved Files view from $workspace via $via and $outcome', async ({ workspace, via }) => {
     window.history.replaceState(null, '', `/?workspace=${workspace}&mode=full_text`);
     const fileSearches: Request[] = [];
     const state = new ExploreState(window);
@@ -523,7 +524,11 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(savedFilesViewFetch(fileSearches)), state });
     try {
       if (workspace === 'files') expect((await screen.findByLabelText<HTMLInputElement>('Filter filename')).value).toBe('invoice');
-      await openDemoView();
+      if (via === 'palette') {
+        await screen.findByRole('button', { name: 'Demo view' });
+        await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+        await fireEvent.click(await screen.findByRole('option', { name: 'Demo view' }));
+      } else await openDemoView();
       const grid = await screen.findByRole('grid', { name: 'Files results' });
       if (workspace === 'everything') await waitFor(() => expect(document.activeElement).toBe(grid));
       if (workspace === 'files') {
@@ -2568,7 +2573,7 @@ describe('AppShell', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Files' }));
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
-      .toBe('Newest first is the canonical Messages order.');
+      .toBe('');
     rendered.unmount();
     state.destroy();
   });
@@ -2602,6 +2607,7 @@ describe('AppShell', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     await screen.findByText('Synthetic subject 1');
 
+    expect(screen.getByRole('status', { name: 'Sort status' }).textContent).toBe('');
     const main = screen.getByRole('main', { name: 'Messages' });
     expect(within(main).getAllByText('2 items')).toHaveLength(1);
     await fireEvent.keyDown(document.body, { key: 's' });
@@ -2682,7 +2688,7 @@ describe('AppShell', () => {
     await chooseSelectOption(screen.getByRole('combobox', { name: /^Show as:/ }), 'Table');
     await waitFor(() => expect(state.current.workspace).toBe('everything'));
     expect(screen.getByRole('status', { name: 'Sort status' }).textContent)
-      .toBe('Newest first is the canonical Messages order.');
+      .toBe('');
     rendered.unmount();
     state.destroy();
   });
