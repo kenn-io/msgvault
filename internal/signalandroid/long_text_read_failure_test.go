@@ -25,11 +25,17 @@ func TestUnreadableSignalLongTextKeepsMessage(t *testing.T) {
 				runImport(t, st, dir, storage)
 				want = "Carol here archivedsuffix"
 			}
-			require.NoError(os.Chmod(file, 0o000))
-			t.Cleanup(func() { require.NoError(os.Chmod(file, 0o600)) })
-			_, err := os.ReadFile(file)
-			require.ErrorIs(err, os.ErrPermission)
-			summary := runImport(t, st, dir, storage)
+			opts := DefaultOptions()
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+			progress := longTextReadFailureProgress{onStart: func() {
+				// Replace the file after discovery, which skips directories.
+				require.NoError(os.Remove(file))
+				require.NoError(os.Mkdir(file, 0o700))
+				_, err := os.ReadFile(file)
+				require.Error(err)
+			}}
+			summary, err := NewImporter(st, progress).Import(t.Context(), filepath.Join(dir, "database.sqlite"), opts)
+			require.NoError(err)
 			assert.Equal(int64(1), summary.Errors)
 			assert.Equal(int64(2), summary.AttachmentsMissing)
 			assert.Equal(int64(6), summary.MessagesAdded+summary.MessagesUpdated)
@@ -37,3 +43,11 @@ func TestUnreadableSignalLongTextKeepsMessage(t *testing.T) {
 		})
 	}
 }
+
+type longTextReadFailureProgress struct {
+	NullProgress
+
+	onStart func()
+}
+
+func (p longTextReadFailureProgress) OnStart() { p.onStart() }
