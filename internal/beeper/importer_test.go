@@ -1681,9 +1681,14 @@ func TestImportTailScanThrottled(t *testing.T) {
 	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
 
-	sum, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+	f.resetRequests()
+	_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.NoError(err)
-	assert.Zero(sum.ChatsReopened, "a scan within the interval must not re-probe completed chats")
+	for _, req := range f.requests() {
+		if strings.Contains(req, "/messages?") {
+			assert.NotContains(req, "direction=before", "a scan within the interval must not re-probe completed chats: %s", req)
+		}
+	}
 }
 
 // serial: changes tailScanInterval.
