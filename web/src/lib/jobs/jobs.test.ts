@@ -35,7 +35,7 @@ describe('jobs', () => {
       lane('message_embedding'),
     ]);
     expect(mixed.map(job => job.id)).toEqual(['message_embedding', 'visual_embedding', 'person_enrichment']);
-    expect(queued[0]?.detail).toBe('Queued');
+    expect(queued[0]?.detail).toBe('');
     expect(jobsHealth(queued)).toBe('queued');
     expect(jobsHealth([...queued, ...running])).toBe('running');
     expect(jobsHealth(mixed)).toBe('failed');
@@ -49,14 +49,14 @@ it.each([
   { name: 'failed import shows the main error before item errors', source: { latest_sync: syncRunStatus({ status: 'failed', error_message: 'Import failed\nImport details', item_errors: [{ error_message: 'Missing attachment', created_at: '2020-01-01T00:00:04Z', error_kind: 'parse_failed', phase: 'parse', source_message_id: 'synthetic-1' }] }) }, lanes: [], expected: [['failed', 'Import failed']] },
   { name: 'completed sync and partial lane warnings', source: { latest_sync: syncRunStatus({ errors_count: 2 }) }, lanes: [lane('document_extraction', { latest: partial })], expected: [] },
   { name: 'disabled lane with a stale failure', lanes: [lane('document_extraction', { configured: false })], expected: [] },
-  { name: 'disabled lane still running', lanes: [lane('visual_embedding', { configured: false, active: activeRun })], expected: [['running', 'Running']] },
-  { name: 'queued source with completed sync', source: { scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: syncRunStatus() }, lanes: [], expected: [['queued', 'Queued']] },
+  { name: 'disabled lane still running', lanes: [lane('visual_embedding', { configured: false, active: activeRun })], expected: [['running', '']] },
+  { name: 'queued source with completed sync', source: { scheduler_queued: true, sync_unavailable_reason: 'sync_already_running', latest_sync: syncRunStatus() }, lanes: [], expected: [['queued', '']] },
   { name: 'failed source with a queued retry', source: { scheduler_queued: true, latest_sync: syncRunStatus({ status: 'failed', error_message: 'Mailbox unavailable' }) }, lanes: [], expected: [['failed', 'Mailbox unavailable']] },
   { name: 'source with scheduler failure skips its source sync lane', source: { scheduler_last_error: 'Schedule failed' }, lanes: [lane('source_sync')], expected: [['failed', 'Schedule failed']] },
   { name: 'trims a scheduler error to its first line', source: { scheduler_last_error: 'Schedule failed\nmore detail' }, lanes: [], expected: [['failed', 'Schedule failed']] },
-  { name: 'active sync with queued follow-up and old failure', source: { scheduler_queued: true, active_sync: syncRunStatus({ status: 'running', completed_at: null }), latest_sync: syncRunStatus({ status: 'failed', error_message: 'Old failure' }) }, lanes: [], expected: [['running', 'Syncing']] },
-  { name: 'scheduler active with a pending follow-up', source: { scheduler_pending: true, scheduler_started_at: '2026-08-30T11:00:00Z', sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', 'Syncing']] },
-  { name: 'latest running import without an active snapshot', source: { source_type: 'mbox', latest_sync: syncRunStatus({ status: 'running', completed_at: null }), sync_unavailable_reason: 'source_not_schedulable' }, lanes: [], expected: [['running', 'Syncing']] },
+  { name: 'active sync with queued follow-up and old failure', source: { scheduler_queued: true, active_sync: syncRunStatus({ status: 'running', completed_at: null }), latest_sync: syncRunStatus({ status: 'failed', error_message: 'Old failure' }) }, lanes: [], expected: [['running', '']] },
+  { name: 'scheduler active with a pending follow-up', source: { scheduler_pending: true, scheduler_started_at: '2026-08-30T11:00:00Z', sync_unavailable_reason: 'sync_already_running' }, lanes: [], expected: [['running', '']] },
+  { name: 'latest running import without an active snapshot', source: { source_type: 'mbox', latest_sync: syncRunStatus({ status: 'running', completed_at: null }), sync_unavailable_reason: 'source_not_schedulable' }, lanes: [], expected: [['running', '']] },
 ])('$name', ({ source, lanes, expected }) => {
   expect(collectJobs(source ? [sourceStatus(source as Partial<SourceStatus>)] : [], lanes).map(({ state, detail }) => [state, detail])).toEqual(expected);
 });

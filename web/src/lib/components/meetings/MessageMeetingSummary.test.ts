@@ -41,6 +41,7 @@ describe('Messages meeting summary', () => {
     expect(await screen.findByText(new RegExp(`^${label} ·`))).toBeDefined();
     await fireEvent.click(await screen.findByRole('button', { name: /Action items/ }));
     const dialog = screen.getByRole('dialog', { name: 'Action items' });
+    expect(within(dialog).getAllByText('Action items', { exact: true })).toHaveLength(1);
     expect(within(dialog).getByText('Prepare review')).toBeDefined();
     await fireEvent.click(await within(dialog).findByRole('link', { name: 'Archived review' }));
     expect(onOpenMeeting).toHaveBeenCalledWith(expect.objectContaining({ message_id: 42 }));

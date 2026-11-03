@@ -1,8 +1,29 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
-import { CHAT_MESSAGE_TYPES } from '../../explore/labels';
 import FilterMenu from './FilterMenu.svelte';
+
+it("offers the server's Conversation kind for an empty message type in a group chat", async () => {
+  const requests: Request[] = [];
+  const onChange = vi.fn();
+  render(FilterMenu, {
+    client: createAPIClient(async (input) => {
+      const request = input as Request;
+      if (!request.url.endsWith('/groups')) return Response.json({ accounts: [], identities: [] });
+      requests.push(request);
+      const body = await request.clone().json();
+      // An empty message_type in group_chat is canonically a conversation,
+      // while grouping by message_type folds it into the email bucket.
+      return Response.json({ rows: body.grouping?.[0] === 'kind'
+        ? [{ key: 'conversation', count: 1 }]
+        : [{ key: 'email', count: 1 }] });
+    }), filters: [], onChange, onClear: vi.fn(),
+  });
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  await fireEvent.click(await screen.findByRole('checkbox', { name: 'Conversation' }));
+  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'kind', values: ['conversation'] }]);
+  await expect(requests[0]!.clone().json()).resolves.toMatchObject({ grouping: ['kind'] });
+});
 
 it('edits UTC date bounds and retains committed bounds after invalid edits', async () => {
   const onChange = vi.fn();
@@ -51,9 +72,9 @@ it('keeps Kind lookup failures visible and retries when Filter reopens', async (
 });
 
 it.each([
-  { name: 'preserves restored kinds when adding Email', filters: [{ dimension: 'message_type' as const, values: ['whatsapp', 'restored-kind'] }], kinds: ['whatsapp', 'discord', 'email'], label: 'Email', expected: ['whatsapp', 'restored-kind', 'email'] },
-  { name: 'groups meeting kinds in a meetings-only archive', filters: [], kinds: ['meeting_note', 'meeting_minutes'], label: undefined, expected: ['meeting_note', 'meeting_minutes'] },
-  { name: 'includes older SMS when conversation groups expose only MMS', filters: [], kinds: ['mms'], label: 'Conversation', expected: [...CHAT_MESSAGE_TYPES] },
+  { name: 'preserves restored kinds when adding Email', filters: [{ dimension: 'kind' as const, values: ['conversation'] }], kinds: ['conversation', 'email'], label: 'Email', expected: ['conversation', 'email'] },
+  { name: 'selects the canonical meeting kind in a meetings-only archive', filters: [], kinds: ['meeting'], label: 'Meeting', expected: ['meeting'] },
+  { name: 'selects conversations across message types', filters: [], kinds: ['conversation'], label: 'Conversation', expected: ['conversation'] },
 ])('$name', async ({ filters, kinds, label, expected }) => {
   const onChange = vi.fn();
   render(FilterMenu, {
@@ -64,7 +85,7 @@ it.each([
   });
   await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
   await fireEvent.click(await screen.findByRole('checkbox', { name: label }));
-  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'message_type', values: expected }]);
+  expect(onChange).toHaveBeenLastCalledWith([{ dimension: 'kind', values: expected }]);
 });
 
 it('Escape closes only the active Account picker, then Filter', async () => {

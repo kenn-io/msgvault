@@ -29,7 +29,9 @@
       <span class="job">
         <span class="job__text">
           <span class="job__name">{item.name}</span>
-          <span class="job__detail">{item.at ? `${item.detail} · ${formatRelativeTime(item.at)}` : item.detail}</span>
+          {#if item.detail || item.at}
+            <span class="job__detail">{item.detail}{item.detail && item.at ? ' · ' : ''}{item.at ? formatRelativeTime(item.at) : ''}</span>
+          {/if}
         </span>
         <Chip size="sm" tone={chip.tone} uppercase={false}>{chip.label}</Chip>
       </span>
