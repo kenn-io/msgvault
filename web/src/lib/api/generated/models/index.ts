@@ -291,6 +291,7 @@ export * from "./exploreFilter";
 export * from "./exploreFilterDimension";
 export * from "./exploreGroupDimension";
 export * from "./exploreGroupRow";
+export * from "./exploreGroupRowLevel";
 export * from "./exploreGroupsHTTPRequest";
 export * from "./exploreGroupsHTTPRequestPresentation";
 export * from "./exploreGroupsHTTPRequestSearchMode";

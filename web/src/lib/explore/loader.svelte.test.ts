@@ -1,5 +1,5 @@
 import { flushSync } from 'svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { ExploreLoader, type ExploreLoaderCallbacks } from './loader.svelte';
@@ -417,6 +417,52 @@ describe('ExploreLoader', () => {
 
     cleanup();
     state.destroy();
+  });
+
+  it.each([
+    { workspace: 'everything', grouped: false, endpoint: '/api/v1/explore' },
+    { workspace: 'everything', grouped: true, endpoint: '/api/v1/explore/groups' },
+    { workspace: 'files', grouped: true, endpoint: '/api/v1/files/groups' }
+  ])('restarts $workspace pagination after a 409 on $endpoint', async ({ workspace, grouped, endpoint }) => {
+    window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace }))}`);
+    const cursors: (string | undefined)[] = [];
+    const row = (index: number) => grouped ? {
+      key: String(index), label: `Group ${index}`, count: index,
+      estimated_bytes: 10, latest_at: '2026-07-18T12:00:00Z'
+    } : entry(index);
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const request = input as Request;
+      expect(new URL(request.url).pathname).toBe(endpoint);
+      const body = await request.clone().json() as { cursor?: string };
+      cursors.push(body.cursor);
+      if (body.cursor === 'old-cursor') return Response.json({
+        error: 'archive_revision_changed', message: 'The committed analytical cache changed; restart pagination'
+      }, { status: 409 });
+      return Response.json(exploreResponse({
+        rows: [row(cursors.length === 1 ? 1 : 2)], total_count: 2,
+        cache_revision: cursors.length === 1 ? 'cache-1' : 'cache-2',
+        next_cursor: cursors.length === 1 ? 'old-cursor' : 'new-cursor'
+      }));
+    });
+    const state = new ExploreState(window);
+    if (grouped) state.commitGrouping('source');
+    const { loader, cleanup } = setup(fetchFn, state);
+    onTestFinished(() => { cleanup(); state.destroy(); });
+    const rows = () => grouped ? loader.groupRows : loader.rows;
+    await vi.waitFor(() => expect(rows()).toHaveLength(1));
+
+    expect((await loader.loadMore()).status).toBe('failed');
+    expect(rows().map(row => row.key)).toEqual([grouped ? '1' : 'message:1']);
+    expect(loader.pageError).toContain('Reload this view.');
+    expect(loader.error).toBe('');
+    expect(loader.nextCursor).toBeUndefined();
+
+    loader.retry();
+    flushSync();
+    await vi.waitFor(() => expect(rows().map(row => row.key)).toEqual([grouped ? '2' : 'message:2']));
+    expect(cursors).toEqual([undefined, 'old-cursor', undefined]);
+    expect(loader.nextCursor).toBe('new-cursor');
+    expect(loader.pageError).toBe('');
   });
 
   it('keeps a terminal authority-change failure inline while dropping the cursor', async () => {

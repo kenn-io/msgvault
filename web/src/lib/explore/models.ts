@@ -33,6 +33,7 @@ import type {
   PersonIdentifier as GeneratedPersonIdentifier,
   PersonSummary as GeneratedPersonSummary,
   SearchProvenance as GeneratedSearchProvenance,
+  SavedViewStateEnvelopeGroupingItem,
   SourceIdentitiesResponse as GeneratedSourceIdentitiesResponse,
   SourceIdentityResponse as GeneratedSourceIdentityResponse,
 } from '../api/generated/models';
@@ -70,7 +71,8 @@ export type FileSearchSort = {
   direction: 'asc' | 'desc';
 };
 export type FileMIMEFamily = 'image' | 'pdf' | 'audio' | 'video' | 'text' | 'document' | 'archive' | 'other';
-export type ExploreGroupDimension = GeneratedExploreGroupDimension;
+export type ExploreGroupDimension = SavedViewStateEnvelopeGroupingItem;
+export type ExploreRequestGroupDimension = GeneratedExploreGroupDimension;
 export type ExploreGroupRow = GeneratedExploreGroupRow;
 export type ExploreGroupsResponse = GeneratedExploreGroupsHTTPResponse;
 export type ExplorePredicate = GeneratedExploreHTTPRequest;
@@ -78,7 +80,7 @@ export type ExplorePredicate = GeneratedExploreHTTPRequest;
  * Predicate for the groups listing: the shared explore predicate plus the
  * groups-only exact-key filter (see ExploreGroupsHTTPRequest.group_key).
  */
-export type ExploreGroupsPredicate = ExplorePredicate & Pick<GeneratedExploreGroupsHTTPRequest, 'group_key'>;
+export type ExploreGroupsPredicate = ExplorePredicate & Pick<GeneratedExploreGroupsHTTPRequest, 'group_key' | 'sent_only' | 'timezone'>;
 export type ExploreResponse = GeneratedExploreHTTPResponse;
 export type ExploreSearchMode = NonNullable<ExplorePredicate['search_mode']>;
 export type OperationStatusAuthority = Exclude<
@@ -159,6 +161,8 @@ export interface ExploreURLState {
   relationshipTarget: string | null;
   relationshipShowAll: boolean;
   relationshipFiles: boolean;
+  relationshipSaved: boolean;
+  relationshipSort: 'closest' | 'recent' | 'name';
   operationHistory: boolean;
   operationLane: '' | OperationLane;
   operationKind: '' | OperationKind;

@@ -53,6 +53,10 @@
   type ExplorePreflight = GeneratedExplorePreflightResponse;
 
   interface Props {
+    meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
+    scope?: import('../../explore/models').ExploreFilter;
+    conversationStart?: string;
+    conversationEnd?: string;
     resultsWidth?: number;
     client: APIClient;
     exploreState: ExploreState;
@@ -67,7 +71,7 @@
     selectionPreflight: ExplorePreflight | undefined;
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
-    onReviewDeletion: (mode: 'explicit' | 'all_matching') => void;
+    onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitSearch: (query: string, mode: ExploreSearchMode) => void;
     commitWorkspace: (workspace: ExploreWorkspace) => void;
@@ -86,6 +90,10 @@
   }
 
   let {
+    meetingContext = undefined,
+    scope = undefined,
+    conversationStart = undefined,
+    conversationEnd = undefined,
     resultsWidth = $bindable(0),
     client,
     exploreState,
@@ -387,7 +395,7 @@
     const loading = loader.loading;
     const generation = loader.resultGeneration;
     const resultFingerprint = loader.resultFingerprint;
-    const isMeetingView = exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
+    const isMeetingView = !meetingContext && exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
     untrack(() => {
       if (!isMeetingView || session.meetingOverview?.fingerprint !== fingerprint) session.meetingOverview = undefined;
       if (!isMeetingView || !result || loading || resultFingerprint !== fingerprint) return;
@@ -620,13 +628,14 @@
   });
 </script>
 
-<main class="everything-workspace" aria-label="Messages">
-  <PageHeader title="Messages">
+<svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
+  {#if !scope}<PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
-  </PageHeader>
+  </PageHeader>{/if}
 
   <ContextBar
     messages
+    lockedFilter={scope}
     {client}
     query={exploreState.current.query}
     searchMode={exploreState.current.searchMode}
@@ -701,9 +710,10 @@
     <p class="scope-note" role="status">Semantic search covers active messages only.</p>
   {/if}
 
-  {#if meetingScope}
+  {#if meetingContext?.error}<p role="status">{meetingContext.error}</p>{/if}
+  {#if meetingContext?.scope || meetingScope}
     <div class="meeting-overview">
-      <MessageMeetingSummary {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
+      <MessageMeetingSummary {client} scope={(meetingContext?.scope ?? meetingScope)!} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>
   {/if}
@@ -792,7 +802,7 @@
             {:else}
               <EverythingTable
                 rows={loader.rows}
-                {selection}
+                selection={scope ? undefined : selection}
                 columns={exploreState.current.columns}
                 columnWidths={exploreState.current.columnWidths}
                 focusedKey={exploreState.current.activeRow}
@@ -818,7 +828,7 @@
                 onRetry={loader.retry}
               />
             {/if}
-            <SelectionBar
+            {#if !scope}<SelectionBar
               {selection}
               totalCount={loader.result?.totalCount}
               allMatching={allMatchingSelection}
@@ -830,6 +840,7 @@
               {onReviewDeletion}
               onClear={focusGrid}
             />
+            {/if}
           {/if}
         </div>
       {/snippet}
@@ -849,6 +860,8 @@
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
             onOpenPerson={openRelationship}
+            {conversationStart}
+            {conversationEnd}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}
           />
@@ -857,7 +870,7 @@
     </SplitPane>
   </div>
 
-</main>
+</svelte:element>
 
 <style>
   .everything-workspace {

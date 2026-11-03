@@ -28,6 +28,7 @@
   let {
     client,
     messages = false,
+    lockedFilter = undefined,
     filterExtra = undefined,
     extraControls = undefined,
     query,
@@ -48,6 +49,7 @@
   }: {
     client: APIClient;
     messages?: boolean;
+    lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;
     query: string;
@@ -101,7 +103,7 @@
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
     {:else}
     <Button
       size="sm"
@@ -112,6 +114,7 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     {/if}
+    {#if !lockedFilter}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}
@@ -125,6 +128,7 @@
         onchange={selectGrouping}
       />
     </div>
+    {/if}
     {#if sort}
       <div data-sort-menu>
         <SelectDropdown

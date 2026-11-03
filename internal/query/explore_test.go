@@ -14,6 +14,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	for day := 1; day <= 4; day++ {
+		for range day {
+			b.AddMessage(MessageOpt{SourceID: source, SentAt: time.Date(2026, 7, day, 12, 0, 0, 0, time.UTC)})
+		}
+	}
+	engine := b.BuildEngine()
+
+	for _, tc := range []struct {
+		name     string
+		page     PageSpec
+		groupKey string
+		rows     int
+		total    int64
+		levelled bool
+	}{
+		{"limited", PageSpec{Limit: 1}, "", 1, 4, false},
+		{"unpaged", PageSpec{}, "", 4, 4, true},
+		{"keyed", PageSpec{}, "2026-07-04", 1, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Page: tc.page, GroupKey: tc.groupKey})
+			require.NoError(err)
+			require.Len(result.Rows, tc.rows)
+			assert.Equal(tc.total, result.TotalCount)
+			for _, row := range result.Rows {
+				if !tc.levelled {
+					assert.Empty(row.Level)
+				} else if row.Key == "2026-07-04" {
+					assert.Equal(identityindex.HeatFourthQuartile, row.Level)
+				} else {
+					assert.NotEmpty(row.Level)
+				}
+			}
+		})
+	}
+}
+
 func TestExploreSentOnlyExcludesDraftsBeforePagination(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)

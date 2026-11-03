@@ -38,11 +38,11 @@
   } from '../../explore/models';
   import { parseAttachmentSelection } from '../../explore/attachment-authority';
   import { filtersForGroup } from '../../explore/group-context';
-  import { ExploreLoader } from '../../explore/loader.svelte';
+  import { ExploreLoader, type MessagesTable } from '../../explore/loader.svelte';
   import { GROUPING_CATALOG, groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, predicateFingerprint } from '../../explore/selection';
   import { ExploreSelectionState, ExploreState, navigationFingerprint } from '../../explore/state.svelte';
-  import { RelationshipsController } from '../../relationships/controller.svelte';
+  import { contextPredicate, RelationshipsController } from '../../relationships/controller.svelte';
   import { DirectoryController } from '../../directory/controller.svelte';
   import { DirectoryReviewController } from '../../directory/review-controller.svelte';
   import { RelationshipReviewController } from '../../directory/relationship-review-controller.svelte';
@@ -71,7 +71,7 @@
   import DeletionsWorkspace from '../deletions/DeletionsWorkspace.svelte';
   import FilesWorkspace from '../files/FilesWorkspace.svelte';
   import FileViewer from '../files/FileViewer.svelte';
-  import RelationshipsWorkspace from '../relationships/RelationshipsWorkspace.svelte';
+  import PeopleWorkspace from '../people/PeopleWorkspace.svelte';
   import DirectoryWorkspace from '../directory/DirectoryWorkspace.svelte';
   import DirectoryReviewWorkspace from '../directory/DirectoryReviewWorkspace.svelte';
   import KeyboardHelp from './KeyboardHelp.svelte';
@@ -278,7 +278,10 @@
     exploreState.closeOperationHistory();
   }
   let displayOpen = $state(false);
+  let personMessages = $state<MessagesTable>();
   let resultsWidth = $state(0);
+  const displayState = $derived(exploreState.current.workspace === 'everything' ? exploreState : exploreState.current.workspace === 'relationships' ? personMessages?.state : undefined);
+  const displayResultsWidth = $derived(exploreState.current.workspace === 'everything' ? resultsWidth : exploreState.current.workspace === 'relationships' ? personMessages?.resultsWidth ?? 0 : 0);
   const operationsController = new OperationsController(untrack(() => client));
   const shellData = new ShellData(untrack(() => client), operationsController);
 
@@ -528,6 +531,7 @@
     loader.submitted = true;
     loader.retry();
     const workspace = exploreState.current.workspace;
+    if (workspace === 'relationships') { commitNavigation({ identityQuery: query }); return; }
     if (workspace === 'everything' || workspace === 'files') {
       commitSearch(query, mode);
       focusGrid();
@@ -797,7 +801,7 @@
   function relayGridKey(event: KeyboardEvent, key: string, init: KeyboardEventInit = {}): void {
     if (event.target instanceof Element && event.target.closest('button, a, summary, [role="button"]')) return;
     const grid = currentGrid();
-    if (!grid || event.target === grid) return;
+    if (!grid || event.target === grid || (event.target instanceof Element && event.target.closest('[role="grid"]') && event.target.closest('[role="grid"]') !== grid)) return;
     grid.focus();
     grid.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init }));
   }
@@ -944,13 +948,8 @@
     focusGrid();
   }
   function openContextControl(kind: 'filters' | 'grouping' | 'sort'): void {
-    const selector =
-      kind === 'filters'
-        ? exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' ? 'button[aria-label="Filter"]' : 'button[aria-label="Filters"]'
-        : kind === 'grouping'
-          ? '[data-group-picker] button'
-          : '[data-sort-menu] button';
-    const control = document.querySelector<HTMLButtonElement>(selector);
+    const selector = { filters: 'button[aria-label="Filter"], button[aria-label="Filters"]', grouping: '[data-group-picker] button', sort: '[data-sort-menu] button' }[kind];
+    const control = (document.querySelector('.everything-workspace') ?? document).querySelector<HTMLButtonElement>(selector);
     control?.focus();
     control?.click();
   }
@@ -962,12 +961,12 @@
         : 'Messages is always shown newest first.';
     document.querySelector<HTMLButtonElement>('[data-sort-menu] button')?.focus();
   }
-  function navigateReader(delta: number): void {
-    if (!exploreState.current.selectedRow || loader.rows.length === 0) return;
-    const index = loader.rows.findIndex((row) => row.key === exploreState.current.selectedRow);
+  function navigateReader(delta: number, { state, loader: { rows }, openRow: open }: MessagesTable = personMessages ?? { state: exploreState, loader, openRow, resultsWidth }): void {
+    if (!state.current.selectedRow || rows.length === 0) return;
+    const index = rows.findIndex((row) => row.key === state.current.selectedRow);
     if (index < 0) return;
-    const next = loader.rows[Math.max(0, Math.min(loader.rows.length - 1, index + delta))];
-    if (next && next.key !== exploreState.current.selectedRow) openRow(next);
+    const next = rows[Math.max(0, Math.min(rows.length - 1, index + delta))];
+    if (next && next.key !== state.current.selectedRow) open(next);
   }
   function relay(event: KeyboardEvent | undefined, key: string | undefined = undefined, init: KeyboardEventInit = {}): void {
     const resolvedKey = key ?? event?.key;
@@ -1134,11 +1133,8 @@
     keyboardHelpScopeCleanup?.();
     keyboardHelpScopeCleanup = keyboardHelpOpen ? appShortcuts.pushScope('everything-keyboard-help') : undefined;
   });
-  // Hydrates the Relationships hub's detail pane from a URL-carried target
-  // (initial load, or Back/Forward restoring a different one). The hub
-  // itself never opens a target on its own — RelationshipsWorkspace's own
-  // tests drive controller.openTarget explicitly — so AppShell, as the
-  // controller's owner, is the one place that reacts to the URL field.
+  // AppShell owns the People controller and opens the URL target on initial
+  // load and Back/Forward navigation.
   // Tracked (not untracked) so a predicate change alone — e.g. filters set
   // in Everything/Files that carry over when the URL-carried target stays
   // the same — re-opens the target too, mirroring how Everything's own
@@ -1161,7 +1157,7 @@
       if (relationshipsController.target !== null) relationshipsController.clearTarget();
       return;
     }
-    const predicate = exploreState.predicate();
+    const predicate = contextPredicate(exploreState.predicate());
     if (
       relationshipsController.target === target &&
       relationshipsController.lastPredicateFingerprint === predicateFingerprint(predicate)
@@ -1287,13 +1283,14 @@
       {/if}
       <SearchBar
         workspace={exploreState.current.workspace}
-        query={exploreState.current.query}
+        query={exploreState.current.workspace === 'relationships' ? exploreState.current.identityQuery ?? '' : exploreState.current.query}
         mode={exploreState.current.searchMode}
-        live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files'}
+        live={exploreState.current.workspace === 'everything' || exploreState.current.workspace === 'files' || exploreState.current.workspace === 'relationships'}
         compact={narrow}
         bind:inputEl={searchInput}
-        onDraft={(query, mode) => exploreState.replaceSearchDraft(query, mode)}
+        onDraft={(query, mode) => exploreState.current.workspace === 'relationships' ? debouncedSearchPatch({ identityQuery: query }) : exploreState.replaceSearchDraft(query, mode)}
         onSubmit={submitGlobalSearch}
+        filterLabel={exploreState.current.relationshipFacet === 'domains' ? 'Filter domains' : 'Filter people'}
       />
       <div class="app-top-bar__end" aria-label="Appearance controls">
         <DisplayMenu
@@ -1304,9 +1301,9 @@
           onThemeChange={(theme) => appearance.setTemporary({ theme })}
           onDensityChange={(density) => appearance.setTemporary({ density })}
           onUseDefaults={() => appearance.clearTemporary()}
-          columns={exploreState.current.workspace === 'everything' && exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0 ? exploreState.current.columns : undefined}
-          onColumnsChange={(columns) => replaceTransient({ columns })}
-          readerPosition={exploreState.current.workspace === 'everything' && resultsWidth >= 960 ? readerPosition.value : undefined}
+          columns={displayState?.current.presentation === 'table' && displayState.current.groupingChain.length === 0 ? displayState.current.columns : undefined}
+          onColumnsChange={(columns) => { beforeCommit(); displayState?.replaceTransient({ columns }); }}
+          readerPosition={displayResultsWidth >= 960 ? readerPosition.value : undefined}
           onReaderPositionChange={(value) => readerPosition.set(value)}
         />
       </div>
@@ -1329,19 +1326,22 @@
       {:else if exploreState.current.workspace === 'deletions'}
         <DeletionsWorkspace {client} controller={shellData.deletions} onChanged={() => void shellData.refreshDeletions()} />
       {:else if exploreState.current.workspace === 'relationships'}
-        <RelationshipsWorkspace
+        <PeopleWorkspace
+          onMessagesTableChange={(table) => personMessages = table}
           onConfigureVisualSearch={openVisualAttachmentSettings}
+          directory={directoryController}
+          urlState={exploreState.current}
+          onNavigate={commitNavigation}
+          onReplaceNavigation={replaceCommittedNavigation}
+          onDraftNavigation={replaceCommittedDraft}
           {client}
           controller={relationshipsController}
-          facet={exploreState.current.relationshipFacet}
           target={exploreState.current.relationshipTarget}
-          showAll={exploreState.current.relationshipShowAll}
           filesOpen={exploreState.current.relationshipFiles}
           predicate={exploreState.predicate()}
+          onFiltersChange={(filters) => commitNavigation({ filters })}
           personFilePresentation={exploreState.current.personFilePresentation}
           personFileDirections={exploreState.current.personFileDirections}
-          onFacetChange={(relationshipFacet) => commitNavigation({ relationshipFacet })}
-          onTargetChange={(relationshipTarget) => commitNavigation({ relationshipTarget, relationshipFiles: false })}
           onShowAllChange={(relationshipShowAll) => commitNavigation({ relationshipShowAll })}
           onFilesToggle={(relationshipFiles) => commitNavigation({ relationshipFiles })}
           onPersonFilePresentationChange={(personFilePresentation) =>
@@ -1358,7 +1358,6 @@
               selectedRow: null,
               scrollAnchor: null,
             })}
-          onOpenEverything={() => commitWorkspace('everything')}
           onOpenPerson={openRelationship}
           onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
           onOpenDirectory={openDirectoryFromRelationship}

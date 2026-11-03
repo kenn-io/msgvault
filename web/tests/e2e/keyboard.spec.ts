@@ -76,13 +76,9 @@ test('pointer-free archive journey preserves focus, announcements, and history',
     activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-01-02T12:00:00Z',
     last_at: '2026-01-02T12:00:00Z', cache_revision: 'keyboard-100k'
   } }));
-  await page.route('**/api/v1/relationships/2/timeline', (route) => route.fulfill({ json: {
-    canonical_id: 2, identity_revision: 1, cache_revision: 'keyboard-100k',
-    rows: [{
-      key: 'message:200', kind: 'chat', occurred_at: '2026-01-02T12:00:00Z',
-      preview: 'Synthetic chat body', source_id: 1, title: 'Synthetic conversation',
-      has_attachments: false, message_count: 1
-    }], total_count: 1
+  await page.route('**/api/v1/participants/2/timeline', (route) => route.fulfill({ json: {
+    rows: [{ ...fixture.logicalRows[0], title: 'Synthetic conversation' }], total_count: 1,
+    cache_revision: 'keyboard-100k', search_provenance: {}
   } }));
 
   await page.goto('/');
@@ -97,16 +93,16 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await tabTo(page, 'People');
   await page.keyboard.press('Enter');
 
-  await expect(page.getByRole('main', { name: 'Relationships' })).toBeVisible();
-  await tabTo(page, 'Relationship results');
-  const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
+  await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
+  await tabTo(page, 'People results');
+  const relationshipList = page.getByRole('grid', { name: 'People results' });
   await expect(relationshipList).toBeFocused();
   await page.keyboard.press('j');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Beta Person' })).toBeVisible();
 
-  await tabTo(page, 'Relationship activity');
-  const relationshipTimeline = page.getByRole('grid', { name: 'Relationship activity' });
+  await tabTo(page, 'Messages results');
+  const relationshipTimeline = page.getByRole('grid', { name: 'Messages results' });
   await expect(relationshipTimeline).toBeFocused();
   await page.keyboard.press('Enter');
   const relationshipReading = page.getByRole('complementary', { name: /Reading pane: Synthetic conversation/ });

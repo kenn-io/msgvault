@@ -12,10 +12,10 @@ test.beforeEach(async ({ page }) => {
     rows: [], total_count: 0, cache_revision: 'spacing', identity_revision: 1
   } }));
   await page.goto('/?workspace=relationships');
-  await expect(page.getByRole('heading', { name: 'Relationships', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
 });
 
-test('page content sits one header gap below the page title, and full-width panes sit closest', async ({ page }) => {
+test('page content uses its header gap across workspaces', async ({ page }) => {
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
   await stubOperationStatus(page);
   await page.route('**/api/v1/carddav/connections', (route) => route.fulfill({ json: { connections: [] } }));
@@ -34,7 +34,7 @@ test('page content sits one header gap below the page title, and full-width pane
   const gaps: Record<string, number> = {};
   for (const label of ['People', 'Directory', 'Reviews', 'Messages', 'Files', 'Sources', 'Deletions', 'Settings']) {
     await selectWorkspace(page, label);
-    if (label === 'People') await expect(page.getByText('No relationships found', { exact: true })).toBeVisible();
+    if (label === 'People') await expect(page.getByText('No people yet', { exact: true })).toBeVisible();
     if (label === 'Directory') await expect(page.getByText('No people found', { exact: true })).toBeVisible();
     if (label === 'Messages') await expect(page.getByRole('grid', { name: 'Messages results' }).getByText(row.title, { exact: true })).toBeVisible();
     if (label === 'Files') await expect(page.getByText('SyntheticArchiveAttachmentWithAnUnbrokenDescriptiveFilename.pdf', { exact: true })).toBeVisible();

@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### API schema 3.40.0
+
+- People brings people, domains, and saved profile filters into one list. Person and domain pages share Messages and Files, with a daily Activity calendar; Details keeps identity actions and links to full Directory profiles. API schema 3.40.0 adds timezone-aware daily grouping and sent-only group counts.
+
 ### API schema 3.39.0
 
 - Staged deletion list summaries include the optional `account` so clients can identify the mailbox for each batch.

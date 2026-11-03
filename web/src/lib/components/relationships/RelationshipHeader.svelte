@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import CopyIcon from '@lucide/svelte/icons/copy';
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, IconButton, SegmentedControl, copyToClipboard } from '@kenn-io/kit-ui';
+  import { Button, IconButton, copyToClipboard } from '@kenn-io/kit-ui';
 
   import type { APIClient } from '../../api/client';
   import type { PersonAttributeGroup } from '../../api/generated/models';
@@ -10,7 +10,6 @@
   import type { LinkOutcome, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import { identityChipText } from '../../relationships/identity-chip';
   import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
-  import IdentityAvatar from '../common/IdentityAvatar.svelte';
   import AttributeSummary from '../directory/AttributeSummary.svelte';
   import PersonBindingConflictModal from '../directory/PersonBindingConflictModal.svelte';
   import LinkIdentityDialog from './LinkIdentityDialog.svelte';
@@ -21,15 +20,13 @@
   interface Props {
     detail: PersonSummary | DomainSummary | null;
     loading?: boolean;
-    filesOpen: boolean;
     headerState?: 'missing' | 'no-mail' | 'normal';
-    onFilesToggle: (value: boolean) => void;
     client: APIClient;
     onLinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     onUnlinkParticipants: (a: number, b: number) => Promise<LinkOutcome>;
     onOpenDirectory?: (participantID: number) => void;
     capturePersonMergeContext?: () => RelationshipsMergeContext;
-    onReconcilePersonMerge?: (context: RelationshipsMergeContext) => Promise<void>;
+    onReconcilePersonMerge?: (context: RelationshipsMergeContext, success: PersonMergeSuccess) => Promise<void>;
     onOpenDirectoryPerson?: (personID: number) => void;
     loadAttributes?: (personID: number) => Promise<PersonAttributeGroup[]>;
     onAnnounce?: (message: string) => void;
@@ -38,9 +35,7 @@
   let {
     detail,
     loading = false,
-    filesOpen,
     headerState = 'normal',
-    onFilesToggle,
     client,
     onLinkParticipants,
     onUnlinkParticipants,
@@ -79,10 +74,6 @@
    * pending promise. */
   function currentPersonID(): number | null {
     return detail && isPersonDetail(detail) ? detail.id : null;
-  }
-
-  function displayLabel(value: PersonSummary | DomainSummary): string {
-    return isPersonDetail(value) ? value.display_label : value.domain;
   }
 
   function formatDate(value: string): string {
@@ -228,7 +219,7 @@
     activeDialog = undefined;
     const name = success.survivor.display_name?.trim() || `Person ${success.survivor.id}`;
     onAnnounce?.(`People merged into ${name}. Identity cache ${success.result.cache_state}.`);
-    if (context && onReconcilePersonMerge) void onReconcilePersonMerge(context);
+    if (context && onReconcilePersonMerge) void onReconcilePersonMerge(context, success);
     onOpenDirectoryPerson?.(success.survivor.id);
   }
 
@@ -309,13 +300,6 @@
     </p>
   {:else}
     <div class="title-row">
-      <IdentityAvatar
-        label={displayLabel(detail)}
-        seed={isPersonDetail(detail) ? `cluster:${detail.id}` : `domain:${detail.domain}`}
-        shape={isPersonDetail(detail) ? 'person' : 'domain'}
-        size={36}
-      />
-      <h2>{displayLabel(detail)}</h2>
       {#if isPersonDetail(detail)}
         <div class="actions" role="group" aria-label="Person actions">
           {#if onOpenDirectory || (detail.profile?.id && onOpenDirectoryPerson)}
@@ -342,17 +326,6 @@
         <Button label="Retry" surface="outline" size="sm" disabled={retrying} onclick={() => void retryRefresh()} />
       </section>
     {/if}
-    <div class="view-row">
-      <SegmentedControl
-        ariaLabel="Relationship view"
-        value={filesOpen ? 'files' : 'messages'}
-        options={[
-          { value: 'messages', label: 'Messages' },
-          { value: 'files', label: `Files ${detail.file_count.toLocaleString()}` }
-        ]}
-        onchange={(value) => onFilesToggle(value === 'files')}
-      />
-    </div>
     <p class="counts">
       {#if headerState === 'no-mail'}
         No sent or received messages with this contact yet.
@@ -530,29 +503,10 @@
     gap: var(--space-2) var(--space-4);
   }
 
-  .title-row h2 {
-    flex: 1 1 12rem;
-    min-width: 0;
-  }
-
-  h2 {
-    overflow: hidden;
-    margin: 0;
-    font-size: var(--font-size-xl);
-    font-weight: 650;
-    line-height: 1.2;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   .actions {
     display: flex;
     flex: none;
     gap: var(--space-2);
-  }
-
-  .view-row {
-    display: flex;
   }
 
   .counts {
