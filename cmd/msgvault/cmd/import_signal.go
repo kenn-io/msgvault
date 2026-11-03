@@ -38,7 +38,8 @@ Pass that directory or its database.sqlite file. Attachment files
 names another one. msgvault reads Signal Android database versions 185 through
 330. Keep DatabaseVersion.sbf beside database.sqlite. Run the command again with
 a newer backup to add new messages; messages already in the archive are updated
-in place.
+in place. Missing or skipped attachment files leave message text available;
+rerun with the files available to archive them.
 
 Examples:
   msgvault import-signal --phone "+447700900000" ~/signal-backup
@@ -172,9 +173,6 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 		summary.MessagesProcessed, summary.MessagesAdded, summary.MessagesUpdated, summary.MessagesSkipped)
 	if summary.MessagesEdited > 0 {
 		fmt.Printf("  Edited:         %d\n", summary.MessagesEdited)
-	}
-	if summary.DuplicateIDs > 0 {
-		fmt.Printf("  Duplicate IDs:  %d (same author and timestamp; first kept)\n", summary.DuplicateIDs)
 	}
 	fmt.Printf("  Participants:   %d\n", summary.Participants)
 	fmt.Printf("  Reactions:      %d\n", summary.ReactionsAdded)

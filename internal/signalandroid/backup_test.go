@@ -18,7 +18,7 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
 	full := strings.Repeat("long text ", 300) + "searchablesuffix"
-	changeFixture(t, dir, `UPDATE message SET body = 'preview' WHERE _id = 300`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
+	changeFixture(t, dir, `UPDATE message SET body = 'long text ' WHERE _id = 300`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
 	file := filepath.Join(dir, "Attachment_503_-1.bin")
 	require.NoError(t, os.WriteFile(file, []byte(full), 0o600))
 	runImport(t, st, dir, t.TempDir())
@@ -27,6 +27,24 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 	assert.Equal(t, full, importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
 	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
 	assert.Equal(t, int64(2), summary.AttachmentsMissing)
+}
+
+func TestMissingEditedLongTextKeepsLatestPreview(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "Attachment_503_-1.bin"), []byte("Carol here originalsuffix"), 0o600))
+	storage := t.TempDir()
+	runImport(t, st, dir, storage)
+	changeFixture(t, dir,
+		`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
+		`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, 'Carol EDITED short', 300 FROM message WHERE _id = 300`,
+		`INSERT INTO attachment (_id, message_id, content_type) VALUES (504, 301, 'text/x-signal-plain')`)
+	runImport(t, st, dir, storage)
+	assert.Equal(t, "Carol EDITED short", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
+	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'EDITED'`))
+	assert.Zero(t, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'originalsuffix'`))
 }
 
 func TestMissingLongTextOnFirstImport(t *testing.T) {

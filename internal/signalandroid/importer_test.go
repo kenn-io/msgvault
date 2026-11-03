@@ -336,8 +336,20 @@ func TestIdentifiers(t *testing.T) {
 func TestApplyMentions(t *testing.T) {
 	assert := assert.New(t)
 	names := map[int64]string{1: "Ann", 2: "Ben"}
-	got := applyMentions("\uFFFC and \uFFFC", []sigMention{{RecipientID: 1, RangeStart: 0}, {RecipientID: 2, RangeStart: 8}},
+	got := applyMentions("\uFFFC and \uFFFC", []sigMention{{RecipientID: 1, RangeStart: 0}, {RecipientID: 2, RangeStart: 6}},
 		func(id int64) string { return names[id] })
 	assert.Equal("@Ann and @Ben", got)
 	assert.Equal("no mention", applyMentions("no mention", nil, nil))
+}
+
+func TestIndependentMentionUsesRecordedOffset(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	// The emoji takes two UTF-16 code units, and the first placeholder is literal text.
+	changeFixture(t, dir, `UPDATE message SET body = '😀 ￼ then ￼ and ￼' WHERE _id = 200`,
+		`UPDATE mention SET range_start = 10 WHERE message_id = 200`,
+		`INSERT INTO mention (thread_id, message_id, recipient_id, range_start, range_length) VALUES (11, 200, 3, 16, 1)`)
+	runImport(t, st, dir, t.TempDir())
+	assert.Equal(t, "😀 \uFFFC then @Alice Example and @Bob Example\n\nBeach", importedMessages(t, st)["signal:group:"+signalfixture.GroupB64+":"+signalfixture.BobACI+":"+ms(signalfixture.TGroup)].body)
 }

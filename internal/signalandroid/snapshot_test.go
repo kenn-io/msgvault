@@ -21,7 +21,6 @@ func TestSameTimestampDifferentChats(t *testing.T) {
 	summary := runImport(t, st, dir, t.TempDir())
 	assert.Equal(t, int64(7), summary.MessagesAdded)
 	assert.Len(t, importedMessages(t, st), 7)
-	assert.Zero(t, summary.DuplicateIDs)
 }
 
 func TestLongTextAttachment(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/export"
@@ -50,12 +51,8 @@ type run struct {
 
 	participants    map[int64]int64
 	participantErrs map[int64]error
-	// seenIDs maps each message ID written in this run to its Signal row, so
-	// a second row claiming the same chat, author, and timestamp is reported
-	// instead of overwriting the first.
-	seenIDs        map[string]int64
-	pendingReplies map[string]bool
-	written        int64
+	pendingReplies  map[string]bool
+	written         int64
 }
 
 // Import reads the Signal database at dbPath and writes its chats, messages,
@@ -94,7 +91,6 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 		summary:         &ImportSummary{},
 		participants:    make(map[int64]int64),
 		participantErrs: make(map[int64]error),
-		seenIDs:         make(map[string]int64),
 		pendingReplies:  make(map[string]bool),
 	}
 	if r.recipients, err = fetchRecipients(ctx, db, sch); err != nil {
@@ -440,12 +436,6 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 			rootID = m.OriginalRowID.Int64
 		}
 		id := messageID(sourceConvID, token, m.DateSent)
-		if previous, seen := r.seenIDs[id]; seen && previous != rootID {
-			r.summary.DuplicateIDs++
-			r.summary.MessagesSkipped++
-			continue
-		}
-		r.seenIDs[id] = rootID
 		pending = append(pending, pendingMessage{row: m, chatID: sourceConvID, id: id, rootID: rootID, senderID: author})
 		ids = append(ids, id)
 		lookupRows = append(lookupRows, m.RowID)
@@ -544,8 +534,10 @@ func (r *run) writeMessage(
 					if err != nil {
 						return fmt.Errorf("read archived long text: %w", err)
 					}
-					body = archived
-					preservedBody = true
+					if body != "" && strings.HasPrefix(archived, body) {
+						body = archived
+						preservedBody = true
+					}
 				}
 			}
 		}

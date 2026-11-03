@@ -148,7 +148,7 @@ database so msgvault can check its version. Pass the directory or the
 version file. Missing or oversize attachments
 and files that cannot be stored are skipped and counted; their messages still
 import. Long text stored in an attachment needs its file to import the full text; without it, only the inline preview is
-available on a first import. A rerun without the file keeps text already archived.
+available on a first import.
 
 ### Flags
 
@@ -194,10 +194,14 @@ keep their identities, including after a backup is restored on a new phone. Each
 the ones in the backup, and a message whose text was removed loses its archived
 text.
 
+When a long-text file is missing, msgvault keeps archived full text only if it starts with the backup's nonempty text preview. Otherwise, it archives the latest preview, so an edit replaces the previous revision's text even when its full-text file is missing.
+
 Each message commits with its text, attachments, reactions, and sender membership.
 If a reaction's author conflicts with existing people, that message keeps its previous snapshot and the import reports an error.
+Missing, oversized, or failed attachment files leave message text available and count as missing or skipped attachments. File storage failures also count as errors. Reruns store files that become available later.
 If the import fails or is interrupted, rerun it to finish and repair conversation counts.
 The attachment and reaction additions in the summary count committed additions.
+The unresolved reply count covers messages written in that run.
 
 Messages deleted in Signal, including messages later deleted for everyone, stay
 in your archive.

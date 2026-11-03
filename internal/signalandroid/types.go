@@ -4,7 +4,7 @@
 // The input is database.sqlite with DatabaseVersion.sbf beside it, and optionally
 // the Attachment_*.bin files that signalbackup-tools writes when it unpacks a Signal
 // backup into a directory. The importer reads Signal Android database
-// versions 185 through 215.
+// versions 185 through 330.
 package signalandroid
 
 import (
@@ -77,7 +77,6 @@ type ImportSummary struct {
 	MessagesUpdated    int64
 	MessagesSkipped    int64
 	MessagesEdited     int64
-	DuplicateIDs       int64
 	Participants       int64
 	ReactionsAdded     int64
 	RepliesLinked      int64
@@ -112,23 +111,20 @@ type sigThread struct {
 // sigMessage is a visible message row: the latest revision of a message,
 // with the identity fields of its original revision.
 type sigMessage struct {
-	ThreadID       int64          `json:"thread_id"`
-	RowID          int64          `json:"row_id"`
-	OriginalRowID  sql.NullInt64  `json:"original_row_id,omitzero"`
-	AuthorID       int64          `json:"author_recipient_id"`
-	DateSent       int64          `json:"date_sent"`
-	DateReceived   int64          `json:"date_received"`
-	RevisionSent   int64          `json:"revision_date_sent"`
-	Type           int64          `json:"type"`
-	Body           sql.NullString `json:"body"`
-	QuoteID        int64          `json:"quote_id,omitzero"`
-	QuoteAuthor    int64          `json:"quote_author,omitzero"`
-	StoryType      int64          `json:"story_type,omitzero"`
-	ParentStoryID  int64          `json:"parent_story_id,omitzero"`
-	RemoteDeleted  int64          `json:"remote_deleted,omitzero"`
-	ScheduledDate  int64          `json:"scheduled_date,omitzero"`
-	ViewOnce       int64          `json:"view_once,omitzero"`
-	RevisionNumber int64          `json:"revision_number,omitzero"`
+	ThreadID      int64          `json:"thread_id"`
+	RowID         int64          `json:"row_id"`
+	OriginalRowID sql.NullInt64  `json:"original_row_id,omitzero"`
+	AuthorID      int64          `json:"author_recipient_id"`
+	DateSent      int64          `json:"date_sent"`
+	DateReceived  int64          `json:"date_received"`
+	Type          int64          `json:"type"`
+	Body          sql.NullString `json:"body"`
+	QuoteID       int64          `json:"quote_id,omitzero"`
+	QuoteAuthor   int64          `json:"quote_author,omitzero"`
+	StoryType     int64          `json:"story_type,omitzero"`
+	ParentStoryID int64          `json:"parent_story_id,omitzero"`
+	RemoteDeleted int64          `json:"remote_deleted,omitzero"`
+	ScheduledDate int64          `json:"scheduled_date,omitzero"`
 }
 
 // sigAttachment is one attachment row.
@@ -138,7 +134,6 @@ type sigAttachment struct {
 	ContentType   string
 	FileName      string
 	Caption       string
-	DataSize      int64
 	Width         int64
 	Height        int64
 	VoiceNote     bool

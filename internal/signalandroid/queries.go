@@ -127,10 +127,10 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 		       COALESCE(o.from_recipient_id, m.from_recipient_id),
 		       COALESCE(o.date_sent, m.date_sent),
 		       COALESCE(o.date_received, m.date_received),
-		       m.date_sent, m.thread_id, m.type, m.body,
+		       m.thread_id, m.type, m.body,
 		       COALESCE(m.quote_id, 0), COALESCE(m.quote_author, 0),
 		       COALESCE(%s, 0), COALESCE(%s, 0), COALESCE(%s, 0),
-		       COALESCE(%s, -1), COALESCE(%s, 0), COALESCE(%s, 0)
+		       COALESCE(%s, -1)
 		FROM message m
 		LEFT JOIN message o ON o._id = m.original_message_id
 		WHERE m.thread_id = ? AND m.latest_revision_id IS NULL AND m._id > ?
@@ -140,8 +140,6 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 		s.messageColumn("parent_story_id", "0"),
 		s.deletedMessageExpr(),
 		s.messageColumn("scheduled_date", "-1"),
-		s.messageColumn("view_once", "0"),
-		s.messageColumn("revision_number", "0"),
 	)
 	rows, err := db.QueryContext(ctx, query, threadID, afterRowID, limit)
 	if err != nil {
@@ -152,9 +150,9 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 	for rows.Next() {
 		var m sigMessage
 		if err := rows.Scan(&m.RowID, &m.OriginalRowID, &m.AuthorID, &m.DateSent, &m.DateReceived,
-			&m.RevisionSent, &m.ThreadID, &m.Type, &m.Body, &m.QuoteID, &m.QuoteAuthor,
+			&m.ThreadID, &m.Type, &m.Body, &m.QuoteID, &m.QuoteAuthor,
 			&m.StoryType, &m.ParentStoryID, &m.RemoteDeleted,
-			&m.ScheduledDate, &m.ViewOnce, &m.RevisionNumber); err != nil {
+			&m.ScheduledDate); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		messages = append(messages, m)
@@ -175,14 +173,14 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 	}
 	query := fmt.Sprintf(`
 		SELECT a._id, a.%s, COALESCE(a.%s, ''), COALESCE(%s, ''), COALESCE(%s, ''),
-		       COALESCE(%s, 0), COALESCE(%s, 0), COALESCE(%s, 0),
+		       COALESCE(%s, 0), COALESCE(%s, 0),
 		       COALESCE(%s, 0), COALESCE(%s, 0), COALESCE(%s, '')
 		FROM %s a
 		WHERE a.%s IN (%s) AND COALESCE(%s, 0) = 0
 		ORDER BY a.%s, COALESCE(%s, 0), a._id`,
 		s.attachmentMessage, s.attachmentType,
 		s.attachmentColumn("file_name", "''"), s.attachmentColumn("caption", "''"),
-		s.attachmentColumn("data_size", "0"), s.attachmentColumn("width", "0"),
+		s.attachmentColumn("width", "0"),
 		s.attachmentColumn("height", "0"), s.attachmentColumn("voice_note", "0"),
 		s.attachmentColumn("video_gif", "0"), s.attachmentColumn("sticker_pack_id", "''"),
 		s.attachmentTable, s.attachmentMessage, placeholders(len(messageIDs)),
@@ -198,7 +196,7 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 		var a sigAttachment
 		var voiceNote, videoGIF int64
 		if err := rows.Scan(&a.ID, &a.MessageID, &a.ContentType, &a.FileName, &a.Caption,
-			&a.DataSize, &a.Width, &a.Height, &voiceNote, &videoGIF, &a.StickerPackID); err != nil {
+			&a.Width, &a.Height, &voiceNote, &videoGIF, &a.StickerPackID); err != nil {
 			return nil, fmt.Errorf("scan attachment: %w", err)
 		}
 		a.VoiceNote = voiceNote != 0
@@ -350,9 +348,6 @@ func int64Args(ids []int64) []any {
 }
 
 func placeholders(count int) string {
-	if count <= 0 {
-		return ""
-	}
 	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
 }
 

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/google/uuid"
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
@@ -143,20 +144,25 @@ func groupV2Identifier(stored string) (string, bool) {
 }
 
 // applyMentions replaces Signal's mention placeholders (U+FFFC) with
-// "@name", in the order the mentions appear in the body.
+// "@name" at their recorded UTF-16 offsets.
 func applyMentions(body string, mentions []sigMention, nameOf func(int64) string) string {
 	if len(mentions) == 0 || !strings.ContainsRune(body, objectReplacementRune) {
 		return body
 	}
 	var b strings.Builder
 	next := 0
+	var offset int64
 	for _, r := range body {
-		if r == objectReplacementRune && next < len(mentions) {
+		for next < len(mentions) && mentions[next].RangeStart < offset {
+			next++
+		}
+		if r == objectReplacementRune && next < len(mentions) && mentions[next].RangeStart == offset {
 			b.WriteString("@" + nameOf(mentions[next].RecipientID))
 			next++
-			continue
+		} else {
+			b.WriteRune(r)
 		}
-		b.WriteRune(r)
+		offset += int64(utf16.RuneLen(r))
 	}
 	return b.String()
 }

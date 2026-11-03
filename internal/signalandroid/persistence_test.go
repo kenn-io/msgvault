@@ -105,3 +105,27 @@ func TestCurrentDeletedMessageIsSkipped(t *testing.T) {
 	assert.Equal(t, int64(5), summary.MessagesAdded)
 	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE snippet = 'Carol here'`))
 }
+
+func TestReactorConflictLeavesSnapshot(t *testing.T) {
+	st := testutil.NewSQLiteTestStore(t)
+	dir := t.TempDir()
+	signalfixture.Write(t, dir, signalfixture.Current, 0)
+	storage := t.TempDir()
+	runImport(t, st, dir, storage)
+	before := importedMessages(t, st)
+	// A new phone for an ACI-only reactor conflicts with two curated people.
+	aciPID, _, err := st.ParticipantByIdentifierContext(t.Context(), ACIIdentifierType, signalfixture.BobACI)
+	require.NoError(t, err)
+	_, _, err = st.CreatePersonFromParticipant(aciPID)
+	require.NoError(t, err)
+	phonePID, err := st.EnsureParticipantByPhone("+15555550102", "Other Example", SourceType)
+	require.NoError(t, err)
+	_, _, err = st.CreatePersonFromParticipant(phonePID)
+	require.NoError(t, err)
+	// Carol's sender resolves normally; only her reactor has a conflict.
+	changeFixture(t, dir, `UPDATE recipient SET e164 = '+15555550102' WHERE _id = 3`, `UPDATE message SET body = 'Changed text' WHERE _id = 300`, `INSERT INTO reaction (message_id, author_id, emoji, date_sent, date_received) VALUES (300, 3, 'x', 1700000300100, 1700000300101)`)
+	summary := runImport(t, st, dir, storage)
+	require.Positive(t, summary.Errors)
+	assert.Equal(t, before, importedMessages(t, st))
+	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Changed'`))
+}
