@@ -406,4 +406,27 @@ func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
 	assertions.Equal("confirmed", occurrence.Status)
 	assertions.Equal("2027-03-02T09:00:00Z", occurrence.Start.Format(time.RFC3339))
 	assertions.Equal("2027-03-02T10:00:00Z", occurrence.End.Format(time.RFC3339))
+
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", ids[1]))
+	requirements.NoError(err)
+	assertions.Equal(ids[0], detail.MessageID)
+	assertions.Equal(fmt.Sprintf("evt:%d", ids[0]), detail.Ref)
+	assertions.Zero(detail.SeriesMessageID)
+	assertions.Equal("2027-03-02T09:00:00Z", detail.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T10:00:00Z", detail.End.Format(time.RFC3339))
+
+	reopened, err := st.GetCalendarOccurrenceContext(t.Context(), detail.Ref)
+	requirements.NoError(err)
+	assertions.Equal(detail.CalendarOccurrence, reopened.CalendarOccurrence)
+
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	budget := 500
+	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: ids[1]}, &budget)
+	requirements.NoError(err)
+	assertions.Equal(ids[0], resolved.Ref.MessageID)
+	assertions.Empty(resolved.Ref.Key)
+	assertions.Equal("2027-03-02T09:00:00Z", resolved.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T10:00:00Z", resolved.End.Format(time.RFC3339))
 }

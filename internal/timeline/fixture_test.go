@@ -104,9 +104,15 @@ func (f *timelineFixture) transcript(key, uid string, at time.Time) int64 {
 	return id
 }
 func (f *timelineFixture) call(at time.Time) int64 {
+	return f.callWithParticipants(at, []callhistory.Participant{{ID: f.peer, Participation: "joined"}})
+}
+func (f *timelineFixture) callWithoutRoster(at time.Time) int64 {
+	return f.callWithParticipants(at, nil)
+}
+func (f *timelineFixture) callWithParticipants(at time.Time, participants []callhistory.Participant) int64 {
 	f.T.Helper()
 	f.serial++
-	o := callhistory.Observation{RecordID: strconv.Itoa(f.serial), Version: 1, Provider: "signal", Account: "example", NativeCallID: strconv.Itoa(f.serial), Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: at, Precision: "instant", Participants: []callhistory.Participant{{ID: f.peer, Participation: "joined"}}, Raw: []byte(`{}`)}
+	o := callhistory.Observation{RecordID: strconv.Itoa(f.serial), Version: 1, Provider: "signal", Account: "example", NativeCallID: strconv.Itoa(f.serial), Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: at, Precision: "instant", Participants: participants, Raw: []byte(`{}`)}
 	src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
 	require.NoError(f.T, err)
 	id, err := f.Store.PutCallObservationContext(f.T.Context(), src.ID, o)

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/archivemarker"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -82,6 +83,44 @@ func TestMalformedPersonReferenceIsInputError(t *testing.T) {
 	got, err := Build(t.Context(), f.src, relationshipRequest("person:1"))
 	requirements.NoError(err)
 	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+}
+
+func TestUnresolvedSubjectDoesNotExposeUnfilteredActivity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	id := f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	f.src.People = personReadFailure{f.src.People}
+
+	day := dayRequest()
+	day.Mode, day.With = ModeDay, "email:alice@example.com"
+	got, err := Build(t.Context(), f.src, day)
+	requirements.NoError(err)
+	assertions.Empty(got.Days)
+	assertions.Empty(got.Upcoming)
+	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+
+	anchor := anchorRequest(messageRef(id))
+	anchor.With = "email:alice@example.com"
+	got, err = Build(t.Context(), f.src, anchor)
+	requirements.NoError(err)
+	assertions.Nil(got.Anchor)
+	assertions.Empty(got.History)
+	assertions.Empty(got.Upcoming)
+	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+}
+
+func TestOccurrencePeopleKeepsDistinctAttendeesWithoutEmails(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	composer := composer{}
+	people := composer.occurrencePeople(store.CalendarOccurrence{Attendees: []calevent.Attendee{
+		{DisplayName: "Guest One"},
+		{DisplayName: "Guest Two"},
+	}})
+	requirements.Len(people, 2)
+	assertions.Equal([]string{"Guest One", "Guest Two"}, []string{people[0].Name, people[1].Name})
 }
 
 func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {

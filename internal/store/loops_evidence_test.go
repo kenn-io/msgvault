@@ -112,6 +112,40 @@ func TestLoopMessageEvidenceConcurrentMissesShareToken(t *testing.T) {
 	assert.Equal(want, got)
 }
 
+func TestLoopMessageEvidenceVersionMissIgnoresReadSnapshot(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
+	oldFacts := store.LoopMessageEvidence{Asks: true}
+	_, oldToken, hit, err := f.Store.LoopMessageEvidenceContext(t.Context(), id, 1)
+	requirements.NoError(err)
+	requirements.False(hit)
+	requirements.NoError(f.Store.SaveLoopMessageEvidenceContext(t.Context(), id, 1, oldToken, oldFacts))
+
+	snapshotCtx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	var snapshotVersion int
+	requirements.NoError(store.ReadDBContext(snapshotCtx, f.Store.DB()).QueryRowContext(snapshotCtx,
+		`SELECT rule_version FROM loop_message_evidence WHERE message_id = ?`, id).Scan(&snapshotVersion))
+	assertions.Equal(1, snapshotVersion)
+
+	facts, token, hit, err := f.Store.LoopMessageEvidenceContext(snapshotCtx, id, 2)
+	requirements.NoError(err)
+	assertions.False(hit)
+	assertions.Empty(facts)
+	assertions.NotEmpty(token)
+	assertions.NotEqual(oldToken, token)
+
+	var currentVersion int
+	var currentFacts sql.NullString
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(),
+		`SELECT rule_version, facts FROM loop_message_evidence WHERE message_id = ?`, id).Scan(&currentVersion, &currentFacts))
+	assertions.Equal(2, currentVersion)
+	assertions.False(currentFacts.Valid)
+}
+
 func TestLoopEvidenceSchemaUpgrade(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -1621,6 +1621,7 @@ func TestSyncUsernameChangeRefreshesUnreportedEvents(t *testing.T) {
 	var metadata calevent.CalDAVMetadata
 	requirements.NoError(json.Unmarshal([]byte(meta), &metadata))
 	assertions.Equal("other@example.org", metadata.AccountEmail)
+	assertions.Equal("example@example.org", metadata.ICalUID)
 	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_event_attendees WHERE email='other@example.org' AND is_copy_self`))
 	assertions.Zero(count(t, st, `SELECT COUNT(*) FROM calendar_event_attendees WHERE email='owner@example.org' AND is_copy_self`))
 }

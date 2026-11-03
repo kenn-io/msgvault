@@ -9,6 +9,9 @@ import (
 	"time"
 )
 
+const calendarAttendedCandidateBatch = 100
+const calendarAttendedCandidateBudget = 10000
+
 // calendarAttendedTranscriptIDs bounds candidate recordings before resolving
 // exact occurrences. It never expands a calendar history or reads message bodies.
 func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuery, filters ActivityFilters, limit int) ([]int64, bool, error) {
@@ -21,7 +24,7 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 		return nil, false, nil
 	}
 	marks := placeholders(len(emails))
-	args := make([]any, 0, len(emails)+1)
+	args := make([]any, 0, len(emails))
 	for _, email := range emails {
 		args = append(args, email)
 	}
@@ -29,84 +32,99 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 	args = append(args, calendarArgs...)
 	transcriptScope, transcriptArgs := sourceScopeClause(ctx, "m.source_id")
 	args = append(args, transcriptArgs...)
-	args = append(args, limit+1)
-	uid := calendarUIDExpression(s.dialect, "cm.metadata")
-	// UID/provider keys and manual targets are only candidates: the forward
-	// resolver below still applies splits, ambiguity, current copies and scope.
+	// Link keys and manual decisions are only candidates. The forward resolver
+	// applies UID/provider-key lookup, splits, ambiguity, current copies and scope.
 	query := `SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.message_type='meeting_transcript' AND m.list_id IS NULL
  AND ` + strings.Replace(s.activityLiveEligibleSQL(), "COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL", "TRUE", 1) + `
  AND EXISTS(SELECT 1 FROM calendar_events e JOIN messages cm ON cm.id=e.message_id
  WHERE cm.deleted_at IS NULL AND ` + calendarEventVisibility("e", "cm") + `
  AND EXISTS(SELECT 1 FROM calendar_event_attendees a WHERE a.message_id=e.message_id AND a.is_copy_self=FALSE AND a.role<>'room' AND LOWER(TRIM(a.email)) IN (` + marks + `))` + calendarScope + `
- AND (EXISTS(SELECT 1 FROM meeting_link_key k WHERE k.message_id=m.id AND
- ((k.kind='ical_uid' AND k.value<>'' AND k.value=` + uid + `) OR
- (k.kind='google_event_id' AND e.provider_event_id<>'' AND (k.value=e.provider_event_id OR SUBSTR(k.value,1,LENGTH(e.provider_event_id)+1)=e.provider_event_id||'_'))))
- OR EXISTS(SELECT 1 FROM meeting_link_decisions d WHERE d.member_message_id=m.id AND d.decision='link'
- AND (d.target_message_id=cm.id OR (d.target_ical_uid<>'' AND d.target_ical_uid=` + uid + `)))))` + transcriptScope + ` ORDER BY m.id DESC LIMIT ?`
-	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
-	if err != nil {
-		return nil, false, fmt.Errorf("discover calendar attended transcripts: %w", err)
-	}
-	candidates := []int64{}
-	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, false, fmt.Errorf("scan calendar transcript: %w", err)
-		}
-		candidates = append(candidates, id)
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return nil, false, fmt.Errorf("iterate calendar transcripts: %w", err)
-	}
-	more := len(candidates) > limit
-	if more {
-		candidates = candidates[:limit]
-	}
-	identity, err := s.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: candidates})
-	if err != nil {
-		return nil, more, err
-	}
+ AND (EXISTS(SELECT 1 FROM meeting_link_key k WHERE k.message_id=m.id)
+ OR EXISTS(SELECT 1 FROM meeting_link_decisions d WHERE d.member_message_id=m.id AND d.decision='link')))` + transcriptScope + ` ORDER BY m.id DESC LIMIT ? OFFSET ?`
 	occurrences := map[string]bool{}
 	result := []int64{}
-	for _, id := range candidates {
-		for _, ref := range identity.ByTranscript[id].ExactOccurrenceRefs {
-			matches, known := occurrences[ref]
-			if !known {
-				detail, err := s.GetCalendarOccurrenceContext(ctx, ref)
-				if err != nil {
-					return nil, more, err
-				}
-				o := detail.CalendarOccurrence
-				at := o.Start
-				if o.AllDay {
-					loc := q.Location
-					if loc == nil {
-						loc = time.UTC
+	more := false
+	offset := 0
+	reachedEnd := false
+	for offset < calendarAttendedCandidateBudget && len(result) <= limit {
+		pageArgs := append(slices.Clone(args), calendarAttendedCandidateBatch, offset)
+		rows, err := s.db.QueryContext(ctx, s.Rebind(query), pageArgs...)
+		if err != nil {
+			return nil, false, fmt.Errorf("discover calendar attended transcripts: %w", err)
+		}
+		candidates := []int64{}
+		for rows.Next() {
+			var id int64
+			if err = rows.Scan(&id); err != nil {
+				_ = rows.Close()
+				return nil, false, fmt.Errorf("scan calendar transcript: %w", err)
+			}
+			candidates = append(candidates, id)
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, false, fmt.Errorf("iterate calendar transcripts: %w", err)
+		}
+		if len(candidates) == 0 {
+			reachedEnd = true
+			break
+		}
+		identity, err := s.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: candidates})
+		if err != nil {
+			return nil, false, err
+		}
+		for _, id := range candidates {
+			for _, ref := range identity.ByTranscript[id].ExactOccurrenceRefs {
+				matches, known := occurrences[ref]
+				if !known {
+					detail, err := s.GetCalendarOccurrenceContext(ctx, ref)
+					if err != nil {
+						return nil, false, err
 					}
-					at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, loc)
-				}
-				if !at.IsZero() && !at.After(q.Now) {
-					for _, a := range o.Attendees {
-						if !a.IsCopySelf && a.Role != "room" && slices.Contains(emails, strings.ToLower(strings.TrimSpace(a.Email))) {
-							matches = true
-							break
+					o := detail.CalendarOccurrence
+					at := o.Start
+					if o.AllDay {
+						loc := q.Location
+						if loc == nil {
+							loc = time.UTC
+						}
+						at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, loc)
+					}
+					if !at.IsZero() && !at.After(q.Now) {
+						for _, a := range o.Attendees {
+							if !a.IsCopySelf && a.Role != "room" && slices.Contains(emails, strings.ToLower(strings.TrimSpace(a.Email))) {
+								matches = true
+								break
+							}
 						}
 					}
+					occurrences[ref] = matches
 				}
-				occurrences[ref] = matches
-			}
-			if matches {
-				result = append(result, id)
-				break
+				if matches {
+					result = append(result, id)
+					break
+				}
 			}
 		}
+		offset += len(candidates)
+		if len(result) > limit {
+			more = true
+			break
+		}
+		if len(candidates) < calendarAttendedCandidateBatch {
+			reachedEnd = true
+			break
+		}
+	}
+	if !reachedEnd && offset >= calendarAttendedCandidateBudget {
+		more = true
+	}
+	if len(result) > limit {
+		result = result[:limit]
 	}
 	return result, more, nil
 }
-
 func (s *Store) contactSubjectEmails(ctx context.Context, subject ActivitySubject) ([]string, error) {
 	predicate, args, err := activityFactSubjectClause(subject)
 	if err != nil {

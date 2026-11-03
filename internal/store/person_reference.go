@@ -110,7 +110,7 @@ func (s *Store) ResolvePersonReferenceContext(ctx context.Context, kind PersonRe
  SELECT p.id,pp.person_id FROM participants p LEFT JOIN person_participants pp ON pp.participant_id=p.id
  WHERE EXISTS(SELECT 1 FROM visible v WHERE v.id=p.id) AND ` + predicate + `
  ), reach(root,id) AS (
- SELECT id,id FROM visible WHERE person_id IS NULL
+ SELECT m.id,m.id FROM matching m JOIN visible v ON v.id=m.id WHERE v.person_id IS NULL
  UNION
  SELECT r.root,CASE WHEN l.participant_a=r.id THEN l.participant_b ELSE l.participant_a END
  FROM reach r JOIN participant_links l ON l.participant_a=r.id OR l.participant_b=r.id

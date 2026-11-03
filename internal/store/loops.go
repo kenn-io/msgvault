@@ -36,6 +36,7 @@ const (
 // LoopQuery selects the conversations a loop request reads.
 type LoopQuery struct {
 	PersonID       int64
+	ParticipantIDs []int64
 	ConversationID int64
 }
 
@@ -212,6 +213,18 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 			OR EXISTS (SELECT 1 FROM conversation_participants cp
 				WHERE cp.conversation_id = c.id AND cp.participant_id = pp.participant_id)))`
 		args = append(args, q.PersonID)
+	}
+	if len(q.ParticipantIDs) > 0 {
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(q.ParticipantIDs)), ",")
+		query += ` AND EXISTS (SELECT 1 FROM participants p WHERE p.id IN (` + marks + `) AND (
+			EXISTS (SELECT 1 FROM messages pm WHERE pm.conversation_id = c.id AND pm.sender_id = p.id)
+			OR EXISTS (SELECT 1 FROM message_recipients pr JOIN messages pm ON pm.id = pr.message_id
+				WHERE pm.conversation_id = c.id AND pr.participant_id = p.id)
+			OR EXISTS (SELECT 1 FROM conversation_participants cp
+				WHERE cp.conversation_id = c.id AND cp.participant_id = p.id)))`
+		for _, id := range q.ParticipantIDs {
+			args = append(args, id)
+		}
 	}
 	query += ` GROUP BY m.conversation_id, c.source_id, c.conversation_type`
 	return query, args
@@ -745,6 +758,10 @@ type LoopMessageEvidence struct {
 // LoopMessageEvidenceContext returns cached facts only for the requested rules.
 // A version mismatch replaces derived evidence so every reader can make progress.
 func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, string, bool, error) {
+	// Cache versioning performs a read, an UPSERT, then a read of the current row.
+	// Keep that sequence outside a caller's archive snapshot so the final read
+	// sees the row written by the UPSERT instead of stale cached facts.
+	ctx = WithoutReadSnapshotContext(ctx)
 	var e LoopMessageEvidence
 	var token string
 	var facts sql.NullString

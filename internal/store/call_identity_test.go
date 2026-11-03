@@ -65,6 +65,30 @@ func TestLogicalCallsEmptyKeysStaySeparate(t *testing.T) {
 	assertions.Empty(next)
 }
 
+func TestLogicalCallOutcomeDoesNotDependOnParticipantCredit(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newLogicalCallFixture(t)
+	noRoster := f.put(t, "no-roster", func(o *callhistory.Observation) { o.Participants = nil })
+	invited := f.put(t, "invited-only", func(o *callhistory.Observation) { o.Participants[0].Participation = "invited" })
+	notJoined := f.put(t, "owner-not-joined", func(o *callhistory.Observation) { o.OwnerParticipation = "not_joined" })
+
+	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
+	requirements.NoError(err)
+	requirements.Len(calls, 3)
+	byMessageID := make(map[int64]store.LogicalCall, len(calls))
+	for _, call := range calls {
+		byMessageID[call.MessageID] = call
+	}
+
+	assertions.Equal("answered", byMessageID[noRoster].Outcome)
+	assertions.Empty(byMessageID[noRoster].Participants)
+	assertions.Equal("answered", byMessageID[invited].Outcome)
+	requirements.Len(byMessageID[invited].Participants, 1)
+	assertions.False(byMessageID[invited].Participants[0].Credited)
+	assertions.Equal("conflicting", byMessageID[notJoined].Outcome)
+}
+
 func TestLogicalCallsTimestampIsEarliestObservation(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

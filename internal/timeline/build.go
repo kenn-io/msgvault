@@ -83,9 +83,14 @@ func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
 			return nil, e
 		}
 		c.setSubject(p)
-		if req.Mode == ModeRelationship {
+		if c.personResolved && req.Mode == ModeRelationship {
 			c.buildRelationship(p)
 		}
+	}
+	if req.With != "" && !c.personResolved {
+		c.finishGaps()
+		SetContinuation(t, Continuation{Binding: binding, Positions: positions, More: c.more, SortKeys: c.keys})
+		return Fit(t, req.Format, req.Budget)
 	}
 	switch req.Mode {
 	case ModeDay:
@@ -180,18 +185,19 @@ func resolveWindow(req Request, now time.Time, loc *time.Location) (Window, erro
 }
 
 type composer struct {
-	subject      store.ActivitySubject
-	participants []int64
-	ctx          context.Context
-	src          Sources
-	req          Request
-	t            *Timeline
-	loc          *time.Location
-	positions    map[string]string
-	entryDates   map[string]string
-	keys         map[string]string
-	more         map[string]bool
-	tiers        map[int64]store.PersonTier
+	subject        store.ActivitySubject
+	participants   []int64
+	personResolved bool
+	ctx            context.Context
+	src            Sources
+	req            Request
+	t              *Timeline
+	loc            *time.Location
+	positions      map[string]string
+	entryDates     map[string]string
+	keys           map[string]string
+	more           map[string]bool
+	tiers          map[int64]store.PersonTier
 }
 
 func (c *composer) gap(section string, err error, partial bool) {
@@ -362,12 +368,12 @@ func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person
 	return people
 }
 
-func (c *composer) collectLoops(personID int64) readResult[loops.Result] {
+func (c *composer) collectLoops(subject store.ActivitySubject) readResult[loops.Result] {
 	limit := 10
 	if c.req.Brief {
 		limit = 5
 	}
 	return readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
-		return c.src.Loops.List(ctx, loops.Options{PersonID: personID, Limit: limit}, c.t.Now)
+		return c.src.Loops.List(ctx, loops.Options{PersonID: subject.PersonID, ParticipantIDs: slices.Clone(subject.ParticipantIDs), Limit: limit}, c.t.Now)
 	})
 }

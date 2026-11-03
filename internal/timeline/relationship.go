@@ -49,6 +49,7 @@ func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 		}
 		return store.PersonCandidate{}, &ErrAmbiguousReference{Candidates: c.t.Candidates}
 	}
+	c.personResolved = true
 	return r.value[0], nil
 }
 func (c *composer) setSubject(p store.PersonCandidate) {
@@ -117,7 +118,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
-	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts}
+	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts, MergeCopies: c.req.IncludeCold}
 	parallel(c.ctx,
 		func() {
 			if c.src.Activity != nil {
@@ -320,7 +321,7 @@ func (c *composer) relationshipExtras(person int64) {
 	if c.src.Loops == nil {
 		c.unavailable("loops")
 	} else {
-		c.addLoops(c.collectLoops(person))
+		c.addLoops(c.collectLoops(store.ActivitySubject{PersonID: person}))
 	}
 	if c.src.Briefs == nil {
 		c.unavailable("brief")

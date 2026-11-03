@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
@@ -57,6 +58,88 @@ func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...stri
 	require.NoError(t, err)
 	require.NoError(t, st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id = ?`, id).Scan(&data.Message.ConversationID))
 	return data, id
+}
+
+func caldavEventFixture(t *testing.T, st *Store, key, raw string) (int64, int64) {
+	t.Helper()
+	const identifier = "https://calendar.example.org/calendars/synthetic"
+	source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, identifier)
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, `{"calendar_url":"https://calendar.example.org/calendars/synthetic","time_zone":"UTC"}`))
+	components, err := calevent.ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+	require.NoError(t, err)
+	require.Len(t, components, 1)
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: components[0].Event.ProviderEventID, TimeZone: "UTC"}, json.Deterministic(true))
+	require.NoError(t, err)
+	data := &MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event", Subject: sql.NullString{String: components[0].Summary, Valid: true}},
+		Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: components[0].Summary},
+		RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+		Metadata: &sql.NullString{String: string(metadata), Valid: true},
+	}
+	id, err := st.PersistMessage(data)
+	require.NoError(t, err)
+	return source.ID, id
+}
+
+func TestSourceNativeCountsIncludeCalDAVEvents(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	caldavSource, _ := caldavEventFixture(t, st, "native-event", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:native@example.org\r\nDTSTART:20270302T170000Z\r\nDTEND:20270302T180000Z\r\nSUMMARY:Native event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	emailSource, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(emailSource.ID, "email-thread", "email_thread", "Synthetic")
+	requirements.NoError(err)
+	_, err = st.UpsertMessage(&Message{
+		SourceID: emailSource.ID, SourceMessageID: "email-derived-event",
+		ConversationID: conversationID, MessageType: "calendar_event",
+	})
+	requirements.NoError(err)
+
+	caldavCount, err := st.CountMessagesForSourceContext(t.Context(), caldavSource)
+	requirements.NoError(err)
+	emailCount, err := st.CountMessagesForSourceContext(t.Context(), emailSource.ID)
+	requirements.NoError(err)
+	counts, err := st.CountMessagesBySourceContext(t.Context())
+	requirements.NoError(err)
+	assertions.EqualValues(1, caldavCount)
+	assertions.EqualValues(0, emailCount)
+	assertions.EqualValues(1, counts[caldavSource].Live)
+	assertions.EqualValues(0, counts[emailSource.ID].Live)
+}
+
+func TestReconcileSourceMessageSnapshotIncludesNativeCalDAVEvents(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	caldavSource, caldavMessage := caldavEventFixture(t, st, "native-event", "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:native@example.org\r\nDTSTART:20270302T170000Z\r\nDTEND:20270302T180000Z\r\nSUMMARY:Native event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+
+	syncID, err := st.StartSync(caldavSource, "full")
+	requirements.NoError(err)
+	scoped := st.ScopedToSync(caldavSource, syncID)
+	reconciled, err := scoped.ReconcileSourceMessageSnapshot(t.Context(), caldavSource, map[string]struct{}{})
+	requirements.NoError(err)
+	assertions.EqualValues(1, reconciled)
+	var deleted bool
+	requirements.NoError(st.db.QueryRowContext(t.Context(), st.Rebind("SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id=?"), caldavMessage).Scan(&deleted))
+	assertions.True(deleted)
+
+	emailSource, err := st.GetOrCreateSource("gmail", "owner@example.test")
+	requirements.NoError(err)
+	conversationID, err := st.EnsureConversationWithType(emailSource.ID, "email-thread", "email_thread", "Synthetic")
+	requirements.NoError(err)
+	emailEvent, err := st.UpsertMessage(&Message{
+		SourceID: emailSource.ID, SourceMessageID: "email-derived-event",
+		ConversationID: conversationID, MessageType: "calendar_event",
+	})
+	requirements.NoError(err)
+	emailSyncID, err := st.StartSync(emailSource.ID, "full")
+	requirements.NoError(err)
+	emailScoped := st.ScopedToSync(emailSource.ID, emailSyncID)
+	reconciled, err = emailScoped.ReconcileSourceMessageSnapshot(t.Context(), emailSource.ID, map[string]struct{}{})
+	requirements.NoError(err)
+	assertions.Zero(reconciled)
+	requirements.NoError(st.db.QueryRowContext(t.Context(), st.Rebind("SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE id=?"), emailEvent).Scan(&deleted))
+	assertions.False(deleted)
 }
 
 func calendarRows(t *testing.T, st *Store, ids ...int64) []CalendarEventRow {

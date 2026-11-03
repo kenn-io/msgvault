@@ -166,6 +166,15 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 			if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
 				row.Event.Status = meetingCancelledStatus
 			}
+		} else if len(masters) == 1 && row.OverrideRemoved && masters[0].Event.Kind == meetingSingleKind {
+			master := masters[0]
+			if !calendarSingleMatchesOriginal(master.Event, *row.Event.Original) {
+				return linkOccurrence{}, sql.ErrNoRows
+			}
+			if master.Event.Start == nil || master.Event.End == nil {
+				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(master.Event), sql.ErrNoRows)
+			}
+			return occurrenceFromRow(master, ""), nil
 		} else if len(masters) == 1 && (row.Event.Original.AllDay || row.Event.Original.Instant.Nanosecond() == 0) {
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 		} else {
@@ -220,7 +229,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	if x, ok := calendarExceptionOverrides(moved)[ref.Key]; ok {
+	if x, ok := calendarExceptionOverrides(row, moved)[ref.Key]; ok {
 		if x.Event.Start != nil && x.Event.End != nil {
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)
@@ -250,6 +259,13 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		return linkOccurrence{}, err
 	}
 	return linkOccurrence{}, sql.ErrNoRows
+}
+
+func calendarSingleMatchesOriginal(event calevent.Event, original calrecur.Identity) bool {
+	if original.AllDay {
+		return event.AllDay && event.StartDate == original.Date
+	}
+	return !event.AllDay && event.Start != nil && event.Start.Equal(original.Instant)
 }
 
 func seriesExceptionBounds(master, exception CalendarEventRow) (time.Time, time.Time, error) {
@@ -316,7 +332,10 @@ func memberLinkKey(ctx context.Context, r SQLReader, id int64) (meetingLinkKey, 
 func (s *Store) calendarUIDPredicate(uid string) (string, []any) {
 	key := calevent.ICSMessageID(uid, "")
 	return `e.message_id IN (
- SELECT uid_message.id FROM messages uid_message WHERE uid_message.message_type='calendar_event' AND ` + calendarUIDExpression(s.dialect, "uid_message.metadata") + ` = ?
+ SELECT uid_message.id FROM messages uid_message
+ JOIN calendar_events uid_event ON uid_event.message_id=uid_message.id
+ JOIN sources uid_source ON uid_source.id=uid_message.source_id
+ WHERE uid_message.message_type='calendar_event' AND ` + calendarEventUIDExpression(s.dialect, "uid_message.metadata", "uid_event.provider_event_id", "uid_source.source_type") + ` = ?
  UNION
  SELECT uid_event.message_id FROM calendar_events uid_event JOIN message_raw uid_raw ON uid_raw.message_id=uid_event.message_id
  WHERE uid_raw.raw_format='ics' AND (uid_event.provider_event_id=? OR uid_event.series_provider_id=?)

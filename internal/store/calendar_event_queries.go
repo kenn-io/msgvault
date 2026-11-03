@@ -65,6 +65,18 @@ func calendarUIDExpression(d Dialect, column string) string {
 	return "CASE WHEN json_valid(" + column + ") THEN json_extract(" + column + ", '$.ical_uid') END"
 }
 
+// CalDAV provider IDs retain the component UID as the first JSON string. Read
+// it when metadata predates the explicit ical_uid field.
+func calendarEventUIDExpression(d Dialect, metadata, providerID, sourceType string) string {
+	var providerUID string
+	if d.DriverName() == postgresDriverName {
+		providerUID = `CASE WHEN ` + sourceType + `='caldav' AND ` + providerID + ` ~ '^\\["([^"\\\\]|\\\\.)*","([^"\\\\]|\\\\.)*"\\]$' THEN (` + providerID + `::jsonb ->> 0) END`
+	} else {
+		providerUID = `CASE WHEN ` + sourceType + `='caldav' AND json_valid(` + providerID + `) AND json_type(` + providerID + `)='array' THEN json_extract(` + providerID + `, '$[0]') END`
+	}
+	return `COALESCE(NULLIF(` + calendarUIDExpression(d, metadata) + `, ''), ` + providerUID + `)`
+}
+
 // Keep unique archived events. A live copy wins over archived copies; among
 // archived copies, the lowest message ID wins within the merged source.
 // ICS revision and cancellation state excludes source-merge archive-only rows.
@@ -131,7 +143,7 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	query := fmt.Sprintf(calendarEventSelect,
 		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "provider_updated_at_unix_nano"),
 		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "sequence"),
-		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
+		calendarEventUIDExpression(r.dialect, "m.metadata", "e.provider_event_id", "s.source_type")) + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
@@ -595,20 +607,21 @@ func inheritCalendarCancellation(ctx context.Context, r contextRowQuerier, row, 
 type calendarCancellationEvidence struct {
 	raw        []byte
 	format     string
+	metadata   []byte
 	fields     map[string]any
 	sparse     bool
 	diagnostic string
 }
 
 func readCalendarCancellationEvidence(ctx context.Context, r contextRowQuerier, messageID int64) (*calendarCancellationEvidence, error) {
-	raw, format, err := readCalendarRaw(ctx, r, messageID)
+	raw, format, metadata, err := readCalendarRaw(ctx, r, messageID)
 	if err != nil {
 		if errors.Is(err, errMeetingRawTooLarge) || errors.Is(err, ErrInvalidMessageRaw) {
 			return &calendarCancellationEvidence{diagnostic: fmt.Sprintf("decode cancellation evidence: %s", err)}, nil
 		}
 		return nil, err
 	}
-	evidence := &calendarCancellationEvidence{raw: raw, format: format}
+	evidence := &calendarCancellationEvidence{raw: raw, format: format, metadata: metadata}
 	var fields map[string]any
 	switch format {
 	case rawFormatICS:

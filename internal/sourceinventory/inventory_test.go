@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -248,6 +249,20 @@ func TestHistoryOnlyBeeperSourceIsStatic(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Len(items, 1)
 	requirements.Equal("static", items[0].Scheduling)
+	assertions.Empty(items[0].SyncCommand)
+}
+
+func TestImportedCallHistorySourceIsStatic(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	_, err := st.GetOrCreateSource(callhistory.SourceType, "signal/example")
+	requirements.NoError(err)
+
+	items, err := Build(t.Context(), config.NewDefaultConfig(), st)
+	requirements.NoError(err)
+	requirements.Len(items, 1)
+	assertions.Equal("static", items[0].Scheduling)
 	assertions.Empty(items[0].SyncCommand)
 }
 

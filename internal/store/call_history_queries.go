@@ -236,6 +236,7 @@ func callIdentityCTEs(active string) string {
  SELECT identity_key, MIN(occurred_at) AS occurred_at, MIN(kind) AS kind,
  MIN(message_id) AS message_id, MAX(duration_seconds) AS duration_seconds,
  MAX(CASE WHEN outcome = 'answered' THEN 1 ELSE 0 END) AS answered,
+ MAX(CASE WHEN outcome = 'answered' AND owner_participation = 'joined' THEN 1 ELSE 0 END) AS owner_answered,
  MAX(CASE WHEN owner_participation = 'not_joined' OR outcome IN ('missed','declined','cancelled') THEN 1 ELSE 0 END) AS negative,
  MAX(CASE WHEN outcome = 'missed' THEN 1 ELSE 0 END) AS missed,
  MAX(CASE WHEN outcome = 'declined' THEN 1 ELSE 0 END) AS declined,
@@ -243,7 +244,7 @@ func callIdentityCTEs(active string) string {
  FROM active GROUP BY identity_key)`
 }
 
-func callCategorySQL(confirmed string) string {
+func callCategorySQL(answered string) string {
 	return fmt.Sprintf(`CASE WHEN i.kind = 'scheduled_meeting' AND i.cancelled = 1 THEN 'scheduled_cancelled'
  WHEN i.kind = 'scheduled_meeting' THEN 'scheduled'
  WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
@@ -251,7 +252,7 @@ func callCategorySQL(confirmed string) string {
  WHEN i.missed = 1 THEN 'missed'
  WHEN i.declined = 1 THEN 'declined'
  WHEN i.cancelled = 1 THEN 'cancelled'
- ELSE 'unknown' END`, confirmed)
+ ELSE 'unknown' END`, answered)
 }
 
 func callConfirmedSQL() string {

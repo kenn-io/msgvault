@@ -52,6 +52,42 @@ func retractTimelineActivity(t *testing.T, f *timelineActivityFixture, messageID
 	require.NoError(t, err)
 }
 
+func TestColdAdapterAbsoluteWindowUsesTimestampInstants(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineActivityFixture(t)
+	targetRoom := coldTimelineRoom(t, f, f.Source.ID, "offset-target")
+	targetAt := time.Date(2026, 11, 3, 8, 30, 0, 0, time.UTC)
+	target := f.add(t, targetRoom, f.Source.ID, targetAt, false, "")
+	earlierRoom := coldTimelineRoom(t, f, f.Source.ID, "offset-earlier")
+	earlier := f.add(t, earlierRoom, f.Source.ID, targetAt.Add(-9*time.Hour), false, "")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2026-11-03 01:30:00-07:00", target)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=? WHERE id=?`), "2026-11-03 01:30:00+02:00", earlier)
+	requirements.NoError(err)
+	projectColdTimeline(t, f, "UTC")
+
+	plusTwo := time.FixedZone("plus-two", 2*60*60)
+	minusSeven := time.FixedZone("minus-seven", -7*60*60)
+	for _, tc := range []struct {
+		name          string
+		after, before time.Time
+	}{
+		{name: "query offset differs from stored target", after: time.Date(2026, 11, 3, 10, 0, 0, 0, plusTwo), before: time.Date(2026, 11, 3, 11, 0, 0, 0, plusTwo)},
+		{name: "exclude earlier instant with matching wall clock", after: time.Date(2026, 11, 3, 1, 0, 0, 0, minusSeven), before: time.Date(2026, 11, 3, 2, 0, 0, 0, minusSeven)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), store.BurstQuery{
+				After: &tc.after, Before: &tc.before, Limit: 10,
+				Filters: store.ActivityFilters{IncludeNoise: true},
+			})
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal([]int64{target}, page.Bursts[0].LatestMessageIDs)
+		})
+	}
+}
+
 // A recipient alias inherits the person's strongest role for contact counting,
 // but only an actual sender exclusion makes the message noise.
 func TestColdAdapterExcludedRecipientAliasIsNotSenderNoise(t *testing.T) {
