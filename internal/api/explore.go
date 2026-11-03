@@ -39,7 +39,7 @@ const (
 )
 
 type ExploreFilter struct {
-	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,mailing_list,after,before,deletion,identity,account"`
+	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,kind,mailing_list,after,before,deletion,identity,account"`
 	Values    []string `json:"values" minItems:"1"`
 }
 
@@ -50,6 +50,7 @@ const (
 	exploreFilterParticipant = explorecatalog.FilterParticipant
 	exploreFilterDomain      = explorecatalog.FilterDomain
 	exploreFilterMessageType = explorecatalog.FilterMessageType
+	exploreFilterKind        = explorecatalog.FilterKind
 	exploreFilterMailingList = explorecatalog.FilterMailingList
 	exploreFilterAfter       = explorecatalog.FilterAfter
 	exploreFilterBefore      = explorecatalog.FilterBefore
@@ -1058,6 +1059,16 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			}
 		case exploreFilterMessageType:
 			result.MessageTypes = append([]string(nil), filter.Values...)
+		case exploreFilterKind:
+			for _, value := range filter.Values {
+				kind := query.EntryKind(strings.ToLower(value))
+				switch kind {
+				case query.EntryEmail, query.EntryConversation, query.EntryEvent, query.EntryMeeting, query.EntryItem:
+					result.Kinds = append(result.Kinds, kind)
+				default:
+					return result, fmt.Errorf("unknown entry kind %q", value)
+				}
+			}
 		case exploreFilterMailingList:
 			values := append([]string(nil), filter.Values...)
 			if len(result.MailingLists) == 0 {

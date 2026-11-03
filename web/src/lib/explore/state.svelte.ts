@@ -54,6 +54,7 @@ const FILTER_DIMENSIONS = new Set([
   'domain',
   'mailing_list',
   'message_type',
+  'kind',
   'after',
   'before',
   'deletion'

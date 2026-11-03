@@ -36,6 +36,31 @@ function setup(kind: '' | 'source_sync' = '', filters: Partial<OperationsURLStat
 }
 
 describe('Past runs', () => {
+  it('shows pending action feedback on the button until the request completes', async () => {
+    const visualRun = fixture.runs.find(candidate => candidate.kind === 'visual_embedding')!;
+    let resolveAction!: (response: Response) => void;
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes(lane('visual_embedding', { supported_actions: ['visual_build'] })) });
+      if (path === '/api/v1/operations/runs') return Response.json({ runs: [visualRun], membership_revision: 1, unavailable_kinds: [] });
+      if (path === `/api/v1/operations/runs/${visualRun.id}`) return Response.json({ ...visualRun, supported_actions: ['visual_build'] });
+      if (path === '/api/v1/multimodal/build' && request.method === 'POST') return new Promise<Response>(resolve => { resolveAction = resolve; });
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    });
+    const controller = new OperationsController(client); controllers.push(controller);
+    const onAnnounce = vi.fn();
+    render(RunHistoryDialog, { client, controller,
+      state: { ...defaultOperationsState(), operationRunID: visualRun.id },
+      onNavigate: vi.fn(), onclose: vi.fn(), onConfigure: vi.fn(), onAnnounce });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Build visual index' }));
+    expect((await screen.findByRole<HTMLButtonElement>('button', { name: 'Build visual index…' })).disabled).toBe(true);
+    expect(screen.queryByRole('status')).toBeNull();
+    resolveAction(Response.json({}));
+    await vi.waitFor(() => expect(onAnnounce).toHaveBeenCalledWith('Visual index build request completed; current operation state was refreshed.'));
+    expect(screen.getByRole<HTMLButtonElement>('button', { name: 'Build visual index' }).disabled).toBe(false);
+  });
+
   it('keeps the same title while a deep-linked run loads and identifies its kind', async () => {
     let resolveDetail!: (response: Response) => void;
     const client = createAPIClient(async input => {
@@ -74,6 +99,8 @@ describe('Past runs', () => {
     configured = true;
     await controller.refreshStatus();
     await screen.findByText('4 of 5 owners ready');
+    const dialog = screen.getByRole('dialog', { name: 'Document index status' });
+    expect(within(dialog).getAllByText('Document index status', { exact: true })).toHaveLength(1);
     expect(screen.queryByText('Document index needs configuration')).toBeNull();
   });
   it('applies date bounds and exclusive kind or lane controls', async () => {

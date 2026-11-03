@@ -16,12 +16,14 @@
   let {
     client,
     compact = false,
+    showHeading = true,
     request = undefined,
     evidence = undefined,
     onOpenMeeting = undefined,
   }: {
     client: APIClient;
     compact?: boolean;
+    showHeading?: boolean;
     request?: MeetingActionsRequest;
     evidence?: ActionsPage;
     onOpenMeeting?: (meeting: MeetingRef) => void;
@@ -64,7 +66,7 @@
 
 {#if compact}
   <section class="compact-actions" aria-label="Action items">
-    <h3>Action items</h3>
+    {#if showHeading}<h3>Action items</h3>{/if}
     {#if controller.loading}<p role="status">Loading action items…</p>{/if}
     {#if controller.error}
       <p role="alert">{controller.error.message}</p>

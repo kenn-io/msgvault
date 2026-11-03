@@ -7,6 +7,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
+import { chooseSelectOption } from '../../../test/kit-ui';
 import TaskLinks from './TaskLinks.svelte';
 
 function expectOneInitialTaskRead(requests: Request[]): void {
@@ -15,6 +16,63 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
+  it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
+    const requests: Request[] = [];
+    let statusCalls = 0;
+    const client = createAPIClient(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/tasks/status')) return ++statusCalls === 2
+        ? Response.json({ message: 'Status unavailable' }, { status: 503 })
+        : Response.json({ state: 'ready', project: 'example' });
+      if (request.method === 'POST') {
+        requests.push(request);
+        return requests.length === 1
+          ? Response.json({ message: 'Create response unavailable' }, { status: 503 })
+          : Response.json({ task: { id: 'task-1', title: 'Draft title' } }, { status: 201 });
+      }
+      return Response.json({ state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    });
+    const statuses = new SvelteMap<string, ConversationTaskStatus['latest']>();
+    const shared: ConversationTaskStatus = {
+      load: async () => {
+        const response = await getTaskIntegrationStatus(client);
+        statuses.set('latest', response.data ?? { state: 'unreachable', message: 'Status unavailable' });
+        return response;
+      },
+      get latest() { return statuses.get('latest'); },
+    };
+    const context = new Map([[conversationTaskStatusKey, shared]]);
+    const oncomplete = vi.fn();
+    render(TaskLinks, { props: { client, mode: 'add', messageId: 42, title: 'Follow up', oncomplete }, context });
+    const title = await screen.findByLabelText('Task title');
+    await fireEvent.input(title, { target: { value: 'Draft title' } });
+    await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
+    await chooseSelectOption(screen.getByLabelText('Priority'), 'High');
+    await fireEvent.input(screen.getByLabelText('Labels'), { target: { value: 'mail, follow-up' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await screen.findByText('Create response unavailable');
+
+    render(TaskLinks, { props: { client, messageId: 43, title: 'Another message', showSetup: false }, context });
+    await screen.findByText('Task integration unreachable: Status unavailable');
+    expect(screen.getByLabelText('Task title')).toBe(title);
+    expect(title).toHaveProperty('value', 'Draft title');
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
+    expect(screen.getByLabelText('Priority').textContent).toContain('High');
+    expect(screen.getByLabelText('Labels')).toHaveProperty('value', 'mail, follow-up');
+    expect(screen.getByRole('button', { name: 'Create task' })).toHaveProperty('disabled', true);
+    await fireEvent.submit(title.closest('form')!);
+    expect(requests).toHaveLength(1);
+
+    await shared.load();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Create task' })).toHaveProperty('disabled', false));
+    await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(oncomplete).toHaveBeenCalledOnce());
+    expect(requests).toHaveLength(2);
+    expect(requests[1]!.headers.get('X-Request-Id')).toBe(requests[0]!.headers.get('X-Request-Id'));
+    await expect(requests[1]!.clone().text()).resolves.toBe(await requests[0]!.clone().text());
+  });
+
   it('completes creation without refreshing the closing add surface', async () => {
     const reads: Request[] = [];
     const oncomplete = vi.fn();

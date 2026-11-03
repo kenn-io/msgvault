@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { view } from './fixtures.test-support';
 import type { JobsStore } from '../../jobs/jobs.svelte';
+import { collectJobs, jobsHealth } from '../../jobs/jobs';
+import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 import AppSidebar from './AppSidebar.svelte';
 
 const jobs = { items: [], health: 'ok', loaded: true, refresh: vi.fn() } as unknown as JobsStore;
@@ -71,7 +73,7 @@ describe('AppSidebar', () => {
     const store = {
       items: [
         { id: 'f', name: 'Work Gmail', state: 'failed', detail: 'Gmail sign-in expired', target: { kind: 'source' } },
-        { id: 'r', name: 'CardDAV sync', state: 'running', detail: 'Running', target: { kind: 'status', authority: 'getCardDAVStatus' } },
+        { id: 'r', name: 'CardDAV sync', state: 'running', detail: '', target: { kind: 'status', authority: 'getCardDAVStatus' } },
       ],
       health: 'failed',
       loaded: true,
@@ -97,6 +99,28 @@ describe('AppSidebar', () => {
   });
 });
 
+it.each([
+  { state: 'running', processed: 0, detail: 'yesterday' },
+  { state: 'running', processed: 42, detail: '42 messages so far · yesterday' },
+  { state: 'queued', processed: 0, detail: undefined },
+] as const)('shows a $state job with $processed processed messages', async ({ state, processed, detail }) => {
+  vi.setSystemTime(new Date('2026-08-31T11:00:00Z'));
+  try {
+    const items = collectJobs([sourceStatus(state === 'queued' ? { scheduler_queued: true } : {
+      active_sync: syncRunStatus({ status: 'running', completed_at: null, messages_processed: processed }),
+    })], []);
+    const store = { items, health: jobsHealth(items), loaded: true, refresh: vi.fn() } as unknown as JobsStore;
+    renderSidebar({ jobs: store });
+    const label = state === 'queued' ? 'Queued' : 'Running';
+    await fireEvent.click(screen.getByRole('button', { name: `Sync status: ${label}` }));
+    const row = within(screen.getByRole('menuitem', { name: /Example archive/ }));
+    expect(row.getAllByText(label)).toHaveLength(1);
+    if (detail) expect(row.getByText(detail)).toBeDefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
 it('shows a saved-view read error above the last rows and offers Retry', async () => {
   const onRetryViews = vi.fn();
   renderSidebar({ views: [view(1, 'Budget')], viewsError: "Couldn't load saved views.", onRetryViews });
@@ -116,7 +140,7 @@ it('Sync status typeahead keeps page shortcuts suspended', async () => {
   const pageShortcut = vi.fn();
   const unregister = appShortcuts.register('d', pageShortcut);
   const rendered = renderSidebar({ jobs: { ...jobs, health: 'running', items: [
-    { id: 'document', name: 'Document extraction', state: 'running', detail: 'Running', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
+    { id: 'document', name: 'Document extraction', state: 'running', detail: '', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
   ] } });
   try {
     await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Running' }));

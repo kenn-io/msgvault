@@ -45,16 +45,16 @@
       loading = false;
     }
   }
-  type HistoryRow = { id: number; value: string; context?: string | null; envelope: ValueEnvelope; observedAt?: string; sourceID?: number };
+  type HistoryRow = { id: number; value: string; context?: string | null; envelope: ValueEnvelope; observedAt?: string };
 
   // Any closed validity or transaction interval makes a value historical.
   function ended(envelope: ValueEnvelope): string | undefined {
     return envelope.superseded_at ?? envelope.active_until;
   }
 
-  type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; source_id?: number; service_slug?: string; scope_kind?: string; scope_value?: string };
+  type Item = { envelope: ValueEnvelope; original_value: string; formatted?: string; label?: string; date_kind?: string; date_text?: string; observed_at?: string; service_slug?: string; scope_kind?: string; scope_value?: string };
   function rows(items: Item[], value: ((item: Item) => string) | null = null, context: ((item: Item) => string | null) | null = null): HistoryRow[] {
-    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at, sourceID: item.source_id }));
+    return items.map((item) => ({ id: item.envelope.id, value: value ? value(item) : item.original_value, context: context?.(item), envelope: item.envelope, observedAt: item.observed_at }));
   }
 
   const sections = $derived.by(() => {
@@ -110,11 +110,11 @@
     {:else if error}
       <p role="alert" class="history-error">{error}</p>
     {:else if history}
-      {#snippet row(item: HistoryRow, past: boolean)}
+      {#snippet row(item: HistoryRow)}
         <li>
           <span class="value">{item.value}{#if item.context}<small>{item.context}</small>{/if}</span>
           <span class="meta">
-            {#if past}Removed {historyTime(ended(item.envelope))} · {/if}{historyProvenance(item.envelope)}{#if item.observedAt} · {historyTime(item.observedAt)}{/if}{#if item.sourceID !== undefined} · Source {item.sourceID}{/if}
+            {historyProvenance(item.envelope)}{#if item.observedAt} · {historyTime(item.observedAt)}{/if}
           </span>
         </li>
       {/snippet}
@@ -122,12 +122,12 @@
         <section>
           <h3>{section.title}</h3>
           {#if section.current.length > 0}
-            <ul>{#each section.current as item (item.id)}{@render row(item, false)}{/each}</ul>
+            <ul>{#each section.current as item (item.id)}{@render row(item)}{/each}</ul>
           {/if}
           {#if section.past.length > 0}
             <details>
               <summary>{section.past.length} earlier {section.past.length === 1 ? 'value' : 'values'}</summary>
-              <ul>{#each section.past as item (item.id)}{@render row(item, true)}{/each}</ul>
+              <ul>{#each section.past as item (item.id)}{@render row(item)}{/each}</ul>
             </details>
           {/if}
         </section>

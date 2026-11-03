@@ -142,6 +142,25 @@ describe('AttributeSection', () => {
     expect(history).not.toBeNull();
     expect(history?.hasAttribute('open')).toBe(false);
     const row = screen.getByText('Two').closest('li')!;
-    expect(row.textContent).toMatch(/Removed (Jul|Aug) \d{1,2}, 2026/);
+    expect(row.textContent).toMatch(/Valid until: (Jul|Aug) \d{1,2}, 2026/);
+  });
+
+  it.each([
+    { active_until: '2026-08-02T00:00:00Z' },
+    { superseded_at: '2026-08-03T00:00:00Z' },
+    { active_until: '2026-08-02T00:00:00Z', superseded_at: '2026-08-03T00:00:00Z' },
+  ])('shows each closed attribute interval once in provenance: %j', interval => {
+    const field = definition({ is_sensitive: false });
+    const historical = personValue(field, 29, { type: 'text', text: 'Earlier note' }, 0, interval);
+    renderSection(vi.fn(), [{ definition: field, current: [], history: [historical] }]);
+
+    const row = screen.getByText('Earlier note').closest('li')!;
+    expect(row.closest('details')).not.toBeNull();
+    const metadata = row.querySelector('.meta')!.textContent!.trim();
+    expect(metadata.split(' · ').map(part => part.split(': ')[0])).toEqual([
+      'You', 'Actor', 'Valid from', ...(interval.active_until ? ['Valid until'] : []), ...(interval.superseded_at ? ['Superseded'] : []), 'Created',
+    ]);
+    if (interval.active_until) expect(metadata).toMatch(/Valid until: (Aug 1|Aug 2), 2026/);
+    if (interval.superseded_at) expect(metadata).toMatch(/Superseded: (Aug 2|Aug 3), 2026/);
   });
 });

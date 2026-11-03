@@ -5470,6 +5470,7 @@ components:
             - participant
             - domain
             - message_type
+            - kind
             - mailing_list
             - after
             - before
@@ -5482,6 +5483,7 @@ components:
             - ExploreFilterDimensionParticipant
             - ExploreFilterDimensionDomain
             - ExploreFilterDimensionMessageType
+            - ExploreFilterDimensionKind
             - ExploreFilterDimensionMailingList
             - ExploreFilterDimensionAfter
             - ExploreFilterDimensionBefore
@@ -14518,6 +14520,7 @@ components:
             - mailing_list
             - account
             - message_type
+            - kind
             - after
             - before
             - deletion
@@ -14532,6 +14535,7 @@ components:
             - SavedViewFilterFieldMailingList
             - SavedViewFilterFieldAccount
             - SavedViewFilterFieldMessageType
+            - SavedViewFilterFieldKind
             - SavedViewFilterFieldAfter
             - SavedViewFilterFieldBefore
             - SavedViewFilterFieldDeletion

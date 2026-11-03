@@ -486,7 +486,6 @@
                     toggle(key);
                   }}>{contactLabel(connection)}</button
                 >
-                <span class="muted">Contacts</span>
               </div>
             </td>
             <td><div class="name"><Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>

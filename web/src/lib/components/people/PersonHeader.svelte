@@ -10,7 +10,7 @@
 <header>
   {#if onBack}<IconButton ariaLabel="Back to People" onclick={onBack}><ArrowLeft size={16} aria-hidden="true" /></IconButton>{/if}
   <button class="avatar" type="button" tabindex="-1" aria-label="Open details" onclick={onOpenDetails}><IdentityAvatar label={name} seed={email || name} shape={domain ? 'domain' : 'person'} size={40} /></button>
-  <div><h2><button type="button" onclick={onOpenDetails}>{name}</button></h2>{#if email}<span>{email}</span>{/if}</div>
+  <div><h2><button type="button" onclick={onOpenDetails}>{name}</button></h2>{#if email && email !== name}<span>{email}</span>{/if}</div>
   <div class="actions">{@render actions?.()}</div>
 </header>
 

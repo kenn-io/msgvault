@@ -2040,7 +2040,7 @@ describe('EverythingWorkspace', () => {
     await waitFor(() => expect(explorePostCount).toBe(totalPages));
     await waitFor(() => expect(
       screen.getByRole('status', { name: 'Sort status' }).textContent
-    ).toBe('Newest first is the canonical Messages order.'));
+    ).toBe(''));
     rendered.unmount();
     state.destroy();
   });

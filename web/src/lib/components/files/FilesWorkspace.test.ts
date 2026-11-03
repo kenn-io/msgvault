@@ -1299,6 +1299,8 @@ describe('FilesWorkspace', () => {
     const onFilenameQueryChange = vi.fn(), onMIMEFamiliesChange = vi.fn();
     const view = render(FilesWorkspace, { client, embedded: true, identityScope: { kind: 'person', id: 42 }, personPresentation: 'files', predicate: { filters: [] }, sort: { field: 'occurred_at', direction: 'desc' }, filenameQuery: 'old', mimeFamilies: ['pdf', 'text'], onFilenameQueryChange, onMIMEFamiliesChange });
     await screen.findByText('fixture.pdf');
+    expect(screen.getByText('Filename', { selector: 'label > span' })).toBeDefined();
+    expect((screen.getByRole('searchbox', { name: 'Filter filename' }) as HTMLInputElement).placeholder).toBe('');
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter filename' }), { target: { value: 'budget' } });
     expect(onFilenameQueryChange).toHaveBeenCalledWith('budget');
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Audio' }));

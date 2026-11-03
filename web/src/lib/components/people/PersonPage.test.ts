@@ -167,7 +167,10 @@ it('opening Files drops the selected day from the conversation reader', async ()
 
 it('shows Addresses only on the person Details tab', async () => {
   vi.stubEnv('TZ', 'UTC');
-  const summary = { id: 1, display_label: 'Alice Example', identifiers: [], activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
+  const summary = { id: 1, display_label: 'Alice Example', identifiers: [
+    { type: 'email', value: 'alice@example.com', participant_id: 1, is_primary: true, provenance: 'participant_identifiers' },
+    { type: 'email', value: 'alice@example.org', participant_id: 1, is_primary: false, provenance: 'participant_identifiers' },
+  ], activity_count: 9, file_count: 2, first_at: '2026-06-01T12:00:00Z', last_at: when, source_counts: [], cache_revision: 'cache-detail' };
   const target = 'cluster:1';
   const client = createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
@@ -183,7 +186,10 @@ it('shows Addresses only on the person Details tab', async () => {
   try {
     expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();
     await fireEvent.click(screen.getByRole('radio', { name: 'Details' }));
-    expect(screen.getByRole('heading', { name: 'Addresses' })).toBeDefined();
+    expect(screen.getAllByRole('heading', { name: 'Addresses' })).toHaveLength(1);
+    const addresses = screen.getByRole('region', { name: 'Known addresses' });
+    expect(within(addresses).getByLabelText('Identity alice@example.com')).toBeDefined();
+    expect(within(addresses).getByLabelText('Identity alice@example.org')).toBeDefined();
     await fireEvent.click(screen.getByRole('radio', { name: 'Files' }));
     await view.rerender({ filesOpen: true });
     expect(screen.queryByRole('heading', { name: 'Addresses' })).toBeNull();

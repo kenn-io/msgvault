@@ -20,6 +20,7 @@ func identityRequestIsUnfiltered(request ExploreRequest) bool {
 		len(context.AdditionalParticipantGroups) == 0 &&
 		len(context.AdditionalDomainGroups) == 0 &&
 		len(context.MessageTypes) == 0 &&
+		len(context.Kinds) == 0 &&
 		context.After == nil &&
 		context.Before == nil &&
 		context.Deletion == DeletionAny &&
@@ -377,6 +378,14 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 	if condition, conditionArgs := duckDBMessageTypeCondition("f", request.Context.MessageTypes); condition != "" {
 		conditions = append(conditions, condition)
 		args = append(args, conditionArgs...)
+	}
+	if len(request.Context.Kinds) > 0 {
+		placeholders := make([]string, len(request.Context.Kinds))
+		for i, kind := range request.Context.Kinds {
+			placeholders[i] = "?"
+			args = append(args, string(kind))
+		}
+		conditions = append(conditions, "(CASE WHEN f.is_chat THEN 'conversation' ELSE f.entry_kind END) IN ("+strings.Join(placeholders, ",")+")")
 	}
 	if request.Context.After != nil {
 		conditions = append(conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
