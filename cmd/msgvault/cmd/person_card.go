@@ -40,7 +40,7 @@ func newPersonCardCommand(deps personCardCommandDeps) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use: "card <person-ref>", Short: "Prepare for a meeting or reply with a cited person card",
-		Long: "Read an owner-only person card with last interaction, ranked cited items, meeting history, honest gaps, and freshness. Private notes and sensitive attributes are excluded. as_of evaluates current snapshots; it is not a historical snapshot.",
+		Long: "Owner access required. Private notes and sensitive attributes are excluded. as_of evaluates current snapshots; it is not a historical snapshot.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := validatePersonCardCLIRef(args[0]); err != nil {

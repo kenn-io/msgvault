@@ -152,8 +152,10 @@ func newMeetingLinkCommand(deps meetingRecordsCommandDeps, unlink bool) *cobra.C
 	return command
 }
 func writeMeetingRecord(cmd *cobra.Command, record store.MeetingRecord) error {
-	if _, err := fmt.Fprintln(cmd.OutOrStdout(), textutil.SanitizeTerminal(record.Ref)); err != nil {
-		return fmt.Errorf("write meeting record: %w", err)
+	if record.Occurrence == nil || record.Ref != record.Occurrence.Ref {
+		if _, err := fmt.Fprintln(cmd.OutOrStdout(), textutil.SanitizeTerminal(record.Ref)); err != nil {
+			return fmt.Errorf("write meeting record: %w", err)
+		}
 	}
 	if record.Occurrence != nil {
 		if err := writeCalendarOccurrence(cmd, *record.Occurrence); err != nil {

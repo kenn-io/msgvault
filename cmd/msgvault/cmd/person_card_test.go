@@ -93,6 +93,14 @@ func TestPersonCardCLIFormatsAndOptions(t *testing.T) {
 	}
 }
 
+func TestPersonCardCLIHelpExplainsAccessAndPrivacyLimits(t *testing.T) {
+	command := newPersonCardCommand(personCardCommandDeps{})
+	assert.Contains(t, command.Long, "Owner access required.")
+	assert.Contains(t, command.Long, "Private notes and sensitive attributes are excluded.")
+	assert.Contains(t, command.Long, "as_of evaluates current snapshots; it is not a historical snapshot.")
+	assert.NotContains(t, command.Long, "Read an owner-only person card with")
+}
+
 func TestPersonCardCLIValidatesBeforeOpeningDaemon(t *testing.T) {
 	for _, args := range [][]string{
 		{"person:7", "--max-items", "0"}, {"person:7", "--max-items", "11"},

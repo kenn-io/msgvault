@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -156,6 +157,12 @@ func TestMeetingRecordPlainTextOutputSanitizesArchivedFields(t *testing.T) {
 	assertions.NotContains(output.String(), "\r")
 	assertions.Contains(output.String(), "Planning  forged ")
 	assertions.Contains(output.String(), "First line\nSecond line")
+	assertions.Equal(1, strings.Count(output.String(), "evt:10"))
+
+	record.Ref = occurrence.Ref
+	output.Reset()
+	requirements.NoError(writeMeetingRecord(command, record))
+	assertions.Equal(1, strings.Count(output.String(), "evt:10"))
 }
 
 type personMeetingsTextTestClient struct {

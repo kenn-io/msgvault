@@ -76,6 +76,8 @@ func TestAssembleTrustAndFreshness(t *testing.T) {
 	assertions.NotContains(md, "<!--")
 	assertions.NotContains(md, "\x1b")
 	assertions.Contains(md, "[fact-decision:2 ← message:20]")
+	assertions.NotContains(md, "Source freshness: stale")
+	assertions.Contains(md, "Source \"you@example.com\": stale")
 	first, err := json.Marshal(card)
 	requirements.NoError(err)
 	second, err := json.Marshal(Assemble(in, Options{AsOf: now.Add(30 * 24 * time.Hour)}))

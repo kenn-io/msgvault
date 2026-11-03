@@ -92,6 +92,8 @@ func TestCalendarControlCLIScopeHelpMatchesSupportedActions(t *testing.T) {
 	updateScope := update.Flags().Lookup("scope")
 	requirements.NotNil(updateScope)
 	assertions.Contains(updateScope.Usage, "future")
+	assertions.NotContains(root.Long, "Read archived occurrences with events and event.")
+	assertions.Contains(root.Long, "Archived reads use message.read on calendar sources.")
 }
 
 func TestCalendarControlCLIReportsArchiveFailureWithoutMessageID(t *testing.T) {

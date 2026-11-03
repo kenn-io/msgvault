@@ -8,7 +8,7 @@ import (
 )
 
 var gapLabels = map[string]string{
-	"not_a_saved_profile": "not a saved profile", "not_in_archive": "not in the archive", "not_tracked": "contact tracking", "contact_state_none": "contact state", "contact_state_unavailable": "contact state (not available)", "brief_none": "brief", "brief_unavailable": "brief (not available)", "open_loops_none": "open loops", "open_loops_unavailable": "open loops (not available on this daemon)", "actions_none": "meeting actions", "actions_unavailable": "meeting actions (not available)", "facts_none": "recent fact changes", "facts_unavailable": "recent fact changes (not available)", "agenda_none": "agenda", "agenda_not_configured": "agenda (not configured)", "agenda_unavailable": "agenda (not available)", "meetings_none": "meeting history", "meetings_unavailable": "meeting history (not available)", "sources_unavailable": "source freshness (not available)",
+	"not_a_saved_profile": "not a saved profile", "not_in_archive": "not in the archive", "not_tracked": "contact tracking", "contact_state_none": "contact state", "contact_state_unavailable": "contact state (not available)", "brief_none": "brief", "brief_unavailable": "brief (not available)", "open_loops_none": "open loops", "open_loops_unavailable": "open loops (not available on this daemon)", "actions_none": "meeting actions", "actions_unavailable": "meeting actions (not available)", "facts_none": "recent fact changes", "facts_unavailable": "recent fact changes (not available)", "agenda_none": "agenda", "agenda_not_configured": "agenda (not configured)", "agenda_unavailable": "agenda (not available)", "meetings_unavailable": "meeting history (not available)", "sources_unavailable": "source freshness (not available)",
 }
 
 // EscapeMarkdown quotes every source-controlled string as inert, single-line data.
@@ -148,7 +148,15 @@ func RenderMarkdown(card Card, affiliation string) string {
 		b.WriteByte('\n')
 	}
 	if card.Freshness.Stale {
-		b.WriteString("Source freshness: stale\n")
+		staleSources := 0
+		for _, s := range card.Freshness.Sources {
+			if s.Stale {
+				staleSources++
+			}
+		}
+		if staleSources == 0 {
+			b.WriteString("Source freshness: stale\n")
+		}
 		for _, s := range card.Freshness.Sources {
 			if s.Stale {
 				fmt.Fprintf(&b, "Source %s: stale", EscapeMarkdown(s.Identifier))

@@ -49,6 +49,7 @@ func TestFreshnessSourcePolicy(t *testing.T) {
 	card := Assemble(in, Options{})
 	assertions.True(card.Freshness.Stale)
 	assertions.Equal(5, card.Freshness.SourcesOmitted)
+	assertions.Contains(RenderMarkdown(card, ""), "Source freshness: stale")
 	in = baseInput()
 	for i := int64(1); i <= 11; i++ {
 		in.Freshness.Sources = append(in.Freshness.Sources, SourceInput{SourceID: i, Identifier: strconv.FormatInt(i, 10), LastSuccessfulSyncAt: &recent})
@@ -67,7 +68,7 @@ func TestFreshnessSourcePolicy(t *testing.T) {
 func TestGapLabelsAndSuppressedEmptyGaps(t *testing.T) {
 	assertions := assert.New(t)
 	in := baseInput()
-	in.Gaps = []string{"contact_state_unavailable", "brief_unavailable", "actions_unavailable", "facts_unavailable", "agenda_not_configured", "meetings_unavailable", "open_loops_unavailable", "sources_unavailable", "unrecognized"}
+	in.Gaps = []string{"contact_state_unavailable", "brief_unavailable", "actions_unavailable", "facts_unavailable", "agenda_not_configured", "meetings_none", "meetings_unavailable", "open_loops_unavailable", "sources_unavailable", "unrecognized"}
 	c := Assemble(in, Options{})
 	assertions.NotContains(c.Gaps, "unrecognized")
 	for _, g := range []string{"contact_state_none", "brief_none", "actions_none", "facts_none", "agenda_none", "meetings_none", "open_loops_none"} {
@@ -75,6 +76,7 @@ func TestGapLabelsAndSuppressedEmptyGaps(t *testing.T) {
 	}
 	md := RenderMarkdown(c, "")
 	assertions.Contains(md, "No data:")
+	assertions.NotContains(RenderMarkdown(Card{Gaps: []string{"meetings_none"}}, ""), "No data:")
 	assertions.NotContains(md, "not enrolled")
 }
 func TestEvidenceKindDerivedAndOversizedIDsRejected(t *testing.T) {
