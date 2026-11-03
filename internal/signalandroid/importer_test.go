@@ -79,7 +79,7 @@ func expectedMessages() map[string]importedMessage {
 }
 
 func TestImportMapsSignalDatabase(t *testing.T) {
-	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v185": signalfixture.V185} {
+	for name, layout := range map[string]signalfixture.Layout{"current": signalfixture.Current, "v215": signalfixture.V215, "v185": signalfixture.V185} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			dbDir := t.TempDir()

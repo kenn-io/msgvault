@@ -8,8 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"go.kenn.io/msgvault/internal/store"
 )
 
 // fetchRecipients loads every recipient keyed by its local row ID.
@@ -140,7 +138,7 @@ func fetchMessages(ctx context.Context, db *sql.DB, s *schema, threadID, afterRo
 		LIMIT ?`,
 		s.messageColumn("story_type", "0"),
 		s.messageColumn("parent_story_id", "0"),
-		s.messageColumn("remote_deleted", "0"),
+		s.deletedMessageExpr(),
 		s.messageColumn("scheduled_date", "-1"),
 		s.messageColumn("view_once", "0"),
 		s.messageColumn("revision_number", "0"),
@@ -187,7 +185,7 @@ func fetchAttachments(ctx context.Context, db *sql.DB, s *schema, messageIDs []i
 		s.attachmentColumn("data_size", "0"), s.attachmentColumn("width", "0"),
 		s.attachmentColumn("height", "0"), s.attachmentColumn("voice_note", "0"),
 		s.attachmentColumn("video_gif", "0"), s.attachmentColumn("sticker_pack_id", "''"),
-		s.attachmentTable, s.attachmentMessage, store.SQLPlaceholders(len(messageIDs)),
+		s.attachmentTable, s.attachmentMessage, placeholders(len(messageIDs)),
 		s.attachmentColumn("quote", "0"),
 		s.attachmentMessage, s.attachmentColumn("display_order", "0"),
 	)
@@ -220,7 +218,7 @@ func fetchReactions(ctx context.Context, db *sql.DB, s *schema, rootIDs []int64)
 	if !s.hasReactions || len(rootIDs) == 0 {
 		return out, nil
 	}
-	in := store.SQLPlaceholders(len(rootIDs))
+	in := placeholders(len(rootIDs))
 	query := fmt.Sprintf(`
 		SELECT COALESCE(m.original_message_id, m._id), r.author_id, r.emoji, COALESCE(r.date_sent, 0)
 		FROM reaction r
@@ -255,7 +253,7 @@ func fetchMentions(ctx context.Context, db *sql.DB, s *schema, messageIDs []int6
 	query := fmt.Sprintf(`
 		SELECT message_id, recipient_id, COALESCE(range_start, 0)
 		FROM mention WHERE message_id IN (%s)
-		ORDER BY message_id, range_start`, store.SQLPlaceholders(len(messageIDs)))
+		ORDER BY message_id, range_start`, placeholders(len(messageIDs)))
 	rows, err := db.QueryContext(ctx, query, int64Args(messageIDs)...)
 	if err != nil {
 		return nil, fmt.Errorf("query mentions: %w", err)
@@ -277,8 +275,8 @@ func fetchMentions(ctx context.Context, db *sql.DB, s *schema, messageIDs []int6
 
 // ownerEvidence counts, per recipient, the messages that name it as the
 // account owner: the author of outgoing messages and the recipient of
-// incoming messages outside groups. In supported databases both point at the
-// owner's own recipient row.
+// incoming messages outside groups. V185 copied the author into both
+// address columns on old incoming rows, so those rows supply no owner evidence.
 func ownerEvidence(ctx context.Context, db *sql.DB) (map[int64]int64, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT owner, COUNT(*) FROM (
@@ -287,6 +285,7 @@ func ownerEvidence(ctx context.Context, db *sql.DB) (map[int64]int64, error) {
 			UNION ALL
 			SELECT m.to_recipient_id FROM message m
 			WHERE (m.type & ?) = ?
+			  AND m.to_recipient_id <> m.from_recipient_id
 			  AND NOT EXISTS (
 				SELECT 1 FROM recipient r
 				WHERE r._id = m.to_recipient_id AND COALESCE(r.group_id, '') <> '')
@@ -348,4 +347,19 @@ func int64Args(ids []int64) []any {
 		args[i] = id
 	}
 	return args
+}
+
+func placeholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
+}
+
+// deletedMessageExpr follows V302's deletion marker while retaining old layouts.
+func (s *schema) deletedMessageExpr() string {
+	if s.messageColumns["deleted_by"] {
+		return "(m.deleted_by IS NOT NULL)"
+	}
+	return s.messageColumn("remote_deleted", "0")
 }

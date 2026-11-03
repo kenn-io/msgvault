@@ -2098,7 +2098,7 @@ to `mode=fts` instead.
 
 `message_type` uses the same values as local search: `email`,
 `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`,
-`mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`,
+`mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `signal`, `synctech_sms_call`,
 `google_voice_text`, `google_voice_call`, and `google_voice_voicemail`. The
 query string can also carry `message_type:` / `message_type=` operators inside
 `q`.

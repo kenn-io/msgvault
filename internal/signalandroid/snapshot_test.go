@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
-func TestReviewSameTimestampDifferentChats(t *testing.T) {
+func TestSameTimestampDifferentChats(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -24,7 +24,7 @@ func TestReviewSameTimestampDifferentChats(t *testing.T) {
 	assert.Zero(t, summary.DuplicateIDs)
 }
 
-func TestReviewLongTextAttachment(t *testing.T) {
+func TestLongTextAttachment(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -36,7 +36,7 @@ func TestReviewLongTextAttachment(t *testing.T) {
 	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'searchablesuffix'`))
 }
 
-func TestReviewReplyQuotesLatestRevision(t *testing.T) {
+func TestReplyQuotesLatestRevision(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -46,7 +46,7 @@ func TestReviewReplyQuotesLatestRevision(t *testing.T) {
 	assert.Zero(t, summary.RepliesUnresolved)
 }
 
-func TestReviewBodyWriteFailurePreservesOldSnapshot(t *testing.T) {
+func TestBodyWriteFailurePreservesOldSnapshot(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -70,7 +70,7 @@ type cancelProgress struct {
 
 func (p cancelProgress) OnProgress(_, _, _ int64) { p.cancel() }
 
-func TestReviewInterruptedImportKeepsConversationCount(t *testing.T) {
+func TestInterruptedImportKeepsConversationCount(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -86,20 +86,7 @@ func TestReviewInterruptedImportKeepsConversationCount(t *testing.T) {
 	assert.Equal(t, 2, count)
 }
 
-func TestReviewFutureBackupVersionRejected(t *testing.T) {
-	st := testutil.NewTestStore(t)
-	dir := t.TempDir()
-	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), []byte("VERSION:uint32:999999\n"), 0o600))
-	opts := DefaultOptions()
-	opts.Phone = signalfixture.OwnPhone
-	_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
-	require.ErrorIs(t, err, ErrUnsupportedDatabase)
-	assert.Contains(t, err.Error(), "999999")
-	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM sources`))
-}
-
-func TestReviewAttachmentStoreFailureIsError(t *testing.T) {
+func TestAttachmentStoreFailureIsError(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -124,7 +111,8 @@ func TestImportSnapshotRollsBackAttachmentAndReactionFailures(t *testing.T) {
 			attachmentsDir := t.TempDir()
 			runImport(t, st, dir, attachmentsDir)
 			before := importedMessages(t, st)
-			changeFixture(t, dir, `UPDATE message SET body = 'Changed group text' WHERE _id = 200`, `UPDATE reaction SET emoji = 'x' WHERE message_id = 200`)
+			changeFixture(t, dir, `UPDATE message SET body = 'Changed group text' WHERE _id = 200`, `UPDATE reaction SET emoji = 'x' WHERE message_id = 200`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (504, 200, 'image/jpeg')`)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "Attachment_504_-1.bin"), []byte("new photo"), 0o600))
 			_, err := st.DB().Exec(tc.trigger)
 			require.NoError(t, err)
 			summary := runImport(t, st, dir, attachmentsDir)

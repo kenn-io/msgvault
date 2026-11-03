@@ -420,7 +420,7 @@ func (s *Store) loadPersonFactEmploymentOrganizationReferencesTx(
 		SELECT c.claim_key, CAST(c.normalized_value_json AS TEXT)
 		FROM person_fact_claims c
 		WHERE c.person_id = ? AND c.target_kind = ?
-		  AND c.target_key IN (`+SQLPlaceholders(len(orderedTargetKeys))+`)
+		  AND c.target_key IN (`+placeholders(len(orderedTargetKeys))+`)
 		  AND c.normalized_value_json IS NOT NULL AND c.rejection_action IS NULL
 		ORDER BY c.id`, args...)
 	if err != nil {
@@ -1398,7 +1398,7 @@ func loadPersonFactEmploymentOrganizationBindingsTx(
 		JOIN person_fact_claims c ON c.id = d.claim_id
 		WHERE d.person_id = ? AND d.action = 'applied'
 		  AND d.resolved_organization_id IS NOT NULL
-		  AND c.claim_key IN (`+SQLPlaceholders(len(claimKeys))+`)
+		  AND c.claim_key IN (`+placeholders(len(claimKeys))+`)
 		ORDER BY c.claim_key, d.id DESC
 	`, args...)
 	if err != nil {

@@ -101,7 +101,7 @@ func NormalizePhone(raw string) string {
 		return ""
 	}
 	phone, err := textimport.NormalizePhone(raw)
-	if err != nil || !strings.HasPrefix(phone, "+") {
+	if err != nil {
 		return ""
 	}
 	return phone

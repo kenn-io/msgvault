@@ -142,7 +142,7 @@ func loadCalendarAttendees(ctx context.Context, r *loggedDB, events []CalendarEv
 		for i := start; i < end; i++ {
 			args[i-start] = events[i].MessageID
 		}
-		rows, err := r.QueryContext(ctx, `SELECT message_id, email, display_name, role, rsvp, is_copy_self FROM calendar_event_attendees WHERE message_id IN (`+SQLPlaceholders(len(args))+`) ORDER BY message_id, ordinal`, args...)
+		rows, err := r.QueryContext(ctx, `SELECT message_id, email, display_name, role, rsvp, is_copy_self FROM calendar_event_attendees WHERE message_id IN (`+placeholders(len(args))+`) ORDER BY message_id, ordinal`, args...)
 		if err != nil {
 			return fmt.Errorf("read calendar attendees: %w", err)
 		}
@@ -211,9 +211,9 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 		// Name the parent IDs directly so the provider index finds the few
 		// candidates even before the planner has statistics; otherwise the
 		// EXISTS runs once for every archived event.
-		predicate := `e.kind IN ('series', 'single') AND e.provider_event_id IN (` + SQLPlaceholders(len(seriesIDs)) + `)
+		predicate := `e.kind IN ('series', 'single') AND e.provider_event_id IN (` + placeholders(len(seriesIDs)) + `)
    AND EXISTS (SELECT 1 FROM calendar_events x JOIN messages mx ON mx.id = x.message_id
-   WHERE x.message_id IN (` + SQLPlaceholders(len(ids)) + `)
+   WHERE x.message_id IN (` + placeholders(len(ids)) + `)
    AND x.series_provider_id = e.provider_event_id AND mx.source_id = m.source_id)`
 		parents, err := queryCalendarSeriesWithinBudget(ctx, r, predicate, append(seriesIDs, ids...))
 		if err != nil {

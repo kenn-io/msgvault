@@ -2311,7 +2311,7 @@ msgvault import-signal <directory | database.sqlite> --phone <your-number>
 The source type and message type are `signal`. Conversations are
 `signal:aci:<account ID>` or `signal:group:<group ID>` (unpadded base64url).
 Messages are `<conversation ID>:<author account ID>:<original sent timestamp in ms>`.
-Supported Signal Android database versions are 185 through 215; newer and older
+Supported Signal Android database versions are 185 through 330; newer and older
 versions fail with an error.
 
 See [Text Messages](/docs/usage/text-messages/#import-signal) for what is

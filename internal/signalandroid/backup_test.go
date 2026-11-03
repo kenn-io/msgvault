@@ -13,7 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/signalfixture"
 )
 
-func TestAuditMissingLongTextOnRerun(t *testing.T) {
+func TestMissingLongTextOnRerun(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -29,7 +29,7 @@ func TestAuditMissingLongTextOnRerun(t *testing.T) {
 	assert.Equal(t, int64(2), summary.AttachmentsMissing)
 }
 
-func TestAuditMissingLongTextOnFirstImport(t *testing.T) {
+func TestMissingLongTextOnFirstImport(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -39,7 +39,7 @@ func TestAuditMissingLongTextOnFirstImport(t *testing.T) {
 	assert.Equal(t, "Carol here", importedMessages(t, st)["signal:aci:"+signalfixture.CarolACI+":"+signalfixture.CarolACI+":"+ms(signalfixture.TCarol)].body)
 }
 
-func TestScratchOversizeAttachmentDropsMessage(t *testing.T) {
+func TestUnavailableAttachmentKeepsMessage(t *testing.T) {
 	for _, storageFailure := range []bool{false, true} {
 		t.Run(map[bool]string{false: "oversize", true: "storage failure"}[storageFailure], func(t *testing.T) {
 			st := testutil.NewTestStore(t)
@@ -61,13 +61,13 @@ func TestScratchOversizeAttachmentDropsMessage(t *testing.T) {
 	}
 }
 
-func TestAuditProducerVersionSidecar(t *testing.T) {
+func TestProducerVersionSidecar(t *testing.T) {
 	for _, tc := range []struct {
 		name, data string
 		wantError  bool
 	}{
-		{"supported", "VERSION:uint32:215\n", false},
-		{"future", "VERSION:uint32:216\n", true},
+		{"supported", "VERSION:uint32:330\n", false},
+		{"future", "VERSION:uint32:331\n", true},
 		{"old", "VERSION:uint32:184\n", true},
 		{"malformed", "VERSION:uint32:garbage\n", true},
 		{"missing", "", true},
@@ -88,6 +88,9 @@ func TestAuditProducerVersionSidecar(t *testing.T) {
 			_, err := NewImporter(st, nil).Import(t.Context(), path, opts)
 			if tc.wantError {
 				require.ErrorIs(t, err, ErrUnsupportedDatabase)
+				if tc.name == "future" {
+					assert.Contains(t, err.Error(), "331")
+				}
 				assert.Zero(t, countRows(t, st, `SELECT COUNT(*) FROM sources`))
 			} else {
 				require.NoError(t, err)
@@ -97,7 +100,7 @@ func TestAuditProducerVersionSidecar(t *testing.T) {
 	}
 }
 
-func TestAuditGroupOnlyBackup(t *testing.T) {
+func TestGroupOnlyBackup(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -106,7 +109,7 @@ func TestAuditGroupOnlyBackup(t *testing.T) {
 	assert.Equal(t, int64(1), summary.MessagesAdded)
 }
 
-func TestAuditPhoneAppearsForArchivedSender(t *testing.T) {
+func TestPhoneAppearsForArchivedSender(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -122,7 +125,7 @@ func TestAuditPhoneAppearsForArchivedSender(t *testing.T) {
 	assert.Equal(t, 0, countRows(t, st, `SELECT COUNT(*) FROM participants WHERE id = ? AND phone_number IS NULL`, sender))
 }
 
-func TestAuditInterruptedReplyIsComplete(t *testing.T) {
+func TestInterruptedReplyIsComplete(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -135,7 +138,7 @@ func TestAuditInterruptedReplyIsComplete(t *testing.T) {
 	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM messages WHERE reply_to_message_id IS NOT NULL`))
 }
 
-func TestAuditDeferredReplyAfterBackupDropsChild(t *testing.T) {
+func TestDeferredReplyAfterBackupDropsChild(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -153,7 +156,7 @@ func TestAuditDeferredReplyAfterBackupDropsChild(t *testing.T) {
 	assert.Equal(t, "signal:aci:"+signalfixture.AliceACI+":"+signalfixture.AliceACI+":"+ms(signalfixture.TAlice1), parent)
 }
 
-func TestAuditStatsFailureCannotCompleteImport(t *testing.T) {
+func TestStatsFailureCannotCompleteImport(t *testing.T) {
 	st := testutil.NewSQLiteTestStore(t)
 	dir := t.TempDir()
 	path := signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -166,7 +169,7 @@ func TestAuditStatsFailureCannotCompleteImport(t *testing.T) {
 	assert.Equal(t, 1, countRows(t, st, `SELECT COUNT(*) FROM sync_runs WHERE status = 'failed'`))
 }
 
-func TestScratchCounters(t *testing.T) {
+func TestImportCountsSkippedMessages(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	dir := t.TempDir()
 	signalfixture.Write(t, dir, signalfixture.Current, 0)
@@ -175,7 +178,7 @@ func TestScratchCounters(t *testing.T) {
 	assert.Equal(t, int64(4), summary.MessagesSkipped)
 }
 
-func TestAuditNegativeLimit(t *testing.T) {
+func TestNegativeLimit(t *testing.T) {
 	opts := DefaultOptions()
 	opts.Phone, opts.Limit = signalfixture.OwnPhone, -1
 	_, err := NewImporter(testutil.NewTestStore(t), nil).Import(t.Context(), "missing.sqlite", opts)

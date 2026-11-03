@@ -168,7 +168,7 @@ func (s *Store) FilenameSuggestionRowsContext(ctx context.Context, ids []int64, 
 		` + filenamePostgresMessageRoots
 	} else {
 		// IDs bind at the PostgreSQL primary-key roots above.
-		conditions = append([]string{"a.id IN (" + SQLPlaceholders(len(ids)) + ")"}, conditions...)
+		conditions = append([]string{"a.id IN (" + placeholders(len(ids)) + ")"}, conditions...)
 	}
 	query := `SELECT a.id,a.message_id,m.conversation_id,m.source_id,COALESCE(m.source_message_id,''),
   COALESCE(m.message_type,''),COALESCE(c.conversation_type,''),COALESCE(a.filename,''),COALESCE(a.mime_type,''),COALESCE(a.size,0),
@@ -270,7 +270,7 @@ func (s *Store) filenameScopeConditions(scope FilenameSuggestionScope) ([]string
 	conditions := []string{LiveMessagesWhere("m", false)}
 	var args []any
 	if len(scope.SourceIDs) > 0 {
-		conditions = append(conditions, "m.source_id IN ("+SQLPlaceholders(len(scope.SourceIDs))+")")
+		conditions = append(conditions, "m.source_id IN ("+placeholders(len(scope.SourceIDs))+")")
 		for _, id := range scope.SourceIDs {
 			args = append(args, id)
 		}
@@ -291,7 +291,7 @@ func (s *Store) filenameScopeConditions(scope FilenameSuggestionScope) ([]string
 		args = append(args, scope.Before.UTC())
 	}
 	if len(scope.MIMEFamilies) > 0 {
-		conditions = append(conditions, "("+filemeta.MIMEFamilySQL("a.mime_type")+") IN ("+SQLPlaceholders(len(scope.MIMEFamilies))+")")
+		conditions = append(conditions, "("+filemeta.MIMEFamilySQL("a.mime_type")+") IN ("+placeholders(len(scope.MIMEFamilies))+")")
 		for _, family := range scope.MIMEFamilies {
 			args = append(args, family)
 		}

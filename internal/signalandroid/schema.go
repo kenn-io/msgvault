@@ -20,7 +20,7 @@ import (
 const MinDatabaseVersion = 185
 
 // MaxDatabaseVersion is the newest layout covered by importer fixtures.
-const MaxDatabaseVersion = 215
+const MaxDatabaseVersion = 330
 
 // ErrUnsupportedDatabase reports a SQLite file that is not a Signal Android
 // database this importer can read.

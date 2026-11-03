@@ -36,7 +36,7 @@ signalbackup-tools has decrypted into a directory:
 Pass that directory or its database.sqlite file. Attachment files
 (Attachment_*.bin) are read from the same directory unless --attachments-dir
 names another one. msgvault reads Signal Android database versions 185 through
-215. Keep DatabaseVersion.sbf beside database.sqlite. Run the command again with
+330. Keep DatabaseVersion.sbf beside database.sqlite. Run the command again with
 a newer backup to add new messages; messages already in the archive are updated
 in place.
 
@@ -143,7 +143,11 @@ func runSignalImport(cmd *cobra.Command, input string, flags importSignalFlags) 
 			fmt.Println("\nImport interrupted. Run again to continue.")
 			return rebuildCacheAfterWrite(archiveDSN, state)
 		}
-		return fmt.Errorf("import failed: %w", err)
+		var cacheErr error
+		if summary != nil && summary.SourceID != 0 {
+			cacheErr = rebuildCacheAfterWrite(archiveDSN, state)
+		}
+		return errors.Join(fmt.Errorf("import failed: %w", err), cacheErr)
 	}
 
 	if !flags.noDefaultIdentity && summary.SourceID != 0 {

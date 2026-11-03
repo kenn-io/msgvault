@@ -151,22 +151,22 @@ func (imp *Importer) Import(ctx context.Context, dbPath string, opts ImportOptio
 
 	imp.progress.OnStart()
 	if err := r.ensureSelf(ctx); err != nil {
-		return nil, err
+		return r.summary, err
 	}
 
 	threads, err := fetchThreads(ctx, db, sch)
 	if err != nil {
-		return nil, err
+		return r.summary, err
 	}
 	for _, thread := range threads {
 		if r.limitReached() {
 			break
 		}
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return r.summary, err
 		}
 		if err := r.importThread(ctx, thread); err != nil {
-			return nil, err
+			return r.summary, err
 		}
 	}
 
@@ -371,7 +371,10 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 	}
 
 	var chatAdded int64
-	senders := make(map[int64]struct{})
+	conversation := store.ConversationPersistData{
+		SourceConversationID: sourceConvID, ConversationType: convType, Title: title,
+		PreserveExistingParticipants: true,
+	}
 	afterRowID := int64(0)
 	for !r.limitReached() {
 		if err := ctx.Err(); err != nil {
@@ -387,7 +390,7 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 			break
 		}
 		afterRowID = messages[len(messages)-1].RowID
-		added, err := r.importBatch(ctx, conversationID, sourceConvID, messages, senders)
+		added, err := r.importBatch(ctx, conversationID, sourceConvID, messages, conversation)
 		if err != nil {
 			return err
 		}
@@ -397,9 +400,6 @@ func (r *run) importThread(ctx context.Context, thread sigThread) error {
 		if len(messages) < r.opts.BatchSize {
 			break
 		}
-	}
-	for pid := range senders {
-		_ = r.imp.store.EnsureConversationParticipantContext(ctx, conversationID, pid, "member")
 	}
 	r.imp.progress.OnChatComplete(sourceConvID, chatAdded)
 	return nil
@@ -414,7 +414,7 @@ type pendingMessage struct {
 	senderID int64
 }
 
-func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvID string, messages []sigMessage, senders map[int64]struct{}) (int64, error) {
+func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvID string, messages []sigMessage, conversation store.ConversationPersistData) (int64, error) {
 	var pending []pendingMessage
 	var ids []string
 	var lookupRows []int64
@@ -502,7 +502,7 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 		if reactionsRead {
 			rowReactions = reactions[p.rootID]
 		}
-		if err := r.writeMessage(ctx, conversationID, archivedID, p, rowAttachments,
+		if err := r.writeMessage(ctx, conversationID, archivedID, conversation, p, rowAttachments,
 			reactionsRead, rowReactions, mentions[p.row.RowID]); err != nil {
 			if ctx.Err() != nil {
 				return added, ctx.Err()
@@ -518,19 +518,17 @@ func (r *run) importBatch(ctx context.Context, conversationID int64, sourceConvI
 			r.summary.MessagesAdded++
 			added++
 		}
-		if pid, ok := r.participants[p.senderID]; ok && pid != 0 {
-			senders[pid] = struct{}{}
-		}
 	}
 	return added, nil
 }
 
 func (r *run) writeMessage(
-	ctx context.Context, conversationID, archivedID int64, p pendingMessage,
+	ctx context.Context, conversationID, archivedID int64, conversation store.ConversationPersistData, p pendingMessage,
 	attachments []sigAttachment, reactionsRead bool, reactions []sigReaction, mentions []sigMention,
 ) error {
 	m := p.row
 	st := r.imp.store
+	var found, missing int64
 	body := ""
 	preservedBody := false
 	if m.Body.Valid {
@@ -538,7 +536,7 @@ func (r *run) writeMessage(
 	}
 	for _, a := range attachments {
 		if a.ContentType == "text/x-signal-plain" {
-			r.summary.AttachmentsFound++
+			found++
 			if name, ok := r.files[a.ID]; ok {
 				full, err := os.ReadFile(filepath.Join(r.opts.AttachmentFilesDir, name))
 				if err != nil {
@@ -546,7 +544,7 @@ func (r *run) writeMessage(
 				}
 				body = applyMentions(string(full), mentions, r.displayName)
 			} else {
-				r.summary.AttachmentsMissing++
+				missing++
 				if archivedID != 0 {
 					archived, err := st.GetMessageBodyText(archivedID)
 					if err != nil {
@@ -597,7 +595,7 @@ func (r *run) writeMessage(
 	if err != nil {
 		return err
 	}
-	writes, err := r.prepareAttachments(ctx, archivedID, attachments)
+	writes, mediaFound, mediaMissing, err := r.prepareAttachments(ctx, archivedID, attachments)
 	if err != nil {
 		return err
 	}
@@ -605,11 +603,15 @@ func (r *run) writeMessage(
 	if p.senderID == r.selfRecipientID {
 		senderAddr = r.opts.Phone
 	}
+	if senderID.Valid {
+		conversation.Participants = []store.ConversationParticipantRef{{ParticipantID: senderID.Int64, Role: "member"}}
+	}
 	data := store.MessagePersistData{
-		Message: &msg, BodyText: sql.NullString{String: body, Valid: body != ""},
+		Conversation: &conversation,
+		Message:      &msg, BodyText: sql.NullString{String: body, Valid: body != ""},
 		RawMIME: raw, RawFormat: rawFormat, Edited: m.OriginalRowID.Valid,
-		MIMEAttachmentReplacement: writes,
-		FTS:                       &store.FTSDoc{Body: body, FromAddr: senderAddr},
+		Attachments: writes,
+		FTS:         &store.FTSDoc{Body: body, FromAddr: senderAddr},
 	}
 	parentID, err := r.quotedMessageID(ctx, p.chatID, m)
 	if err != nil {
@@ -657,15 +659,15 @@ func (r *run) writeMessage(
 	if err != nil {
 		return err
 	}
+	r.summary.AttachmentsFound += found + mediaFound
+	r.summary.AttachmentsMissing += missing + mediaMissing
 	if data.Edited {
 		r.summary.MessagesEdited++
 	}
 	if data.Reactions != nil {
-		r.summary.ReactionsAdded += int64(len(*data.Reactions))
+		r.summary.ReactionsAdded += data.ReactionsAdded
 	}
-	if writes != nil {
-		r.summary.AttachmentsStored += int64(len(*writes))
-	}
+	r.summary.AttachmentsStored += int64(len(writes))
 	if msg.ReplyToMessageID.Valid {
 		r.summary.RepliesLinked++
 	} else if m.QuoteID > 0 && m.QuoteAuthor > 0 && parentID == "" {
@@ -713,30 +715,32 @@ func (r *run) resolveReplies(ctx context.Context) error {
 	return nil
 }
 
-// prepareAttachments builds the snapshot before committing the message. Missing
-// files retain the archived attachment at the same source part key.
-func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachments []sigAttachment) (*[]store.AttachmentWrite, error) {
+// prepareAttachments stores only source parts that are absent from the archive.
+func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachments []sigAttachment) ([]store.AttachmentWrite, int64, int64, error) {
 	var writes []store.AttachmentWrite
+	archived := make(map[string]bool)
 	if archivedID != 0 {
 		refs, err := r.imp.store.MessageMIMEAttachmentsContext(ctx, archivedID)
 		if err != nil {
-			return nil, err
+			return nil, 0, 0, err
 		}
 		for _, ref := range refs {
-			writes = append(writes, store.AttachmentWrite{Filename: ref.Filename, MIMEType: ref.MimeType,
-				StoragePath: ref.StoragePath, ContentHash: ref.ContentHash, Size: int64(ref.Size),
-				MediaType: ref.MediaType, Width: ref.Width, Height: ref.Height,
-				Role: ref.Role, RoleSource: ref.RoleSource, SourcePartKey: ref.SourcePartKey})
+			archived[ref.SourcePartKey] = true
 		}
 	}
+	var found, missing int64
 	for i, a := range attachments {
 		if a.ContentType == "text/x-signal-plain" {
 			continue
 		}
-		r.summary.AttachmentsFound++
+		found++
+		key := fmt.Sprintf("signal:attachment:%d", i)
+		if archived[key] {
+			continue
+		}
 		name, ok := r.files[a.ID]
 		if !ok || r.opts.AttachmentsDir == "" {
-			r.summary.AttachmentsMissing++
+			missing++
 			continue
 		}
 		storagePath, contentHash, size, err := export.StoreAttachmentFromPath(
@@ -746,7 +750,7 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 			r.imp.progress.OnError(fmt.Errorf("store attachment %d: %w", a.ID, err))
 		}
 		if err != nil || storagePath == "" {
-			r.summary.AttachmentsMissing++
+			missing++
 			continue
 		}
 		mediaType := attachmentMediaType(a)
@@ -754,25 +758,11 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 		if mediaType == "sticker" {
 			role, roleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
 		}
-		write := store.AttachmentWrite{Filename: a.FileName, MIMEType: a.ContentType, StoragePath: storagePath,
+		writes = append(writes, store.AttachmentWrite{Filename: a.FileName, MIMEType: a.ContentType, StoragePath: storagePath,
 			ContentHash: contentHash, Size: size, MediaType: mediaType, Width: a.Width, Height: a.Height,
-			Role: role, RoleSource: roleSource, SourcePartKey: fmt.Sprintf("signal:attachment:%d", i)}
-		replaced := false
-		for j := range writes {
-			if writes[j].SourcePartKey == write.SourcePartKey {
-				writes[j] = write
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
-			writes = append(writes, write)
-		}
+			Role: role, RoleSource: roleSource, SourcePartKey: key})
 	}
-	if len(writes) == 0 {
-		return nil, nil
-	}
-	return &writes, nil
+	return writes, found, missing, nil
 }
 
 func millisTime(ms int64) sql.NullTime {

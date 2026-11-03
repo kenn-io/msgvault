@@ -188,18 +188,22 @@ a phone number, their archived messages and group membership follow that contact
 
 Run the command with each newer backup. Every message is identified by its
 chat, author's Signal account ID, and original sent timestamp. A rerun adds
-new messages and updates existing edits, reactions, and attachments without
-duplicating messages. This holds for a
-backup restored on a new phone. Each rerun replaces a message's reactions with
+new messages and updates existing edits and reactions. It reuses archived
+attachment parts and stores newly available parts. Messages and attachment rows
+keep their identities, including after a backup is restored on a new phone. Each rerun replaces a message's reactions with
 the ones in the backup, and a message whose text was removed loses its archived
 text.
+
+Each message commits with its text, attachments, reactions, and sender membership.
+If the import fails or is interrupted, rerun it to finish and repair conversation counts.
+The attachment and reaction additions in the summary count committed additions.
 
 Messages deleted in Signal, including messages later deleted for everyone, stay
 in your archive.
 
 ### Format limits
 
-msgvault reads Signal Android database versions 185 through 215. It refuses
+msgvault reads Signal Android database versions 185 through 330. It refuses
 newer versions before writing to the archive. It reads the version from
 `DatabaseVersion.sbf`; a missing or invalid version file stops the import. Older
 versions and databases missing required tables or columns also stop with an error.

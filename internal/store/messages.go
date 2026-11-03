@@ -96,7 +96,11 @@ type MessagePersistData struct {
 	// Edited records a source edit atomically with the message.
 	Edited bool
 	// Reactions replaces the provider reaction snapshot when non-nil.
-	Reactions                 *[]ReactionRef
+	Reactions *[]ReactionRef
+	// ReactionsAdded reports new reaction identities after a successful persist.
+	ReactionsAdded int64
+	// Attachments adds or updates source parts without replacing archived rows.
+	Attachments               []AttachmentWrite
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -2155,10 +2159,26 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 					return err
 				}
 			}
-			if data.Reactions != nil {
-				if err := s.replaceReactionsWith(q, id, *data.Reactions); err != nil {
+			if len(data.Attachments) > 0 {
+				for _, attachment := range data.Attachments {
+					attachment = attachment.normalized()
+					if err := attachment.validate(); err != nil {
+						return err
+					}
+					if err := s.upsertAttachmentRecord(q, id, attachment); err != nil {
+						return err
+					}
+				}
+				if err := recomputeMessageAttachmentStatsWith(q, id); err != nil {
 					return err
 				}
+			}
+			if data.Reactions != nil {
+				added, err := s.replaceReactionsWith(q, id, *data.Reactions)
+				if err != nil {
+					return err
+				}
+				data.ReactionsAdded = added
 			}
 			if data.Edited {
 				return setMessageEditedStateWith(q, id, true)
@@ -6201,13 +6221,37 @@ func (s *Store) ReplaceReactions(messageID int64, reactions []ReactionRef) error
 // ReplaceReactionsContext honors cancellation during ReplaceReactions.
 func (s *Store) ReplaceReactionsContext(ctx context.Context, messageID int64, reactions []ReactionRef) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return s.replaceReactionsWith(boundQuerier{ctx: ctx, q: tx}, messageID, reactions)
+		_, err := s.replaceReactionsWith(boundQuerier{ctx: ctx, q: tx}, messageID, reactions)
+		return err
 	})
 }
 
-func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []ReactionRef) error {
+func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []ReactionRef) (int64, error) {
+	type identity struct {
+		participant int64
+		kind, value string
+	}
+	seen := make(map[identity]bool)
+	var added int64
+	for _, r := range reactions {
+		if r.ParticipantID == 0 {
+			continue
+		}
+		key := identity{r.ParticipantID, r.Type, r.Value}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		var exists bool
+		if err := q.QueryRow(`SELECT EXISTS (SELECT 1 FROM reactions WHERE message_id = ? AND participant_id = ? AND reaction_type = ? AND reaction_value = ?)`, messageID, r.ParticipantID, r.Type, r.Value).Scan(&exists); err != nil {
+			return 0, err
+		}
+		if !exists {
+			added++
+		}
+	}
 	if _, err := q.Exec(`DELETE FROM reactions WHERE message_id = ?`, messageID); err != nil {
-		return err
+		return 0, err
 	}
 	for _, r := range reactions {
 		if r.ParticipantID == 0 {
@@ -6215,10 +6259,10 @@ func (s *Store) replaceReactionsWith(q querier, messageID int64, reactions []Rea
 		}
 		if _, err := q.Exec(s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO reactions (message_id, participant_id, reaction_type, reaction_value, created_at)
 			VALUES (?, ?, ?, ?, ?)`), messageID, r.ParticipantID, r.Type, r.Value, sql.NullTime{Time: r.CreatedAt, Valid: !r.CreatedAt.IsZero()}); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return added, nil
 }
 
 // UpsertMessageRawWithFormat stores compressed raw data with an explicit format.

@@ -44,13 +44,16 @@ const (
 // Layout selects the column names of a Signal database version.
 type Layout struct {
 	aci, e164, attachment, attachmentMessage, attachmentType string
+	version                                                  int
 }
 
 var (
-	// Current matches database version 215.
-	Current = Layout{"aci", "e164", "attachment", "message_id", "content_type"}
+	// Current matches the reader columns at database version 330.
+	Current = Layout{"aci", "e164", "attachment", "message_id", "content_type", 330}
+	// V215 covers the attachment-table rename.
+	V215 = Layout{"aci", "e164", "attachment", "message_id", "content_type", 215}
 	// V185 matches database versions 185 to 199.
-	V185 = Layout{"uuid", "phone", "part", "mid", "ct"}
+	V185 = Layout{"uuid", "phone", "part", "mid", "ct", 185}
 )
 
 // Write writes a small Signal Android database and an
@@ -64,10 +67,7 @@ func Write(t testing.TB, dir string, layout Layout, offset int64) string {
 	defer func() { require.NoError(t, db.Close()) }()
 
 	id := func(n int64) int64 { return n + offset }
-	version := 215
-	if layout == V185 {
-		version = 185
-	}
+	version := layout.version
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "DatabaseVersion.sbf"), fmt.Appendf(nil, "VERSION:uint32:%d\n", version), 0o600))
 	stmts := []string{
 		fmt.Sprintf(`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, type INTEGER DEFAULT 0,
@@ -99,6 +99,18 @@ func Write(t testing.TB, dir string, layout Layout, offset int64) string {
 	for _, stmt := range stmts {
 		_, err := db.Exec(stmt)
 		require.NoError(t, err, stmt)
+	}
+
+	if layout == Current {
+		// V223 adds nickname precedence; V302 replaces remote_deleted semantics.
+		for _, stmt := range []string{
+			`ALTER TABLE recipient ADD COLUMN nickname_joined_name TEXT DEFAULT NULL`,
+			`ALTER TABLE recipient ADD COLUMN profile_given_name TEXT DEFAULT NULL`,
+			`ALTER TABLE message ADD COLUMN deleted_by INTEGER DEFAULT NULL REFERENCES recipient (_id) ON DELETE CASCADE`,
+		} {
+			_, err := db.Exec(stmt)
+			require.NoError(t, err, stmt)
+		}
 	}
 
 	exec := func(query string, args ...any) {

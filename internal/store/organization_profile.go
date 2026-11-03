@@ -858,7 +858,7 @@ func (s *Store) supersedeOrganizationRowsTx(
 		AND active_until IS NULL AND superseded_at IS NULL`
 	args := []any{organizationID}
 	if len(kept) > 0 {
-		where += ` AND id NOT IN (` + SQLPlaceholders(len(kept)) + `)`
+		where += ` AND id NOT IN (` + placeholders(len(kept)) + `)`
 		for _, id := range kept {
 			args = append(args, id)
 		}
@@ -1029,7 +1029,7 @@ func (s *Store) insertOrganizationProfileRowTx(
 	args = append(args, profileEnvelopeArgs(env)...)
 	query := `INSERT INTO ` + table + ` (` + columns + `, ` +
 		profileEnvelopeWriteColumns + `, created_at, updated_at) VALUES (` +
-		SQLPlaceholders(len(args)) + `, ` + s.dialect.Now() + `, ` + s.dialect.Now() +
+		placeholders(len(args)) + `, ` + s.dialect.Now() + `, ` + s.dialect.Now() +
 		`) RETURNING id`
 	var id int64
 	if err := tx.QueryRowContext(ctx, query, args...).Scan(&id); err != nil {
@@ -1062,8 +1062,7 @@ func resolveOrganizationEnvelopeTx(
 	return env, nil
 }
 
-// SQLPlaceholders returns comma-separated SQL bind markers.
-func SQLPlaceholders(count int) string {
+func placeholders(count int) string {
 	if count <= 0 {
 		return ""
 	}

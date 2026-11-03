@@ -265,7 +265,7 @@ func attachmentWrite(row Row, reference string) (store.AttachmentWrite, error) {
 	return store.AttachmentWrite{
 		Filename:      path.Base(normalizedReference),
 		MIMEType:      mimeType,
-		MediaType:     attachmentMediaType(mimeType),
+		MediaType:     attachmentpolicy.MediaType(mimeType),
 		Metadata:      string(metadata),
 		Role:          store.AttachmentRoleStandalone,
 		RoleSource:    store.AttachmentRoleSourceImporterSemantics,
@@ -285,23 +285,6 @@ func normalizeAttachmentMIME(raw, extension string) string {
 		}
 	}
 	return "application/octet-stream"
-}
-
-// attachmentMediaType maps a normalized MIME type onto the repository's
-// attachment categories. Image, video, and audio keep their MIME prefix;
-// every other file type — including PDFs and unknown content — is a
-// document so document-oriented processing can find it.
-func attachmentMediaType(mimeType string) string {
-	switch {
-	case strings.HasPrefix(mimeType, "image/"):
-		return "image"
-	case strings.HasPrefix(mimeType, "video/"):
-		return "video"
-	case strings.HasPrefix(mimeType, "audio/"):
-		return "audio"
-	default:
-		return "document"
-	}
 }
 
 func attachmentSourceUnavailable(sourcePath string) bool {

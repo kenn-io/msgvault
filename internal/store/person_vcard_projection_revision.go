@@ -322,5 +322,5 @@ func sortedIDPlaceholders(ids []int64) (string, []any) {
 	for i, id := range ids {
 		args[i] = id
 	}
-	return SQLPlaceholders(len(ids)), args
+	return placeholders(len(ids)), args
 }
