@@ -52,7 +52,17 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 func TestMarkdownReportsOpenLoopTruncationOnlyInOmissionFooter(t *testing.T) {
 	got := Markdown(sampleTimeline())
 	assert.NotContains(t, got, "more available")
-	assert.Equal(t, 1, strings.Count(got, "open_loops more"))
+	assert.Equal(t, 1, strings.Count(got, "open more"))
+	assert.NotContains(t, got, "open_loops")
+}
+func TestMarkdownOmissionUsesDisplaySectionNamesAndKeepsCounts(t *testing.T) {
+	v := sampleTimeline()
+	v.Omitted.Budget = map[string]any{"open_loops": 2, "history": 3, "upcoming": 4}
+	got := Markdown(v)
+	assert.Contains(t, got, "open 2")
+	assert.Contains(t, got, "history 3")
+	assert.Contains(t, got, "upcoming 4")
+	assert.NotContains(t, got, "open_loops")
 }
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline()

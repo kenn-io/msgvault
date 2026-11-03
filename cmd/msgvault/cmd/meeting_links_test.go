@@ -103,6 +103,10 @@ func TestMeetingLinkCommands(t *testing.T) {
 			case "suggest":
 				assertions.Equal(tc.args[1], fake.ref)
 				assertions.Contains(out.String(), tc.want)
+				if tc.args[len(tc.args)-1] != "--json" {
+					assertions.Contains(out.String(), "SHARED TITLE WORDS")
+					assertions.NotContains(out.String(), "TITLE TOKENS")
+				}
 				if tc.warning {
 					assertions.Contains(errOut.String(), "some calendar entries could not be fully expanded")
 					assertions.Contains(errOut.String(), "event 99: unsupported recurrence")

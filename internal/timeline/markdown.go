@@ -140,7 +140,7 @@ func Markdown(t *Timeline) string {
 	}
 	var omitted []string
 	for section, n := range t.Omitted.Budget {
-		omitted = append(omitted, fmt.Sprintf("%s %v", section, n))
+		omitted = append(omitted, fmt.Sprintf("%s %v", markdownBudgetSectionName(section), n))
 	}
 	sort.Strings(omitted)
 	if t.Omitted.Noise > 0 {
@@ -178,6 +178,14 @@ func Markdown(t *Timeline) string {
 	}
 	return b.String()
 }
+
+func markdownBudgetSectionName(section string) string {
+	if section == "open_loops" {
+		return "open"
+	}
+	return section
+}
+
 func entryRow(e Entry, loc *time.Location) string {
 	ref := FormatShortRef(e.Ref)
 	clock := e.Time.In(loc).Format("15:04")

@@ -57,6 +57,6 @@ func newSyncCalDAVCmd() *cobra.Command {
 		}
 		return recordSyncAttempt(cmd.Context(), calevent.CalDAVSourceType, source.Name, syncErr)
 	}
-	cmd.Flags().BoolVar(&full, "full", false, "reconcile a complete calendar snapshot")
+	cmd.Flags().BoolVar(&full, "full", false, "Check all events for changes")
 	return addManualSyncCacheFlags(cmd)
 }
