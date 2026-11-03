@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-30"
+last_edited: 2026-11-03
 title: Configuration
 description: Configuration file reference, environment variables, and file locations.
 ---
@@ -1704,6 +1704,38 @@ and MCP server or CLI. Deploy the backend first: an older backend can ignore
 the subthread request and silently omit child chats. Unsupported CLI commands
 and malformed MCP catalogs fail explicitly. Read the [connection and capture limits](usage/inline.md)
 before choosing media caps or configuring a remote daemon.
+
+### `[[facebook_comments]]` {#facebook-comments}
+
+Select one Facebook Page for comment ingestion (unreleased). See
+[Facebook Page comments](usage/facebook-comments.md) for token setup, coverage,
+and recovery. Tokens are read only from the named daemon environment variable.
+
+```toml
+[[facebook_comments]]
+identifier = "example-page"
+app_id = "9"
+page_id = "100"
+token_env = "EXAMPLE_FACEBOOK_PAGE_TOKEN"
+enabled = true
+schedule = "*/30 * * * *"
+```
+
+| Key | Default | Description |
+|---|---|---|
+| `identifier` | required | Local profile label, unique ignoring case; renaming it preserves archive identity |
+| `app_id` | required | Decimal Meta app ID; paired with `page_id` for source and actor identity |
+| `page_id` | required | Decimal selected Page ID; verified against the supplied Page token before registration |
+| `token_env` | required | Explicit environment variable name on the daemon host; no token values or fallback variables |
+| `enabled` | `false` | Enable scheduled sync; manual commands remain available |
+| `schedule` | empty | Five-field cron expression; empty means manual sync only |
+
+`identifier` is trimmed and must be nonempty and unique ignoring case.
+`app_id` and `page_id` must be positive decimal IDs without leading zeros.
+Duplicate app/Page pairs, invalid environment variable names, unknown profile
+keys, and invalid schedules are rejected. The source identifier is
+`app:<app_id>:page:<page_id>`; scheduled jobs use
+`facebook_comments:<source-identifier>`, independently of email account dispatch.
 
 ### `[[chatwoot]]` {#chatwoot}
 
