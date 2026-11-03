@@ -35,6 +35,18 @@ h3 {
   font-weight: 600;
 }
 
+/* The first block sits 12px plus --page-header-gap below the page title.
+   Ordinary parents reserve --field-gap between blocks and block parents
+   reserve 0; --page-header-parent-gap names the parent's gap so the margin
+   cancels it. Full-width panes set --page-header-gap to 0. */
+.kit-page-header {
+  margin-bottom: calc(var(--space-5) + var(--page-header-gap, var(--field-gap)) - var(--page-header-parent-gap, var(--field-gap)));
+}
+
+.kit-page-header + p {
+  margin: 0;
+}
+
 /* Sign-in and boot screens share one narrow column with a brand line. */
 .boot-screen,
 .boot-screen > form {

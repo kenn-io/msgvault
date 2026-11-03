@@ -607,3 +607,24 @@ func TestParticipantDetailUsesParticipantNotFoundError(t *testing.T) {
 	require.NoError(t, json.NewDecoder(response.Body).Decode(&body))
 	assert.Equal(t, "participant_not_found", body.Error)
 }
+
+func TestParticipantDetailReturnsDraftOnlyPerson(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	t.Parallel()
+	engine, _ := newExploreDuckDBFixtureWithClusters(
+		t, exploreFixtureDefaultMessages, exploreFixtureDefaultRecipients, "", 3,
+		identityCacheFixtureOptions{unsentMessages: "(SELECT 3::BIGINT AS message_id)"},
+	)
+	server := newTestServerWithEngine(t, engine)
+
+	response := httptest.NewRecorder()
+	server.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/participants/2", nil))
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var person map[string]any
+	require.NoError(json.Unmarshal(response.Body.Bytes(), &person))
+	assert.Equal("Bob", person["display_label"])
+	assert.InDelta(0, person["activity_count"], 0)
+	assert.NotContains(person, "first_at")
+	assert.NotContains(person, "last_at")
+}

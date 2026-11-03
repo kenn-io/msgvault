@@ -3,6 +3,7 @@ import { expect, test } from '@playwright/test';
 import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
+import { installOperations } from './e2e/fixtures/operations';
 
 test.beforeEach(async ({ page }) => {
   await mockArchiveLayout(page);
@@ -14,7 +15,7 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Relationships', exact: true })).toBeVisible();
 });
 
-test('page content sits one header gap below the divider, and full-width panes meet it', async ({ page }) => {
+test('page content sits one header gap below the page title, and full-width panes sit closest', async ({ page }) => {
   await page.route('**/api/v1/operations/runs**', (route) => route.fulfill({ json: { runs: [], unavailable_kinds: [], membership_revision: 1 } }));
   await stubOperationStatus(page);
   await page.route('**/api/v1/carddav/connections', (route) => route.fulfill({ json: { connections: [] } }));
@@ -46,18 +47,30 @@ test('page content sits one header gap below the divider, and full-width panes m
     }
     if (label === 'Sources') await expect(page.getByRole('table', { name: 'Sources' }).getByText('Archive', { exact: true })).toBeVisible();
     if (label === 'Settings') await expect(page.locator('.kit-settings')).toBeVisible();
-    const header = page.locator('.page-header:visible');
+    const header = page.locator('.kit-page-header:visible');
     await expect(header).toHaveCount(1);
     gaps[label] = await header.evaluate((element) => {
-      const divider = element.getBoundingClientRect().bottom - Number.parseFloat(getComputedStyle(element, '::before').bottom);
       const owner = element.parentElement!;
       let next = element.nextElementSibling;
       if (!next) next = owner.nextElementSibling;
       while (next && (next.getBoundingClientRect().height === 0 || next.classList.contains('kit-sr-only'))) next = next.nextElementSibling;
-      return next!.getBoundingClientRect().top - divider;
+      return next!.getBoundingClientRect().top - element.getBoundingClientRect().bottom;
     });
   }
-  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 0 : 8])));
+  expect(gaps).toEqual(Object.fromEntries(Object.keys(gaps).map((label) => [label, ['People', 'Settings'].includes(label) ? 12 : 20])));
+});
+
+test('Past runs keeps its detail below the dialog header on mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await installOperations(page);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', operationHistory: true }))}`);
+  const dialog = page.getByRole('dialog', { name: 'Past runs' });
+  await dialog.getByRole('button', { name: 'Open Source sync run' }).click();
+  await expect(dialog.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
+  const gap = await dialog.locator('.kit-modal-header').evaluate((header) => (
+    header.nextElementSibling!.firstElementChild!.getBoundingClientRect().top - header.getBoundingClientRect().bottom
+  ));
+  expect(gap).toBe(12);
 });
 
 test('selection bar uses the shared inset and gap', async ({ page }) => {

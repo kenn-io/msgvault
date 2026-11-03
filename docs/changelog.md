@@ -8,21 +8,37 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### API schema 3.39.0
+
+- Staged deletion list summaries include the optional `account` so clients can identify the mailbox for each batch.
+
+### API schema 3.38.0
+
+- Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.38.0 adds optional participant IDs to messages in conversation responses.
+
+### Other changes
+
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
+- Import Telegram Desktop JSON exports with senders, replies, edit markers, and available media using [`import-telegram`](usage/text-messages.md#import-telegram). Overlapping exports add new messages while preserving archived content.
+
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
-- Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.36.0 adds optional participant IDs to messages in conversation responses.
 - The web UI opens Messages first, alongside People, Files, and Sources. Saved views move into the sidebar with Undo, run history opens from the status dot's Past runs menu, and Display combines appearance controls. Old Operations links open Settings Overview, with Past runs open when they include a run, status, or history filter. Old Saved views links open Messages.
+- Each Gmail incremental sync retries messages earlier syncs couldn't download or save, until they're archived or Gmail reports them gone. Failures recorded before upgrading and before the source's latest completed incremental sync aren't retried; run a full sync to recover them. A source with no completed incremental sync retries every recorded failure on its first incremental sync after upgrading.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
+- Opening a person you've only drafted to shows them with no sent or received messages instead of "not found" and hides the relationship calendar; the API omits `first_at` and `last_at` for a person with no sent or received messages, and `pkg/client` declares them as `*time.Time`. A person ID that doesn't exist reads "Person not found." in the web view.
 - Gmail full sync now includes Spam and Trash. Existing archives need an
   explicit unfiltered, unlimited `sync-full` to discover older messages omitted
   by earlier full syncs; that backfill can increase Gmail API use, transfer, and
   local storage. Incremental sync does not backfill old omissions by itself.
 - CLI search JSON, MCP `search_message_bodies`, message details, MCP `get_message` and `search_in_message`, and CLI `show-message --json` and `show-thread --json` report the best-effort flag `hidden_text_present`. True means the stored HTML likely hides readable text. False does not guarantee that text is visible. The check uses inline-style heuristics, `hidden`, and legacy color attributes. Non-blank HTML that fails to parse also sets the flag. Text output from `show-message` and `show-thread` warns on stderr, once per thread page. Archive schema 16 flags older mail during a one-time backfill; new HTML writes refresh the stored flag. API schema 3.30.0 includes the flag in message details and search rows. Daemons older than API schema 3.30.0 report false. Message bodies stay unchanged. The check excludes stylesheets and browser layout.
+- `msgvault update` leaves foreground daemons to their supervisor or the person who started them; `--no-restart` also leaves background daemons stopped.
+- `msgvault serve` now provides native `/mcp` and `/mcp/writes` endpoints, with writes enabled through `--mcp-allow-writes` and the other `--mcp-allow-*` flags. See [native daemon endpoints](usage/chat.md#native-daemon-endpoints).
 - Drafts and unsent messages no longer count as contact in last contact and cadence.
 - Drafts and unsent messages no longer count as contact in relationship temperature, the relationship calendar, the relationships list, person and domain timelines, or chat inbox summaries. Full cache checks at startup, after syncs, and during explicit cache builds detect sent-state changes; automatic refreshes respect the configured minimum rebuild interval. Analytics cache schema 33 triggers a one-time rebuild on upgrade without re-importing messages.
 - Vector search, daemon status, and Explore coverage now say to restart when a rebuild activated settings changed after the daemon started.
+- `import-imessage` copies available local attachments into the archive and reports unavailable and skipped ones in its summary. `--messages-root` selects a copied Messages folder, and `--no-attachments` skips the copy. Voice notes (`.caf`) are kept but not transcribed.
 - Builds use Go 1.27.3, so IMAP connections reject the compromised intermediate certificates listed in [GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809).
 - MCP [`stage_deletion`](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) stages every eligible query match through local or remote daemons, with skipped counts and a 100,000-match limit, instead of stopping at 500 metadata or 100 full-text matches.
 - On Windows, a keyed daemon's first start no longer fails with `provider credential DACL permits inherited access` when a client is polling at the same moment.

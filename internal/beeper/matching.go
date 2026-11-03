@@ -385,13 +385,11 @@ func (m *identityMatcher) matchStableProviderID(
 		}
 		seen[other] = struct{}{}
 
-		pair := newParticipantPair(participantID, other)
-		memoKey := newIdentityMatchMemoKey(
-			pair, store.IdentityMatchStableProviderID,
-			observation.ServiceSlug, observation.ScopeKind, observation.ScopeValue,
-			observation.ProviderUserID,
-		)
-		if _, done := m.resolved[memoKey]; done {
+		memoKey, skip, err := m.stableProviderMatchMemo(ctx, observation, &others[i])
+		if err != nil {
+			return err
+		}
+		if skip {
 			continue
 		}
 
@@ -477,6 +475,34 @@ func (m *identityMatcher) matchStableProviderID(
 		}
 	}
 	return nil
+}
+
+// stableProviderMatchMemo skips settled pairs and shared Telegram keys between
+// Beeper sources. Those keys link Beeper users through an export participant.
+func (m *identityMatcher) stableProviderMatchMemo(
+	ctx context.Context, observation, other *store.ParticipantContactObservation,
+) (identityMatchMemoKey, bool, error) {
+	memoKey := newIdentityMatchMemoKey(
+		newParticipantPair(observation.ParticipantID, other.ParticipantID), store.IdentityMatchStableProviderID,
+		observation.ServiceSlug, observation.ScopeKind, observation.ScopeValue, observation.ProviderUserID,
+	)
+	key := *observation.ProviderUserID
+	if _, done := m.resolved[memoKey]; done || key != telegramUserKey(key[strings.LastIndex(key, ":")+1:]) {
+		return memoKey, done, nil
+	}
+	for _, sourceID := range []*int64{observation.SourceID, other.SourceID} {
+		if sourceID == nil {
+			return memoKey, false, nil
+		}
+		source, err := m.store.GetSourceByIDContext(ctx, *sourceID)
+		if err != nil {
+			return memoKey, false, err
+		}
+		if source.SourceType != sourceTypeBeeper {
+			return memoKey, false, nil
+		}
+	}
+	return memoKey, true, nil
 }
 
 // handleStaleAcceptedMatch converts a concurrent review or participant merge

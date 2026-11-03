@@ -14,7 +14,8 @@ func TestExclusiveMaintenanceLetsScopedConversationFinish(t *testing.T) {
 		t.Run(maintenance, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+			skipUnlessPostgresInternal(t)
+			st := newPGStoreInternal(t)
 			removed, err := st.GetOrCreateSource("discord", "removed-guild")
 			require.NoError(err)
 			retained, err := st.GetOrCreateSource("discord", "retained-guild")
@@ -97,7 +98,8 @@ func TestChannelPurgeLetsOtherSourceSyncFinish(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			st := newPGStoreInternal(t, skipUnlessPostgresInternal(t))
+			skipUnlessPostgresInternal(t)
+			st := newPGStoreInternal(t)
 			removed, err := st.GetOrCreateSource("discord", "removed-guild")
 			require.NoError(err)
 			retained, err := st.GetOrCreateSource("discord", "retained-guild")

@@ -79,7 +79,7 @@ func TestRunServeAllowsDeletionIDsWhileAnalyticsBuildBlocked(t *testing.T) {
 	}
 	waitForServeHealthBounded(t, c.Server.APIPort, errCh)
 
-	client := &http.Client{Timeout: time.Second}
+	client := &http.Client{Timeout: serveLifecycleTestTimeout}
 	resp, err := client.Post(
 		fmt.Sprintf("http://127.0.0.1:%d/api/v1/deletions", c.Server.APIPort),
 		"application/json", strings.NewReader(`{"message_ids":[999999],"dry_run":true}`),

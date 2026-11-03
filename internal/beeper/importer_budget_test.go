@@ -56,6 +56,7 @@ func countBeeperMessages(t *testing.T, imp *Importer) int {
 }
 
 func TestImportStopsAtChatBoundaryAndHoldsWatermark(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -96,6 +97,7 @@ func TestImportStopsAtChatBoundaryAndHoldsWatermark(t *testing.T) {
 }
 
 func TestStoppedImportUpdatesTouchedConversationStats(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -115,6 +117,7 @@ func TestStoppedImportUpdatesTouchedConversationStats(t *testing.T) {
 }
 
 func TestImportStopDuringConversationStatsCompletesSync(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to cancel during conversation stats")
 	for _, budgetExpiry := range []bool{false, true} {
 		name := "yield"
@@ -122,45 +125,45 @@ func TestImportStopDuringConversationStatsCompletesSync(t *testing.T) {
 			name = "budget expiry"
 		}
 		t.Run(name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := newFakeBeeper(t)
-			chat := budgetTestChat("!stats-yield:beeper.local", 2, time.Now().Add(-24*time.Hour))
-			f.addChat(chat)
-			imp, st, done := newTestImporter(t, f)
-			defer done()
-			st.DB().SetMaxOpenConns(1)
+			synctest.Test(t, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				f := newFakeBeeper(t)
+				chat := budgetTestChat("!stats-yield:beeper.local", 2, time.Now().Add(-24*time.Hour))
+				f.addChat(chat)
+				imp, st := newHandlerTestImporter(t, f)
+				st.DB().SetMaxOpenConns(1)
 
-			_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-			require.NoError(err)
-			source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
-			require.NoError(err)
+				_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+				require.NoError(err)
+				source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+				require.NoError(err)
 
-			ctx, cancel := context.WithCancel(context.Background())
-			t.Cleanup(cancel)
-			statsStarted := make(chan struct{})
-			var startOnce sync.Once
-			var stopAt time.Time
-			conn, err := st.DB().Conn(context.Background())
-			require.NoError(err)
-			err = conn.Raw(func(driverConn any) error {
-				sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-				require.True(ok, "driver connection is SQLite")
-				return sqliteConn.RegisterFunc("wait_for_beeper_stats_yield", func() (int, error) {
-					startOnce.Do(func() { close(statsStarted) })
-					if !stopAt.IsZero() {
-						timer := time.NewTimer(time.Until(stopAt))
-						defer timer.Stop()
-						<-timer.C
-						return 0, errors.New("conversation stats interrupted at scheduled budget boundary")
-					}
-					<-ctx.Done()
-					return 0, nil
-				}, true)
-			})
-			require.NoError(err)
-			require.NoError(conn.Close())
-			_, err = st.DB().Exec(`
+				ctx, cancel := context.WithCancel(context.Background())
+				t.Cleanup(cancel)
+				statsStarted := make(chan struct{})
+				var startOnce sync.Once
+				var stopAt time.Time
+				conn, err := st.DB().Conn(context.Background())
+				require.NoError(err)
+				err = conn.Raw(func(driverConn any) error {
+					sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+					require.True(ok, "driver connection is SQLite")
+					return sqliteConn.RegisterFunc("wait_for_beeper_stats_yield", func() (int, error) {
+						startOnce.Do(func() { close(statsStarted) })
+						if !stopAt.IsZero() {
+							timer := time.NewTimer(time.Until(stopAt))
+							defer timer.Stop()
+							<-timer.C
+							return 0, errors.New("conversation stats interrupted at scheduled budget boundary")
+						}
+						<-ctx.Done()
+						return 0, nil
+					}, true)
+				})
+				require.NoError(err)
+				require.NoError(conn.Close())
+				_, err = st.DB().Exec(`
 				CREATE TRIGGER wait_during_beeper_stats
 				BEFORE UPDATE OF message_count ON conversations
 				WHEN NEW.message_count != OLD.message_count
@@ -168,176 +171,180 @@ func TestImportStopDuringConversationStatsCompletesSync(t *testing.T) {
 					SELECT wait_for_beeper_stats_yield();
 				END
 			`)
-			require.NoError(err)
-			f.appendMsg(chat.ID, fakeMsg{
-				ID: "!stats-yield:beeper.local-2", SortKey: 2,
-				Timestamp: time.Now().Add(-23 * time.Hour),
-				Text:      "new message",
-				SenderID:  "@signal_ann:beeper.local", SenderName: "Ann",
-			})
+				require.NoError(err)
+				f.appendMsg(chat.ID, fakeMsg{
+					ID: "!stats-yield:beeper.local-2", SortKey: 2,
+					Timestamp: time.Now().Add(-23 * time.Hour),
+					Text:      "new message",
+					SenderID:  "@signal_ann:beeper.local", SenderName: "Ann",
+				})
 
-			type importResult struct {
-				sum *ImportSummary
-				err error
-			}
-			resultCh := make(chan importResult, 1)
-			options := ImportOptions{AccountID: "signal"}
-			if budgetExpiry {
-				stopAt = time.Now().Add(time.Second)
-				options.StopAt = stopAt
-			} else {
-				options.ShouldStop = func() bool {
-					return ctx.Err() != nil
+				type importResult struct {
+					sum *ImportSummary
+					err error
 				}
-			}
-			go func() {
-				sum, importErr := imp.Import(ctx, options)
-				resultCh <- importResult{sum: sum, err: importErr}
-			}()
-			select {
-			case <-statsStarted:
-			case <-time.After(10 * time.Second):
-				require.FailNow("conversation stats update did not reach cancellation trigger")
-			}
-			if !budgetExpiry {
-				cancel()
-			}
-			var result importResult
-			select {
-			case result = <-resultCh:
-			case <-time.After(10 * time.Second):
-				require.FailNow("stop during conversation stats did not stop the scheduled import")
-			}
-			require.NoError(result.err, "stopping during local maintenance completes the sync normally")
-			require.NotNil(result.sum)
-			assert.True(result.sum.Stopped)
-			run, err := st.GetLastSuccessfulSync(source.ID)
-			require.NoError(err)
-			assert.Equal("completed", run.Status)
-			_, err = st.DB().Exec(`DROP TRIGGER wait_during_beeper_stats`)
-			require.NoError(err)
+				resultCh := make(chan importResult, 1)
+				options := ImportOptions{AccountID: "signal"}
+				if budgetExpiry {
+					stopAt = time.Now().Add(time.Second)
+					options.StopAt = stopAt
+				} else {
+					options.ShouldStop = func() bool {
+						return ctx.Err() != nil
+					}
+				}
+				go func() {
+					sum, importErr := imp.Import(ctx, options)
+					resultCh <- importResult{sum: sum, err: importErr}
+				}()
+				select {
+				case <-statsStarted:
+				case <-time.After(10 * time.Second):
+					require.FailNow("conversation stats update did not reach cancellation trigger")
+				}
+				if !budgetExpiry {
+					cancel()
+				}
+				var result importResult
+				select {
+				case result = <-resultCh:
+				case <-time.After(10 * time.Second):
+					require.FailNow("stop during conversation stats did not stop the scheduled import")
+				}
+				require.NoError(result.err, "stopping during local maintenance completes the sync normally")
+				require.NotNil(result.sum)
+				assert.True(result.sum.Stopped)
+				run, err := st.GetLastSuccessfulSync(source.ID)
+				require.NoError(err)
+				assert.Equal("completed", run.Status)
+				_, err = st.DB().Exec(`DROP TRIGGER wait_during_beeper_stats`)
+				require.NoError(err)
 
-			_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-			require.NoError(err, "the next scheduled run resumes after the stats pass was deferred")
-			assert.Equal(3, countBeeperMessages(t, imp))
-			var count int
-			var preview string
-			require.NoError(st.DB().QueryRow(`
+				_, err = imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+				require.NoError(err, "the next scheduled run resumes after the stats pass was deferred")
+				assert.Equal(3, countBeeperMessages(t, imp))
+				var count int
+				var preview string
+				require.NoError(st.DB().QueryRow(`
 				SELECT message_count, COALESCE(last_message_preview, '') FROM conversations
 			`).Scan(&count, &preview))
-			assert.Equal(3, count, "the resumed run must recompute stats after the prior stats pass yielded")
-			assert.Equal("new message", preview,
-				"the resumed run must refresh the conversation preview after the prior stats pass yielded")
+				assert.Equal(3, count, "the resumed run must recompute stats after the prior stats pass yielded")
+				assert.Equal("new message", preview,
+					"the resumed run must refresh the conversation preview after the prior stats pass yielded")
+			})
 		})
 	}
 }
 
 func TestQuietRosterStatsBudgetExpiryCompletesMessageSync(t *testing.T) {
+	t.Parallel()
 	testutil.SkipIfPostgres(t, "uses a SQLite trigger to expire the budget during quiet-roster stats")
-	require := require.New(t)
-	assertions := assert.New(t)
-	f := newFakeBeeper(t)
-	quiet := mediaChat()
-	f.addChat(quiet)
-	active := mediaChat()
-	active.ID = "!active-roster-stats:beeper.local"
-	active.LastActivity = time.Now().UTC()
-	active.Msgs = nil
-	f.addChat(active)
-	imp, st, done := newTestImporter(t, f)
-	defer done()
-	st.DB().SetMaxOpenConns(1)
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", NoMedia: true})
-	require.NoError(err)
-	source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
-	require.NoError(err)
-	staleSourceSync := time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), staleSourceSync, source.ID)
-	require.NoError(err)
-	var conversationID int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assertions := assert.New(t)
+		f := newFakeBeeper(t)
+		quiet := mediaChat()
+		f.addChat(quiet)
+		active := mediaChat()
+		active.ID = "!active-roster-stats:beeper.local"
+		active.LastActivity = time.Now().UTC()
+		active.Msgs = nil
+		f.addChat(active)
+		imp, st := newHandlerTestImporter(t, f)
+		st.DB().SetMaxOpenConns(1)
+		_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal", NoMedia: true})
+		require.NoError(err)
+		source, err := st.GetOrCreateSource(sourceTypeBeeper, "signal")
+		require.NoError(err)
+		staleSourceSync := time.Date(1990, time.January, 1, 0, 0, 0, 0, time.UTC)
+		_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = ? WHERE id = ?`), staleSourceSync, source.ID)
+		require.NoError(err)
+		var conversationID int64
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations
 		WHERE source_id = ? AND source_conversation_id = ?`), source.ID, quiet.ID).Scan(&conversationID))
-	require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: "{}", Valid: true}))
-	f.mu.Lock()
-	quiet.Participants = append(quiet.Participants, map[string]any{
-		"id": "@signal_bob:beeper.local", "fullName": "Bob",
-	})
-	f.mu.Unlock()
+		require.NoError(st.SetConversationMetadata(conversationID, sql.NullString{String: "{}", Valid: true}))
+		f.mu.Lock()
+		quiet.Participants = append(quiet.Participants, map[string]any{
+			"id": "@signal_bob:beeper.local", "fullName": "Bob",
+		})
+		f.mu.Unlock()
 
-	statsStarted := make(chan struct{})
-	var startOnce sync.Once
-	var stopAt time.Time
-	conn, err := st.DB().Conn(context.Background())
-	require.NoError(err)
-	err = conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		require.True(ok, "driver connection is SQLite")
-		return sqliteConn.RegisterFunc("wait_for_quiet_roster_stats", func() (int, error) {
-			startOnce.Do(func() { close(statsStarted) })
-			timer := time.NewTimer(time.Until(stopAt))
-			defer timer.Stop()
-			<-timer.C
-			return 0, errors.New("quiet-roster stats reached the scheduled budget boundary")
-		}, true)
-	})
-	require.NoError(err)
-	require.NoError(conn.Close())
-	_, err = st.DB().Exec(`CREATE TRIGGER wait_during_quiet_roster_stats
+		statsStarted := make(chan struct{})
+		var startOnce sync.Once
+		var stopAt time.Time
+		conn, err := st.DB().Conn(context.Background())
+		require.NoError(err)
+		err = conn.Raw(func(driverConn any) error {
+			sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+			require.True(ok, "driver connection is SQLite")
+			return sqliteConn.RegisterFunc("wait_for_quiet_roster_stats", func() (int, error) {
+				startOnce.Do(func() { close(statsStarted) })
+				timer := time.NewTimer(time.Until(stopAt))
+				defer timer.Stop()
+				<-timer.C
+				return 0, errors.New("quiet-roster stats reached the scheduled budget boundary")
+			}, true)
+		})
+		require.NoError(err)
+		require.NoError(conn.Close())
+		_, err = st.DB().Exec(`CREATE TRIGGER wait_during_quiet_roster_stats
 		BEFORE UPDATE OF participant_count ON conversations
 		WHEN NEW.participant_count != OLD.participant_count
 		BEGIN
 			SELECT wait_for_quiet_roster_stats();
 		END`)
-	require.NoError(err)
-	defer func() {
-		_, dropErr := st.DB().Exec(`DROP TRIGGER IF EXISTS wait_during_quiet_roster_stats`)
-		require.NoError(dropErr)
-	}()
+		require.NoError(err)
+		defer func() {
+			_, dropErr := st.DB().Exec(`DROP TRIGGER IF EXISTS wait_during_quiet_roster_stats`)
+			require.NoError(dropErr)
+		}()
 
-	stopAt = time.Now().Add(10 * time.Second)
-	type importResult struct {
-		sum *ImportSummary
-		err error
-	}
-	resultCh := make(chan importResult, 1)
-	go func() {
-		sum, importErr := imp.Import(context.Background(), ImportOptions{
-			AccountID: "signal", NoMedia: true, StopAt: stopAt,
-		})
-		resultCh <- importResult{sum: sum, err: importErr}
-	}()
-	select {
-	case <-statsStarted:
-	case result := <-resultCh:
-		require.FailNow("quiet roster import ended before its stats refresh", "error: %v", result.err)
-	case <-time.After(15 * time.Second):
-		require.FailNow("quiet roster stats refresh did not reach the budget trigger")
-	}
-	var result importResult
-	select {
-	case result = <-resultCh:
-	case <-time.After(30 * time.Second):
-		require.FailNow("scheduled quiet-roster stats expiry did not finalize the import")
-	}
-	require.NoError(result.err, "optional stats expiry must not fail completed message work")
-	require.NotNil(result.sum)
-	assertions.False(result.sum.Stopped, "message sync completed before optional roster maintenance")
-	assertions.Zero(result.sum.Errors)
-	state := latestBeeperState(t, imp)
-	require.NotNil(state.Chats[quiet.ID])
-	assertions.NotEmpty(state.Chats[quiet.ID].RosterRetryAfter, "interrupted stats refresh must persist backoff")
-	ids, err := st.ListUnresolvedConversationIDs(context.Background(), source.ID)
-	require.NoError(err)
-	assertions.Equal([]string{quiet.ID}, ids, "the incomplete stats refresh must remain pending for retry")
-	run, err := st.GetLastSuccessfulSync(source.ID)
-	require.NoError(err)
-	assertions.Equal("completed", run.Status)
-	src, err := st.GetSourceByID(source.ID)
-	require.NoError(err)
-	assertions.True(src.LastSyncAt.Valid, "optional roster work must not withhold message sync freshness")
-	assertions.True(src.LastSyncAt.Time.After(staleSourceSync), "the budget-expired sync must advance the stale source timestamp")
+		stopAt = time.Now().Add(10 * time.Second)
+		type importResult struct {
+			sum *ImportSummary
+			err error
+		}
+		resultCh := make(chan importResult, 1)
+		go func() {
+			sum, importErr := imp.Import(context.Background(), ImportOptions{
+				AccountID: "signal", NoMedia: true, StopAt: stopAt,
+			})
+			resultCh <- importResult{sum: sum, err: importErr}
+		}()
+		select {
+		case <-statsStarted:
+		case result := <-resultCh:
+			require.FailNow("quiet roster import ended before its stats refresh", "error: %v", result.err)
+		case <-time.After(15 * time.Second):
+			require.FailNow("quiet roster stats refresh did not reach the budget trigger")
+		}
+		var result importResult
+		select {
+		case result = <-resultCh:
+		case <-time.After(30 * time.Second):
+			require.FailNow("scheduled quiet-roster stats expiry did not finalize the import")
+		}
+		require.NoError(result.err, "optional stats expiry must not fail completed message work")
+		require.NotNil(result.sum)
+		assertions.False(result.sum.Stopped, "message sync completed before optional roster maintenance")
+		assertions.Zero(result.sum.Errors)
+		state := latestBeeperState(t, imp)
+		require.NotNil(state.Chats[quiet.ID])
+		assertions.NotEmpty(state.Chats[quiet.ID].RosterRetryAfter, "interrupted stats refresh must persist backoff")
+		ids, err := st.ListUnresolvedConversationIDs(context.Background(), source.ID)
+		require.NoError(err)
+		assertions.Equal([]string{quiet.ID}, ids, "the incomplete stats refresh must remain pending for retry")
+		run, err := st.GetLastSuccessfulSync(source.ID)
+		require.NoError(err)
+		assertions.Equal("completed", run.Status)
+		src, err := st.GetSourceByID(source.ID)
+		require.NoError(err)
+		assertions.True(src.LastSyncAt.Valid, "optional roster work must not withhold message sync freshness")
+		assertions.True(src.LastSyncAt.Time.After(staleSourceSync), "the budget-expired sync must advance the stale source timestamp")
+	})
 }
 
+// serial: changes routeProbeTimeout.
 func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 	testutil.SkipIfPostgres(t, "uses a SQLite function to slow quiet-roster writes")
 	assertions, requirements := assert.New(t), require.New(t)
@@ -404,6 +411,7 @@ func TestQuietRosterRepairWritesOutlastProbeTimeout(t *testing.T) {
 }
 
 func TestImportStopsBeforeStaleRederivationWhenBudgetIsSpent(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -429,6 +437,7 @@ func TestImportStopsBeforeStaleRederivationWhenBudgetIsSpent(t *testing.T) {
 }
 
 func TestImportStopsAtBackfillPageBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -457,6 +466,7 @@ func TestImportStopsAtBackfillPageBoundary(t *testing.T) {
 }
 
 func TestImportStopsAfterIncrementalPageAndResumesFromCursor(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -519,13 +529,12 @@ func (h handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
+	t.Parallel()
 	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	f := newFakeBeeper(t)
 	chat := budgetTestChat("!deadline:beeper.local", 2, base)
 	f.addChat(chat)
-	client := NewClient("http://beeper.test", testToken, 10000)
-	client.http.Transport = handlerTransport(f.handler())
-	imp := NewImporter(testutil.NewTestStore(t), client)
+	imp, _ := newHandlerTestImporter(t, f)
 	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
 	require.NoError(t, err)
 	f.appendMsg(chat.ID, fakeMsg{
@@ -562,6 +571,7 @@ func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
 }
 
 func TestImportStopsAfterReconcilePage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
@@ -598,6 +608,7 @@ func TestImportStopsAfterReconcilePage(t *testing.T) {
 }
 
 func TestImportStopsChatEnumerationAtPageBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	base := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
@@ -633,6 +644,7 @@ func TestImportStopsChatEnumerationAtPageBoundary(t *testing.T) {
 	assert.Equal(1, searchPages, "enumeration yields before fetching another page")
 }
 
+// serial: changes tailScanInterval.
 func TestImportResumesTailProbeAfterBudgetStop(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -689,6 +701,7 @@ func latestBeeperState(t *testing.T, imp *Importer) *SyncState {
 }
 
 func TestImportRunsTailsBeforeBackfill(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	now := time.Now().UTC().Truncate(time.Second)
 	f := newFakeBeeper(t)
@@ -727,59 +740,64 @@ func TestImportRunsTailsBeforeBackfill(t *testing.T) {
 	assert.Less(t, tailAt, backlogAt, "incremental tails run before history backfill")
 }
 
+// serial: changes tailScanInterval.
 func TestImportTailScanProgressesAcrossBudgetedRuns(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	base := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(time.Second)
 	f := newFakeBeeper(t)
-	for i := range 4 {
-		f.addChat(budgetTestChat("!quiet"+strconv.Itoa(i)+":beeper.local", 3, base.Add(time.Duration(i)*time.Hour)))
-	}
-	imp, st, done := newTestImporter(t, f)
-	defer done()
-	_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
-	require.NoError(err, "first run finishes every chat and a tail scan")
-
-	oldInterval := tailScanInterval
-	tailScanInterval = 0
-	t.Cleanup(func() { tailScanInterval = oldInterval })
-	src, err := st.GetOrCreateSource("beeper", "signal")
-	require.NoError(err)
-	lastTailScan := func() string {
-		run, err := st.GetLastSuccessfulSync(src.ID)
-		require.NoError(err)
-		state, err := LoadSyncState(run.CursorAfter.String)
-		require.NoError(err)
-		return state.LastTailScan
-	}
-	before := lastTailScan()
-	time.Sleep(1100 * time.Millisecond) //nolint:kennlint // sleeptest: waits for SQLite's second-precision tail-scan timestamp to advance
-
-	// Stop after three completed chats, then finish the remaining probe on the
-	// next scheduled run.
-	completedChats := 0
-	budgetedRun := func() ImportOptions {
-		completedChats = 0
-		return ImportOptions{
-			AccountID:  "signal",
-			ShouldStop: func() bool { return completedChats >= 3 },
-			Progress:   func(string) { completedChats++ },
+	imp, st := newHandlerTestImporter(t, f)
+	synctest.Test(t, func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		// Connections opened by the import own timers that must close inside the bubble.
+		t.Cleanup(func() { require.NoError(st.Close()) })
+		base := time.Now().Add(-40 * 24 * time.Hour).UTC().Truncate(time.Second)
+		for i := range 4 {
+			f.addChat(budgetTestChat("!quiet"+strconv.Itoa(i)+":beeper.local", 3, base.Add(time.Duration(i)*time.Hour)))
 		}
-	}
-	sum, err := imp.Import(context.Background(), budgetedRun())
-	require.NoError(err)
-	require.True(sum.Stopped)
-	assert.Equal(before, lastTailScan(), "an unfinished tail scan is not recorded")
+		_, err := imp.Import(context.Background(), ImportOptions{AccountID: "signal"})
+		require.NoError(err, "first run finishes every chat and a tail scan")
 
-	sum, err = imp.Import(context.Background(), budgetedRun())
-	require.NoError(err)
-	assert.False(sum.Stopped, "the second run resumes the scan instead of restarting it")
-	assert.NotEqual(before, lastTailScan(), "the scan completes across budgeted runs")
+		oldInterval := tailScanInterval
+		tailScanInterval = 0
+		t.Cleanup(func() { tailScanInterval = oldInterval })
+		src, err := st.GetOrCreateSource("beeper", "signal")
+		require.NoError(err)
+		lastTailScan := func() string {
+			run, err := st.GetLastSuccessfulSync(src.ID)
+			require.NoError(err)
+			state, err := LoadSyncState(run.CursorAfter.String)
+			require.NoError(err)
+			return state.LastTailScan
+		}
+		before := lastTailScan()
+		time.Sleep(1100 * time.Millisecond)
+
+		// Stop after three completed chats, then finish the remaining probe on the
+		// next scheduled run.
+		completedChats := 0
+		budgetedRun := func() ImportOptions {
+			completedChats = 0
+			return ImportOptions{
+				AccountID:  "signal",
+				ShouldStop: func() bool { return completedChats >= 3 },
+				Progress:   func(string) { completedChats++ },
+			}
+		}
+		sum, err := imp.Import(context.Background(), budgetedRun())
+		require.NoError(err)
+		require.True(sum.Stopped)
+		assert.Equal(before, lastTailScan(), "an unfinished tail scan is not recorded")
+
+		sum, err = imp.Import(context.Background(), budgetedRun())
+		require.NoError(err)
+		assert.False(sum.Stopped, "the second run resumes the scan instead of restarting it")
+		assert.NotEqual(before, lastTailScan(), "the scan completes across budgeted runs")
+	})
 }
 
 // Every tick gets the same small budget. Completed chats must not consume
 // that budget again while later chats still need their first visit.
 func TestImportBudgetedCycleReachesEveryChat(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	f := newFakeBeeper(t)
@@ -813,6 +831,7 @@ func TestImportBudgetedCycleReachesEveryChat(t *testing.T) {
 }
 
 func TestImportCleanupDeadlineAfterEarlyPreemption(t *testing.T) {
+	t.Parallel()
 	synctest.Test(t, func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -827,6 +846,7 @@ func TestImportCleanupDeadlineAfterEarlyPreemption(t *testing.T) {
 }
 
 func TestConversationStatsContextUsesCallerBudget(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	parent, cancelParent := context.WithTimeout(context.Background(), time.Hour)
@@ -862,6 +882,7 @@ func TestConversationStatsContextUsesCallerBudget(t *testing.T) {
 }
 
 func TestImportBudgetAtCompletedChatStillAdvancesCycle(t *testing.T) {
+	t.Parallel()
 	f := newFakeBeeper(t)
 	for _, id := range []string{"!one:beeper.local", "!two:beeper.local", "!three:beeper.local"} {
 		f.addChat(budgetTestChat(id, 2, time.Now().Add(-48*time.Hour)))

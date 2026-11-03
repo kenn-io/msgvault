@@ -96,6 +96,9 @@ type Syncer struct {
 	successfulHookName string
 	successfulHook     SuccessfulSyncHook
 
+	acquisitionSyncID   int64
+	pendingAcquisitions map[string]struct{}
+
 	// failedRelocationGuards holds run-scoped protection for forced
 	// relocation targets that failed this run. It is set only on the scoped
 	// Syncer copy a single full() run uses and never persists.
@@ -1333,6 +1336,13 @@ func (s *Syncer) full(
 	scoped.failedRelocationGuards = newFailedRelocationGuards()
 	s = &scoped
 	summary.SyncRunID = state.syncID
+
+	if s.opts.SourceType != sourceTypeIMAP {
+		if err := s.initAcquisitionReplay(ctx, source.ID, state.syncID); err != nil {
+			s.failStoppedSync(state.syncID, err)
+			return nil, fmt.Errorf("find pending acquisition replays: %w", err)
+		}
+	}
 	summary.WasResumed = state.wasResumed
 	summary.ResumedFromToken = state.pageToken
 
@@ -1887,17 +1897,19 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 
 	// Persist atomically
 	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
-		Message:    data.message,
-		Metadata:   data.metadata,
-		BodyText:   sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML:   sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:    data.rawMIME,
-		Recipients: recipientSets,
-		LabelIDs:   labelIDs,
+		Message:     data.message,
+		Metadata:    data.metadata,
+		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:    sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:     data.rawMIME,
+		Recipients:  recipientSets,
+		LabelIDs:    labelIDs,
+		SyncRunItem: s.acquisitionResolution(data.message.SourceMessageID),
 	})
 	if err != nil {
 		return 0, err
 	}
+	delete(s.pendingAcquisitions, data.message.SourceMessageID)
 
 	// Store attachments (best-effort, file I/O outside transaction)
 	if s.opts.AttachmentsDir != "" && len(data.attachments) > 0 {

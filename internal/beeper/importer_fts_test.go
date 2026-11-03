@@ -16,6 +16,7 @@ import (
 // and skipped on PostgreSQL, which uses a tsvector column instead of the
 // messages_fts vtable (fbmessenger FTS test pattern).
 func TestImportIndexesFTS(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	testutil.SkipIfPostgres(t, "directly MATCH-queries the SQLite FTS5 vtable")

@@ -166,6 +166,7 @@ func deliveryRows(t *testing.T, st *store.Store, destination string) []deliveryR
 }
 
 func TestBeeperMediaSubmission(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	wav := syntheticWAV(1600, 1)
@@ -222,6 +223,7 @@ func TestBeeperMediaSubmission(t *testing.T) {
 // operation gate. The archive changes only while the gate is held, and no
 // Docbank request runs under it.
 func TestBeeperMediaGatedWrites(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -301,6 +303,7 @@ func mediaArchiveState(t *testing.T, st *store.Store) []string {
 }
 
 func TestBeeperMediaSyncIsolation(t *testing.T) {
+	t.Parallel()
 	for fault, wantCode := range map[string]string{
 		"http-503": "server_error", "malformed-json": "invalid_receipt", "wait-for-cancel": "",
 	} {
@@ -363,6 +366,7 @@ func TestBeeperMediaSyncIsolation(t *testing.T) {
 }
 
 func TestBeeperMediaRestart(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -400,6 +404,7 @@ func TestBeeperMediaRestart(t *testing.T) {
 // TestBeeperMediaStepTimeout keeps a step that outlives its own deadline from
 // holding the queue: it backs off like a transport fault and the next item runs.
 func TestBeeperMediaStepTimeout(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t,
@@ -451,6 +456,7 @@ func TestBeeperMediaStepTimeout(t *testing.T) {
 // TestBeeperMediaStatusRejection keeps a queued job after a rejected poll and
 // resumes observing it when the daemon restarts.
 func TestBeeperMediaStatusRejection(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -493,6 +499,7 @@ func TestBeeperMediaStatusRejection(t *testing.T) {
 // TestBeeperMediaCoverageAfterJob keeps observing a completed job until
 // Docbank publishes its coverage.
 func TestBeeperMediaCoverageAfterJob(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -526,6 +533,7 @@ func TestBeeperMediaCoverageAfterJob(t *testing.T) {
 // TestBeeperMediaProcessingFailure records Docbank's failed processing
 // receipt, which has no job, as a terminal result and sends no more retries.
 func TestBeeperMediaProcessingFailure(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -557,6 +565,7 @@ func TestBeeperMediaProcessingFailure(t *testing.T) {
 // own receipt. Docbank's source status names the newest operation but takes
 // coverage from the newest succeeded one on the same audio.
 func TestBeeperMediaCoverageOwnership(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	wav := syntheticWAV(800, 16)
@@ -623,6 +632,7 @@ func TestBeeperMediaCoverageOwnership(t *testing.T) {
 // TestBeeperMediaLargeUpload gives a large upload time proportional to its
 // size, so a slow but working link retains it instead of retrying forever.
 func TestBeeperMediaLargeUpload(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	wav := syntheticWAV(800, 17)
@@ -662,6 +672,7 @@ func TestBeeperMediaLargeUpload(t *testing.T) {
 // TestBeeperMediaHiddenPending retires a pending row whose message is hidden
 // before upload, sends nothing for it, and reopens it if the message returns.
 func TestBeeperMediaHiddenPending(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	hidden, live := syntheticWAV(800, 18), syntheticWAV(800, 19)
@@ -710,6 +721,7 @@ func TestBeeperMediaHiddenPending(t *testing.T) {
 }
 
 func TestBeeperMediaRetainActionFence(t *testing.T) {
+	t.Parallel()
 	for _, mutation := range []struct {
 		name  string
 		apply func(*testing.T, *mediaWorld, store.BeeperMediaOperation)
@@ -805,6 +817,7 @@ func TestBeeperMediaRetainActionFence(t *testing.T) {
 }
 
 func TestBeeperMediaArtifactActionFence(t *testing.T) {
+	t.Parallel()
 	for _, shared := range []bool{false, true} {
 		for _, mutation := range []string{"dedup-hide", "source-delete", "attachment-replacement"} {
 			name := "single-" + mutation
@@ -925,6 +938,7 @@ func TestBeeperMediaArtifactActionFence(t *testing.T) {
 }
 
 func TestBeeperMediaProcessSupplierRace(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/race",
@@ -972,6 +986,7 @@ func TestBeeperMediaProcessSupplierRace(t *testing.T) {
 }
 
 func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"pending", "source_unavailable"} {
 		t.Run(state, func(t *testing.T) {
 			require := require.New(t)
@@ -1076,6 +1091,7 @@ func TestBeeperMediaProcessRaceKeepsPendingSupplier(t *testing.T) {
 }
 
 func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/revoked-job",
@@ -1131,6 +1147,7 @@ func TestBeeperMediaStartedJobAfterRevocation(t *testing.T) {
 }
 
 func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		sourceVault    string
@@ -1184,6 +1201,7 @@ func TestBeeperMediaRevokedObservingVaultMismatch(t *testing.T) {
 }
 
 func TestBeeperMediaTerminalJobBeforeSourceStatus(t *testing.T) {
+	t.Parallel()
 	for _, state := range []string{"failed", "abandoned"} {
 		t.Run(state, func(t *testing.T) {
 			require := require.New(t)
@@ -1212,6 +1230,7 @@ func TestBeeperMediaTerminalJobBeforeSourceStatus(t *testing.T) {
 }
 
 func TestBeeperMediaCASBoundary(t *testing.T) {
+	t.Parallel()
 	wav := syntheticWAV(800, 4)
 	digest := sha256Hex(wav)
 	descriptor := MediaDescriptor{SourceSHA256: digest, ByteLength: int64(len(wav)),
@@ -1262,6 +1281,7 @@ func TestBeeperMediaCASBoundary(t *testing.T) {
 }
 
 func TestBeeperMediaTranscriptBoundary(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	long := strings.TrimSpace(strings.Repeat("long provider words ", 2000))
@@ -1299,6 +1319,7 @@ func TestBeeperMediaTranscriptBoundary(t *testing.T) {
 }
 
 func TestBeeperMediaReceiptIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -1326,6 +1347,7 @@ func TestBeeperMediaReceiptIdentity(t *testing.T) {
 }
 
 func TestStoredMediaSharedLifecycle(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	wav := syntheticWAV(800, 7)
@@ -1412,6 +1434,7 @@ func TestStoredMediaSharedLifecycle(t *testing.T) {
 }
 
 func TestBeeperMediaEligibility(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	voice, ordinary := syntheticWAV(800, 8), syntheticWAV(900, 9)
@@ -1465,6 +1488,7 @@ func TestBeeperMediaEligibility(t *testing.T) {
 }
 
 func TestBeeperMediaAdmissionGaps(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t,
@@ -1558,6 +1582,7 @@ func TestBeeperMediaAdmissionGaps(t *testing.T) {
 // TestBeeperMediaAliasIdentity sends verified WAV and MP3 under the labels
 // Docbank accepts, whatever MIME alias or extension the provider reported.
 func TestBeeperMediaAliasIdentity(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t,
@@ -1592,6 +1617,7 @@ func TestBeeperMediaAliasIdentity(t *testing.T) {
 // TestBeeperMediaSpoolUnavailable waits out a local spool failure as a source
 // gap with a five-minute retry instead of a permanent transport block.
 func TestBeeperMediaSpoolUnavailable(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
@@ -1725,8 +1751,70 @@ func newFakeDocbank(t *testing.T) *fakeDocbank {
 	return f
 }
 
+func TestFakeDocbankUploadCancellation(t *testing.T) {
+	for _, path := range []string{"/api/v1/media/sources", "/api/v1/media/sources/source-1/artifacts"} {
+		for _, cancelled := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/cancelled=%t", path, cancelled), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				docbank := &fakeDocbank{t: t}
+				started, finished := make(chan struct{}), make(chan struct{})
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					defer close(finished)
+					close(started)
+					docbank.ServeHTTP(w, r)
+				}))
+				defer server.Close()
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				reader, writer := io.Pipe()
+				defer func() {
+					_ = reader.Close()
+					_ = writer.Close()
+				}()
+				req, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL+path, reader)
+				require.NoError(err)
+				req.Header.Set("X-Api-Key", docbankTestKey)
+				req.Header.Set("Content-Type", "multipart/form-data; boundary=upload")
+				result := make(chan error, 1)
+				go func() {
+					response, err := server.Client().Do(req)
+					if response != nil {
+						assert.Equal(http.StatusUnprocessableEntity, response.StatusCode)
+						_ = response.Body.Close()
+					}
+					result <- err
+				}()
+				_, err = io.WriteString(writer, "--upload\r\n")
+				require.NoError(err)
+				<-started
+				if cancelled {
+					cancel()
+					require.NoError(writer.CloseWithError(context.Canceled))
+				} else {
+					require.NoError(writer.Close())
+				}
+				err = <-result
+				<-finished
+				if cancelled {
+					require.ErrorIs(err, context.Canceled)
+					assert.Empty(docbank.rejected, "an interrupted upload is a transport failure")
+				} else {
+					require.NoError(err)
+					assert.NotEmpty(docbank.rejected, "a complete malformed request violates the contract")
+				}
+			})
+		}
+	}
+}
+
 // reject records a contract violation and answers as Docbank's validator does.
-func (f *fakeDocbank) reject(w http.ResponseWriter, err error) {
+func (f *fakeDocbank) reject(w http.ResponseWriter, r *http.Request, err error) {
+	// A client deadline can interrupt the body between any two multipart bytes.
+	// A disconnected request says nothing about the complete wire contract.
+	if r.Context().Err() != nil {
+		return
+	}
 	f.mu.Lock()
 	f.rejected = append(f.rejected, err.Error())
 	f.mu.Unlock()
@@ -1798,7 +1886,7 @@ func (f *fakeDocbank) submit(w http.ResponseWriter, r *http.Request) {
 		err = validMediaIdentity(metadata.Filename, metadata.MediaType)
 	}
 	if err != nil {
-		f.reject(w, err)
+		f.reject(w, r, err)
 		return
 	}
 	f.mu.Lock()
@@ -1855,7 +1943,7 @@ func (f *fakeDocbank) artifact(w http.ResponseWriter, r *http.Request, source st
 		err = validContractUpload(metadata.OperationID, metadata.SHA256, metadata.ByteLength, content)
 	}
 	if err != nil {
-		f.reject(w, err)
+		f.reject(w, r, err)
 		return
 	}
 	assert.Equal(f.t, "transcript", metadata.Kind)
@@ -1889,7 +1977,7 @@ func (f *fakeDocbank) retry(w http.ResponseWriter, r *http.Request, source strin
 		err = json.Unmarshal(data, &body, json.RejectUnknownMembers(true))
 	}
 	if err != nil {
-		f.reject(w, err)
+		f.reject(w, r, err)
 		return
 	}
 	if body.Processing.Profile == "supplied-transcript" {
@@ -2178,6 +2266,7 @@ func sha256Hex(data []byte) string {
 }
 
 func TestMediaRevisionErrorClassification(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	for _, err := range []error{errBeeperMediaSourceChanged, errBeeperMediaPartMissing, errBeeperMediaPartAmbiguous, errBeeperMediaUnsupported, errBeeperMediaTranscriptInvalid, errBeeperMediaTranscriptTooLarge} {
 		assert.True(MediaRevisionChanged(fmt.Errorf("describe: %w", err)))
