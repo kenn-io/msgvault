@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -10,6 +12,8 @@ import (
 )
 
 const microsoftCategoryPrefix = "msmail-category:"
+
+const microsoftSentEvidenceKey = "msmail_sent_items_observed"
 
 // EnsureMicrosoftMailFoldersContext updates folder labels. A category label
 // holding a folder's display name moves to a distinct name so the two never merge.
@@ -98,17 +102,22 @@ func (s *Store) ReconcileMicrosoftMailLabelsContext(ctx context.Context, message
 
 func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx, sourceID, messageID int64, folderID *int64, categories *[]string) (bool, error) {
 	q := boundQuerier{ctx: ctx, q: tx}
+	sentObserved := false
 	if folderID != nil {
 		var source int64
 		var providerID sql.NullString
-		if err := q.QueryRow(`SELECT source_id,source_label_id FROM labels WHERE id=?`, *folderID).Scan(&source, &providerID); err != nil {
+		var systemRole sql.NullString
+		if err := q.QueryRow(`SELECT source_id,source_label_id,system_role FROM labels WHERE id=?`, *folderID).Scan(&source, &providerID, &systemRole); err != nil {
 			return false, fmt.Errorf("resolve Microsoft folder label: %w", err)
 		}
 		if source != sourceID || providerID.String == "" || strings.HasPrefix(providerID.String, microsoftCategoryPrefix) {
 			return false, errors.New("microsoft folder label does not belong to the message source")
 		}
+		if systemRole.String == LabelSystemRoleSent {
+			sentObserved = true
+		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT l.id,l.source_id,l.source_label_id
+	rows, err := tx.QueryContext(ctx, `SELECT l.id,l.source_id,l.source_label_id,l.system_role
  FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=?`, messageID)
 	if err != nil {
 		return false, fmt.Errorf("read Microsoft message labels: %w", err)
@@ -119,7 +128,8 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		var id int64
 		var source sql.NullInt64
 		var providerID sql.NullString
-		if err := rows.Scan(&id, &source, &providerID); err != nil {
+		var systemRole sql.NullString
+		if err := rows.Scan(&id, &source, &providerID, &systemRole); err != nil {
 			_ = rows.Close()
 			return false, err
 		}
@@ -127,6 +137,9 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		nativeFolder := source.Valid && source.Int64 == sourceID && providerID.String != "" && !category
 		if nativeFolder {
 			folders = append(folders, id)
+			if systemRole.String == LabelSystemRoleSent {
+				sentObserved = true
+			}
 		}
 		if (category && categories != nil) || (nativeFolder && folderID != nil) {
 			continue
@@ -203,6 +216,11 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 			}
 		}
 	}
+	if sentObserved {
+		if err := persistMicrosoftSentEvidence(q, s.dialect, messageID); err != nil {
+			return false, err
+		}
+	}
 	changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, desired, true)
 	if err != nil {
 		return false, err
@@ -213,4 +231,32 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		}
 	}
 	return folderChanged, nil
+}
+
+func persistMicrosoftSentEvidence(q boundQuerier, dialect Dialect, messageID int64) error {
+	var metadata sql.NullString
+	if err := q.QueryRow(`SELECT metadata FROM messages WHERE id=?`, messageID).Scan(&metadata); err != nil {
+		return fmt.Errorf("read Microsoft message metadata: %w", err)
+	}
+	values := map[string]jsontext.Value{}
+	if metadata.Valid && metadata.String != "" {
+		if err := json.Unmarshal([]byte(metadata.String), &values); err != nil {
+			return fmt.Errorf("decode Microsoft message metadata: %w", err)
+		}
+	}
+	if values == nil {
+		values = make(map[string]jsontext.Value)
+	}
+	if observed, ok := values[microsoftSentEvidenceKey]; ok && string(observed) == "true" {
+		return nil
+	}
+	values[microsoftSentEvidenceKey] = jsontext.Value("true")
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return fmt.Errorf("encode Microsoft message metadata: %w", err)
+	}
+	if err := setMessageMetadataWith(q, dialect, messageID, sql.NullString{String: string(encoded), Valid: true}); err != nil {
+		return fmt.Errorf("save Microsoft Sent Items provenance: %w", err)
+	}
+	return nil
 }

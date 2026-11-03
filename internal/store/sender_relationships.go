@@ -19,10 +19,15 @@ func (s *Store) senderNativeOwnershipSQL() string {
 	if s.dialect.DriverName() != postgresDriverName {
 		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
 	}
+	microsoftSent := `m.metadata ->> 'msmail_sent_items_observed'='true'`
+	if s.dialect.DriverName() != postgresDriverName {
+		microsoftSent = `CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.msmail_sent_items_observed') END=1`
+	}
 	sentLabel := `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 	   WHERE ml.message_id=m.id AND l.source_id=m.source_id AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))`
 	providerSent := `((src.source_type IN ('gmail','imap','msmail') AND ` + sentLabel + `) OR
-	  (src.source_type='imap' AND COALESCE(` + origin + `,'')='sent'))`
+	  (src.source_type='imap' AND COALESCE(` + origin + `,'')='sent') OR
+	  (src.source_type='msmail' AND ` + microsoftSent + `))`
 	email := `COALESCE(NULLIF(m.message_type,''),'email')='email'`
 	// Microsoft Graph's legacy source_is_from_me value was address-derived.
 	// Only its provider Sent Items role is native evidence for email ownership.
@@ -178,23 +183,28 @@ func (s *Store) senderContactRelationships(ctx context.Context, tx *loggedTx, ke
 
 func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, scoped bool, excluded int64) (string, []any) {
 	values := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
-	args := make([]any, 0, len(keys)+(len(sources)+1)*4)
+	args := make([]any, 0, len(keys)+(len(sources)+1)*5)
 	for _, key := range keys {
 		args = append(args, key)
 	}
 	scope, sourceArgs := senderSourceScope(sources, excluded)
-	// Resolve every requested address in set-based joins. Correlated EXISTS
-	// subqueries here made the database walk message history again for each
-	// address in a batch.
-	recipientJoin := `JOIN message_recipients mr ON ` + senderRecipientAddress + `=requested.address`
-	recipientAddressFilter := ""
+	// Use indexed probes for existence. Materializing every matching message
+	// before the outbound history budget made high-volume addresses unbounded.
+	recipientJoin := `JOIN messages m ON m.id=mr.message_id`
+	recipientLink := ""
 	if !s.IsPostgreSQL() {
-		// SQLite may otherwise reorder this join and scan the full covering
-		// index. CROSS JOIN keeps requested as the outer loop so each address
-		// probes the normalized-address index.
-		recipientJoin = `CROSS JOIN message_recipients mr`
-		recipientAddressFilter = ` AND ` + senderRecipientAddress + `=requested.address`
+		// Keep recipient envelopes first so SQLite probes the normalized-address
+		// index for each requested address instead of scanning message history.
+		recipientJoin = `CROSS JOIN messages m`
+		recipientLink = `m.id=mr.message_id AND `
 	}
+	realHistory := `EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
+		JOIN sources src ON src.id=m.source_id
+		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address
+		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
+		AND NOT ` + s.activityUnsentSQL() + scope + `)`
+	archiveRecipientHistory := `EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
+		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address` + scope + `)`
 	archiveUseCTE := ""
 	archiveUseJoin := ""
 	contactHistory := "real_history.address IS NOT NULL"
@@ -202,44 +212,26 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		// Mutable participant pointers are negative evidence only: they can
 		// disprove empty history when a legacy draft lacks snapshots, but can
 		// never establish a real observation or transfer trust to an address.
+		pointerHistory := `(
+			EXISTS (SELECT 1 FROM participants p JOIN messages m ON m.sender_id=p.id
+				WHERE LOWER(TRIM(p.email_address))=requested.address` + scope + `) OR
+			EXISTS (SELECT 1 FROM participants p JOIN message_recipients mr ON mr.participant_id=p.id
+				JOIN messages m ON m.id=mr.message_id
+				WHERE LOWER(TRIM(p.email_address))=requested.address` + scope + `) OR
+			EXISTS (SELECT 1 FROM participants p JOIN conversation_participants cp ON cp.participant_id=p.id
+				JOIN messages m ON m.conversation_id=cp.conversation_id
+				WHERE LOWER(TRIM(p.email_address))=requested.address` + scope + `))`
 		archiveUseCTE = `,
-		requested_participants(address, participant_id) AS (
-			SELECT requested.address, p.id FROM requested JOIN participants p
-			ON LOWER(TRIM(p.email_address))=requested.address
-		),
-		pointer_history(address) AS (
-			SELECT rp.address FROM requested_participants rp
-			JOIN messages m ON m.sender_id=rp.participant_id WHERE 1=1` + scope + `
-			UNION
-			SELECT rp.address FROM requested_participants rp
-			JOIN message_recipients mr ON mr.participant_id=rp.participant_id
-			JOIN messages m ON m.id=mr.message_id WHERE 1=1` + scope + `
-			UNION
-			SELECT rp.address FROM requested_participants rp
-			JOIN conversation_participants cp ON cp.participant_id=rp.participant_id
-			JOIN messages m ON m.conversation_id=cp.conversation_id WHERE 1=1` + scope + `
-		),
 		archive_use(address) AS (
-			SELECT address FROM recipient_history
-			UNION
-			SELECT address FROM pointer_history
+			SELECT requested.address FROM requested
+			WHERE ` + archiveRecipientHistory + ` OR ` + pointerHistory + `
 		)`
 		archiveUseJoin = `LEFT JOIN archive_use ON archive_use.address=requested.address`
 		contactHistory = `(real_history.address IS NOT NULL OR archive_use.address IS NULL)`
 	}
 	query := `WITH requested(address) AS (VALUES ` + values + `),
-		recipient_history(address, message_id) AS (
-			SELECT requested.address, m.id FROM requested
-			` + recipientJoin + `
-			JOIN messages m ON m.id=mr.message_id WHERE 1=1` + recipientAddressFilter + scope + `
-		),
 		real_history(address) AS (
-			SELECT history.address FROM recipient_history history
-			JOIN messages m ON m.id=history.message_id
-			JOIN sources src ON src.id=m.source_id
-			WHERE m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-			AND NOT ` + s.activityUnsentSQL() + `
-			GROUP BY history.address
+			SELECT requested.address FROM requested WHERE ` + realHistory + `
 		)` + archiveUseCTE + `
 		SELECT requested.address,
 		CASE WHEN EXISTS (SELECT 1 FROM participants p JOIN person_participants pp ON pp.participant_id=p.id
@@ -249,7 +241,7 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		LEFT JOIN real_history ON real_history.address=requested.address ` + archiveUseJoin
 	args = append(args, sourceArgs...)
 	if !scoped {
-		for range 3 {
+		for range 4 {
 			args = append(args, sourceArgs...)
 		}
 	}
@@ -292,7 +284,9 @@ func (s *Store) senderKnownRelationships(ctx context.Context, tx *loggedTx, keys
 		}
 		for _, candidate := range candidates {
 			// The candidate query already requires native ownership or trusted Sent
-			// evidence; email sync does not set the native chat ownership flag.
+			// evidence. Carry that proof into classification even when the provider
+			// records sent-folder ownership separately from source_is_from_me.
+			candidate.SourceIsFromMe = true
 			if !candidate.Eligible || candidate.Unsent {
 				continue
 			}

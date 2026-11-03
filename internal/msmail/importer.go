@@ -377,7 +377,7 @@ func (s *syncer) applyPage(ctx context.Context, folderID string, items []DeltaMe
 // afterStore makes sure that every attachment of a stored MIME has a row. For
 // a refreshed message, it then drops the rows of parts that the new MIME no
 // longer has. If a row is missing, the old rows stay and it returns an error.
-func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) error {
+func (s *syncer) afterStore(ctx context.Context, folderLabel int64, m DeltaMessage, raw []byte) error {
 	msgID := m.archiveID
 	if msgID == 0 {
 		ids, err := s.st.MessageExistsBatch(s.sourceID, []string{m.ID})
@@ -386,10 +386,12 @@ func (s *syncer) afterStore(ctx context.Context, m DeltaMessage, raw []byte) err
 		}
 		msgID = ids[m.ID]
 	}
-	// Known messages already saved their categories before the MIME download.
-	if m.archiveID == 0 && m.Categories != nil {
-		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, nil, m.Categories); err != nil {
-			return fmt.Errorf("save Microsoft categories: %w", err)
+	// A new message's folder label is written with the MIME. Reconcile it here
+	// too so provider Sent Items provenance is saved before a later move can
+	// remove that label.
+	if m.archiveID == 0 {
+		if _, err := s.st.ReconcileMicrosoftMailLabelsContext(ctx, msgID, &folderLabel, m.Categories); err != nil {
+			return fmt.Errorf("save Microsoft message labels: %w", err)
 		}
 	}
 	if s.opts.AttachmentsDir == "" {
@@ -651,7 +653,7 @@ func (s *syncer) download(ctx context.Context, folderID string, msgs []DeltaMess
 			continue
 		}
 		delete(s.cursors, retryPrefix+r.msg.ID)
-		if err := s.afterStore(ctx, r.msg, r.raw); err != nil {
+		if err := s.afterStore(ctx, folderLabel, r.msg, r.raw); err != nil {
 			// A later walk skips stored messages, so incomplete processing needs a retry.
 			s.log.Warn("processing after message storage failed, retrying on the next sync", "id", r.msg.ID, "error", err)
 			s.sum.Errors++

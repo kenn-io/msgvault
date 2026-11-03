@@ -421,6 +421,20 @@ func TestImportSentItemsEstablishesKnownSenderRelationship(t *testing.T) {
 	got, err := st.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
 	requirements.NoError(err)
 	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["target@example.com"])
+	var metadata string
+	requirements.NoError(st.DB().QueryRow(`SELECT CAST(metadata AS TEXT) FROM messages WHERE source_message_id='sent-message'`).Scan(&metadata))
+	assertions.JSONEq(`{"msmail_sent_items_observed":true}`, metadata)
+	_, err = st.DB().Exec(`UPDATE messages SET metadata=NULL WHERE source_message_id='sent-message'`)
+	requirements.NoError(err)
+
+	f.put("sent-message", "archive")
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	assertions.Equal("Archive", state(t, st)["sent-message"], "the provider Sent label is removed after the move")
+	got, err = st.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["target@example.com"],
+		"provider-observed Sent Items provenance must survive folder changes")
 }
 
 func TestImportMoveAndDelete(t *testing.T) {
