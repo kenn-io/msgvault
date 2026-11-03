@@ -227,6 +227,97 @@ func TestApplyObservationBatchDropsInvalidWithoutAbort(t *testing.T) {
 	assert.Equal(t, "created", result.Items[0].Outcome)
 	assert.Equal(t, "dropped-invalid", result.Items[1].Outcome)
 }
+
+func assertInvalidSupersessionTargetPreservesSibling(t *testing.T, f personSweepJournalFixture, in personobs.BatchInput, generation, targetID, invalidID int64) {
+	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
+	invalid := in.Proposals[0]
+	invalid.Content = "[PERSON] runs every weekday"
+	invalid.SupersedesIDs = []int64{targetID, invalidID}
+	sibling := in.Proposals[0]
+	sibling.Content = "[PERSON] keeps a regular running habit"
+	in.Proposals = []personobs.ProposedObservation{invalid, sibling}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), in)
+	require.NoError(err)
+	require.Len(batch.Items, 2)
+	require.Nil(batch.Items[0].Failure)
+	require.Nil(batch.Items[1].Failure)
+
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "extractor")
+	require.NoError(err)
+	require.Len(result.Items, 2)
+	assert.Equal("dropped-invalid", result.Items[0].Outcome)
+	require.NotNil(result.Items[0].Failure)
+	assert.Equal("supersedes_ids", result.Items[0].Failure.Field)
+	assert.Equal("supersession-target", result.Items[0].Failure.Reason)
+	assert.Zero(result.Items[0].ObservationID)
+	assert.Equal("created", result.Items[1].Outcome)
+	assert.NotZero(result.Items[1].ObservationID)
+
+	target := observationGet(t, f.store, targetID)
+	assert.Equal(personobs.StatusActive, target.Status)
+	assert.Nil(target.SupersededByID)
+	var invalidCount int
+	invalidKey := personobs.ContentKey(invalid.Level, invalid.SubjectRef, invalid.Content)
+	require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT COUNT(*) FROM person_observations WHERE person_id=? AND content_key=?`), in.PersonID, invalidKey,
+	).Scan(&invalidCount))
+	assert.Zero(invalidCount)
+}
+
+func FuzzApplyObservationBatchInvalidSupersessionTargetPreservesSibling(f *testing.F) {
+	f.Add(int64(1 << 60))
+	f.Add(int64(1 << 61))
+	f.Fuzz(func(t *testing.T, invalidID int64) {
+		if invalidID <= 0 {
+			t.Skip()
+		}
+		require := require.New(t)
+		fixture, input, generation := observationBatchFixture(t, "I run")
+		targetID := applyObservationInput(t, fixture.store, input, generation).Items[0].ObservationID
+		if invalidID == targetID {
+			t.Skip()
+		}
+		var exists bool
+		require.NoError(fixture.store.DB().QueryRowContext(t.Context(), fixture.store.Rebind(
+			`SELECT EXISTS(SELECT 1 FROM person_observations WHERE id=?)`), invalidID,
+		).Scan(&exists))
+		if exists {
+			t.Skip()
+		}
+		assertInvalidSupersessionTargetPreservesSibling(t, fixture, input, generation, targetID, invalidID)
+	})
+}
+
+func TestApplyObservationBatchRejectsInvalidSupersessionTargetWithoutAbortingSibling(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		invalidID func(t *testing.T, f personSweepJournalFixture) int64
+	}{
+		{
+			name: "missing",
+			invalidID: func(t *testing.T, _ personSweepJournalFixture) int64 {
+				t.Helper()
+				return 1 << 60
+			},
+		},
+		{
+			name: "foreign",
+			invalidID: func(t *testing.T, f personSweepJournalFixture) int64 {
+				t.Helper()
+				return insertObservationRow(t, f.store, f.bobPersonID, 1, personobs.LevelExplicit, "[PERSON] has a separate profile")
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f, in, generation := observationBatchFixture(t, "I run")
+			targetID := applyObservationInput(t, f.store, in, generation).Items[0].ObservationID
+			assertInvalidSupersessionTargetPreservesSibling(t, f, in, generation, targetID, tt.invalidID(t, f))
+		})
+	}
+}
+
 func TestApplyObservationBatchRejectsGenerationOfOtherPerson(t *testing.T) {
 	require := require.New(t)
 	f, in, _ := observationBatchFixture(t, "I run")
@@ -1021,6 +1112,49 @@ func TestApplyObservationBatchRevalidatesContradictionAfterPremiseExclusionClear
 	counterDetail, err := f.store.GetPersonObservation(t.Context(), counterID)
 	require.NoError(err)
 	assert.Equal(1, counterDetail.SupportedCount)
+}
+
+func TestApplyObservationBatchDropsMalformedDeductionWithoutRollingBackSibling(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, in, generation := observationBatchFixture(t, "I run")
+
+	unsupportedPremiseID := insertObservationRow(t, f.store, in.PersonID, 1, personobs.LevelExplicit, "[PERSON] had an unsupported report")
+	_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE person_observations SET origin='extraction',status='unsupported' WHERE id=?`), unsupportedPremiseID)
+	require.NoError(err)
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`
+		INSERT INTO person_observation_clocks(person_id,last_sequence) VALUES(?,1)
+		ON CONFLICT(person_id) DO UPDATE SET last_sequence=CASE
+			WHEN person_observation_clocks.last_sequence < excluded.last_sequence THEN excluded.last_sequence
+			ELSE person_observation_clocks.last_sequence END`), in.PersonID)
+	require.NoError(err)
+	foreignPremiseID := insertObservationRow(t, f.store, f.bobPersonID, 1, personobs.LevelExplicit, "[PERSON] has a different owner")
+
+	malformed := personobs.ProposedObservation{
+		PersonID: in.PersonID, Level: personobs.LevelDeductive, Origin: personobs.OriginReasoning,
+		Kind: personobs.KindOther, Content: "[PERSON] follows an unrelated routine", ConfidenceBP: 800,
+		Premises: []personobs.PremiseInput{
+			{ID: unsupportedPremiseID, Role: personobs.PremiseRoleSupport},
+			{ID: foreignPremiseID, Role: personobs.PremiseRoleSupport},
+		},
+	}
+	input := in
+	input.Proposals = []personobs.ProposedObservation{malformed, in.Proposals[0]}
+	batch, err := f.store.PreparePersonObservationBatch(t.Context(), input)
+	require.NoError(err)
+	require.Len(batch.Items, 2)
+	require.NotNil(batch.Items[0].Failure)
+	assert.Equal("premise-person", batch.Items[0].Failure.Reason)
+	require.Nil(batch.Items[1].Failure)
+
+	result, err := f.store.ApplyPersonObservationBatch(t.Context(), batch, generation, "reasoner")
+	require.NoError(err)
+	require.Len(result.Items, 2)
+	assert.Equal("dropped-invalid", result.Items[0].Outcome)
+	require.NotNil(result.Items[0].Failure)
+	assert.Equal("premise-person", result.Items[0].Failure.Reason)
+	assert.Equal("created", result.Items[1].Outcome)
 }
 
 func TestApplyObservationBatchAllowsContradictionWithUnsupportedOptionalCounter(t *testing.T) {

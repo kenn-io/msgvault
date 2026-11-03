@@ -682,8 +682,20 @@ func (s *Store) applyPersonObservationBatchTx(ctx context.Context, tx *loggedTx,
 		}
 		if out.Failure == nil {
 			for _, targetID := range item.Proposal.SupersedesIDs {
-				if targetID == reinforcementTargetID {
+				if reinforcementTargetID != 0 && targetID == reinforcementTargetID {
 					continue
+				}
+				target, err := s.loadObservationTx(ctx, tx, targetID)
+				if err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						out.Failure = &personobs.ValidationError{Field: "supersedes_ids", Reason: "supersession-target"}
+						break
+					}
+					return result, fmt.Errorf("revalidate observation supersession target: %w", err)
+				}
+				if target.PersonID != b.PersonID {
+					out.Failure = &personobs.ValidationError{Field: "supersedes_ids", Reason: "supersession-target"}
+					break
 				}
 				if _, ok := premiseAncestorSet[targetID]; ok {
 					out.Failure = &personobs.ValidationError{Field: "supersedes_ids", Reason: "supporting-ancestor"}

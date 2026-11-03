@@ -85,7 +85,7 @@ func ValidateProposal(p ProposedObservation, premises map[int64]Observation) *Va
 		}
 		seen := map[int64]bool{}
 		support := 0
-		supported := 0
+		derived := Observation{PersonID: p.PersonID, Level: p.Level}
 		for _, edge := range p.Premises {
 			if seen[edge.ID] {
 				return invalid("premises", "premise-duplicate")
@@ -95,11 +95,18 @@ func ValidateProposal(p ProposedObservation, premises map[int64]Observation) *Va
 			if !ok {
 				return invalid("premises", "premise-missing")
 			}
-			if e := validateEdge(Observation{PersonID: p.PersonID, Level: p.Level}, premise, edge.Role, false); e != nil {
+			if e := validateEdgeStructure(derived, premise, edge.Role, false); e != nil {
 				return e
 			}
 			if edge.Role == PremiseRoleSupport {
 				support++
+			}
+		}
+		supported := 0
+		for _, edge := range p.Premises {
+			premise := premises[edge.ID]
+			if e := validateEdgeStatus(premise, edge.Role); e != nil {
+				return e
 			}
 			if PremiseSupported(premise) {
 				supported++
@@ -139,6 +146,13 @@ func ValidateAppend(derived, premise Observation, role PremiseRole) *ValidationE
 	return validateEdge(derived, premise, role, true)
 }
 func validateEdge(derived, premise Observation, role PremiseRole, checkOrder bool) *ValidationError {
+	if err := validateEdgeStructure(derived, premise, role, checkOrder); err != nil {
+		return err
+	}
+	return validateEdgeStatus(premise, role)
+}
+
+func validateEdgeStructure(derived, premise Observation, role PremiseRole, checkOrder bool) *ValidationError {
 	if derived.PersonID != premise.PersonID {
 		return invalid("premises", "premise-person")
 	}
@@ -154,6 +168,10 @@ func validateEdge(derived, premise Observation, role PremiseRole, checkOrder boo
 	if checkOrder && (derived.ID == premise.ID || (derived.Level == LevelDeductive && premise.Level == LevelDeductive && premise.ID >= derived.ID)) {
 		return invalid("premises", "premise-order")
 	}
+	return nil
+}
+
+func validateEdgeStatus(premise Observation, role PremiseRole) *ValidationError {
 	if role == PremiseRoleSupport && !PremiseSupported(premise) {
 		return invalid("premises", "premise-not-supported")
 	}
