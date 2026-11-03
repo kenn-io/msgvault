@@ -83,6 +83,8 @@ func TestPeopleBrowserSearchForwardsCursorAndMapsPerson(t *testing.T) {
 	assert.Equal("cache-7", page.CacheRevision)
 	assert.Equal(int64(11), page.Rows[0].ID)
 	assert.Equal("Alice Example", page.Rows[0].DisplayLabel)
+	assert.Equal(time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), page.Rows[0].FirstAt)
+	assert.Equal(time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC), page.Rows[0].LastAt)
 	assert.Equal(int64(3), page.Rows[0].MeetingCount)
 	assert.Equal(62, page.Rows[0].CurrentRelationshipTemperature)
 	assert.Equal(97, page.Rows[0].PeakRelationshipTemperature)
@@ -284,6 +286,8 @@ func TestPeopleBrowserGetContactPreservesIdentityContext(t *testing.T) {
 	contact, err := engine.GetContact(t.Context(), 11)
 	require.NoError(err)
 	require.NotNil(contact)
+	assert.True(contact.FirstAt.IsZero())
+	assert.True(contact.LastAt.IsZero())
 	assert.Equal([]query.PersonIdentifier{{
 		Type: "beeper", Value: "beeper:example-id", IsPrimary: true, Provenance: "archive", ParticipantID: 14,
 		ServiceSlug: "whatsapp", ServiceLabel: "WhatsApp", ScopeKind: "account",

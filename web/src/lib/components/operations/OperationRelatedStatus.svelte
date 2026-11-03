@@ -126,7 +126,7 @@
         {status.exact_consent ? 'Exact provider consent recorded' : 'Provider consent needs attention'}</p>
       <strong>{count(status.ready_owners)} of {count(status.eligible_owners)} owners ready</strong>
       <p>{count(status.missing_owners)} missing · {count(status.retry_owners)} retryable · {count(status.terminal_owners)} terminal</p>
-      <p>{count(status.stored_plaintext_chunks)} stored plaintext chunks · {count(status.provider_requests)} provider requests</p>
+      <p>{count(status.stored_plaintext_chunks)} stored plaintext chunks · {count(status.stored_plaintext_ranges)} saved page ranges · {count(status.provider_requests)} provider requests</p>
       {#if documentStatus.active_rebuild}
         <p>{count(documentStatus.active_rebuild.remaining_owners)} of {count(documentStatus.active_rebuild.snapshot_owners)} rebuild owners remaining</p>
       {/if}

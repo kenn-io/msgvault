@@ -1,6 +1,6 @@
 <script lang="ts">
   import XIcon from '@lucide/svelte/icons/x';
-  import { Button, Chip, DetailDrawer, IconButton, Modal, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, DetailDrawer, IconButton, Modal, PageHeader, SearchInput, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { MeetingRef } from '../../api/generated/models';
@@ -12,7 +12,6 @@
   import { ExploreSelectionState } from '../../explore/state.svelte';
   import { bufferedCallback } from '../../util/buffered-callback';
   import DirectoryList from './DirectoryList.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import PersonDetail from './PersonDetail.svelte';
 
   interface Props {

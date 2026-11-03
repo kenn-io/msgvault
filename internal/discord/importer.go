@@ -1660,32 +1660,7 @@ func (imp *Importer) resolveRecipients(ctx context.Context,
 }
 
 func (imp *Importer) resolveDeferredReplies(ctx context.Context, sourceID int64) error {
-	afterID := int64(0)
-	for {
-		unresolved, err := imp.store.ListUnresolvedMessageRepliesAfterContext(ctx,
-			sourceID, discordMessageType, afterID, imp.pageSize,
-		)
-		if err != nil {
-			return err
-		}
-		for _, reply := range unresolved {
-			var metadata struct {
-				ReferencedMessageID string `json:"referenced_message_id"`
-			}
-			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
-				return fmt.Errorf("decode Discord reply metadata for %s: %w", reply.SourceMessageID, err)
-			}
-			if metadata.ReferencedMessageID != "" {
-				if err := imp.store.SetReplyToContext(ctx, sourceID, reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
-					return fmt.Errorf("resolve deferred Discord reply %s: %w", reply.SourceMessageID, err)
-				}
-			}
-			afterID = reply.MessageID
-		}
-		if len(unresolved) < imp.pageSize {
-			return nil
-		}
-	}
+	return imp.store.ResolveDeferredMessageRepliesContext(ctx, sourceID, discordMessageType, imp.pageSize)
 }
 
 func (imp *Importer) saveCheckpoint(ctx context.Context,

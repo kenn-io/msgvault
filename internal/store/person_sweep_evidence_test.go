@@ -373,6 +373,7 @@ func TestPersonSweepEvidenceRejectsEditBetweenPacketAndPrepare(t *testing.T) {
 	result, err := (store.PersonSweepEvidenceAligner{Store: f.store}).Align(t.Context(), input)
 	requirements.NoError(err)
 	checks.False(result.Accepted)
+	checks.Equal(personfacts.DecisionInvalid, result.Failure.Action)
 	checks.Equal(personfacts.ReasonUnalignedEvidence, result.Failure.Reason)
 }
 

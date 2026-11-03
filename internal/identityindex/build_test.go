@@ -792,21 +792,21 @@ func TestValidateRejectsPreEpochAnnualTemperature(t *testing.T) {
 	require.ErrorContains(t, err, "invalid relationship temperature summary")
 }
 
-func writeRelationshipBaseFixture(t *testing.T, empty bool) (string, *sql.DB) {
-	t.Helper()
-	root := t.TempDir()
+func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
+	tb.Helper()
+	root := tb.TempDir()
 	db, err := duckdbutil.Open(
 		context.Background(),
 		duckdbutil.BuilderPolicy(filepath.Join(root, "duckdb-tmp")),
 	)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(tb, err)
+	tb.Cleanup(func() { require.NoError(tb, db.Close()) })
 
 	where := ""
 	if empty {
 		where = " WHERE false"
 	}
-	writeRelationshipParquet(t, db, root, "messages", `
+	writeRelationshipParquet(tb, db, root, "messages", `
 		SELECT * FROM (VALUES
 			(100::BIGINT, 1::BIGINT, 'm-100'::VARCHAR, 10::BIGINT,
 			 'Subject'::VARCHAR, 'Preview'::VARCHAR,
@@ -816,47 +816,47 @@ func writeRelationshipBaseFixture(t *testing.T, empty bool) (string, *sql.DB) {
 		) AS t(id, source_id, source_message_id, conversation_id, subject,
 			snippet, sent_at, size_estimate, has_attachments, attachment_count,
 			deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month)`+where)
-	writeRelationshipParquet(t, db, root, "sources", `
+	writeRelationshipParquet(tb, db, root, "sources", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@example.com'::VARCHAR, 'gmail'::VARCHAR)
 		) AS t(id, account_email, source_type)`+where)
-	writeRelationshipParquet(t, db, root, "conversations", `
+	writeRelationshipParquet(tb, db, root, "conversations", `
 		SELECT * FROM (VALUES
 			(10::BIGINT, 'thread-10'::VARCHAR, 'Thread'::VARCHAR, 'email_thread'::VARCHAR)
 		) AS t(id, source_conversation_id, title, conversation_type)`+where)
-	writeRelationshipParquet(t, db, root, "participants", `
+	writeRelationshipParquet(tb, db, root, "participants", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 'alice@example.com'::VARCHAR, 'example.com'::VARCHAR, 'Alice'::VARCHAR, ''::VARCHAR),
 			(2::BIGINT, 'bob@example.net'::VARCHAR, 'example.net'::VARCHAR, ''::VARCHAR, ''::VARCHAR),
 			(3::BIGINT, 'alias@example.net'::VARCHAR, 'example.net'::VARCHAR, 'Bob Alias'::VARCHAR, ''::VARCHAR),
 			(4::BIGINT, 'member@community.test'::VARCHAR, 'community.test'::VARCHAR, 'Member'::VARCHAR, ''::VARCHAR)
 		) AS t(id, email_address, domain, display_name, phone_number)`+where)
-	writeRelationshipParquet(t, db, root, "participant_identifiers", `
+	writeRelationshipParquet(tb, db, root, "participant_identifiers", `
 		SELECT * FROM (VALUES
 			(2::BIGINT, 'email'::VARCHAR, 'bob@example.net'::VARCHAR, 'Bob Home'::VARCHAR, true),
 			(3::BIGINT, 'chat'::VARCHAR, 'bob-chat'::VARCHAR, 'Bob Chat'::VARCHAR, true)
 		) AS t(participant_id, identifier_type, identifier_value, display_value, is_primary)`+where)
-	writeRelationshipParquet(t, db, root, "message_recipients", `
+	writeRelationshipParquet(tb, db, root, "message_recipients", `
 		SELECT * FROM (VALUES
 			(100::BIGINT, 1::BIGINT, 'from'::VARCHAR, 'Alice'::VARCHAR),
 			(100::BIGINT, 2::BIGINT, 'to'::VARCHAR, ''::VARCHAR),
 			(100::BIGINT, 2::BIGINT, 'cc'::VARCHAR, ''::VARCHAR)
 		) AS t(message_id, participant_id, recipient_type, display_name)`+where)
-	writeRelationshipParquet(t, db, root, "conversation_participants", `
+	writeRelationshipParquet(tb, db, root, "conversation_participants", `
 		SELECT * FROM (VALUES
 			(10::BIGINT, 4::BIGINT)
 		) AS t(conversation_id, participant_id)`+where)
-	writeRelationshipParquet(t, db, root, "owner_participants", `
+	writeRelationshipParquet(tb, db, root, "owner_participants", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 1::BIGINT)
 		) AS t(source_id, participant_id)`+where)
-	writeRelationshipParquet(t, db, root, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
-	writeRelationshipParquet(t, db, root, "participant_clusters", `
+	writeRelationshipParquet(tb, db, root, "person_display_names", `SELECT 0::BIGINT AS participant_id, 0::BIGINT AS person_id, NULL::VARCHAR AS display_name WHERE false`)
+	writeRelationshipParquet(tb, db, root, "participant_clusters", `
 		SELECT * FROM (VALUES
 			(2::BIGINT, 2::BIGINT),
 			(3::BIGINT, 2::BIGINT)
 		) AS t(participant_id, canonical_id)`+where)
-	writeRelationshipParquet(t, db, root, "attachments", `
+	writeRelationshipParquet(tb, db, root, "attachments", `
 		SELECT * FROM (VALUES
 			(1::BIGINT, 100::BIGINT, 12::BIGINT, 'file.txt'::VARCHAR, 'text/plain'::VARCHAR)
 		) AS t(attachment_id, message_id, size, filename, mime_type)`+where)
@@ -923,30 +923,30 @@ func (r *relationshipActivityCopyRecorder) ExecContext(
 }
 
 func replaceRelationshipParquet(
-	t *testing.T,
+	tb testing.TB,
 	db *sql.DB,
 	root, dataset, query string,
 ) {
-	t.Helper()
-	require.NoError(t, os.RemoveAll(filepath.Join(root, dataset)))
-	writeRelationshipParquet(t, db, root, dataset, query)
+	tb.Helper()
+	require.NoError(tb, os.RemoveAll(filepath.Join(root, dataset)))
+	writeRelationshipParquet(tb, db, root, dataset, query)
 }
 
 func writeRelationshipParquet(
-	t *testing.T,
+	tb testing.TB,
 	db *sql.DB,
 	root, dataset, query string,
 ) {
-	t.Helper()
+	tb.Helper()
 	directory := filepath.Join(root, dataset)
-	require.NoError(t, os.MkdirAll(directory, 0o755))
+	require.NoError(tb, os.MkdirAll(directory, 0o755))
 	path := filepath.Join(directory, dataset+".parquet")
 	_, err := db.Exec(fmt.Sprintf(
 		"COPY (%s) TO '%s' (FORMAT PARQUET, COMPRESSION 'zstd')",
 		query,
 		strings.ReplaceAll(path, "'", "''"),
 	))
-	require.NoError(t, err, dataset)
+	require.NoError(tb, err, dataset)
 }
 
 func relationshipParquetCount(

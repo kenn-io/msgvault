@@ -147,7 +147,32 @@ func TestRewriteGeneratedValidatorsRejectsAmbiguousDailyNotePersonIDValidators(t
 }
 
 func generatedValidatorFixture() string {
-	return `type AttributeValue struct {
+	return `type Attendee struct {
+	Email string
+	DisplayName string
+}
+func (a Attendee) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+type CalendarOccurrence struct {
+	StartDate string
+	EndDate string
+	Subject string
+}
+func (c CalendarOccurrence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.StartDate, "required"); err != nil {
+		errors = errors.Append("StartDate", err)
+	}
+	if err := typesValidator.Var(c.EndDate, "required"); err != nil {
+		errors = errors.Append("EndDate", err)
+	}
+	if err := typesValidator.Var(c.Subject, "required"); err != nil {
+		errors = errors.Append("Subject", err)
+	}
+	return errors
+}
+type AttributeValue struct {
 	JSON *struct{}  ` + "`json:\"json,omitempty\"`" + `
 }
 type ExploreCacheUnavailableResponse struct {

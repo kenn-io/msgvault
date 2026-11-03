@@ -12,7 +12,7 @@
 </script>
 
 <script lang="ts">
-  import { appShortcuts, Button, DetailDrawer, EmptyState, ROOT_SCOPE } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, DetailDrawer, EmptyState, PageHeader, ROOT_SCOPE } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { MeetingRef } from '../../api/generated/models';
@@ -33,7 +33,6 @@
   import RelationshipHeader from './RelationshipHeader.svelte';
   import RelationshipCalendar from './RelationshipCalendar.svelte';
   import RelationshipList from './RelationshipList.svelte';
-  import PageHeader from '../shell/PageHeader.svelte';
   import RelationshipTimeline from './RelationshipTimeline.svelte';
   import { localDayBoundsUTC, timelineRowToSelection } from './timeline-support';
   import { RELATIONSHIP_READER_HISTORY_KEY, relationshipReaderHistory } from '../../relationships/reader-history';
@@ -570,7 +569,7 @@
                   detail={controller.detail}
                   loading={controller.timelineLoading}
                   {filesOpen}
-                  missing={controller.detailMissing}
+                  headerState={controller.headerState}
                   {onFilesToggle}
                   {client}
                   {onOpenDirectory}
@@ -582,7 +581,7 @@
                   onLinkParticipants={(a, b) => controller.linkParticipants(a, b)}
                   onUnlinkParticipants={(a, b) => controller.unlinkParticipants(a, b)}
                 />
-                {#if target !== null && domainOf(target) === undefined && !controller.detailMissing}
+                {#if target !== null && domainOf(target) === undefined && controller.headerState === 'normal'}
                   <RelationshipCalendar
                     calendar={controller.relationshipCalendar}
                     loading={controller.relationshipCalendarLoading}

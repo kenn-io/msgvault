@@ -560,6 +560,18 @@ func (a AttachmentSearchResult) Validate() error {
 	return errors
 }
 
+type Attendee struct {
+	DisplayName string `json:"display_name" validate:"omitempty"`
+	Email       string `json:"email" validate:"omitempty"`
+	IsSelf      bool   `json:"is_self"`
+	Role        string `json:"role" validate:"required"`
+	Rsvp        string `json:"rsvp" validate:"required"`
+}
+
+func (a Attendee) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AttributeChoice struct {
 	Label string `json:"label" validate:"required"`
 	Value string `json:"value" validate:"required"`
@@ -1153,6 +1165,81 @@ func (c CalendarEventTarget) Validate() error {
 	return errors
 }
 
+type CalendarOccurrence struct {
+	AllDay            bool       `json:"all_day"`
+	Attendees         []Attendee `json:"attendees" validate:"required"`
+	DeletedFromSource bool       `json:"deleted_from_source"`
+	End               time.Time  `json:"end" validate:"required"`
+	EndDate           string     `json:"end_date" validate:"omitempty"`
+	MessageID         int64      `json:"message_id"`
+	SeriesMessageID   int64      `json:"series_message_id"`
+	SourceID          int64      `json:"source_id"`
+	Start             time.Time  `json:"start" validate:"required"`
+	StartDate         string     `json:"start_date" validate:"omitempty"`
+	Status            string     `json:"status" validate:"required"`
+	Subject           string     `json:"subject" validate:"omitempty"`
+}
+
+func (c CalendarOccurrence) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Attendees, "required"); err != nil {
+		errors = errors.Append("Attendees", err)
+	}
+	for i, item := range c.Attendees {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Attendees[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.End, "required"); err != nil {
+		errors = errors.Append("End", err)
+	}
+	if err := typesValidator.Var(c.Start, "required"); err != nil {
+		errors = errors.Append("Start", err)
+	}
+	if err := typesValidator.Var(c.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type CalendarOccurrencePage struct {
+	Occurrences  []CalendarOccurrence   `json:"occurrences" validate:"required"`
+	Unexpandable []CalendarUnexpandable `json:"unexpandable" validate:"required"`
+}
+
+func (c CalendarOccurrencePage) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(c.Occurrences, "required"); err != nil {
+		errors = errors.Append("Occurrences", err)
+	}
+	for i, item := range c.Occurrences {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Occurrences[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(c.Unexpandable, "required"); err != nil {
+		errors = errors.Append("Unexpandable", err)
+	}
+	for i, item := range c.Unexpandable {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Unexpandable[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type CalendarPlannedWrite struct {
 	Action      string               `json:"action" validate:"required"`
 	CalendarID  string               `json:"calendar_id" validate:"required"`
@@ -1389,6 +1476,15 @@ func (c CalendarResult) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type CalendarUnexpandable struct {
+	MessageID int64  `json:"message_id"`
+	Reason    string `json:"reason" validate:"required"`
+}
+
+func (c CalendarUnexpandable) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
 type CalendarWriteReceipt struct {
@@ -3833,6 +3929,7 @@ type DocumentIndexStatus struct {
 	RetryOwners                  int64                       `json:"retry_owners"`
 	StagingOwners                int64                       `json:"staging_owners"`
 	StoredPlaintextChunks        int64                       `json:"stored_plaintext_chunks"`
+	StoredPlaintextRanges        int64                       `json:"stored_plaintext_ranges"`
 	SuccessfulAttempts           int64                       `json:"successful_attempts"`
 	TerminalOwners               int64                       `json:"terminal_owners"`
 	UnknownRoleOccurrences       int64                       `json:"unknown_role_occurrences"`
@@ -13380,10 +13477,10 @@ type PersonSummary struct {
 	DisplayLabel                   string             `json:"display_label" validate:"required"`
 	DisplayName                    *string            `json:"display_name,omitzero"`
 	FileCount                      int64              `json:"file_count"`
-	FirstAt                        time.Time          `json:"first_at" validate:"required"`
+	FirstAt                        *time.Time         `json:"first_at,omitempty"`
 	ID                             int64              `json:"id"`
 	Identifiers                    []PersonIdentifier `json:"identifiers" validate:"required"`
-	LastAt                         time.Time          `json:"last_at" validate:"required"`
+	LastAt                         *time.Time         `json:"last_at,omitempty"`
 	MeetingCount                   int64              `json:"meeting_count"`
 	PartialLabel                   bool               `json:"partial_label"`
 	PeakRelationshipTemperature    int64              `json:"peak_relationship_temperature"`
@@ -13407,9 +13504,6 @@ func (p PersonSummary) Validate() error {
 	if err := typesValidator.Var(p.DisplayLabel, "required"); err != nil {
 		errors = errors.Append("DisplayLabel", err)
 	}
-	if err := typesValidator.Var(p.FirstAt, "required"); err != nil {
-		errors = errors.Append("FirstAt", err)
-	}
 	if err := typesValidator.Var(p.Identifiers, "required"); err != nil {
 		errors = errors.Append("Identifiers", err)
 	}
@@ -13419,9 +13513,6 @@ func (p PersonSummary) Validate() error {
 				errors = errors.Append(fmt.Sprintf("Identifiers[%d]", i), err)
 			}
 		}
-	}
-	if err := typesValidator.Var(p.LastAt, "required"); err != nil {
-		errors = errors.Append("LastAt", err)
 	}
 	if p.Profile != nil {
 		if v, ok := any(p.Profile).(runtime.Validator); ok {

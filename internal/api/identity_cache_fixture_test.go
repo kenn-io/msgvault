@@ -12,6 +12,10 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 )
 
+type identityCacheFixtureOptions struct {
+	unsentMessages string
+}
+
 // ensureIdentityCacheFixtureDatasets keeps hand-built API fixtures compatible
 // with the current cache contract by deriving the identity datasets from
 // the fixture's raw Parquet tables with the production builder. The derived
@@ -22,6 +26,7 @@ func ensureIdentityCacheFixtureDatasets(
 	tb testing.TB,
 	db *sql.DB,
 	analyticsDir string,
+	options identityCacheFixtureOptions,
 ) {
 	tb.Helper()
 	personDisplayNamesDir := filepath.Join(analyticsDir, "person_display_names")
@@ -32,10 +37,12 @@ func ensureIdentityCacheFixtureDatasets(
 		personDisplayNamesPath,
 	))
 	require.NoError(tb, err, "write empty person_display_names fixture dataset")
-	_, err = identityindex.Build(context.Background(), db, identityindex.BuildOptions{
+	buildOptions := identityindex.BuildOptions{
 		Mode:           identityindex.ModeFull,
 		StagedBaseRoot: analyticsDir,
 		OutputRoot:     analyticsDir,
-	})
+		UnsentMessages: options.unsentMessages,
+	}
+	_, err = identityindex.Build(context.Background(), db, buildOptions)
 	require.NoError(tb, err, "derive identity fixture datasets")
 }
