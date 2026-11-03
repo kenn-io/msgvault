@@ -66,7 +66,7 @@ func (a *Actions) instagramActionChecks(ctx context.Context, t Target, kind Acti
 }
 
 func actionProvider(t Target) string {
-	if t.MessageType == InstagramSourceType {
+	if t.MessageType == InstagramSourceType || t.MessageType == MentionsSourceType {
 		return "instagram"
 	}
 	return "facebook"

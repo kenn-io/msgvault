@@ -1803,6 +1803,8 @@ scheduler job is `instagram_comments:<source-identifier>`.
 (default `false`). Register it with `source instagram-mentions add`; tags use
 `source instagram-mentions sync` or, when enabled and scheduled, the independent job
 `instagram_mentions:<source-identifier>`. It reuses `token_env` with no fallback.
+Public replies to caption and comment mentions also require an enabled profile
+and `actions` containing `public_reply`. Tag-only items remain read-only.
 See [Mentions and tags](usage/instagram-comments.md#mentions-and-tags) for
 coverage, webhook integration, and live-access prerequisites.
 

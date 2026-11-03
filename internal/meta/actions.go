@@ -128,6 +128,9 @@ func resolveActionTarget(ctx context.Context, st *store.Store, id int64, allowDe
 	if src.MergedIntoSourceID != 0 {
 		return t, actionFailure("stale_identity", nil, store.ErrSourceRetired)
 	}
+	if m.MessageType == MentionsSourceType && src.SourceType == MentionsSourceType {
+		return resolveMentionActionTarget(m, src, allowDeleted)
+	}
 	if m.MessageType != src.SourceType || (m.MessageType != SourceType && m.MessageType != InstagramSourceType) {
 		return t, actionFailure("unsupported_source", nil, nil)
 	}
@@ -173,6 +176,9 @@ func actionBinding(t Target, action ActionKind, body string) string {
 		visibility = "private"
 	}
 	parts := []string{string(action), strconv.FormatInt(t.MessageID, 10), strconv.FormatInt(t.SourceID, 10), t.SourceIdentifier, t.App, t.Asset, t.CommentID, visibility, body}
+	if t.MessageType == MentionsSourceType {
+		parts = append(parts, t.RootID)
+	}
 	return strings.Join(parts, "\n")
 }
 func ConfirmToken(t Target, action ActionKind, body string) string {
@@ -229,6 +235,16 @@ func (a *Actions) Run(ctx context.Context, req ActionRequest) (*ActionResult, er
 		return nil, err
 	}
 	result := &ActionResult{MessageID: target.MessageID, SourceID: target.SourceID, Action: req.Action, DryRun: req.DryRun, Disclosure: Disclosure{Provider: actionProvider(target), AssetID: target.Asset, AssetName: target.AssetName, CommentID: target.CommentID, AuthorName: target.AuthorName}, Confirm: ConfirmToken(target, req.Action, req.Body)}
+	if target.MessageType == MentionsSourceType {
+		if err = mentionActionCheck(req.Action); err != nil {
+			return result, err
+		}
+		marker := "instagram_comment_mention"
+		if target.CommentID == target.RootID {
+			marker = "instagram_caption_mention"
+		}
+		result.Warnings = append(result.Warnings, marker)
+	}
 	result.Disclosure.Body = req.Body
 	result.Disclosure.Public = req.Action == ActionPublicReply
 	if isReply(req.Action) {
@@ -450,6 +466,10 @@ func (a *Actions) localEffect(ctx context.Context, t Target, result *ActionResul
 	defer cancel()
 	var err error
 	switch result.Action {
+	case ActionPublicReply:
+		if t.MessageType == MentionsSourceType {
+			err = a.archiveMentionReceipt(local, t, result)
+		}
 	case ActionDelete:
 		err = a.st.MarkMessageDeletedContext(local, t.SourceID, t.CommentID)
 	case ActionHide, ActionUnhide:

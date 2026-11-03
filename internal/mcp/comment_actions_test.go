@@ -18,6 +18,7 @@ type commentToolBackend struct {
 	filter           meta.CommentQueueRequest
 	expect           string
 	warnings         []string
+	disclosure       *meta.Disclosure
 	fail             bool
 }
 
@@ -29,6 +30,10 @@ func (b *commentToolBackend) RunCommentAction(_ context.Context, id int64, r met
 	}
 	b.request = r
 	result := &meta.ActionResult{MessageID: id, DryRun: r.DryRun, Confirm: "binding", Disclosure: meta.Disclosure{CommentID: "100_200_300", AuthorName: "Example Author", AssetName: "Example Page", Body: r.Body, Public: r.Action == meta.ActionPublicReply}, Warnings: append([]string{fmt.Sprintf("preview%d", b.previews)}, b.warnings...)}
+	if b.disclosure != nil {
+		result.Disclosure = *b.disclosure
+		result.Disclosure.Body = r.Body
+	}
 	if b.fail {
 		return result, &meta.ActionError{Code: "outcome_unknown", Message: "Inspect provider", Result: result}
 	}
@@ -201,4 +206,24 @@ func TestMCPReplyToCommentAuthorWarningBeforeConfirmation(t *testing.T) {
 	})
 	assert.Equal(t, true, result["isError"])
 	assert.Zero(t, b.writes)
+}
+
+func TestMCPReplyToInstagramMentionDisclosure(t *testing.T) {
+	for _, tc := range []struct{ name, marker, id, want string }{
+		{"caption", "instagram_caption_mention", "300", "Publish a PUBLIC reply as Example Instagram to Instagram caption mention on media 300 (author unavailable):\nExact example reply"},
+		{"comment", "instagram_comment_mention", "400", "Publish a PUBLIC reply as Example Instagram to Instagram comment mention 400 (author unavailable):\nExact example reply"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions := assert.New(t)
+			b := &commentToolBackend{warnings: []string{tc.marker}, disclosure: &meta.Disclosure{Provider: "instagram", AssetName: "Example Instagram", CommentID: tc.id, Public: true}}
+			args := map[string]any{"message_id": float64(7), "visibility": "public", "body": "Exact example reply"}
+			declined := confirmedCallTool(t, ServeOptions{CommentActions: b}, ToolReplyToComment, args, false, func(prompt string) { assertions.Equal(tc.want, prompt) })
+			assertions.Equal(true, declined["isError"])
+			assertions.Zero(b.writes)
+			accepted := confirmedCallTool(t, ServeOptions{CommentActions: b}, ToolReplyToComment, args, true, func(prompt string) { assertions.Equal(tc.want, prompt) })
+			assertions.NotEqual(true, accepted["isError"])
+			assertions.Equal(1, b.writes)
+			assertions.Equal(meta.ActionRequest{MessageID: 7, Action: meta.ActionPublicReply, Body: "Exact example reply", Confirm: "binding"}, b.request)
+		})
+	}
 }

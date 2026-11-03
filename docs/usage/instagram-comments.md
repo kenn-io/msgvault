@@ -96,9 +96,33 @@ Backlogs resolve in turns of up to 16 mentions so other archive operations can
 run between turns. Automatic retries resume completed items after a restart
 and do not spend an attempt on a request-budget pause. Explicit replay
 refreshes every item.
-Public mention replies are pending. Tagged photos cannot be replied to through
-this integration. Story mentions belong to Instagram Messaging and are outside
-this source.
+Story mentions belong to Instagram Messaging and are outside this source.
+
+The owner can reply publicly to archived caption and comment mentions. Keep
+`mentions = true`, enable the profile, and add `public_reply` to its `actions`:
+
+```toml
+mentions = true
+enabled = true
+actions = ["public_reply"]
+```
+
+Preview with the archived message ID, then send the same body with its
+confirmation token:
+
+```bash
+msgvault comment reply <message-id> --visibility public --body "Example reply" --dry-run
+msgvault comment reply <message-id> --visibility public --body "Example reply" --confirm <token>
+msgvault comment actions <message-id>
+```
+
+Each accepted reply is archived once in the same conversation, attributed to
+this Instagram account. A comment mention's reply links to that comment; a
+caption mention's reply links to the media root. Replaying a successful receipt
+repairs an interrupted local archive without sending again. An unknown send
+outcome requires explicit resolution through the comment actions flow and is
+never retried automatically. Private replies and moderation on foreign media
+are refused. Items discovered only through photo tags are read-only.
 
 The own-media skip depends on Graph returning the account as `owner`. Owner
 availability on comment expansions and tags still needs a live check.

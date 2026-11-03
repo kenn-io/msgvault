@@ -45,7 +45,7 @@ func commentToolDefinition(name string) toolDefinition {
 		properties["visibility"] = stringSchema("Reply visibility; choose explicitly", "public", "private")
 		properties["body"] = stringSchema("Exact reply text")
 		properties["dry_run"] = booleanSchema("Preview locally without sending")
-		definition = explicitlyConfirmedWriteDefinition(name, "Reply publicly or send one private message about an archived comment. Requires explicit client confirmation. Private replies are limited to one per comment within seven days. Inspect uncertain outcomes and resolve through the CLI before retrying.", closedObject(properties, "message_id", "visibility", "body"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall, toolSecurityWrite)
+		definition = explicitlyConfirmedWriteDefinition(name, "Reply publicly or send one private message about an archived comment. Instagram caption and comment mentions support public replies only. Requires explicit client confirmation. Private replies are limited to one per comment within seven days. Inspect uncertain outcomes and resolve through the CLI before retrying.", closedObject(properties, "message_id", "visibility", "body"), commentOutputSchema[meta.ActionResult](), (*handlers).commentActionsCall, toolSecurityWrite)
 	case ToolModerateComment:
 		properties["action"] = stringSchema("Moderation action", "hide", "unhide", "delete")
 		properties["dry_run"] = booleanSchema("Preview locally without changing the provider")
@@ -94,6 +94,13 @@ func (h *handlers) commentActionsCall(ctx context.Context, req toolRequest) (*to
 		prompt := fmt.Sprintf("Publish a PUBLIC reply as %s to comment %s by %s:\n%s", d.AssetName, d.CommentID, d.AuthorName, d.Body)
 		if visibility == "private" {
 			prompt = fmt.Sprintf("Send ONE PRIVATE message to %s about comment %s as %s:\n%s", d.AuthorName, d.CommentID, d.AssetName, d.Body)
+		}
+		if visibility == "public" && d.Provider == "instagram" {
+			if slices.Contains(preview.Warnings, "instagram_caption_mention") {
+				prompt = fmt.Sprintf("Publish a PUBLIC reply as %s to Instagram caption mention on media %s (author unavailable):\n%s", d.AssetName, d.CommentID, d.Body)
+			} else if slices.Contains(preview.Warnings, "instagram_comment_mention") {
+				prompt = fmt.Sprintf("Publish a PUBLIC reply as %s to Instagram comment mention %s (author unavailable):\n%s", d.AssetName, d.CommentID, d.Body)
+			}
 		}
 		if visibility == "private" && slices.Contains(preview.Warnings, "prior_private_reply_to_author") {
 			prompt += "\nWarning: a private reply to this author was already recorded in the past seven days."

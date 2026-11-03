@@ -313,6 +313,8 @@ recovery, and MCP confirmation.
 ## comment reply
 
 Reply publicly or privately to an archived Facebook or Instagram comment (unreleased).
+Archived Instagram caption and comment mentions support public replies only;
+tag-only items cannot be replied to.
 Requires owner authorization, daemon API schema 3.35.0 or newer, an enabled
 profile, and the matching `public_reply` or `private_reply` action opt-in.
 
@@ -329,7 +331,8 @@ messaging workflow. Public replies with the same body reuse their receipt.
 `--resolve-unknown sent|not-sent` records an inspected outcome without sending;
 it requires the original body, visibility, and confirmation token and cannot
 be combined with `--dry-run`. `--json` retains coded errors and partial receipts
-while exiting nonzero. Instagram targets must be top-level and visible;
+while exiting nonzero. Comments on the account's own Instagram media must be
+top-level and visible;
 see [Instagram actions](usage/instagram-comments.md#reply-and-moderate).
 See [reply limits and recovery](usage/facebook-comments.md#public-and-private-replies).
 
@@ -362,8 +365,8 @@ excluded. Deleted comments appear only with `--state all`.
 
 ## comment actions
 
-Read receipts for an archived Facebook or Instagram comment. Requires owner authorization
-and daemon API schema 3.35.0 or newer. Reading receipts never retries an action.
+Read receipts for an archived Facebook or Instagram comment or mention.
+Requires owner authorization and daemon API schema 3.35.0 or newer. Reading receipts never retries an action.
 
 ```bash
 msgvault comment actions <message-id> [--json]

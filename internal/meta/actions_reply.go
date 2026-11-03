@@ -45,6 +45,9 @@ func (a *Actions) privateReplyWindowOpen(t Target) bool {
 	return !t.SentAt.IsZero() && a.opts.Now().Sub(t.SentAt) < 7*24*time.Hour
 }
 func (a *Actions) dispatchReply(ctx context.Context, t Target, req ActionRequest, result *ActionResult, row store.MetaCommentAction, api ActionAPI) (*ActionResult, error) {
+	if t.MessageType == MentionsSourceType {
+		return a.dispatchMentionReply(ctx, t, req, result, row, api)
+	}
 	var obj Object
 	var err error
 	out := store.MetaCommentActionOutcome{}

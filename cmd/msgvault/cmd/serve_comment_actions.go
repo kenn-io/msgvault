@@ -35,10 +35,10 @@ func (a *storeAPIAdapter) commentProfile(ctx context.Context, sourceID int64) (c
 				return p, nil
 			}
 		}
-	case meta.InstagramSourceType:
+	case meta.InstagramSourceType, meta.MentionsSourceType:
 		tuple, ok := meta.ParseInstagramSourceIdentifier(src.Identifier)
 		if ok {
-			if p := a.config.InstagramCommentsSourceFor(tuple.AppID, tuple.PageID, tuple.AccountID); p != nil {
+			if p := a.config.InstagramCommentsSourceFor(tuple.AppID, tuple.PageID, tuple.AccountID); p != nil && (src.SourceType != meta.MentionsSourceType || p.Mentions) {
 				return p, nil
 			}
 		}
@@ -112,7 +112,8 @@ func (a *storeAPIAdapter) ListCommentActions(ctx context.Context, id int64) ([]m
 	if err != nil {
 		return nil, err
 	}
-	if (m.MessageType != meta.SourceType && m.MessageType != meta.InstagramSourceType) || m.ParentMessageID == 0 {
+	comment := (m.MessageType == meta.SourceType || m.MessageType == meta.InstagramSourceType) && m.ParentMessageID != 0
+	if !comment && m.MessageType != meta.MentionsSourceType {
 		return nil, commentFailure("not_a_comment", nil)
 	}
 	rows, err := a.store.ListMessageMetaCommentActionsContext(ctx, id)
