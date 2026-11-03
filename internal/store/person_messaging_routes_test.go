@@ -540,6 +540,14 @@ func TestMessagingRoutesNetworkFilterMatchesNativeAndBeeperRoutes(t *testing.T) 
 	}
 	assertions.Equal("slack", networks[exported], "Slack exports belong to the slack network")
 	assertions.Len(networks, 2, "only the Slack and Slack export routes match")
+
+	telegramID := nativeConversation("telegram", "user42")
+	telegram, err := f.Store.GetPersonMessagingRoutesContext(t.Context(),
+		store.PersonMessagingRouteQuery{PersonUID: person.VCardUID, Network: "telegram"})
+	requirements.NoError(err)
+	requirements.Len(telegram.Routes.Items, 1)
+	assertions.Equal(telegramID, telegram.Routes.Items[0].ConversationID)
+	assertions.Equal("telegram", telegram.Routes.Items[0].Network)
 }
 
 func TestMessagingRoutesKeepDeletionSignalAfterArchiveGC(t *testing.T) {

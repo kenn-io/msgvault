@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -2330,6 +2330,25 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 | `--no-default-identity` | `false` | Do not auto-confirm the phone number as this source's "me" identity |
 
 See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail audio behavior and usage examples.
+
+---
+
+## import-telegram
+
+Import a Telegram Desktop Machine-readable JSON export, including available media.
+
+```bash
+msgvault import-telegram <export-dir>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | Export owner | Numeric Telegram user ID; required for single-chat exports |
+| `--limit` | `0` | Maximum messages added; `0` imports all messages |
+| `--no-resume` | `false` | Scan every chat, ignoring the resume checkpoint |
+| `--no-default-identity` | `false` | Skip automatic account identity creation |
+
+Re-imports add new messages and fill missing media. Archived text and edit flags stay unchanged. See [Telegram imports](usage/text-messages.md#import-telegram) for export and resume behavior.
 
 ---
 
