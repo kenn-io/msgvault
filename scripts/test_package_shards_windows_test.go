@@ -86,6 +86,8 @@ func record(t *testing.T) {
 			require := require.New(t)
 			output, result, err := run(t, timeout, "")
 			require.NoError(err, result)
+			require.Regexp(`(?m)^--- PASS: Test0000_\w+ \(\d+\.\d+s\)\r?\n(?:--- PASS: .*\n)*ok  \tshardfixture\t\d+\.\d{3}s\r?$`, result,
+				"named passes must precede the package line go test prints")
 			files, err := os.ReadDir(output)
 			require.NoError(err)
 			require.Greater(len(files), 4, "fixture must exceed one command line per shard")
@@ -168,5 +170,6 @@ func record(t *testing.T) {
 		_, result, err := run(t, "1m30s", want[count-1])
 		require.Error(err)
 		require.Contains(result, "shard failure sentinel")
+		require.Regexp(`(?m)^FAIL\tshardfixture\t\d+\.\d{3}s\r?$`, result)
 	})
 }

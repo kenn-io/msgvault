@@ -26,6 +26,10 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
-    exclude: ['tests/**', 'node_modules/**', 'dist/**']
+    exclude: ['tests/**', 'node_modules/**', 'dist/**'],
+    // In GitHub Actions, list every test under its file so a rerun's log shows
+    // which tests passed. Naming reporters drops Vitest's automatic
+    // github-actions annotations, so keep them explicitly.
+    ...(process.env.GITHUB_ACTIONS === 'true' && { reporters: ['tree', 'github-actions'] })
   }
 });

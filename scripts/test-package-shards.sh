@@ -66,25 +66,36 @@ pids=()
 for ((i = 0; i < active_shards; i++)); do
 	# Test names are Go identifiers: no regex metacharacters to escape.
 	pattern="^($(paste -sd '|' "$work/shard-$i.names"))$"
+	# The time keyword reports the shard's wall clock for its package line
+	# without needing a sub-second clock that macOS's Bash 3.2 lacks.
 	(
 		cd "$package_dir"
-		exec "$test_binary" -test.v "-test.run=$pattern" "-test.timeout=$timeout"
-	) >"$work/shard-$i.out" 2>&1 &
+		TIMEFORMAT=%3R
+		{ time "$test_binary" -test.v "-test.run=$pattern" "-test.timeout=$timeout" >"$work/shard-$i.out" 2>&1; } 2>"$work/shard-$i.time"
+	) &
 	pids+=($!)
 done
+
+# Each shard's results end with the package line go test prints, so a reader
+# of the log can tell which package the named results above it belong to.
+elapsed() {
+	local seconds
+	seconds=$(tail -n 1 "$work/shard-$1.time" 2>/dev/null) || true
+	printf '%ss' "${seconds:-0.000}"
+}
 
 failed=0
 for ((i = 0; i < active_shards; i++)); do
 	count=$(( $(wc -l <"$work/shard-$i.names") ))
 	if wait "${pids[$i]}"; then
 		awk '/^[[:space:]]*--- (PASS|SKIP): /' "$work/shard-$i.out"
-		printf 'ok\t%s\n' "$import_path"
+		printf 'ok  \t%s\t%s\n' "$import_path" "$(elapsed "$i")"
 		echo "ok shard $((i + 1)): $count tests"
 	else
 		failed=1
 		echo "shard $((i + 1)) failed" >&2
 		cat "$work/shard-$i.out"
-		printf 'FAIL\t%s\n' "$import_path"
+		printf 'FAIL\t%s\t%s\n' "$import_path" "$(elapsed "$i")"
 	fi
 done
 

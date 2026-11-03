@@ -7,7 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
+	"regexp"
 	"testing"
 	"time"
 
@@ -61,7 +61,8 @@ func TestSilent(t *testing.T) {}
 			} else {
 				require.NoError(err, result)
 			}
-			blocks := strings.Split(result, "ok\texample.com/shardfixture\n")
+			// Each shard ends with the package line go test prints after a package's results.
+			blocks := regexp.MustCompile(`(?m)^ok  \texample\.com/shardfixture\t\d+\.\d{3}s\n`).Split(result, -1)
 			require.GreaterOrEqual(len(blocks), 4, result)
 			assert.Contains(blocks[0], "--- PASS: TestPass (")
 			assert.Contains(blocks[1], "--- SKIP: TestSkip (")
@@ -73,7 +74,7 @@ func TestSilent(t *testing.T) {}
 				assert.Contains(blocks[2], "=== RUN   TestNested/routes/get")
 				assert.Contains(blocks[2], "nested failure sentinel")
 				assert.Contains(blocks[2], "--- FAIL: TestNested/routes/get (")
-				assert.Contains(blocks[2], "FAIL\texample.com/shardfixture\n")
+				assert.Regexp(`\nFAIL\nFAIL\texample\.com/shardfixture\t\d+\.\d{3}s\n`, blocks[2])
 			} else {
 				assert.Len(blocks, 5, result)
 				assert.Contains(blocks[2], "        --- PASS: TestNested/routes/get (")

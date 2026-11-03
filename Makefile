@@ -34,6 +34,9 @@ LDFLAGS_RELEASE = $(LDFLAGS) -s -w
 # - sqlite_vec: enable the sqlite-vec extension for vector search
 BUILD_TAGS := fts5 sqlite_vec
 TEST_TIMEOUT := 60m
+# Extra go test flags for the targets CI runs. CI passes -v so each test's
+# PASS or FAIL line appears in the job log above its package result.
+TEST_FLAGS ?=
 
 # Cap on test binaries the PostgreSQL lanes run at once. go test defaults -p
 # to the host CPU count, and every PostgreSQL-backed test binary opens its own
@@ -212,7 +215,7 @@ test:
 .PHONY: test-cli-e2e
 test-cli-e2e:
 	@if [ -z "$(MSGVAULT_E2E_BINARY)" ]; then $(MAKE) build; fi
-	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" go test -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./cmd/msgvault/cmd -run '^TestSearchDiscoverabilityBuiltCLI$$' -count=1
+	MSGVAULT_E2E_BINARY="$(if $(MSGVAULT_E2E_BINARY),$(MSGVAULT_E2E_BINARY),$(CURDIR)/msgvault$(GOEXE))" go test $(TEST_FLAGS) -timeout $(TEST_TIMEOUT) -tags "$(BUILD_TAGS)" ./cmd/msgvault/cmd -run '^TestSearchDiscoverabilityBuiltCLI$$' -count=1
 
 .PHONY: test-standard $(SQLITE_SHARD_TARGETS)
 test-standard:
@@ -228,7 +231,7 @@ $(SQLITE_SHARD_TARGETS): test-sqlite-shard/%:
 # sharded jobs; together they cover exactly what `make test` covers.
 test-unsharded:
 	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
-	go test -timeout $(TEST_TIMEOUT) $(if $(TEST_REMAINDER_PARALLEL),-p $(TEST_REMAINDER_PARALLEL),) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
+	go test $(TEST_FLAGS) -timeout $(TEST_TIMEOUT) $(if $(TEST_REMAINDER_PARALLEL),-p $(TEST_REMAINDER_PARALLEL),) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
 
 # SHARDED_TEST_PKGS, each as TEST_SHARDS concurrent processes. Same binary,
 # same tests, same per-package timeout; only the process boundary is new.
@@ -256,7 +259,7 @@ test-pg: require-test-db
 .PHONY: test-pg-nocgo
 test-pg-nocgo: require-test-db
 	CGO_ENABLED=0 go build ./internal/store ./internal/query ./internal/slack ./internal/discord ./internal/api
-	CGO_ENABLED=0 go test -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive ./pkg/mcp
+	CGO_ENABLED=0 go test $(TEST_FLAGS) -timeout $(TEST_TIMEOUT) ./internal/postgresprofile ./pkg/archive ./pkg/mcp
 
 # Run the SHIPPED build's tests against PostgreSQL (set MSGVAULT_TEST_DB first).
 # The released binary is built with BUILD_TAGS and no pgvector, so that build
@@ -274,7 +277,7 @@ test-pg-shipped: require-test-db
 # test-postgres-sharded jobs cover the rest against their own servers.
 test-pg-shipped-unsharded: require-test-db
 	@excluded=$$(go list $(SHARDED_TEST_PKGS) | sed 's/^/-e /' | tr '\n' ' '); \
-	go test -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
+	go test $(TEST_FLAGS) -timeout $(TEST_TIMEOUT) -p $(PG_TEST_PARALLEL) -tags "$(BUILD_TAGS)" $$(go list ./... | grep -vxF $$excluded)
 
 # Both PostgreSQL lanes' coverage in one pass.
 #

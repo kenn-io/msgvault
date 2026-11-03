@@ -120,7 +120,7 @@ jobs:
           echo "$SMOKE_OUT" | grep -q "$VERSION" || { echo "FATAL: version output doesn't match CI build version"; exit 1; }
 
       - name: Test built CLI on a synthetic archive
-        run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
+        run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} TEST_FLAGS=-v MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
   checks:
     env:
@@ -199,10 +199,10 @@ jobs:
 
       # test-sharded runs the Makefile's SHARDED_TEST_PKGS; test-unsharded runs the rest of `make test`.
       - name: Test
-        run: make test-unsharded TEST_TIMEOUT=17m
+        run: make test-unsharded TEST_TIMEOUT=17m TEST_FLAGS=-v
 
       - name: Test build without vector backends
-        run: go test -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
+        run: go test -v -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1 ./cmd/msgvault/cmd
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -273,7 +273,7 @@ jobs:
           group: macos
 
       - name: Test
-        run: make test TEST_TIMEOUT=39m
+        run: make test TEST_TIMEOUT=39m TEST_FLAGS=-v
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -529,7 +529,7 @@ jobs:
           $packages = go list -tags "fts5 sqlite_vec" ./... |
             Where-Object { $_ -notin $separatePackages }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          go test -timeout 20m -tags "fts5 sqlite_vec" $packages
+          go test -v -timeout 20m -tags "fts5 sqlite_vec" $packages
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -801,7 +801,7 @@ jobs:
       # binaries open connections to the one service container at once. See
       # the Makefile comment for the arithmetic.
       - name: Test (pgvector-tagged)
-        run: go test -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
+        run: go test -v -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1 ./internal/vector/... ./internal/scheduler/... ./cmd/msgvault/cmd/...
 
   # The shipped-build remainder runs here; test-postgres-sharded covers large packages and follow-up checks.
   # Tests using testutil.NewTestStore read MSGVAULT_TEST_DB and switch backends without recompiling.
@@ -856,7 +856,7 @@ jobs:
       # The three largest packages run in test-postgres-sharded below, each
       # against its own server; this covers the rest.
       - name: Test (PostgreSQL)
-        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
+        run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m TEST_FLAGS=-v
 
       - name: Save Go caches
         uses: $/.github/actions/go-cache-save
@@ -930,11 +930,11 @@ jobs:
 
       - name: Test PostgreSQL library without CGO
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
-        run: make test-pg-nocgo TEST_TIMEOUT=5m
+        run: make test-pg-nocgo TEST_TIMEOUT=5m TEST_FLAGS=-v
 
       # Run store concurrency tests after the API package test, away from the store package shard.
       # Five repetitions catch intermittent lost updates and uniqueness races.
       - name: Concurrency tests (-count=5)
         if: ${{ !cancelled() && matrix.followups && steps.postgres-shards.outcome != 'skipped' }}
         run: |
-          go test -timeout 7m -tags fts5 -count=5 -run 'Concurrent' ./internal/store
+          go test -v -timeout 7m -tags fts5 -count=5 -run 'Concurrent' ./internal/store

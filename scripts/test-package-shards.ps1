@@ -35,17 +35,18 @@ foreach ($part in [regex]::Matches($Timeout, '(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|μ
 }
 if ($Timeout.StartsWith('-')) { $timeoutSeconds = -$timeoutSeconds }
 
-$goListArgs = @("list", "-f", "{{.Dir}}")
+# Import paths contain no spaces; the directory may.
+$goListArgs = @("list", "-f", "{{.ImportPath}} {{.Dir}}")
 if ($Tags) {
     $goListArgs += @("-tags", $Tags)
 }
 $goListArgs += $Package
 
-$packageDir = & go @goListArgs
+$packageInfo = & go @goListArgs
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
-$packageDir = $packageDir.Trim()
+$importPath, $packageDir = $packageInfo.Trim() -split ' ', 2
 
 $testBinary = Join-Path ([System.IO.Path]::GetTempPath()) (
     "msgvault-tests-{0}-{1}.exe" -f $PID, [guid]::NewGuid().ToString("N")
@@ -152,13 +153,19 @@ try {
                     $spent[$i] += $elapsed.TotalSeconds
                     $stdout = $run.StandardOut.GetAwaiter().GetResult()
                     $stderr = $run.StandardErr.GetAwaiter().GetResult()
+                    # Each batch's results end with the package line go test prints,
+                    # so a reader of the log can tell which package they belong to.
+                    $duration = $elapsed.TotalSeconds.ToString('F3', [cultureinfo]::InvariantCulture) + 's'
                     if ($run.Process.ExitCode -eq 0) {
+                        $stdout -split '\r?\n' | Where-Object { $_ -match '^\s*--- (PASS|SKIP): ' } | ForEach-Object { Write-Host $_ }
+                        Write-Host "ok  `t$importPath`t$duration"
                         Write-Host ("ok shard {0}, batch {1}/{2} ({3:N1}s)" -f ($i + 1), ($run.Batch + 1), $batches[$i].Count, $elapsed.TotalSeconds)
                     } else {
                         $failed = $true
                         Write-Error ("shard {0}, batch {1} failed with exit code {2}" -f ($i + 1), ($run.Batch + 1), $run.Process.ExitCode) -ErrorAction Continue
                         if ($stdout) { Write-Output $stdout }
                         if ($stderr) { Write-Error $stderr -ErrorAction Continue }
+                        Write-Output "FAIL`t$importPath`t$duration"
                     }
                     $run.Process.Dispose()
                     $run.Process = $null
@@ -183,6 +190,7 @@ try {
                 $startInfo.CreateNoWindow = $true
                 $startInfo.RedirectStandardOutput = $true
                 $startInfo.RedirectStandardError = $true
+                $startInfo.ArgumentList.Add("-test.v")
                 $startInfo.ArgumentList.Add("-test.run=$($batches[$i][$run.Batch])")
                 $startInfo.ArgumentList.Add("-test.timeout=$batchTimeout")
 
