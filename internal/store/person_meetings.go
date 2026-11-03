@@ -27,6 +27,9 @@ type PersonMeetingsQuery struct {
 	From, To       time.Time
 	Limit          int
 	Cursor         string
+	// CursorIdentity binds a page cursor to the caller-visible person selector,
+	// without fingerprinting resolved participant IDs or private contact emails.
+	CursorIdentity string
 	// NewestFirst selects recent history for bounded person cards. The default
 	// preserves the ascending person-meetings API order.
 	NewestFirst bool

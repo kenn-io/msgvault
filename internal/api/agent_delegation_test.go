@@ -2,8 +2,11 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -377,6 +380,62 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	}
 	assertions.Equal(len(reads), testedReads)
 	assertions.Greater(denied, 10)
+}
+
+func TestDelegatedPersonMeetingCursorDoesNotRevealContactEmail(t *testing.T) {
+	t.Parallel()
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{
+		Data:   config.DataConfig{DataDir: t.TempDir()},
+		Server: config.ServerConfig{APIKey: "owner", AgentAccess: true},
+	}
+	const privateEmail = "private-contact@example.test"
+	participantID, err := st.EnsureParticipant(privateEmail, "Synthetic Person", "example.test")
+	requirements.NoError(err)
+	calendarSource, err := st.GetOrCreateSource("gcal", "calendar@example.test")
+	requirements.NoError(err)
+	emails, err := st.MeetingParticipantEmailsContext(t.Context(), []int64{participantID})
+	requirements.NoError(err)
+	requirements.Equal([]string{privateEmail}, emails)
+
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	t.Cleanup(srv.agentGrants.Close)
+	_, secret, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: calendarSource.ID, Type: calendarSource.SourceType, Identifier: calendarSource.Identifier}}, time.Time{})
+	requirements.NoError(err)
+
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	to := from.Add(24 * time.Hour)
+	scope := store.SourceScope{IDs: []int64{calendarSource.ID}}
+	for _, guessedEmail := range []string{privateEmail, "wrong-guess@example.test"} {
+		cursor := legacyPersonMeetingCursor(t, scope, []int64{participantID}, []string{guessedEmail}, from, to)
+		path := fmt.Sprintf("/api/v1/people/participant:%d/meetings?from=%s&to=%s&cursor=%s", participantID, from.Format(time.RFC3339), to.Format(time.RFC3339), cursor)
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set(apiprotocol.AgentTokenHeader, secret)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, req)
+		assertions.Equal(http.StatusBadRequest, w.Code, w.Body.String())
+		assertions.NotContains(w.Body.String(), privateEmail)
+	}
+}
+
+func legacyPersonMeetingCursor(t *testing.T, scope store.SourceScope, participantIDs []int64, emails []string, from, to time.Time) string {
+	t.Helper()
+	query, err := jsonv2.Marshal(struct {
+		Scope       store.SourceScope
+		IDs         []int64
+		Emails      []string
+		From, To    time.Time
+		NewestFirst bool `json:",omitempty,omitzero"`
+	}{scope, participantIDs, emails, from, to, false})
+	require.NoError(t, err)
+	payload, err := jsonv2.Marshal(struct {
+		From, To, Start time.Time
+		Ref, Query      string
+	}{from, to, from.Add(time.Hour), "msg:1", fmt.Sprintf("%x", sha256.Sum256(query))})
+	require.NoError(t, err)
+	return base64.RawURLEncoding.EncodeToString(payload)
 }
 
 // TestDelegationNotReachableOverHTTP tests proof matrix row 21.
