@@ -142,6 +142,7 @@ type Store struct {
 
 // Hot import writes carry trigger programs whose compilation dominated CPU time.
 // Cache statements per connection; reset entries hold no transactions or locks.
+// 128 fits ~33-64 statements plus recipient variants; larger caches were no faster and use more memory.
 const sqliteStmtCacheParams = "&_stmt_cache_size=128"
 
 // synchronous=FULL + fullfsync=true protects WAL writes against OS/power crashes
