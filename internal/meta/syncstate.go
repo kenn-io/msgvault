@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"fmt"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
@@ -20,21 +21,66 @@ type syncState struct {
 }
 
 type phaseState struct {
-	After     string         `json:"after,omitempty"`
-	Exhausted bool           `json:"exhausted,omitempty"`
-	Done      bool           `json:"done,omitempty"`
-	Rescan    bool           `json:"rescan,omitempty"`
-	Posts     []Object       `json:"posts,omitempty"`
-	Stack     []commentFrame `json:"stack,omitempty"`
+	ReadRequest int            `json:"read_request,omitempty"`
+	ReadSyncID  int64          `json:"read_sync_id,omitempty"`
+	After       string         `json:"after,omitempty"`
+	Exhausted   bool           `json:"exhausted,omitempty"`
+	Done        bool           `json:"done,omitempty"`
+	Rescan      bool           `json:"rescan,omitempty"`
+	Posts       []Object       `json:"posts,omitempty"`
+	Stack       []commentFrame `json:"stack,omitempty"`
 }
 
 type commentFrame struct {
-	Root    string   `json:"root"`
-	Parent  string   `json:"parent"`
-	After   string   `json:"after,omitempty"`
-	Loaded  bool     `json:"loaded,omitempty"`
-	Next    string   `json:"next,omitempty"`
-	Pending []Object `json:"pending,omitempty"`
+	ReadRequest int      `json:"read_request,omitempty"`
+	ReadSyncID  int64    `json:"read_sync_id,omitempty"`
+	Root        string   `json:"root"`
+	Parent      string   `json:"parent"`
+	After       string   `json:"after,omitempty"`
+	Loaded      bool     `json:"loaded,omitempty"`
+	Next        string   `json:"next,omitempty"`
+	Pending     []Object `json:"pending,omitempty"`
+}
+
+// responseRead is polling bookkeeping. Archive markers keep it durable without
+// making unchanged message content look edited to change-feed consumers.
+type responseRead struct {
+	SyncID  int64 `json:"sync_id"`
+	Request int   `json:"request"`
+}
+
+func (read responseRead) newer(other responseRead) bool {
+	return read.SyncID > other.SyncID || (read.SyncID == other.SyncID && read.Request > other.Request)
+}
+
+func (r *importRun) responseReadKey(id string) string {
+	return fmt.Sprintf("meta.poll_read:%d:%s", r.source.ID, id)
+}
+
+func (r *importRun) loadResponseRead(ctx context.Context, id string, legacy responseRead) (responseRead, error) {
+	blob, found, err := r.imp.store.GetArchiveMarker(ctx, r.responseReadKey(id))
+	if err != nil || !found {
+		return legacy, err
+	}
+	var read responseRead
+	if json.Unmarshal([]byte(blob), &read) != nil || read.SyncID < 0 || read.Request < 0 {
+		return responseRead{}, errors.New("invalid polling response marker")
+	}
+	if legacy.newer(read) {
+		return legacy, nil
+	}
+	return read, nil
+}
+
+func (r *importRun) saveResponseRead(ctx context.Context, id string, read responseRead) error {
+	if r.state == nil || read.SyncID == 0 {
+		return nil
+	}
+	blob, err := json.Marshal(read)
+	if err != nil {
+		return err
+	}
+	return r.imp.store.SetArchiveMarker(ctx, r.responseReadKey(id), string(blob))
 }
 
 func freshState(source string) *syncState {
@@ -74,7 +120,7 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 	}
 	var blob string
 	var priorID int64
-	prior, err := st.GetLastSuccessfulSyncContext(ctx, src.ID)
+	prior, err := st.GetLastSuccessfulSyncByTypeContext(ctx, src.ID, src.SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return nil, err
 	}
@@ -82,7 +128,7 @@ func loadState(ctx context.Context, st *store.Store, src *store.Source, full boo
 		blob = prior.CursorAfter.String
 		priorID = prior.ID
 	}
-	checkpoint, err := st.GetLatestCheckpointedSyncContext(ctx, src.ID)
+	checkpoint, err := st.GetLatestCheckpointedSyncByTypeContext(ctx, src.ID, src.SourceType)
 	if err != nil && !errors.Is(err, store.ErrSyncRunNotFound) {
 		return nil, err
 	}
