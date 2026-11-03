@@ -86,6 +86,7 @@ func TestLoopsListRejectsBadFlags(t *testing.T) {
 	for _, args := range [][]string{
 		{"list", "--limit", "201"}, {"list", "--limit", "0"},
 		{"list", "--person", "0"}, {"list", "--person", "-1"},
+		{"done", "7", "--through", "0"}, {"snooze", "7", "--until", "48h", "--through", "-1"},
 	} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			require := require.New(t)
@@ -110,7 +111,9 @@ func TestLoopsDoneAndSnooze(t *testing.T) {
 	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", missing))
 
 	ctx, anchor, _ = loopsDaemon(t)
-	output, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10))
+	_, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10), "--through", strconv.FormatInt(missing, 10))
+	require.EqualError(err, fmt.Sprintf("%d isn't an open loop.", anchor), "a --through outside the loop refuses the action")
+	output, err = runLoops(ctx, t, "done", strconv.FormatInt(anchor, 10), "--through", strconv.FormatInt(anchor, 10))
 	require.NoError(err)
 	assert.Equal(fmt.Sprintf("Marked %d done.\n", anchor), output)
 

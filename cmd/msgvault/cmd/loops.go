@@ -74,29 +74,48 @@ func newLoopsListCommand() *cobra.Command {
 }
 
 func newLoopsDoneCommand() *cobra.Command {
-	return &cobra.Command{
+	var through int64
+	command := &cobra.Command{
 		Use:   "done <message-id>",
 		Short: "Mark a loop done",
 		Long: `Mark a loop done. The message ID is the last column of 'msgvault loops list'.
 A distinct question can list again, whatever its message date. Use 'reopen' to
 clear this question's done decision.`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := positivePersonCLIArg(cmd, args[0], "message")
-			if err != nil {
-				return err
-			}
-			return withLoopsClient(cmd, func(client *daemonclient.Client) error {
-				if _, err := client.MarkLoopDone(cmd.Context(), id); err != nil {
-					return loopActionError(id, err)
-				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Marked %d done.\n", id); err != nil {
-					return fmt.Errorf("write loop result: %w", err)
-				}
-				return nil
-			})
-		},
 	}
+	addLoopThroughFlag(command, &through)
+	command.RunE = func(cmd *cobra.Command, args []string) error {
+		id, err := positivePersonCLIArg(cmd, args[0], "message")
+		if err != nil {
+			return err
+		}
+		if err := checkLoopThroughFlag(cmd, through); err != nil {
+			return err
+		}
+		return withLoopsClient(cmd, func(client *daemonclient.Client) error {
+			if _, err := client.MarkLoopDone(cmd.Context(), id, through); err != nil {
+				return loopActionError(id, err)
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "Marked %d done.\n", id); err != nil {
+				return fmt.Errorf("write loop result: %w", err)
+			}
+			return nil
+		})
+	}
+	return command
+}
+
+// addLoopThroughFlag lets done and snooze stop at the newest question a
+// caller listed, as reported in list's JSON through_message_id.
+func addLoopThroughFlag(command *cobra.Command, through *int64) {
+	command.Flags().Int64Var(through, "through", 0, "Stop at this question, the through_message_id from loops list --json")
+}
+
+func checkLoopThroughFlag(cmd *cobra.Command, through int64) error {
+	if cmd.Flags().Changed("through") && through <= 0 {
+		return usageErr(cmd, errors.New("--through must be a positive message ID"))
+	}
+	return nil
 }
 
 func newLoopsSnoozeCommand() *cobra.Command {
@@ -113,9 +132,14 @@ currently open questions. Use the current message ID from loops list.`,
 	}
 	command.Flags().StringVar(&until, "until", "", "A duration such as 48h, a date such as 2026-10-25 (local midnight), or an RFC3339 time")
 	_ = command.MarkFlagRequired("until")
+	var through int64
+	addLoopThroughFlag(command, &through)
 	command.RunE = func(cmd *cobra.Command, args []string) error {
 		id, err := positivePersonCLIArg(cmd, args[0], "message")
 		if err != nil {
+			return err
+		}
+		if err := checkLoopThroughFlag(cmd, through); err != nil {
 			return err
 		}
 		at, err := loops.ParseSnoozeUntil(until, time.Now())
@@ -123,7 +147,7 @@ currently open questions. Use the current message ID from loops list.`,
 			return usageErr(cmd, err)
 		}
 		return withLoopsClient(cmd, func(client *daemonclient.Client) error {
-			decision, err := client.SnoozeLoop(cmd.Context(), id, at)
+			decision, err := client.SnoozeLoop(cmd.Context(), id, through, at)
 			if err != nil {
 				return loopActionError(id, err)
 			}
