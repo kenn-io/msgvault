@@ -255,7 +255,9 @@ a tool dependency in `go.mod`. `make test`, the PostgreSQL targets, and CI's
 inline test steps rerun each failed test up to twice and list rerun tests in
 `gotestsum/<suite>-reruns.txt`. Every run records its `go test -json` events in
 `gotestsum/<suite>.json`. CI uploads those files as
-`gotestsum-<suite>-attempt-<n>` artifacts when a job fails or reruns a test.
+`gotestsum-<suite>-attempt-<n>` artifacts when a step fails, when gotestsum
+reruns a test, and on every rerun attempt of the workflow, so a test that failed
+in one attempt can be matched with its result in the next.
 
 The shard scripts do not rerun tests. They write every shard's events to
 `gotestsum/<suite>.json`, where the suite defaults to the package's last path

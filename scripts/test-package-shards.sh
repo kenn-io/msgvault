@@ -9,8 +9,8 @@
 # shard, and the binary are unchanged; only the process boundary is new.
 #
 # Every shard's test2json events are collected in gotestsum/<suite>.json under
-# the current directory, the file CI uploads when a job fails. The suite
-# defaults to the package's last path element.
+# the current directory, the file CI uploads as an artifact. The suite defaults
+# to the package's last path element.
 #
 # Usage: scripts/test-package-shards.sh <package> [shards=4] [tags] [timeout=60m] [suite]
 # Mirrors scripts/test-package-shards.ps1, which the Windows lanes use.

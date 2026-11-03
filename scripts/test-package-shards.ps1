@@ -17,7 +17,7 @@ param(
     [int]$PartIndex = 1,
 
     # Names gotestsum/<Suite>.json under the current directory, which collects
-    # every batch's test2json events for CI to upload when a job fails.
+    # every batch's test2json events for CI to upload as an artifact.
     # Defaults to the package's last path element.
     [string]$Suite = ""
 )

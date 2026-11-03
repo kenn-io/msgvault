@@ -35,9 +35,8 @@ LDFLAGS_RELEASE = $(LDFLAGS) -s -w
 BUILD_TAGS := fts5 sqlite_vec
 TEST_TIMEOUT := 60m
 # Run go test through gotestsum. It records the test2json events in
-# gotestsum/<suite>.json, which CI uploads when a job fails or reruns a test,
-# and reruns each failed test up to twice, listing those tests in
-# gotestsum/<suite>-reruns.txt.
+# gotestsum/<suite>.json, which CI uploads as an artifact, and reruns each
+# failed test up to twice, listing those tests in gotestsum/<suite>-reruns.txt.
 # Usage: $(call gotestsum,<suite>,<packages>,<go test flags>)
 gotestsum = go tool gotestsum --format pkgname-and-test-fails --format-icons text \
 	--jsonfile gotestsum/$(1).json --rerun-fails=2 --rerun-fails-report gotestsum/$(1)-reruns.txt \

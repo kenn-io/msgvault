@@ -123,7 +123,7 @@ jobs:
         run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-cli-e2e-${{ matrix.goarch }}-attempt-${{ github.run_attempt }}
@@ -211,7 +211,7 @@ jobs:
         run: make test-unsharded TEST_TIMEOUT=17m
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/unsharded-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/unsharded-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-unsharded-attempt-${{ github.run_attempt }}
@@ -226,7 +226,7 @@ jobs:
           -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/vector-stub-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/vector-stub-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-vector-stub-attempt-${{ github.run_attempt }}
@@ -286,7 +286,7 @@ jobs:
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "sharded-${{ matrix.name }}"
 
       - name: Upload test events
-        if: failure()
+        if: failure() || github.run_attempt > 1
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
@@ -315,7 +315,7 @@ jobs:
         run: make test TEST_TIMEOUT=39m
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-macos-attempt-${{ github.run_attempt }}
@@ -610,7 +610,7 @@ jobs:
             --packages "$packages" -- -timeout 20m -tags "fts5 sqlite_vec"
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-attempt-${{ github.run_attempt }}
@@ -713,7 +713,7 @@ jobs:
           --packages "./internal/api ./internal/importer ./scripts" -- -timeout 9m -tags "fts5 sqlite_vec"
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-slow-attempt-${{ github.run_attempt }}
@@ -791,7 +791,7 @@ jobs:
           }
 
       - name: Upload test events
-        if: failure()
+        if: failure() || github.run_attempt > 1
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
@@ -904,7 +904,7 @@ jobs:
           -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pgvector-attempt-${{ github.run_attempt }}
@@ -968,7 +968,7 @@ jobs:
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
       - name: Upload test events
-        if: failure() || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-shipped-unsharded-attempt-${{ github.run_attempt }}
@@ -1047,7 +1047,7 @@ jobs:
         run: scripts/test-package-shards.sh "${{ matrix.package }}" 4 "fts5 sqlite_vec" "${{ matrix.test_timeout }}" "postgres-sharded-${{ matrix.name }}"
 
       - name: Upload test events
-        if: failure()
+        if: failure() || github.run_attempt > 1
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-postgres-sharded-${{ matrix.name }}-attempt-${{ github.run_attempt }}
@@ -1060,7 +1060,7 @@ jobs:
         run: make test-pg-nocgo TEST_TIMEOUT=5m
 
       - name: Upload test events
-        if: ${{ matrix.followups && (failure() || hashFiles('gotestsum/pg-nocgo-reruns.txt') != '') }}
+        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || hashFiles('gotestsum/pg-nocgo-reruns.txt') != '') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-pg-nocgo-attempt-${{ github.run_attempt }}
@@ -1077,7 +1077,7 @@ jobs:
           --packages ./internal/store -- -timeout 7m -tags fts5 -count=5 -run 'Concurrent'
 
       - name: Upload test events
-        if: ${{ matrix.followups && (failure() || hashFiles('gotestsum/store-concurrency-reruns.txt') != '') }}
+        if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || hashFiles('gotestsum/store-concurrency-reruns.txt') != '') }}
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-store-concurrency-attempt-${{ github.run_attempt }}
