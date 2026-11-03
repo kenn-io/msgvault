@@ -33,7 +33,10 @@ func isAcquisitionReplayCandidate(item store.SyncRunItem) bool {
 		item.SourceMessageID != "" && item.SourceMessageID != "(unknown)"
 }
 
-var errRawBatchMissing = errors.New("missing raw message in batch result")
+var (
+	errRawBatchMissing          = errors.New("missing raw message in batch result")
+	errAcquisitionFailureRecord = errors.New("record acquisition failure")
+)
 
 type rawBatchWithErrors interface {
 	GetMessagesRawBatchWithErrors(ctx context.Context, messageIDs []string) ([]gmail.RawMessageBatchResult, error)
@@ -205,7 +208,21 @@ func syncItemErrorMessage(err error, fallback string) string {
 	return fallback
 }
 
-func (s *Syncer) recordSyncItem(syncID int64, sourceMessageID, phase, status, kind string, err error) {
+// recordAcquisitionFailure must succeed before Gmail can advance past an
+// acquisition. Callers must stop on error: even completing an idle incremental
+// run hides older retry debt behind ListUnresolvedSyncItemErrors' lower bound.
+func (s *Syncer) recordAcquisitionFailure(syncID int64, sourceMessageID, phase, kind string, acquisitionErr error) error {
+	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
+		s.recordSyncItem(syncID, sourceMessageID, phase, store.SyncRunItemStatusError, kind, acquisitionErr)
+		return nil
+	}
+	if err := s.writeSyncItem(syncID, sourceMessageID, phase, store.SyncRunItemStatusError, kind, acquisitionErr); err != nil {
+		return fmt.Errorf("%w for Gmail message %q (%s): %w", errAcquisitionFailureRecord, sourceMessageID, phase, err)
+	}
+	return nil
+}
+
+func (s *Syncer) writeSyncItem(syncID int64, sourceMessageID, phase, status, kind string, err error) error {
 	if s.pendingAcquisitions != nil && syncID == s.acquisitionSyncID && status == store.SyncRunItemStatusError &&
 		isAcquisitionReplayCandidate(store.SyncRunItem{SourceMessageID: sourceMessageID, Phase: phase, ErrorKind: kind}) {
 		s.pendingAcquisitions[sourceMessageID] = struct{}{}
@@ -214,14 +231,21 @@ func (s *Syncer) recordSyncItem(syncID int64, sourceMessageID, phase, status, ki
 		sourceMessageID = "(unknown)"
 	}
 	errMsg := syncItemErrorMessage(err, kind)
-	if recErr := s.store.RecordSyncRunItem(store.SyncRunItem{
+	return s.store.RecordSyncRunItem(store.SyncRunItem{
 		SyncRunID:       syncID,
 		SourceMessageID: sourceMessageID,
 		Phase:           phase,
 		Status:          status,
 		ErrorKind:       kind,
 		ErrorMessage:    errMsg,
-	}); recErr != nil {
+	})
+}
+
+func (s *Syncer) recordSyncItem(syncID int64, sourceMessageID, phase, status, kind string, err error) {
+	if sourceMessageID == "" {
+		sourceMessageID = "(unknown)"
+	}
+	if recErr := s.writeSyncItem(syncID, sourceMessageID, phase, status, kind, err); recErr != nil {
 		s.logger.Warn("failed to record sync item",
 			"sync_id", syncID,
 			"source_message_id", sourceMessageID,

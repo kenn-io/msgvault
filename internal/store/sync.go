@@ -948,7 +948,9 @@ func (s *Store) PinSyncHandoffCursorContext(ctx context.Context, syncID int64, c
 	})
 }
 
-// RecordSyncRunItem records a per-item sync outcome for diagnostics.
+// RecordSyncRunItem records a per-item outcome. Gmail also uses acquisition
+// errors as retry debt, so callers must not advance past an acquisition whose
+// error could not be recorded.
 func (s *Store) RecordSyncRunItem(item SyncRunItem) error {
 	return s.RecordSyncRunItemContext(context.Background(), item)
 }

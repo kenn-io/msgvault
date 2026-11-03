@@ -919,7 +919,13 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 				errMsg := syncItemErrorMessage(fetch.Err, errRawBatchMissing.Error())
 				s.logger.Warn("failed to fetch message", "id", sourceMessageID, "error", errMsg)
-				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				if !alreadyExists {
+					if err := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseFetch, syncItemKindFetchError, fetch.Err); err != nil {
+						return nil, err
+					}
+				} else {
+					s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, fetch.Err)
+				}
 				checkpoint.ErrorsCount++
 				continue
 			}
@@ -1092,7 +1098,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					continue
 				}
 				s.logger.Warn("failed to ingest message", "id", raw.ID, "error", err)
-				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
+				if recErr := s.recordAcquisitionFailure(syncID, sourceMessageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
 				checkpoint.ErrorsCount++
 				continue
 			}
