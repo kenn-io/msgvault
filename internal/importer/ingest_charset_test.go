@@ -48,3 +48,31 @@ func TestIngestRawMessage_DeclaredUTF8HTML(t *testing.T) {
 	require.NoError(err)
 	assert.Contains(message.Snippet, "Heizkörper")
 }
+
+func TestIngestRawMessage_HTMLSemanticBlocksRemainSearchable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	st := testutil.NewSQLiteTestStore(t)
+	require.True(st.FTS5Available(), "body search must exercise the full-text index")
+	source, err := st.GetOrCreateSource("mbox", "archive@example.test")
+	require.NoError(err)
+
+	const bodyHTML = "<html><body><center>Order</center><section>Confirmed</section><article>Ready</article></body></html>"
+	raw := []byte("From: sender@example.test\r\nTo: recipient@example.test\r\n" +
+		"Subject: HTML blocks\r\nMessage-ID: <html-blocks@example.test>\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: text/html; charset=utf-8\r\n\r\n" + bodyHTML)
+	digest := sha256.Sum256(raw)
+	err = IngestRawMessage(context.Background(), st, source.ID, "archive@example.test", "",
+		nil, "html-blocks-1", hex.EncodeToString(digest[:]), raw, time.Time{}, slog.Default())
+	require.NoError(err)
+
+	results, total, err := st.SearchMessages("Confirmed", 0, 10)
+	require.NoError(err)
+	require.Equal(int64(1), total)
+	require.Len(results, 1)
+	message, err := st.GetMessage(results[0].ID)
+	require.NoError(err)
+	assert.Equal("Order", message.Snippet)
+	assert.Empty(message.BodyText)
+}

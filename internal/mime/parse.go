@@ -787,7 +787,7 @@ func parseDate(s string) time.Time {
 }
 
 // Block tags that should create line breaks when stripped.
-var blockTagRe = regexp.MustCompile(`(?i)<(/?)(p|div|br|hr|h[1-6]|li|tr|td|th|blockquote|pre|table|ul|ol|dl|dt|dd)[^>]*>`)
+var blockTagRe = regexp.MustCompile(`(?i)<(/?)(address|article|aside|blockquote|body|br|caption|center|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|h[1-6]|header|hgroup|hr|li|main|menu|nav|ol|p|pre|search|section|summary|table|tbody|td|tfoot|th|thead|tr|ul)[^>]*>`)
 
 // Patterns for content-stripping tags (each needs separate pattern due to Go regex limitations).
 var scriptTagRe = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)

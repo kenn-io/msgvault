@@ -623,6 +623,7 @@ func TestStripHTML(t *testing.T) {
 		{"paragraph_breaks", "<p>Para1</p><p>Para2</p>", "Para1\n\nPara2"},
 		{"div_breaks", "<div>Block1</div><div>Block2</div>", "Block1\n\nBlock2"},
 		{"heading_breaks", "<h1>Title</h1><p>Content</p>", "Title\n\nContent"},
+		{"semantic_block_breaks", "<article>Reservation</article><section>Confirmed</section><center>Ready</center>", "Reservation\n\nConfirmed\n\nReady"},
 
 		// Complex HTML email
 		{
