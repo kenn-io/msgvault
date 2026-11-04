@@ -35,6 +35,7 @@ type SearchRequest struct {
 	FTSQuery     string // optional override; defaults to FreeText
 	Filter       vector.Filter
 	Limit        int
+	KPerSignal   int      // positive values cap the configured per-signal pool
 	SubjectTerms []string // lowercased terms for subject-boost check
 	Explain      bool     // reserved for future use; no-op in this task
 }
@@ -248,11 +249,15 @@ func (e *Engine) Search(ctx context.Context, req SearchRequest) ([]vector.FusedH
 	if req.FTSQuery != "" {
 		terms = ftsTerms(req.FTSQuery)
 	}
+	kPerSignal := e.cfg.KPerSignal
+	if req.KPerSignal > 0 {
+		kPerSignal = min(kPerSignal, req.KPerSignal)
+	}
 	fReq := vector.FusedRequest{
 		FTSTerms:     terms,
 		QueryVec:     queryVec,
 		Generation:   active.ID,
-		KPerSignal:   e.cfg.KPerSignal,
+		KPerSignal:   kPerSignal,
 		Limit:        req.Limit,
 		RRFK:         e.cfg.RRFK,
 		SubjectBoost: e.cfg.SubjectBoost,

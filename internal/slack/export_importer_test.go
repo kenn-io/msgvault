@@ -20,15 +20,31 @@ func TestImportSlackdumpPersistsSlackSemantics(t *testing.T) {
 	require := require.New(t)
 
 	st := testutil.NewTestStore(t)
+	rootExport := copySlackdumpFixture(t)
+	usersPath := filepath.Join(rootExport, "users.json")
+	users, err := os.ReadFile(usersPath)
+	require.NoError(err)
+	usersWithBot := strings.TrimSuffix(strings.TrimSpace(string(users)), "]") +
+		`,{"id":"UBOT","team_id":"T_TEST","name":"deploys","is_bot":true,"profile":{"real_name":"Deploys"}}]`
+	require.NoError(os.WriteFile(usersPath, []byte(usersWithBot), 0o600))
+	require.NoError(os.WriteFile(filepath.Join(rootExport, "general", "2024-01-03.json"),
+		[]byte(`[{"type":"message","ts":"1704240000.000001","user":"UBOT","text":"deploy finished"}]`), 0o600))
 
-	summary, err := ImportSlackdump(context.Background(), st, slackdumpFixture, SlackdumpImportOptions{
+	summary, err := ImportSlackdump(context.Background(), st, rootExport, SlackdumpImportOptions{
 		Me: "alice@example.com",
 	})
 	require.NoError(err)
 	assert.Equal(5, summary.ConversationsProcessed)
-	assert.Equal(6, summary.MessagesProcessed)
-	assert.Equal(6, summary.MessagesAdded)
+	assert.Equal(7, summary.MessagesProcessed)
+	assert.Equal(7, summary.MessagesAdded)
 	assert.Zero(summary.MessagesUpdated)
+	var botSender int64
+	require.NoError(st.DB().QueryRow(st.Rebind(
+		`SELECT sender_id FROM messages WHERE source_id = ? AND source_message_id = ?`),
+		summary.SourceID, "C001:1704240000.000001").Scan(&botSender))
+	botParticipant, _, err := st.ParticipantByIdentifierContext(t.Context(), "slack", "T_TEST:bot:UBOT")
+	require.NoError(err)
+	assert.Equal(botSender, botParticipant, "the importer records the user's is_bot classification")
 
 	source, err := st.GetSourceByID(summary.SourceID)
 	require.NoError(err)

@@ -22,7 +22,12 @@ CREATE TABLE IF NOT EXISTS index_generations (
     state         TEXT NOT NULL,
     message_count INTEGER NOT NULL DEFAULT 0,
     embedding_count INTEGER NOT NULL DEFAULT 0,
-    vector_revision INTEGER NOT NULL DEFAULT 0
+    vector_revision INTEGER NOT NULL DEFAULT 0,
+    -- Shortest and longest nonzero vector, valid while vector_norm_revision
+    -- equals vector_revision. NULL vector_norm_revision means unknown.
+    vector_norm_min REAL,
+    vector_norm_max REAL,
+    vector_norm_revision INTEGER
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_generations_active
     ON index_generations(state) WHERE state = 'active';
