@@ -70,7 +70,7 @@ func (c *Client) addRelocationMessagesLocked(ctx context.Context, mailboxes []st
 	var lost []string
 	for mailbox, prior := range c.priorFolderStates {
 		state, exists := current[mailbox]
-		if c.scopedMailboxSnapshot && !exists {
+		if c.scopedMailboxSnapshot && !exists && (slices.Contains(c.mailboxCache, mailbox) || !c.mailboxIncludedLocked(mailbox)) {
 			continue
 		}
 		for _, uid := range prior.KnownUIDs {

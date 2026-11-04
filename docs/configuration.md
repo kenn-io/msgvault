@@ -1008,21 +1008,34 @@ Sync warns when an account key matches no stored IMAP source or a folder name
 matches no selectable mailbox. Unmatched folders stay configured and will be
 excluded if created later. Blank saved folder names prevent daemon startup.
 
-To track source deletions in scanned folders while others stay excluded, opt in
-with the same exact `ACCOUNT` key:
+To reconcile deletions within scanned folders, enable the setting for the exact
+`ACCOUNT` value from `msgvault list-accounts`:
 
 ```toml
 [sync]
 imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
 ```
 
-This setting gives deletion reconciliation for the folders a sync with the saved
-exclusions scanned. It applies to scheduled and manual syncs without `--folder`
-or `--skip-folder` overrides. It has no effect on date-filtered runs. A move into
-any unscanned folder can make a message eligible for `gc` when no stored
-membership remains.
-See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
-on archive membership, deletion tracking, cursor advancement, and `gc`.
+Restart the daemon after editing the file. This opt-in gives deletion
+reconciliation for the folders a sync with the saved exclusions scanned. It
+applies to scheduled and manual syncs without `--folder` or `--skip-folder`
+overrides, including stored folder allow lists. After a clean, complete run,
+msgvault advances cursors and replaces memberships only for scanned folders.
+Date-filtered, limited, resumed, failed, or interrupted runs do not commit this
+reconciliation.
+
+A message is marked deleted from its source only when no stored folder membership
+remains. Moving it into any unscanned folder can therefore make it eligible for
+`gc`, even if it still exists on the server. Stored memberships in skipped folders
+remain unchanged and can keep messages live indefinitely, until those folders are
+scanned again. A message already recorded in Trash by an earlier unfiltered sync
+stays live after Trash is skipped. Skipped-only messages keep their labels and deletion markers.
+
+Older imports without stored memberships remain unreconciled if absent from the
+first opted-in scan. Once observed in a scanned folder, their folder labels are
+rebuilt from stored memberships; a legacy label for a skipped folder alone does
+not prove membership and may disappear. A later sync without folder filters
+reconciles the full account again.
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the
