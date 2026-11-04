@@ -2107,6 +2107,10 @@ CREATE TABLE IF NOT EXISTS imap_message_memberships (
 CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_source_message
     ON imap_message_memberships(source_id, message_id);
 
+-- Message deletes cascade into memberships by message_id.
+CREATE INDEX IF NOT EXISTS idx_imap_message_memberships_message
+    ON imap_message_memberships(message_id);
+
 -- Managed outbound drafts retain the exact APPEND receipt and any interrupted
 -- replacement bytes. The receipt is the mutation authority; mailbox sync only
 -- observes memberships and never changes these fields.
