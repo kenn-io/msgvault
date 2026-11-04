@@ -159,14 +159,16 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 				require.NoError(st.UpsertAttachment(id, "document.txt", "text/plain", "", fmt.Sprintf("hash-%d", i), 42))
 			}
 			addMessage(1)
-			addMessage(2)
 			require.NoError(st.Close())
 			_, err = buildCache(dbPath, incDir, true)
 			require.NoError(err)
 
 			st, err = store.Open(dbPath)
 			require.NoError(err)
+			addMessage(2)
 			addMessage(3)
+			_, err = st.DB().Exec(`UPDATE messages SET sent_at = NULL WHERE id = 3`)
+			require.NoError(err)
 			if tt.repair {
 				require.NoError(st.ReplaceMessageRecipients(1, "to", []int64{bob}, []string{"Updated"}))
 			}
@@ -176,13 +178,13 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(st.Close())
 
 			expected := map[string][]string{
-				"message_recipients": {"3", "3"},
-				"message_labels":     {"3"},
-				"attachments":        {"3"},
-				"messages":           {"1", "2", "3"},
+				"message_recipients": {"2", "2"},
+				"message_labels":     {"2"},
+				"attachments":        {"2"},
+				"messages":           {"1", "2"},
 			}
 			if tt.repair {
-				expected["message_recipients"] = []string{"1", "1", "2", "2", "3", "3"}
+				expected["message_recipients"] = []string{"1", "1", "2", "2"}
 			}
 			hookCalled := false
 			buildCacheBeforeMessagesExportHook = func() error {
