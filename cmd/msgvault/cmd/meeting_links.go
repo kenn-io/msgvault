@@ -100,7 +100,7 @@ func newMeetingSuggestCommand(open meetingLinkOpen) *cobra.Command {
 			}
 		}
 		writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-		if _, err := fmt.Fprintln(writer, "EVENT\tNOTE\tOVERLAP (MIN)\tSHARED ATTENDEES\tTITLE TOKENS"); err != nil {
+		if _, err := fmt.Fprintln(writer, "EVENT\tNOTE\tOVERLAP (MIN)\tSHARED ATTENDEES\tSHARED WORDS"); err != nil {
 			return fmt.Errorf("write meeting suggestions: %w", err)
 		}
 		for _, suggestion := range suggestions.Suggestions {

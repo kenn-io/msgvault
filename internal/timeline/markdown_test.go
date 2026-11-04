@@ -3,6 +3,7 @@ package timeline
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,22 @@ func TestMarkdownAnchorGolden(t *testing.T) {
 	v.Person = nil
 	v.Days = nil
 	golden(t, "anchor.md", []byte(Markdown(v)))
+}
+func TestMarkdownAnchorHeadingDoesNotRepeatMatchingEntryRef(t *testing.T) {
+	now := time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC)
+	v := &Timeline{
+		Mode:     ModeAnchor,
+		Timezone: "UTC",
+		Anchor:   &Anchor{Ref: "msg:31"},
+		History: []Entry{
+			{Kind: "message", Ref: "msg:31", Time: now, Anchor: true, Message: &MessageEntry{Direction: "inbound", Snippet: UntrustedText{Text: "anchor"}}},
+			{Kind: "message", Ref: "msg:32", Time: now, Message: &MessageEntry{Direction: "inbound", Snippet: UntrustedText{Text: "other"}}},
+		},
+	}
+
+	got := Markdown(v)
+	assert.Equal(t, 1, strings.Count(got, "#31"))
+	assert.Contains(t, got, "· #32")
 }
 func TestMarkdownTruncatesByRunesAndStaysValidUTF8(t *testing.T) {
 	v := sampleTimeline()
@@ -63,11 +80,12 @@ func TestMarkdownMarksSourceDeletedMeeting(t *testing.T) {
 }
 
 func TestMarkdownDoesNotRepeatOpenLoopTruncationInOmittedFooter(t *testing.T) {
+	assertions := assert.New(t)
 	v := sampleTimeline()
 	got := Markdown(v)
-	assert.Equal(t, 1, strings.Count(got, "more available\n"))
-	assert.Contains(t, got, "omitted: history 2 · noise 2 · cold 3\n")
-	assert.NotContains(t, got, "open_loops")
+	assertions.Equal(1, strings.Count(got, "more available\n"))
+	assertions.Contains(got, "omitted: history 2 · noise 2 · cold 3\n")
+	assertions.NotContains(got, "open_loops")
 
 	v.Days = nil
 	v.History = nil
@@ -75,7 +93,7 @@ func TestMarkdownDoesNotRepeatOpenLoopTruncationInOmittedFooter(t *testing.T) {
 	v.Gaps = nil
 	v.Omitted = Omitted{Budget: map[string]any{"open_loops": "more"}}
 	got = Markdown(v)
-	assert.NotContains(t, got, "omitted:")
+	assertions.NotContains(got, "omitted:")
 }
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline()
@@ -91,6 +109,7 @@ func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 }
 
 func TestMarkdownDoesNotRepeatLatestSyncWarning(t *testing.T) {
+	assertions := assert.New(t)
 	v := &Timeline{
 		Timezone: "UTC",
 		Freshness: Freshness{
@@ -99,8 +118,8 @@ func TestMarkdownDoesNotRepeatLatestSyncWarning(t *testing.T) {
 		},
 	}
 	got := Markdown(v)
-	assert.Contains(t, got, "gmail:owner@example.test stale failed")
-	assert.NotContains(t, got, "The latest sync failed for gmail source owner@example.test.")
-	assert.Contains(t, got, "The activity projection is reconciling archive changes.")
-	assert.Equal(t, []string{"The latest sync failed for gmail source owner@example.test.", "The activity projection is reconciling archive changes."}, v.Freshness.Warnings)
+	assertions.Contains(got, "gmail:owner@example.test stale failed")
+	assertions.NotContains(got, "The latest sync failed for gmail source owner@example.test.")
+	assertions.Contains(got, "The activity projection is reconciling archive changes.")
+	assertions.Equal([]string{"The latest sync failed for gmail source owner@example.test.", "The activity projection is reconciling archive changes."}, v.Freshness.Warnings)
 }

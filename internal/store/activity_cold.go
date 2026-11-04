@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/archivemarker"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 type coldActivityMessage struct {
@@ -120,12 +121,24 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		args = append(args, q.ConversationID)
 	}
 	if q.After != nil {
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=?`
-		args = append(args, q.After.UTC())
+		occurredAt := `COALESCE(m.sent_at,m.received_at,m.internal_date)`
+		if s.IsPostgreSQL() {
+			where += ` AND ` + occurredAt + `>=?`
+			args = append(args, q.After.UTC())
+		} else {
+			where += ` AND ` + sqliteutil.TimestampKeyFunction + `(` + occurredAt + `)>=?`
+			args = append(args, sqliteutil.TimestampKey(*q.After))
+		}
 	}
 	if q.Before != nil {
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, q.Before.UTC())
+		occurredAt := `COALESCE(m.sent_at,m.received_at,m.internal_date)`
+		if s.IsPostgreSQL() {
+			where += ` AND ` + occurredAt + `<?`
+			args = append(args, q.Before.UTC())
+		} else {
+			where += ` AND ` + sqliteutil.TimestampKeyFunction + `(` + occurredAt + `)<?`
+			args = append(args, sqliteutil.TimestampKey(*q.Before))
+		}
 	}
 	if q.After == nil && q.Before == nil {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {

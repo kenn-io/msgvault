@@ -72,6 +72,33 @@ func TestBuildRejectsPersonFilterInExplicitDayMode(t *testing.T) {
 	require.Nil(t, got)
 }
 
+func TestRelationshipLinkedTranscriptParticipantKeepsMeetingInHistory(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	event := f.calendar("planning", singleDayEvent)
+	note := f.transcript("planning-notes", "planning@example.com", f.now.Add(-2*time.Hour))
+	bob := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", []int64{bob}, nil))
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:bob@example.com"))
+	requirements.NoError(err)
+	assertions.Equal(1, got.Person.InteractionCount)
+	requirements.Len(got.History, 1)
+	meeting := got.History[0]
+	assertions.Equal("meeting", meeting.Kind)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), meeting.Ref)
+	assertions.Len(meeting.Meeting.Attendees, 1)
+	assertions.Equal(f.peer, meeting.Meeting.Attendees[0].ParticipantID)
+	participantIDs := make([]int64, 0, len(meeting.Meeting.People))
+	for _, person := range meeting.Meeting.People {
+		participantIDs = append(participantIDs, person.ParticipantID)
+	}
+	assertions.Contains(participantIDs, f.peer)
+	assertions.Contains(participantIDs, bob)
+}
+
 type personReadFailure struct{ PeopleSource }
 
 func (personReadFailure) ResolvePersonReferenceContext(context.Context, store.PersonRefKind, string, []int64, int) ([]store.PersonCandidate, error) {

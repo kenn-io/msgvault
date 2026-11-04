@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -217,6 +218,10 @@ func (c *composer) readDisplays(ids []int64) readResult[map[int64]store.MessageD
 }
 
 func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.ActivityMessage, occurrences []store.CalendarOccurrence, calls []store.LogicalCall, notes []store.DailyNoteEntry) ([]Entry, []Entry) {
+	messagesByID := make(map[int64]store.ActivityMessage, len(messages))
+	for _, message := range messages {
+		messagesByID[message.MessageID] = message
+	}
 	ids := []int64{}
 	refs := []string{}
 	transcriptIDs := []int64{}
@@ -333,7 +338,25 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		seen[key] = true
-		people := c.occurrencePeople(o)
+		attendees := c.occurrencePeople(o)
+		people := slices.Clone(attendees)
+		seenPeople := make(map[int64]bool, len(people))
+		for _, person := range people {
+			seenPeople[person.ParticipantID] = true
+		}
+		for _, transcriptID := range info.LinkedTranscriptIDs {
+			message, ok := messagesByID[transcriptID]
+			if !ok {
+				continue
+			}
+			for _, person := range counterpartPeople(message.Counterparts) {
+				if !seenPeople[person.ParticipantID] {
+					people = append(people, person)
+					seenPeople[person.ParticipantID] = true
+				}
+			}
+		}
+		people = c.tierPeople(people)
 		if !c.admitTier(people) {
 			continue
 		}
@@ -354,13 +377,21 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		at := o.Start
 		end := o.End
 		if o.AllDay {
-			at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
-			end, _ = time.ParseInLocation(time.DateOnly, o.EndDate, c.loc)
+			var exists bool
+			var err error
+			at, exists, err = calrecur.CivilDateBoundary(o.StartDate, c.loc)
+			if err != nil || !exists {
+				continue
+			}
+			end, _, err = calrecur.CivilDateBoundary(o.EndDate, c.loc)
+			if err != nil {
+				continue
+			}
 		}
 		if at.IsZero() {
 			continue
 		}
-		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, Status: o.Status, DeletedFromSource: o.DeletedFromSource, AllDay: o.AllDay, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
+		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, Status: o.Status, DeletedFromSource: o.DeletedFromSource, AllDay: o.AllDay, Attendees: attendees, AttendeeCount: len(attendees), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
 		if len(linked) > 0 {
 			e.Open = append(e.Open, c.open("get_meeting_context", map[string]any{"message_ids": linked})...)
 		}
@@ -456,7 +487,10 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if !c.admitTier(people) {
 			continue
 		}
-		at, _ := time.ParseInLocation(time.DateOnly, note.LocalDate, c.loc)
+		at, _, err := calrecur.CivilDateBoundary(note.LocalDate, c.loc)
+		if err != nil {
+			continue
+		}
 		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: []Open{}, Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
 		c.entryDates[e.Key] = note.LocalDate
 		entries = append(entries, e)
@@ -645,8 +679,7 @@ func (c *composer) groupDays(entries []Entry) {
 	}
 	slices.Sort(dates)
 	slices.Reverse(dates)
-	newest, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
-	detailFrom := newest.AddDate(0, 0, -1).Format(time.DateOnly)
+	detailFrom := shiftCivilDate(c.t.Window.To, -1)
 	for _, date := range dates {
 		day := Day{Date: date}
 		items := byDate[date]

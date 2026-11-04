@@ -117,7 +117,9 @@ func (c *composer) collectDay() dayRead {
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Notes != nil {
-				r.notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) { return c.readNotes(ctx, from, to) })
+				r.notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
+					return c.readNotes(ctx, c.t.Window.From, c.t.Window.To)
+				})
 			}
 		},
 		func() {
@@ -161,9 +163,17 @@ func (c *composer) readCalls(ctx context.Context, q store.LogicalCallQuery) ([]s
 		q.AfterKey = key
 	}
 }
-func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.DailyNoteEntry, error) {
+func (c *composer) readNotes(ctx context.Context, from, to string) ([]store.DailyNoteEntry, error) {
 	result := []store.DailyNoteEntry{}
-	for date := from; date.Before(to); date = date.AddDate(0, 0, 1) {
+	start, err := time.Parse(time.DateOnly, from)
+	if err != nil {
+		return result, fmt.Errorf("parse daily-note start date: %w", err)
+	}
+	end, err := time.Parse(time.DateOnly, to)
+	if err != nil {
+		return result, fmt.Errorf("parse daily-note end date: %w", err)
+	}
+	for date := start; !date.After(end); date = date.AddDate(0, 0, 1) {
 		for offset := 0; ; offset += 100 {
 			notes, err := c.src.Notes.ListDailyNoteEntriesContext(ctx, date.Format(time.DateOnly), 100, offset)
 			result = append(result, notes...)

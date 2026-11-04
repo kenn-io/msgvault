@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -171,8 +172,8 @@ func resolveWindow(req Request, now time.Time, loc *time.Location) (Window, erro
 		}
 		from = now.In(loc).AddDate(0, 0, 1-days).Format(time.DateOnly)
 	}
-	start, e1 := time.ParseInLocation(time.DateOnly, from, loc)
-	end, e2 := time.ParseInLocation(time.DateOnly, to, loc)
+	start, e1 := time.Parse(time.DateOnly, from)
+	end, e2 := time.Parse(time.DateOnly, to)
 	if e1 != nil || e2 != nil || end.Before(start) {
 		return Window{}, ErrInvalidRequest
 	}
@@ -280,10 +281,17 @@ func parallel(ctx context.Context, tasks ...func()) {
 }
 
 func (c *composer) bounds() (time.Time, time.Time) {
-	from, _ := time.ParseInLocation(time.DateOnly, c.t.Window.From, c.loc)
-	to, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
-	return from, to.AddDate(0, 0, 1)
+	from, _, _ := calrecur.CivilDateBoundary(c.t.Window.From, c.loc)
+	toDate := shiftCivilDate(c.t.Window.To, 1)
+	to, _, _ := calrecur.CivilDateBoundary(toDate, c.loc)
+	return from, to
 }
+
+func shiftCivilDate(date string, days int) string {
+	civil, _ := time.Parse(time.DateOnly, date)
+	return civil.AddDate(0, 0, days).Format(time.DateOnly)
+}
+
 func (c *composer) filters() store.ActivityFilters {
 	f := c.src.Filters
 	f.IncludeNoise = c.req.IncludeNoise

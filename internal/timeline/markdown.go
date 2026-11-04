@@ -25,6 +25,7 @@ func Markdown(t *Timeline) string {
 		zone += " (set [activity].timezone)"
 	}
 	heading := t.Window.To
+	headingRef := ""
 	if t.Window.From != t.Window.To {
 		heading = t.Window.From + " – " + t.Window.To
 	}
@@ -32,7 +33,8 @@ func Markdown(t *Timeline) string {
 		heading = personName(t.Person.Person)
 	}
 	if t.Mode == ModeAnchor && t.Anchor != nil {
-		heading = "Around " + FormatShortRef(t.Anchor.Ref)
+		headingRef = FormatShortRef(t.Anchor.Ref)
+		heading = "Around " + headingRef
 	}
 	fmt.Fprintf(&b, "# %s · %s\n", heading, zone)
 	for _, s := range t.Freshness.Sources {
@@ -79,7 +81,7 @@ func Markdown(t *Timeline) string {
 	count := 0
 	rows := func(entries []Entry) {
 		for _, e := range entries {
-			fmt.Fprintf(&b, "- %s\n", entryRow(e, loc))
+			fmt.Fprintf(&b, "- %s\n", entryRow(e, loc, headingRef))
 			count++
 		}
 	}
@@ -110,7 +112,7 @@ func Markdown(t *Timeline) string {
 		var other []string
 		for _, e := range d.Calls {
 			if e.Call != nil && e.Call.Outcome != "answered" {
-				other = append(other, entryRow(e, loc))
+				other = append(other, entryRow(e, loc, headingRef))
 				count++
 			} else {
 				rows([]Entry{e})
@@ -128,7 +130,7 @@ func Markdown(t *Timeline) string {
 	if len(t.Upcoming) > 0 {
 		b.WriteString("\nUpcoming\n")
 		for _, e := range t.Upcoming {
-			fmt.Fprintf(&b, "- %s %s\n", e.Time.In(loc).Format("Mon"), entryRow(e, loc))
+			fmt.Fprintf(&b, "- %s %s\n", e.Time.In(loc).Format("Mon"), entryRow(e, loc, headingRef))
 			count++
 		}
 	}
@@ -178,7 +180,7 @@ func Markdown(t *Timeline) string {
 	}
 	return b.String()
 }
-func entryRow(e Entry, loc *time.Location) string {
+func entryRow(e Entry, loc *time.Location, headingRef string) string {
 	ref := FormatShortRef(e.Ref)
 	clock := e.Time.In(loc).Format("15:04")
 	var body string
@@ -269,7 +271,9 @@ func entryRow(e Entry, loc *time.Location) string {
 			body += " [deleted from source]"
 		}
 	}
-	body += " · " + ref
+	if headingRef == "" || ref != headingRef {
+		body += " · " + ref
+	}
 	if e.Filtered {
 		body += " [filtered]"
 	}

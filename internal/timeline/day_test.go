@@ -38,6 +38,45 @@ func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	assertions.Equal("Planning", entries[0].Meeting.Title.Text)
 	requirements.NoError(entries[0].Validate())
 }
+
+func TestBuildDayUsesCivilBoundariesAcrossSkippedMidnight(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	f := newTimelineFixture(t)
+	f.src.Location = loc
+	f.now = time.Date(2018, 11, 4, 12, 0, 0, 0, loc)
+	f.src.Clock = func() time.Time { return f.now }
+	previousNote, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2018-11-03", Body: "Previous day", Author: "owner"})
+	requirements.NoError(err)
+	todayNote, err := f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2018-11-04", Body: "Boundary day", Author: "owner"})
+	requirements.NoError(err)
+	allDayID := f.calendar("all-day", `{"id":"all-day","iCalUID":"all-day@example.com","summary":"All day","start":{"date":"2018-11-04"},"end":{"date":"2018-11-05"}}`)
+	lateID := f.calendar("late", `{"id":"late","iCalUID":"late@example.com","summary":"Late meeting","start":{"dateTime":"2018-11-04T23:30:00-02:00"},"end":{"dateTime":"2018-11-05T00:30:00-02:00"}}`)
+	req := dayRequest()
+	req.Date = "2018-11-04"
+
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Equal(Window{From: "2018-11-04", To: "2018-11-04"}, got.Window)
+	requirements.Len(got.Days, 1)
+	day := got.Days[0]
+	assertions.Equal("2018-11-04", day.Date)
+	requirements.Len(day.Notes, 1)
+	assertions.Equal(fmt.Sprintf("note:%d", todayNote.ID), day.Notes[0].Key)
+	assertions.NotEqual(fmt.Sprintf("note:%d", previousNote.ID), day.Notes[0].Key)
+	assertions.Equal(time.Date(2018, 11, 4, 1, 0, 0, 0, loc), day.Notes[0].Time.In(loc))
+	requirements.Len(day.Meetings, 2)
+	meetings := map[string]Entry{}
+	for _, entry := range day.Meetings {
+		meetings[entry.Ref] = entry
+	}
+	allDay := meetings[fmt.Sprintf("evt:%d", allDayID)]
+	assertions.True(allDay.Meeting.AllDay)
+	assertions.Equal(time.Date(2018, 11, 4, 1, 0, 0, 0, loc), allDay.Time.In(loc))
+	late := meetings[fmt.Sprintf("evt:%d", lateID)]
+	assertions.Equal(time.Date(2018, 11, 4, 23, 30, 0, 0, loc), late.Time.In(loc))
+}
 func TestBuildDayOverlappingCallDoesNotSetAttended(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

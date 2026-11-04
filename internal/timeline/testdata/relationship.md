@@ -28,7 +28,7 @@ History
 Upcoming
 - Thu 13:30 Weekly sync ✓ Alice T1 · notes #21 · 2 actions · possibly related msg:22 · e12
 
-omitted: history 2 · open_loops more · noise 2 · cold 3
+omitted: history 2 · noise 2 · cold 3
 
 retry: days
 

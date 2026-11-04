@@ -222,9 +222,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		func() {
 			if c.req.Scope.Owner && c.src.Notes != nil && !c.req.Conversation {
 				notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
-					start, _ := time.ParseInLocation(time.DateOnly, from.Format(time.DateOnly), c.loc)
-					end, _ := time.ParseInLocation(time.DateOnly, to.Format(time.DateOnly), c.loc)
-					return c.readNotes(ctx, start, end.AddDate(0, 0, 1))
+					return c.readNotes(ctx, from.In(c.loc).Format(time.DateOnly), to.In(c.loc).Format(time.DateOnly))
 				})
 			}
 		},
