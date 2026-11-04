@@ -176,11 +176,10 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 }
 
 func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchRequest(t *testing.T) {
-	req := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
 	tx, err := st.DB().BeginTx(t.Context(), nil)
-	req.NoError(err)
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
 	persist := func(key, subject, body string) {
 		var id int64
@@ -199,10 +198,10 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		persist(id, "plain", "bodyneedle")
 		bodyIDs = append(bodyIDs, id)
 	}
-	req.NoError(tx.Commit())
+	require.NoError(t, tx.Commit())
 	indexed, err := st.BackfillFTS(nil)
-	req.NoError(err)
-	req.Equal(int64(750), indexed)
+	require.NoError(t, err)
+	require.Equal(t, int64(750), indexed)
 	var requests atomic.Int32
 	var boundedRequests atomic.Int32
 	daemon := metadataDaemonWithPeer(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests,
