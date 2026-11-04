@@ -419,6 +419,155 @@ func TestMergeSourcesPreservesMicrosoftSentEnvelopeSnapshot(t *testing.T) {
 	assert.False(survivorCandidate.Unsent, "the hidden Sent envelope overrides the retained Drafts label")
 }
 
+func TestMergeDuplicatesPreservesSentEnvelopeAcrossProviderTypes(t *testing.T) {
+	tests := []struct {
+		name      string
+		fromType  string
+		intoType  string
+		microsoft bool
+	}{
+		{name: "gmail to imap", fromType: "gmail", intoType: "imap"},
+		{name: "microsoft to gmail", fromType: "msmail", intoType: "gmail", microsoft: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			from, err := st.GetOrCreateSource(test.fromType, "history@example.test")
+			require.NoError(err)
+			into, err := st.GetOrCreateSource(test.intoType, "live@example.test")
+			require.NoError(err)
+			recipients := []string{"visible@example.test"}
+			survivor := emailMergeFixtureMessage(t, st, into.ID, "live-message", recipients, true)
+			duplicate := emailMergeFixtureMessage(t, st, from.ID, "history-message", recipients, true)
+			private, err := st.EnsureParticipant("private@example.test", "Private Recipient", "example.test")
+			require.NoError(err)
+			_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_recipients(
+				message_id, participant_id, recipient_type, email_address
+			) VALUES (?, ?, 'bcc', ?)`), duplicate, private, "private@example.test")
+			require.NoError(err)
+
+			if test.microsoft {
+				folders, err := st.EnsureMicrosoftMailFoldersContext(ctx, from.ID, map[string]store.LabelInfo{
+					"sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+				})
+				require.NoError(err)
+				sent := folders["sent"]
+				_, err = st.ReconcileMicrosoftMailLabelsContext(ctx, duplicate, &sent, nil)
+				require.NoError(err)
+				_, err = st.DB().Exec(st.Rebind(
+					`DELETE FROM message_recipients WHERE message_id=? AND recipient_type='bcc'`), duplicate)
+				require.NoError(err)
+			} else {
+				labels, err := st.EnsureLabelsBatch(from.ID, map[string]store.LabelInfo{
+					"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+				})
+				require.NoError(err)
+				require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+			}
+
+			_, err = st.MergeDuplicates(survivor, []int64{duplicate}, "cross-provider-sent-envelope")
+			require.NoError(err)
+			require.NoError(st.ReplaceMessageLabels(survivor, nil))
+			var liveEnvelope bool
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT EXISTS(
+				SELECT 1 FROM message_recipients WHERE message_id=? AND email_address=?
+			)`), survivor, "private@example.test").Scan(&liveEnvelope))
+			assert.False(liveEnvelope, "the private recipient should be represented only by the saved Sent snapshot")
+			got, err := st.SenderRelationships(ctx, []string{"private@example.test"}, nil)
+			require.NoError(err)
+			assert.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["private@example.test"])
+		})
+	}
+}
+
+func TestMergeSourcesCanonicalizesSentProvenanceFingerprintMetadata(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("gmail", "history@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "live@example.test")
+	require.NoError(err)
+	recipients := []string{"recipient@example.test"}
+	survivor := emailMergeFixtureMessage(t, st, into.ID, "live-message", recipients, true)
+	duplicate := emailMergeFixtureMessage(t, st, from.ID, "history-message", recipients, true)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata=? WHERE id=?`), `{"source": "gmail"}`, survivor)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata=? WHERE id=?`),
+		`{"provider_sent_envelope_observed":true,"source":"gmail"}`, duplicate)
+	require.NoError(err)
+
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), result.DuplicatesHidden,
+		"provider provenance must not change fingerprints when JSON formatting differs")
+}
+
+func TestMergeDuplicatesDoesNotTrustRawImportSentLabels(t *testing.T) {
+	for _, test := range []struct {
+		name             string
+		preserveOriginal bool
+	}{
+		{name: "current importer ID"},
+		{name: "source-merged original importer ID", preserveOriginal: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			var source *store.Source
+			var from *store.Source
+			if test.preserveOriginal {
+				var err error
+				from, err = st.GetOrCreateSource("gmail", "import-history@example.test")
+				require.NoError(err)
+				source, err = st.GetOrCreateSource("gmail", "import-live@example.test")
+				require.NoError(err)
+			} else {
+				var err error
+				source, err = st.GetOrCreateSource("gmail", "import-live@example.test")
+				require.NoError(err)
+			}
+			survivor := emailMergeFixtureMessage(t, st, source.ID, "eml-"+strings.Repeat("a", 64),
+				[]string{"survivor@example.test"}, true)
+			duplicateSourceID := source.ID
+			if test.preserveOriginal {
+				duplicateSourceID = from.ID
+			}
+			duplicate := emailMergeFixtureMessage(t, st, duplicateSourceID, "eml-"+strings.Repeat("b", 64),
+				[]string{"imported-recipient@example.test"}, true)
+			if test.preserveOriginal {
+				result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+					FromSourceID: from.ID, IntoSourceID: source.ID,
+				})
+				require.NoError(err)
+				assert.Zero(result.DuplicatesHidden, "different recipient envelopes must remain separate during the source move")
+				var originalID string
+				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT original_source_message_id
+					FROM source_merge_archive_only_messages WHERE message_id=?`), duplicate).Scan(&originalID))
+				assert.Equal("eml-"+strings.Repeat("b", 64), originalID)
+			}
+			labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+				"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+			})
+			require.NoError(err)
+			require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+
+			_, err = st.MergeDuplicates(survivor, []int64{duplicate}, "raw-import-sent-label")
+			require.NoError(err)
+			got, err := st.SenderRelationships(t.Context(), []string{"imported-recipient@example.test"}, nil)
+			require.NoError(err)
+			assert.Equal("none", got["imported-recipient@example.test"].Relationship,
+				"an importer-generated ID must not become trusted provider evidence from a Sent label")
+		})
+	}
+}
+
 func TestMergeSourcesDoesNotFingerprintMicrosoftSentProvenance(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

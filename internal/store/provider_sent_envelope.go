@@ -45,24 +45,20 @@ func (s *Store) mergeProviderSentEnvelopeEvidenceTx(
 	}
 	duplicateSent := s.providerSentEnvelopeEvidenceSQL("duplicate", "duplicate_source")
 	survivorSent := s.providerSentEnvelopeEvidenceSQL("survivor", "survivor_source")
-	var sourceType string
 	var hasDuplicateSent, hasSurvivorSent bool
-	err := tx.QueryRowContext(ctx, `SELECT duplicate_source.source_type, `+duplicateSent+`, `+survivorSent+`
+	err := tx.QueryRowContext(ctx, `SELECT `+duplicateSent+`, `+survivorSent+`
 		FROM messages duplicate
 		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
 		JOIN messages survivor ON survivor.id=?
 		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
-		WHERE duplicate.id=? AND duplicate_source.source_type=survivor_source.source_type
-		  AND duplicate_source.source_type IN ('gmail','`+sourceTypeIMAP+`')`, survivorID, duplicateID).
-		Scan(&sourceType, &hasDuplicateSent, &hasSurvivorSent)
+		WHERE duplicate.id=? AND duplicate_source.source_type IN ('gmail','`+sourceTypeIMAP+`')
+		  AND survivor_source.source_type IN ('gmail','`+sourceTypeIMAP+`','msmail')`, survivorID, duplicateID).
+		Scan(&hasDuplicateSent, &hasSurvivorSent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return fmt.Errorf("read provider Sent envelope evidence: %w", err)
-	}
-	if sourceType != "gmail" && sourceType != sourceTypeIMAP {
-		return nil
 	}
 	if hasSurvivorSent {
 		if err := s.copyProviderSentEnvelopeTx(ctx, tx, survivorID, survivorID); err != nil {
@@ -82,11 +78,16 @@ func (s *Store) providerSentEnvelopeEvidenceSQL(message, source string) string {
 	if !s.IsPostgreSQL() {
 		origin = "CASE WHEN json_valid(" + message + ".metadata) THEN " + message + ".metadata ->> 'imap_content_origin' END"
 	}
-	return `(EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
+	original := `COALESCE(NULLIF((SELECT p.original_source_message_id
+		FROM source_merge_archive_only_messages p WHERE p.message_id=` + message + `.id), ''), ` + message + `.source_message_id)`
+	email := `COALESCE(NULLIF(` + message + `.message_type,''),'email')='email'`
+	rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
+	providerSentLabel := `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 		WHERE ml.message_id=` + message + `.id AND l.source_id=` + message + `.source_id
-		  AND (l.system_role='` + LabelSystemRoleSent + `' OR (` + source + `.source_type='gmail' AND l.source_label_id='SENT'))) OR
-		(` + source + `.source_type='` + sourceTypeIMAP + `' AND COALESCE(` + origin + `,'')='sent') OR
-		` + providerSentEnvelopeSnapshotExistsSQL(s.dialect, message) + `)`
+		  AND (l.system_role='` + LabelSystemRoleSent + `' OR (` + source + `.source_type='gmail' AND l.source_label_id='SENT')))`
+	providerSentOrigin := `(` + source + `.source_type='` + sourceTypeIMAP + `' AND COALESCE(` + origin + `,'')='sent')`
+	return `(((` + providerSentLabel + ` OR ` + providerSentOrigin + `) AND NOT ` + rawImported + `) OR ` +
+		providerSentEnvelopeSnapshotExistsSQL(s.dialect, message) + `)`
 }
 
 func (s *Store) copyProviderSentEnvelopeTx(ctx context.Context, tx *loggedTx, targetID, sentMessageID int64) error {

@@ -29,15 +29,15 @@ func (s *Store) senderNativeOwnershipSQL() string {
 	   WHERE ml.message_id=m.id AND l.source_id=m.source_id AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))`
 	providerSent := `((src.source_type IN ('gmail','imap','msmail') AND ` + sentLabel + `) OR
 	  (src.source_type='imap' AND COALESCE(` + origin + `,'')='sent') OR
-	  (src.source_type='msmail' AND (` + microsoftSent + ` OR ` + msmailSentEnvelope + `)) OR
-	  (src.source_type IN ('gmail','` + sourceTypeIMAP + `') AND ` + providerSentEnvelope + `))`
+	  (src.source_type='msmail' AND ` + microsoftSent + `) OR
+	  ` + msmailSentEnvelope + ` OR ` + providerSentEnvelope + `)`
 	email := `COALESCE(NULLIF(m.message_type,''),'email')='email'`
 	// Microsoft Graph's legacy source_is_from_me value was address-derived.
 	// Only provider-observed Sent envelope evidence can exempt a raw-import ID.
 	nativeFlag := `(COALESCE(m.source_is_from_me,FALSE) AND NOT (` + email + ` AND src.source_type='msmail'))`
 	rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
-	allowRawProviderSent := `((src.source_type='msmail' AND (` + microsoftSent + ` OR ` + msmailSentEnvelope + `)) OR
-	  (src.source_type IN ('gmail','` + sourceTypeIMAP + `') AND ` + providerSentEnvelope + `))`
+	allowRawProviderSent := `((src.source_type='msmail' AND ` + microsoftSent + `) OR
+	  ` + msmailSentEnvelope + ` OR ` + providerSentEnvelope + `)`
 	return `(` + nativeFlag + ` OR ` + providerSent + `) AND NOT (` + rawImported + ` AND NOT ` + allowRawProviderSent + `)`
 }
 

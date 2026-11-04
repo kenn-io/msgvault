@@ -143,30 +143,29 @@ func mergeMessageFingerprint(ctx context.Context, tx *loggedTx, m mergeMessage) 
 
 func mergeFingerprintMetadata(metadata string) string {
 	if strings.TrimSpace(metadata) == "" {
-		return metadata
+		return ""
 	}
 	var values map[string]jsontext.Value
 	if err := json.Unmarshal([]byte(metadata), &values); err != nil || values == nil {
 		return metadata
 	}
-	changed := false
 	for _, key := range []string{
 		microsoftSentEvidenceKey,
 		microsoftSentEnvelopeObservedKey,
 		providerSentEnvelopeObservedKey,
 	} {
-		if _, ok := values[key]; ok {
-			delete(values, key)
-			changed = true
-		}
-	}
-	if !changed {
-		return metadata
+		delete(values, key)
 	}
 	if len(values) == 0 {
 		return ""
 	}
-	encoded, err := json.Marshal(values)
+	for key, value := range values {
+		if err := value.Canonicalize(jsontext.CanonicalizeRawInts(false)); err != nil {
+			return metadata
+		}
+		values[key] = value
+	}
+	encoded, err := json.Marshal(values, json.Deterministic(true))
 	if err != nil {
 		return metadata
 	}

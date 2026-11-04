@@ -319,12 +319,16 @@ func persistMicrosoftSentEnvelopeRecipients(q boundQuerier, dialect Dialect, tar
 }
 
 func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, survivorID, duplicateID int64) error {
-	sentObserved := func(message string) string {
-		return `(` + metadataFlagSQL(s.dialect, message, microsoftSentEvidenceKey) + ` OR ` +
-			microsoftSentEnvelopeSnapshotExistsSQL(s.dialect, message) + ` OR EXISTS (
+	sentObserved := func(message, source string) string {
+		original := `COALESCE(NULLIF((SELECT p.original_source_message_id
+		FROM source_merge_archive_only_messages p WHERE p.message_id=` + message + `.id), ''), ` + message + `.source_message_id)`
+		email := `COALESCE(NULLIF(` + message + `.message_type,''),'email')='email'`
+		rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
+		nativeSent := `(` + source + `.source_type='msmail' AND (` + metadataFlagSQL(s.dialect, message, microsoftSentEvidenceKey) + ` OR EXISTS (
 			SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 			WHERE ml.message_id=` + message + `.id AND l.source_id=` + message + `.source_id
-			  AND l.system_role='` + LabelSystemRoleSent + `'))`
+			  AND l.system_role='` + LabelSystemRoleSent + `')) AND NOT ` + rawImported + `)`
+		return `(` + microsoftSentEnvelopeSnapshotExistsSQL(s.dialect, message) + ` OR ` + nativeSent + `)`
 	}
 	var observed, survivorObserved bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
@@ -332,15 +336,15 @@ func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, 
 		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
 		JOIN messages survivor ON survivor.id=?
 		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
-		WHERE duplicate.id=? AND duplicate_source.source_type='msmail'
-		  AND survivor_source.source_type='msmail' AND `+sentObserved("duplicate")+`
+		WHERE duplicate.id=? AND survivor_source.source_type IN ('gmail','imap','msmail')
+		  AND `+sentObserved("duplicate", "duplicate_source")+`
 	), EXISTS (
 		SELECT 1 FROM messages duplicate
 		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
 		JOIN messages survivor ON survivor.id=?
 		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
-		WHERE duplicate.id=? AND duplicate_source.source_type='msmail'
-		  AND survivor_source.source_type='msmail' AND `+sentObserved("survivor")+`
+		WHERE duplicate.id=? AND survivor_source.source_type IN ('gmail','imap','msmail')
+		  AND `+sentObserved("survivor", "survivor_source")+`
 	)`, survivorID, duplicateID, survivorID, duplicateID).
 		Scan(&observed, &survivorObserved)
 	if err != nil {
