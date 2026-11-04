@@ -126,9 +126,9 @@ func (s *Store) listRetryableAttachmentMessagesContext(ctx context.Context,
 		JOIN conversations c ON c.id = m.conversation_id
 		JOIN attachments a ON a.message_id = m.id
 		WHERE m.source_id = ?
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id = m.id)
 		  AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = a.id)
- AND a.source_attachment_id LIKE ?
+		  AND a.source_attachment_id LIKE ?
 		ORDER BY m.id, a.id
 	`, sourceID, providerPrefix+"%")
 	if err != nil {
@@ -421,6 +421,7 @@ const (
 	sourceTypeSlackdump     = "slackdump"
 	sourceTypeBeeper        = "beeper"
 	sourceTypeAppleMessages = "apple_messages"
+	sourceTypeMatrix        = "matrix"
 )
 
 // membershipRecord is the provider-maintained membership a conversation's
@@ -476,7 +477,7 @@ func attachmentPolicyParticipantCount(sourceType string, observed int, metadata 
 	switch strings.TrimSuffix(sourceType, ":") {
 	case sourceTypeDiscord:
 		return max(record.memberCount, observed)
-	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, "inline", sourceTypeAppleMessages:
+	case sourceTypeTeams, sourceTypeSlack, sourceTypeSlackdump, sourceTypeBeeper, "inline", sourceTypeAppleMessages, sourceTypeMatrix:
 		return record.memberCount
 	default:
 		return observed
