@@ -36,8 +36,8 @@ type TextSnapshotScope struct {
 	Filter         TextFilter
 }
 
-// TextSnapshotter returns an identity for the complete logical result set
-// behind a text page. Implementations exclude pagination from the identity.
+// TextSnapshotter returns a revision that changes when a text result may have
+// changed. Implementations exclude pagination from the revision.
 type TextSnapshotter interface {
 	TextSnapshotRevision(ctx context.Context, scope TextSnapshotScope) (string, error)
 }

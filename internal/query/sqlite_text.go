@@ -21,9 +21,9 @@ var _ TextEngine = (*SQLiteEngine)(nil)
 var _ TextSnapshotter = (*SQLiteEngine)(nil)
 var _ TextSnapshotReader = (*SQLiteEngine)(nil)
 
-// TextSnapshotRevision tracks changes to a chat's messages for timelines, or
-// hashes the complete ordered metadata for conversation lists. Pagination is
-// excluded from the revision.
+// TextSnapshotRevision tracks chat message changes, including body edits, and
+// displayed sender names and conversation titles. Conversation-list revisions
+// hash the ordered metadata. Pagination is excluded from both revisions.
 func (e *SQLiteEngine) TextSnapshotRevision(
 	ctx context.Context, scope TextSnapshotScope,
 ) (string, error) {
@@ -49,7 +49,8 @@ func (e *SQLiteEngine) ListConversationsSnapshot(
 }
 
 // ListConversationMessagesSnapshot returns one timeline page and a revision
-// that tracks changes to the chat's messages from the same read transaction.
+// that tracks message and body edits, sender names, and the conversation title
+// from the same read transaction.
 func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 	ctx context.Context, conversationID int64, filter TextFilter,
 ) ([]MessageSummary, string, error) {
@@ -62,8 +63,12 @@ func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 }
 
 const sqliteTimelineSnapshotProbe = `SELECT
-	(SELECT COUNT(*) FROM messages WHERE conversation_id = ?),
-	(SELECT MAX(content_changed_at) FROM messages WHERE conversation_id = ?)`
+	COUNT(*), MAX(content_changed_at),
+	COALESCE(SUM(CAST(unixepoch(content_changed_at, 'subsec') * 1000 AS INTEGER)), 0),
+	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_display_name_revision'), '0'),
+	COALESCE((SELECT updated_at FROM conversations WHERE id = ?), ''),
+	COALESCE((SELECT title FROM conversations WHERE id = ?), '')
+FROM messages WHERE conversation_id = ?`
 
 func readSQLiteTimelineSnapshot(
 	ctx context.Context, e *SQLiteEngine, scope TextSnapshotScope, collectPage bool,
@@ -79,9 +84,12 @@ func readSQLiteTimelineSnapshot(
 	}()
 
 	conversationID := *scope.ConversationID
-	var count int64
+	var count, changedSum int64
 	var changedAt sql.NullString
-	if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID).Scan(&count, &changedAt); err != nil {
+	var participantRevision, conversationUpdatedAt, conversationTitle string
+	if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID, conversationID).Scan(
+		&count, &changedAt, &changedSum, &participantRevision, &conversationUpdatedAt, &conversationTitle,
+	); err != nil {
 		return nil, "", fmt.Errorf("probe text timeline snapshot: %w", err)
 	}
 	identity, err := textSnapshotFilterIdentity(scope)
@@ -90,47 +98,13 @@ func readSQLiteTimelineSnapshot(
 	}
 	hasher := sha256.New()
 	writeSnapshotField(hasher, identity)
-	for _, field := range []any{conversationID, count, changedAt.String} {
+	for _, field := range []any{conversationID, count, changedAt.String, changedSum, participantRevision, conversationUpdatedAt, conversationTitle} {
 		writeSnapshotField(hasher, snapshotFieldBytes(field))
 	}
 	revision = "text-" + hex.EncodeToString(hasher.Sum(nil))
 
 	if collectPage {
-		where, args := buildSQLiteTextFilterConditions(e.dialect, scope.Filter)
-		where += " AND m.conversation_id = ?"
-		args = append(args, conversationID)
-		limit := scope.Filter.Pagination.Limit
-		if limit == 0 {
-			limit = 500
-		}
-		direction := sqliteDirection(scope.Filter.SortDirection)
-		query := fmt.Sprintf(`
-			SELECT
-				m.id,
-				COALESCE(m.source_message_id, ''),
-				COALESCE(m.conversation_id, 0),
-				COALESCE(c.source_conversation_id, ''),
-				COALESCE(m.subject, ''),
-				COALESCE(m.snippet, ''),
-				COALESCE(p_sender.email_address, ''),
-				COALESCE(p_sender.display_name, ''),
-				COALESCE(p_sender.phone_number, ''),
-				m.sent_at,
-				COALESCE(m.size_estimate, 0),
-				COALESCE(m.has_attachments, 0),
-				m.hidden_text_present,
-				COALESCE(m.attachment_count, 0),
-				m.deleted_from_source_at,
-				COALESCE(m.message_type, ''),
-				COALESCE(c.title, '')
-			FROM messages m
-			LEFT JOIN participants p_sender ON p_sender.id = m.sender_id
-			LEFT JOIN conversations c ON c.id = m.conversation_id
-			WHERE %s
-			ORDER BY m.sent_at %s, m.id %s
-			LIMIT ? OFFSET ?
-		`, where, direction, direction)
-		args = append(args, limit, scope.Filter.Pagination.Offset)
+		query, args := e.sqliteConversationMessagesQuery(conversationID, scope.Filter)
 		rows, err := tx.QueryContext(ctx, e.dialect.Rebind(query), args...)
 		if err != nil {
 			return nil, "", fmt.Errorf("query text timeline snapshot: %w", err)
@@ -726,6 +700,18 @@ func (e *SQLiteEngine) TextAggregate(
 func (e *SQLiteEngine) ListConversationMessages(
 	ctx context.Context, convID int64, filter TextFilter,
 ) ([]MessageSummary, error) {
+	query, args := e.sqliteConversationMessagesQuery(convID, filter)
+
+	rows, err := e.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list conversation messages: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanMessageSummaries(rows)
+}
+
+func (e *SQLiteEngine) sqliteConversationMessagesQuery(convID int64, filter TextFilter) (string, []any) {
 	where, args := buildSQLiteTextFilterConditions(e.dialect, filter)
 	where += " AND m.conversation_id = ?"
 	args = append(args, convID)
@@ -748,9 +734,9 @@ func (e *SQLiteEngine) ListConversationMessages(
 			COALESCE(p_sender.phone_number, '') AS from_phone,
 			m.sent_at,
 			COALESCE(m.size_estimate, 0) AS size_estimate,
-			m.has_attachments,
+			COALESCE(m.has_attachments, 0) AS has_attachments,
 			m.hidden_text_present,
-			m.attachment_count,
+			COALESCE(m.attachment_count, 0) AS attachment_count,
 			m.deleted_from_source_at,
 			COALESCE(m.message_type, '') AS message_type,
 			COALESCE(c.title, '') AS conv_title
@@ -764,13 +750,7 @@ func (e *SQLiteEngine) ListConversationMessages(
 
 	args = append(args, limit, filter.Pagination.Offset)
 
-	rows, err := e.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("list conversation messages: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	return scanMessageSummaries(rows)
+	return query, args
 }
 
 // sanitizeTextSearchMatch tokenizes a raw user query and builds an FTS5

@@ -19,7 +19,7 @@ func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
 	require.NoError(err)
 	t.Cleanup(func() { require.NoError(s.Close()) })
 	require.NoError(s.InitSchema())
-	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+sqliteTimelineSnapshotProbe, 1, 1)
+	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+sqliteTimelineSnapshotProbe, 1, 1, 1)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var plan strings.Builder
@@ -31,7 +31,11 @@ func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Contains(plan.String(), "COVERING INDEX idx_messages_conversation_content_changed")
+	assert.Equal(1, strings.Count(plan.String(), "COVERING INDEX idx_messages_conversation_content_changed"))
 	assert.NotContains(plan.String(), "SCAN m")
+	var millis int64
+	require.NoError(s.DB().QueryRow(`SELECT CAST(unixepoch('2020-01-01 00:00:00.123', 'subsec') * 1000 AS INTEGER)`).Scan(&millis))
+	assert.Equal(int64(1577836800123), millis)
 }
 
 func TestSQLiteTimelineSnapshotRevisionTracksMessageChanges(t *testing.T) {
@@ -99,6 +103,75 @@ func TestSQLiteTimelineSnapshotRevisionTracksMessageChanges(t *testing.T) {
 			differentFilter, err := engine.TextSnapshotRevision(t.Context(), scope)
 			require.NoError(err)
 			assert.NotEqual(after, differentFilter)
+		})
+	}
+}
+
+func TestSQLiteTimelineSnapshotRevisionTracksDisplayedChanges(t *testing.T) {
+	for _, change := range []string{"sender name", "conversation title", "message edit below maximum", "body edit"} {
+		t.Run(change, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			s, err := store.OpenForTest(filepath.Join(t.TempDir(), "timeline.db"))
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(s.Close()) })
+			require.NoError(s.InitSchema())
+			_, err = s.DB().Exec(`
+				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title, updated_at)
+					VALUES (701, 7, 'chat-701', 'direct_chat', 'Original', '2020-01-01 00:00:00');
+				INSERT INTO participants (id, email_address, display_name) VALUES (11, 'sender@example.com', 'Original');
+				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, sender_id, snippet, content_changed_at) VALUES
+					(801, 701, 7, 'message-801', 'imessage', '2020-01-01 10:00:00', 11, 'first', '2999-01-01 00:00:00.000'),
+					(802, 701, 7, 'message-802', 'imessage', '2020-01-01 11:00:00', 11, 'second', '2020-01-01 00:00:00.000');
+				INSERT INTO message_bodies (message_id, body_text) VALUES (802, 'original body');
+				UPDATE messages SET content_changed_at = '2020-01-01 00:00:00.000' WHERE id = 802;
+			`)
+			require.NoError(err)
+			engine := NewSQLiteEngine(s.DB())
+			filter := TextFilter{SortDirection: SortAsc}
+			page, before, err := engine.ListConversationMessagesSnapshot(t.Context(), 701, filter)
+			require.NoError(err)
+			require.Len(page, 2)
+			assert.Equal("Original", page[0].FromName)
+			assert.Equal("Original", page[0].ConversationTitle)
+			var maxBefore string
+			require.NoError(s.DB().QueryRow(`SELECT MAX(content_changed_at) FROM messages WHERE conversation_id = 701`).Scan(&maxBefore))
+
+			switch change {
+			case "sender name":
+				require.NoError(s.RepairParticipantDisplayNames([]store.ParticipantDisplayNameRepair{{ParticipantID: 11, DisplayName: "Updated"}}))
+			case "conversation title":
+				require.NoError(s.SetConversationTitle(7, 701, "Updated"))
+				// Title updates can share SQLite's one-second updated_at value.
+				_, err = s.DB().Exec(`UPDATE conversations SET updated_at = '2020-01-01 00:00:00' WHERE id = 701`)
+				require.NoError(err)
+			case "message edit below maximum":
+				_, err = s.DB().Exec(`UPDATE messages SET snippet = 'updated' WHERE id = 802`)
+				require.NoError(err)
+			case "body edit":
+				_, err = s.DB().Exec(`UPDATE message_bodies SET body_text = 'updated body' WHERE message_id = 802`)
+				require.NoError(err)
+			}
+			page, after, err := engine.ListConversationMessagesSnapshot(t.Context(), 701, filter)
+			require.NoError(err)
+			require.Len(page, 2)
+			assert.NotEqual(before, after)
+			var maxAfter string
+			require.NoError(s.DB().QueryRow(`SELECT MAX(content_changed_at) FROM messages WHERE conversation_id = 701`).Scan(&maxAfter))
+			assert.Equal(maxBefore, maxAfter)
+			switch change {
+			case "sender name":
+				assert.Equal("Updated", page[0].FromName)
+			case "conversation title":
+				assert.Equal("Updated", page[0].ConversationTitle)
+			case "message edit below maximum":
+				assert.Equal("updated", page[1].Snippet)
+			case "body edit":
+				var body string
+				require.NoError(s.DB().QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = 802`).Scan(&body))
+				assert.Equal("updated body", body)
+			}
 		})
 	}
 }
@@ -181,7 +254,7 @@ func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.
 	assert.NotEqual(reordered, differentSort)
 }
 
-func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *testing.T) {
+func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
