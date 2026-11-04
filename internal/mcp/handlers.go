@@ -600,6 +600,9 @@ func dependencyError(operation string, err error) (*toolResult, error) {
 }
 
 func messageLookupError(operation string, err error) (*toolResult, error) {
+	if result := translateLocalDaemonError(err); result != nil {
+		return result, nil
+	}
 	if errors.Is(err, os.ErrNotExist) || err.Error() == "not found" {
 		return toolErrorResult("message not found"), nil
 	}

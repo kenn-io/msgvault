@@ -1998,6 +1998,17 @@ func TestSearchMessageBodies_UnknownMode(t *testing.T) {
 	assert.Contains(t, txt, "invalid mode", "expected 'invalid mode' error, got: %s")
 }
 
+func TestGetMessageRecoveryFailureWrappingNotExistIsDaemonUnavailable(t *testing.T) {
+	assertions := assert.New(t)
+	h := newTestHandlers(&querytest.MockEngine{
+		GetMessageFunc: func(context.Context, int64) (*query.MessageDetail, error) {
+			return nil, &daemonclient.LocalDaemonUnavailableError{Err: os.ErrNotExist}
+		},
+	})
+	result := runToolExpectError(t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42)})
+	assertions.Equal("daemon_unavailable: "+daemonclient.LocalDaemonUnavailableMessage, resultText(t, result))
+}
+
 func TestGetMessage(t *testing.T) {
 	eng := &querytest.MockEngine{
 		Messages: map[int64]*query.MessageDetail{

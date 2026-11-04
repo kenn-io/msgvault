@@ -123,6 +123,9 @@ func (d operationalDefinition) bind(backend OperationBackend) func(context.Conte
 }
 
 func operationalToolResponse(name string, result *OperationResult, err error) (*toolResult, error) {
+	if translated := translateLocalDaemonError(err); translated != nil {
+		return translated, nil
+	}
 	if err != nil {
 		if result == nil || !result.IsError {
 			return nil, newInternalError(name, err)

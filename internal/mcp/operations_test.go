@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http/httptest"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 type operationalTestBackend struct{}
@@ -53,6 +55,24 @@ func TestOperationalReadRetainsTypedStructuredOutput(t *testing.T) {
 	opts := ServeOptions{Operations: operationalTestBackend{}, OperationCapabilities: []string{"get_source_scheduler_status"}}
 	result := rawCallTool(t, opts, "get_source_scheduler_status", map[string]any{})
 	assertions.Equal(map[string]any{"running": false, "accounts": []any{}}, result["structuredContent"])
+}
+
+func TestOperationalWriteRecoveryFailureDoesNotExposeUncertainOutcome(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	local := &daemonclient.LocalDaemonUnavailableError{Err: errors.New("private archive path")}
+	result, err := operationalToolResponse("sync_source", &OperationResult{
+		IsError: true,
+		Output: map[string]any{
+			"error":                        "operation_failed",
+			"operation_may_have_completed": true,
+		},
+	}, local)
+	requirements.NoError(err)
+	requirements.NotNil(result)
+	assertions.True(result.isError)
+	assertions.Equal("daemon_unavailable: "+daemonclient.LocalDaemonUnavailableMessage, result.text)
+	assertions.Empty(result.structuredContent)
 }
 
 type countingOperationalBackend struct {
