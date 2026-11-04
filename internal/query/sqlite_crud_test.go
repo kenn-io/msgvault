@@ -130,6 +130,49 @@ func TestMessageFilter_HasEmptyTargets(t *testing.T) {
 	}
 }
 
+func TestListMessagesBySourceUsesSourceTimelineIndex(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	for _, tc := range []struct {
+		name   string
+		filter MessageFilter
+		args   []any
+		index  string
+	}{
+		{"source", MessageFilter{}, []any{1, 100, 0}, "idx_messages_source_sent_at"},
+		{"conversation", MessageFilter{ConversationID: new(int64(1))}, []any{1, 1, 100, 0}, "idx_messages_conversation"},
+		{"date range", MessageFilter{After: new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))}, []any{1, "2024-01-01 00:00:00", 100, 0}, "idx_messages_source_sent_at"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dialect := &rebindRecordingDialect{Dialect: SQLiteQueryDialect{}}
+			engine := NewEngineWithDialect(env.DB, dialect)
+			tc.filter.SourceID = new(int64(1))
+			tc.filter.Sorting = MessageSorting{Field: MessageSortByDate, Direction: SortDesc}
+			tc.filter.Pagination = Pagination{Limit: 100}
+			_, err := engine.ListMessages(env.Ctx, tc.filter)
+			require.NoError(err)
+			require.NotEmpty(dialect.queries)
+			rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+dialect.queries[0], tc.args...)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+				if parent == 0 {
+					plan = append(plan, detail)
+				}
+			}
+			require.NoError(rows.Err())
+			assert.Contains(strings.Join(plan, "\n"), "USING INDEX "+tc.index)
+			assert.NotContains(strings.Join(plan, "\n"), "USE TEMP B-TREE FOR ORDER BY")
+		})
+	}
+}
+
 func TestListMessages_Filters(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
