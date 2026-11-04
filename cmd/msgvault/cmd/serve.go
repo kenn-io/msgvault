@@ -889,9 +889,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start the schedulers
 	sched.Start()
-	if _, err := sched.StartJob(sqliteMaintenanceJob, false); err != nil {
-		logger.Error("failed to start SQLite maintenance", "error", err)
-	}
+	startSQLiteMaintenanceJob(sched, s, logger)
 	mediaSched.Start()
 
 	// Create adapters for the API interfaces
