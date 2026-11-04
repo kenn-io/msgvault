@@ -72,8 +72,12 @@ func TestExportMessagesInMemory(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, store.MessageExportCounts{Sources: 1, Conversations: 1, Messages: 3}, counts)
 	require.Len(t, sink.messages, 3)
-	assert.Equal(t, []string{"a", "b", "c"}, []string{sink.messages[0].ID, sink.messages[1].ID, sink.messages[2].ID})
-	assert.Equal(t, []string{"Body a", "", ""}, []string{sink.messages[0].Text, sink.messages[1].Text, sink.messages[2].Text})
+	type messageBody struct{ id, text string }
+	assert.Equal(t, []messageBody{{"a", "Body a"}, {"b", ""}, {"c", ""}}, []messageBody{
+		{sink.messages[0].ID, sink.messages[0].Text},
+		{sink.messages[1].ID, sink.messages[1].Text},
+		{sink.messages[2].ID, sink.messages[2].Text},
+	})
 }
 
 func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
@@ -517,7 +521,9 @@ func TestExportMessagesOrdersByIdentityKey(t *testing.T) {
 	requirements.NoError(err)
 	discord, err := st.GetOrCreateSource("discord", "z-guild")
 	requirements.NoError(err)
-	sources := []store.Source{*discord, *gmail}
+	firstDiscord, err := st.GetOrCreateSource("discord", "a-guild")
+	requirements.NoError(err)
+	sources := []store.Source{*firstDiscord, *discord, *gmail}
 	var conversations []int64
 	for _, source := range sources {
 		second := insertMessageExportConversation(t, st, source.ID, "b", "", "channel", `{}`)
@@ -526,7 +532,7 @@ func TestExportMessagesOrdersByIdentityKey(t *testing.T) {
 	}
 
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	const messageCount = 16
+	const messageCount = 24
 	type identity struct {
 		sourceType, sourceIdentifier, conversationID, messageID string
 	}
