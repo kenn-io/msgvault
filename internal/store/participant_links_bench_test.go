@@ -98,6 +98,9 @@ func BenchmarkMergeParticipantsUnrelatedEdges(b *testing.B) {
 			seedDisjointOwnedParticipantLinks(b, st, 0, edges)
 			override := ""
 			if st.IsPostgreSQL() {
+				// Bulk seeding bypasses the statistics normally maintained by autovacuum.
+				_, err := st.db.Exec(`ANALYZE participants, participant_links, identity_match_candidates`)
+				require.NoError(b, err)
 				override = " OVERRIDING SYSTEM VALUE"
 			}
 			next := int64(2*edges + 1)
