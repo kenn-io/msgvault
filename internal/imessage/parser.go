@@ -2,6 +2,7 @@ package imessage
 
 import (
 	"bytes"
+	"encoding/binary"
 	"math"
 	"strings"
 	"time"
@@ -81,8 +82,17 @@ func resolveHandle(handleID string) (phone, email, displayName string) {
 // macOS Ventura+ / iOS 16+ stopped populating the plain-text "text"
 // column for most iMessages; the content lives exclusively here.
 func extractAttributedBodyText(data []byte) string {
+	text, _ := decodeAttributedBodyText(data)
+	return text
+}
+
+// decodeAttributedBodyText extracts attributed-body text and reports whether
+// the archive was decoded. Callers use the distinction to avoid treating a
+// malformed non-empty archive as a message whose content was deliberately
+// removed.
+func decodeAttributedBodyText(data []byte) (string, bool) {
 	if len(data) == 0 {
-		return ""
+		return "", false
 	}
 
 	// Try streamtyped format first (most common on modern macOS)
@@ -95,133 +105,86 @@ func extractAttributedBodyText(data []byte) string {
 		return extractKeyedArchiverText(data)
 	}
 
-	return ""
+	return "", false
 }
 
-// extractStreamtypedText extracts text from NSArchiver streamtyped format.
-// The format embeds an NSString with the text content. We scan for the
-// NSString class marker, skip past the variable-length encoding prefix,
-// and extract the UTF-8 text that follows.
-//
-// After the marker (\x84\x01+), there is a length prefix:
-//   - Single-byte: bit 7 clear (0x00-0x7F), value is the text length
-//   - Multi-byte: bit 7 set, followed by length bytes and framing bytes
-//     (including 0x92 and other high bytes)
-//
-// The text content is always clean UTF-8 surrounded by binary framing.
-func extractStreamtypedText(data []byte) string {
+// extractStreamtypedText extracts the UTF-8 NSString after the class marker.
+// streamtyped uses little-endian integers: 0x81 introduces a uint16 length,
+// 0x82 a uint32; other reserved tags (including floating-point 0x83) are invalid.
+// See github.com/dgelessus/python-typedstream, stream.py, _read_integer.
+func extractStreamtypedText(data []byte) (string, bool) {
 	marker := []byte("\x84\x01+")
 	idx := bytes.Index(data, marker)
 	if idx < 0 {
-		return ""
+		return "", false
 	}
 	pos := idx + len(marker)
 	if pos >= len(data) {
-		return ""
+		return "", false
 	}
-
-	// Decode the length prefix.
-	//
-	// Format after the \x84\x01+ marker:
-	//   Single-byte: 0x00-0x7F = length, then text immediately follows.
-	//   Multi-byte:  0x81 <len_byte> [framing_bytes...] <text> 0x86
-	//     The 0x81 flag means "1 length byte follows". The length byte
-	//     can be any value (including printable ASCII). After the length
-	//     byte, skip remaining framing bytes (0x00, 0x92, etc.) until
-	//     valid text starts.
-	b := data[pos]
-	var textLen int
-	if b&0x80 == 0 {
-		// Single-byte length (0x00-0x7F)
-		textLen = int(b)
-		pos++
-	} else {
-		// Multi-byte: 0x81 means 1 length byte follows
-		pos++ // skip the 0x81 flag
-		if pos >= len(data) {
-			return ""
+	head := data[pos]
+	pos++
+	var textLen int64
+	switch head {
+	case 0x81:
+		if len(data)-pos < 2 {
+			return "", false
 		}
-		textLen = int(data[pos])
-		pos++ // skip the length byte
-		// Skip remaining framing bytes (nulls, high bytes) before text
-		for pos < len(data) {
-			fb := data[pos]
-			if fb == 0x00 || (fb >= 0x80 && fb <= 0xBF) {
-				pos++
-				continue
-			}
-			break
+		textLen = int64(binary.LittleEndian.Uint16(data[pos : pos+2]))
+		pos += 2
+	case 0x82:
+		if len(data)-pos < 4 {
+			return "", false
 		}
-	}
-
-	if pos >= len(data) {
-		return ""
-	}
-
-	// Use the decoded length to extract exactly the right bytes
-	if textLen > 0 {
-		end := min(pos+textLen, len(data))
-		text := string(data[pos:end])
-		for len(text) > 0 && !utf8.ValidString(text) {
-			text = text[:len(text)-1]
+		textLen = int64(binary.LittleEndian.Uint32(data[pos : pos+4]))
+		pos += 4
+	default:
+		if head >= 0x80 && head <= 0x91 {
+			return "", false
 		}
-		return text
+		textLen = int64(head)
 	}
-
-	// Fallback: extract until archiver control byte or end
-	end := pos
-	for end < len(data) {
-		ch := data[end]
-		if ch == 0x00 || ch == 0x86 {
-			break
-		}
-		end++
+	if textLen > int64(len(data)-pos) {
+		return "", false
 	}
-
-	if end <= pos {
-		return ""
-	}
-
-	text := string(data[pos:end])
-	for len(text) > 0 && !utf8.ValidString(text) {
-		text = text[:len(text)-1]
-	}
-	return text
+	// The length is bounded by the remaining slice, including on 32-bit hosts.
+	text := string(data[pos : int64(pos)+textLen])
+	return text, utf8.ValidString(text)
 }
 
 // extractKeyedArchiverText extracts text from NSKeyedArchiver binary plist.
-func extractKeyedArchiverText(data []byte) string {
+func extractKeyedArchiverText(data []byte) (string, bool) {
 	var archive struct {
 		Top     map[string]plist.UID `plist:"$top"`
 		Objects []any                `plist:"$objects"`
 	}
 	if _, err := plist.Unmarshal(data, &archive); err != nil {
-		return ""
+		return "", false
 	}
 
 	rootUID, ok := archive.Top["root"]
 	if !ok || int(rootUID) >= len(archive.Objects) { //nolint:gosec // index check immediately gates uint64->int
-		return ""
+		return "", false
 	}
 
 	rootObj, ok := archive.Objects[rootUID].(map[string]any)
 	if !ok {
-		return ""
+		return "", false
 	}
 
 	nsStringUID, ok := rootObj["NS.string"].(plist.UID)
 	if !ok {
-		return ""
+		return "", false
 	}
 	if int(nsStringUID) >= len(archive.Objects) { //nolint:gosec // index check gates uint64->int
-		return ""
+		return "", false
 	}
 
 	text, ok := archive.Objects[nsStringUID].(string)
 	if !ok {
-		return ""
+		return "", false
 	}
-	return text
+	return text, true
 }
 
 // snippet returns the first n characters of s, suitable for message preview.

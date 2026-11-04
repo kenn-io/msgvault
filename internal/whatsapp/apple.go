@@ -122,6 +122,7 @@ func (imp *Importer) importApple(
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}
+	summary.SyncID = syncID
 	scoped := *imp
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	imp = &scoped
@@ -139,15 +140,15 @@ func (imp *Importer) importApple(
 
 	lidMap, err := loadAppleLIDMap(ctx, chatDBPath)
 	if err != nil {
-		return nil, fmt.Errorf("load Apple LID mapping: %w", err)
+		return summary, fmt.Errorf("load Apple LID mapping: %w", err)
 	}
 	pushNames, err := loadApplePushNames(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("load Apple push names: %w", err)
+		return summary, fmt.Errorf("load Apple push names: %w", err)
 	}
 	duplicateStanzas, duplicateRows, err := fetchDuplicateAppleTextStanzas(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("find duplicate Apple stanza IDs: %w", err)
+		return summary, fmt.Errorf("find duplicate Apple stanza IDs: %w", err)
 	}
 	if duplicateRows > 0 {
 		summary.Errors++
@@ -155,31 +156,35 @@ func (imp *Importer) importApple(
 			"skipping %d Apple text messages whose stanza IDs are duplicated",
 			duplicateRows,
 		))
+		// Duplicate-only imports may never reach a message checkpoint.
+		if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{ErrorsCount: summary.Errors}); err != nil {
+			return summary, fmt.Errorf("checkpoint Apple import warnings: %w", err)
+		}
 	}
 
 	selfParticipantID, err := imp.store.EnsureParticipantByPhone(
 		opts.Phone, opts.DisplayName, "whatsapp",
 	)
 	if err != nil {
-		return nil, fmt.Errorf("ensure self participant: %w", err)
+		return summary, fmt.Errorf("ensure self participant: %w", err)
 	}
 	participantIDs := map[string]int64{opts.Phone: selfParticipantID}
 	summary.Participants = 1
 
 	chats, err := fetchAppleChats(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("fetch Apple chats: %w", err)
+		return summary, fmt.Errorf("fetch Apple chats: %w", err)
 	}
 
 	aggregates, markersAvailable, err := fetchAppleChatAggregates(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
+		return summary, fmt.Errorf("read Apple chat change markers: %w", err)
 	}
 	// Without a store identity, markers cannot tell one database from another,
 	// so every chat is read.
 	storeIdentity, err := fetchAppleStoreIdentity(ctx, db)
 	if err != nil {
-		return nil, fmt.Errorf("read Apple chat change markers: %w", err)
+		return summary, fmt.Errorf("read Apple chat change markers: %w", err)
 	}
 	if storeIdentity == "" {
 		markersAvailable, aggregates = false, nil
@@ -188,13 +193,13 @@ func (imp *Importer) importApple(
 		storeIdentity, selfParticipantID, lidMap, pushNames, duplicateStanzas,
 	)
 	if err != nil {
-		return nil, err
+		return summary, err
 	}
 	var previousMarkers map[int64]string
 	if !opts.Full && markersAvailable {
 		previousMarkers, err = imp.previousAppleChatMarkers(ctx, source, syncID, importContext)
 		if err != nil {
-			return nil, err
+			return summary, err
 		}
 	}
 	nextMarkers := make(map[int64]string, len(chats))
@@ -409,7 +414,11 @@ func (imp *Importer) importApple(
 				if _, err := imp.store.PersistMessageContext(ctx, data); err != nil {
 					return summary, fmt.Errorf("persist Apple message: %w", err)
 				}
-				summary.MessagesAdded++
+				if _, exists := stored[sourceMessage.StanzaID]; exists {
+					summary.MessagesUpdated++
+				} else {
+					summary.MessagesAdded++
+				}
 				chatAdded++
 				totalAdded++
 			}
@@ -417,6 +426,8 @@ func (imp *Importer) importApple(
 			if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 				MessagesProcessed: summary.MessagesProcessed,
 				MessagesAdded:     summary.MessagesAdded,
+				MessagesUpdated:   summary.MessagesUpdated,
+				ErrorsCount:       summary.Errors,
 			}); err != nil {
 				return summary, fmt.Errorf("checkpoint Apple import: %w", err)
 			}

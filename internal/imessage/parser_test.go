@@ -2,6 +2,8 @@ package imessage
 
 import (
 	"math"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -256,47 +258,44 @@ func makeStreamtypedBlob(text string) []byte {
 	buf = append(buf, parent...)
 	buf = append(buf, marker...)
 
-	// Length encoding
 	textBytes := []byte(text)
 	n := len(textBytes)
-	if n < 128 {
+	switch {
+	case n < 0x80 || (n > 0x91 && n <= 0xff):
 		buf = append(buf, byte(n))
-	} else {
-		// Multi-byte little-endian length
-		nBytes := 0
-		tmp := n
-		for tmp > 0 {
-			nBytes++
-			tmp >>= 8
-		}
-		buf = append(buf, 0x80|byte(nBytes))
-		for i := range nBytes {
-			buf = append(buf, byte(n>>(8*i)))
-		}
+	case n <= 0xffff:
+		buf = append(buf, 0x81, byte(n), byte(n>>8))
+	default:
+		buf = append(buf, 0x82, byte(n), byte(n>>8), byte(n>>16), byte(n>>24))
 	}
 
 	buf = append(buf, textBytes...)
 	return buf
 }
 
-// makeRealStreamtypedBlob builds a blob matching the actual macOS Sequoia
-// format where the multi-byte length has extra framing bytes (0x81, 0x92, 0x00)
-// between the marker and the text. The 0x92 byte is > 0x20, which the
-// original parser couldn't skip.
+// makeRealStreamtypedBlob uses the two-byte length encoding even for short text.
+// In the observed prefix 0x81 0x92 0x00, 0x0092 is the length, not framing.
 func makeRealStreamtypedBlob(text string) []byte {
-	// This matches the real format seen in chat.db:
-	// \x84\x01+ \x81 \x92 \x00 <text> \x86 ...
-	var buf []byte
-	buf = append(buf, "\x04\x0bstreamtyped\x81\xe8\x03\x84\x01@\x84\x84\x84"...)
-	buf = append(buf, "\x12NSAttributedString"...)
-	buf = append(buf, "\x00\x84\x84\x08NSObject\x00\x85\x92\x84\x84\x84\x08NSString\x01\x94"...)
-	buf = append(buf, "\x84\x01+"...) // marker
-	// Multi-byte length prefix with actual 0x92 framing byte (> 0x20)
+	buf := []byte("\x04\x0bstreamtyped\x81\xe8\x03\x84\x01+\x81")
 	n := len(text)
-	buf = append(buf, 0x81, byte(n), 0x92, 0x00)
+	buf = append(buf, byte(n), byte(n>>8))
 	buf = append(buf, text...)
-	buf = append(buf, 0x86) // terminator
-	return buf
+	return append(buf, 0x86)
+}
+
+func TestStreamtypedLengthPrefixes(t *testing.T) {
+	for _, n := range []int{0, 127, 128, 145, 146, 200, 255, 256, 300, 65535, 65536} {
+		t.Run(strconv.Itoa(n), func(t *testing.T) {
+			text := strings.Repeat("a", n)
+			got, ok := decodeAttributedBodyText(makeStreamtypedBlob(text))
+			require.True(t, ok)
+			assert.Equal(t, text, got)
+		})
+	}
+	for _, prefix := range [][]byte{{0x81}, {0x81, 0x01}, {0x82, 1, 0, 0}, {0x83, 1, 0, 0, 0}, {0x81, 0xff, 0xff}} {
+		_, ok := decodeAttributedBodyText(append([]byte("\x04\x0bstreamtyped\x84\x01+"), prefix...))
+		assert.False(t, ok)
+	}
 }
 
 func TestExtractAttributedBodyText(t *testing.T) {

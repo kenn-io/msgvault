@@ -303,6 +303,9 @@ func readCacheSyncCountersContext(ctx context.Context, db contextSQLRowQuerier) 
 
 // Cancelled attempts can commit messages before yielding. Like failed runs,
 // they may stop before counting every write, so track interruptions as well.
+// The no-write prefix is inlined rather than bound: callers pass a raw *sql.DB
+// that may be PostgreSQL, which does not accept '?' placeholders. The prefix is
+// a constant without quotes or LIKE wildcards.
 func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cacheSyncCounters, error) {
 	var counters cacheSyncCounters
 	err := queryRow(`
@@ -315,6 +318,7 @@ func readCacheSyncCountersWithRow(queryRow func(string, ...any) *sql.Row) (cache
 		JOIN sources src ON src.id = sr.source_id
 		WHERE sr.status IN ('completed', 'failed', 'cancelled', 'paused')
 		  AND sr.completed_at IS NOT NULL
+		  AND COALESCE(sr.error_message, '') NOT LIKE '`+store.SyncNoArchiveWritesErrorPrefix+`%'
 	`).Scan(
 		&counters.additions,
 		&counters.updates,

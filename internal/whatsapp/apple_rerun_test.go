@@ -146,7 +146,8 @@ func TestImportAppleRerunUpdatesEditedMessage(t *testing.T) {
 	execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZTEXT = '`+prefix+` editedtail' WHERE Z_PK = 1`)
 	second, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(1), second.MessagesAdded)
+	assert.Equal(int64(1), second.MessagesUpdated)
+	assert.Equal(int64(0), second.MessagesAdded)
 	assert.Equal([]string{"direct-in"}, rewrittenAppleMessages(t, st))
 	assert.Equal(prefix+" editedtail", appleBodyText(t, st, "direct-in"))
 	raw, err := st.GetMessageRaw(messageID)
@@ -175,7 +176,8 @@ func TestImportAppleRerunReattributesLIDSenders(t *testing.T) {
 	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 	second, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(2), second.MessagesAdded)
+	assert.Equal(int64(2), second.MessagesUpdated)
+	assert.Equal(int64(0), second.MessagesAdded)
 	assert.Equal([]string{"group-in", "lid-in"}, rewrittenAppleMessages(t, st))
 
 	attribution := func(sourceMessageID string) (string, string) {
@@ -292,7 +294,8 @@ func TestImportAppleFailedWriteLeavesNoPartialMessage(t *testing.T) {
 	release()
 	edited, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(1), edited.MessagesAdded)
+	assert.Equal(int64(1), edited.MessagesUpdated)
+	assert.Equal(int64(0), edited.MessagesAdded)
 	assert.Equal("edited outbound text", appleBodyText(t, st, "direct-out"))
 }
 
@@ -331,7 +334,8 @@ func TestImportAppleRerunRepairsPartialWrites(t *testing.T) {
 
 	summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(3), summary.MessagesAdded)
+	assert.Equal(int64(3), summary.MessagesUpdated)
+	assert.Equal(int64(0), summary.MessagesAdded)
 	assert.Equal([]string{"direct-in", "group-in", "lid-in"}, rewrittenAppleMessages(t, st))
 	raw, err := st.GetMessageRaw(ids["lid-in"])
 	require.NoError(err)
@@ -359,7 +363,8 @@ func TestImportAppleRerunFollowsChatMove(t *testing.T) {
 	execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZCHATSESSION = 3 WHERE Z_PK = 2`)
 	moved, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(1), moved.MessagesAdded)
+	assert.Equal(int64(1), moved.MessagesUpdated)
+	assert.Equal(int64(0), moved.MessagesAdded)
 
 	var conversation string
 	require.NoError(st.DB().QueryRow(`
@@ -460,14 +465,16 @@ func TestImportAppleLimitSkipsUnchangedPrefix(t *testing.T) {
 	`)
 	first, err := importer.Import(context.Background(), chatDBPath, limited)
 	require.NoError(err)
-	assert.Equal(int64(1), first.MessagesAdded)
+	assert.Equal(int64(1), first.MessagesUpdated)
+	assert.Equal(int64(0), first.MessagesAdded)
 	assert.GreaterOrEqual(first.MessagesSkipped, int64(7))
 	assert.Equal("late one edited", appleBodyText(t, st, "late-1"))
 	assert.Equal("late two", appleBodyText(t, st, "late-2"))
 
 	second, err := importer.Import(context.Background(), chatDBPath, limited)
 	require.NoError(err)
-	assert.Equal(int64(1), second.MessagesAdded)
+	assert.Equal(int64(1), second.MessagesUpdated)
+	assert.Equal(int64(0), second.MessagesAdded)
 	assert.Equal("late two edited", appleBodyText(t, st, "late-2"))
 
 	final, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
@@ -615,4 +622,28 @@ func TestImportAndroidRejectsDateWindow(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "only supported for Apple")
 	assertStoreCount(t, st.DB(), "messages", 0)
+}
+
+func TestImportAppleEditAndAdditionCounts(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	chatDBPath := createAppleChatFixture(t)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	_, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	execAppleFixture(t, chatDBPath, `
+ UPDATE ZWAMESSAGE SET ZTEXT = 'edited direct text' WHERE Z_PK = 1;
+ INSERT INTO ZWAMESSAGE VALUES
+ (20, 1, NULL, 'direct-new', 0, 700000020, 'new direct text', 0, '15555550101@s.whatsapp.net');
+ `)
+	summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
+	require.NoError(err)
+	assert.Equal(int64(1), summary.MessagesAdded)
+	run, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	require.NotNil(run)
+	assert.Equal(int64(1), run.MessagesAdded)
+	assert.Equal(int64(1), run.MessagesUpdated)
+	assert.Equal("edited direct text", appleBodyText(t, st, "direct-in"))
+	assert.Equal("new direct text", appleBodyText(t, st, "direct-new"))
 }

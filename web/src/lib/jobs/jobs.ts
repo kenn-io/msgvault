@@ -29,7 +29,10 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
     } else {
       const run = source.latest_sync;
       const failedAt = run?.completed_at ?? run?.started_at;
-      const runFailed = sourceRunState(source) === 'failed';
+      // An unmeasured run that failed (Full Disk Access denied, source
+      // missing) still needs attention; one that completed does not.
+      const state = sourceRunState(source);
+      const runFailed = state === 'failed' || (state === 'unmeasured' && run?.status === 'failed');
       if (runFailed || source.scheduler_last_error) {
         const diagnostics = runFailed
           ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).find(Boolean)

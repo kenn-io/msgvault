@@ -3886,6 +3886,36 @@ func (s *Store) UpsertFTSContext(ctx context.Context, messageID int64, subject, 
 	})
 }
 
+// IndexStoredMessageFTSContext writes messageID's search document from its
+// stored subject, body, and recipients: the document BackfillFTS builds.
+// Importers that write those parts separately call it after the last one, so
+// new and edited messages are searchable without a backfill.
+func (s *Store) IndexStoredMessageFTSContext(ctx context.Context, messageID int64) error {
+	if !s.fts5Available {
+		return nil
+	}
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		// The body-write lock keeps a concurrent body change from landing
+		// between this read and the index write.
+		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+			return fmt.Errorf("lock message search document: %w", err)
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		if s.syncGeneration != nil {
+			if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+				return err
+			}
+		}
+		row, err := s.loadDerivedEmailText(q, messageID)
+		if err != nil {
+			return fmt.Errorf("load message search document: %w", err)
+		}
+		row.fts.Body = row.body
+		_, err = s.upsertFTSOrUnsearchable(q, row.fts)
+		return err
+	})
+}
+
 // BackfillFTS fills missing search entries from existing message data on SQLite.
 // PostgreSQL also refreshes entries with an old indexing version.
 // Processes in batches to avoid blocking for minutes on large archives.
