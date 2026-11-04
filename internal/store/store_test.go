@@ -1318,11 +1318,7 @@ func TestStore_GetRandomMessageIDs_ExcludesDeleted(t *testing.T) {
 	require.NoError(err)
 	otherConversation, err := f.Store.EnsureConversation(otherSource.ID, "other-thread", "Other Thread")
 	require.NoError(err)
-	_, err = f.Store.UpsertMessage(&store.Message{
-		SourceID: otherSource.ID, ConversationID: otherConversation,
-		SourceMessageID: "other-message", MessageType: "email",
-	})
-	require.NoError(err)
+	storetest.NewMessage(otherSource.ID, otherConversation).Create(t, f.Store)
 
 	// Delete 2 messages
 	err = f.Store.MarkMessageDeleted(f.Source.ID, "msg-0")
