@@ -1,5 +1,15 @@
 # msgvault Agent Quickstart
 
+Find the command for a task before reading its flags and examples:
+
+```bash
+msgvault cli search "search extracted document attachments"
+```
+
+This searches command metadata locally without configuration or a daemon.
+Add `--json` for structured results and `--limit N` for 1–20 results (default 5).
+Then run the suggested command with `--help`.
+
 You have access to `msgvault`, an offline email, chat, and meeting archive
 tool. The user's archive is stored locally in a SQLite database with
 Parquet-based analytics. Use the commands below to help the user set up, sync,
