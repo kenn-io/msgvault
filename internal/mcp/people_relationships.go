@@ -2,7 +2,7 @@ package mcp
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"strings"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -41,9 +41,13 @@ func (h *handlers) listRelationships(ctx context.Context, req toolRequest) (*too
 	default:
 		return toolErrorResult("cadence must be overdue, due, no_list, or unknown"), nil
 	}
-	dueWithinDays, err := relationshipDueWithinDays(args, cadence)
+	dueWithinDaysValue, hasDueWithinDays, err := relationshipDueWithinDays(args, cadence)
 	if err != nil {
 		return toolErrorResult(err.Error()), nil
+	}
+	var dueWithinDays *int
+	if hasDueWithinDays {
+		dueWithinDays = &dueWithinDaysValue
 	}
 	limit := limitArg(args, toolArgLimit, 50)
 	if limit < 1 || limit > 500 {
@@ -61,22 +65,21 @@ func (h *handlers) listRelationships(ctx context.Context, req toolRequest) (*too
 		return nil, newInternalError("list relationships", err)
 	}
 	if page == nil {
-		return nil, newInternalError("list relationships", fmt.Errorf("empty response"))
+		return nil, newInternalError("list relationships", errors.New("empty response"))
 	}
 	return jsonResult(page)
 }
 
-func relationshipDueWithinDays(args map[string]any, cadence string) (*int, error) {
+func relationshipDueWithinDays(args map[string]any, cadence string) (int, bool, error) {
 	if _, present := args["due_within_days"]; !present {
-		return nil, nil
+		return 0, false, nil
 	}
 	if cadence != "due" {
-		return nil, fmt.Errorf("due_within_days requires cadence=due and an integer from 0 to 3660")
+		return 0, false, errors.New("due_within_days requires cadence=due and an integer from 0 to 3660")
 	}
 	days64, err := nonnegativeInt64Arg(args, "due_within_days")
 	if err != nil || days64 > 3660 {
-		return nil, fmt.Errorf("due_within_days requires cadence=due and an integer from 0 to 3660")
+		return 0, false, errors.New("due_within_days requires cadence=due and an integer from 0 to 3660")
 	}
-	days := int(days64)
-	return &days, nil
+	return int(days64), true, nil
 }

@@ -96,6 +96,9 @@ type RelationshipCadence struct {
 type RelationshipsRequest struct {
 	Context Context
 	ShowAll bool
+	// AllRows returns the complete ordered ranking for callers that must join
+	// local metadata before applying their own filter and page boundary.
+	AllRows bool
 	Limit   int
 	Offset  int
 	Now     time.Time
@@ -178,6 +181,7 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 		now.UTC(),
 		request.Offset,
 		limit,
+		request.AllRows,
 	)
 	if err != nil {
 		return nil, err
@@ -201,6 +205,7 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 	showAll bool,
 	now time.Time,
 	offset, limit int,
+	allRows bool,
 ) ([]RelationshipRow, int64, error) {
 	var queryText string
 	var queryArgs []any
@@ -252,6 +257,9 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 		return relationshipRowBefore(candidates[i], candidates[j])
 	})
 	totalCount := int64(len(candidates))
+	if allRows {
+		return candidates, totalCount, nil
+	}
 	if offset >= len(candidates) {
 		return []RelationshipRow{}, totalCount, nil
 	}
