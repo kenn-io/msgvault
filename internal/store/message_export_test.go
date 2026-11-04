@@ -500,7 +500,63 @@ func (s *hidingMessageExportSink) Message(message store.MessageExportMessage) er
 	return err
 }
 
-func TestExportMessagesKeysetPagingDoesNotSkipAfterPrefixMutation(t *testing.T) {
+func TestExportMessagesKeepsOrderAcrossPages(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	gmail, err := st.GetOrCreateSource("gmail", "a@example.test")
+	requirements.NoError(err)
+	discord, err := st.GetOrCreateSource("discord", "z-guild")
+	requirements.NoError(err)
+	sources := []store.Source{*discord, *gmail}
+	var conversations []int64
+	for _, source := range sources {
+		second := insertMessageExportConversation(t, st, source.ID, "b", "", "channel", `{}`)
+		first := insertMessageExportConversation(t, st, source.ID, "a", "", "channel", `{}`)
+		conversations = append(conversations, first, second)
+	}
+
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	const messageCount = 3*256 + 1
+	type identity struct {
+		sourceType, sourceIdentifier, conversationID, messageID string
+	}
+	want := make([]identity, messageCount)
+	for i := range messageCount {
+		source := sources[i/193/2]
+		want[i] = identity{
+			sourceType: source.SourceType, sourceIdentifier: source.Identifier,
+			conversationID: []string{"a", "b"}[i/193%2],
+			messageID:      fmt.Sprintf("message-%d-%03d-%d", i/193, 64-i%193/3, i%193%3),
+		}
+	}
+	// Interleave sources, conversations, timestamps, and message IDs on insert.
+	for n := range messageCount {
+		i := n * 257 % messageCount
+		source := sources[i/193/2]
+		insertMessageExportMessage(
+			t, st, source.ID, conversations[i/193], want[i].messageID, "text",
+			start.Add(time.Duration(i%193/3)*time.Minute), "", "", 0, false, false,
+		)
+	}
+
+	sink := &collectingMessageExportSink{}
+	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
+		Start: start, End: start.Add(24 * time.Hour),
+	}, sink)
+	requirements.NoError(err)
+	assertions.Equal(messageCount, counts.Messages)
+	got := make([]identity, len(sink.messages))
+	for i, message := range sink.messages {
+		got[i] = identity{
+			sourceType: message.SourceType, sourceIdentifier: message.SourceIdentifier,
+			conversationID: message.ConversationID, messageID: message.ID,
+		}
+	}
+	assertions.Equal(want, got)
+}
+
+func TestExportMessagesIsOneSnapshotWhileSinkHidesRows(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -521,7 +577,7 @@ func TestExportMessagesKeysetPagingDoesNotSkipAfterPrefixMutation(t *testing.T) 
 	sink := &hidingMessageExportSink{
 		st:             st,
 		sourceID:       source.ID,
-		sourceMessage:  "message-000",
+		sourceMessage:  "message-256",
 		hideAfterCount: pageSize,
 	}
 	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
@@ -531,7 +587,10 @@ func TestExportMessagesKeysetPagingDoesNotSkipAfterPrefixMutation(t *testing.T) 
 	requirements.NoError(err)
 	assertions.Equal(pageSize+1, counts.Messages)
 	requirements.Len(sink.messages, pageSize+1)
-	assertions.Equal("message-256", sink.messages[pageSize].ID)
+	for i, message := range sink.messages {
+		assertions.Equal(fmt.Sprintf("message-%03d", i), message.ID)
+	}
+	assertions.Equal(len(sink.messages), counts.Messages)
 }
 
 type failingMessageExportSink struct {
