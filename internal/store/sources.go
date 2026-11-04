@@ -734,9 +734,6 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	if err := rows.Close(); err != nil {
 		return fmt.Errorf("close unsupported identity matches: %w", err)
 	}
-	if len(unsupported) == 0 {
-		return nil
-	}
 	unsupportedIDs := make(map[int64]struct{}, len(unsupported))
 	for _, candidate := range unsupported {
 		unsupportedIDs[candidate.id] = struct{}{}
@@ -756,6 +753,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	}
 	var acceptedScope string
 	var acceptedScopeArgs []any
+	var linkScope string
 	if participantID != 0 {
 		// Use the component before withdrawing edges so accepted matches can
 		// reconnect participants on either side of a resulting split.
@@ -769,18 +767,15 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 			ids = append(ids, id)
 		}
 		slices.Sort(ids)
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-		acceptedScope = fmt.Sprintf(` AND id IN (
-			SELECT id FROM identity_match_candidates WHERE left_kind = 'participant' AND left_id IN (%s)
-			UNION SELECT id FROM identity_match_candidates WHERE right_kind = 'participant' AND right_id IN (%s)
-		)`, placeholders, placeholders)
-		for range 2 {
-			for _, id := range ids {
-				acceptedScopeArgs = append(acceptedScopeArgs, id)
-			}
-		}
+		linkScope, acceptedScopeArgs = clusterEdgeFilter(ids)
+		left, right, _ := strings.Cut(linkScope, " OR ")
+		left = strings.Replace(left, "participant_a", "left_id", 1)
+		right = strings.Replace(right, "participant_b", "right_id", 1)
+		acceptedScope = ` AND id IN (
+			SELECT id FROM identity_match_candidates WHERE left_kind = 'participant' AND ` + left + `
+			UNION SELECT id FROM identity_match_candidates WHERE right_kind = 'participant' AND ` + right + `
+		)`
 	}
-	deletedEdges := make(map[linkEdge]struct{})
 
 	type replacementOwner struct {
 		candidateID int64
@@ -852,9 +847,6 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 			if err != nil {
 				return fmt.Errorf("count withdrawn identity match link %d: %w", candidate.id, err)
 			}
-			if _, supported := replacements[pair]; !supported && changed > 0 {
-				deletedEdges[pair] = struct{}{}
-			}
 			identityChanged = identityChanged || changed > 0
 		}
 		if _, err := exec(ctx,
@@ -863,11 +855,17 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 			return fmt.Errorf("delete unsupported identity match %d: %w", candidate.id, err)
 		}
 	}
-	currentEdges := make([]linkEdge, 0, len(originalEdges))
-	for _, edge := range originalEdges {
-		if _, deleted := deletedEdges[edge]; !deleted {
-			currentEdges = append(currentEdges, edge)
-		}
+	currentQuery := `SELECT participant_a, participant_b FROM participant_links`
+	if participantID != 0 {
+		currentQuery += ` WHERE ` + linkScope
+	}
+	currentRows, err := query(ctx, currentQuery, acceptedScopeArgs...)
+	if err != nil {
+		return fmt.Errorf("list participant links after source cleanup: %w", err)
+	}
+	currentEdges, err := scanLinkEdges(currentRows)
+	if err != nil {
+		return fmt.Errorf("scan participant links after source cleanup: %w", err)
 	}
 	reapplied, err := reapplyAcceptedIdentityMatchesAfterSourceCleanupContext(
 		ctx, query, exec, originalEdges, currentEdges, acceptedScope, acceptedScopeArgs,
