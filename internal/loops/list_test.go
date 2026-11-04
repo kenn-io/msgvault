@@ -3,6 +3,7 @@ package loops_test
 import (
 	"context"
 	"database/sql"
+	"iter"
 	"strconv"
 	"testing"
 	"time"
@@ -19,6 +20,8 @@ import (
 const (
 	me   = storetest.OwnerAddress
 	alex = "alex@example.test"
+
+	listTestEvidenceBudget = 25
 )
 
 var now = time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
@@ -589,15 +592,53 @@ func TestLoopActionLeavesQuestionInsideItsGraceUnmarked(t *testing.T) {
 	}
 }
 
+func TestListUsesDefaultEvidenceBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
+	counted := &countingStore{Store: f.Store}
+	st := &uncachedConversationStore{countingStore: counted}
+
+	result, err := loops.List(t.Context(), st, loops.Options{}, now)
+	require.NoError(err)
+	assert.True(result.CoverageIncomplete)
+	assert.NotEmpty(result.Loops)
+	assert.Equal(loops.MaxListEvidenceComputations, counted.bodies)
+	assert.Equal(loops.MaxListEvidenceComputations, counted.originals)
+}
+
+// uncachedConversationStore replays one stored conversation with cache misses
+// so the default request budget needs only one persisted email.
+type uncachedConversationStore struct {
+	*countingStore
+}
+
+func (s *uncachedConversationStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
+	return func(yield func(store.LoopConversation, error) bool) {
+		for conv, err := range s.Store.LoopConversationsContext(ctx, q) {
+			for range loops.MaxListEvidenceComputations + 1 {
+				if !yield(conv, err) || err != nil {
+					return
+				}
+			}
+		}
+	}
+}
+
+func (s *uncachedConversationStore) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, string, bool, error) {
+	evidence, token, _, err := s.Store.LoopMessageEvidenceContext(ctx, id, version)
+	return evidence, token, false, err
+}
+
 func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
-	// serial: lowers listEvidenceBudget.
-	const budget = 25
-	loops.SetListEvidenceBudgetForTest(t, budget)
+	// serial: changes the package global listEvidenceBudget.
+	loops.SetListEvidenceBudgetForTest(t, listTestEvidenceBudget)
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	anchor := f.PersistEmail(storetest.EmailSpec{Thread: "long", From: alex, To: []string{me}, Body: "Can you send the original?", SentAt: ago(80 * day)})
-	for i := range budget {
+	for i := range listTestEvidenceBudget {
 		f.PersistEmail(storetest.EmailSpec{Thread: "long", From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(4*day + time.Duration(i)*time.Minute)})
 	}
 	current := f.PersistEmail(storetest.EmailSpec{Thread: "current", From: "sam@example.test", To: []string{me}, Body: "Can you send the current draft?", SentAt: ago(5 * day)})
@@ -607,8 +648,8 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 	require.True(first.CoverageIncomplete)
 	require.Len(first.Loops, 1, "the interrupted conversation cannot expose a provisional anchor")
 	assert.Equal(current, first.Loops[0].Anchor.ID)
-	assert.Equal(budget, counted.bodies)
-	assert.Equal(budget, counted.originals)
+	assert.Equal(listTestEvidenceBudget, counted.bodies)
+	assert.Equal(listTestEvidenceBudget, counted.originals)
 	counted.bodies, counted.originals = 0, 0
 	second, err := loops.List(t.Context(), counted, loops.Options{}, now)
 	require.NoError(err)
@@ -628,14 +669,13 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 }
 
 func TestColdListIncludesOldestEligibleLoopBeforeEvidenceCap(t *testing.T) {
-	// serial: lowers listEvidenceBudget.
-	const budget = 25
-	loops.SetListEvidenceBudgetForTest(t, budget)
+	// serial: changes the package global listEvidenceBudget.
+	loops.SetListEvidenceBudgetForTest(t, listTestEvidenceBudget)
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	var oldest int64
-	for i := range budget + 1 {
+	for i := range listTestEvidenceBudget + 1 {
 		oldest = f.PersistEmail(storetest.EmailSpec{
 			Thread: "eligible-" + strconv.Itoa(i), From: alex, To: []string{me},
 			Body: "Can you send the contract?", SentAt: ago(2*day + time.Duration(i)*time.Minute),
