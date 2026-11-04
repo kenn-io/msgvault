@@ -186,7 +186,7 @@ func (s *Store) directoryCadencePageTx(ctx context.Context, tx *loggedTx, query 
 		case "overdue":
 			matches = cadence.Status == CadenceOverdue
 		case "due":
-			matches = cadence.DueAt != nil && !cadence.DueAt.After(now.AddDate(0, 0, query.dueWithinDays))
+			matches = cadence.DueAt != nil && contactcadence.DueWithinUTCDateHorizon(*cadence.DueAt, now, query.dueWithinDays)
 		case "no_list":
 			matches = cadence.FrequencyDays == nil
 		case "unknown":

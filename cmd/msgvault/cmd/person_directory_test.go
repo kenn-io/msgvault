@@ -513,6 +513,28 @@ func TestPersonDirectoryCadence(t *testing.T) {
 	}
 }
 
+func TestPersonDirectoryCadenceRequiresNewDaemonMessage(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var lookups atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/api/v1/health" {
+			_, _ = io.WriteString(w, `{"status":"ok","api_schema_version":"3.29.0"}`)
+			return
+		}
+		lookups.Add(1)
+		_, _ = io.WriteString(w, `{"people":[]}`)
+	}))
+	t.Cleanup(server.Close)
+	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+
+	output, err := runPersonDirectoryCommand(ctx, t, "--cadence", "due")
+	require.ErrorContains(err, "Upgrade the daemon to use contact-list filters or sorting.")
+	assert.Empty(output)
+	assert.Zero(lookups.Load())
+}
+
 func TestPersonDirectoryCadenceHumanColumns(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"go.kenn.io/msgvault/internal/contactcadence"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -353,9 +354,7 @@ func relationshipRowMatchesCadence(row query.RelationshipRow, cadence string, du
 		if dueWithinDays != nil {
 			horizon = *dueWithinDays
 		}
-		utc := now.UTC()
-		cutoff := time.Date(utc.Year(), utc.Month(), utc.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, horizon+1)
-		return schedule.DueAt.Before(cutoff)
+		return contactcadence.DueWithinUTCDateHorizon(*schedule.DueAt, now, horizon)
 	case "no_list":
 		return schedule.FrequencyDays == nil
 	case "unknown":

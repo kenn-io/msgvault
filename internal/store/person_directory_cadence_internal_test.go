@@ -50,19 +50,26 @@ func FuzzDirectoryCadenceAssignment(f *testing.F) {
 }
 
 func FuzzContactFrequencyColumnIsolation(f *testing.F) {
-	f.Add(uint16(2), int64(21), true)
-	f.Add(uint16(511), int64(0), true)
-	f.Fuzz(func(t *testing.T, mask uint16, days int64, integerKind bool) {
+	f.Add(uint16(1), int64(21), true)
+	f.Add(uint16(0), int64(21), true)
+	f.Add(uint16(1), int64(21), false)
+	f.Add(uint16(7), int64(21), true)
+	f.Fuzz(func(t *testing.T, shape uint16, days int64, integerKind bool) {
 		var fields [9]sql.NullString
-		for i := range fields {
-			fields[i] = sql.NullString{Valid: mask&(1<<i) != 0, String: strconv.FormatInt(days, 10)}
+		storedValue := strconv.FormatInt(days, 10)
+		shape %= 8
+		if shape == 7 {
+			fields[7] = sql.NullString{Valid: true, String: "person"}
+			fields[8] = sql.NullString{Valid: true, String: storedValue}
+		} else {
+			fields[shape] = sql.NullString{Valid: true, String: storedValue}
 		}
 		kind := "text"
 		if integerKind {
 			kind = "integer"
 		}
 		value := decodeContactFrequency(kind, fields)
-		wantValid := integerKind && mask&511 == 2
+		wantValid := integerKind && shape == 1
 		assert.Equal(t, wantValid, value.Valid)
 		if wantValid {
 			assert.Equal(t, days, value.Days)
