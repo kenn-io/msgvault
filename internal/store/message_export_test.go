@@ -476,31 +476,7 @@ func TestExportMessagesPrefersCanonicalSenderOverStaleFromRecipient(t *testing.T
 	assertions.Equal("canonical@example.test", sink.messages[0].Author.Address)
 }
 
-type hidingMessageExportSink struct {
-	collectingMessageExportSink
-
-	st             *store.Store
-	sourceID       int64
-	sourceMessage  string
-	hideAfterCount int
-}
-
-func (s *hidingMessageExportSink) Message(message store.MessageExportMessage) error {
-	if err := s.collectingMessageExportSink.Message(message); err != nil {
-		return err
-	}
-	if len(s.messages) != s.hideAfterCount {
-		return nil
-	}
-	_, err := s.st.DB().Exec(s.st.Rebind(`
-		UPDATE messages
-		SET deleted_at = ?
-		WHERE source_id = ? AND source_message_id = ?
-	`), time.Now().UTC(), s.sourceID, s.sourceMessage)
-	return err
-}
-
-func TestExportMessagesKeepsOrderAcrossPages(t *testing.T) {
+func TestExportMessagesOrdersByIdentityKey(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -517,26 +493,26 @@ func TestExportMessagesKeepsOrderAcrossPages(t *testing.T) {
 	}
 
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	const messageCount = 3*256 + 1
+	const messageCount = 16
 	type identity struct {
 		sourceType, sourceIdentifier, conversationID, messageID string
 	}
 	want := make([]identity, messageCount)
 	for i := range messageCount {
-		source := sources[i/193/2]
+		source := sources[i/4/2]
 		want[i] = identity{
 			sourceType: source.SourceType, sourceIdentifier: source.Identifier,
-			conversationID: []string{"a", "b"}[i/193%2],
-			messageID:      fmt.Sprintf("message-%d-%03d-%d", i/193, 64-i%193/3, i%193%3),
+			conversationID: []string{"a", "b"}[i/4%2],
+			messageID:      fmt.Sprintf("message-%d-%s", i/4, []string{"z-0", "z-1", "a-0", "a-1"}[i%4]),
 		}
 	}
 	// Interleave sources, conversations, timestamps, and message IDs on insert.
 	for n := range messageCount {
-		i := n * 257 % messageCount
-		source := sources[i/193/2]
+		i := n * 5 % messageCount
+		source := sources[i/4/2]
 		insertMessageExportMessage(
-			t, st, source.ID, conversations[i/193], want[i].messageID, "text",
-			start.Add(time.Duration(i%193/3)*time.Minute), "", "", 0, false, false,
+			t, st, source.ID, conversations[i/4], want[i].messageID, "text",
+			start.Add(time.Duration(i%4/2)*time.Minute), "", "", 0, false, false,
 		)
 	}
 
@@ -554,43 +530,6 @@ func TestExportMessagesKeepsOrderAcrossPages(t *testing.T) {
 		}
 	}
 	assertions.Equal(want, got)
-}
-
-func TestExportMessagesIsOneSnapshotWhileSinkHidesRows(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("text", "source")
-	requirements.NoError(err)
-	conversationID := insertMessageExportConversation(
-		t, st, source.ID, "conversation", "", "direct_chat", `{}`,
-	)
-	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	const pageSize = 256
-	for i := range pageSize + 1 {
-		insertMessageExportMessage(
-			t, st, source.ID, conversationID, fmt.Sprintf("message-%03d", i), "text",
-			start, "", "", 0, false, false,
-		)
-	}
-
-	sink := &hidingMessageExportSink{
-		st:             st,
-		sourceID:       source.ID,
-		sourceMessage:  "message-256",
-		hideAfterCount: pageSize,
-	}
-	counts, err := st.ExportMessages(context.Background(), store.MessageExportFilter{
-		Start: start,
-		End:   start.Add(time.Hour),
-	}, sink)
-	requirements.NoError(err)
-	assertions.Equal(pageSize+1, counts.Messages)
-	requirements.Len(sink.messages, pageSize+1)
-	for i, message := range sink.messages {
-		assertions.Equal(fmt.Sprintf("message-%03d", i), message.ID)
-	}
-	assertions.Equal(len(sink.messages), counts.Messages)
 }
 
 type failingMessageExportSink struct {

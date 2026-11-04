@@ -3,6 +3,7 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,11 +14,11 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
 )
 
-type discardingMessageExportSink struct{}
+type messageExportSinkFunc func(MessageExportMessage) error
 
-func (discardingMessageExportSink) Source(MessageExportSource) error             { return nil }
-func (discardingMessageExportSink) Conversation(MessageExportConversation) error { return nil }
-func (discardingMessageExportSink) Message(MessageExportMessage) error           { return nil }
+func (messageExportSinkFunc) Source(MessageExportSource) error             { return nil }
+func (messageExportSinkFunc) Conversation(MessageExportConversation) error { return nil }
+func (f messageExportSinkFunc) Message(message MessageExportMessage) error { return f(message) }
 
 func TestExportMessagesReadsWindowOnce(t *testing.T) {
 	assertions := assert.New(t)
@@ -33,11 +34,25 @@ func TestExportMessagesReadsWindowOnce(t *testing.T) {
 
 	observer.Reset()
 	start := time.Date(2015, 1, 1, 0, 0, 0, 0, time.UTC)
+	var messageIDs []string
 	counts, err := s.ExportMessages(t.Context(), MessageExportFilter{
 		Start: start, End: start.Add(24 * time.Hour),
-	}, discardingMessageExportSink{})
+	}, messageExportSinkFunc(func(message MessageExportMessage) error {
+		messageIDs = append(messageIDs, message.ID)
+		if len(messageIDs) == messageExportPageSize {
+			// A row hidden during the export must remain in its original snapshot.
+			_, err := s.db.Exec(`UPDATE messages SET deleted_at = ? WHERE source_id = ? AND source_message_id = ?`,
+				start, 1, fmt.Sprintf("m%d", messageExportPageSize+1))
+			return err
+		}
+		return nil
+	}))
 	requirements.NoError(err)
 	assertions.Equal(messageCount, counts.Messages)
+	requirements.Len(messageIDs, messageCount)
+	for i, id := range messageIDs {
+		assertions.Equal(fmt.Sprintf("m%d", i+1), id)
+	}
 	var messageQueries int
 	for _, query := range observer.Statements() {
 		if strings.Contains(query, "JOIN conversations c") &&
