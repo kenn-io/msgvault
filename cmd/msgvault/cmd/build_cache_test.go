@@ -1261,7 +1261,6 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 		for _, path := range []string{full, inc} {
 			rows, err := duck.Query(`DESCRIBE SELECT * FROM read_parquet(?)`, path)
 			require.NoError(err)
-			defer func() { require.NoError(rows.Close()) }()
 			var schema []string
 			for rows.Next() {
 				var name, typ string
@@ -1270,6 +1269,7 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 				schema = append(schema, name+":"+typ)
 			}
 			require.NoError(rows.Err())
+			require.NoError(rows.Close())
 			schemas = append(schemas, schema)
 		}
 		assert.Equal(schemas[0], schemas[1], dataset)
