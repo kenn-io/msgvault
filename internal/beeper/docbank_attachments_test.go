@@ -566,7 +566,7 @@ func TestAttachmentMirrorLostResponse(t *testing.T) {
 			count := 0
 			r.Nodes.Range(func(_, _ any) bool { count++; return true })
 			assert.Equal(1, count)
-			assert.Equal("version", refs[hash][0].VersionID)
+			assert.Equal("version-8", refs[hash][0].VersionID)
 			uploaded, _ := r.Uploaded.Load(hash)
 			assert.Equal([2]string{hash[:12] + "-report.pdf", "application/pdf"}, uploaded)
 		})
@@ -1058,6 +1058,24 @@ func TestAttachmentMirrorProcessesExistingDeliveries(t *testing.T) {
 	assert.Equal([]string{docbanktest.ProcessingJobID("a", r.processing.Fingerprint)}, r.processing.Polls)
 }
 
+func TestAttachmentMirrorProcessesDistinctUploads(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	r := newMirrorRig(t)
+	r.worker.options.DocumentProfile = "documents"
+	r.add("a.pdf", "application/pdf", []byte("document a"))
+	r.add("b.pdf", "application/pdf", []byte("document b"))
+	require.NoError(r.runBatch(t.Context()))
+	require.NoError(r.runBatch(t.Context()))
+	assert.ElementsMatch([]string{"version-8", "version-9"}, r.processing.Jobs)
+	r.processing.States[docbanktest.ProcessingJobID("version-8", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
+	r.processing.States[docbanktest.ProcessingJobID("version-9", r.processing.Fingerprint)] = [3]string{"failed", "rendition", "consent"}
+	r.processingDue()
+	require.NoError(r.runBatch(t.Context()))
+	assert.Equal(int64(1), r.processingCounts().Extracted)
+	assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
+}
+
 func TestAttachmentMirrorProcessingStartSavesConflictReason(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1532,4 +1550,37 @@ func TestAttachmentMirrorGateKeepsFailure(t *testing.T) {
 	_, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
 	require.ErrorContains(t, err, "server_error")
 	assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
+}
+
+func TestAttachmentMirrorBusyUploadGateStopsPass(t *testing.T) {
+	r := newMirrorRig(t)
+	r.delivered("a")
+	transport := http.DefaultTransport
+	defer func() { http.DefaultTransport = transport }()
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		profileRead, gateBusy := false, false
+		http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+			if req.URL.Path == "/api/v1/processing/profiles" {
+				profileRead = true
+			}
+			r.serve(w, req)
+		})
+		r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+			if gateBusy {
+				return nil, false
+			}
+			if profileRead {
+				// Saving the profile uses the processing budget, leaving uploads pending.
+				synctest.Sleep(31 * time.Second)
+				gateBusy = true
+			}
+			return func() {}, true
+		})
+		more, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
+		require.NoError(t, err)
+		assert.False(more)
+		assert.True(gateBusy)
+		assert.Empty(r.processing.Jobs)
+	})
 }
