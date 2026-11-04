@@ -40,15 +40,6 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 	}{
 		{"sent_at edit", exec(`UPDATE messages SET sent_at = '2020-01-01 09:00:00' WHERE id = 802`), false},
 		{"body edit", exec(`UPDATE message_bodies SET body_text = 'updated body' WHERE message_id = 802`), false},
-		{"sender rename", func(s *store.Store) error {
-			return s.RepairParticipantDisplayNames([]store.ParticipantDisplayNameRepair{{ParticipantID: 11, DisplayName: "Updated"}})
-		}, false},
-		{"sender email repair", func(s *store.Store) error {
-			return s.RepairParticipantEmailAddresses([]store.ParticipantEmailRepair{{ParticipantID: 11, EmailAddress: "updated@example.com"}})
-		}, false},
-		{"sender identifier", func(s *store.Store) error {
-			return s.SetParticipantIdentifier(11, "email", "alternate@example.com")
-		}, false},
 		// Raw SQL leaves updated_at alone, as a retitle within the same second would.
 		{"chat retitle", exec(`UPDATE conversations SET title = 'Updated' WHERE id = 701`), false},
 		{"roster removal", func(s *store.Store) error { return s.ReplaceConversationParticipants(701, nil) }, true},

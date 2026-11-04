@@ -23,9 +23,9 @@ var _ TextSnapshotter = (*SQLiteEngine)(nil)
 var _ TextSnapshotReader = (*SQLiteEngine)(nil)
 
 // TextSnapshotRevision tracks chat message changes, including body edits, and
-// displayed sender details and conversation titles. Conversation-list revisions
-// hash the ordered metadata. Search- and label-filtered timelines hash their
-// full filtered result. Pagination is excluded from all revisions.
+// conversation titles. Conversation-list revisions hash the ordered metadata.
+// Search- and label-filtered timelines hash their full filtered result.
+// Pagination is excluded from all revisions.
 func (e *SQLiteEngine) TextSnapshotRevision(
 	ctx context.Context, scope TextSnapshotScope,
 ) (string, error) {
@@ -57,7 +57,7 @@ func (e *SQLiteEngine) ListConversationsSnapshot(
 }
 
 // ListConversationMessagesSnapshot returns one timeline page and a revision
-// that tracks message and body edits, sender details, and the conversation title
+// that tracks message and body edits and the conversation title
 // from the same read transaction. Search- and label-filtered timelines hash
 // their full filtered result.
 func (e *SQLiteEngine) ListConversationMessagesSnapshot(
@@ -73,9 +73,6 @@ func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 const sqliteTimelineSnapshotProbe = `SELECT
 	COUNT(*), MAX(content_changed_at),
 	COALESCE(julianday(MAX(content_changed_at)) BETWEEN julianday('now', '-0.002 seconds') AND julianday('now'), 0) AS recent,
-	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_display_name_revision'), '0'),
-	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_identifier_revision'), '0'),
-	COALESCE((SELECT value FROM archive_metadata WHERE key = 'identity_revision'), '0'),
 	COALESCE((SELECT updated_at FROM conversations WHERE id = ?), ''),
 	COALESCE((SELECT title FROM conversations WHERE id = ?), '')
 FROM messages WHERE conversation_id = ?`
@@ -88,13 +85,13 @@ func readSQLiteTimelineSnapshot(
 		var count int64
 		var recent bool
 		var changedAt sql.NullString
-		var participantRevision, identifierRevision, identityRevision, conversationUpdatedAt, conversationTitle string
+		var conversationUpdatedAt, conversationTitle string
 		if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID, conversationID).Scan(
-			&count, &changedAt, &recent, &participantRevision, &identifierRevision, &identityRevision, &conversationUpdatedAt, &conversationTitle,
+			&count, &changedAt, &recent, &conversationUpdatedAt, &conversationTitle,
 		); err != nil {
 			return nil, fmt.Errorf("probe text timeline snapshot: %w", err)
 		}
-		for _, field := range []any{conversationID, count, changedAt.String, participantRevision, identifierRevision, identityRevision, conversationUpdatedAt, conversationTitle} {
+		for _, field := range []any{conversationID, count, changedAt.String, conversationUpdatedAt, conversationTitle} {
 			writeSnapshotField(hasher, snapshotFieldBytes(field))
 		}
 		if len(scope.Filter.ParticipantIDs) > 0 {
