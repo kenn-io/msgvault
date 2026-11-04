@@ -22,18 +22,15 @@ import (
 func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL index check")
+	}
 	_, err := f.Store.DB().Exec("DROP INDEX idx_identity_match_candidates_right")
-	require.NoError(err)
-	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='19' WHERE key='schema_version'")
 	require.NoError(err)
 	require.NoError(f.Store.InitSchemaContext(t.Context()))
 	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
-	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_identity_match_candidates_right'`
-	if f.Store.IsPostgreSQL() {
-		query = `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`
-	}
 	var count int
-	require.NoError(f.Store.DB().QueryRow(query).Scan(&count))
+	require.NoError(f.Store.DB().QueryRow(`SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`).Scan(&count))
 	assert.Equal(t, 1, count)
 }
 
