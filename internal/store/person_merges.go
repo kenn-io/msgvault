@@ -2610,24 +2610,64 @@ func personInstructionOwnerDecisionOrderAfter(a, b personInstructionOwnerDecisio
 		(a.decidedAt.Equal(b.decidedAt) && a.eventID > b.eventID)
 }
 
-func personInstructionMoveMarkerReversedTx(
+func (s *Store) personInstructionMoveMarkerReversedTx(
 	ctx context.Context, tx *loggedTx, instructionID int64, detail personInstructionMergeEventDetail,
 ) (bool, error) {
 	if detail.MergeID <= 0 || instructionID <= 0 {
 		return false, nil
 	}
-	var reversed bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
-		SELECT 1 FROM person_merge_rows
+	var postJSON sql.NullString
+	err := tx.QueryRowContext(ctx, `SELECT post_merge_row_json
+		FROM person_merge_rows
 		WHERE merge_id=? AND table_name=? AND split_id IS NOT NULL
 		  AND (original_row_id=? OR current_row_id=?)
-	)`, detail.MergeID, personInstructionsTableName, instructionID, instructionID).Scan(&reversed); err != nil {
-		return false, fmt.Errorf("check person instruction move marker reversal: %w", err)
+	ORDER BY CASE WHEN origin_side=? AND original_row_id=? THEN 0
+		WHEN origin_side=? THEN 1 ELSE 2 END, original_row_key
+		LIMIT 1`, detail.MergeID, personInstructionsTableName,
+		instructionID, instructionID, personMergeOriginSurvivor,
+		instructionID, personMergeOriginSurvivor,
+	).Scan(&postJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
 	}
-	return reversed, nil
+	if err != nil {
+		return false, fmt.Errorf("load split person instruction move marker: %w", err)
+	}
+	if !postJSON.Valid || postJSON.String == "" {
+		return true, nil
+	}
+	var post personMergeSnapshotRow
+	if err := json.Unmarshal([]byte(postJSON.String), &post); err != nil {
+		return false, fmt.Errorf("decode split person instruction move marker: %w", err)
+	}
+	currentRows, err := s.capturePersonMergeQueryTx(ctx, tx,
+		personMergeTableRegistry[personInstructionsTableName],
+		`SELECT * FROM person_instructions WHERE id=?`, []any{instructionID}, 0,
+	)
+	if err != nil {
+		return false, fmt.Errorf("load current person instruction for move marker: %w", err)
+	}
+	if len(currentRows) == 0 {
+		return true, nil
+	}
+	if len(currentRows) != 1 {
+		return false, fmt.Errorf("%w: current person instruction is ambiguous", ErrPersonMergeInvalid)
+	}
+	currentByName := personSplitSnapshotColumnsByName(currentRows[0].Columns)
+	postByName := personSplitSnapshotColumnsByName(post.Columns)
+	if personSplitInstructionLifecycleChanged(currentByName, postByName) {
+		return true, nil
+	}
+	for name, value := range currentByName {
+		if personSplitInstructionContentColumn(name) &&
+			!reflect.DeepEqual(value, postByName[name]) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
-func personInstructionOwnerDecisionOrderTx(
+func (s *Store) personInstructionOwnerDecisionOrderTx(
 	ctx context.Context, tx *loggedTx, instruction PersonInstruction,
 ) (personInstructionOwnerDecisionOrder, error) {
 	var order personInstructionOwnerDecisionOrder
@@ -2669,7 +2709,7 @@ func personInstructionOwnerDecisionOrderTx(
 				return order, fmt.Errorf("decode person instruction move decision history: %w", err)
 			}
 			if mergeDetail.Collision && mergeDetail.LifecycleDecisionOrder != nil {
-				reversed, err := personInstructionMoveMarkerReversedTx(ctx, tx, instruction.ID, mergeDetail)
+				reversed, err := s.personInstructionMoveMarkerReversedTx(ctx, tx, instruction.ID, mergeDetail)
 				if err != nil {
 					return order, fmt.Errorf("check person instruction decision marker reversal: %w", err)
 				}
@@ -2758,11 +2798,11 @@ func (s *Store) movePersonInstructionsTx(ctx context.Context, tx *loggedTx, merg
 		if existing, ok := live[row.InstructionKey]; ok && instructionLive(row) {
 			source, sourceName := existing, "survivor"
 			aRank, sRank := instructionLifecycleRank(row), instructionLifecycleRank(existing)
-			absorbedDecision, err := personInstructionOwnerDecisionOrderTx(ctx, tx, row)
+			absorbedDecision, err := s.personInstructionOwnerDecisionOrderTx(ctx, tx, row)
 			if err != nil {
 				return fmt.Errorf("read absorbed instruction owner decision order: %w", err)
 			}
-			survivorDecision, err := personInstructionOwnerDecisionOrderTx(ctx, tx, existing)
+			survivorDecision, err := s.personInstructionOwnerDecisionOrderTx(ctx, tx, existing)
 			if err != nil {
 				return fmt.Errorf("read survivor instruction owner decision order: %w", err)
 			}

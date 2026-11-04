@@ -29,6 +29,7 @@ const (
 	identityMatchEvidenceTableName         = "identity_match_evidence"
 	identityMatchEvidenceSourcesTableName  = "identity_match_evidence_sources"
 	personMergeActionDeduplicated          = "deduplicated"
+	personMergeActionDeletedSnapshot       = "deleted_snapshot"
 	personAttributeValuesTableName         = "person_attribute_values"
 	personContactPointsTableName           = "person_contact_points"
 	personInstructionsTableName            = "person_instructions"

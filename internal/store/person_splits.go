@@ -1614,6 +1614,14 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	if !ok {
 		return fmt.Errorf("%w: unregistered split table %q", ErrPersonMergeInvalid, row.TableName)
 	}
+	var err error
+	if row.TableName == personInstructionsTableName &&
+		journal.originSide == personMergeOriginSurvivor {
+		row, err = s.personSplitPreviouslyReversedInstructionBaselineTx(ctx, tx, mergeID, journal, row)
+		if err != nil {
+			return err
+		}
+	}
 	where, whereArgs, err := personSplitCurrentRowWhere(spec, journal)
 	if err != nil {
 		return err
@@ -1650,10 +1658,22 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 	}
 	instructionLifecycleChanged := row.TableName == personInstructionsTableName &&
 		personSplitInstructionLifecycleChanged(currentByName, postByName)
+	preserveForLaterMerge := false
+	if row.TableName == personInstructionsTableName && journal.originSide == personMergeOriginSurvivor {
+		instructionID := currentByName["id"].Integer
+		if instructionID != nil {
+			preserveForLaterMerge, err = personSplitSurvivorInstructionHasLaterMergeTx(
+				ctx, tx, mergeID, *instructionID,
+			)
+			if err != nil {
+				return fmt.Errorf("check later instruction merge before split restore: %w", err)
+			}
+		}
+	}
 	preserveInstructionLifecycle := row.TableName == personInstructionsTableName &&
-		personSplitInstructionLifecycleMustPreserve(currentByName, postByName)
+		(preserveForLaterMerge || personSplitInstructionLifecycleMustPreserve(currentByName, postByName))
 	preserveInstructionContent := row.TableName == personInstructionsTableName &&
-		instructionLifecycleChanged && personSplitInstructionHasTrustedContent(currentByName)
+		(preserveForLaterMerge || (instructionLifecycleChanged && personSplitInstructionHasTrustedContent(currentByName)))
 	keyColumns := make(map[string]struct{}, len(spec.keyColumns()))
 	for _, name := range spec.keyColumns() {
 		keyColumns[name] = struct{}{}
@@ -1765,6 +1785,88 @@ func (s *Store) restoreExistingPersonSplitRowTx(
 		return fmt.Errorf("%w: current %s row is missing", ErrPersonSplitParticipants, row.TableName)
 	}
 	return nil
+}
+
+func (s *Store) personSplitPreviouslyReversedInstructionBaselineTx(
+	ctx context.Context,
+	tx *loggedTx,
+	mergeID int64,
+	journal personSplitJournalRow,
+	current personMergeSnapshotRow,
+) (personMergeSnapshotRow, error) {
+	if mergeID <= 0 || !journal.originalRowID.Valid || journal.originalRowID.Int64 <= 0 {
+		return current, nil
+	}
+	var priorMergeID int64
+	var snapshotPath string
+	var exactReversal bool
+	err := tx.QueryRowContext(ctx, `SELECT prior.merge_id, prior.snapshot_path,
+		COALESCE(split.is_exact_reversal, FALSE)
+		FROM person_merge_rows prior
+		LEFT JOIN person_splits split ON split.id = prior.split_id
+		WHERE prior.merge_id < ? AND prior.table_name = ? AND prior.original_row_id = ?
+		ORDER BY prior.merge_id DESC LIMIT 1`,
+		mergeID, personInstructionsTableName, journal.originalRowID.Int64,
+	).Scan(&priorMergeID, &snapshotPath, &exactReversal)
+	if errors.Is(err, sql.ErrNoRows) {
+		return current, nil
+	}
+	if err != nil {
+		return personMergeSnapshotRow{}, fmt.Errorf("load prior split instruction restoration baseline: %w", err)
+	}
+	if !exactReversal {
+		return current, nil
+	}
+	if !strings.HasPrefix(snapshotPath, "rows/") {
+		return personMergeSnapshotRow{}, fmt.Errorf("%w: invalid prior split instruction snapshot path %q",
+			ErrPersonMergeSnapshotCorrupt, snapshotPath)
+	}
+	rowIndex, err := strconv.Atoi(strings.TrimPrefix(snapshotPath, "rows/"))
+	if err != nil || rowIndex < 0 {
+		return personMergeSnapshotRow{}, fmt.Errorf("%w: invalid prior split instruction snapshot path %q",
+			ErrPersonMergeSnapshotCorrupt, snapshotPath)
+	}
+	_, priorSnapshot, err := s.loadPersonSplitMergeTx(ctx, tx, priorMergeID)
+	if err != nil {
+		return personMergeSnapshotRow{}, fmt.Errorf("load prior split instruction snapshot: %w", err)
+	}
+	if rowIndex >= len(priorSnapshot.Rows) {
+		return personMergeSnapshotRow{}, fmt.Errorf("%w: prior split instruction snapshot row is missing",
+			ErrPersonMergeSnapshotCorrupt)
+	}
+	baseline := priorSnapshot.Rows[rowIndex]
+	if baseline.TableName != personInstructionsTableName || baseline.RowID != journal.originalRowID.Int64 {
+		return personMergeSnapshotRow{}, fmt.Errorf("%w: prior split instruction snapshot row does not match its journal",
+			ErrPersonMergeSnapshotCorrupt)
+	}
+	baselineColumns := personSplitSnapshotColumnsByName(baseline.Columns)
+	for index := range current.Columns {
+		name := current.Columns[index].Name
+		if !personSplitInstructionLifecycleColumn(name) && !personSplitInstructionContentColumn(name) {
+			continue
+		}
+		if value, ok := baselineColumns[name]; ok {
+			current.Columns[index].Value = value
+		}
+	}
+	return current, nil
+}
+
+func personSplitSurvivorInstructionHasLaterMergeTx(
+	ctx context.Context, tx *loggedTx, mergeID, instructionID int64,
+) (bool, error) {
+	if mergeID <= 0 || instructionID <= 0 {
+		return false, nil
+	}
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM person_merge_rows
+		WHERE merge_id > ? AND table_name = ? AND split_id IS NULL
+		  AND (original_row_id = ? OR current_row_id = ?)
+	)`, mergeID, personInstructionsTableName, instructionID, instructionID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("inspect later instruction merge journal: %w", err)
+	}
+	return exists, nil
 }
 
 func personSplitSnapshotColumnsByName(
@@ -2795,8 +2897,99 @@ func (s *Store) restorePersonInstructionLinksTx(ctx context.Context, tx *loggedT
 		if target <= 0 {
 			continue
 		}
-		// Only journal rows actually restored by this split may receive old links.
-		if _, err := tx.ExecContext(ctx, `UPDATE person_instructions SET supersedes_id=? WHERE id=? AND EXISTS(SELECT 1 FROM person_instructions target WHERE target.id=?) AND EXISTS(SELECT 1 FROM person_merge_rows journal WHERE journal.merge_id=? AND journal.table_name='person_instructions' AND journal.original_row_id=? AND journal.split_id IS NOT NULL)`, target, row.RowID, target, mergeID, row.RowID); err != nil {
+		var action, originSide string
+		var postJSON sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT action, origin_side, post_merge_row_json
+			FROM person_merge_rows
+			WHERE merge_id=? AND table_name=? AND original_row_id=? AND split_id IS NOT NULL`,
+			mergeID, personInstructionsTableName, row.RowID,
+		).Scan(&action, &originSide, &postJSON)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("load split instruction supersession baseline: %w", err)
+		}
+		if personMergeOriginSide(originSide) == personMergeOriginSurvivor {
+			preserveForLaterMerge, err := personSplitSurvivorInstructionHasLaterMergeTx(
+				ctx, tx, mergeID, row.RowID,
+			)
+			if err != nil {
+				return fmt.Errorf("check later instruction merge before link restore: %w", err)
+			}
+			if preserveForLaterMerge {
+				continue
+			}
+		}
+		if !postJSON.Valid && action != personMergeActionDeletedSnapshot {
+			continue
+		}
+		var postSupersedes *int64
+		if postJSON.Valid {
+			var post personMergeSnapshotRow
+			if err := json.Unmarshal([]byte(postJSON.String), &post); err != nil {
+				return fmt.Errorf("%w: decode post-merge instruction link: %w",
+					ErrPersonMergeSnapshotCorrupt, err)
+			}
+			postColumn, ok := personSplitSnapshotColumnsByName(post.Columns)["supersedes_id"]
+			if !ok || (postColumn.Kind != personMergeSnapshotInteger && postColumn.Kind != personMergeSnapshotNull) {
+				return fmt.Errorf("%w: post-merge instruction supersession is missing or invalid",
+					ErrPersonMergeSnapshotCorrupt)
+			}
+			postSupersedes = postColumn.Integer
+		}
+
+		var personID int64
+		var kind, scopeKey string
+		var currentSupersedes sql.NullInt64
+		err = tx.QueryRowContext(ctx, `SELECT person_id, kind, scope_key, supersedes_id
+			FROM person_instructions WHERE id=?`, row.RowID).Scan(
+			&personID, &kind, &scopeKey, &currentSupersedes,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("load restored split instruction link: %w", err)
+		}
+		if postJSON.Valid && ((postSupersedes == nil && currentSupersedes.Valid) ||
+			(postSupersedes != nil && (!currentSupersedes.Valid || currentSupersedes.Int64 != *postSupersedes))) {
+			// An owner changed the link after the merge. Keep that decision.
+			continue
+		}
+		instructionKind := personfacts.InstructionKind(kind)
+		if !personfacts.SingleValuedInstructionKind(instructionKind) {
+			continue
+		}
+		var targetPersonID int64
+		var targetKind, targetScopeKey string
+		err = tx.QueryRowContext(ctx, `SELECT person_id, kind, scope_key
+			FROM person_instructions WHERE id=?`, target).Scan(
+			&targetPersonID, &targetKind, &targetScopeKey,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("load split instruction supersession target: %w", err)
+		}
+		if targetPersonID != personID || targetKind != kind || targetScopeKey != scopeKey {
+			continue
+		}
+		query := `UPDATE person_instructions SET supersedes_id=?
+			WHERE id=? AND person_id=? AND kind=? AND scope_key=?
+			AND EXISTS (SELECT 1 FROM person_instructions target
+				WHERE target.id=? AND target.person_id=person_instructions.person_id
+				AND target.kind=person_instructions.kind
+				AND target.scope_key=person_instructions.scope_key)`
+		args := []any{target, row.RowID, personID, kind, scopeKey, target}
+		if currentSupersedes.Valid {
+			query += ` AND supersedes_id=?`
+			args = append(args, currentSupersedes.Int64)
+		} else {
+			query += ` AND supersedes_id IS NULL`
+		}
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return fmt.Errorf("restore split instruction supersession: %w", err)
 		}
 	}
@@ -2907,14 +3100,14 @@ func (s *Store) restorePersonInstructionDecisionOrdersAfterSplitTx(
 			}
 			order := instruction.order
 			if instruction.id == collision.survivorInstructionID {
-				laterDecision, err := personInstructionHasDecisionAfterEventTx(
+				laterDecision, err := s.personInstructionHasDecisionAfterEventTx(
 					ctx, tx, instruction.id, collision.eventID,
 				)
 				if err != nil {
 					return fmt.Errorf("check later instruction decisions after split target: %w", err)
 				}
 				if laterDecision {
-					effectiveOrder, err := personInstructionOwnerDecisionOrderTx(ctx, tx, restored)
+					effectiveOrder, err := s.personInstructionOwnerDecisionOrderTx(ctx, tx, restored)
 					if err != nil {
 						return fmt.Errorf("load effective instruction decision order after split: %w", err)
 					}
@@ -2940,7 +3133,7 @@ func (s *Store) restorePersonInstructionDecisionOrdersAfterSplitTx(
 	return nil
 }
 
-func personInstructionHasDecisionAfterEventTx(
+func (s *Store) personInstructionHasDecisionAfterEventTx(
 	ctx context.Context, tx *loggedTx, instructionID, eventID int64,
 ) (bool, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT action,detail_json
@@ -2981,7 +3174,7 @@ func personInstructionHasDecisionAfterEventTx(
 			return false, fmt.Errorf("decode later person instruction move decision: %w", err)
 		}
 		if detail.Collision && detail.LifecycleDecisionOrder != nil {
-			reversed, err := personInstructionMoveMarkerReversedTx(ctx, tx, instructionID, detail)
+			reversed, err := s.personInstructionMoveMarkerReversedTx(ctx, tx, instructionID, detail)
 			if err != nil {
 				return false, fmt.Errorf("check later person instruction move marker reversal: %w", err)
 			}
