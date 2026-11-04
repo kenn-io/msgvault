@@ -160,6 +160,7 @@ func (c *composer) collectDay() dayRead {
 			}
 		},
 	)
+	c.recoverSnapshotAfterCollection(collectionCtx)
 	return r
 }
 func (c *composer) readCalendar(from, to time.Time) readResult[store.CalendarOccurrencePage] {

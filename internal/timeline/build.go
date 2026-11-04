@@ -303,6 +303,17 @@ func parallel(ctx context.Context, tasks ...func()) {
 	wg.Wait()
 }
 
+// A timed reader can abort a PostgreSQL transaction shared by a read
+// snapshot. If the collection deadline expires before the request does, use
+// fresh pool reads for subsequent hydration instead of reusing that aborted
+// transaction.
+func (c *composer) recoverSnapshotAfterCollection(ctx context.Context) {
+	if ctx.Err() == nil || c.ctx.Err() != nil || !store.HasReadSnapshotContext(c.ctx) {
+		return
+	}
+	c.ctx = store.WithoutReadSnapshotContext(c.ctx)
+}
+
 func (c *composer) bounds() (time.Time, time.Time) {
 	from, _, _ := civilDateBoundary(c.t.Window.From, c.loc)
 	afterTo, _ := addCivilDate(c.t.Window.To, 1)

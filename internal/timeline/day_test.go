@@ -5,14 +5,17 @@ import (
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/kit/stacktest"
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
@@ -32,14 +35,20 @@ func TestBuildDaySlowInventoryLeavesTimeForDisplayHydration(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineFixture(t)
 	f.add(f.now.Add(-time.Hour), false)
+	f.calendar("pg-lock", singleDayEvent)
 	f.project()
 	f.src.Inventory = blockingInventory{}
 
 	got, err := Build(t.Context(), f.src, dayRequest())
 	requirements.NoError(err)
 	entries := allDayEntries(got)
-	requirements.Len(entries, 1)
-	assertions.NotNil(entries[0].Burst, "the activity loaded before the optional inventory timeout must still be hydrated")
+	var hasMeeting, hasBurst bool
+	for _, entry := range entries {
+		hasMeeting = hasMeeting || entry.Meeting != nil
+		hasBurst = hasBurst || entry.Burst != nil
+	}
+	assertions.True(hasMeeting, "the calendar entry collected before the optional inventory timeout should remain visible")
+	assertions.True(hasBurst, "the activity loaded before the optional inventory timeout must still be hydrated")
 }
 
 func TestBuildDaySlowSnapshotReadersLeaveTimeForDisplayHydration(t *testing.T) {
@@ -58,6 +67,139 @@ func TestBuildDaySlowSnapshotReadersLeaveTimeForDisplayHydration(t *testing.T) {
 	entries := allDayEntries(got)
 	requirements.Len(entries, 1)
 	assertions.NotNil(entries[0].Burst, "slow optional snapshot readers must leave time to hydrate the loaded activity")
+}
+
+type signalingCalendarSource struct {
+	CalendarSource
+
+	started chan struct{}
+	once    sync.Once
+}
+
+func (s *signalingCalendarSource) ListCalendarOccurrencesContext(ctx context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
+	s.once.Do(func() { close(s.started) })
+	return s.CalendarSource.ListCalendarOccurrencesContext(ctx, query)
+}
+
+type pausingActivitySource struct {
+	ActivitySource
+
+	collected chan struct{}
+	resume    <-chan struct{}
+	once      sync.Once
+	err       error
+}
+
+func (s *pausingActivitySource) ListActivityBurstsContext(ctx context.Context, query store.BurstQuery) (store.BurstPage, error) {
+	page, err := s.ActivitySource.ListActivityBurstsContext(ctx, query)
+	s.err = err
+	s.once.Do(func() { close(s.collected) })
+	select {
+	case <-s.resume:
+	case <-ctx.Done():
+	}
+	return page, err
+}
+
+func TestBuildDaySnapshotRecoversAfterCanceledPostgresCalendarQuery(t *testing.T) {
+	if !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		t.Skip("PostgreSQL query-cancellation regression requires MSGVAULT_TEST_DB")
+	}
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.add(f.now.Add(-time.Hour), false)
+	f.project()
+
+	blocker, err := f.Store.DB().BeginTx(t.Context(), nil)
+	requirements.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+
+	ctx, release, err := f.Store.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	defer release()
+	reader := store.ReadDBContext(ctx, f.Store.DB())
+	var backendPID int
+	requirements.NoError(reader.QueryRowContext(ctx, "SELECT pg_backend_pid()").Scan(&backendPID))
+
+	started := make(chan struct{})
+	collected := make(chan struct{})
+	continueRead := make(chan struct{})
+	var continueOnce sync.Once
+	resume := func() { continueOnce.Do(func() { close(continueRead) }) }
+	defer resume()
+	activity := &pausingActivitySource{ActivitySource: f.src.Activity, collected: collected, resume: continueRead}
+	f.src.Activity = activity
+	f.src.Calendar = &signalingCalendarSource{CalendarSource: f.src.Calendar, started: started}
+	type buildResult struct {
+		timeline *Timeline
+		err      error
+	}
+	done := make(chan buildResult, 1)
+	go func() {
+		got, buildErr := Build(ctx, f.src, dayRequest())
+		done <- buildResult{timeline: got, err: buildErr}
+	}()
+
+	select {
+	case <-collected:
+		requirements.NoError(activity.err)
+	case result := <-done:
+		requirements.FailNowf("timeline build finished before collecting activity", "error: %v", result.err)
+	case <-time.After(10 * time.Second):
+		stacktest.Dump(t)
+		requirements.FailNow("activity reader did not finish before the collection deadline")
+	}
+	_, err = blocker.ExecContext(t.Context(), "LOCK TABLE calendar_event_attendees IN ACCESS EXCLUSIVE MODE")
+	requirements.NoError(err)
+	resume()
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		stacktest.Dump(t)
+		requirements.FailNow("calendar reader did not start")
+	}
+	requirements.Eventually(func() bool {
+		var waitEventType sql.NullString
+		queryErr := f.Store.DB().QueryRowContext(t.Context(), `SELECT wait_event_type FROM pg_stat_activity WHERE pid = $1`, backendPID).Scan(&waitEventType)
+		return queryErr == nil && waitEventType.Valid && waitEventType.String == "Lock"
+	}, 5*time.Second, 25*time.Millisecond, "the real calendar query should be waiting on the PostgreSQL table lock")
+
+	// Wait until the collection deadline cancels the real query before
+	// releasing the lock, so transaction recovery runs before display hydration.
+	requirements.Eventually(func() bool {
+		var state, waitEventType sql.NullString
+		queryErr := f.Store.DB().QueryRowContext(t.Context(), `SELECT state, wait_event_type FROM pg_stat_activity WHERE pid = $1`, backendPID).Scan(&state, &waitEventType)
+		if queryErr == sql.ErrNoRows {
+			return true
+		}
+		return queryErr == nil && state.Valid && state.String != "active" && (!waitEventType.Valid || waitEventType.String != "Lock")
+	}, 8*time.Second, 25*time.Millisecond, "the collection deadline should cancel the blocked PostgreSQL query")
+	requirements.NoError(blocker.Rollback())
+
+	var result buildResult
+	select {
+	case result = <-done:
+	case <-time.After(5 * time.Second):
+		stacktest.Dump(t)
+		requirements.FailNow("timeline build did not finish after releasing the PostgreSQL lock")
+	}
+	requirements.NoError(result.err)
+	entries := allDayEntries(result.timeline)
+	var hydratedBurst bool
+	for _, entry := range entries {
+		if entry.Burst != nil {
+			hydratedBurst = true
+		}
+	}
+	assertions.True(hydratedBurst, "activity loaded before the canceled calendar query must still be hydrated")
+	var timedOut bool
+	for _, gap := range result.timeline.Gaps {
+		if gap.Section == "meetings" && gap.Code == "timeout" {
+			timedOut = true
+			break
+		}
+	}
+	assertions.True(timedOut, "the canceled calendar query should be reported as a timeout")
 }
 
 func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {

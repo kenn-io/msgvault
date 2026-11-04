@@ -294,6 +294,7 @@ func (c *composer) probeAnchor(ctx context.Context, target anchorTarget, days in
 			}
 		},
 	)
+	c.recoverSnapshotAfterCollection(ctx)
 	c.gap("history", activity.err, len(activity.value.bursts) > 0)
 	c.gap("cold", cold.err, false)
 	c.gap("cold", coldCount.err, false)

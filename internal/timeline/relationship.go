@@ -184,6 +184,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		},
 		func() { cc.loadFreshness() },
 	)
+	c.recoverSnapshotAfterCollection(collectionCtx)
 	c.gap("contact", messages.err, false)
 	c.gap("contact", calls.err, false)
 	c.gap("meetings", transcripts.err, len(transcripts.value) > 0)
