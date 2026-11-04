@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatDateTime as historyTime } from '../../util/format';
   import { Button, Spinner, Table } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
@@ -68,10 +69,7 @@
 
 <section class="merge-history" aria-labelledby={`person-${personID}-merge-history-heading`}>
   <div class="section-heading">
-    <div>
-      <h3 id={`person-${personID}-merge-history-heading`}>Merge history</h3>
-      <p>Inspect durable merge provenance and explicitly restore eligible absorbed lineage.</p>
-    </div>
+    <h3 id={`person-${personID}-merge-history-heading`}>Merges</h3>
   </div>
 
   {#if controller.historyLoading && controller.history.length === 0}
@@ -83,32 +81,24 @@
       <div class="message" role="alert"><p>{controller.historyError}</p><Button label="Retry merge history" size="sm" onclick={() => void controller.retryHistory()} /></div>
     {/if}
     {#if controller.history.length === 0}
-      <p>No merge history on this page.</p>
+      <p class="muted">No merges</p>
     {:else}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard users need to reach the overflow region) -->
-      <div class="table-scroll" role="region" aria-label="Scrollable Person merge history" tabindex="0">
-        <Table unsorted bare ariaLabel="Person merge history">
-          <thead><tr><th scope="col">Merge</th><th scope="col">Created</th><th scope="col">Survivor</th><th scope="col">Absorbed</th><th scope="col">Current</th><th scope="col">Participants</th><th scope="col">Rows</th><th scope="col">Row actions</th><th scope="col">Review</th><th scope="col">Splits</th><th scope="col">Action</th></tr></thead>
-          <tbody>
-            {#each controller.history as item (item.merge.id)}
-              <tr>
-                <th scope="row">{item.merge.id}</th><td>{item.merge.created_at}</td>
-                <td>Person {item.merge.survivor_person_id}</td><td>Person {item.merge.absorbed_person_id}</td>
-                <td>{item.merge.current_person_id ? `Person ${item.merge.current_person_id}` : 'None'}</td>
-                <td>{item.participant_count}</td><td>{item.row_count}</td><td>{rowActionCounts(item.row_action_counts)}</td>
-                <td>{item.pending_candidate_count} pending</td><td>{item.split_count}</td>
-                <td><Button label={`Inspect merge ${item.merge.id}`} size="sm" onclick={() => void controller.selectMerge(item.merge.id)} /></td>
-              </tr>
-            {/each}
-          </tbody>
-        </Table>
-      </div>
+      <ul class="merges" aria-label="Person merge history">
+        {#each controller.history as item (item.merge.id)}
+          <li>
+            <span>Person {item.merge.absorbed_person_id} merged into person {item.merge.survivor_person_id}
+              <small>{historyTime(item.merge.created_at)} · {item.participant_count} {item.participant_count === 1 ? 'address' : 'addresses'}{item.split_count ? ` · split ${item.split_count}×` : ''}{item.pending_candidate_count ? ` · ${item.pending_candidate_count} to review` : ''}</small>
+            </span>
+            <Button label="Inspect" ariaLabel={`Inspect merge ${item.merge.id}`} size="sm" onclick={() => void controller.selectMerge(item.merge.id)} />
+          </li>
+        {/each}
+      </ul>
     {/if}
-    <div class="pagination" aria-label="Merge history pagination">
+    {#if controller.hasPreviousHistoryPage || controller.hasNextHistoryPage}<div class="pagination" aria-label="Merge history pagination">
       <Button label="Previous merge history page" size="sm" disabled={!controller.hasPreviousHistoryPage || controller.historyLoading} onclick={() => void controller.previousHistoryPage()} />
       <span>Offset {controller.historyOffset}</span>
       <Button label="Next merge history page" size="sm" disabled={!controller.hasNextHistoryPage || controller.historyLoading} onclick={() => void controller.nextHistoryPage()} />
-    </div>
+    </div>{/if}
   {/if}
 
   {#if controller.detailLoading}
@@ -170,7 +160,11 @@
 
 <style>
   .merge-history, .merge-detail { display: grid; gap: var(--space-3); }
-  .merge-history { padding-top: var(--space-3); border-top: var(--border-width) solid var(--border-default); }
+  .merge-history { gap: var(--space-2); }
+  .merges { display: grid; padding: 0; list-style: none; }
+  .merges li { display: flex; align-items: center; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); }
+  .merges span { display: grid; gap: var(--space-1); }
+  .merges small, .muted { color: var(--text-muted); font-size: var(--font-size-sm); }
   .section-heading, .pagination { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
   h3, h4, p, pre { margin: 0; }
   .section-heading p, .pagination { color: var(--text-muted); font-size: var(--font-size-sm); }

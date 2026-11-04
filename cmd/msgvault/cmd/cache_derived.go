@@ -485,17 +485,31 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 	if len(clusters) == 0 {
 		return nil
 	}
-	values := make([]string, 0, len(clusters))
+	values := make([]string, 0, participantClusterMaxBatchRows)
+	flush := func() error {
+		if len(values) == 0 {
+			return nil
+		}
+		if _, err := db.ExecContext(ctx, `INSERT INTO tmp_participant_clusters VALUES `+strings.Join(values, ",")); err != nil {
+			return fmt.Errorf("populate participant clusters temp table: %w", err)
+		}
+		values = values[:0]
+		return nil
+	}
 	for participantID, canonicalID := range clusters {
 		values = append(values, fmt.Sprintf("(%d,%d)", participantID, canonicalID))
+		if len(values) >= participantClusterMaxBatchRows {
+			if err := flush(); err != nil {
+				return err
+			}
+		}
 	}
-	if _, err := db.ExecContext(ctx, `INSERT INTO tmp_participant_clusters VALUES `+strings.Join(values, ",")); err != nil {
-		return fmt.Errorf("populate participant clusters temp table: %w", err)
-	}
-	return nil
+	return flush()
 }
 
 const participantClustersSelectSQL = `SELECT participant_id, canonical_id FROM tmp_participant_clusters`
+
+const participantClusterMaxBatchRows = 1024
 
 func conversationParticipantsSelectSQL(maxMessageID int64) string {
 	return fmt.Sprintf(`SELECT cp.conversation_id, cp.participant_id

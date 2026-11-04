@@ -10,6 +10,7 @@ import (
 )
 
 func TestDuckDBSearchFastPipeOR(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@example.com")
 	first := b.AddMessage(MessageOpt{Subject: "alpha beta"})
@@ -29,6 +30,7 @@ func TestDuckDBSearchFastPipeOR(t *testing.T) {
 }
 
 func TestDuckDBSearchFast_RecipientMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -52,6 +54,7 @@ func TestDuckDBSearchFast_RecipientMetadata(t *testing.T) {
 }
 
 func TestDuckDBSearchFast_AllFromParticipantsMetadata(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -75,6 +78,7 @@ func TestDuckDBSearchFast_AllFromParticipantsMetadata(t *testing.T) {
 }
 
 func TestDuckDBSearchFast_DomainFilterTreatsWildcardsLiterally(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	b.AddSource("test@example.com")
 	wantedSenderID := b.AddParticipant("sender@team_ops.example", "team_ops.example", "Wanted Sender")
@@ -100,6 +104,7 @@ func TestDuckDBSearchFast_DomainFilterTreatsWildcardsLiterally(t *testing.T) {
 }
 
 func TestDuckDBSearchFast_AppliesCompleteViewFilter(t *testing.T) {
+	t.Parallel()
 	t.Run("sender name", func(t *testing.T) {
 		engine := newParquetEngine(t)
 		messages, err := engine.SearchFast(context.Background(), search.Parse("Preview"), MessageFilter{
@@ -129,6 +134,7 @@ func TestDuckDBSearchFast_AppliesCompleteViewFilter(t *testing.T) {
 }
 
 func TestDuckDBSearchFast_UnscopedIncludesCachedMessageTypes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -242,6 +248,7 @@ func TestDuckDBSearchFast_UnscopedIncludesCachedMessageTypes(t *testing.T) {
 }
 
 func TestDuckDBSearchMessageBodies_DelegatesToDirectSQLite(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -258,6 +265,7 @@ func TestDuckDBSearchMessageBodies_DelegatesToDirectSQLite(t *testing.T) {
 }
 
 func TestDuckDBSearchMessageBodies_RequiresDirectSQLite(t *testing.T) {
+	t.Parallel()
 	_, err := (&DuckDBEngine{}).SearchMessageBodies(context.Background(),
 		&search.Query{TextTerms: []string{"needle"}}, 50, 0)
 	require.Error(t, err, "missing direct SQLite engine")

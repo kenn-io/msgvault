@@ -93,6 +93,24 @@ export class CardDAVController {
   async load(): Promise<void> {
     await Promise.all([this.retryStatus(), this.refreshRuns()]);
   }
+  // A summary requested during sync cannot establish the post-sync state.
+  get statusRevision(): number | undefined {
+    return this.syncPending ? undefined : this.statusCommitGeneration;
+  }
+  async refreshFromConnection(status: CardDAVStatus, revision: number | undefined): Promise<void> {
+    if (this.disposed || this.syncPending || revision !== this.statusCommitGeneration) return;
+    this.status ??= status;
+    if (status.active || status.scheduled || status.queued_at || status.scheduler_running) {
+      await this.retryStatus();
+    } else {
+      const statusCommit = ++this.statusCommitGeneration;
+      this.status = status;
+      this.statusLoading = false;
+      this.statusError = null;
+      this.pollFingerprint = statusFingerprint(status);
+      this.recordSuccessfulStatusCommit(statusCommit);
+    }
+  }
   async retryStatus(): Promise<void> {
     const loaded = await this.readStatus(true);
     if (loaded && this.status?.available) {
@@ -222,6 +240,7 @@ export class CardDAVController {
   }
   async sync(connection: string | undefined = this.connection): Promise<void> {
     if (!this.canSync || this.syncPending) return;
+    this.statusCommitGeneration += 1;
     const context = this.generation;
     this.syncAbort?.abort();
     const requestController = new AbortController();

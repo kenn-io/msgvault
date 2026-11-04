@@ -97,7 +97,7 @@ it does not authorize reuse in ordinary tests.
 
 Refresh the Web UI images with `make docs-web-screenshots`. The script imports
 the pinned fixture into a temporary archive, builds and starts its own daemon,
-and captures Everything and Relationships at 1920 × 1080. It keeps the normal
+and captures Messages and Relationships at 1920 × 1080. It keeps the normal
 build toolchain and caches. Set `MSGVAULT_DOCS_SCREENSHOT_OUTPUT_DIR` to retain
 captures outside the hydrated asset directory while reviewing them.
 

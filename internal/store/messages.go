@@ -94,6 +94,8 @@ type MessageDeliveryEvidence struct {
 // MessagePersistData bundles everything needed to atomically
 // persist a message and its related rows in a single transaction.
 type MessagePersistData struct {
+	// Edited records a source edit atomically with the message.
+	Edited                    bool
 	Message                   *Message
 	Conversation              *ConversationPersistData
 	Delivery                  *MessageDeliveryEvidence
@@ -108,6 +110,7 @@ type MessagePersistData struct {
 	PreserveLabels            bool
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
+	SyncRunItem               *SyncRunItem
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -1211,6 +1214,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				); err != nil {
 					return fmt.Errorf("repoint legacy replies: %w", err)
 				}
+				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
+					return fmt.Errorf("transfer legacy loop decision: %w", err)
+				}
 			}
 
 			_, err = tx.Exec(
@@ -1853,8 +1859,13 @@ func (s *Store) GetMessageBodyAndRawContext(ctx context.Context, messageID int64
 // GetMessageBodyText returns the archived plain-text body for one message.
 // A message without a body returns an empty string.
 func (s *Store) GetMessageBodyText(messageID int64) (string, error) {
+	return s.GetMessageBodyTextContext(context.Background(), messageID)
+}
+
+// GetMessageBodyTextContext is GetMessageBodyText with a context.
+func (s *Store) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
 	var body sql.NullString
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT body_text FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -2109,8 +2120,30 @@ func (s *Store) PersistMessageContext(ctx context.Context, data *MessagePersistD
 	}
 	return s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
-		nil, nil, func([]int64) *MessagePersistData { return data }, nil, nil,
+		nil, nil, func([]int64) *MessagePersistData { return data }, nil,
+		func(ctx context.Context, tx *loggedTx, data *MessagePersistData, id int64) error {
+			q := boundQuerier{ctx: ctx, q: tx}
+			if data.MIMEAttachmentReplacement != nil {
+				if err := s.persistAttachmentSnapshotWith(q, id, data.MIMEAttachmentReplacement); err != nil {
+					return err
+				}
+			}
+			if data.Edited {
+				return setMessageEditedStateWith(q, id, true)
+			}
+			return nil
+		},
 	)
+}
+
+func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replacement *[]AttachmentWrite) error {
+	if err := s.replaceMIMEAttachmentsWith(q, messageID, replacement); err != nil {
+		return fmt.Errorf("persist attachments: %w", err)
+	}
+	if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
+		return fmt.Errorf("recompute attachment stats: %w", err)
+	}
+	return nil
 }
 
 // PersistMessageWithParticipantsContext resolves participants and persists the
@@ -2201,13 +2234,7 @@ func (s *Store) PersistRepairMessageWithParticipantsContext(
 			data.Message.RFC822MessageID, messageID); err != nil {
 			return fmt.Errorf("replace repair message RFC Message-ID: %w", err)
 		}
-		if err := s.replaceMIMEAttachmentsWith(q, messageID, data.MIMEAttachmentReplacement); err != nil {
-			return fmt.Errorf("replace repair message attachments: %w", err)
-		}
-		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
-			return fmt.Errorf("recompute repair message attachment stats: %w", err)
-		}
-		return nil
+		return s.persistAttachmentSnapshotWith(q, messageID, data.MIMEAttachmentReplacement)
 	}
 	messageID, err := s.persistMessageWithParticipantsTransaction(
 		ctx, attributionLock{Sources: []int64{expected.SourceID}},
@@ -2360,6 +2387,11 @@ func (s *Store) persistMessageWithParticipantsTx(
 	id, err := s.persistMessageWith(ctx, tx, data)
 	if err != nil {
 		return 0, err
+	}
+	if data.SyncRunItem != nil {
+		if err := s.recordSyncRunItemWith(ctx, tx, *data.SyncRunItem); err != nil {
+			return 0, err
+		}
 	}
 	if afterPersist != nil {
 		if err := afterPersist(ctx, tx, data, id); err != nil {
@@ -3441,9 +3473,13 @@ func (s *Store) SetMessageEditedState(messageID int64, edited bool) error {
 // SetMessageEditedStateContext honors cancellation during SetMessageEditedState.
 func (s *Store) SetMessageEditedStateContext(ctx context.Context, messageID int64, edited bool) error {
 	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
-		return err
+		return setMessageEditedStateWith(q, messageID, edited)
 	})
+}
+
+func setMessageEditedStateWith(q querier, messageID int64, edited bool) error {
+	_, err := q.Exec(`UPDATE messages SET is_edited = ? WHERE id = ?`, edited, messageID)
+	return err
 }
 
 // SetMessageReplyContext links a message to the message it replies to while
@@ -7312,4 +7348,35 @@ func (s *Store) soleAddressParticipantContext(ctx context.Context, query, addres
 		return 0, nil
 	}
 	return ids[0], nil
+}
+
+// ResolveDeferredMessageRepliesContext links archived replies whose metadata
+// contains referenced_message_id once their parent is available.
+func (s *Store) ResolveDeferredMessageRepliesContext(ctx context.Context, sourceID int64, messageType string, pageSize int) error {
+	afterID := int64(0)
+	for {
+		unresolved, err := s.ListUnresolvedMessageRepliesAfterContext(ctx,
+			sourceID, messageType, afterID, pageSize,
+		)
+		if err != nil {
+			return err
+		}
+		for _, reply := range unresolved {
+			var metadata struct {
+				ReferencedMessageID string `json:"referenced_message_id"`
+			}
+			if err := json.Unmarshal([]byte(reply.Metadata), &metadata); err != nil {
+				return fmt.Errorf("decode reply metadata for %s: %w", reply.SourceMessageID, err)
+			}
+			if metadata.ReferencedMessageID != "" {
+				if err := s.SetReplyToContext(ctx, sourceID, reply.SourceMessageID, metadata.ReferencedMessageID); err != nil {
+					return fmt.Errorf("resolve deferred reply %s: %w", reply.SourceMessageID, err)
+				}
+			}
+			afterID = reply.MessageID
+		}
+		if len(unresolved) < pageSize {
+			return nil
+		}
+	}
 }

@@ -24,6 +24,8 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
+On unreleased `main`, connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
+
 ### Filename suggestions
 
 Newer than the latest release, API schema 3.15 adds
@@ -158,7 +160,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.35.0**.
+it is separate from the binary release version. The current schema is **3.40.0**.
+
+Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
+
+Schema 3.39.0 adds the optional `account` to staged deletion list summaries.
+
+Schema 3.38.0 adds exact sender and To participant identities to conversation windows and `kind` filters for canonical Email, Conversation, Event, Meeting, and Item entries. Conversation classification includes older chat messages whose stored message type is empty.
 
 Schema 3.35.0 adds `GET /api/v1/calendar/events`, which lists archived calendar occurrences in a window with repeating events expanded. `msgvault calendar events` requires a daemon supporting this schema.
 
@@ -167,6 +175,8 @@ Schema 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity: `q
 Schema 3.29.0 adds the optional `address` filter to `GET /api/v1/people/directory`. It matches literal case-insensitive fragments on a saved person's currently bound identities or current curated contact points without semantic search. CLI and MCP address lookups require a daemon supporting this schema.
 
 Schema 3.33.0 adds the read-only [person tier preview](#get-apiv1peopletiers) and [explanation](#get-apiv1peopleidtier) routes. The `preview_person_tiers` and `explain_person_tier` MCP tools require a daemon supporting this schema.
+
+Schema 3.36.0 adds `stored_plaintext_ranges` to document indexing status.
 
 Schema 3.34.0 adds `calls_short` and `calls_long`, the answered-call counts, to person tier signals.
 
@@ -361,6 +371,8 @@ responses are bounded projections that omit raw vCards and resource hrefs;
 only the explicit publication preview route returns a raw vCard.
 See [release changes](changelog.md#upgrade-and-compatibility) for removed paths
 and the 1.x/2.x transition.
+
+Schema 3.37.0 returns HTTP 200 from `GET /api/v1/participants/{id}` for a participant with no sent or received messages, with `activity_count` set to 0 and `first_at` and `last_at` omitted. `GET /api/v1/participants/{id}/inboxes` also returns HTTP 200 with an empty list for that participant. `GET /api/v1/relationships/{id}/calendar` still returns 404 for that participant because it has no relationship score; check `activity_count` before requesting the calendar. The generated Go client in `pkg/client` declares `PersonSummary.FirstAt` and `LastAt` as `*time.Time`.
 
 ### Person UIDs and CardDAV bindings
 
@@ -1745,6 +1757,7 @@ Full message details including body and attachment metadata.
   "has_attachments": true,
   "size_bytes": 52480,
   "body": "<plain text body, or HTML when no plain text body exists>",
+  "body_text": "<stored plain-text body, or an empty string when no plain text is stored>",
   "body_html": "<html><body><p>Full HTML body</p></body></html>",
   "attachments": [
     {
@@ -1758,7 +1771,9 @@ Full message details including body and attachment metadata.
 }
 ```
 
-The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the plain-text body when one exists; for HTML-only messages, it falls back to the HTML body so callers still receive message content.
+The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the stored plain-text body when one exists; otherwise, it falls back to the HTML body so callers still receive message content.
+
+API schema 3.41.0 adds `body_text` for a single message's stored plain-text body, which can be generated from the HTML part and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit `body_text`, and `body` keeps its HTML fallback.
 
 ---
 
@@ -2030,7 +2045,7 @@ to `mode=fts` instead.
 
 `message_type` uses the same values as local search: `email`,
 `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`,
-`mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`,
+`mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`,
 `google_voice_text`, `google_voice_call`, and `google_voice_voicemail`. The
 query string can also carry `message_type:` / `message_type=` operators inside
 `q`.
@@ -2604,6 +2619,24 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 
+### Participant and domain timelines
+
+`POST /api/v1/participants/{id}/timeline` and `POST /api/v1/domains/{domain}/timeline` omit drafts and unsent items. Participant timelines include events and meetings only when the archive owner participated. These rules apply to every caller, including CLI and MCP clients.
+
+### Group analytical results
+
+**Endpoint:** `POST /api/v1/explore/groups`
+
+`grouping` takes one dimension: `source`, `participant`, `domain`,
+`message_type`, `mailing_list`, `kind`, `year`, `month`, or `day`.
+`day` returns `YYYY-MM-DD` keys and counts individual messages; other
+dimensions count entries, with chats collapsed into conversations.
+`timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
+Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages and keyed lookups omit `level`.
+`sent_only: true` excludes drafts and unsent items from the counts.
+Day grouping is request-only and cannot be stored in a saved view.
+Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
+
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 
 **Endpoint:** `POST /api/v1/explore/preflight`
@@ -2639,7 +2672,7 @@ explore contract is in the generated OpenAPI document (`/openapi.json`).
 | Field | Description |
 |---|---|
 | `mode` | `all_matching` selects everything the predicate matches; `explicit` selects only the listed `row_keys` |
-| `predicate` | The explore request being acted on: `filters` (dimensions `source`, `participant`, `domain`, `message_type`, `after`, `before`, `deletion`), plus `query` / `search_mode` for search-backed selections. Cursors are rejected |
+| `predicate` | The explore request being acted on: `filters` (dimensions `source`, `participant`, `domain`, `message_type`, `kind`, `after`, `before`, `deletion`), plus `query` / `search_mode` for search-backed selections. Cursors are rejected |
 | `row_keys` | Explore row keys (the `key` field of explore rows) to include; required when `mode` is `explicit` |
 | `exclusions` | Row keys to exclude from an `all_matching` selection |
 | `cache_revision` | Required. The `cache_revision` from the explore response being reviewed |
@@ -2718,7 +2751,7 @@ Web UI and run by the API:
 |-------|-----------------|
 | `query` | Free text. Empty means no text search. |
 | `search_mode` | `full_text`, `semantic`, `hybrid`. Defaults to `full_text` when a query is present. |
-| `filters[].field` | An Explore filter dimension: `source`, `identity`, `participant`, `domain`, `mailing_list`, `message_type`, `after`, `before`, `deletion`. The legacy aliases `source_id` and `participant_id` are accepted and executed as `source` and `participant`. |
+| `filters[].field` | An Explore filter dimension: `source`, `identity`, `participant`, `domain`, `mailing_list`, `message_type`, `kind`, `after`, `before`, `deletion`. The legacy aliases `source_id` and `participant_id` are accepted and executed as `source` and `participant`. |
 | `filters[].operator` | `eq` or `in`. |
 | `filters[].values` | One or more non-empty strings. Numeric identifiers are decimal strings so they survive JavaScript clients unchanged. |
 | `grouping` | A drill-down chain of Explore grouping dimensions: `source`, `participant`, `domain`, `message_type`, `mailing_list`, `kind`, `year`, `month`. |
@@ -3016,6 +3049,7 @@ filters by one of `pending`, `in_progress`, `completed`, `failed`, or
       "created_at": "2026-07-06T15:30:00Z",
       "created_by": "api",
       "description": "old newsletters",
+      "account": "user@example.com",
       "message_count": 1234
     }
   ]

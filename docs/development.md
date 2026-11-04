@@ -221,6 +221,11 @@ server releases when the binary exits, so the next binary reclaims whatever an
 earlier one left behind; a role without `CREATEDB` falls back to a private
 schema in the configured database.
 
+`dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
+SQLite's backup API.
+Query tests call `t.Parallel()`; a test that replaces a package global stays
+serial and explains why in a `// serial:` comment.
+
 
 ### Local test scheduling
 
@@ -250,9 +255,38 @@ The PostgreSQL targets keep their existing connection-oriented concurrency
 limits; setting `MSGVAULT_TEST_DB` disables automatic scaling in `make test` too.
 CI's explicit `test-unsharded` and package-shard jobs keep their existing layout.
 
-Successful Bash shards and the Windows slow-packages job print named passing
-and skipped test outcomes, including subtests, followed by the package result.
-Failed runs print the full verbose test output for diagnosis.
+Go tests run through [gotestsum](https://github.com/gotestyourself/gotestsum),
+a tool dependency in `go.mod`. `make test`, the PostgreSQL targets, and CI's
+inline test steps rerun each failed test up to twice and list rerun tests in
+`gotestsum/<suite>-reruns.txt`. Every run records its `go test -json` events in
+`gotestsum/<suite>.json`. CI uploads those files as
+`gotestsum-<suite>-attempt-<n>` artifacts when a step fails, when gotestsum
+reruns a test, and on every rerun attempt of the workflow, so a test that failed
+in one attempt can be matched with its result in the next.
+
+The shard scripts do not rerun tests. They write every shard's events to
+`gotestsum/<suite>.json`, where the suite defaults to the package's last path
+element. Successful shards print named passing and skipped test outcomes,
+including subtests, followed by the package line `go test` prints. Failed
+shards print the full verbose test output, then the package's `FAIL` line.
+
+Bash shards balance test time with recorded durations from a package's
+`testdata/shard-weights-<backend>.txt`. Only PostgreSQL store has a weights
+file; a missing file keeps round-robin assignment. Unlisted tests get the median
+recorded duration, and removed tests are ignored. Each successful shard line
+reports its summed top-level test-seconds. Refresh
+`internal/store/testdata/shard-weights-postgres.txt` from a recent successful
+main run's `test-postgres-sharded (store)` job with:
+
+```bash
+gh run view -R kenn-io/msgvault --job <job-id> --log | cut -f3- | sed 's/^[^ ]* //' | grep -E '^--- (PASS|SKIP|FAIL): ' | sort
+```
+
+In CI, Vitest and Playwright retry a failed test twice and write JSON reports
+under `web/test-results/vitest/` and `web/test-results/playwright/`. CI uploads
+each report as a `vitest-<suite>-attempt-<n>` or
+`playwright-<suite>-attempt-<n>` artifact. `MSGVAULT_PLAYWRIGHT_SUITE` names a
+Playwright run's report.
 
 ## Lint & Format
 

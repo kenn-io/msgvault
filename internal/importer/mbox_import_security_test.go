@@ -16,6 +16,7 @@ import (
 )
 
 func TestStoreAttachmentPreservesMIMEOccurrenceEvidence(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	assert := assert.New(t)
 	tmp := t.TempDir()
@@ -66,6 +67,7 @@ func TestStoreAttachmentPreservesMIMEOccurrenceEvidence(t *testing.T) {
 }
 
 func TestStoreAttachment_StatError_DoesNotUpsertRow(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	if runtime.GOOS == "windows" {
 		t.Skip("requires symlink support")

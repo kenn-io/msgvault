@@ -387,7 +387,16 @@ import (
 // 3.33.0 adds the read-only person tier preview and explanation routes.
 // 3.34.0 adds answered-call counts to person tier signals.
 // 3.35.0 adds archived calendar occurrence listing.
-const APISchemaVersion = "3.35.0"
+// 3.36.0 adds stored plaintext range counts to document indexing status.
+// 3.37.0 omits first_at and last_at on person summaries with no sent or received messages, and returns participants with no sent or received messages instead of 404.
+// 3.38.0 adds exact sender and To participant identities to conversation windows
+// and canonical entry-kind filters to analytical requests.
+// 3.39.0 adds the optional account to staged deletion list summaries.
+// 3.40.0 adds timezone-aware daily message grouping and sent_only group filtering.
+// It also filters participant timelines to events and meetings attended by the owner.
+// 3.41.0 adds body_text for a single message's stored plain-text body, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset.
+// Older servers omit body_text; body keeps its HTML fallback.
+const APISchemaVersion = "3.41.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -820,7 +829,7 @@ func hardenExploreSchemas(doc *huma.OpenAPI) {
 }
 
 func exploreGroupingEnum() []any {
-	dimensions := explorecatalog.GroupingDimensions()
+	dimensions := explorecatalog.RequestGroupingDimensions()
 	values := make([]any, len(dimensions))
 	for index, dimension := range dimensions {
 		values[index] = dimension
@@ -1368,7 +1377,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 	}
 	setEnumNames(schemas["ExploreGroupDimension"], []any{
 		"ExploreGroupDimensionSource", "ExploreGroupDimensionParticipant", "ExploreGroupDimensionDomain",
-		"ExploreGroupDimensionMessageType", "ExploreGroupDimensionMailingList", "ExploreGroupDimensionKind", "ExploreGroupDimensionYear", "ExploreGroupDimensionMonth",
+		"ExploreGroupDimensionMessageType", "ExploreGroupDimensionMailingList", "ExploreGroupDimensionKind", "ExploreGroupDimensionYear", "ExploreGroupDimensionMonth", "ExploreGroupDimensionDay",
 	})
 	if counter := schemas["OperationPublicCounter"]; counter != nil {
 		setEnumNames(counter.Properties["unit"], []any{
@@ -1450,8 +1459,9 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
 		"ExploreFilter": {
-			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount"},
+			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionKind", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount"},
 		},
+		"ExploreGroupRow": {"level": {"ExploreGroupRowLevelNone", "ExploreGroupRowLevelFirstQuartile", "ExploreGroupRowLevelSecondQuartile", "ExploreGroupRowLevelThirdQuartile", "ExploreGroupRowLevelFourthQuartile"}},
 		"ExploreGroupSort": {
 			"direction": {"ExploreGroupSortDirectionAsc", "ExploreGroupSortDirectionDesc"},
 			"field":     {"ExploreGroupSortFieldKey", "ExploreGroupSortFieldCount", "ExploreGroupSortFieldEstimatedBytes", "ExploreGroupSortFieldLatestAt"},
@@ -1476,9 +1486,7 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 				"ImportJobResponseStatusFailed",
 			},
 		},
-		"ExploreSelection": {
-			"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"},
-		},
+		"ExploreSelection": {"mode": {"ExploreSelectionModeExplicit", "ExploreSelectionModeAllMatching"}},
 		"ExploreSort": {
 			"direction": {"ExploreSortDirectionDesc"},
 			"field":     {"ExploreSortFieldOccurredAt"},

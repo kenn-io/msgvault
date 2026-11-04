@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -13,10 +14,6 @@ const forbidden = {
   href: 'https://forbidden.example.test/profile',
   credential: 'forbidden-private-credential'
 };
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function catalog(sensitive: boolean) {
   return {

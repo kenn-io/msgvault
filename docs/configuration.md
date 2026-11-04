@@ -510,8 +510,8 @@ uses a configured endpoint without a manifest.
 | `training_posture` | `unknown` | Mistral: `default-opt-out` or `opted-out`; Docling: `operator-controlled` (default) |
 | `max_file_bytes` | `52428800` | Maximum original document size (50 MiB) |
 | `max_pages_per_document` | `500` | Maximum provider units for one document |
-| `max_response_bytes` | `67108864` | Maximum provider response size (64 MiB) |
-| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters |
+| `max_response_bytes` | `67108864` | Maximum provider response size and aggregate Docling range checkpoint bytes, including canonical normalized evidence (64 MiB); exceeding this limit fails the extraction |
+| `max_normalized_chars` | `25000000` | Maximum locally retained normalized characters; Docling ranges exceeding the aggregate checkpoint limit stay in memory and are resent on retry, and the completed document is truncated at publication |
 | `max_spool_bytes` | `536870912` | Mistral private staging-directory limit (512 MiB) |
 | `min_free_space_bytes` | `1073741824` | Mistral free-space reserve before staging (1 GiB) |
 | `request_timeout` | `5m` | Timeout for each request; Docling defaults to `30s` |
@@ -529,6 +529,12 @@ HTML bytes. It verifies sources in bounded memory and does not use the Mistral
 disk spool. Its `max_pages_per_document` bounds returned evidence units before
 any whole-document Markdown fallback. It cannot enforce a pre-upload page
 count for every native format.
+
+For Docling, PDFs over 50 pages run in consecutive 50-page jobs. Each job gets
+its own `total_timeout` and `max_poll_attempts`, while `max_pages_per_document`
+still limits the whole file. See
+[Docling extraction](usage/document-indexing.md#use-a-self-hosted-docling-service)
+for range checkpoints and retry behavior.
 
 Docling’s operator-controlled postures assign responsibility for deployment,
 credentials, model downloads, egress, resource limits, retention, and training
@@ -556,9 +562,10 @@ enabled.
 Provider uploads are manual-only: `msgvault serve` does not schedule document
 extraction. Each `documents build` or `documents resume` displays its upload
 and cost preflight before requiring `--yes`. Mistral receives its capability
-manifest explicitly; Docling uses its configured endpoint and policy. When
-document indexing is enabled, the daemon’s weekly reconciliation and local
-derivative cleanup remain automatic and make no provider requests.
+manifest explicitly; Docling uses its configured endpoint and policy. The
+daemon reconciles attachments weekly when document indexing is enabled.
+While `msgvault serve` runs, it also cleans stale local derivatives weekly,
+even when indexing is disabled. Neither job contacts a provider.
 
 `[attachments.documents.scope]` accepts these fields:
 
@@ -1040,13 +1047,13 @@ configuration cannot turn a Drafts folder into the account's Sent folder.
 
 ### `[server]`
 
-Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
+Settings for the Web UI and API server started by `msgvault serve`. The same HTTP server is used by remote CLI access and by the local background daemon for archive-access CLI commands. On unreleased `main`, the owner key also authenticates [native MCP endpoints](usage/chat.md#native-daemon-endpoints). The `api_key` setting is also reused for inbound bearer authentication when `msgvault mcp --http` starts a separate Streamable HTTP listener; that listener's address comes from the `--http` flag. See [Web UI & API Server](/docs/api-server/) for API endpoint documentation and [MCP Server](/docs/usage/chat/#streamablehttp-transport) for MCP client setup, or fetch `/openapi.json` from a running server for the generated OpenAPI contract.
 
 | Key | Default | Description |
 |---|---|---|
 | `api_port` | `0` (auto-select) | Port the server listens on; `0` picks an open port at startup and clients discover it automatically. Set a fixed port for remote/NAS deployments. |
 | `bind_addr` | `127.0.0.1` | Bind address, or `iface:NAME` to bind an address on a named interface |
-| `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http` |
+| `api_key` | — | API key for daemon/API authentication and bearer authentication on `msgvault mcp --http`; also authenticates native `/mcp` |
 | `api_key_file` | — | Owner-only file holding the API key |
 | `api_key_env` | — | Name of an environment variable holding the API key |
 | `agent_access` | `false` | Enable restricted agent grants; requires an effective API key. Read at daemon startup only; a `config.toml` edit takes effect only after a restart. |
@@ -2442,7 +2449,7 @@ features once published. No startup hook or entrypoint wrapper is required.
   per install and UTC day. Visual queries and images use `semantic`; combined searches
   report both types. TUI fast/deep use `text`; its combined lexical/vector mode uses `hybrid`.
   CLI recording transcript searches (`media search`) use `text`.
-- `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Everything sends no `search_empty` while recording search is unknown or set up because its archive row count excludes transcript matches.
+- `search_empty` when a submitted search returns no results, with the same surface and search type as `search_run`. Debounced previews, reloads, sorting, and continuation pages don't count. Like `search_run`, it counts once per UTC day, surface, and search type. Messages sends no `search_empty` while recording search is unknown or set up because its archive row count excludes transcript matches.
 - `error_shown` when the web or TUI shows an error for search, archive loading, message opening, or a Sync now request on Sources that is refused or times out. TUI People readers and recording transcript hits aren't covered. A Sync now run that fails later counts through `sync_failed`. Its `kind` is `search`, `message`, `sync`, or `other`. It has no daily deduplication, so retries can send repeated events.
 - `sync_failed` when a scheduled sync or Sync now on Sources finds a source starting to fail, with its registered type as `sync_source` and `reason=auth|network|rate_limited|other`. The first observed failure counts, including the first sync attempt. Calendar outages count once per account. Repeated failures count once until recovery. State stays in memory, so a restart can count an outage again. Manual CLI syncs and Settings → Contacts Sync now neither record nor clear outages; the next successful scheduled pass clears them. Cache refresh failures don't count as source failures. Unlisted outcome values become `other`. Twenty, Plaud, Circleback, and Muesli HTTP failures always report `other` because their clients return HTTP status as text. Slack's exhausted throttling and HTTP auth failures, IMAP throttling and auth failures without an `AUTHENTICATIONFAILED` code, and Granola throttling also report `other`. A sync counts as failing when it returns an error, even if it read some messages; a sync that returns no error counts as good, even when its summary records skipped or failed items. Partial Granola and Beeper syncs report `other`.
 - `message_opened` when a selected message becomes readable in web, TUI, or CLI

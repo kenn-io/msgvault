@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-03"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
@@ -16,7 +16,7 @@ appear in full under Inherited Flags.
 | Task | Commands and guides |
 |---|---|
 | Add and sync a source | [Choose a source](guides/sources.md), [sync](#sync), [sync-full](#sync-full) |
-| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
+| Import local exports | [import-eml](#import-eml), [import-mbox](#import-mbox), [import-maildir](#import-maildir), [import-emlx](#import-emlx), [import-pst](#import-pst), [import-slackdump](#import-slackdump), [import-telegram](#import-telegram), [import-imazing-csv](#import-imazing-csv), [text imports](usage/text-messages.md) |
 | Search and browse | [search](#search), [find-chat](#find-chat), [tui](#tui), [show-message](#show-message), [documents](#documents), [embeddings](#embeddings), [multimodal](#multimodal), [eval](#eval) |
 | Maintain people and contacts | [person](#person), [people guide](usage/people.md), [CardDAV](usage/people-carddav.md) |
 | Edit live email tags | [message-tags](#message-tags) |
@@ -850,7 +850,7 @@ and retries. Plan for additional API use and storage on large accounts.
 
 ## sync
 
-Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync.
+Sync new and changed messages. Gmail accounts use the Gmail History API; IMAP accounts perform a mailbox scan and skip messages already in the database. The optional account can be an identifier or display name. When it is omitted, the command syncs all accounts that have completed an initial full sync. Each Gmail incremental sync first retries messages an earlier sync couldn't download or save, until they're archived or Gmail reports them gone.
 
 ```bash
 msgvault sync [account] [flags]
@@ -2260,6 +2260,10 @@ msgvault import-imessage
 
 Reads from `~/Library/Messages/chat.db` by default. This is a read-only operation.
 
+Eligible attachments referenced by `chat.db` are copied into the archive. See
+[Text Messages](/docs/usage/text-messages/#import-imessage) for limits,
+copied trees, and voice notes.
+
 | Flag | Default | Description |
 |---|---|---|
 | `--db-path` | `~/Library/Messages/chat.db` | Path to chat.db |
@@ -2268,6 +2272,8 @@ Reads from `~/Library/Messages/chat.db` by default. This is a read-only operatio
 | `--limit` | `0` | Limit number of messages (for testing) |
 | `--me` | — | Your phone/email for recipient tracking |
 | `--contacts` | — | Path to contacts `.vcf` file for display-name backfill |
+| `--messages-root` | `~/Library/Messages` | Messages folder to read attachments from; rebase copied Mac paths here |
+| `--no-attachments` | `false` | Do not copy attachment files (attachment metadata is still recorded) |
 
 See [Text Messages](/docs/usage/text-messages/) for usage examples.
 
@@ -2324,6 +2330,25 @@ The directory must be the "Voice" folder from a Google Takeout export, containin
 | `--no-default-identity` | `false` | Do not auto-confirm the phone number as this source's "me" identity |
 
 See [Google Voice imports](usage/text-messages.md#import-gvoice) for voicemail audio behavior and usage examples.
+
+---
+
+## import-telegram
+
+Import a Telegram Desktop Machine-readable JSON export, including available media.
+
+```bash
+msgvault import-telegram <export-dir>
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--me` | Export owner | Numeric Telegram user ID; required for single-chat exports |
+| `--limit` | `0` | Maximum messages added; `0` imports all messages |
+| `--no-resume` | `false` | Scan every chat, ignoring the resume checkpoint |
+| `--no-default-identity` | `false` | Skip automatic account identity creation |
+
+Re-imports add new messages and fill missing media. Archived text and edit flags stay unchanged. See [Telegram imports](usage/text-messages.md#import-telegram) for export and resume behavior.
 
 ---
 
@@ -2775,7 +2800,7 @@ msgvault media search "quarterly numbers" --person 7 --direction from_person --l
 
 `--mode lexical` is the default. Semantic and hybrid are unavailable. `--limit` accepts 1 to 100 message occurrences. `--direction` accepts `from_person`, `to_person` or `group` and requires `--person`.
 
-The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Everything.
+The table shows message, conversation and attachment IDs, supplied or generated origin, plain excerpt, and recorded timing. An empty recording result proves no match only with complete coverage and `partial=false`. Its coverage line reports pending media, unavailable attribution, partial coverage and truncated results. JSON preserves the same fields and adds optional `filename`, `containing_title` and `occurred_at`. Recording search requires Docbank's source-selected search contract. Shared audio searches the currently selected transcript; different supplied captions can leave some messages unavailable even when no excerpt matches. A recording with more than 64 distinct current caption inputs is left out; its occurrences count in `unavailable_occurrences`, with `partial=true`. See [the API scope limits](api-server.md#media-transcript-search) for the version and source ceilings; narrow the person scope if it exceeds a ceiling. Use `msgvault show-message <message_id>` to read a result in context. See [browser recording search](web-ui.md#recording-matches) for transcript matches in Messages.
 
 Unreleased builds also print a separate attachment table with message, conversation, attachment, filename, and excerpt, followed by truncation and search errors. It searches text Docbank has extracted from mirrored document files. A scope with more than 4096 document files returns an attachment error; set `--person` to narrow the scope. An empty list doesn't rule out words in files awaiting extraction. `--limit` caps each list separately; `--json` includes optional `attachments` and `recordings_error` fields. See [attachment search formats](usage/searching.md#search-mirrored-attachment-text) for the files included in the scope.
 
@@ -4481,8 +4506,8 @@ msgvault mcp [flags]
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve MCP over StreamableHTTP on this address instead of stdio. Bare ports bind to loopback, e.g. `8080` becomes `127.0.0.1:8080`. Non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
-| `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
-| `--http-token-env` | — | On unreleased `main`, name the environment variable holding an independent inbound bearer key. Requires `--http`. |
+| `--http-token-file` | — | Read an independent inbound bearer key from an owner-only file; takes priority over `--http-token-env`. Requires `--http`. |
+| `--http-token-env` | — | Name the environment variable holding an independent inbound bearer key. Requires `--http`. |
 | `--http-allow-insecure` | `false` | Allow non-loopback HTTP binding without an effective inbound key. A configured key is still enforced; without one, use only behind a trusted network boundary or authenticated reverse proxy. |
 | `--http-allow-writes` | `false` | Expose native email tag edits, Saved View management, attachment export, deletion staging, and managed draft writes over StreamableHTTP. Profile, source, calendar, identity, CardDAV, and Kata writes also need their separate opt-ins; see [write controls](usage/chat.md#write-controls). Enable only for trusted, authenticated clients. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
@@ -4588,6 +4613,25 @@ for environment-only deployment and persisted API keys.
 msgvault serve --bind 0.0.0.0 --port 8080
 ```
 
+On unreleased `main`, `/mcp` serves the read-only MCP catalog on this listener
+with the configured owner bearer key. Native MCP never permits keyless access.
+
+| Flag | Default | Effect |
+|---|---|---|
+| `--mcp-allow-writes` | `false` | Enable the independent `/mcp/writes` catalog; `/mcp` stays read-only. |
+| `--mcp-allow-profile-writes` | `false` | Enable profile promotion, display-name and Notes writes. |
+| `--mcp-allow-identity-decisions` | `false` | Enable confirmed identity match accept/reject calls. |
+| `--mcp-allow-identity-scoring` | `false` | Enable confirmed manual scoring using the fixed Jev provider. |
+| `--mcp-allow-person-merges` | `false` | Enable confirmed local person merges. |
+| `--mcp-allow-carddav-writes` | `false` | Enable confirmed CardDAV publication and sync. |
+| `--mcp-allow-calendar-writes` | `false` | Enable calendar mutations. |
+| `--mcp-allow-kata-writes` | `false` | Enable Kata issue creation and evidence linking. |
+| `--mcp-allow-source-writes` | `false` | Enable confirmed source synchronization and policy writes. |
+
+Every family flag also requires `--mcp-allow-writes`. These are process flags;
+auto-started local daemons default to read-only. See the
+[MCP guide](usage/chat.md#native-daemon-endpoints) for client setup and confirmation.
+
 ---
 
 ## setup
@@ -4686,7 +4730,7 @@ provider. Stored provider credentials are checked too. An `on` state means the
 setup checks passed; it does not prove that an index has been built or that a
 provider will answer. The MCP summary is a partial list derived from enabled
 configuration flags, not the live server's `tools/list` response. Use the
-feature's status command or [Web Operations](web-ui.md#operations) to inspect
+feature's status command or [Settings Overview](web-ui.md#settings-and-restart-behavior) to inspect
 index progress and coverage.
 
 ```bash

@@ -1,3 +1,4 @@
+import { person } from './entity-fixtures.test-support';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -7,25 +8,13 @@ import {
   validatePersonMergeRequired
 } from './person-merge';
 
-function person(id: number, revision: number, displayName: string) {
-  return {
-    id,
-    revision,
-    display_name: displayName,
-    participant_ids: [id * 10],
-    created_at: '2026-08-01T00:00:00Z',
-    updated_at: '2026-08-02T00:00:00Z',
-    vcard_uid: `synthetic-${id}`
-  };
-}
-
 function conflict() {
   return {
     error: 'person_merge_required',
     message: 'Choose a survivor',
     profiles: [
-      { person: person(7, 4, 'Synthetic One'), etag: '"person-7-r4"' },
-      { person: person(9, 2, 'Synthetic Two'), etag: '"person-9-r2"' }
+      { person: person(7, 4, [70], 'Synthetic One'), etag: '"person-7-r4"' },
+      { person: person(9, 2, [90], 'Synthetic Two'), etag: '"person-9-r2"' }
     ]
   };
 }
@@ -65,7 +54,7 @@ describe('person merge error and ETag guards', () => {
   });
 
   it('requires the strong tag revision to match the returned person snapshot', () => {
-    const snapshot = person(7, 4, 'Synthetic One');
+    const snapshot = person(7, 4, [70], 'Synthetic One');
     expect(isMatchingPersonRevisionETag('"person-7-r4"', snapshot)).toBe(true);
     expect(isMatchingPersonRevisionETag('"person-7-r5"', snapshot)).toBe(false);
     expect(isMatchingPersonRevisionETag('"person-9-r4"', snapshot)).toBe(false);

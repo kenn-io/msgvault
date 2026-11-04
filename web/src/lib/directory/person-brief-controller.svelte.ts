@@ -187,6 +187,15 @@ export class PersonBriefController {
     await this.loadEnrollmentAndBrief(personID);
   }
 
+  async refresh(): Promise<void> {
+    const personID = this.personID;
+    if (personID === undefined || this.disposed || this.pending !== null) return;
+    const context = this.contextGeneration;
+    await this.loadEnrollmentAndBrief(personID);
+    if (!this.current(context, personID)) return;
+    await this.refreshVersions(personID);
+  }
+
   async retryBrief(): Promise<void> {
     const personID = this.personID;
     if (personID === undefined || this.disposed || this.briefLoading || this.pending !== null) return;
@@ -381,6 +390,15 @@ export class PersonBriefController {
   }
 
   private beginMutation(action: PersonBriefPending): AbortController {
+    // A refresh started before this write must not restore pre-mutation state.
+    this.enrollmentGeneration += 1;
+    this.briefGeneration += 1;
+    this.enrollmentAbort?.abort();
+    this.briefAbort?.abort();
+    this.enrollmentAbort = undefined;
+    this.briefAbort = undefined;
+    this.enrollmentLoading = false;
+    this.briefLoading = false;
     this.mutationAbort?.abort();
     const abort = new AbortController();
     this.mutationAbort = abort;
@@ -401,8 +419,9 @@ export class PersonBriefController {
   }
 
   private async loadEnrollmentAndBrief(personID: number): Promise<void> {
+    const mutation = this.mutationGeneration;
     if (!(await this.loadEnrollment(personID))) return;
-    if (!this.enrollment?.enrolled) return;
+    if (mutation !== this.mutationGeneration || !this.enrollment?.enrolled) return;
     await this.loadBrief(personID);
   }
 

@@ -26,11 +26,13 @@ describe('keyboard command registry', () => {
     expect(() => createCommandRegistry(handlersFor(ids))).toThrow(/clear-selection.*handler/i);
   });
 
-  it('renders and searches the registry, including selection commands', async () => {
+  it('searches selection commands and opens Commands', async () => {
     const onclose = vi.fn();
+    const onOpenCommands = vi.fn();
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
-      onclose
+      onclose,
+      onOpenCommands
     });
 
     expect(screen.getByRole('dialog', { name: 'Keyboard shortcuts' })).toBeDefined();
@@ -41,6 +43,8 @@ describe('keyboard command registry', () => {
     });
     expect(screen.getByText('Select all visible rows')).toBeDefined();
     expect(screen.queryByText('Open filters')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Commands' }));
+    expect(onOpenCommands).toHaveBeenCalledOnce();
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     expect(onclose).toHaveBeenCalledOnce();
   });
@@ -48,6 +52,7 @@ describe('keyboard command registry', () => {
   it('renders a modified shortcut as one chord instead of key alternatives', () => {
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
+      onOpenCommands: vi.fn(),
       onclose: vi.fn()
     });
 

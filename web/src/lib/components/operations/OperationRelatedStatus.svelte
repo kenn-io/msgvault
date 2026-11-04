@@ -95,8 +95,7 @@
 
 <section class="related-status" aria-label={labels[authority]}>
   <header>
-    <h1>{labels[authority]}</h1>
-    <Button size="sm" surface="soft" label="Back to operations" onclick={onClose} />
+    <Button size="sm" surface="soft" label="Back" onclick={onClose} />
   </header>
 
   {#if loading}
@@ -126,7 +125,7 @@
         {status.exact_consent ? 'Exact provider consent recorded' : 'Provider consent needs attention'}</p>
       <strong>{count(status.ready_owners)} of {count(status.eligible_owners)} owners ready</strong>
       <p>{count(status.missing_owners)} missing · {count(status.retry_owners)} retryable · {count(status.terminal_owners)} terminal</p>
-      <p>{count(status.stored_plaintext_chunks)} stored plaintext chunks · {count(status.provider_requests)} provider requests</p>
+      <p>{count(status.stored_plaintext_chunks)} stored plaintext chunks · {count(status.stored_plaintext_ranges)} saved page ranges · {count(status.provider_requests)} provider requests</p>
       {#if documentStatus.active_rebuild}
         <p>{count(documentStatus.active_rebuild.remaining_owners)} of {count(documentStatus.active_rebuild.snapshot_owners)} rebuild owners remaining</p>
       {/if}
@@ -164,9 +163,8 @@
 
 <style>
   .related-status { display: grid; align-content: start; gap: var(--space-4); min-height: 0; padding: var(--space-5) var(--page-gutter) var(--space-4); overflow: auto; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  h1, .summary p { margin: 0; }
-  h1 { color: var(--text-primary); font-size: var(--font-size-xl); font-weight: 650; line-height: 1.25; }
+  header { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); }
+  .summary p { margin: 0; }
   .summary { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
   .summary p { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
   .notice { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); }

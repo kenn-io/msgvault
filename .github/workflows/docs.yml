@@ -20,7 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7.0.1
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install ripgrep
         run: |

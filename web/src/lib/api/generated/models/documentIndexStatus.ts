@@ -27,6 +27,7 @@ export interface DocumentIndexStatus {
   retry_owners: number;
   staging_owners: number;
   stored_plaintext_chunks: number;
+  stored_plaintext_ranges: number;
   successful_attempts: number;
   terminal_owners: number;
   unknown_role_occurrences: number;

@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 const relationshipTestTimezoneUTCPlus14 = "Pacific/Kiritimati"
 
 func TestRelationshipCalendarReturnsLocalDaysAndCachedTemperatureSummary(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	engine, canonicalID, _, _ := buildTimelineFixture(t)
@@ -82,6 +84,7 @@ func TestRelationshipCalendarReturnsLocalDaysAndCachedTemperatureSummary(t *test
 }
 
 func TestRelationshipCalendarValidatesIdentityYearAndTimezone(t *testing.T) {
+	t.Parallel()
 	engine := NewTestDataBuilder(t).BuildEngine()
 	tests := []RelationshipCalendarRequest{
 		{CanonicalID: 0, Year: 2026, Timezone: "UTC"},
@@ -95,6 +98,7 @@ func TestRelationshipCalendarValidatesIdentityYearAndTimezone(t *testing.T) {
 }
 
 func TestRelationshipCalendarValidationUsesRequestedTimezoneYear(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2025, time.December, 31, 10, 30, 0, 0, time.UTC)
 	_, _, err := validateRelationshipCalendarRequestAt(RelationshipCalendarRequest{
 		CanonicalID: 1, Year: 2026, Timezone: relationshipTestTimezoneUTCPlus14,
@@ -108,6 +112,7 @@ func TestRelationshipCalendarValidationUsesRequestedTimezoneYear(t *testing.T) {
 }
 
 func TestRelationshipCalendarAllowsCurrentYearBeyondStaleCacheWatermark(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	currentYear := time.Now().UTC().Year()
@@ -137,6 +142,7 @@ func TestRelationshipCalendarAllowsCurrentYearBeyondStaleCacheWatermark(t *testi
 }
 
 func TestRelationshipCalendarReadsBothUTCPartitionsAtLocalYearBoundary(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "imessage")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
@@ -171,6 +177,7 @@ func TestRelationshipCalendarReadsBothUTCPartitionsAtLocalYearBoundary(t *testin
 }
 
 func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	effectiveAt := time.Date(2025, time.December, 31, 23, 30, 0, 0, time.UTC)
@@ -211,10 +218,13 @@ func TestRelationshipCalendarUsesSnapshotInstantForLatestLocalDay(t *testing.T) 
 }
 
 func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "gmail")
 	ownerID := b.AddParticipant("owner@example.test", "example.test", "Owner")
 	personID := b.AddParticipant("person@example.test", "example.test", "Person")
+	draftRecipient := b.AddParticipant("draft@example.test", "example.test", "Draft recipient")
 	b.AddOwnerParticipant(sourceID, ownerID)
 	messageID := b.AddMessage(MessageOpt{
 		SourceID: sourceID, MessageType: "email",
@@ -222,17 +232,25 @@ func TestRelationshipCalendarRejectsMissingAndOwnerPeople(t *testing.T) {
 	})
 	b.AddFrom(messageID, ownerID, "Owner")
 	b.AddTo(messageID, personID, "Person")
+	draft := b.AddMessage(MessageOpt{
+		SourceID: sourceID, MessageType: "email", IsFromMe: true,
+		SentAt: time.Date(2026, time.January, 2, 12, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(draft, ownerID, "Owner")
+	b.AddTo(draft, draftRecipient, "Draft recipient")
+	b.unsentMessages = fmt.Sprintf("(SELECT %d::BIGINT AS message_id)", draft)
 	engine := b.BuildEngine()
 
-	for _, canonicalID := range []int64{ownerID, 999_999} {
+	for _, canonicalID := range []int64{ownerID, 999_999, draftRecipient} {
 		_, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{
 			CanonicalID: canonicalID, Year: 2026, Timezone: "UTC",
 		})
-		assert.ErrorIs(t, err, ErrRelationshipPersonNotFound, canonicalID)
+		assert.ErrorIs(err, ErrRelationshipPersonNotFound, canonicalID)
 	}
 }
 
 func TestRelationshipCalendarHandlesExtremeOffsetsDSTFractionalOffsetsAndLeapDays(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSourceWithType("owner@example.test", "imessage")
@@ -291,6 +309,7 @@ func TestRelationshipCalendarHandlesExtremeOffsetsDSTFractionalOffsetsAndLeapDay
 }
 
 func TestRelationshipCalendarDeduplicatesLinkedAliasEdgesPerMessage(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)

@@ -7,9 +7,11 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestSQLiteVecExtensionLoads(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	require := require.New(t)
 	require.NoError(RegisterExtension(), "RegisterExtension")
 	db, err := sql.Open(DriverName(), ":memory:")

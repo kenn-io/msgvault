@@ -176,6 +176,6 @@ results, run `msgvault embeddings build` after the sync, or configure
 `[vector.embed.schedule].run_after_sync = true` for scheduled daemon syncs.
 
 In the [Web UI](/docs/web-ui/), Teams direct chats, group chats, and channel
-conversations appear as conversation rows in Everything and can be combined
+conversations appear as conversation rows in Messages and can be combined
 with the same search, filters, and grouping as other archive modalities. In
 the [TUI](/docs/usage/tui/), press `m` to switch from Email mode to Texts mode.

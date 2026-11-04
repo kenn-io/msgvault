@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-06"
+last_edited: "2026-10-29"
 title: CardDAV Contacts
 description: Bring address-book contacts into msgvault, publish selected profiles, and resolve competing edits.
 ---
@@ -257,12 +257,13 @@ unqualified sync fails as unavailable.
 
 Settings shows the selected connection's status, books and history, and its
 sync buttons run that connection. Switching connections clears unsaved account
-fields, passwords and pending test or sign-in results. Operations shows all
-connections' attributed runs and offers aggregate sync. Its action is disabled
-while any CardDAV run is active. Schedules, retry gates and run leases are
+fields, passwords and pending test or sign-in results. The sidebar status dot's
+**Past runs…** menu shows all connections' attributed runs; filter Kind to
+**CardDAV sync**. **Settings → Overview → Contacts → Sync now** runs an
+aggregate sync and is disabled while any CardDAV run is active. Schedules, retry gates and run leases are
 independent per connection.
 
-To publish a person, open their saved profile in **Directory** and turn on
+To publish a person, open their saved profile in **People**, choose **More actions → Publish to address book**, and turn on
 **Publish person to CardDAV**. A contact UID identifies that published person
 across syncs. Later profile changes are reconciled to the write target.
 Turning publication off removes the remote card while retaining the local
@@ -338,7 +339,7 @@ without publishing or resolving the conflict. Then run
 `POST /api/v1/carddav/conflicts/{id}/resolve` and `{"choice":"keep_local"}`.
 
 The preview route is the one CardDAV response that returns a raw vCard, and
-it can include Private Notes. The Directory UI directs you to the CLI review
+it can include Private Notes. The person’s **Publish to address book** action directs you to the CLI review
 commands when approval is required.
 
 ### Recover a connection removed from config

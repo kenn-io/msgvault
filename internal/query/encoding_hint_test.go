@@ -10,6 +10,7 @@ import (
 )
 
 func TestIsEncodingError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  error
@@ -30,6 +31,7 @@ func TestIsEncodingError(t *testing.T) {
 }
 
 func TestHintRepairEncoding(t *testing.T) {
+	t.Parallel()
 	t.Run("nil error", func(t *testing.T) {
 		assert.NoError(t, HintRepairEncoding(nil))
 	})

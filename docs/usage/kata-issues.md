@@ -20,8 +20,7 @@ configured project must already exist.
 Msgvault attributes its writes to the actor of the Kata credential. A static
 Kata token has no actor, so msgvault writes as `msgvault`.
 
-Issues filed this way don't appear in the Task links panel, which reads the
-separate `[integrations.tasks]` connection.
+The reader lists Kata issues and linked tasks under each message. Linked tasks use the separate `[integrations.tasks]` connection.
 
 ## Check before asking the owner again
 
@@ -68,14 +67,16 @@ profile and Notes read surfaces.
 
 ## In the Web UI
 
-Expand a message and choose **Create Kata issue**. The dialog shows the passage
+Expand a chat message or meeting transcript and choose **⋯ → Add to task…** to
+open its quote editor. For email, select **Kata** in the provider picker and choose
+**Add quote to Kata…**. The dialog shows the passage
 that will be saved, up to 1,000 characters. Use **Earlier passage** and **Later
 passage** to move through a long message or transcript; each step moves half a
 window, so neighbouring passages overlap. The text in the
 preview is exactly what the issue quotes. To quote less, select part of the
 passage and choose **Quote selection**; **Whole passage** goes back.
 
-To quote a file, open it and choose **Create Kata issue from file**, search for
+To quote a file, open it and choose **Add to task…**, search for
 a passage, and pick one; the dialog then pages and narrows it like a message.
 This needs text that document indexing has already extracted.
 

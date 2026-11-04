@@ -58,7 +58,7 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `conversation_id` | INTEGER FK | References `conversations` |
 | `source_id` | INTEGER FK | References `sources` |
 | `source_message_id` | TEXT | Source-specific message ID |
-| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
+| `message_type` | TEXT | `email`, `calendar_event`, `meeting_transcript`, `beeper`, `chatwoot`, `teams`, `discord`, `sms`, `mms`, `whatsapp`, `imessage`, `fbmessenger`, `telegram`, `synctech_sms_call`, `google_voice_text`, `google_voice_call`, `google_voice_voicemail` |
 | `sent_at` | DATETIME | Send timestamp |
 | `sender_id` | INTEGER FK | References `participants` |
 | `account_address` | TEXT, nullable | The one confirmed address an email or calendar event belongs to; NULL when evidence conflicts or is missing |
@@ -252,12 +252,12 @@ results instantly as you group and drill down. On the default SQLite backend, ms
 Parquet so DuckDB can group and filter it without repeatedly joining the
 normalized archive tables.
 
-Ungrouped Everything and Files listings page a scalar message or attachment
+Ungrouped Messages and Files listings page a scalar message or attachment
 population before resolving participant lists for the returned rows. Exact
 totals use separate narrow scans. This page-before-enrichment boundary keeps
 multi-million-message listings inside the daemon's interactive DuckDB memory
 budget without changing cache format or query semantics. Domain-filtered
-Everything listings share the filtered message population between page
+Messages listings share the filtered message population between page
 selection, participant enrichment, and total counting. This avoids repeating
 recipient and conversation-roster membership joins under the interactive
 memory limit. Listings without domain filters retain separate scalar scans.

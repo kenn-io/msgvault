@@ -1,101 +1,157 @@
+import { appShortcuts, initShortcuts } from '@kenn-io/kit-ui';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
+import { view } from './fixtures.test-support';
+import type { JobsStore } from '../../jobs/jobs.svelte';
+import { collectJobs, jobsHealth } from '../../jobs/jobs';
+import { sourceStatus, syncRunStatus } from '../../jobs/fixtures.test-support';
 import AppSidebar from './AppSidebar.svelte';
 
-const status = { tone: 'idle' as const, label: 'Local archive ready', text: 'Local archive' };
+const jobs = { items: [], health: 'ok', loaded: true, refresh: vi.fn() } as unknown as JobsStore;
 
 function renderSidebar(overrides: Record<string, unknown> = {}) {
   const props = {
     active: 'everything' as const,
     collapsed: false,
     showCollapseToggle: true,
-    status,
+    jobs,
+    onPastRuns: vi.fn(),
+    onOpenJob: vi.fn(),
     onNavigate: vi.fn(),
     onToggleCollapsed: vi.fn(),
-    onOpenShortcuts: vi.fn(),
-    ...overrides
+    onOpenHelp: vi.fn(),
+    ...overrides,
   };
   const view = render(AppSidebar, props);
-  return { ...props, rerender: view.rerender, container: view.container };
+  return { ...props, rerender: view.rerender, container: view.container, unmount: view.unmount };
 }
 
+const primary = () => within(screen.getByRole('navigation', { name: 'Primary' }));
+
 describe('AppSidebar', () => {
-  it('lists workspaces in People, Archive, Manage order with the active one current', () => {
+  it.each([4, 500])('shows a waiting badge of %s', duplicateCount => {
+    renderSidebar({ duplicateCount });
+    expect(primary().getByRole('button', { name: duplicateCount === 500 ? 'People 500+' : 'People 4' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');
+  });
+
+  it('lists four places with the active one current', () => {
     renderSidebar();
-    const nav = screen.getByRole('navigation', { name: 'Primary' });
     expect(
-      within(nav)
+      primary()
         .getAllByRole('button')
-        .map((b) => b.getAttribute('aria-label') ?? b.textContent?.trim())
-    ).toEqual([
-      'Relationships',
-      'Directory',
-      'Reviews',
-      'Everything',
-      'Files',
-      'Saved views',
-      'Sources',
-      'Operations',
-      'Deletions',
-      'Settings'
-    ]);
-    expect(within(nav).getByRole('button', { name: 'Everything' }).getAttribute('aria-current')).toBe(
-      'page'
-    );
-    expect(within(nav).getByRole('button', { name: 'Files' }).hasAttribute('aria-current')).toBe(
-      false
-    );
+        .map((b) => b.getAttribute('aria-label')),
+    ).toEqual(['Messages', 'People', 'Files', 'Sources']);
+    expect(primary().getByRole('button', { name: 'Messages' }).getAttribute('aria-current')).toBe('page');
+    expect(primary().getByRole('button', { name: 'Files' }).hasAttribute('aria-current')).toBe(false);
   });
 
-  it('keeps full accessible names in the icon rail and hides group headings', () => {
-    renderSidebar({ collapsed: true });
-    expect(screen.getByRole('button', { name: 'Saved views' })).toBeTruthy();
-    expect(screen.queryByText('People')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Everything' }).getAttribute('aria-current')).toBe(
-      'page'
-    );
+  it('nests saved views under the place they open', async () => {
+    const onOpenView = vi.fn();
+    const budget = view(1, 'Budget threads');
+    renderSidebar({ views: [
+      budget, view(2, 'PDF invoices', 'files'),
+    ], onOpenView });
+    const messages = within(screen.getByRole('list', { name: 'Messages saved views' }));
+    const files = within(screen.getByRole('list', { name: 'Files saved views' }));
+    expect(messages.getByRole('button', { name: 'Budget threads' })).toBeTruthy();
+    expect(messages.queryByRole('button', { name: 'PDF invoices' })).toBeNull();
+    expect(files.getByRole('button', { name: 'PDF invoices' })).toBeTruthy();
+    await fireEvent.click(messages.getByRole('button', { name: 'Budget threads' }));
+    expect(onOpenView).toHaveBeenCalledWith(budget);
   });
 
-  it('keeps every sidebar item inside its landmark and hides the decorative status dot', () => {
-    const { container } = renderSidebar();
-    const sidebar = screen.getByRole('complementary', { name: 'Sidebar' });
-    expect(sidebar.textContent).toBe(container.textContent);
-    expect(within(sidebar).getByText('msgvault')).toBeTruthy();
-    expect(within(sidebar).getByRole('navigation', { name: 'Primary' })).toBeTruthy();
-    const dot = container.querySelector('[aria-label="Local archive ready"]');
-    expect(dot?.closest('[aria-hidden="true"]')).toBeTruthy();
+  it('keeps full accessible names in the icon rail and hides saved views', () => {
+    renderSidebar({ collapsed: true, views: [view(1, 'Budget threads')] });
+    expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Budget threads' })).toBeNull();
+    expect(screen.queryByText('Settings')).toBeNull();
   });
 
-  it('gives assistive tech the full archive status in the rail', () => {
-    renderSidebar({ collapsed: true });
-    expect(screen.getByText('Local archive ready').classList.contains('kit-sr-only')).toBe(true);
-    expect(screen.queryByText('Local archive')).toBeNull();
-  });
-
-  it('lets keyboard users open the archive status tooltip in the rail', async () => {
-    renderSidebar({ collapsed: true });
-    const trigger = screen.getByText('Local archive ready').closest('.kit-tooltip-trigger') as HTMLElement;
-    expect(trigger.tabIndex).toBe(0);
-    trigger.focus();
-    expect((await screen.findByRole('tooltip')).textContent?.trim()).toBe('Local archive ready');
-  });
-
-  it('toggles the rail and opens shortcuts from the footer', async () => {
-    const props = renderSidebar();
-    await fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
-    await fireEvent.click(screen.getByRole('button', { name: /Keyboard shortcuts/ }));
-    expect(props.onToggleCollapsed).toHaveBeenCalled();
-    expect(props.onOpenShortcuts).toHaveBeenCalled();
-    expect(screen.getByText('Local archive')).toBeTruthy();
+  it('lists running jobs and failures in the status menu and opens their source', async () => {
+    const onOpenJob = vi.fn();
+    const store = {
+      items: [
+        { id: 'f', name: 'Work Gmail', state: 'failed', detail: 'Gmail sign-in expired', target: { kind: 'source' } },
+        { id: 'r', name: 'CardDAV sync', state: 'running', detail: '', target: { kind: 'status', authority: 'getCardDAVStatus' } },
+      ],
+      health: 'failed',
+      loaded: true,
+      refresh: vi.fn(),
+    } as unknown as JobsStore;
+    renderSidebar({ jobs: store, onOpenJob });
+    await fireEvent.click(screen.getByRole('button', { name: /Sync status: Needs attention/ }));
+    expect(store.refresh).toHaveBeenCalled();
+    expect(screen.getByRole('menuitem', { name: /Work Gmail/ }).textContent).toContain('Gmail sign-in expired');
+    expect(screen.getByRole('menuitem', { name: /CardDAV sync/ }).textContent).toContain('Running');
+    await fireEvent.click(screen.getByRole('menuitem', { name: /Work Gmail/ }));
+    expect(onOpenJob).toHaveBeenCalledWith({ kind: 'source' });
   });
 
   it('keeps focus on the toggle when the parent switches the sidebar to the rail', async () => {
-    const { rerender } = renderSidebar();
+    const { rerender, onToggleCollapsed } = renderSidebar();
     const toggle = screen.getByRole('button', { name: 'Collapse sidebar' });
     toggle.focus();
     await fireEvent.click(toggle);
+    expect(onToggleCollapsed).toHaveBeenCalledOnce();
     await rerender({ collapsed: true });
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Expand sidebar' }));
   });
+});
+
+it.each([
+  { state: 'running', processed: 0, detail: 'yesterday' },
+  { state: 'running', processed: 42, detail: '42 messages so far · yesterday' },
+  { state: 'queued', processed: 0, detail: undefined },
+] as const)('shows a $state job with $processed processed messages', async ({ state, processed, detail }) => {
+  vi.setSystemTime(new Date('2026-08-31T11:00:00Z'));
+  try {
+    const items = collectJobs([sourceStatus(state === 'queued' ? { scheduler_queued: true } : {
+      active_sync: syncRunStatus({ status: 'running', completed_at: null, messages_processed: processed }),
+    })], []);
+    const store = { items, health: jobsHealth(items), loaded: true, refresh: vi.fn() } as unknown as JobsStore;
+    renderSidebar({ jobs: store });
+    const label = state === 'queued' ? 'Queued' : 'Running';
+    await fireEvent.click(screen.getByRole('button', { name: `Sync status: ${label}` }));
+    const row = within(screen.getByRole('menuitem', { name: /Example archive/ }));
+    expect(row.getAllByText(label)).toHaveLength(1);
+    if (detail) expect(row.getByText(detail)).toBeDefined();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('shows a saved-view read error above the last rows and offers Retry', async () => {
+  const onRetryViews = vi.fn();
+  renderSidebar({ views: [view(1, 'Budget')], viewsError: "Couldn't load saved views.", onRetryViews });
+  expect(screen.getByRole('alert').textContent).toContain("Couldn't load saved views.");
+  expect(screen.getByRole('button', { name: 'Budget' })).toBeTruthy();
+  await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(onRetryViews).toHaveBeenCalledOnce();
+});
+
+it('shows neutral Loading before the first job status fetch', () => {
+  renderSidebar({ jobs: { ...jobs, loaded: false, health: 'unavailable' } });
+  expect(screen.getByRole('button', { name: 'Sync status: Loading' })).toBeTruthy();
+});
+
+it('Sync status typeahead keeps page shortcuts suspended', async () => {
+  const detachShortcuts = initShortcuts();
+  const pageShortcut = vi.fn();
+  const unregister = appShortcuts.register('d', pageShortcut);
+  const rendered = renderSidebar({ jobs: { ...jobs, health: 'running', items: [
+    { id: 'document', name: 'Document extraction', state: 'running', detail: '', target: { kind: 'status', authority: 'getDocumentIndexStatus' } },
+  ] } });
+  try {
+    await fireEvent.click(screen.getByRole('button', { name: 'Sync status: Running' }));
+    const first = (await screen.findAllByRole('menuitem'))[0]!;
+    first.focus();
+    await fireEvent.keyDown(first, { key: 'd' });
+    expect(pageShortcut).not.toHaveBeenCalled();
+    expect(screen.getByRole('menu').contains(document.activeElement)).toBe(true);
+  } finally {
+    rendered.unmount();
+    unregister();
+    detachShortcuts();
+  }
 });

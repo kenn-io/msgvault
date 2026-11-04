@@ -38,6 +38,7 @@ func emptyTargets(views ...ViewType) map[ViewType]bool {
 // TestMessageFilter_Clone verifies that Clone creates an independent copy
 // of the filter, especially the EmptyValueTargets map.
 func TestMessageFilter_Clone(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	// Create original filter with EmptyValueTargets
 	original := MessageFilter{
@@ -75,6 +76,7 @@ func TestMessageFilter_Clone(t *testing.T) {
 
 // TestMessageFilter_Clone_NilMap verifies Clone handles nil EmptyValueTargets.
 func TestMessageFilter_Clone_NilMap(t *testing.T) {
+	t.Parallel()
 	original := MessageFilter{Sender: "bob@example.com"}
 	clone := original.Clone()
 
@@ -88,6 +90,7 @@ func TestMessageFilter_Clone_NilMap(t *testing.T) {
 
 // TestMessageFilter_HasEmptyTargets verifies HasEmptyTargets checks for true values.
 func TestMessageFilter_HasEmptyTargets(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		filter MessageFilter
@@ -128,6 +131,7 @@ func TestMessageFilter_HasEmptyTargets(t *testing.T) {
 }
 
 func TestListMessages_Filters(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	tests := []struct {
@@ -215,6 +219,7 @@ func TestListMessages_Filters(t *testing.T) {
 }
 
 func TestListMessages_NoDuplicates(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	filter := MessageFilter{Recipient: "bob@company.org", RecipientName: "Bob"}
@@ -230,6 +235,7 @@ func TestListMessages_NoDuplicates(t *testing.T) {
 }
 
 func TestListMessagesWithLabels(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	messages := env.MustListMessages(MessageFilter{})
@@ -239,6 +245,7 @@ func TestListMessagesWithLabels(t *testing.T) {
 }
 
 func TestGetMessage(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -262,6 +269,7 @@ func TestGetMessage(t *testing.T) {
 }
 
 func TestGetMessageWithAttachments(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -281,6 +289,7 @@ func TestGetMessageWithAttachments(t *testing.T) {
 }
 
 func TestGetMessageWithURLBackedAttachment(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -300,6 +309,7 @@ func TestGetMessageWithURLBackedAttachment(t *testing.T) {
 }
 
 func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -320,6 +330,7 @@ func TestGetAttachmentClearsURLBackedContentHash(t *testing.T) {
 }
 
 func TestGetAttachmentsByHashUsesDialectRebind(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -341,6 +352,7 @@ func TestGetAttachmentsByHashUsesDialectRebind(t *testing.T) {
 }
 
 func TestDuplicateCASAliasRetainsHashAcrossAttachmentQueries(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -380,6 +392,7 @@ func TestDuplicateCASAliasRetainsHashAcrossAttachmentQueries(t *testing.T) {
 }
 
 func TestGetMessageBySourceID(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	env := newTestEnv(t)
@@ -401,6 +414,7 @@ func TestGetMessageBySourceID(t *testing.T) {
 }
 
 func TestListAccounts(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	accounts, err := env.Engine.ListAccounts(env.Ctx)
@@ -410,6 +424,7 @@ func TestListAccounts(t *testing.T) {
 }
 
 func TestListAccountsLastSyncAt(t *testing.T) {
+	t.Parallel()
 	checks := assert.New(t)
 	must := require.New(t)
 	env := newTestEnv(t)
@@ -431,6 +446,7 @@ func TestListAccountsLastSyncAt(t *testing.T) {
 }
 
 func TestGetTotalStats(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -443,6 +459,7 @@ func TestGetTotalStats(t *testing.T) {
 }
 
 func TestGetTotalStatsSourceDeletedBreakdown(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -471,6 +488,7 @@ func TestGetTotalStatsSourceDeletedBreakdown(t *testing.T) {
 // display_name. Otherwise drilling into a per-message sender-name bucket shows
 // a different name than the bucket it came from.
 func TestListMessagesFromNameUsesPerMessageDisplayName(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -504,6 +522,7 @@ func TestListMessagesFromNameUsesPerMessageDisplayName(t *testing.T) {
 // active/source-deleted breakdown alongside the total message count, so
 // /api/v1/text/stats reports non-zero breakdown fields.
 func TestGetTextStatsSourceDeletedBreakdown(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -525,6 +544,7 @@ func TestGetTextStatsSourceDeletedBreakdown(t *testing.T) {
 }
 
 func TestGetTotalStatsWithSourceID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -553,6 +573,7 @@ func TestGetTotalStatsWithSourceID(t *testing.T) {
 }
 
 func TestGetTotalStatsWithInvalidSourceID(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -566,6 +587,7 @@ func TestGetTotalStatsWithInvalidSourceID(t *testing.T) {
 }
 
 func TestWithAttachmentsOnlyStats(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	allStats := env.MustGetTotalStats(StatsOptions{})
@@ -577,6 +599,7 @@ func TestWithAttachmentsOnlyStats(t *testing.T) {
 }
 
 func TestHideDeletedFromSourceSearchFast(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -604,6 +627,7 @@ func TestHideDeletedFromSourceSearchFast(t *testing.T) {
 }
 
 func TestHideDeletedFromSourceStats(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	allStats := env.MustGetTotalStats(StatsOptions{})
@@ -625,6 +649,7 @@ func TestHideDeletedFromSourceStats(t *testing.T) {
 // the same source-deletion visibility as plain stats: only
 // HideDeletedFromSource gates it, never a deletion scope the caller never set.
 func TestHideDeletedFromSourceStatsWithSearchQuery(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// "Hello" matches messages 1 and 2; mark message 1 source-deleted.
@@ -638,6 +663,7 @@ func TestHideDeletedFromSourceStatsWithSearchQuery(t *testing.T) {
 }
 
 func TestDeletedMessagesIncludedWithFlag(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -670,6 +696,7 @@ func TestDeletedMessagesIncludedWithFlag(t *testing.T) {
 }
 
 func TestGetMessageIncludesDeleted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -686,6 +713,7 @@ func TestGetMessageIncludesDeleted(t *testing.T) {
 }
 
 func TestGetMessageBySourceIDIncludesDeleted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -702,6 +730,7 @@ func TestGetMessageBySourceIDIncludesDeleted(t *testing.T) {
 }
 
 func TestListMessages_MatchEmptySenderName_NotExists(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -721,6 +750,7 @@ func TestListMessages_MatchEmptySenderName_NotExists(t *testing.T) {
 }
 
 func TestMatchEmptySenderName_MixedFromRecipients(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// Resolve participant IDs dynamically to avoid coupling to seed order.
@@ -742,6 +772,7 @@ func TestMatchEmptySenderName_MixedFromRecipients(t *testing.T) {
 }
 
 func TestMatchEmptySenderName_CombinedWithDomain(t *testing.T) {
+	t.Parallel()
 	env := newTestEnvWithEmptyBuckets(t)
 
 	filter := MessageFilter{
@@ -754,6 +785,7 @@ func TestMatchEmptySenderName_CombinedWithDomain(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilter_Label(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	tests := []struct {
@@ -778,6 +810,7 @@ func TestGetDeletionTargetsByFilter_Label(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilterExcludesPortableArchiveOnlyMarker(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -799,6 +832,7 @@ func TestGetDeletionTargetsByFilterExcludesPortableArchiveOnlyMarker(t *testing.
 }
 
 func TestGetDeletionTargetsByFilter_DomainIsCaseInsensitive(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	env := newTestEnv(t)
@@ -812,6 +846,7 @@ func TestGetDeletionTargetsByFilter_DomainIsCaseInsensitive(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilter_ConversationID(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	_, err := env.DB.Exec(`
 		INSERT INTO conversations (
@@ -831,6 +866,7 @@ func TestGetDeletionTargetsByFilter_ConversationID(t *testing.T) {
 }
 
 func TestSQLiteEngine_ListIDScopesFastSearchAndDeletionLiterally(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -867,6 +903,7 @@ func TestSQLiteEngine_ListIDScopesFastSearchAndDeletionLiterally(t *testing.T) {
 }
 
 func TestSQLiteEngine_GetDeletionTargetsByAggregateSearch_List(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -884,6 +921,7 @@ func TestSQLiteEngine_GetDeletionTargetsByAggregateSearch_List(t *testing.T) {
 }
 
 func TestSQLiteEngine_GetDeletionTargetsByAggregateSearch_TimeGranularity(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	tests := []struct {
 		name        string
@@ -917,6 +955,7 @@ func TestSQLiteEngine_GetDeletionTargetsByAggregateSearch_TimeGranularity(t *tes
 }
 
 func TestGetDeletionTargetsByFilter_EmptyBuckets(t *testing.T) {
+	t.Parallel()
 	env := newTestEnvWithEmptyBuckets(t)
 
 	tests := []struct {
@@ -946,6 +985,7 @@ func TestGetDeletionTargetsByFilter_EmptyBuckets(t *testing.T) {
 }
 
 func TestGetDeletionTargetsBySearchCombinesSearchFilterAndActiveScope(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	env.EnableFTS()
 	env.MarkDeletedBySourceID("msg2")
@@ -965,6 +1005,7 @@ func TestGetDeletionTargetsBySearchCombinesSearchFilterAndActiveScope(t *testing
 }
 
 func TestGetDeletionTargetsBySearchMatchesNormalFilterComposition(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	for _, mode := range []DeletionSearchMode{DeletionSearchFast, DeletionSearchDeep} {
@@ -983,6 +1024,7 @@ func TestGetDeletionTargetsBySearchMatchesNormalFilterComposition(t *testing.T) 
 }
 
 func TestDeepSearchAndDeletionUseExactRecipientPredicates(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	env := newTestEnv(t)
@@ -1034,6 +1076,7 @@ func TestDeepSearchAndDeletionUseExactRecipientPredicates(t *testing.T) {
 }
 
 func TestFastSearchAndDeletionUseExactViewPredicates(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	aliceID := env.MustLookupParticipant("alice@example.com")
 
@@ -1093,6 +1136,7 @@ func TestFastSearchAndDeletionUseExactViewPredicates(t *testing.T) {
 }
 
 func TestGetDeletionTargetsBySearchPreservesUnsupportedFilterPredicates(t *testing.T) {
+	t.Parallel()
 	env := newTestEnvWithEmptyBuckets(t)
 
 	targets, err := env.Engine.GetDeletionTargetsBySearch(env.Ctx,
@@ -1106,6 +1150,7 @@ func TestGetDeletionTargetsBySearchPreservesUnsupportedFilterPredicates(t *testi
 }
 
 func TestFastSearchAndDeletionKeepViewLabelExact(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -1135,6 +1180,7 @@ func TestFastSearchAndDeletionKeepViewLabelExact(t *testing.T) {
 }
 
 func TestDeepSearchDeletionKeepsViewDomainExact(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	env := newTestEnv(t)
@@ -1156,6 +1202,7 @@ func TestDeepSearchDeletionKeepsViewDomainExact(t *testing.T) {
 }
 
 func TestDeepSearchAndDeletionKeepExactViewFilters(t *testing.T) {
+	t.Parallel()
 	env := newTestEnvWithEmptyBuckets(t)
 	env.EnableFTS()
 
@@ -1199,6 +1246,7 @@ func TestDeepSearchAndDeletionKeepExactViewFilters(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilter_SenderName(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{SenderName: "Alice"}))
@@ -1207,6 +1255,7 @@ func TestGetDeletionTargetsByFilter_SenderName(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilter_AfterBefore(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -1264,6 +1313,7 @@ func addMultiAuthorMessage(env *testEnv, subject string) string {
 // from-row of a multi-author message — a cross-row match (email on Author A,
 // name on Author B) must NOT match, while a same-row match still does.
 func TestListMessages_SenderEmailAndName_SameFromRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -1293,6 +1343,7 @@ func TestListMessages_SenderEmailAndName_SameFromRow(t *testing.T) {
 // TestListMessages_SenderEmailAndName_SameFromRow for the GetDeletionTargetsByFilter
 // builder site (deletion/staging path).
 func TestGetDeletionTargetsByFilter_SenderEmailAndName_SameFromRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -1347,6 +1398,7 @@ func addMultiRecipientMessage(env *testEnv, subject string) string {
 // to/cc/bcc row of a multi-recipient message — a cross-row match (email on
 // Recip A, name on Recip B) must NOT match, while a same-row match still does.
 func TestListMessages_RecipientEmailAndName_SameToRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -1376,6 +1428,7 @@ func TestListMessages_RecipientEmailAndName_SameToRow(t *testing.T) {
 // TestListMessages_RecipientEmailAndName_SameToRow for the GetDeletionTargetsByFilter
 // builder site (deletion/staging path).
 func TestGetDeletionTargetsByFilter_RecipientEmailAndName_SameToRow(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	env := newTestEnv(t)
@@ -1404,6 +1457,7 @@ func TestGetDeletionTargetsByFilter_RecipientEmailAndName_SameToRow(t *testing.T
 }
 
 func TestSQLiteRecipientPhoneFilter(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	phoneID := env.AddParticipant(dbtest.ParticipantOpts{
 		Phone:       new("+15551234567"),
@@ -1455,6 +1509,7 @@ func TestSQLiteRecipientPhoneFilter(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilter_RecipientName(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	ids, err := deletionTargetSourceMessageIDs(env.Engine.GetDeletionTargetsByFilter(env.Ctx, MessageFilter{RecipientName: "Bob"}))
@@ -1463,6 +1518,7 @@ func TestGetDeletionTargetsByFilter_RecipientName(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilter_RecipientName_WithMatchEmptyRecipient(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	filter := MessageFilter{
@@ -1475,6 +1531,7 @@ func TestGetDeletionTargetsByFilter_RecipientName_WithMatchEmptyRecipient(t *tes
 }
 
 func TestListMessages_ConversationIDFilter(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -1528,6 +1585,7 @@ func TestListMessages_ConversationIDFilter(t *testing.T) {
 // =============================================================================
 
 func TestListMessages_MatchEmptyFilters(t *testing.T) {
+	t.Parallel()
 	env := newTestEnvWithEmptyBuckets(t)
 
 	tests := []struct {
@@ -1623,6 +1681,7 @@ func TestListMessages_MatchEmptyFilters(t *testing.T) {
 }
 
 func TestRecipientAndRecipientNameAndMatchEmptyRecipient(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1645,6 +1704,7 @@ func TestRecipientAndRecipientNameAndMatchEmptyRecipient(t *testing.T) {
 // TestRecipientNameFilter_IncludesBCC verifies that RecipientName filter includes BCC recipients.
 // Regression test for a bug where RecipientName only searched 'to' and 'cc' but not 'bcc'.
 func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	aliceID := env.AddParticipant(dbtest.ParticipantOpts{Email: new("alice-bcc@example.com"), DisplayName: new("Alice Sender"), Domain: "example.com"})
@@ -1700,6 +1760,7 @@ func TestRecipientNameFilter_IncludesBCC(t *testing.T) {
 // preserves both empty constraints. This tests the fix for the bug where
 // EmptyValueTarget could only hold one dimension.
 func TestMultipleEmptyTargets(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnvWithEmptyBuckets(t)
 
@@ -1796,6 +1857,7 @@ func TestMultipleEmptyTargets(t *testing.T) {
 // for a bug where SQLiteEngine.GetTotalStats ignored opts.SearchQuery, returning
 // global stats instead of search-filtered stats.
 func TestGetTotalStatsWithSearchQuery(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -1814,6 +1876,7 @@ func TestGetTotalStatsWithSearchQuery(t *testing.T) {
 }
 
 func TestGetTotalStats_SearchScope(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1857,6 +1920,7 @@ func TestGetTotalStats_SearchScope(t *testing.T) {
 }
 
 func TestSQLiteMessageSummariesIncludeSourceID(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1909,6 +1973,7 @@ func TestSQLiteMessageSummariesIncludeSourceID(t *testing.T) {
 // so a message on each side of the chunk boundary carries a label to prove
 // that pass is chunked as well, not just the base fetch.
 func TestGetMessageSummariesByIDs_ChunksLargeIDSetsAndPreservesOrder(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -1955,6 +2020,7 @@ func TestGetMessageSummariesByIDs_ChunksLargeIDSetsAndPreservesOrder(t *testing.
 }
 
 func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source2 := env.AddSource(dbtest.SourceOpts{
 		Identifier: "second@example.com", DisplayName: "Second Account",
@@ -2076,6 +2142,7 @@ func TestGetTotalStats_SearchScopeCountsMatchingLabelsAndSources(t *testing.T) {
 }
 
 func TestGetTotalStats_FilteredCountsMatchDuckDBPopulation(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	source2 := env.AddSource(dbtest.SourceOpts{Identifier: "second@example.com"})
 	source3 := env.AddSource(dbtest.SourceOpts{Identifier: "third@example.com"})
@@ -2167,6 +2234,7 @@ func TestGetTotalStats_FilteredCountsMatchDuckDBPopulation(t *testing.T) {
 }
 
 func TestSearchFastWithStats_SourceIDsMultiAndEmptyScopes(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2206,6 +2274,7 @@ func TestSearchFastWithStats_SourceIDsMultiAndEmptyScopes(t *testing.T) {
 }
 
 func TestGetTotalStatsWithSearchQuery_MessageTypeFilter(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	env := newTestEnv(t)
 
@@ -2223,6 +2292,7 @@ func TestGetTotalStatsWithSearchQuery_MessageTypeFilter(t *testing.T) {
 // TestGetTotalStatsWithSearchQuery_FromFilter verifies that from: search
 // filters are applied correctly to stats.
 func TestGetTotalStatsWithSearchQuery_FromFilter(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// "from:alice" should match 3 messages (ids 1,2,3)
@@ -2235,6 +2305,7 @@ func TestGetTotalStatsWithSearchQuery_FromFilter(t *testing.T) {
 // TestGetTotalStatsWithSearchQuery_Combined verifies that SearchQuery combines
 // with other StatsOptions filters (e.g., WithAttachmentsOnly).
 func TestGetTotalStatsWithSearchQuery_Combined(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	// "from:alice" matches 3 messages (ids 1,2,3), but only id=2 has attachments.
@@ -2248,6 +2319,7 @@ func TestGetTotalStatsWithSearchQuery_Combined(t *testing.T) {
 }
 
 func TestSearchFastWithStats_MessageTypeStats(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 	env := newTestEnv(t)
@@ -2273,6 +2345,7 @@ func TestSearchFastWithStats_MessageTypeStats(t *testing.T) {
 }
 
 func TestGetMessageRaw(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
 
@@ -2289,6 +2362,7 @@ func TestGetMessageRaw(t *testing.T) {
 }
 
 func TestGetMessageRaw_NotFound(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 
 	got, err := env.Engine.GetMessageRaw(env.Ctx, 999999)
@@ -2297,6 +2371,7 @@ func TestGetMessageRaw_NotFound(t *testing.T) {
 }
 
 func TestGetMessageRaw_ServesDeletedFromSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
@@ -2319,6 +2394,7 @@ func TestGetMessageRaw_ServesDeletedFromSource(t *testing.T) {
 }
 
 func TestGetMessageRaw_FiltersInternallyDeleted(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 	rawMIME := []byte("From: test@example.com\r\nSubject: Test\r\n\r\nHello")
@@ -2344,6 +2420,7 @@ func TestGetMessageRaw_FiltersInternallyDeleted(t *testing.T) {
 // surfaces deleted_from_source_at via MessageDetail.DeletedAt so the API
 // can include it in detail responses.
 func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	env := newTestEnv(t)
 
@@ -2361,6 +2438,7 @@ func TestGetMessage_PopulatesDeletedAt(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByMessageIDs(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -2387,6 +2465,7 @@ func TestGetDeletionTargetsByMessageIDs(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByMessageIDsPreservesDuplicateGmailIDSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -2411,6 +2490,7 @@ func TestGetDeletionTargetsByMessageIDsPreservesDuplicateGmailIDSource(t *testin
 }
 
 func TestDeletionTargetResolversExcludeArchiveOnlyMergeHistory(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	// Subsets preserve this portable marker even when merge provenance is omitted.
 	_, err := env.DB.Exec(`INSERT INTO source_merge_archive_only_messages(message_id) VALUES (1)`)
@@ -2442,6 +2522,7 @@ func TestDeletionTargetResolversExcludeArchiveOnlyMergeHistory(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -2461,6 +2542,7 @@ func TestGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 
@@ -2497,6 +2579,7 @@ func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 }
 
 func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
+	t.Parallel()
 	env := newTestEnv(t)
 	// The bounded staging search can return 100,001 summaries, exceeding
 	// SQLite's 32,766-parameter limit for a single label lookup.
@@ -2515,6 +2598,7 @@ func TestFetchLabelsForMessageListChunksIDLookups(t *testing.T) {
 }
 
 func TestGetDeletionTargetsByMessageIDs_LargeSelectionExceedsSingleQueryLimit(t *testing.T) {
+	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
 

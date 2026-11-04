@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // Fail at observable provider boundaries, after the preceding durable write.
@@ -400,6 +401,7 @@ func TestGmailRecoveryAbruptProcessExit(t *testing.T) {
 
 func recoveryStateEnv(t *testing.T, legacy bool) *TestEnv {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dir := t.TempDir()
 	st, err := store.OpenForTest(filepath.Join(dir, "durable.db"))
 	require.NoError(t, err)
@@ -462,7 +464,7 @@ func TestGmailRecoveryResumedCatchupKeepsAcquisitionCounts(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(lists, e.Mock.ListMessagesCalls)
 	assert.Equal(int64(2), summary.MessagesAdded, "new-ok from enumeration and history-only from catch-up")
-	assert.Equal(int64(1), summary.Errors)
+	assert.Equal(int64(2), summary.Errors, "enumeration failure plus its failed acquisition retry during catch-up")
 	assertRawDataExists(t, e.Store, "new-ok")
 	assertRawDataExists(t, e.Store, "history-only")
 }

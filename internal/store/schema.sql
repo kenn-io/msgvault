@@ -2051,6 +2051,7 @@ CREATE INDEX IF NOT EXISTS idx_person_sweep_sync_publications_source
 -- status='error' is actionable and contributes to sync_runs.errors_count.
 -- status='skipped' records expected item churn, such as Gmail messages that
 -- were deleted between a history/list response and raw-message fetch.
+-- status='resolved' records successful acquisition after an earlier failure.
 CREATE TABLE IF NOT EXISTS sync_run_items (
     id INTEGER PRIMARY KEY,
     sync_run_id INTEGER NOT NULL REFERENCES sync_runs(id) ON DELETE CASCADE,
@@ -3649,6 +3650,7 @@ CREATE TABLE IF NOT EXISTS document_extractions (
     lease_until           DATETIME,
     attempt_count         INTEGER NOT NULL DEFAULT 0,
     request_count         INTEGER NOT NULL DEFAULT 0 CHECK (request_count >= 0),
+    upload_count          INTEGER NOT NULL DEFAULT 0 CHECK (upload_count >= 0),
     retry_count           INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0 AND retry_count <= request_count),
     provider_latency_ms   INTEGER NOT NULL DEFAULT 0 CHECK (provider_latency_ms >= 0),
     next_retry_at         DATETIME,
@@ -4718,3 +4720,56 @@ CREATE TABLE IF NOT EXISTS calendar_event_attendees (
     is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (message_id, ordinal)
 );
+
+-- Successful PDF selections remain unpublished until the complete extraction commits.
+CREATE TABLE IF NOT EXISTS document_extraction_ranges (
+    extraction_id TEXT NOT NULL REFERENCES document_extractions(id) ON DELETE CASCADE,
+    first_page INTEGER NOT NULL CHECK (first_page >= 1),
+    last_page INTEGER NOT NULL CHECK (last_page >= first_page),
+    total_pages INTEGER NOT NULL CHECK (total_pages >= last_page),
+    evidence TEXT NOT NULL,
+    evidence_checksum TEXT NOT NULL,
+    char_count BIGINT NOT NULL CHECK (char_count >= 0),
+    PRIMARY KEY (extraction_id, first_page)
+);
+
+CREATE TABLE IF NOT EXISTS loop_decisions (
+ message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ state TEXT NOT NULL CHECK (state IN ('done', 'snoozed')),
+ snoozed_until DATETIME,
+ CHECK ((state = 'snoozed') = (snoozed_until IS NOT NULL))
+);
+
+-- Retained message facts for bounded request-time loop detection.
+CREATE TABLE IF NOT EXISTS loop_message_evidence (
+ message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+ rule_version INTEGER NOT NULL,
+ token TEXT NOT NULL,
+ facts TEXT
+);
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_insert
+AFTER INSERT ON message_raw FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_update
+AFTER UPDATE ON message_raw FOR EACH ROW
+WHEN OLD.message_id IS NOT NEW.message_id OR OLD.raw_data IS NOT NEW.raw_data OR OLD.raw_format IS NOT NEW.raw_format OR OLD.compression IS NOT NEW.compression OR OLD.encryption_version IS NOT NEW.encryption_version BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_raw_delete
+AFTER DELETE ON message_raw FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_insert
+AFTER INSERT ON message_bodies FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id;
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_update
+AFTER UPDATE ON message_bodies FOR EACH ROW
+WHEN OLD.message_id IS NOT NEW.message_id OR OLD.body_text IS NOT NEW.body_text BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
+END;
+CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
+AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
+ DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
+END;

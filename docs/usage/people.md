@@ -6,8 +6,8 @@ description: Find people across your archive, keep their details together, and u
 
 Find someone across email, chats, and meetings, then keep their contact details
 and the things you want to remember in one profile. Start in the Web UI's
-**Relationships** workspace to explore contacts already in your archive, then
-save selected people in **Directory**. You can also use the
+**People** workspace to explore contacts already in your archive, then
+choose **Save** in their header. You can also use the
 [TUI People browser](/docs/usage/tui/#people).
 
 | I want to… | Start here |
@@ -24,8 +24,7 @@ save selected people in **Directory**. You can also use the
 
 Ordinary profile editing and identity discovery use your archive. Briefs,
 automatic fact extraction, semantic person search, and external enrichment
-need separate provider configuration and consent. You can use the Directory
-without enabling them.
+need separate provider configuration and consent. You can edit saved profiles without enabling them.
 
 ## Understand the records
 
@@ -76,9 +75,9 @@ operation. A link into one saved profile extends its participant bindings. A
 candidate that spans two different saved profiles needs a separate person
 merge review.
 
-In the Web UI, a stale decision closes its dialog and refreshes the queue.
-Review the changed evidence, then reopen the decision. Your draft notes remain
-available; the open dialog never silently replaces the token you reviewed.
+In the Web UI, open **People → Filter → Possible duplicates**. A stale decision
+refreshes the pair. Review its changed evidence before choosing **Merge** or
+**Keep separate** again. Your draft notes remain available.
 
 Review notes are private profile data. Avoid putting unnecessary personal
 details in them. The matching CLI and token-guarded API are documented in the
@@ -124,9 +123,8 @@ for exact settings and routes.
 
 ## Promote a durable person
 
-Directory starts empty until you save profiles or import contacts. In
-**Relationships**, select a person, choose **Open in Directory**, then
-**Promote to person**. This creates a saved profile from the contact already
+The **Saved** filter starts empty until you save profiles or import contacts. In
+**People**, select a person, and choose **Save** in the header. This creates a saved profile from the contact already
 observed in your archive. The profile starts with the first nonblank observed
 name in the linked cluster, ordered by participant ID. A contact without an
 observed name keeps the `Person N` fallback.
@@ -166,7 +164,7 @@ person and UID.
 
 ### Browse people by last contact
 
-Drafts and unsent messages don't set last contact, cadence, or relationship temperature. They stay out of the relationship calendar, relationship list, person and domain timelines, and chat inbox summaries. Explore, search, and the Files view still include them for lookup. A person's or domain's Files tab, `person files`, and MCP `search_person_files` list only files on sent or received mail. Opening someone you have only drafted to shows no contact activity.
+Drafts and unsent messages don't set last contact, cadence, or relationship temperature. They stay out of the relationship calendar, relationship list, person and domain timelines, and chat inbox summaries. Explore, search, and the Files view still include them for lookup. A person's or domain's Files tab, `person files`, and MCP `search_person_files` list only files on sent or received mail. A contact you've only drafted to reads as existing with no sent or received messages and no relationship calendar. A person ID that doesn't exist reads as not found.
 
 Cached views update after a cache refresh. Full checks at startup and during explicit cache builds detect sent-state changes. Scheduled post-sync refresh checks indexed changes first. If those already require a build, `min_rebuild_interval` can delay both the full sent-state check and the visible update. If indexed state is clean, sent state is checked before that interval is applied. Ordinary requests use a cache marker check; they don't scan the archive for sent-state changes.
 
@@ -202,6 +200,8 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 `person list` continues to show the full unpaginated profile collection. Its `--json` output remains an array of profiles.
 
 ## Keep private notes
+
+In **People → Details**, use **More fields** to add notes, pronunciation, and custom fields. Manage field definitions, connection types, and organizations in **Settings → People**. The header's **More actions → History** includes replaced values and merge history.
 
 Save context in your own words with the Notes field. It preserves line breaks
 and keeps earlier values in attribute history:
@@ -310,13 +310,13 @@ RFC3339 timestamp.
 
 [Person briefs](/docs/usage/people-briefs/) summarize recent chat and text
 messages with citations. The guide covers enrollment, generation, reading in
-Directory or the TUI, refresh timing, and saved versions. Email-only contacts
+People Details or the TUI, refresh timing, and saved versions. Email-only contacts
 cannot receive a brief yet.
 
 ## Keep a person’s follow-ups in view
 
 Enable the [Kata connection](../configuration.md#integrationskata) to see live
-todos on a person's Directory page. Create or unlink tasks there, and link
+todos on a person's Details tab in People. Create or unlink tasks there, and link
 existing tasks with the [CLI](../cli-reference.md#person-agenda) or API. Edit
 and complete tasks in Kata. Tasks stay in Kata; this connection requires Kata
 API schema 0.21.0 or later.

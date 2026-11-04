@@ -10,6 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/textutil"
 	"go.kenn.io/msgvault/internal/update"
+	"go.kenn.io/msgvault/internal/vector/embed"
 )
 
 type tuiStyles struct {
@@ -771,7 +772,7 @@ func (m Model) buildDetailLines() []string {
 	lines = append(lines, "", strings.Repeat("─", sepWidth), "")
 
 	// Body - wrap lines to fit width
-	body := msg.BodyText
+	body := embed.BodyTextForEmbedding(msg.BodyText, msg.BodyHTML)
 	if body == "" {
 		body = "(No text content)"
 	}

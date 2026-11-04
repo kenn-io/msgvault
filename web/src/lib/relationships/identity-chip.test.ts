@@ -45,7 +45,7 @@ describe('identityChipText', () => {
 
   it('keeps a server scope visible', () => {
     const text = identityChipText(identifier({ scope_kind: 'server', scope_value: 'matrix.example.com' }), undefined, []);
-    expect(text.subtitle).toBe('server: matrix.example.com');
+    expect(text.detail).toBe('beeper:8:whatsapp:9:@user:x.y · server: matrix.example.com');
   });
 
   it('keeps distinct ordinary email and phone addresses on their chip faces', () => {

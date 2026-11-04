@@ -3255,6 +3255,18 @@ components:
         - state
         - evidence
       type: object
+    ConversationParticipant:
+      additionalProperties: true
+      properties:
+        display:
+          type: string
+        participant_id:
+          format: int64
+          type: integer
+      required:
+        - participant_id
+        - display
+      type: object
     ConversationResponse:
       additionalProperties: true
       properties:
@@ -3703,6 +3715,8 @@ components:
     DeletionManifestSummary:
       additionalProperties: true
       properties:
+        account:
+          type: string
         created_at:
           format: date-time
           type: string
@@ -4144,6 +4158,9 @@ components:
         stored_plaintext_chunks:
           format: int64
           type: integer
+        stored_plaintext_ranges:
+          format: int64
+          type: integer
         successful_attempts:
           format: int64
           type: integer
@@ -4184,6 +4201,7 @@ components:
         - terminal_owners
         - missing_owners
         - stored_plaintext_chunks
+        - stored_plaintext_ranges
       type: object
     DocumentIndexStatusResponse:
       additionalProperties: true
@@ -5490,6 +5508,7 @@ components:
             - participant
             - domain
             - message_type
+            - kind
             - mailing_list
             - after
             - before
@@ -5516,6 +5535,7 @@ components:
         - kind
         - year
         - month
+        - day
       type: string
     ExploreGroupRow:
       additionalProperties: true
@@ -5532,6 +5552,14 @@ components:
           type: string
         latest_at:
           format: date-time
+          type: string
+        level:
+          enum:
+            - NONE
+            - FIRST_QUARTILE
+            - SECOND_QUARTILE
+            - THIRD_QUARTILE
+            - FOURTH_QUARTILE
           type: string
       required:
         - key
@@ -5571,6 +5599,7 @@ components:
         group_key:
           type: string
         grouping:
+          description: Day counts individual messages; other dimensions count entries, with chats collapsed into conversations
           items:
             $ref: "#/components/schemas/ExploreGroupDimension"
           maxItems: 1
@@ -5595,11 +5624,17 @@ components:
             - semantic
             - hybrid
           type: string
+        sent_only:
+          description: Count sent messages only, excluding drafts and unsent items
+          type: boolean
         sort:
           items:
             $ref: "#/components/schemas/ExploreGroupSort"
           maxItems: 1
           type: array
+        timezone:
+          description: IANA timezone for day grouping; defaults to UTC
+          type: string
       required:
         - grouping
       type: object
@@ -8177,6 +8212,9 @@ components:
           type: string
         body_omitted:
           type: boolean
+        body_text:
+          description: Stored plain-text body of a single message, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit this field; body keeps its HTML fallback.
+          type: string
         calendar:
           $ref: "#/components/schemas/CalendarProjection"
           description: "Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."
@@ -8198,6 +8236,10 @@ components:
           type: string
         from_name:
           type: string
+        from_participant_id:
+          description: Sender participant ID, populated for conversation windows.
+          format: int64
+          type: integer
         from_phone:
           type: string
         has_attachments:
@@ -8235,6 +8277,11 @@ components:
         to:
           items:
             type: string
+          type: array
+        to_participants:
+          description: Recipient participants, populated for conversation windows.
+          items:
+            $ref: "#/components/schemas/ConversationParticipant"
           type: array
       required:
         - body
@@ -13624,8 +13671,6 @@ components:
         - peak_relationship_temperature
         - peak_relationship_year
         - source_counts
-        - first_at
-        - last_at
         - cache_revision
       type: object
     PersonTierExplanation:
@@ -14668,6 +14713,7 @@ components:
             - mailing_list
             - account
             - message_type
+            - kind
             - after
             - before
             - deletion
@@ -17030,7 +17076,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.35.0
+  version: 3.41.0
 openapi: 3.1.0
 paths:
   /api/ping:

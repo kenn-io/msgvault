@@ -71,11 +71,11 @@ type RelationshipTimelineResponse struct {
 // surface here despite contributing no ranking signal.
 //
 // The local day boundary is computed by DuckDB's ICU-backed timezone()
-// function (statically linked into the go-duckdb prebuilt binary — see
-// TestDuckDBTimezoneConversionUsesBundledICU), not by decay-style date_diff
-// arithmetic: occurred_at is a naive TIMESTAMP holding a UTC instant, so the
-// column is first anchored to UTC and then re-expressed in the requested
-// zone's wall-clock time before formatting the date.
+// function (statically linked into the go-duckdb prebuilt binary), not by
+// decay-style date_diff arithmetic: occurred_at is a naive TIMESTAMP holding a
+// UTC instant, so the column is anchored to UTC and then re-expressed in the
+// requested zone's wall-clock time before formatting the date. See
+// TestRelationshipTimelineBurstsChatByLocalDay for local-day grouping.
 func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request RelationshipTimelineRequest) (*RelationshipTimelineResponse, error) {
 	if e.analyticsDir == "" {
 		return nil, &CacheUnavailableError{Readiness: CacheAbsent}

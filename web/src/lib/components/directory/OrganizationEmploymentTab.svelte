@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { appShortcuts, Button, EmptyState, Modal, SearchInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, Modal, IconButton } from '@kenn-io/kit-ui';
 
+  import Pencil from '@lucide/svelte/icons/pencil';
+  import X from '@lucide/svelte/icons/x';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, Organization } from '../../directory/models';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
+  import DetailRow from '../people/DetailRow.svelte';
   import EmploymentEditor from './EmploymentEditor.svelte';
   import OrganizationEditor from './OrganizationEditor.svelte';
 
@@ -14,8 +17,7 @@
   }
 
   let { controller, personID, organizationRequest = undefined }: Props = $props();
-  let organizationQuery = $state('');
-  let organizationEditor = $state<Organization | null | undefined>(undefined);
+  let organizationEditor = $state<(Pick<Organization, 'id'> & Partial<Organization>) | null | undefined>(undefined);
   let employmentEditor = $state<Employment | null | undefined>(undefined);
   let employmentAction = $state<'edit' | 'end'>('edit');
   let deletingEmployment = $state<Employment>();
@@ -38,7 +40,7 @@
   });
 
   function organizationName(id: number): string {
-    return controller.organizations.find((item) => item.id === id)?.name
+    return controller.organizationRecords.get(id)?.organization.name ?? controller.organizations.find((item) => item.id === id)?.name
       ?? (controller.employmentProjection?.organization_id === id ? controller.employmentProjection.organization_name : undefined)
       ?? `Organization ${id}`;
   }
@@ -51,23 +53,19 @@
     return employment.title ?? employment.role ?? 'Employment';
   }
 
-  function dateText(value: { year?: number; month?: number; day?: number } | undefined): string {
-    if (!value) return '';
-    return [value.year?.toString().padStart(4, '0'), value.month?.toString().padStart(2, '0'), value.day?.toString().padStart(2, '0')].filter(Boolean).join('-');
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  // "Mar 2024 – present", or "2019 – 2021".
+  function periodText(employment: Employment): string {
+    const when = (value: { year?: number; month?: number } | undefined) => value?.year ? [value.month ? MONTHS[value.month - 1] : '', value.year].filter(Boolean).join(' ') : '';
+    const start = when(employment.start_date);
+    const end = when(employment.end_date) || (employment.is_current ? 'present' : '');
+    return start && end ? `${start} – ${end}` : start ? `Since ${start}` : end && end !== 'present' ? `Until ${end}` : '';
   }
 
-  async function searchOrganizations(): Promise<void> {
-    await controller.refreshOrganizations(organizationQuery);
-  }
-
-  async function openRequestedOrganization(id: number): Promise<void> {
+  function openRequestedOrganization(id: number): void {
     actionMessage = '';
-    try {
-      const profile = await controller.prepareOrganizationMutation(id);
-      organizationEditor = profile.organization;
-    } catch (cause: unknown) {
-      actionMessage = cause instanceof Error ? cause.message : 'Unable to open the organization.';
-    }
+    organizationEditor = { id };
   }
 
   async function addEmployment(): Promise<void> {
@@ -129,17 +127,8 @@
 </script>
 
 <section class="organization-employment" aria-label="Organizations and employment">
-  <header>
-    <div><h2>Organizations</h2><p>Maintain organizations and the selected person's employment history.</p></div>
-    <div class="actions"><Button label="New organization" onclick={() => { organizationEditor = null; }} /><Button tone="info" label="Add employment" onclick={() => void addEmployment()} /></div>
-  </header>
-
-  {#if controller.employmentProjection}
-    <p class="projection"><strong>Primary organization: {controller.employmentProjection.organization_name}</strong>{#if controller.employmentProjection.title} · {controller.employmentProjection.title}{/if}</p>
-  {/if}
-
+  <header><h3>Work</h3><Button size="sm" label="Add work" onclick={() => void addEmployment()} /></header>
   <section aria-label="Employment history">
-    <h3>Employment history</h3>
     {#if controller.errors.employments}
       <div class="refresh-error">
         <p role="alert">{controller.errors.employments}</p>
@@ -148,24 +137,21 @@
     {/if}
     {#if controller.employmentsLoading}<p role="status">Loading employment records…</p>{/if}
     {#if controller.employments.length === 0}
-      {#if !controller.employmentsLoading}<EmptyState title="No employment records." description="Add an employment to connect this person to an organization." />{/if}
+      {#if !controller.employmentsLoading}<p class="empty">No work yet</p>{/if}
     {:else}
-      <ul class="records">
+      <div class="records">
         {#each controller.employments as employment (employment.id)}
-          <li>
-            <div><strong>{employmentLabel(employment)}</strong> · {organizationName(employment.organization_id)}
-              {#if employment.is_primary} <small>Primary</small>{/if}{#if employment.is_current} <small>Current</small>{/if}
-              {#if employment.start_date || employment.end_date}<span class="dates">{dateText(employment.start_date)} – {dateText(employment.end_date) || 'present'}</span>{/if}
-            </div>
-            <div class="row-actions">
-              <Button size="sm" label="Edit employment" onclick={() => { employmentAction = 'edit'; employmentEditor = employment; }} />
-              {#if employment.is_current}<Button size="sm" label="End employment" onclick={() => { employmentAction = 'end'; employmentEditor = employment; }} />{/if}
-              {#if employment.is_current && !employment.is_primary}<Button size="sm" label="Make primary employment" disabled={acting} onclick={() => void makePrimary(employment)} />{/if}
-              <Button size="sm" tone="danger" label="Delete employment" onclick={() => openDelete(employment)} />
-            </div>
-          </li>
+          <DetailRow description={[periodText(employment), employment.department, employment.is_primary && controller.employments.filter((item) => item.is_current).length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')}>
+            {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(employment.organization_id)}</button>
+            {#snippet actions()}
+              {#if employment.is_current && !employment.is_primary}<Button size="sm" label="Make primary employment" shortLabel="Make primary" disabled={acting} onclick={() => void makePrimary(employment)} />{/if}
+              {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" onclick={() => { employmentAction = 'end'; employmentEditor = employment; }} />{/if}
+              <IconButton size="sm" ariaLabel="Edit employment" onclick={() => { employmentAction = 'edit'; employmentEditor = employment; }}><Pencil size={14} /></IconButton>
+              <IconButton size="sm" ariaLabel="Delete employment" onclick={() => openDelete(employment)}><X size={14} /></IconButton>
+            {/snippet}
+          </DetailRow>
         {/each}
-      </ul>
+      </div>
     {/if}
     {#if actionMessage}
       <div role="alert">
@@ -177,19 +163,7 @@
     {/if}
   </section>
 
-  <section aria-label="Organization directory">
-    <h3>Organization directory</h3>
-    <form class="search" onsubmit={(event) => { event.preventDefault(); void searchOrganizations(); }}>
-      <SearchInput value={organizationQuery} ariaLabel="Search organizations" placeholder="Search organizations…" block oninput={(value) => { organizationQuery = value; }} />
-      <Button type="submit" label="Search organizations" disabled={controller.organizationsLoading} />
-    </form>
-    {#if controller.organizationsLoading}<p role="status">Searching organizations…</p>
-    {:else if controller.errors.organizations}<p role="alert">{controller.errors.organizations}</p>
-    {:else if controller.organizations.length === 0}<p class="empty">No organizations found.</p>
-    {:else}
-      <ul class="organizations">{#each controller.organizations as organization (organization.id)}<li><span><strong>{organization.name}</strong> · {organization.kind}{#if organization.primary_domain} · {organization.primary_domain}{/if}</span><Button size="sm" label={`Manage ${organization.name}`} onclick={() => { organizationEditor = organization; }} /></li>{/each}</ul>
-    {/if}
-  </section>
+
 </section>
 
 {#if organizationEditor !== undefined}
@@ -216,12 +190,14 @@
 {/if}
 
 <style>
-  .organization-employment, section, .refresh-error { display: grid; gap: var(--space-3); }
-  header, .actions, .row-actions, .search, .organizations li { display: flex; gap: var(--space-2); align-items: center; justify-content: space-between; flex-wrap: wrap; }
-  h2, h3, p, ul { margin: 0; } header p, .dates, small, .empty { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .projection { padding: var(--space-3); border-radius: var(--radius-sm); background: var(--bg-inset); }
-  .records, .organizations { list-style: none; padding: 0; display: grid; gap: var(--space-2); }
-  .records li { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
-  .row-actions { justify-content: flex-start; } .dates { display: block; } .search :global(.kit-search-input) { flex: 1; min-width: 14rem; }
+  .organization-employment { display: grid; gap: var(--space-2); min-width: 0; }
+  section, .refresh-error { display: grid; gap: var(--field-gap); min-width: 0; }
+  header { display: flex; gap: var(--control-gap); align-items: center; justify-content: space-between; min-height: var(--control-h); }
+  h3, p { margin: 0; }
+  h3 { font-size: var(--font-size-md); }
+  .records { display: grid; }
+  .empty { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
+  .org-link:hover { text-decoration: underline; }
   [role="alert"] { color: var(--text-danger); }
 </style>
