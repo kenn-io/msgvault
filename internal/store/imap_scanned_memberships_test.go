@@ -7,18 +7,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil"
 )
-
-func newScannedIMAPFixture(t *testing.T) imapMembershipFixture {
-	t.Helper()
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("imap", "scanned@example.com")
-	require.NoError(t, err)
-	conversation, err := st.EnsureConversation(source.ID, "scanned", "Scanned mail")
-	require.NoError(t, err)
-	return imapMembershipFixture{store: st, source: source, convID: conversation}
-}
 
 func completedScannedIMAPSync(t *testing.T, f imapMembershipFixture) int64 {
 	t.Helper()
@@ -80,7 +69,7 @@ func skippedIMAPSnapshot(t *testing.T, f imapMembershipFixture) []string {
 
 func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedMailboxes(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	f := newScannedIMAPFixture(t)
+	f := newIMAPIdentityFixture(t)
 	removed := f.createMessage(t, "INBOX|1", "")
 	shared := f.createMessage(t, "INBOX|2", "")
 	skipped := f.createMessage(t, "Trash|1", "")
@@ -112,7 +101,7 @@ func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedMailboxes(t *testing.T) {
 
 func TestApplyIMAPScannedMailboxDeltas_UIDValidityChange(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	f := newScannedIMAPFixture(t)
+	f := newIMAPIdentityFixture(t)
 	old := f.createMessage(t, "INBOX|1", "<old@example.com>")
 	skipped := f.createMessage(t, "Trash|1", "<skipped@example.com>")
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
@@ -139,7 +128,7 @@ func TestApplyIMAPScannedMailboxDeltas_EmptyAndFailedApplyPreserveState(t *testi
 	for _, name := range []string{"empty", "nil", "unresolved identity", "running", "newer running", "newer failed"} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			f := newScannedIMAPFixture(t)
+			f := newIMAPIdentityFixture(t)
 			id := f.createMessage(t, "Trash|1", "")
 			require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 				scannedIMAPDelta("Trash", 22, "Trash|1"),
@@ -193,7 +182,7 @@ func FuzzIMAPScannedMailboxDeltas_RetainedMembership(f *testing.F) {
 		if uid == 0 {
 			uid = 1
 		}
-		fixture := newScannedIMAPFixture(t)
+		fixture := newIMAPIdentityFixture(t)
 		id := fixture.createMessage(t, "shared", "")
 		scanned := scannedIMAPDelta("INBOX", epoch, "shared")
 		scanned.Memberships[0].UID = uid

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	imapapi "github.com/emersion/go-imap/v2"
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
@@ -96,6 +97,32 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	assert.Equal([]string{"INBOX|1"}, ids)
 	assert.Equal(1, strings.Count(logs.String(), "IMAP folder exclusions match no stored account"))
 	assert.Contains(logs.String(), "account=user@example.com")
+}
+
+func TestIMAPSyncFolderFilter_UnmatchedAccounts(t *testing.T) {
+	const identifier = "imap://user@example.com"
+	const typo = "imap://typo@example.com"
+	for _, setting := range []string{"exclusions", "reconciliation"} {
+		t.Run(setting, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			_, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
+			require.NoError(t, err)
+			cfg := testConfigValue()
+			if setting == "exclusions" {
+				cfg.Sync.IMAPSkipFolders = map[string][]string{identifier: {"Trash"}, typo: {"Trash"}}
+			} else {
+				cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{identifier: true, typo: true}
+			}
+			state := testInvocationWithConfig(cfg)
+			var logs bytes.Buffer
+			state.logger = slog.New(slog.NewTextHandler(&logs, nil))
+			imapSyncFolderFilter(st, identifier, state, nil, nil)
+			imapSyncFolderFilter(st, identifier, state, nil, nil)
+			assert.Equal(t, 1, strings.Count(logs.String(), "match no stored account"))
+			assert.Contains(t, logs.String(), "account="+typo)
+			assert.NotContains(t, logs.String(), "account="+identifier)
+		})
+	}
 }
 
 func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {
@@ -818,41 +845,67 @@ func TestSaveIMAPFolderStates_FilteredReconciliation(t *testing.T) {
 }
 
 func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
-	host, portText, err := net.SplitHostPort(addr)
-	require.NoError(err)
-	port, err := strconv.Atoi(portText)
-	require.NoError(err)
-	imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
-	require.NoError(err)
-	configJSON, err := imapCfg.ToJSON()
-	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
-	src, err = st.GetSourceByID(src.ID)
-	require.NoError(err)
-	home := t.TempDir()
-	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Sync: config.SyncConfig{
-		IMAPSkipFolders:                map[string][]string{src.Identifier: {"Trash"}},
-		IMAPReconcileFilteredDeletions: map[string]bool{src.Identifier: true},
-	}}
-	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
-	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
-	require.NoError(err)
-	require.Zero(summary.Errors)
-	require.Equal(1, imapMembershipRowCount(t, st, src.ID))
-	testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
-	summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
-	require.NoError(err)
-	assert.Zero(summary.Errors)
-	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
-	assert.Zero(imapMembershipRowCount(t, st, src.ID))
-	states, err := loadIMAPFolderStates(st, src.ID)
-	require.NoError(err)
-	assert.NotContains(states, "Trash")
+	for _, enabled := range []bool{true, false} {
+		t.Run(map[bool]string{true: "enabled", false: "default"}[enabled], func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 0})
+			host, portText, err := net.SplitHostPort(addr)
+			require.NoError(err)
+			port, err := strconv.Atoi(portText)
+			require.NoError(err)
+			imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+			require.NoError(err)
+			configJSON, err := imapCfg.ToJSON()
+			require.NoError(err)
+			require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
+			src, err = st.GetSourceByID(src.ID)
+			require.NoError(err)
+			home := t.TempDir()
+			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Sync: config.SyncConfig{
+				IMAPSkipFolders:                map[string][]string{src.Identifier: {"Trash"}},
+				IMAPReconcileFilteredDeletions: map[string]bool{src.Identifier: enabled},
+			}}
+			require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+			require.NoError(err)
+			require.Zero(summary.Errors)
+			var messageID int64
+			require.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM messages WHERE source_id = ? AND source_message_id = 'INBOX|1'"), src.ID).Scan(&messageID))
+			archived, err := st.GetMessageBodyText(messageID)
+			require.NoError(err)
+			assert.NotEmpty(archived)
+			assert.Zero(imapTombstonedMessageCount(t, st, src.ID))
+			mover, err := imapclient.DialInsecure(addr, nil)
+			require.NoError(err)
+			t.Cleanup(func() { _ = mover.Close() })
+			require.NoError(mover.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+			_, err = mover.Select("INBOX", nil).Wait()
+			require.NoError(err)
+			_, err = mover.Move(imapapi.UIDSetNum(1), "Trash").Wait()
+			require.NoError(err)
+			require.NoError(mover.Close())
+			summary, err = runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+			require.NoError(err)
+			assert.Zero(summary.Errors)
+			wantDeleted := 0
+			if enabled {
+				wantDeleted = 1
+			}
+			assert.Equal(wantDeleted, imapTombstonedMessageCount(t, st, src.ID))
+			if !st.IsPostgreSQL() {
+				plan, err := st.PlanGCContext(t.Context())
+				require.NoError(err)
+				assert.Equal(int64(wantDeleted), plan.SourceDeleted)
+			}
+			assert.Zero(imapMembershipRowCount(t, st, src.ID))
+			states, err := loadIMAPFolderStates(st, src.ID)
+			require.NoError(err)
+			assert.NotContains(states, "Trash")
+		})
+	}
 }
 
 func TestSaveIMAPFolderStates_FilteredReconciliationLegacyLabels(t *testing.T) {

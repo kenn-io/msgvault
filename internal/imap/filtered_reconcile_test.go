@@ -31,12 +31,11 @@ func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 					testutil.AppendIMAPMessageWithMessageID(t, user, all, "overlap@example.com")
 				}
 				first := newTestClient(t, addr, WithFolderFilter(nil, skipped), WithFilteredDeletionReconciliation(true))
-				assert.False(first.ScannedMailboxSnapshotComplete(), "no listing has completed yet")
 				ids := listAllMessages(t, first)
 				require.NotEmpty(ids)
 				assert.True(first.LabelsSnapshotFiltered())
 				assert.False(first.LabelsSnapshotComplete())
-				require.True(first.ScannedMailboxSnapshotComplete())
+				require.NotNil(first.ObservedMailboxDeltas())
 				want := []string{"INBOX"}
 				if all != "" && !excludeAll {
 					want = append(want, all)
@@ -48,16 +47,41 @@ func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 				}
 				assert.ElementsMatch(want, got)
 				assert.NotContains(first.ObservedFolderStates(), "Trash")
-				// Saved UIDNEXTs must not turn a scoped run into sparse observations.
-				second := newTestClient(t, addr, WithFolderStates(first.ObservedFolderStates()), WithFolderFilter(nil, skipped), WithFilteredDeletionReconciliation(true))
-				assert.Equal(ids, listAllMessages(t, second))
-				require.True(second.ScannedMailboxSnapshotComplete())
-				for _, d := range second.ObservedMailboxDeltas() {
-					assert.True(d.Reset)
-					assert.Equal([]uint32{1}, d.State.KnownUIDs)
-				}
 			})
 		}
+	}
+}
+
+func TestFilteredReconciliation_SavedBaseline(t *testing.T) {
+	for _, expunge := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unchanged", true: "expunge"}[expunge], func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 3, "Trash": 1})
+			first := newTestClient(t, addr, WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true))
+			require.Len(listAllMessages(t, first), 3)
+			saved := first.ObservedFolderStates()
+			require.NoError(first.Close())
+			if expunge {
+				testutil.ExpungeIMAPMessage(t, addr, "INBOX", 2)
+			}
+			second := newTestClient(t, addr, WithFolderStates(saved), WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true))
+			assert.Empty(listAllMessages(t, second), "surviving messages need no header fetch or reprocessing")
+			assert.Empty(second.ObservedMemberships())
+			deltas := second.ObservedMailboxDeltas()
+			require.Len(deltas, 1)
+			delta := deltas[0]
+			assert.Equal("INBOX", delta.Mailbox)
+			assert.False(delta.Reset)
+			assert.Empty(delta.ChangedUIDs)
+			if expunge {
+				assert.Equal([]imapv2.UID{2}, delta.VanishedUIDs)
+				assert.Equal([]uint32{1, 3}, delta.State.KnownUIDs)
+			} else {
+				assert.Empty(delta.VanishedUIDs)
+				assert.Equal([]uint32{1, 2, 3}, delta.State.KnownUIDs)
+				assert.Equal(saved, second.ObservedFolderStates())
+			}
+		})
 	}
 }
 
@@ -86,13 +110,13 @@ func TestFilteredReconciliation_DefaultDatesAndEmptySelection(t *testing.T) {
 			listAllMessages(t, client)
 			switch name {
 			case "empty":
-				assert.True(client.ScannedMailboxSnapshotComplete())
+				assert.True(client.ReconcilesFilteredDeletions())
 				assert.NotNil(client.ObservedMailboxDeltas())
 				assert.Empty(client.ObservedMailboxDeltas())
 			case "configured include":
-				assert.True(client.ScannedMailboxSnapshotComplete())
+				assert.True(client.ReconcilesFilteredDeletions())
 			default:
-				assert.False(client.ScannedMailboxSnapshotComplete())
+				assert.False(client.ReconcilesFilteredDeletions())
 			}
 			assert.False(client.LabelsSnapshotComplete())
 		})
@@ -114,7 +138,6 @@ func TestFilteredReconciliation_IncompleteMailboxSuppressesSnapshot(t *testing.T
 			}
 			client := newTestClient(t, addr, WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true))
 			listAllMessages(t, client)
-			assert.False(t, client.ScannedMailboxSnapshotComplete())
 			assert.Nil(t, client.ObservedMailboxDeltas())
 			assert.Nil(t, client.ObservedFolderStates())
 		})

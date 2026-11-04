@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/signal"
 	"slices"
@@ -575,8 +576,8 @@ func saveIMAPFolderStates(
 	if !ok || !imapSyncCanCommit(ctx, summary, limit) {
 		return nil
 	}
-	scannedOnly := imapClient.ScannedMailboxSnapshotComplete()
-	if !scannedOnly && (imapClient.LabelsSnapshotFiltered() || !imapClient.LabelsSnapshotComplete()) {
+	scannedOnly := imapClient.ReconcilesFilteredDeletions()
+	if !scannedOnly && !imapClient.LabelsSnapshotComplete() {
 		return nil
 	}
 	deltas := imapClient.ObservedMailboxDeltas()
@@ -744,16 +745,21 @@ func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, 
 	skipFolders = parseFolderFilter(skipFolders)
 	cfg := state.cfg
 	if len(folders) == 0 && len(skipFolders) == 0 {
-		if len(cfg.Sync.IMAPSkipFolders) > 0 {
+		if len(cfg.Sync.IMAPSkipFolders) > 0 || len(cfg.Sync.IMAPReconcileFilteredDeletions) > 0 {
 			state.imapFolderAccounts.Do(func() {
 				sources, err := s.ListSources(sourceTypeIMAP)
 				if err != nil {
 					state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
 					return
 				}
-				for account := range cfg.Sync.IMAPSkipFolders {
-					if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
-						state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
+				for setting, accounts := range map[string][]string{
+					"IMAP folder exclusions":                         slices.Collect(maps.Keys(cfg.Sync.IMAPSkipFolders)),
+					"IMAP filtered deletion reconciliation settings": slices.Collect(maps.Keys(cfg.Sync.IMAPReconcileFilteredDeletions)),
+				} {
+					for _, account := range accounts {
+						if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
+							state.logger.Warn(setting+" match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
+						}
 					}
 				}
 			})

@@ -1364,10 +1364,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 
 	// Resolve every mailbox's enumeration plan up front so the label map and
 	// the listing below agree. Only the no-\All path takes shortcuts; with an
-	// \All mailbox both consumers keep their previous behaviour. Scoped scans
-	// also enumerate fully so skipped mailboxes never supply missing evidence.
+	// \All mailbox both consumers keep their previous behaviour.
 	var scans map[string]mailboxScan
-	if trackFolders && c.allMailFolder == "" && !scopedSnapshot {
+	if trackFolders && c.allMailFolder == "" {
 		scans = c.planMailboxScans(ctx, allMailboxes, folderStatuses)
 	}
 	labelMapComplete := false

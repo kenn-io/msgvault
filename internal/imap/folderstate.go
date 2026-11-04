@@ -357,11 +357,12 @@ func WithFilteredDeletionReconciliation(enabled bool) Option {
 	return func(c *Client) { c.reconcileFilteredDeletions = enabled }
 }
 
-// ScannedMailboxSnapshotComplete reports complete selected-mailbox observations.
-func (c *Client) ScannedMailboxSnapshotComplete() bool {
+// ReconcilesFilteredDeletions reports whether this session opts into reconciling
+// the selected mailboxes of a folder-filtered sync.
+func (c *Client) ReconcilesFilteredDeletions() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.scannedMailboxSnapshotLocked() && c.labelMapComplete && c.observedMailboxDeltas != nil
+	return c.scannedMailboxSnapshotLocked()
 }
 
 func (c *Client) scannedMailboxSnapshotLocked() bool {
