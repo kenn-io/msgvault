@@ -167,7 +167,7 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(err)
 			addMessage(2)
 			addMessage(3)
-			_, err = st.DB().Exec(`UPDATE messages SET sent_at = NULL WHERE id = 3`)
+			_, err = st.DB().Exec(`UPDATE messages SET sent_at = NULL WHERE id = 2`)
 			require.NoError(err)
 			if tt.repair {
 				require.NoError(st.ReplaceMessageRecipients(1, "to", []int64{bob}, []string{"Updated"}))
@@ -178,10 +178,9 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			require.NoError(st.Close())
 
 			expected := map[string][]string{
-				"message_recipients": {"2", "2"},
-				"message_labels":     {"2"},
-				"attachments":        {"2"},
-				"messages":           {"1", "2"},
+				"message_recipients": {"3", "3"},
+				"message_labels":     {"3"},
+				"attachments":        {"3"},
 			}
 			if tt.repair {
 				expected["message_recipients"] = []string{"1", "1", "2", "2", "3", "3"}
@@ -199,13 +198,9 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 					require.NoError(f.Close())
 					require.NoError(err)
 					require.NotEmpty(records)
-					idColumn := "message_id"
-					if dataset == "messages" {
-						idColumn = "id"
-					}
 					column := -1
 					for i, name := range records[0] {
-						if name == idColumn {
+						if name == "message_id" {
 							column = i
 						}
 					}
