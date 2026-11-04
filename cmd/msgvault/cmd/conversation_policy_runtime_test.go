@@ -140,13 +140,55 @@ func TestConversationPolicyRuntimeMalformedReloadStillExpires(t *testing.T) {
 }
 
 func TestServeConversationPolicyBootstrapFailureBlocksConsumers(t *testing.T) {
-	_, cfg, ctx, _ := policyRuntimeFixture(t)
+	st, _, ctx, _ := policyRuntimeFixture(t)
+	installFailingConversationPolicySettingsWrite(t, st)
 	starts := observePolicyConsumers(t)
-	cfg.Beeper.MaxParticipants = -1
 	cmd := &cobra.Command{Use: "serve"}
 	cmd.SetContext(ctx)
-	require.ErrorContains(t, runServe(cmd, nil), "configure conversation policy")
+	err := runServe(cmd, nil)
+	require.ErrorContains(t, err, "configure conversation policy")
+	require.ErrorContains(t, err, "synthetic conversation policy metadata failure")
 	assert.Empty(t, starts)
+}
+
+func installFailingConversationPolicySettingsWrite(t *testing.T, st *store.Store) {
+	t.Helper()
+	if st.IsPostgreSQL() {
+		_, err := st.DB().Exec(`
+			CREATE FUNCTION fail_conversation_policy_settings() RETURNS trigger
+			LANGUAGE plpgsql AS $$
+			BEGIN
+				IF NEW.key = 'conversation_policy_settings' THEN
+					RAISE EXCEPTION 'synthetic conversation policy metadata failure';
+				END IF;
+				RETURN NEW;
+			END
+			$$`)
+		require.NoError(t, err)
+		_, err = st.DB().Exec(`
+			CREATE TRIGGER fail_conversation_policy_settings
+			BEFORE INSERT OR UPDATE ON archive_metadata
+			FOR EACH ROW EXECUTE FUNCTION fail_conversation_policy_settings()`)
+		require.NoError(t, err)
+		return
+	}
+
+	_, err := st.DB().Exec(`
+		CREATE TRIGGER fail_conversation_policy_settings_insert
+		BEFORE INSERT ON archive_metadata
+		WHEN NEW.key = 'conversation_policy_settings'
+		BEGIN
+			SELECT RAISE(ABORT, 'synthetic conversation policy metadata failure');
+		END`)
+	require.NoError(t, err)
+	_, err = st.DB().Exec(`
+		CREATE TRIGGER fail_conversation_policy_settings_update
+		BEFORE UPDATE ON archive_metadata
+		WHEN NEW.key = 'conversation_policy_settings'
+		BEGIN
+			SELECT RAISE(ABORT, 'synthetic conversation policy metadata failure');
+		END`)
+	require.NoError(t, err)
 }
 
 func TestConversationPolicyRuntimeConfigReloadAndOverrides(t *testing.T) {
