@@ -186,6 +186,46 @@ func TestLoopWalkExcludesUnsentReplies(t *testing.T) {
 	assert.Equal([]int64{question}, ids, "the store walk excludes unsent drafts")
 }
 
+func TestLoopConversationsSkipGoogleVoiceCallsButKeepTexts(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	source, err := f.Store.GetOrCreateSource("google_voice", "account@example.test")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(source.ID, loopOwner, "manual"))
+	owner := f.EnsureParticipant(loopOwner, "", "example.com")
+	friend := f.EnsureParticipant(loopAlex, "", "example.test")
+
+	wantID := int64(0)
+	for _, messageType := range []string{"google_voice_call", "google_voice_voicemail", "google_voice_text"} {
+		conversation, err := f.Store.EnsureConversationWithType(source.ID, "conversation-"+messageType, "direct_chat", "Google Voice")
+		requirements.NoError(err)
+		requirements.NoError(f.Store.EnsureConversationParticipant(conversation, owner, "member"))
+		requirements.NoError(f.Store.EnsureConversationParticipant(conversation, friend, "member"))
+		id, err := f.Store.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message: &store.Message{
+				SourceID: source.ID, ConversationID: conversation, SourceMessageID: messageType,
+				MessageType: messageType, SenderID: sql.NullInt64{Int64: friend, Valid: true},
+				SentAt: sql.NullTime{Time: loopAgo(time.Hour), Valid: true},
+			},
+			BodyText: sql.NullString{String: "Synthetic archived call", Valid: true},
+		})
+		requirements.NoError(err)
+		if messageType == "google_voice_text" {
+			wantID = id
+		}
+	}
+
+	var got []int64
+	for conversation, err := range f.Store.LoopConversationsContext(t.Context(), store.LoopQuery{}) {
+		requirements.NoError(err)
+		for message, err := range conversation.Walk() {
+			requirements.NoError(err)
+			got = append(got, message.ID)
+		}
+	}
+	requirements.Equal([]int64{wantID}, got)
+}
+
 func TestLoopWalkKeepsSentCopiesThatRetainDraftEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name string

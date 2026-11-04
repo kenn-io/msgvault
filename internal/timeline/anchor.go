@@ -398,14 +398,21 @@ func (c *composer) buildAnchor(target anchorTarget) {
 	collectionCtx, cancel := context.WithTimeout(c.ctx, requestTimeout/2)
 	defer cancel()
 	var entries []Entry
+	targetEntry := c.anchorTargetEntry(target)
 	for _, days := range []int{1, 2, 4, 8, 16, 31} {
 		entries = c.probeAnchor(collectionCtx, target, days)
+		for _, entry := range entries {
+			if anchorMatches(entry, target) {
+				targetEntry = entry
+				break
+			}
+		}
 		before, after := 0, 0
 		for _, e := range entries {
 			if anchorMatches(e, target) {
 				continue
 			}
-			if c.compareEntryToAnchor(e, target) < 0 {
+			if c.compareEntryToAnchor(e, targetEntry) < 0 {
 				before++
 			} else {
 				after++
@@ -424,10 +431,14 @@ func (c *composer) buildAnchor(target anchorTarget) {
 	}
 	if !found && target.occurrence != nil {
 		c.t.Anchor.Filtered = true
-		entries = append(entries, c.calendarAnchorFallback(target))
+		fallback := c.calendarAnchorFallback(target)
+		entries = append(entries, fallback)
+		targetEntry = fallback
 	} else if !found && target.messageID > 0 {
 		c.t.Anchor.Filtered = true
-		entries = append(entries, c.anchorFallback(target))
+		fallback := c.anchorFallback(target)
+		entries = append(entries, fallback)
+		targetEntry = fallback
 	}
 	c.sortAnchorEntries(entries)
 	pivot := slices.IndexFunc(entries, func(e Entry) bool { return e.Anchor })
@@ -435,7 +446,7 @@ func (c *composer) buildAnchor(target anchorTarget) {
 		entries = entries[max(0, pivot-c.req.Before):min(len(entries), pivot+1+c.req.After)]
 	} else {
 		pivot = 0
-		for pivot < len(entries) && c.compareEntryToAnchor(entries[pivot], target) < 0 {
+		for pivot < len(entries) && c.compareEntryToAnchor(entries[pivot], targetEntry) < 0 {
 			pivot++
 		}
 		entries = entries[max(0, pivot-c.req.Before):min(len(entries), pivot+c.req.After)]
@@ -449,38 +460,40 @@ func (c *composer) buildAnchor(target anchorTarget) {
 
 func (c *composer) sortAnchorEntries(entries []Entry) {
 	for _, entry := range entries {
-		date := entry.Time.In(c.loc).Format(time.DateOnly)
-		precision := "1"
-		if entry.Call != nil && entry.Call.Precision == string(activitydate.PrecisionDay) && entry.Call.Date != "" {
-			date = entry.Call.Date
-			precision = "0"
-		}
-		key := date + "|" + precision + "|" + entry.Time.UTC().Format(sortTimeLayout) + "|" + entry.Kind + "|" + entry.Key
-		c.keys["history|"+entry.Key] = key
+		c.keys["history|"+entry.Key] = c.anchorOrderKey(entry)
 	}
 	slices.SortFunc(entries, func(a, b Entry) int {
-		return compare(c.keys["history|"+a.Key], c.keys["history|"+b.Key])
+		return compare(c.anchorOrderKey(a), c.anchorOrderKey(b))
 	})
 }
 
-func (c *composer) compareEntryToAnchor(entry Entry, target anchorTarget) int {
-	entryPrecision := activitydate.PrecisionTimestamp
-	if entry.Call != nil && entry.Call.Precision == string(activitydate.PrecisionDay) {
-		entryPrecision = activitydate.PrecisionDay
+func (c *composer) anchorOrderKey(entry Entry) string {
+	date := entry.Time.In(c.loc).Format(time.DateOnly)
+	precision := "1"
+	if entry.Call != nil && entry.Call.Precision == string(activitydate.PrecisionDay) && entry.Call.Date != "" {
+		date = entry.Call.Date
+		precision = "0"
 	}
-	targetPrecision := activitydate.PrecisionTimestamp
-	if target.callPrecision == string(activitydate.PrecisionDay) {
-		targetPrecision = activitydate.PrecisionDay
+	return date + "|" + precision + "|" + entry.Time.UTC().Format(sortTimeLayout) + "|" + entry.Kind + "|" + entry.Key
+}
+
+func (c *composer) anchorTargetEntry(target anchorTarget) Entry {
+	entry := Entry{Kind: target.ref.Kind, Key: target.ref.Ref, Time: target.at}
+	switch {
+	case target.callIdentityKey != "":
+		entry.Kind, entry.Key = "call", target.callIdentityKey
+		entry.Call = &CallEntry{Precision: target.callPrecision}
+		if target.callPrecision == string(activitydate.PrecisionDay) {
+			entry.Call.Date = target.at.UTC().Format(time.DateOnly)
+		}
+	case target.ref.Kind == "date":
+		entry.Call = &CallEntry{Precision: string(activitydate.PrecisionDay), Date: target.ref.LocalDate}
 	}
-	order := activitydate.Compare(entry.Time, entryPrecision, target.at, targetPrecision, c.loc)
-	if order != 0 || target.callPrecision != string(activitydate.PrecisionDay) {
-		return order
-	}
-	targetEntry := Entry{
-		Kind: "call", Key: target.callIdentityKey, Time: target.at,
-		Call: &CallEntry{Precision: string(activitydate.PrecisionDay), Date: target.at.UTC().Format(time.DateOnly)},
-	}
-	return compare(c.historyKey(entry), c.historyKey(targetEntry))
+	return entry
+}
+
+func (c *composer) compareEntryToAnchor(entry, target Entry) int {
+	return compare(c.anchorOrderKey(entry), c.anchorOrderKey(target))
 }
 
 func (c *composer) conversationEntries(conversation int64, from, to time.Time) []Entry {
