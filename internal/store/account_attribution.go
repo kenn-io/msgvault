@@ -270,7 +270,7 @@ func (s *Store) withMessageAttributionTxContext(
 func SentMessageSQL(postgres bool) string {
 	return `(EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id AND (` +
-		sentFolderLabelSQL("l") + " OR " + sentGmailLabelSQL("l", "src") + ") OR " + senderIMAPSentOriginSQL(postgres) + ")"
+		sentFolderLabelSQL("l") + " OR " + sentGmailLabelSQL("l", "src") + ")) OR " + senderIMAPSentOriginSQL(postgres) + ")"
 }
 
 func sentFolderLabelSQL(l string) string {

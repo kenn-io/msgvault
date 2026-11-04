@@ -56,6 +56,8 @@ type SenderClassReader interface {
 	ReadSenderClasses(ctx context.Context, messages []SenderClassInput) map[int64]senderclass.Readout
 }
 
+const senderClassIdentityBatchSize = 500
+
 // ReadSenderClasses fails closed when an engine cannot read the required
 // metadata. Missing evidence never becomes a definitive none relationship.
 func ReadSenderClasses(ctx context.Context, engine Engine, messages []SenderClassInput) map[int64]senderclass.Readout {
@@ -76,9 +78,18 @@ func unavailableSenderClasses(messages []SenderClassInput) map[int64]senderclass
 func (e *SQLiteEngine) ReadSenderClasses(ctx context.Context, messages []SenderClassInput) map[int64]senderclass.Readout {
 	out := unavailableSenderClasses(messages)
 	policy := e.senderClassPolicy.Load()
-	if policy == nil || policy.resolver == nil || len(messages) == 0 || len(messages) > 500 {
+	if policy == nil || policy.resolver == nil || len(messages) == 0 {
 		return out
 	}
+	for start := 0; start < len(messages); start += senderClassIdentityBatchSize {
+		end := min(start+senderClassIdentityBatchSize, len(messages))
+		maps.Copy(out, e.readSenderClassBatch(ctx, messages[start:end], policy))
+	}
+	return out
+}
+
+func (e *SQLiteEngine) readSenderClassBatch(ctx context.Context, messages []SenderClassInput, policy *senderClassPolicy) map[int64]senderclass.Readout {
+	out := unavailableSenderClasses(messages)
 	ids := make([]int64, len(messages))
 	for i, message := range messages {
 		ids[i] = message.ID

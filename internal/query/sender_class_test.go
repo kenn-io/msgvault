@@ -180,3 +180,53 @@ func TestSenderClassPageUsesBatchedMetadata(t *testing.T) {
 		assertions.Equal(senderclass.NoAuthEvidence, row.SenderClassBasis)
 	}
 }
+
+type senderClassBatchResolver struct {
+	identityBatchSizes     []int
+	relationshipBatchSizes []int
+}
+
+func (r *senderClassBatchResolver) MessageSenderIdentities(_ context.Context, ids, _ []int64) (map[int64]store.MessageSenderIdentity, error) {
+	r.identityBatchSizes = append(r.identityBatchSizes, len(ids))
+	identities := make(map[int64]store.MessageSenderIdentity, len(ids))
+	for _, id := range ids {
+		identities[id] = store.MessageSenderIdentity{MessageID: id, Address: "sender@example.test"}
+	}
+	return identities, nil
+}
+
+func (r *senderClassBatchResolver) SenderRelationships(_ context.Context, addresses []string, _ []int64) (map[string]store.SenderRelationshipEvidence, error) {
+	r.relationshipBatchSizes = append(r.relationshipBatchSizes, len(addresses))
+	relationships := make(map[string]store.SenderRelationshipEvidence, len(addresses))
+	for _, address := range addresses {
+		relationships[address] = store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}
+	}
+	return relationships, nil
+}
+
+func TestSenderClassReadBatchesMoreThan500Inputs(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	e := originalEngine(f)
+	resolver := &senderClassBatchResolver{}
+	query.ConfigureSenderClass(e, resolver)
+
+	inputs := make([]query.SenderClassInput, 501)
+	for i := range inputs {
+		inputs[i] = query.SenderClassInput{
+			ID:         int64(i + 1),
+			From:       []query.Address{{Email: "sender@example.test"}},
+			SenderAuth: &senderauth.Verdict{Kind: "email", Verified: true, DMARC: senderauth.Pass},
+		}
+	}
+
+	readouts := query.ReadSenderClasses(t.Context(), e, inputs)
+	assertions.Equal([]int{500, 1}, resolver.identityBatchSizes)
+	assertions.Equal([]int{1, 1}, resolver.relationshipBatchSizes)
+	requirements.Len(readouts, len(inputs))
+	for _, input := range inputs {
+		assertions.Equal(senderclass.Known, readouts[input.ID].SenderClass)
+		assertions.Equal(senderclass.RelationshipKnown, readouts[input.ID].SenderRelationship)
+	}
+}
