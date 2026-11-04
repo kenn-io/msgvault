@@ -627,13 +627,22 @@ jobs:
             --packages "$packages" -- -timeout 20m -tags "fts5 sqlite_vec"
 
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-attempt-${{ github.run_attempt }}
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
+
+      - name: Print slowest tests
+        if: always()
+        shell: bash
+        run: |
+          for f in gotestsum/*.json; do
+            [ -f "$f" ] || continue
+            go tool gotestsum tool slowest --jsonfile "$f" --num 10 || true
+          done
 
       - uses: actions/upload-artifact@v7.0.2
         with:
