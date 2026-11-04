@@ -693,15 +693,25 @@ func TestDailyMaintenanceRepairsSampledMessageStatistics(t *testing.T) {
 			require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&sampled))
 			assert.NotEqual("12000 4000", sampled)
 
-			var held []*sql.Conn
-			for range 2 {
-				conn, err := s.db.Conn(t.Context())
+			plan := func(conn *sql.Conn) string {
+				var id, parent, unused int
+				var detail string
+				require.NoError(conn.QueryRowContext(t.Context(), `EXPLAIN QUERY PLAN SELECT id FROM messages
+					WHERE source_id=1 AND sent_at>='2015-05-01' AND sent_at<'2015-05-08'`).Scan(&id, &parent, &unused, &detail))
+				return detail
+			}
+			if failAnalysis {
+				// Model old statistics that make the source index look selective.
+				_, err = s.db.Exec(`UPDATE sqlite_stat1 SET stat='12000 1' WHERE idx='idx_messages_source'`)
 				require.NoError(err)
-				held = append(held, conn)
-				t.Cleanup(func() { _ = conn.Close() })
-				_, err = conn.ExecContext(t.Context(), "ANALYZE sqlite_schema")
-				require.NoError(err)
-				if failAnalysis {
+				var held []*sql.Conn
+				for range 2 {
+					conn, err := s.db.Conn(t.Context())
+					require.NoError(err)
+					held = append(held, conn)
+					t.Cleanup(func() { _ = conn.Close() })
+					_, err = conn.ExecContext(t.Context(), "ANALYZE sqlite_schema")
+					require.NoError(err)
 					require.NoError(conn.Raw(func(raw any) error {
 						c, ok := raw.(*sqlite3.SQLiteConn)
 						require.True(ok)
@@ -714,15 +724,15 @@ func TestDailyMaintenanceRepairsSampledMessageStatistics(t *testing.T) {
 						return nil
 					}))
 				}
-			}
-			for _, conn := range held {
-				require.NoError(conn.Close())
-			}
-			if failAnalysis {
 				// A child has committed exact statistics while serving connections
-				// still hold the sampled values. The full scan will be denied.
-				_, err = s.db.Exec(`UPDATE sqlite_stat1 SET stat='12000 4000' WHERE idx='idx_messages_source'`)
+				// still hold the old values. The full scan will be denied.
+				_, err = held[0].ExecContext(t.Context(), `UPDATE sqlite_stat1 SET stat='12000 4000' WHERE idx='idx_messages_source'`)
 				require.NoError(err)
+				for _, conn := range held {
+					require.Contains(plan(conn), "idx_messages_source",
+						"each connection must retain a stale plan after exact statistics are committed")
+					require.NoError(conn.Close())
+				}
 			}
 			report, err := s.RunDailyMaintenance(t.Context())
 			require.NoError(err)
@@ -734,15 +744,14 @@ func TestDailyMaintenanceRepairsSampledMessageStatistics(t *testing.T) {
 			var exact string
 			require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&exact))
 			assert.Equal("12000 4000", exact)
-			for range 2 {
-				conn, err := s.db.Conn(t.Context())
-				require.NoError(err)
-				defer func() { _ = conn.Close() }()
-				var id, parent, unused int
-				var detail string
-				require.NoError(conn.QueryRowContext(t.Context(), `EXPLAIN QUERY PLAN SELECT id FROM messages
-					WHERE source_id=1 AND sent_at>='2015-05-01' AND sent_at<'2015-05-08'`).Scan(&id, &parent, &unused, &detail))
-				assert.Contains(detail, "idx_messages_sent_at")
+			if failAnalysis {
+				for range 2 {
+					conn, err := s.db.Conn(t.Context())
+					require.NoError(err)
+					defer func() { _ = conn.Close() }()
+					assert.Contains(plan(conn), "idx_messages_sent_at",
+						"each connection must reload statistics despite the analysis error")
+				}
 			}
 		})
 	}
