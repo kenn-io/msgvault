@@ -83,11 +83,9 @@ func (t *localDaemonRecovery) RoundTrip(request *http.Request) (*http.Response, 
 	}
 	current := t.connection()
 	response, err := t.transport.RoundTrip(t.rewrite(request, current))
-	if !localDaemonDialFailure(request.Context(), err) {
+	if !localDaemonDialFailure(request.Context(), err) ||
+		(request.Body != nil && request.Body != http.NoBody && request.GetBody == nil) {
 		return response, err
-	}
-	if request.Body != nil && request.Body != http.NoBody && request.GetBody == nil {
-		return nil, localDaemonUnavailable(err)
 	}
 	next, resolveErr := t.reconnect(request.Context(), current.generation)
 	if resolveErr != nil {

@@ -3,8 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"path/filepath"
 
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/mcpdiscovery"
 )
 
 // openMCPHTTPStore gives a long-lived local proxy the same runtime discovery
@@ -31,9 +34,13 @@ func openMCPHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo,
 		if err := cfg.ResolveServerKey(); err != nil {
 			return daemonclient.LocalDaemonEndpoint{}, fmt.Errorf("refresh daemon API key: %w", err)
 		}
-		return daemonclient.LocalDaemonEndpoint{
+		endpoint := daemonclient.LocalDaemonEndpoint{
 			URL: urlFromDaemonRuntime(runtime), APIKey: cfg.Server.AuthenticationKey(),
-		}, nil
+		}
+		if err := mcpdiscovery.UpdateBackendURL(filepath.Join(cfg.HomeDir, "mcp"), endpoint.URL); err != nil {
+			slog.Warn("update MCP backend discovery", "error", err)
+		}
+		return endpoint, nil
 	})
 	return client, info, nil
 }

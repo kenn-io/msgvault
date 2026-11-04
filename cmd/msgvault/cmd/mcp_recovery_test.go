@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
+	"go.kenn.io/msgvault/internal/mcpdiscovery"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -89,6 +91,41 @@ func TestMCPCommandRecoversEngineAfterRestart(t *testing.T) {
 	}
 	mcpCmd.SetContext(withStoreResolverConfig(t, cfg))
 	requirements.ErrorIs(mcpCmd.RunE(mcpCmd, nil), stopped)
+}
+
+func TestMCPHTTPRecoveryUpdatesStatusBackendURL(t *testing.T) {
+	clearServerKeyEnvironment(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Server.DaemonAutoStart = new(false)
+	t.Setenv("MSGVAULT_HOME", cfg.HomeDir)
+	initial := publishMCPRecoveryDaemon(t, cfg, 1)
+	setMCPTokenTestFlags(t, nil)
+	mcpHTTPAddr = "127.0.0.1:0"
+	previous := serveMCPHTTPWithOptions
+	t.Cleanup(func() { serveMCPHTTPWithOptions = previous })
+	stopped := errors.New("capture complete")
+	serveMCPHTTPWithOptions = func(ctx context.Context, opts mcpserver.ServeOptions, httpOpts mcpserver.HTTPOptions) error {
+		cleanup, err := mcpdiscovery.Publish(httpOpts.DiscoveryDirectory, "127.0.0.1:9876", httpOpts.APIKey, httpOpts.BackendURL)
+		require.NoError(t, err)
+		defer func() { assert.NoError(t, cleanup()) }()
+		initial.Close()
+		replacement := publishMCPRecoveryDaemon(t, cfg, 9)
+		_, err = opts.Engine.GetTotalStats(ctx, query.StatsOptions{})
+		require.NoError(t, err)
+		command := newMCPStatusCommand()
+		command.SetArgs([]string{"--json"})
+		var output bytes.Buffer
+		command.SetOut(&output)
+		require.NoError(t, command.Execute())
+		var rows []mcpdiscovery.Endpoint
+		require.NoError(t, json.Unmarshal(output.Bytes(), &rows))
+		require.Len(t, rows, 1)
+		assert.Equal(t, replacement.URL, rows[0].BackendURL)
+		assert.Equal(t, "http://127.0.0.1:9876/mcp", rows[0].URL)
+		return stopped
+	}
+	mcpCmd.SetContext(withStoreResolverConfig(t, cfg))
+	require.ErrorIs(t, mcpCmd.RunE(mcpCmd, nil), stopped)
 }
 
 func TestMCPLocalRecoveryHonorsDisabledAutostart(t *testing.T) {

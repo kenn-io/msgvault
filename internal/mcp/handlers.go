@@ -421,7 +421,7 @@ func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*too
 		Filename: strings.TrimSpace(filename), MIMEFamilies: families, Limit: limit, Cursor: cursor,
 	})
 	if err != nil {
-		return toolErrorResult("person file search failed: " + err.Error()), nil
+		return toolErrorResult("person file search failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
 	}
 	return jsonResult(response)
 }

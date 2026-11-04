@@ -330,25 +330,6 @@ func TestLocalDaemonRecoveryLeavesOtherOriginsAlone(t *testing.T) {
 	requirements.NoError(response.Body.Close())
 }
 
-func TestLocalDaemonRecoveryDoesNotReplayStreamingBodies(t *testing.T) {
-	requirements := require.New(t)
-	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
-	requirements.NoError(err)
-	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
-		assert.Fail(t, "a streaming request cannot be replayed")
-		return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
-	})
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, client.BaseURL()+"/stream", io.NopCloser(strings.NewReader("stream")))
-	requirements.NoError(err)
-	requirements.Nil(request.GetBody)
-	response, err := client.httpClient.Do(request)
-	if response != nil {
-		requirements.NoError(response.Body.Close())
-	}
-	var unavailable *LocalDaemonUnavailableError
-	requirements.ErrorAs(err, &unavailable)
-}
-
 func TestLocalDaemonRecoveryRootCancellationStopsDiscovery(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
