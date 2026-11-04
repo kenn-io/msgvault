@@ -590,11 +590,14 @@ func TestLoopActionLeavesQuestionInsideItsGraceUnmarked(t *testing.T) {
 }
 
 func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
+	// serial: lowers listEvidenceBudget.
+	const budget = 25
+	loops.SetListEvidenceBudgetForTest(t, budget)
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	anchor := f.PersistEmail(storetest.EmailSpec{Thread: "long", From: alex, To: []string{me}, Body: "Can you send the original?", SentAt: ago(80 * day)})
-	for i := range loops.MaxListEvidenceComputations {
+	for i := range budget {
 		f.PersistEmail(storetest.EmailSpec{Thread: "long", From: alex, To: []string{me}, Body: "Any update?", SentAt: ago(4*day + time.Duration(i)*time.Minute)})
 	}
 	current := f.PersistEmail(storetest.EmailSpec{Thread: "current", From: "sam@example.test", To: []string{me}, Body: "Can you send the current draft?", SentAt: ago(5 * day)})
@@ -604,8 +607,8 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 	require.True(first.CoverageIncomplete)
 	require.Len(first.Loops, 1, "the interrupted conversation cannot expose a provisional anchor")
 	assert.Equal(current, first.Loops[0].Anchor.ID)
-	assert.Equal(loops.MaxListEvidenceComputations, counted.bodies)
-	assert.Equal(loops.MaxListEvidenceComputations, counted.originals)
+	assert.Equal(budget, counted.bodies)
+	assert.Equal(budget, counted.originals)
 	counted.bodies, counted.originals = 0, 0
 	second, err := loops.List(t.Context(), counted, loops.Options{}, now)
 	require.NoError(err)
@@ -625,11 +628,14 @@ func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {
 }
 
 func TestColdListIncludesOldestEligibleLoopBeforeEvidenceCap(t *testing.T) {
+	// serial: lowers listEvidenceBudget.
+	const budget = 25
+	loops.SetListEvidenceBudgetForTest(t, budget)
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
 	var oldest int64
-	for i := range loops.MaxListEvidenceComputations + 1 {
+	for i := range budget + 1 {
 		oldest = f.PersistEmail(storetest.EmailSpec{
 			Thread: "eligible-" + strconv.Itoa(i), From: alex, To: []string{me},
 			Body: "Can you send the contract?", SentAt: ago(2*day + time.Duration(i)*time.Minute),
