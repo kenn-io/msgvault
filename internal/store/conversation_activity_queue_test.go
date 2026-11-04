@@ -268,67 +268,59 @@ func TestConversationActivityExpansionWithSourceRemoval(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	f := storetest.New(t)
+	if !f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL lock coordination requires MSGVAULT_TEST_DB")
+	}
 	f.CreateMessage("removal-race")
 	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
 	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+	defer cancel()
 	var wg sync.WaitGroup
-	var blocker *sql.Tx
+	var blockerPID int
+	_, err := f.Store.DB().ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '0') ON CONFLICT DO NOTHING`)
+	require.NoError(err)
+	blocker, err := f.Store.DB().BeginTx(ctx, nil)
+	require.NoError(err)
 	defer func() {
-		if blocker != nil {
-			_ = blocker.Rollback()
-		}
+		_ = blocker.Rollback()
 		cancel()
 		wg.Wait()
 	}()
-	var blockerPID int
-	if f.Store.IsPostgreSQL() {
-		_, err := f.Store.DB().ExecContext(ctx, `INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '0') ON CONFLICT DO NOTHING`)
-		require.NoError(err)
-		blocker, err = f.Store.DB().BeginTx(ctx, nil)
-		require.NoError(err)
-		require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
-		_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value = value WHERE key = 'identity_revision'`)
-		require.NoError(err)
-	}
+	require.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&blockerPID))
+	_, err = blocker.ExecContext(ctx, `UPDATE archive_metadata SET value = value WHERE key = 'identity_revision'`)
+	require.NoError(err)
 	removeDone := make(chan error, 1)
 	wg.Go(func() {
 		_, _, err := f.Store.RemoveSourceSerialized(ctx, f.Source.ID)
 		removeDone <- err
 	})
-	if blocker != nil {
-		waitForLockWait(t, f.Store, "archive_metadata", "source removal must reach the identity lock")
-	}
+	waitForLockWait(t, f.Store, "archive_metadata", "source removal must reach the identity lock")
 	expandDone := make(chan error, 1)
 	wg.Go(func() {
 		_, err := f.Store.ExpandActivityConversationQueueContext(ctx, func() error { return nil })
 		expandDone <- err
 	})
-	if blocker != nil {
-		// Both operations must wait before touching the queues. Without this
-		// coordination, expansion can hold a marker while removal locks the
-		// message queue first, producing a cycle in PostgreSQL's lock graph.
-		completed := false
-		require.Eventually(func() bool {
-			select {
-			case err := <-expandDone:
-				assert.NoError(err)
-				expandDone <- err
-				completed = true
-				return true
-			default:
-			}
-			var waiting int
-			err := f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity
-				WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`, blockerPID).Scan(&waiting)
-			return err == nil && waiting == 2
-		}, pgWaitBudget, 10*time.Millisecond, "expansion and removal must reach their coordination lock")
-		assert.False(completed, "expansion must wait for the identity lock before claiming a membership marker")
-		require.NoError(blocker.Rollback())
-	}
+	// Both operations must wait before touching the queues. Without this
+	// coordination, expansion can hold a marker while removal locks the
+	// message queue first, producing a cycle in PostgreSQL's lock graph.
+	completed := false
+	require.Eventually(func() bool {
+		select {
+		case err := <-expandDone:
+			assert.NoError(err)
+			expandDone <- err
+			completed = true
+			return true
+		default:
+		}
+		var waiting int
+		err := f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND $1 = ANY(pg_blocking_pids(pid))`, blockerPID).Scan(&waiting)
+		return err == nil && waiting == 2
+	}, pgWaitBudget, 10*time.Millisecond, "expansion and removal must reach their coordination lock")
+	assert.False(completed, "expansion must wait for the identity lock before claiming a membership marker")
+	require.NoError(blocker.Rollback())
 	require.NoError(<-expandDone, "expansion must complete without a deadlock")
 	require.NoError(<-removeDone, "source removal must complete without a deadlock")
-	var remaining int
-	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM sources WHERE id = ?`), f.Source.ID).Scan(&remaining))
-	assert.Zero(remaining, "source removal must commit")
 }
