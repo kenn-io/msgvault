@@ -424,7 +424,7 @@ func (h *handlers) searchPersonFiles(ctx context.Context, req toolRequest) (*too
 		if result := translateLocalDaemonError(err); result != nil {
 			return result, nil
 		}
-		return toolErrorResult("person file search failed: " + err.Error()), nil //nolint:nilerr // MCP tool errors are successful protocol responses.
+		return toolErrorResult("person file search failed: " + err.Error()), nil
 	}
 	return jsonResult(response)
 }
@@ -918,6 +918,9 @@ func (h *handlers) searchDocuments(ctx context.Context, req toolRequest) (*toolR
 		SearchMode: mode, CandidateLimit: candidateLimit,
 	})
 	if err != nil {
+		if result := translateLocalDaemonError(err); result != nil {
+			return result, nil
+		}
 		return toolErrorResult(fmt.Sprintf("document search failed: %v", err)), nil
 	}
 	return jsonResult(response)

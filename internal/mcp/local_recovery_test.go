@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/calcontrol"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -19,6 +20,12 @@ type unavailablePersonFiles struct{ err error }
 
 func (s unavailablePersonFiles) SearchPersonFiles(context.Context, PersonFileSearchRequest) (generated.PersonFileSearchHTTPResponse, error) {
 	return generated.PersonFileSearchHTTPResponse{}, s.err
+}
+
+type unavailableDocuments struct{ err error }
+
+func (s unavailableDocuments) SearchDocuments(context.Context, store.DocumentSearchRequest) (store.DocumentSearchResponse, error) {
+	return store.DocumentSearchResponse{}, s.err
 }
 
 func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
@@ -36,7 +43,12 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 	_, err = client.GetStats()
 	requirements.Error(err)
 	local := fmt.Errorf("backend request: %w", err)
-	h := &handlers{mediaSearcher: client, personFileSearcher: unavailablePersonFiles{local}, calendar: calendarServiceBackend(func(context.Context, calcontrol.Request) (*calcontrol.Result, error) { return nil, local })}
+	h := &handlers{
+		mediaSearcher:      client,
+		personFileSearcher: unavailablePersonFiles{local},
+		documentSearcher:   unavailableDocuments{local},
+		calendar:           calendarServiceBackend(func(context.Context, calcontrol.Request) (*calcontrol.Result, error) { return nil, local }),
+	}
 	tests := []struct {
 		name    string
 		handler toolHandler
@@ -47,6 +59,7 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 		}, nil},
 		{"media", h.searchMedia, map[string]any{"query": "synthetic"}},
 		{"files", h.searchPersonFiles, map[string]any{"person_id": float64(7)}},
+		{"documents", h.searchDocuments, map[string]any{"query": "synthetic"}},
 	}
 	for _, definition := range stableCalendarTools() {
 		if definition.name == "calendar_freebusy" {
@@ -64,7 +77,7 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 			}{"calendar preview", definition.bind(h), map[string]any{"account": "synthetic", "calendar_id": "primary", "event_id": "synthetic-event"}})
 		}
 	}
-	requirements.Len(tests, 5)
+	requirements.Len(tests, 6)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertions := assert.New(t)

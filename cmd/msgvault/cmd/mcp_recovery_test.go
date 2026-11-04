@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	mcpserver "go.kenn.io/msgvault/internal/mcp"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func publishMCPRecoveryDaemon(t *testing.T, cfg *config.Config, count int) *httptest.Server {
@@ -125,7 +126,7 @@ func TestMCPRecoveryLeavesConfiguredRemoteFixed(t *testing.T) {
 	_, err = client.GetStats()
 	requirements.Error(err)
 	var unavailable *daemonclient.LocalDaemonUnavailableError
-	assertions.False(errors.As(err, &unavailable))
+	assertions.NotErrorAs(err, &unavailable)
 }
 
 func TestMCPLocalRecoveryStartsReplacementDaemon(t *testing.T) {
@@ -133,12 +134,17 @@ func TestMCPLocalRecoveryStartsReplacementDaemon(t *testing.T) {
 	requirements := require.New(t)
 	clearServerKeyEnvironment(t)
 	home := t.TempDir()
-	path := filepath.Join(home, "config.toml")
-	requirements.NoError(os.WriteFile(path, []byte("[server]\napi_port=0\ndaemon_auto_restart='never'\n[analytics]\nengine='sql'\n"), 0o600))
+	dataDir := t.TempDir()
+	path := filepath.Join(t.TempDir(), "custom.toml")
+	contents := "[server]\napi_port=0\ndaemon_auto_restart='never'\n[analytics]\nengine='sql'\n[data]\ndata_dir='" + filepath.ToSlash(dataDir) + "'\n"
+	requirements.NoError(os.WriteFile(path, []byte(contents), 0o600))
 	cfg, err := config.Load(path, home)
 	requirements.NoError(err)
+	assertions.Equal(dataDir, cfg.Data.DataDir)
 	initial := publishMCPRecoveryDaemon(t, cfg, 1)
-	client, _, err := openMCPHTTPStore(withStoreResolverConfig(t, cfg))
+	ctx := withStoreResolverConfig(t, cfg)
+	invocationFromContext(ctx).options = invocationOptions{cfgFile: path, cfgFileChanged: true}
+	client, _, err := openMCPHTTPStore(ctx)
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 	initial.Close()
@@ -158,10 +164,16 @@ func TestMCPLocalRecoveryStartsReplacementDaemon(t *testing.T) {
 			}
 		}
 	})
-	stubStartServeBackgroundProcess(t, func(_ *config.Config, _ backgroundServeStartOptions) (*backgroundServeProcess, error) {
-		owner, err := config.Load(path, home)
+	stubStartServeBackgroundProcess(t, func(_ *config.Config, options backgroundServeStartOptions) (*backgroundServeProcess, error) {
+		if options.Invocation == nil || !options.Invocation.cfgFileChanged || options.Invocation.cfgFile != path {
+			return nil, errors.New("recovery did not preserve the original --config option")
+		}
+		owner, err := config.Load(options.Invocation.cfgFile, home)
 		if err != nil {
 			return nil, err
+		}
+		if owner.Data.DataDir != dataDir {
+			return nil, errors.New("recovery selected a different archive directory")
 		}
 		command := &cobra.Command{Use: "serve"}
 		command.SetContext(testInvocationContext(daemonCtx, owner, invocationOptions{}))
@@ -170,8 +182,16 @@ func TestMCPLocalRecoveryStartsReplacementDaemon(t *testing.T) {
 		go func() { err := runServe(command, nil); launched <- err; done <- err }()
 		return &backgroundServeProcess{PID: os.Getpid(), Wait: launched}, nil
 	})
-	stats, err := client.GetStats()
+	requestCtx, cancelRequest := context.WithCancel(t.Context())
+	defer cancelRequest()
+	assertions.Nil(invocationFromContext(requestCtx), "an MCP tool request has no CLI invocation metadata")
+	response, err := client.DoGeneratedRequestWithContext(requestCtx, http.MethodGet, "/api/v1/stats", &generated.RunCLIRequestOptions{})
 	requirements.NoError(err)
-	assertions.Zero(stats.MessageCount)
+	defer func() { requirements.NoError(response.Body.Close()) }()
+	var stats struct {
+		TotalMessages int64 `json:"total_messages"`
+	}
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&stats))
+	assertions.Zero(stats.TotalMessages)
 	assertions.True(started)
 }
