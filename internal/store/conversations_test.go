@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -116,29 +117,6 @@ func TestMessageReadsTreatMissingSenderAttributionAsNotFromMe(t *testing.T) {
 	assert.False(t, window.Messages[0].IsFromMe)
 }
 
-func TestConversationWindowIncludesSourceDeletedArchiveEntries(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
-	requirements.NoError(err)
-	conversationID, err := st.EnsureConversation(source.ID, "retained-thread", "Retained thread")
-	requirements.NoError(err)
-	messageID, err := st.UpsertMessage(&store.Message{
-		ConversationID: conversationID, SourceID: source.ID, SourceMessageID: "retained-message",
-		MessageType: "email", SentAt: sql.NullTime{Time: time.Now().UTC(), Valid: true},
-	})
-	requirements.NoError(err)
-	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?"), messageID)
-	requirements.NoError(err)
-
-	window, err := st.GetConversationWindow(conversationID, messageID, 1, 1)
-	requirements.NoError(err)
-	requirements.NotNil(window)
-	requirements.Len(window.Messages, 1)
-	assertions.Equal(messageID, window.Messages[0].ID)
-}
-
 func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -152,7 +130,7 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 	day2 := time.Date(2026, 7, 2, 12, 0, 0, 0, time.UTC)
 	sentTimes := []time.Time{
 		day1, day1.Add(time.Minute), day1.Add(2 * time.Minute),
-		day2, day2.Add(time.Minute), day2.Add(2 * time.Minute),
+		day2, day2, day2.Add(time.Minute),
 	}
 	ids := make([]int64, 0, len(sentTimes))
 	for i, sentAt := range sentTimes {
@@ -167,8 +145,11 @@ func TestConversationWindowContextScopesToTimeRange(t *testing.T) {
 		ids = append(ids, id)
 	}
 
-	start := day2.Truncate(24 * time.Hour)
-	end := start.AddDate(0, 0, 1)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = NULL, received_at = ? WHERE id = ?`), day2.Add(time.Minute), ids[5])
+	require.NoError(err)
+
+	start := day2
+	end := day2.Add(2 * time.Minute)
 
 	window, err := st.GetConversationWindowContext(context.Background(), conversationID, ids[4], 25, 25, &start, &end)
 	require.NoError(err)
@@ -364,4 +345,68 @@ func TestConversationTitlesBatchContext(t *testing.T) {
 	titles, err = st.ConversationTitlesBatchContext(t.Context(), first.ID, nil)
 	require.NoError(err)
 	assert.Empty(titles)
+}
+
+func TestConversationWindowOrderAndCounts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "window@example.com")
+	requirements.NoError(err)
+	conv, err := st.EnsureConversation(source.ID, "window-order", "Window order")
+	requirements.NoError(err)
+	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	ids := make([]int64, 9)
+	for i := range ids {
+		message := &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: strconv.Itoa(i), MessageType: "email"}
+		switch i {
+		case 0, 1, 6, 7:
+			message.SentAt = sql.NullTime{Time: base, Valid: true}
+		case 2:
+			message.ReceivedAt = sql.NullTime{Time: base.Add(time.Minute), Valid: true}
+		case 5:
+			message.InternalDate = sql.NullTime{Time: base.Add(2 * time.Minute), Valid: true}
+		}
+		ids[i], err = st.UpsertMessage(message)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), base, ids[5])
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), base, ids[6])
+	requirements.NoError(err)
+	// Importers can persist a zero timestamp as a non-NULL SQL value.
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Time{}, ids[8])
+	requirements.NoError(err)
+	// A second timestamp tie remains visible after the hidden message.
+	order := []int{3, 4, 8, 0, 1, 7, 2, 5}
+	if st.IsPostgreSQL() {
+		order = []int{8, 0, 1, 7, 2, 5, 3, 4}
+	}
+	for pos, anchor := range order {
+		for _, limits := range []struct{ before, after int }{{0, 0}, {1, 1}, {25, 25}, {0, 25}, {25, 0}} {
+			t.Run(fmt.Sprintf("anchor%d/%d/%d", anchor, limits.before, limits.after), func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				window, err := st.GetConversationWindow(conv, ids[anchor], limits.before, limits.after)
+				requirements.NoError(err)
+				want := []int64{}
+				for _, i := range order[max(0, pos-limits.before):min(len(order), pos+limits.after+1)] {
+					want = append(want, ids[i])
+				}
+				got := []int64{}
+				for _, message := range window.Messages {
+					got = append(got, message.ID)
+				}
+				assertions.Equal(want, got)
+				assertions.Equal(int64(8), window.Total)
+				assertions.Equal(int64(pos+1), window.AnchorPosition)
+			})
+		}
+	}
+	for _, anchor := range []int64{ids[6], ids[7] + 1000} {
+		window, err := st.GetConversationWindow(conv, anchor, 25, 25)
+		requirements.NoError(err)
+		assertions.Empty(window.Messages)
+		assertions.Zero(window.Total)
+	}
 }

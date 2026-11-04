@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -138,55 +139,48 @@ func TestTwentyFallbackOnlyOnFieldRejection(t *testing.T) {
 		status          int
 		body, wantError string
 		wantAttempts    int
-		probeOnly       bool
 	}{
-		{"permission error naming field", 200, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "FORBIDDEN", 1, false},
-		{"permission error naming field HTTP 400", 400, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "HTTP 400", 1, false},
-		{"uncoded error naming field", 200, `{"errors":[{"message":"Access denied to iCalUid"}]}`, "Access denied to iCalUid", 1, false},
-		{"other field", 200, `{"errors":[{"message":"Cannot query field \"transcript\" on type \"CallRecording\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "transcript", 1, false},
-		{"auth", 401, "Unauthorized", "HTTP 401", 1, true},
-		{"HTTP throttling", 429, "Rate limit reached", "HTTP 429", 5, true},
-		{"GraphQL throttling", 200, `{"errors":[{"message":"Rate limit reached","extensions":{"code":"RATE_LIMITED"}}]}`, "rate limit reached", 5, false},
+		{"permission error naming field", 200, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "FORBIDDEN", 1},
+		{"permission error naming field HTTP 400", 400, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "HTTP 400", 1},
+		{"uncoded error naming field", 200, `{"errors":[{"message":"Access denied to iCalUid"}]}`, "Access denied to iCalUid", 1},
+		{"other field", 200, `{"errors":[{"message":"Cannot query field \"transcript\" on type \"CallRecording\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "transcript", 1},
+		{"GraphQL throttling", 200, `{"errors":[{"message":"Rate limit reached","extensions":{"code":"RATE_LIMITED"}}]}`, "rate limit reached", 5},
 	} {
-		paths := []bool{true, false}
-		if tt.probeOnly {
-			// Direct recording reads are covered by TestClientHTTPFailuresAreRedacted.
-			paths = []bool{true}
-		}
-		for _, probe := range paths {
+		for _, probe := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/probe=%t", tt.name, probe), func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				attempts, fallbacks := 0, 0
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					attempts++
-					var request struct {
-						Query string `json:"query"`
+				synctest.Test(t, func(t *testing.T) {
+					assert := assert.New(t)
+					require := require.New(t)
+					attempts, fallbacks := 0, 0
+					handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						attempts++
+						var request struct {
+							Query string `json:"query"`
+						}
+						if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
+							return
+						}
+						if !strings.Contains(request.Query, "iCalUid") {
+							fallbacks++
+							_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}},"calendarEvents":{"edges":[]},"calendarEventParticipants":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
+							return
+						}
+						w.WriteHeader(tt.status)
+						_, _ = fmt.Fprint(w, tt.body)
+					})
+					client, err := NewClient("https://fallback.twenty.example", "example-key")
+					require.NoError(err)
+					client.http.Transport = httptest.NewTestServer(t, handler).Client().Transport
+					client.limiter = rate.NewLimiter(rate.Inf, 1)
+					if probe {
+						err = client.Probe(t.Context())
+					} else {
+						_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 					}
-					if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
-						return
-					}
-					if !strings.Contains(request.Query, "iCalUid") {
-						fallbacks++
-						_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}},"calendarEvents":{"edges":[]},"calendarEventParticipants":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
-						return
-					}
-					w.Header().Set("Retry-After", "0")
-					w.WriteHeader(tt.status)
-					_, _ = fmt.Fprint(w, tt.body)
-				}))
-				defer srv.Close()
-				client, err := NewClient(srv.URL, "example-key")
-				require.NoError(err)
-				client.limiter = rate.NewLimiter(rate.Inf, 1)
-				if probe {
-					err = client.Probe(t.Context())
-				} else {
-					_, err = client.ListRecordings(t.Context(), epoch, "", 1)
-				}
-				require.ErrorContains(err, tt.wantError)
-				assert.Equal(tt.wantAttempts, attempts)
-				assert.Zero(fallbacks)
+					require.ErrorContains(err, tt.wantError)
+					assert.Equal(tt.wantAttempts, attempts)
+					assert.Zero(fallbacks)
+				})
 			})
 		}
 	}

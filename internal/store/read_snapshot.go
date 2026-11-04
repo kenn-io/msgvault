@@ -68,3 +68,34 @@ func ReadDBContext(ctx context.Context, db *sql.DB) SQLReader {
 	}
 	return db
 }
+
+// RunIndependentReads runs reads that do not use each other's results and
+// returns the first error in argument order, as running them in order would.
+// Outside a read snapshot each read takes its own pool connection, so the
+// reads run at the same time and all of them finish before it returns.
+// Inside a snapshot every read shares one transaction, which serves one
+// statement at a time, so the reads run in order and stop at the first error.
+// Each read must finish with its rows before it returns and must write only
+// state that no other read touches.
+func RunIndependentReads(ctx context.Context, db *sql.DB, reads ...func(context.Context) error) error {
+	if snapshot, ok := ctx.Value(readSnapshotKey{}).(*readSnapshot); len(reads) < 2 || (ok && snapshot.db == db) {
+		for _, read := range reads {
+			if err := read(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	errs := make([]error, len(reads))
+	var wg sync.WaitGroup
+	for i, read := range reads {
+		wg.Go(func() { errs[i] = read(ctx) })
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

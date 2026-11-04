@@ -11,11 +11,10 @@ import (
 )
 
 func TestListProgressesPastNewerEvidence(t *testing.T) {
+	// serial: changes the package global listEvidenceBudget.
 	assert := assert.New(t)
 	require := require.New(t)
-	previousBudget := listEvidenceBudget
-	listEvidenceBudget = 2
-	t.Cleanup(func() { listEvidenceBudget = previousBudget })
+	SetListEvidenceBudgetForTest(t, 2)
 	f := storetest.New(t)
 	now := time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 	var anchor int64

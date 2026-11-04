@@ -452,10 +452,7 @@ func TestImportMissingChatInvalidatesMessagingRoute(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			sourcePath := filepath.Join(t.TempDir(), "msgvault.db")
-			originalStore, err := store.Open(sourcePath)
-			requirements.NoError(err)
-			t.Cleanup(func() { requirements.NoError(originalStore.Close()) })
-			requirements.NoError(originalStore.InitSchema())
+			originalStore := testutil.NewSQLiteTestStoreAt(t, sourcePath)
 			st := originalStore
 			imp := NewImporter(st, NewClient(srv.URL, testToken, 10000))
 			first, err := imp.Import(t.Context(), ImportOptions{AccountID: "account-a", Limit: test.limit, NoMedia: true})

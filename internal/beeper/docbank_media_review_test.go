@@ -293,25 +293,18 @@ func TestBeeperMediaDiscoveryReadsOutsideGate(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	world := importVoiceChat(t, voiceSpec{id: "voice1", asset: "mxc://beeper.local/voice1",
 		mime: "audio/wav", fileName: "voice.wav", transcript: "words", data: syntheticWAV(800, 25)})
-	world.st.DB().SetMaxOpenConns(1)
-	conn, err := world.st.DB().Conn(t.Context())
-	require.NoError(err)
 	held, rawReadsUnderGate := false, 0
-	require.NoError(conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		require.True(ok)
-		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if action == sqlite3.SQLITE_READ && table == "message_raw" && held {
-				rawReadsUnderGate++
-			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	}))
-	require.NoError(conn.Close())
+	refreshAuthorizer := sqliteAuthorizerRefresher(t, world.st, func(action int, table, _, _ string) int {
+		if action == sqlite3.SQLITE_READ && table == "message_raw" && held {
+			rawReadsUnderGate++
+		}
+		return sqlite3.SQLITE_OK
+	})
+	refreshAuthorizer()
 	worker := NewMediaSubmitter(world.st, world.blobs, nil, "gate-reads", world.dir).WithOperationGate(
 		func(context.Context) (func(), bool) {
 			held = true
+			refreshAuthorizer()
 			return func() { held = false }, true
 		})
 	result, err := worker.RunBatch(t.Context())
@@ -494,8 +487,9 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 				docbank.mu.Unlock()
 
 				denyRawRead := false
+				var refreshAuthorizer func()
 				if failure == "database" {
-					installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
+					refreshAuthorizer = installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
 				}
 				calls, finalGate := 0, 1
 				if kind != "retain" {
@@ -508,6 +502,7 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 					if calls == finalGate {
 						if failure == "database" {
 							denyRawRead = true
+							refreshAuthorizer()
 						} else {
 							cancel()
 						}
@@ -582,12 +577,13 @@ func TestBeeperMediaOperationRawReadFailure(t *testing.T) {
 			`UPDATE attachments SET content_hash = ? WHERE id = ?`), strings.Repeat("d", 64), stale.AttachmentID)
 		require.NoError(err)
 		denyRawRead := false
-		installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
+		refreshAuthorizer := installMessageRawReadAuthorizer(t, world.st, &denyRawRead)
 		calls := 0
 		worker.WithOperationGate(func(context.Context) (func(), bool) {
 			calls++
 			if calls == 2 {
 				denyRawRead = true
+				refreshAuthorizer()
 			}
 			return func() { denyRawRead = false }, true
 		})
@@ -1453,26 +1449,37 @@ func TestBeeperMediaFullRescanRevokesAllNonRevokedStates(t *testing.T) {
 	assert.Equal("no_live_occurrence", deliveries[0].ErrorCode)
 }
 
-func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) {
+func installMessageRawReadAuthorizer(t *testing.T, st *store.Store, denied *bool) func() {
 	t.Helper()
 	testutil.SkipIfPostgres(t, "SQLite authorizer injects a message_raw query failure")
-	st.DB().SetMaxOpenConns(1)
-	conn, err := st.DB().Conn(t.Context())
-	require.NoError(t, err)
-	require.NoError(t, conn.Raw(func(driverConn any) error {
-		sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
-		if !ok {
-			return fmt.Errorf("expected SQLite connection, got %T", driverConn)
+	refresh := sqliteAuthorizerRefresher(t, st, func(action int, table, _, _ string) int {
+		if *denied && action == sqlite3.SQLITE_READ && table == "message_raw" {
+			return sqlite3.SQLITE_DENY
 		}
-		sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
-			if *denied && action == sqlite3.SQLITE_READ && table == "message_raw" {
-				return sqlite3.SQLITE_DENY
+		return sqlite3.SQLITE_OK
+	})
+	refresh()
+	return refresh
+}
+
+// Reinstalling the authorizer expires cached statements so it sees the next execution.
+func sqliteAuthorizerRefresher(t *testing.T, st *store.Store, authorizer func(int, string, string, string) int) func() {
+	t.Helper()
+	st.DB().SetMaxOpenConns(1)
+	return func() {
+		t.Helper()
+		conn, err := st.DB().Conn(t.Context())
+		require.NoError(t, err)
+		require.NoError(t, conn.Raw(func(driverConn any) error {
+			sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+			if !ok {
+				return fmt.Errorf("expected SQLite connection, got %T", driverConn)
 			}
-			return sqlite3.SQLITE_OK
-		})
-		return nil
-	}))
-	require.NoError(t, conn.Close())
+			sqliteConn.RegisterAuthorizer(authorizer)
+			return nil
+		}))
+		require.NoError(t, conn.Close())
+	}
 }
 
 func TestBeeperMediaOperatorRequired(t *testing.T) {

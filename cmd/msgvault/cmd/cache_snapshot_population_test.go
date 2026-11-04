@@ -1,10 +1,17 @@
 package cmd
 
 import (
+	"encoding/csv"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestCacheCatchUpRepairsNewlyExportableOldMessage(t *testing.T) {
@@ -116,6 +123,105 @@ func TestCacheCatchUpExportsSourceDeletedMessageAboveBoundary(t *testing.T) {
 			require.NoError(err)
 			require.Len(result.Rows, 2)
 			assert.EqualValues(2, result.Rows[1][0])
+		})
+	}
+}
+
+func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "1")
+	for _, tt := range []struct {
+		name   string
+		repair bool
+	}{
+		{name: "append"},
+		{name: "repair", repair: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			tmp := t.TempDir()
+			dbPath := filepath.Join(tmp, "msgvault.db")
+			incDir, fullDir := filepath.Join(tmp, "analytics-inc"), filepath.Join(tmp, "analytics-full")
+			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+			sourceID, alice, bob, _ := cacheExportParityParticipants(t, st)
+			require.NoError(st.SetParticipantIdentifier(bob, "email", "bob@example.com"))
+			_, _, err := st.CreatePersonFromParticipant(bob)
+			require.NoError(err)
+			alias, err := st.EnsureParticipantByIdentifier("email", "bob-alias@example.com", "Bob")
+			require.NoError(err)
+			_, err = st.LinkParticipants(bob, alias)
+			require.NoError(err)
+			label, err := st.EnsureLabel(sourceID, "inbox", "Inbox", "system")
+			require.NoError(err)
+			addMessage := func(i int) {
+				_, id := addCacheExportParityMessage(t, st, sourceID, bob, alice, i)
+				require.Equal(int64(i), id)
+				require.NoError(st.AddMessageLabels(id, []int64{label}))
+				require.NoError(st.UpsertAttachment(id, "document.txt", "text/plain", "", fmt.Sprintf("hash-%d", i), 42))
+			}
+			addMessage(1)
+			require.NoError(st.Close())
+			_, err = buildCache(dbPath, incDir, true)
+			require.NoError(err)
+
+			st, err = store.Open(dbPath)
+			require.NoError(err)
+			addMessage(2)
+			addMessage(3)
+			_, err = st.DB().Exec(`UPDATE messages SET sent_at = NULL WHERE id = 2`)
+			require.NoError(err)
+			if tt.repair {
+				require.NoError(st.ReplaceMessageRecipients(1, "to", []int64{bob}, []string{"Updated"}))
+			}
+			_, err = st.DB().Exec(`INSERT INTO sync_runs (source_id, started_at, completed_at, status, messages_processed, messages_added)
+				VALUES (?, datetime('now'), datetime('now'), 'completed', 1, 1)`, sourceID)
+			require.NoError(err)
+			require.NoError(st.Close())
+
+			expected := map[string][]string{
+				"message_recipients": {"3", "3"},
+				"message_labels":     {"3"},
+				"attachments":        {"3"},
+			}
+			if tt.repair {
+				expected["message_recipients"] = []string{"1", "1", "2", "2", "3", "3"}
+			}
+			hookCalled := false
+			buildCacheBeforeMessagesExportHook = func() error {
+				hookCalled = true
+				dirs, err := filepath.Glob(filepath.Join(tmp, ".cache-tmp-*"))
+				require.NoError(err)
+				require.Len(dirs, 1)
+				for dataset, want := range expected {
+					f, err := os.Open(filepath.Join(dirs[0], dataset+".csv"))
+					require.NoError(err)
+					records, err := csv.NewReader(f).ReadAll()
+					require.NoError(f.Close())
+					require.NoError(err)
+					require.NotEmpty(records)
+					column := -1
+					for i, name := range records[0] {
+						if name == "message_id" {
+							column = i
+						}
+					}
+					require.GreaterOrEqual(column, 0, dataset)
+					var ids []string
+					for _, row := range records[1:] {
+						ids = append(ids, row[column])
+					}
+					assert.ElementsMatch(want, ids, dataset)
+				}
+				return nil
+			}
+			t.Cleanup(func() { buildCacheBeforeMessagesExportHook = nil })
+			built, err := buildCache(dbPath, incDir, false)
+			buildCacheBeforeMessagesExportHook = nil
+			require.NoError(err)
+			assert.True(hookCalled)
+			assert.Equal(int64(1), built.StagedCount)
+			_, err = buildCache(dbPath, fullDir, true)
+			require.NoError(err)
+			assertCacheExportParity(t, tmp, incDir, fullDir, query.RequiredParquetDirs)
 		})
 	}
 }

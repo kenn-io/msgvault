@@ -101,22 +101,28 @@
     activeController = controller;
     resetForSelection();
     try {
-      const status = await (conversationStatus?.load() ?? generatedGetTaskIntegrationStatus({
-        ...client,
-        signal: controller.signal,
-      }));
-      if (currentGeneration !== generation || controller.signal.aborted) return;
-      localStatus = status.data ?? { state: 'unavailable' };
       // The reverse-index response is independently authoritative and may
-      // contain a safe last-good snapshot even when the live integration is down.
-      const { data, error: responseError } = await generatedListMessageTasks(
-        { id: selectedMessageID },
-        {
+      // contain a safe last-good snapshot even when the live integration is
+      // down, so both reads start together.
+      const [statusResult, tasksResult] = await Promise.allSettled([
+        conversationStatus?.load() ?? generatedGetTaskIntegrationStatus({
           ...client,
           signal: controller.signal,
-        },
-      );
-      if (currentGeneration !== generation) return;
+        }),
+        generatedListMessageTasks(
+          { id: selectedMessageID },
+          {
+            ...client,
+            signal: controller.signal,
+          },
+        ),
+      ]);
+      if (currentGeneration !== generation || controller.signal.aborted) return;
+      if (statusResult.status === 'rejected') throw statusResult.reason;
+      const status = statusResult.value;
+      localStatus = status.data ?? { state: 'unavailable' };
+      if (tasksResult.status === 'rejected') throw tasksResult.reason;
+      const { data, error: responseError } = tasksResult.value;
       if (!data) throw new Error(messageFor(responseError, 'Unable to load linked tasks.'));
       apply(data);
     } catch (cause) {
