@@ -1229,26 +1229,23 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 		(6, 1, 'from', 'alice@example.com'), (6, 2, 'to', 'bob@example.org'),
 		(7, 2, 'from', 'bob@example.org'), (7, 1, 'to', NULL);
 		INSERT INTO message_labels (message_id, label_id) VALUES (6, 2), (7, 1);
-		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES (6, 'delta.txt', 'text/plain', 123);
-		UPDATE message_recipients SET participant_id = 'unreadable' WHERE message_id = 1 AND participant_id = 1;
+		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES (6, 'delta.txt', 'text/plain', 123)`)
+	require.NoError(err)
+	// The messages export selects size_estimate, so the scanner must decode
+	// this old row unless SQLite bounds the read to the new slice.
+	_, err = db.Exec(`UPDATE messages SET size_estimate = 'unreadable' WHERE id = 1`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, fullDir, true)
+	require.ErrorContains(err, "export messages:", "a full messages scan must trip over the old row")
+	_, err = db.Exec(`UPDATE message_recipients SET participant_id = 'unreadable' WHERE message_id = 1 AND participant_id = 1;
 		UPDATE message_labels SET label_id = 'unreadable' WHERE message_id = 1 AND label_id = 1;
 		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1`)
 	require.NoError(err)
-	// sqlite_query transports every selected column before DuckDB can filter
-	// rows. This expression makes reading an old message fail inside SQLite.
-	_, err = db.Exec(`ALTER TABLE messages RENAME TO stored_messages;
-		CREATE VIEW messages AS SELECT *,
-			CASE WHEN id = 1 THEN abs(-9223372036854775808) ELSE 0 END AS scan_guard
-		FROM stored_messages`)
-	require.NoError(err)
-	_, err = buildCache(dbPath, fullDir, true)
-	require.Error(err, "a full scan must trip over the old rows")
 	result, err := buildCache(dbPath, incDir, false)
 	require.NoError(err, "incremental exports must read only the new slice")
 	assert.False(result.Skipped)
 	assert.Equal(int64(7), result.ExportedCount)
-	_, err = db.Exec(`DROP VIEW messages;
-		ALTER TABLE stored_messages RENAME TO messages;
+	_, err = db.Exec(`UPDATE messages SET size_estimate = 1000 WHERE id = 1;
 		UPDATE message_recipients SET participant_id = 1 WHERE message_id = 1 AND participant_id = 'unreadable';
 		UPDATE message_labels SET label_id = 1 WHERE message_id = 1 AND label_id = 'unreadable';
 		UPDATE attachments SET size = 42 WHERE message_id = 1`)
@@ -1278,13 +1275,7 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 			schemas = append(schemas, schema)
 		}
 		assert.Equal(schemas[0], schemas[1], dataset)
-		var missing, extra int
-		require.NoError(duck.QueryRow(`SELECT
-			(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?))),
-			(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?)))`,
-			full, inc, inc, full).Scan(&missing, &extra), dataset)
-		assert.Zero(missing, dataset)
-		assert.Zero(extra, dataset)
+		requireCacheExportParity(t, duck, dataset, full, inc)
 	}
 }
 

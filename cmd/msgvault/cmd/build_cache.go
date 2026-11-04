@@ -2028,21 +2028,20 @@ func (s *cacheSourceSnapshot) messageSliceRelation(table, idColumn string, after
 	if s.csvSnapshot || after == 0 {
 		return relation, nil
 	}
-	rows, err := s.DuckDB().Query("DESCRIBE SELECT * FROM " + relation)
+	rows, err := s.DuckDB().Query("SELECT * FROM " + relation + " LIMIT 0")
 	if err != nil {
 		return "", fmt.Errorf("describe message slice %s: %w", table, err)
 	}
 	defer func() { _ = rows.Close() }()
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
+	}
 	var columns, casts []string
-	for rows.Next() {
-		var name, typ string
-		var nullable, key, def, extra sql.NullString
-		if err := rows.Scan(&name, &typ, &nullable, &key, &def, &extra); err != nil {
-			return "", fmt.Errorf("scan message slice schema %s: %w", table, err)
-		}
-		column := `"` + name + `"`
+	for _, typ := range types {
+		column := `"` + typ.Name() + `"`
 		columns = append(columns, column)
-		casts = append(casts, fmt.Sprintf("CAST(%s AS %s) AS %s", column, typ, column))
+		casts = append(casts, fmt.Sprintf("CAST(%s AS %s) AS %s", column, typ.DatabaseTypeName(), column))
 	}
 	if err := rows.Err(); err != nil {
 		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
