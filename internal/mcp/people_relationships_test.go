@@ -14,6 +14,7 @@ import (
 
 type relationshipPeopleBackend struct {
 	peoplebrowser.Backend
+
 	page    *peoplebrowser.RelationshipListPage
 	err     error
 	request peoplebrowser.RelationshipListRequest
@@ -31,6 +32,9 @@ func relationshipToolOptions(backend peoplebrowser.Backend) ServeOptions {
 }
 
 func TestMCPListRelationshipsForwardsCadenceAndReturnsJoinedRows(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	last := time.Date(2026, 8, 20, 12, 30, 0, 0, time.UTC)
 	backend := &relationshipPeopleBackend{page: &peoplebrowser.RelationshipListPage{
 		Rows: []query.RelationshipRow{{
@@ -44,20 +48,20 @@ func TestMCPListRelationshipsForwardsCadenceAndReturnsJoinedRows(t *testing.T) {
 		"cursor": "cursor", "limit": float64(12), "show_all": true,
 		"cadence": "due", "due_within_days": float64(7),
 	})
-	assert.NotEqual(t, true, result["isError"], "result: %#v", result)
-	assert.Equal(t, peoplebrowser.RelationshipListRequest{
+	assert.NotEqual(true, result["isError"], "result: %#v", result)
+	assert.Equal(peoplebrowser.RelationshipListRequest{
 		Cursor: "cursor", Limit: 12, ShowAll: true, Cadence: "due", DueWithinDays: new(7),
 	}, backend.request)
 	structured := toolStructuredContent(t, result)
-	assert.Equal(t, "next", structured["next_cursor"])
+	assert.Equal("next", structured["next_cursor"])
 	rows, ok := structured["rows"].([]any)
-	require.True(t, ok)
-	require.Len(t, rows, 1)
+	require.True(ok)
+	require.Len(rows, 1)
 	row, ok := rows[0].(map[string]any)
-	require.True(t, ok)
-	assert.InDelta(t, 7, row["canonical_id"], 0)
-	assert.Equal(t, "Alice Example", row["display_label"])
-	assert.InDelta(t, 11, row["person_id"], 0)
+	require.True(ok)
+	assert.InDelta(7, row["canonical_id"], 0)
+	assert.Equal("Alice Example", row["display_label"])
+	assert.InDelta(11, row["person_id"], 0)
 }
 
 func TestMCPListRelationshipsValidatesCadenceArguments(t *testing.T) {

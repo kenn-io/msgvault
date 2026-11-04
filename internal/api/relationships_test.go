@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,7 @@ type recordingRelationshipEngine struct {
 	*query.DuckDBEngine
 
 	relationshipsCalls    int
+	relationshipsFn       func(context.Context, query.RelationshipsRequest) (*query.RelationshipsResponse, error)
 	timelineCalls         int
 	resolveCanonicalCalls int
 }
@@ -46,6 +48,9 @@ func (e *recordingRelationshipEngine) Relationships(
 	request query.RelationshipsRequest,
 ) (*query.RelationshipsResponse, error) {
 	e.relationshipsCalls++
+	if e.relationshipsFn != nil {
+		return e.relationshipsFn(ctx, request)
+	}
 	return e.DuckDBEngine.Relationships(ctx, request)
 }
 
@@ -279,6 +284,9 @@ func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
 }
 
 func TestRelationshipsJoinsDirectoryCadenceAndFiltersBeforePaging(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	engine := newRelationshipsDuckDBFixture(t, now)
 	srv, identityStore, _ := newRelationshipIdentityAPIServer(t, engine, []string{
@@ -288,61 +296,230 @@ func TestRelationshipsJoinsDirectoryCadenceAndFiltersBeforePaging(t *testing.T) 
 		"newsletter@example.test",
 	})
 	person, _, err := identityStore.CreatePersonFromParticipantContext(t.Context(), relAliceID)
-	require.NoError(t, err)
+	require.NoError(err)
 	days := int64(21)
 	_, err = identityStore.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
 		PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency,
 		Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser,
 	})
-	require.NoError(t, err)
+	require.NoError(err)
 
 	all := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true}`)
-	require.Equal(t, http.StatusOK, all.Code, all.Body.String())
+	require.Equal(http.StatusOK, all.Code, all.Body.String())
 	var allPage RelationshipsHTTPResponse
-	require.NoError(t, json.Unmarshal(all.Body.Bytes(), &allPage))
+	require.NoError(json.Unmarshal(all.Body.Bytes(), &allPage))
 	alice := relationshipRowOf(t, allPage, relAliceID)
-	require.NotNil(t, alice.PersonID)
-	assert.Equal(t, person.ID, *alice.PersonID)
-	require.NotNil(t, alice.Cadence)
-	assert.Equal(t, "A", alice.Cadence.List)
-	assert.Equal(t, store.CadenceUnknown, alice.Cadence.Status)
+	require.NotNil(alice.PersonID)
+	assert.Equal(person.ID, *alice.PersonID)
+	require.NotNil(alice.Cadence)
+	assert.Equal("A", alice.Cadence.List)
+	assert.Equal(store.CadenceUnknown, alice.Cadence.Status)
 
 	unknown := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"unknown"}`)
-	require.Equal(t, http.StatusOK, unknown.Code, unknown.Body.String())
+	require.Equal(http.StatusOK, unknown.Code, unknown.Body.String())
 	var unknownPage RelationshipsHTTPResponse
-	require.NoError(t, json.Unmarshal(unknown.Body.Bytes(), &unknownPage))
-	require.Len(t, unknownPage.Rows, 1)
-	assert.Equal(t, relAliceID, unknownPage.Rows[0].CanonicalID)
-	assert.Equal(t, int64(1), unknownPage.TotalCount)
+	require.NoError(json.Unmarshal(unknown.Body.Bytes(), &unknownPage))
+	require.Len(unknownPage.Rows, 1)
+	assert.Equal(relAliceID, unknownPage.Rows[0].CanonicalID)
+	assert.Equal(int64(1), unknownPage.TotalCount)
 
 	noList := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"no_list"}`)
-	require.Equal(t, http.StatusOK, noList.Code, noList.Body.String())
+	require.Equal(http.StatusOK, noList.Code, noList.Body.String())
 	var noListPage RelationshipsHTTPResponse
-	require.NoError(t, json.Unmarshal(noList.Body.Bytes(), &noListPage))
-	assert.Empty(t, noListPage.Rows)
-	assert.Zero(t, noListPage.TotalCount)
+	require.NoError(json.Unmarshal(noList.Body.Bytes(), &noListPage))
+	assert.Empty(noListPage.Rows)
+	assert.Zero(noListPage.TotalCount)
 
 	_, _, err = identityStore.CreatePersonFromParticipantContext(t.Context(), relNewsletterID)
-	require.NoError(t, err)
+	require.NoError(err)
 	noListAfterPromotion := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"no_list","limit":1}`)
-	require.Equal(t, http.StatusOK, noListAfterPromotion.Code, noListAfterPromotion.Body.String())
+	require.Equal(http.StatusOK, noListAfterPromotion.Code, noListAfterPromotion.Body.String())
 	var noListAfterPromotionPage RelationshipsHTTPResponse
-	require.NoError(t, json.Unmarshal(noListAfterPromotion.Body.Bytes(), &noListAfterPromotionPage))
-	require.Len(t, noListAfterPromotionPage.Rows, 1)
-	assert.Equal(t, relNewsletterID, noListAfterPromotionPage.Rows[0].CanonicalID)
-	assert.Equal(t, int64(1), noListAfterPromotionPage.TotalCount)
+	require.NoError(json.Unmarshal(noListAfterPromotion.Body.Bytes(), &noListAfterPromotionPage))
+	require.Len(noListAfterPromotionPage.Rows, 1)
+	assert.Equal(relNewsletterID, noListAfterPromotionPage.Rows[0].CanonicalID)
+	assert.Equal(int64(1), noListAfterPromotionPage.TotalCount)
 
 	invalid := postExploreJSON(t, srv, "/api/v1/relationships", `{"cadence":"overdue","due_within_days":7}`)
-	assert.Equal(t, http.StatusBadRequest, invalid.Code)
+	assert.Equal(http.StatusBadRequest, invalid.Code)
+}
+
+func TestRelationshipCadenceDueFilterIncludesTheWholeUTCDate(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	dueAt := time.Date(2026, 8, 20, 23, 59, 0, 0, time.UTC)
+	row := query.RelationshipRow{Cadence: &query.RelationshipCadence{DueAt: &dueAt}}
+
+	assert.True(t, relationshipRowMatchesCadence(row, "due", nil, now))
+}
+
+func TestRelationshipsCadenceCursorPinsDirectoryEvaluationTime(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	current := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	engine := newRelationshipsDuckDBFixture(t, current)
+	srv, identityStore, _ := newRelationshipIdentityAPIServer(t, engine, []string{
+		relationshipIdentityIdentifier,
+		"alice@example.test",
+		"alice-chat@example.test",
+		"newsletter@example.test",
+	})
+	srv.clock = func() time.Time { return current }
+	directoryStore := &recordingRelationshipDirectoryClockStore{
+		Store: identityStore.Store, base: identityStore.Store,
+	}
+	srv.store = directoryStore
+
+	alice, _, err := identityStore.CreatePersonFromParticipantContext(t.Context(), relAliceID)
+	require.NoError(err)
+	newsletter, _, err := identityStore.CreatePersonFromParticipantContext(t.Context(), relNewsletterID)
+	require.NoError(err)
+	days := int64(21)
+	for _, personID := range []int64{alice.ID, newsletter.ID} {
+		_, err = identityStore.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+			PersonID: personID, DefinitionSlug: store.AttributeSlugContactFrequency,
+			Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser,
+		})
+		require.NoError(err)
+	}
+
+	first := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"unknown","limit":1}`)
+	require.Equal(http.StatusOK, first.Code, first.Body.String())
+	var firstPage RelationshipsHTTPResponse
+	require.NoError(json.Unmarshal(first.Body.Bytes(), &firstPage))
+	require.NotEmpty(firstPage.NextCursor)
+
+	current = current.Add(24 * time.Hour)
+	secondRequest, err := json.Marshal(struct {
+		ShowAll bool   `json:"show_all"`
+		Cadence string `json:"cadence"`
+		Limit   int    `json:"limit"`
+		Cursor  string `json:"cursor"`
+	}{ShowAll: true, Cadence: "unknown", Limit: 1, Cursor: firstPage.NextCursor})
+	require.NoError(err)
+	second := postExploreJSON(t, srv, "/api/v1/relationships", string(secondRequest))
+	require.Equal(http.StatusOK, second.Code, second.Body.String())
+
+	require.Len(directoryStore.evaluatedAt, 2)
+	want := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	assert.Equal(want, directoryStore.evaluatedAt[0])
+	assert.Equal(want, directoryStore.evaluatedAt[1])
+
+	payload, _, ok := strings.Cut(firstPage.NextCursor, ".")
+	require.True(ok)
+	decoded, err := base64.RawURLEncoding.DecodeString(payload)
+	require.NoError(err)
+	var cursor map[string]any
+	require.NoError(json.Unmarshal(decoded, &cursor))
+	assert.Equal(want.Format(time.RFC3339Nano), cursor["cadence_evaluated_at"])
+}
+
+func TestRelationshipsCadenceCursorRejectsChangedDirectoryCadence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	engine := newRelationshipsDuckDBFixture(t, now)
+	srv, identityStore, _ := newRelationshipIdentityAPIServer(t, engine, []string{
+		relationshipIdentityIdentifier,
+		"alice@example.test",
+		"alice-chat@example.test",
+		"newsletter@example.test",
+	})
+	alice, _, err := identityStore.CreatePersonFromParticipantContext(t.Context(), relAliceID)
+	require.NoError(err)
+	newsletter, _, err := identityStore.CreatePersonFromParticipantContext(t.Context(), relNewsletterID)
+	require.NoError(err)
+	days := int64(21)
+	for _, personID := range []int64{alice.ID, newsletter.ID} {
+		_, err = identityStore.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+			PersonID: personID, DefinitionSlug: store.AttributeSlugContactFrequency,
+			Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser,
+		})
+		require.NoError(err)
+	}
+
+	first := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"unknown","limit":1}`)
+	require.Equal(http.StatusOK, first.Code, first.Body.String())
+	var firstPage RelationshipsHTTPResponse
+	require.NoError(json.Unmarshal(first.Body.Bytes(), &firstPage))
+	require.NotEmpty(firstPage.NextCursor)
+
+	changedDays := int64(30)
+	_, err = identityStore.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+		PersonID: newsletter.ID, DefinitionSlug: store.AttributeSlugContactFrequency,
+		Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &changedDays}, Source: store.ProvenanceUser,
+	})
+	require.NoError(err)
+	secondRequest, err := json.Marshal(struct {
+		ShowAll bool   `json:"show_all"`
+		Cadence string `json:"cadence"`
+		Limit   int    `json:"limit"`
+		Cursor  string `json:"cursor"`
+	}{ShowAll: true, Cadence: "unknown", Limit: 1, Cursor: firstPage.NextCursor})
+	require.NoError(err)
+	second := postExploreJSON(t, srv, "/api/v1/relationships", string(secondRequest))
+	require.Equal(http.StatusConflict, second.Code, second.Body.String())
+	var apiErr ErrorResponse
+	require.NoError(json.Unmarshal(second.Body.Bytes(), &apiErr))
+	assert.Equal("cadence_revision_changed", apiErr.Error)
+}
+
+func TestRelationshipsCadenceFilterRanksAllRowsInOneAnalyzerCall(t *testing.T) {
+	engine := newRelationshipsDuckDBFixture(t, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC))
+	srv, _, analyzer := newRelationshipIdentityAPIServer(t, engine, []string{
+		relationshipIdentityIdentifier,
+		"alice@example.test",
+		"alice-chat@example.test",
+		"newsletter@example.test",
+	})
+	rows := make([]query.RelationshipRow, 501)
+	for index := range rows {
+		participantID := int64(index + 2)
+		rows[index] = query.RelationshipRow{CanonicalID: participantID, MemberIDs: []int64{participantID}}
+	}
+	analyzer.relationshipsFn = func(_ context.Context, request query.RelationshipsRequest) (*query.RelationshipsResponse, error) {
+		page := rows
+		if request.Limit != 0 {
+			end := min(request.Offset+request.Limit, len(rows))
+			page = rows[request.Offset:end]
+		}
+		return &query.RelationshipsResponse{Rows: page, TotalCount: int64(len(rows)), CacheRevision: "fixture", IdentityRevision: 1}, nil
+	}
+
+	response := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"unknown","limit":1}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, 1, analyzer.relationshipsCalls)
+}
+
+type recordingRelationshipDirectoryClockStore struct {
+	*store.Store
+
+	base        *store.Store
+	evaluatedAt []time.Time
+}
+
+func (s *recordingRelationshipDirectoryClockStore) DirectoryPeopleForParticipantsAtContext(
+	ctx context.Context, participantIDs []int64, evaluatedAt time.Time,
+) (map[int64]store.DirectoryPersonSummary, error) {
+	s.evaluatedAt = append(s.evaluatedAt, evaluatedAt)
+	return s.base.DirectoryPeopleForParticipantsAtContext(ctx, participantIDs, evaluatedAt)
 }
 
 type relationshipDirectoryErrorStore struct {
 	*store.Store
+
 	err error
 }
 
 func (s *relationshipDirectoryErrorStore) DirectoryPeopleForParticipantsContext(
-	context.Context, []int64,
+	ctx context.Context, participantIDs []int64,
+) (map[int64]store.DirectoryPersonSummary, error) {
+	return nil, s.err
+}
+
+func (s *relationshipDirectoryErrorStore) DirectoryPeopleForParticipantsAtContext(
+	ctx context.Context, participantIDs []int64, evaluatedAt time.Time,
 ) (map[int64]store.DirectoryPersonSummary, error) {
 	return nil, s.err
 }

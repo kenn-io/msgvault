@@ -32,7 +32,7 @@ func (b *PeopleBrowser) ListRelationships(
 	}
 	options := &generated.ListRelationshipsRequestOptions{
 		Body: &generated.ListRelationshipsBody{
-			ShowAll:       boolPointer(request.ShowAll),
+			ShowAll:       new(request.ShowAll),
 			Cursor:        optionalString(request.Cursor),
 			Limit:         optionalPositiveInt64(request.Limit),
 			Cadence:       relationshipCadencePointer(request.Cadence),
@@ -95,10 +95,6 @@ func relationshipRowFromGenerated(row generated.RelationshipRow) query.Relations
 	}
 	result.LastContactChannel = stringValue(row.LastContactChannel)
 	return result
-}
-
-func boolPointer(value bool) *bool {
-	return &value
 }
 
 func int64Pointer(value *int) *int64 {
