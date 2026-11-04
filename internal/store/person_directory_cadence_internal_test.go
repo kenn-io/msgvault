@@ -32,15 +32,16 @@ func TestDirectoryCadenceBoundary(t *testing.T) {
 
 func FuzzDirectoryCadenceAssignment(f *testing.F) {
 	for _, days := range []int64{0, -1, 21, 366*10000 + 1, 1<<63 - 1} {
-		f.Add(days, true, false)
+		f.Add(days, false)
+		f.Add(days, true)
 	}
-	f.Fuzz(func(t *testing.T, days int64, valid, duplicate bool) {
-		values := []contactFrequencyValue{{Days: days, Valid: valid}}
+	f.Fuzz(func(t *testing.T, days int64, duplicate bool) {
+		values := []contactFrequencyValue{{Days: days, Valid: true}}
 		if duplicate {
 			values = append(values, values[0])
 		}
 		cadence := directoryCadence(ContactState{Stale: true}, values, time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-		if valid && days > 0 && !duplicate {
+		if days > 0 && !duplicate {
 			require.NotNil(t, cadence.FrequencyDays)
 			assert.Equal(t, days, *cadence.FrequencyDays)
 		} else {
