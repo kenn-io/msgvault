@@ -26,6 +26,7 @@ type CalendarEventRow struct {
 	ProviderObservationOrder  int64
 	ProviderUpdatedAtUnixNano sql.NullInt64
 	ProviderSequence          sql.NullInt64
+	icsMetadata               calevent.ICSMetadata
 	SourceType                string
 	Subject                   string
 	ICalUID                   string
@@ -101,7 +102,33 @@ func calendarProviderMetadataNullableNumberExpression(d Dialect, column, key str
 	return "CASE WHEN json_valid(" + column + ") THEN CAST(json_extract(" + column + ", '$." + key + "') AS INTEGER) END"
 }
 
+func calendarProviderMetadataTextExpression(d Dialect, column, key string) string {
+	if d.DriverName() == postgresDriverName {
+		return "(" + column + " ->> '" + key + "')"
+	}
+	return "CASE WHEN json_valid(" + column + ") THEN json_extract(" + column + ", '$." + key + "') END"
+}
+
 func calendarEventSnapshotNewer(candidate, current CalendarEventRow) bool {
+	if candidate.rawFormat == rawFormatICS && current.rawFormat == rawFormatICS &&
+		candidate.icsMetadata.Version == 1 && current.icsMetadata.Version == 1 {
+		// ICS aliases can have distinct provider IDs for equivalent UTC and
+		// floating recurrence IDs. Their accepted revision metadata, rather
+		// than local import order, decides which snapshot is current.
+		if candidate.icsMetadata.Sequence != current.icsMetadata.Sequence {
+			return candidate.icsMetadata.Sequence > current.icsMetadata.Sequence
+		}
+		if !candidate.icsMetadata.Stamp.Equal(current.icsMetadata.Stamp) {
+			return candidate.icsMetadata.Stamp.After(current.icsMetadata.Stamp)
+		}
+		candidateCancelled := candidate.icsMetadata.Status == SyncStatusCancelled ||
+			candidate.icsMetadata.Status == "" && candidate.Event.Status == SyncStatusCancelled
+		currentCancelled := current.icsMetadata.Status == SyncStatusCancelled ||
+			current.icsMetadata.Status == "" && current.Event.Status == SyncStatusCancelled
+		if candidateCancelled != currentCancelled {
+			return candidateCancelled
+		}
+	}
 	if candidate.ProviderUpdatedAtUnixNano.Valid && current.ProviderUpdatedAtUnixNano.Valid && candidate.ProviderUpdatedAtUnixNano.Int64 != current.ProviderUpdatedAtUnixNano.Int64 {
 		return candidate.ProviderUpdatedAtUnixNano.Int64 > current.ProviderUpdatedAtUnixNano.Int64
 	}
@@ -203,8 +230,11 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 			e.StartWall = &value
 		}
 		if row.rawFormat == rawFormatICS {
-			if _, err := calevent.ParseICSMetadata([]byte(messageMetadata)); err != nil {
+			metadata, err := calevent.ParseICSMetadata([]byte(messageMetadata))
+			if err != nil {
 				row.evidenceError = "event data could not be decoded"
+			} else {
+				row.icsMetadata = metadata
 			}
 		}
 		if err := json.Unmarshal([]byte(recurrence), &e.Recurrence); err != nil {

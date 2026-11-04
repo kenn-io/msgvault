@@ -253,6 +253,45 @@ func TestMeetingLinksTwentyExactInstant(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), suggestions.Suggestions[0].Ref)
 }
 
+func TestMeetingLinksAutomaticICSUsesRevisionBeforeWindowFilter(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	requirements.NoError(st.UpdateSourceSyncConfig(source, `{"time_zone":"UTC"}`))
+
+	master := calendarDocument("REQUEST",
+		"SEQUENCE:0\r\nDTSTAMP:20270301T090000Z\r\n"+
+			"DTSTART:20270310T160000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=1\r\n"+
+			"ORGANIZER:mailto:organizer@example.test")
+	_, err := st.PersistICalendarContext(t.Context(), source, master)
+	requirements.NoError(err)
+
+	newerUTC := calendarDocument("REQUEST",
+		"SEQUENCE:2\r\nDTSTAMP:20270302T090000Z\r\n"+
+			"RECURRENCE-ID:20270310T160000Z\r\nDTSTART:20270310T180000Z\r\nDURATION:PT1H\r\n"+
+			"ORGANIZER:mailto:organizer@example.test")
+	newer, err := st.PersistICalendarContext(t.Context(), source, newerUTC)
+	requirements.NoError(err)
+	requirements.Len(newer.MessageIDs, 1)
+
+	olderFloating := calendarDocument("REQUEST",
+		"SEQUENCE:1\r\nDTSTAMP:20270301T080000Z\r\n"+
+			"RECURRENCE-ID:20270310T160000\r\nDTSTART:20270310T100000\r\nDURATION:PT1H\r\n"+
+			"ORGANIZER:mailto:organizer@example.test")
+	older, err := st.PersistICalendarContext(t.Context(), source, olderFloating)
+	requirements.NoError(err)
+	requirements.Len(older.MessageIDs, 1)
+	assertions.NotEqual(newer.MessageIDs[0], older.MessageIDs[0])
+
+	scheduledAt := `2027-03-10T18:00:00Z`
+	_, recording := projectionFixture(t, st, `recording`, `twenty_json`,
+		`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"family@example.com","startsAt":"`+scheduledAt+`"}}`)
+	links, err := st.MeetingLinksContext(t.Context(), recording)
+	requirements.NoError(err)
+	requirements.Len(links, 1)
+	assertions.Equal(time.Date(2027, 3, 10, 18, 0, 0, 0, time.UTC), links[0].Start)
+}
+
 func TestMeetingLinksSplitSurvivesReingest(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

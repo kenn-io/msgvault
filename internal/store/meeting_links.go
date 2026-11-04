@@ -403,6 +403,23 @@ func latestVisibleCalendarExceptionPredicate(d Dialect) string {
 	currentSequence := calendarProviderMetadataNullableNumberExpression(d, "m.metadata", "sequence")
 	updatedEqualOrUnknown := "(" + newerUpdated + " IS NULL OR " + currentUpdated + " IS NULL OR " + newerUpdated + " = " + currentUpdated + ")"
 	sequenceEqualOrUnknown := "(" + newerSequence + " IS NULL OR " + currentSequence + " IS NULL OR " + newerSequence + " = " + currentSequence + ")"
+	newerICSVersion := calendarProviderMetadataNullableNumberExpression(d, "newer_message.metadata", "ics_version")
+	currentICSVersion := calendarProviderMetadataNullableNumberExpression(d, "m.metadata", "ics_version")
+	newerICSSequence := "COALESCE(" + calendarProviderMetadataNullableNumberExpression(d, "newer_message.metadata", "ics_sequence") + ",0)"
+	currentICSSequence := "COALESCE(" + calendarProviderMetadataNullableNumberExpression(d, "m.metadata", "ics_sequence") + ",0)"
+	newerICSStamp := "COALESCE(" + calendarProviderMetadataTextExpression(d, "newer_message.metadata", "ics_stamp") + ",'0001-01-01T00:00:00Z')"
+	currentICSStamp := "COALESCE(" + calendarProviderMetadataTextExpression(d, "m.metadata", "ics_stamp") + ",'0001-01-01T00:00:00Z')"
+	newerICSStatus := "COALESCE(NULLIF(" + calendarProviderMetadataTextExpression(d, "newer_message.metadata", "status") + ",''),newer_event.status)"
+	currentICSStatus := "COALESCE(NULLIF(" + calendarProviderMetadataTextExpression(d, "m.metadata", "status") + ",''),e.status)"
+	newerICSCancelled := "CASE WHEN " + newerICSStatus + "='cancelled' THEN 1 ELSE 0 END"
+	currentICSCancelled := "CASE WHEN " + currentICSStatus + "='cancelled' THEN 1 ELSE 0 END"
+	newerIsICS := `(EXISTS (SELECT 1 FROM message_raw newer_raw WHERE newer_raw.message_id=newer_message.id AND newer_raw.raw_format='ics') AND ` + newerICSVersion + `=1)`
+	currentIsICS := `(EXISTS (SELECT 1 FROM message_raw current_raw WHERE current_raw.message_id=m.id AND current_raw.raw_format='ics') AND ` + currentICSVersion + `=1)`
+	// ICS DTSTAMP values are parsed as UTC at whole-second precision, so their RFC3339 JSON strings sort by instant.
+	icsRevisionNewer := `(` + newerICSSequence + `>` + currentICSSequence + ` OR (` + newerICSSequence + `=` + currentICSSequence + ` AND ` + newerICSStamp + `>` + currentICSStamp + `) OR (` + newerICSSequence + `=` + currentICSSequence + ` AND ` + newerICSStamp + `=` + currentICSStamp + ` AND ` + newerICSCancelled + `=1 AND ` + currentICSCancelled + `=0))`
+	icsRevisionTie := `(` + newerICSSequence + `=` + currentICSSequence + ` AND ` + newerICSStamp + `=` + currentICSStamp + ` AND ` + newerICSCancelled + `=` + currentICSCancelled + `)`
+	providerRevisionNewer := `((` + newerUpdated + ` IS NOT NULL AND ` + currentUpdated + ` IS NOT NULL AND ` + newerUpdated + ` > ` + currentUpdated + `) OR (` + updatedEqualOrUnknown + ` AND ` + newerSequence + ` IS NOT NULL AND ` + currentSequence + ` IS NOT NULL AND ` + newerSequence + ` > ` + currentSequence + `) OR (` + updatedEqualOrUnknown + ` AND ` + sequenceEqualOrUnknown + ` AND (newer_event.provider_observation_order > e.provider_observation_order OR (newer_event.provider_observation_order = e.provider_observation_order AND newer_event.message_id > m.id))))`
+	newerSnapshot := `CASE WHEN ` + newerIsICS + ` AND ` + currentIsICS + ` THEN (` + icsRevisionNewer + ` OR (` + icsRevisionTie + ` AND ` + providerRevisionNewer + `)) ELSE ` + providerRevisionNewer + ` END`
 	return `NOT EXISTS (
 		SELECT 1 FROM calendar_events newer_event
 		JOIN messages newer_message ON newer_message.id = newer_event.message_id
@@ -417,11 +434,7 @@ func latestVisibleCalendarExceptionPredicate(d Dialect) string {
 			SELECT 1 FROM source_merge_archive_only_messages newer_archive
 			WHERE newer_archive.message_id = newer_message.id
 		  )
-		  AND ((` + newerUpdated + ` IS NOT NULL AND ` + currentUpdated + ` IS NOT NULL AND ` + newerUpdated + ` > ` + currentUpdated + `)
-		    OR (` + updatedEqualOrUnknown + ` AND ` + newerSequence + ` IS NOT NULL AND ` + currentSequence + ` IS NOT NULL AND ` + newerSequence + ` > ` + currentSequence + `)
-		    OR (` + updatedEqualOrUnknown + ` AND ` + sequenceEqualOrUnknown + `
-		      AND (newer_event.provider_observation_order > e.provider_observation_order
-		        OR (newer_event.provider_observation_order = e.provider_observation_order AND newer_event.message_id > e.message_id))))
+		  AND ` + newerSnapshot + `
 	)`
 }
 

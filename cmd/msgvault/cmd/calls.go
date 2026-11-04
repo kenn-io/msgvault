@@ -94,7 +94,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 	}
 	root.AddCommand(importCommand)
 	for _, summary := range []bool{false, true} {
-		name, description := "list", "Inspect source observations and participant attendance"
+		name, description := "list", "List imported records and attendance"
 		if summary {
 			name, description = "summary", "Rank people by confirmed answered calls"
 		}

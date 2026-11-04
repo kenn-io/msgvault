@@ -38,7 +38,7 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		channel := `CASE WHEN m.message_type IN ('calendar_event','meeting_transcript') THEN 'meeting' WHEN m.message_type='call_record' THEN 'chat' WHEN c.conversation_type='email_thread' THEN 'email' WHEN c.conversation_type IN ('chat','group_chat','direct_chat','channel') THEN 'chat' ELSE 'other' END`
 		copyKey := `CASE WHEN ` + channel + `='email' THEN ` + s.activityCopyKeySQL(channel, "m.rfc822_message_id", "m.id") + ` ELSE '' END`
 		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT m.id,COALESCE(m.subject,''),COALESCE(m.snippet,''),m.hidden_text_present,
-   m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,src.source_type,m.message_type,`+copyKey+`
+	   m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,src.source_type,COALESCE(m.message_type,''),`+copyKey+`
    FROM messages m JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE m.id IN (`+marks+`) AND `+eligible+scope), args...)
 		if err != nil {
 			return nil, fmt.Errorf("read message display: %w", err)
