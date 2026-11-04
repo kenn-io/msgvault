@@ -45,7 +45,15 @@ export type ListDirectoryPeopleParams = {
    */
   last_contact_before?: string;
   /**
-   * Directory order: name, last_contact_desc, or last_contact_asc
+   * Cadence filter: overdue, due (includes overdue), no_list, or unknown
+   */
+  cadence?: string;
+  /**
+   * UTC days ahead for cadence=due, 0..3660 (default 0)
+   */
+  due_within_days?: number;
+  /**
+   * Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due
    */
   sort?: ListDirectoryPeopleSort;
 };

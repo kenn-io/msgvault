@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-04"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,10 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+### API schema 3.43.0
+
+- Contact lists turn `contact_frequency` into a reach-out queue. `msgvault person attributes set <id> contact_frequency --list A` sets the 21/60/180/365-day A/B/C/D presets, and `person directory --cadence overdue|due|no_list|unknown` with `--sort most_overdue|next_due` lists who is due. MCP `list_directory_people` takes the same filters, and `set_person_contact_list` sets a list after confirmation. See [contact lists](usage/people.md#keep-in-touch-with-contact-lists).
 
 ### API schema 3.40.0
 

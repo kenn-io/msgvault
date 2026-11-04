@@ -3749,8 +3749,55 @@ components:
         - source_identifier
         - source_message_id
       type: object
+    DirectoryCadence:
+      properties:
+        days_overdue:
+          format: int64
+          type: integer
+        due_at:
+          format: date-time
+          type: string
+        frequency_days:
+          format: int64
+          type: integer
+        list:
+          type: string
+        stale:
+          type: boolean
+        status:
+          type: string
+      required:
+        - status
+        - stale
+      type: object
+    DirectoryCadenceCoverage:
+      properties:
+        no_list:
+          format: int64
+          type: integer
+        scheduled:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+        unknown:
+          format: int64
+          type: integer
+      required:
+        - total
+        - no_list
+        - unknown
+        - scheduled
+      type: object
     DirectoryPeopleResponse:
       properties:
+        cadence_coverage:
+          $ref: "#/components/schemas/DirectoryCadenceCoverage"
+        cadence_presets:
+          items:
+            $ref: "#/components/schemas/Preset"
+          type: array
         next_cursor:
           type: string
         people:
@@ -3762,6 +3809,8 @@ components:
       type: object
     DirectoryPersonSummary:
       properties:
+        cadence:
+          $ref: "#/components/schemas/DirectoryCadence"
         carddav_bindings:
           items:
             $ref: "#/components/schemas/CardDAVBinding"
@@ -3780,12 +3829,16 @@ components:
         last_contact_at:
           format: date-time
           type: string
+        last_contact_channel:
+          type: string
         organizations:
           items:
             type: string
           type: array
         primary_channel:
           type: string
+        reach_out_context:
+          $ref: "#/components/schemas/DirectoryReachOutContext"
         revision:
           format: int64
           type: integer
@@ -3799,6 +3852,21 @@ components:
         - contact_state
         - categories
         - organizations
+      type: object
+    DirectoryReachOutContext:
+      properties:
+        awaiting_reply_count:
+          format: int64
+          type: integer
+        needs_reply_count:
+          format: int64
+          type: integer
+        open_loops_stale:
+          type: boolean
+        signals_stale:
+          type: boolean
+        suggested_list:
+          type: string
       type: object
     Disclosure:
       properties:
@@ -13744,6 +13812,17 @@ components:
       required:
         - ok
       type: object
+    Preset:
+      properties:
+        days:
+          format: int64
+          type: integer
+        list:
+          type: string
+      required:
+        - list
+        - days
+      type: object
     Progress:
       properties:
         done:
@@ -15044,6 +15123,7 @@ components:
           format: double
           type: number
         expected_value_id:
+          description: Positive ID compares the current value; zero requires no current value
           format: int64
           type: integer
         ordinal:
@@ -16849,7 +16929,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.42.0
+  version: 3.43.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -27077,7 +27157,18 @@ paths:
           schema:
             format: date-time
             type: string
-        - description: "Directory order: name, last_contact_desc, or last_contact_asc"
+        - description: "Cadence filter: overdue, due (includes overdue), no_list, or unknown"
+          in: query
+          name: cadence
+          schema:
+            type: string
+        - description: UTC days ahead for cadence=due, 0..3660 (default 0)
+          in: query
+          name: due_within_days
+          schema:
+            format: int64
+            type: integer
+        - description: "Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due"
           in: query
           name: sort
           schema:
@@ -27085,6 +27176,8 @@ paths:
               - name
               - last_contact_desc
               - last_contact_asc
+              - most_overdue
+              - next_due
             type: string
       responses:
         "200":

@@ -3032,12 +3032,14 @@ const (
 	LastContactAsc                   ListDirectoryPeopleQuerySort = "last_contact_asc"
 	LastContactDesc                  ListDirectoryPeopleQuerySort = "last_contact_desc"
 	ListDirectoryPeopleQuerySortName ListDirectoryPeopleQuerySort = "name"
+	MostOverdue                      ListDirectoryPeopleQuerySort = "most_overdue"
+	NextDue                          ListDirectoryPeopleQuerySort = "next_due"
 )
 
 // Validate checks if the ListDirectoryPeopleQuerySort value is valid
 func (l ListDirectoryPeopleQuerySort) Validate() error {
 	switch l {
-	case LastContactAsc, LastContactDesc, ListDirectoryPeopleQuerySortName:
+	case LastContactAsc, LastContactDesc, ListDirectoryPeopleQuerySortName, MostOverdue, NextDue:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListDirectoryPeopleQuerySort value, got: %v", l))

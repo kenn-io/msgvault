@@ -31,16 +31,17 @@ type PersonAttributeValue struct {
 
 // PersonAttributeValueInput sets one typed person attribute value.
 type PersonAttributeValueInput struct {
-	PersonID        int64
-	DefinitionSlug  string
-	Ordinal         *int64
-	Value           AttributeValue
-	ActiveFrom      *time.Time
-	ActiveUntil     *time.Time
-	Source          Provenance
-	SourceRef       *string
-	Confidence      *float64
-	Actor           *string
+	PersonID       int64
+	DefinitionSlug string
+	Ordinal        *int64
+	Value          AttributeValue
+	ActiveFrom     *time.Time
+	ActiveUntil    *time.Time
+	Source         Provenance
+	SourceRef      *string
+	Confidence     *float64
+	Actor          *string
+	// ExpectedValueID compares the current slot; zero requires an empty slot.
 	ExpectedValueID *int64
 	DryRun          bool
 }

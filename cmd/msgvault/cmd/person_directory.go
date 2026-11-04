@@ -17,7 +17,8 @@ import (
 )
 
 func newPersonDirectoryCommand() *cobra.Command {
-	var after, before, sort, cursor, queryText, address string
+	var after, before, sort, cursor, queryText, address, cadence string
+	var dueWithinDays int64
 	var jsonOutput bool
 	command := &cobra.Command{
 		Use:   "directory",
@@ -36,6 +37,20 @@ Filters combine to narrow the existing Directory page.`,
 			if err != nil {
 				return err
 			}
+			switch cadence {
+			case "", "overdue", "due", "no_list", "unknown":
+			default:
+				return usageErr(cmd, errors.New("--cadence: must be overdue, due, no_list, or unknown"))
+			}
+			if cmd.Flags().Changed("due-within-days") {
+				if cadence != "due" || dueWithinDays < 0 || dueWithinDays > 3660 {
+					return usageErr(cmd, errors.New("--due-within-days requires --cadence due and a value from 0 to 3660"))
+				}
+				query.DueWithinDays = &dueWithinDays
+			}
+			if cadence != "" {
+				query.Cadence = &cadence
+			}
 			client, _, err := OpenHTTPStore(cmd.Context())
 			if err != nil {
 				return err
@@ -43,6 +58,15 @@ Filters combine to narrow the existing Directory page.`,
 			defer func() { _ = client.Close() }()
 			if err := client.RequireDirectoryAddress(cmd.Context(), address); err != nil {
 				return err
+			}
+			if cadence != "" || query.DueWithinDays != nil || sort == "most_overdue" || sort == "next_due" {
+				supported, err := client.SupportsAPISchemaVersion(cmd.Context(), daemonclient.DirectoryCadenceMinAPISchemaVersion)
+				if err != nil {
+					return err
+				}
+				if !supported {
+					return errors.New("upgrade the daemon to use contact-list filters or sorting")
+				}
 			}
 			response, err := daemonclient.APIResponse(client,
 				func(api *apiclient.Client) (*generated.ListDirectoryPeopleResp, error) {
@@ -56,9 +80,11 @@ Filters combine to narrow the existing Directory page.`,
 	}
 	command.Flags().StringVar(&queryText, "query", "", "Lexical query over current curated names, contact points, and organizations")
 	command.Flags().StringVar(&address, "address", "", "Literal case-insensitive address or identifier substring (saved people only)")
+	command.Flags().StringVar(&cadence, "cadence", "", "Filter: overdue, due, no_list, or unknown")
+	command.Flags().Int64Var(&dueWithinDays, "due-within-days", 0, "UTC days ahead for --cadence due (0..3660)")
 	command.Flags().StringVar(&after, "last-contact-after", "", "Contacted at or after this inclusive date (YYYY-MM-DD or RFC3339)")
 	command.Flags().StringVar(&before, "last-contact-before", "", "Contacted at or before this inclusive date (YYYY-MM-DD or RFC3339)")
-	command.Flags().StringVar(&sort, "sort", string(generated.LastContactDesc), "Directory order: name, last_contact_desc, or last_contact_asc")
+	command.Flags().StringVar(&sort, "sort", string(generated.LastContactDesc), "Directory order: name, last_contact_desc, last_contact_asc, most_overdue, or next_due")
 	command.Flags().StringVar(&cursor, "cursor", "", "Opaque cursor from the previous page")
 	command.Flags().BoolVar(&jsonOutput, flagJSON, false, "Output the Directory page as JSON")
 	return command
@@ -78,7 +104,7 @@ func personDirectoryQuery(cmd *cobra.Command, after, before, sort, cursor, query
 	}
 	order := generated.ListDirectoryPeopleQuerySort(sort)
 	if err := order.Validate(); err != nil {
-		return nil, usageErr(cmd, errors.New("--sort: must be name, last_contact_desc, or last_contact_asc"))
+		return nil, usageErr(cmd, errors.New("--sort: must be name, last_contact_desc, last_contact_asc, most_overdue, or next_due"))
 	}
 	query := &generated.ListDirectoryPeopleQuery{LastContactAfter: lower, LastContactBefore: upper, Sort: &order}
 	if queryText != "" {
@@ -101,9 +127,21 @@ func writePersonDirectoryPage(cmd *cobra.Command, page *generated.DirectoryPeopl
 		return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), page, json.Deterministic(true))
 	}
 	writer := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "ID\tDISPLAY NAME\tLAST CONTACT")
+	_, _ = fmt.Fprintln(writer, "ID\tDISPLAY NAME\tLIST\tLAST CONTACT\tDUE\tSTATUS")
 	for _, person := range page.People {
-		_, _ = fmt.Fprintf(writer, "%d\t%s\t%s\n", person.ID, personDisplayName(person.DisplayName), personDirectoryLastContact(person.LastContactAt))
+		list, due, status := "-", "-", "unknown"
+		if cadence := person.Cadence; cadence != nil {
+			if cadence.List != nil && *cadence.List != "" {
+				list = textutil.SanitizeTerminal(*cadence.List)
+			} else if cadence.FrequencyDays != nil {
+				list = fmt.Sprintf("%d days", *cadence.FrequencyDays)
+			}
+			due = personDirectoryLastContact(cadence.DueAt)
+			if cadence.Status != "" {
+				status = textutil.SanitizeTerminal(cadence.Status)
+			}
+		}
+		_, _ = fmt.Fprintf(writer, "%d\t%s\t%s\t%s\t%s\t%s\n", person.ID, personDisplayName(person.DisplayName), list, personDirectoryLastContact(person.LastContactAt), due, status)
 	}
 	if err := writer.Flush(); err != nil {
 		return fmt.Errorf("write person directory: %w", err)

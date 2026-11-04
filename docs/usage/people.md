@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-04"
 title: People and Profiles
 description: Find people across your archive, keep their details together, and understand your contact history.
 ---
@@ -198,6 +198,34 @@ msgvault person directory --last-contact-after 2026-06-01 --cursor "<next_cursor
 ```
 
 `person list` continues to show the full unpaginated profile collection. Its `--json` output remains an array of profiles.
+
+### Keep in touch with contact lists
+
+A contact list is the person's `contact_frequency` attribute, an interval in days. Lists A, B, C and D are 21, 60, 180 and 365 days. Any other interval stays a custom list. Set a list with `person attributes set`; `--list` writes the matching interval through the same audited attribute writer:
+
+```bash
+msgvault person attributes set 7 contact_frequency --list A
+msgvault person attributes set 7 contact_frequency --value 45
+```
+
+The Directory derives each person's due date from their last contact plus the interval. Nothing else is stored. Filter and order the roster by that cadence to get a reach-out queue:
+
+```bash
+msgvault person directory --cadence overdue --sort most_overdue
+msgvault person directory --cadence due --due-within-days 7 --sort next_due
+msgvault person directory --cadence no_list
+```
+
+| `--cadence` | Matches |
+|---|---|
+| `overdue` | Due date has passed |
+| `due` | Due on or before the end of the UTC date `--due-within-days` days from today (0 to 3660) |
+| `no_list` | No contact list |
+| `unknown` | Has a list but no trustworthy due date: no last contact yet, or contact state is still being recomputed |
+
+`most_overdue` and `next_due` both put the earliest due date first; people without a due date come last. Cadence filters combine with the other Directory filters, and each page carries the presets and a coverage count of the matching people before the cadence filter. A stale contact projection never produces a due date, so a person whose contact state is being recomputed reads as `unknown` until it settles. Cadence filters and sorts require daemon API schema 3.43.0; the CLI reports an upgrade error for older daemons.
+
+MCP clients read the same queue through `list_directory_people` and set lists with `set_person_contact_list`. Signal tiers never assign a list automatically.
 
 ## Keep private notes
 

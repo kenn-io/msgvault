@@ -890,34 +890,32 @@ func listCurrentContactFrequencyTx(
 		); err != nil {
 			return nil, fmt.Errorf("scan contact frequency: %w", err)
 		}
-		value := contactFrequencyValue{}
-		populated := 0
-		for _, field := range []sql.NullString{
-			text, integer, realValue, boolean, date,
-			timestamp, jsonValue, recordID,
-		} {
-			if field.Valid {
-				populated++
-			}
-		}
-		if recordType.Valid != recordID.Valid {
-			populated++
-		}
-		if valueType == string(AttributeValueInteger) &&
-			populated == 1 &&
-			integer.Valid {
-			days, parseErr := strconv.ParseInt(integer.String, 10, 64)
-			if parseErr == nil {
-				value.Days = days
-				value.Valid = true
-			}
-		}
+		value := decodeContactFrequency(valueType, [9]sql.NullString{text, integer, realValue, boolean, date, timestamp, jsonValue, recordType, recordID})
 		values = append(values, value)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate contact frequency: %w", err)
 	}
 	return values, nil
+}
+
+func decodeContactFrequency(valueType string, fields [9]sql.NullString) contactFrequencyValue {
+	populated := 0
+	for index, field := range fields {
+		if index != 7 && field.Valid {
+			populated++
+		}
+	}
+	if fields[7].Valid != fields[8].Valid {
+		populated++
+	}
+	if valueType == string(AttributeValueInteger) && populated == 1 && fields[1].Valid {
+		days, err := strconv.ParseInt(fields[1].String, 10, 64)
+		if err == nil {
+			return contactFrequencyValue{Days: days, Valid: true}
+		}
+	}
+	return contactFrequencyValue{}
 }
 
 type contactFrequencyValue struct {

@@ -3612,13 +3612,49 @@ func (d DeletionTarget) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(d))
 }
 
+type DirectoryCadence struct {
+	DaysOverdue   *int64     `json:"days_overdue,omitempty"`
+	DueAt         *time.Time `json:"due_at,omitempty"`
+	FrequencyDays *int64     `json:"frequency_days,omitempty"`
+	List          *string    `json:"list,omitzero"`
+	Stale         bool       `json:"stale"`
+	Status        string     `json:"status" validate:"required"`
+}
+
+func (d DirectoryCadence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(d))
+}
+
+type DirectoryCadenceCoverage struct {
+	NoList    int64 `json:"no_list"`
+	Scheduled int64 `json:"scheduled"`
+	Total     int64 `json:"total"`
+	Unknown   int64 `json:"unknown"`
+}
+
 type DirectoryPeopleResponse struct {
-	NextCursor *string                  `json:"next_cursor,omitzero"`
-	People     []DirectoryPersonSummary `json:"people" validate:"required"`
+	CadenceCoverage *DirectoryCadenceCoverage `json:"cadence_coverage,omitempty"`
+	CadencePresets  []Preset                  `json:"cadence_presets,omitempty"`
+	NextCursor      *string                   `json:"next_cursor,omitzero"`
+	People          []DirectoryPersonSummary  `json:"people" validate:"required"`
 }
 
 func (d DirectoryPeopleResponse) Validate() error {
 	var errors runtime.ValidationErrors
+	if d.CadenceCoverage != nil {
+		if v, ok := any(d.CadenceCoverage).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("CadenceCoverage", err)
+			}
+		}
+	}
+	for i, item := range d.CadencePresets {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("CadencePresets[%d]", i), err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.People, "required"); err != nil {
 		errors = errors.Append("People", err)
 	}
@@ -3636,20 +3672,30 @@ func (d DirectoryPeopleResponse) Validate() error {
 }
 
 type DirectoryPersonSummary struct {
-	CarddavBindings []CardDAVBinding `json:"carddav_bindings" validate:"required"`
-	Categories      []string         `json:"categories" validate:"required"`
-	ContactState    string           `json:"contact_state" validate:"required"`
-	DisplayName     *string          `json:"display_name,omitzero"`
-	ID              int64            `json:"id"`
-	LastContactAt   *time.Time       `json:"last_contact_at,omitempty"`
-	Organizations   []string         `json:"organizations" validate:"required"`
-	PrimaryChannel  *string          `json:"primary_channel,omitzero"`
-	Revision        int64            `json:"revision"`
-	VcardUID        string           `json:"vcard_uid" validate:"required"`
+	Cadence            *DirectoryCadence         `json:"cadence,omitempty"`
+	CarddavBindings    []CardDAVBinding          `json:"carddav_bindings" validate:"required"`
+	Categories         []string                  `json:"categories" validate:"required"`
+	ContactState       string                    `json:"contact_state" validate:"required"`
+	DisplayName        *string                   `json:"display_name,omitzero"`
+	ID                 int64                     `json:"id"`
+	LastContactAt      *time.Time                `json:"last_contact_at,omitempty"`
+	LastContactChannel *string                   `json:"last_contact_channel,omitzero"`
+	Organizations      []string                  `json:"organizations" validate:"required"`
+	PrimaryChannel     *string                   `json:"primary_channel,omitzero"`
+	ReachOutContext    *DirectoryReachOutContext `json:"reach_out_context,omitempty"`
+	Revision           int64                     `json:"revision"`
+	VcardUID           string                    `json:"vcard_uid" validate:"required"`
 }
 
 func (d DirectoryPersonSummary) Validate() error {
 	var errors runtime.ValidationErrors
+	if d.Cadence != nil {
+		if v, ok := any(d.Cadence).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cadence", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.CarddavBindings, "required"); err != nil {
 		errors = errors.Append("CarddavBindings", err)
 	}
@@ -3669,6 +3715,13 @@ func (d DirectoryPersonSummary) Validate() error {
 	if err := typesValidator.Var(d.Organizations, "required"); err != nil {
 		errors = errors.Append("Organizations", err)
 	}
+	if d.ReachOutContext != nil {
+		if v, ok := any(d.ReachOutContext).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReachOutContext", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(d.VcardUID, "required"); err != nil {
 		errors = errors.Append("VcardUID", err)
 	}
@@ -3676,6 +3729,14 @@ func (d DirectoryPersonSummary) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type DirectoryReachOutContext struct {
+	AwaitingReplyCount *int64  `json:"awaiting_reply_count,omitempty"`
+	NeedsReplyCount    *int64  `json:"needs_reply_count,omitempty"`
+	OpenLoopsStale     *bool   `json:"open_loops_stale,omitempty"`
+	SignalsStale       *bool   `json:"signals_stale,omitempty"`
+	SuggestedList      *string `json:"suggested_list,omitzero"`
 }
 
 type Disclosure struct {
@@ -13772,6 +13833,15 @@ type PingInfo struct {
 	Version *string `json:"version,omitzero"`
 }
 
+type Preset struct {
+	Days int64  `json:"days"`
+	List string `json:"list" validate:"required"`
+}
+
+func (p Preset) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
 type Progress struct {
 	Done  int64 `json:"done"`
 	Total int64 `json:"total"`
@@ -15039,10 +15109,12 @@ func (s SetOrganizationAttributeBody) Validate() error {
 }
 
 type SetPersonAttributeRequest struct {
-	ActiveFrom      *time.Time                       `json:"active_from,omitempty"`
-	ActiveUntil     *time.Time                       `json:"active_until,omitempty"`
-	Actor           *string                          `json:"actor,omitzero"`
-	Confidence      *float64                         `json:"confidence,omitempty"`
+	ActiveFrom  *time.Time `json:"active_from,omitempty"`
+	ActiveUntil *time.Time `json:"active_until,omitempty"`
+	Actor       *string    `json:"actor,omitzero"`
+	Confidence  *float64   `json:"confidence,omitempty"`
+
+	// ExpectedValueID Positive ID compares the current value; zero requires no current value
 	ExpectedValueID *int64                           `json:"expected_value_id,omitempty"`
 	Ordinal         *int64                           `json:"ordinal,omitempty"`
 	Source          *SetPersonAttributeRequestSource `json:"source,omitempty"`

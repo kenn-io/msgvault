@@ -253,3 +253,14 @@ var _ peoplebrowser.Backend = (*directoryCapabilityOnlyBackend)(nil)
 var _ peoplebrowser.Backend = (*profileOnlyPeopleBackend)(nil)
 var _ peoplebrowser.ProfileLister = (*profileOnlyPeopleBackend)(nil)
 var _ peoplebrowser.ProfileReader = (*profileOnlyPeopleBackend)(nil)
+
+func TestMCPDirectoryCadence(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	backend := &directoryPeopleBackend{page: &store.DirectoryPeoplePage{People: []store.DirectoryPersonSummary{}}}
+	result := rawCallTool(t, directoryToolOptions(backend), ToolListDirectoryPeople, map[string]any{"cadence": "due", "due_within_days": 7, "sort": "most_overdue"})
+	require.NotEqual(true, result["isError"], "result: %#v", result)
+	assert.Equal("due", backend.query.Cadence)
+	require.NotNil(backend.query.DueWithinDays)
+	assert.Equal(7, *backend.query.DueWithinDays)
+}
