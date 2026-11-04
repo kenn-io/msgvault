@@ -439,7 +439,7 @@ func TestSearchMessageBodies_HTMLOnlyUsesStrippedHTML(t *testing.T) {
 	assert.NotContains(messages.Messages[0].BodyContextSnippets[0], "<p>")
 }
 
-func TestSearchMessageBodies_TruncatedHTMLHidesOpenStyleContent(t *testing.T) {
+func TestSearchMessageBodies_SkipsOversizedHTMLContext(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
@@ -460,9 +460,7 @@ func TestSearchMessageBodies_TruncatedHTMLHidesOpenStyleContent(t *testing.T) {
 	require.NoError(err, "SearchMessageBodies")
 	require.Len(messages.Messages, 1)
 	assert.Equal(messageID, messages.Messages[0].ID)
-	require.NotEmpty(messages.Messages[0].BodyContextSnippets)
-	assert.Contains(messages.Messages[0].BodyContextSnippets[0], "prefixneedle")
-	assert.NotContains(messages.Messages[0].BodyContextSnippets[0], "hiddenstylesentinel")
+	assert.Empty(messages.Messages[0].BodyContextSnippets)
 	assert.True(messages.Messages[0].BodyContextSnippetsTruncated)
 }
 

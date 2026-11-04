@@ -78,7 +78,7 @@ var (
 	codePattern           = regexp.MustCompile(`(?:[A-Z]-[0-9]{4,8}|[0-9]{3}[ -][0-9]{3}|[A-Z0-9]{4,8})`)
 	urlPattern            = regexp.MustCompile(`(?i)https?://[^\s\p{Z}\x{0085}\v<>"'\x60]+`)
 	tokenPattern          = regexp.MustCompile(`^[A-Za-z0-9_-]{16,}$`)
-	codeWordPattern       = regexp.MustCompile(`\bcode\b`)
+	reverseCodePattern    = regexp.MustCompile(`^[\s\p{Z},:;]*(?:(?:verification|security|sign[- ]in|login|authentication|one[- ]time|confirmation|account|access)[\s\p{Z}-]+)?code\b`)
 	credentialWordPattern = regexp.MustCompile(`\b(?:code|password|passcode|otp|pin)\b`)
 	expiryPattern         = regexp.MustCompile(`(?i)(?:expires? in|valid for)\s+([0-9]{1,5})\s+(minutes?|mins?|hours?|hrs?|seconds?|secs?)\b`)
 )
@@ -155,25 +155,21 @@ func genericSignInCue(text string) bool {
 
 const (
 	genericSignInProximityRunes = 12
-	genericSignInMaxCueBytes    = len("login link")
 )
 
 // genericSignInPrecedesCode treats a bare sign-in cue as evidence only when a
 // candidate code follows it directly. Navigation text such as "Sign in to
 // view order 482913" must not turn an order number into a credential.
-func genericSignInPrecedesCode(text string, codeStart int, matches []cueMatch) bool {
-	if codeStart < 0 || codeStart > len(text) || len(matches) == 0 {
+func genericSignInPrecedesCode(text string, codeStart int, matchesByEnd []cueMatch) bool {
+	if codeStart < 0 || codeStart > len(text) || len(matchesByEnd) == 0 {
 		return false
 	}
 	maxGapBytes := genericSignInProximityRunes * utf8.UTFMax
-	minimumStart := max(0, codeStart-maxGapBytes-genericSignInMaxCueBytes)
-	first := sort.Search(len(matches), func(i int) bool { return matches[i].start >= minimumStart })
-	last := sort.Search(len(matches), func(i int) bool { return matches[i].start >= codeStart })
+	minimumEnd := max(0, codeStart-maxGapBytes)
+	first := sort.Search(len(matchesByEnd), func(i int) bool { return matchesByEnd[i].end >= minimumEnd })
+	last := sort.Search(len(matchesByEnd), func(i int) bool { return matchesByEnd[i].end > codeStart })
 	for i := last - 1; i >= first; i-- {
-		cue := matches[i]
-		if cue.end > codeStart {
-			continue
-		}
+		cue := matchesByEnd[i]
 		if codeStart-cue.end > maxGapBytes {
 			continue
 		}
@@ -184,12 +180,27 @@ func genericSignInPrecedesCode(text string, codeStart int, matches []cueMatch) b
 	return false
 }
 
-func genericSignInDescribesLink(text string, start, end int, matches []cueMatch) bool {
-	for _, cue := range matches {
-		if cue.start >= start && cue.end <= end {
+func genericSignInDescribesLink(text string, start, end int, matchesByStart, matchesByEnd []cueMatch) bool {
+	if start < 0 || end < start || end > len(text) || len(matchesByStart) == 0 {
+		return false
+	}
+	firstInside := sort.Search(len(matchesByStart), func(i int) bool { return matchesByStart[i].start >= start })
+	for i := firstInside; i < len(matchesByStart) && matchesByStart[i].start < end; i++ {
+		if matchesByStart[i].end <= end {
 			return true
 		}
-		if cue.end <= start && separatorsOnlyBetween(text, cue.end, start, genericSignInProximityRunes) {
+	}
+
+	// Only cues within the bounded separator window can introduce this link.
+	// Searching that window keeps each repeated-anchor lookup bounded instead
+	// of rescanning every preceding cue for every link.
+	maxGapBytes := genericSignInProximityRunes * utf8.UTFMax
+	minimumEnd := max(0, start-maxGapBytes)
+	firstPreceding := sort.Search(len(matchesByEnd), func(i int) bool { return matchesByEnd[i].end >= minimumEnd })
+	lastPreceding := sort.Search(len(matchesByEnd), func(i int) bool { return matchesByEnd[i].end > start })
+	for i := lastPreceding - 1; i >= firstPreceding; i-- {
+		cue := matchesByEnd[i]
+		if start-cue.end <= maxGapBytes && separatorsOnlyBetween(text, cue.end, start, genericSignInProximityRunes) {
 			return true
 		}
 	}
@@ -213,18 +224,17 @@ func separatorsOnlyBetween(text string, start, end, maxRunes int) bool {
 }
 
 func hasCodeAfter(text string, start int, urls [][]int) bool {
-	for _, loc := range codeWordPattern.FindAllStringIndex(text[start:min(len(text), start+60)], -1) {
-		begin, end := start+loc[0], start+loc[1]
-		if !wordBoundary(text, begin, end) {
-			continue
-		}
-		index := sort.Search(len(urls), func(i int) bool { return urls[i][1] > begin })
-		if index < len(urls) && end > urls[index][0] {
-			continue
-		}
-		return true
+	if start < 0 || start > len(text) {
+		return false
 	}
-	return false
+	limit := min(len(text), start+60)
+	loc := reverseCodePattern.FindStringIndex(text[start:limit])
+	if loc == nil {
+		return false
+	}
+	begin, end := start+loc[0], start+loc[1]
+	index := sort.Search(len(urls), func(i int) bool { return urls[i][1] > begin })
+	return index == len(urls) || end <= urls[index][0]
 }
 
 func hasCredentialAfter(text string, start int, urls [][]int) bool {
@@ -484,11 +494,13 @@ func Detect(in Input) *Finding {
 		var linkMatches []cueMatch
 		var codeMatches []cueMatch
 		var genericSignInMatches []cueMatch
+		var genericSignInMatchesByEnd []cueMatch
 		for _, c := range matches {
 			if c.kind == kindOTPCode {
 				codeMatches = append(codeMatches, c)
 			} else if genericSignInCue(c.text) {
 				genericSignInMatches = append(genericSignInMatches, c)
+				genericSignInMatchesByEnd = append(genericSignInMatchesByEnd, c)
 			} else {
 				c.maxEnd = c.end
 				if len(linkMatches) > 0 {
@@ -500,6 +512,12 @@ func Detect(in Input) *Finding {
 				f.Kind = c.kind
 			}
 		}
+		sort.SliceStable(genericSignInMatchesByEnd, func(i, j int) bool {
+			if genericSignInMatchesByEnd[i].end == genericSignInMatchesByEnd[j].end {
+				return genericSignInMatchesByEnd[i].start < genericSignInMatchesByEnd[j].start
+			}
+			return genericSignInMatchesByEnd[i].end < genericSignInMatchesByEnd[j].end
+		})
 		if len(matches) > 0 {
 			signal := "body_cue"
 			if fieldIndex == 0 {
@@ -547,7 +565,7 @@ func Detect(in Input) *Finding {
 			end := normalizedAt[loc[1]]
 			if nearCue(text, start, end, codeMatches) {
 				add(Secret{Kind: "code", Value: value})
-			} else if genericSignInPrecedesCode(text, start, genericSignInMatches) {
+			} else if genericSignInPrecedesCode(text, start, genericSignInMatchesByEnd) {
 				add(Secret{Kind: "code", Value: value})
 				if f.Kind == "" {
 					f.Kind = kindOTPCode
@@ -567,7 +585,7 @@ func Detect(in Input) *Finding {
 			start := normalizedAt[link.start]
 			end := normalizedAt[link.end]
 			linkContext := nearCue(text, start, end, linkMatches) ||
-				genericSignInDescribesLink(text, start, end, genericSignInMatches)
+				genericSignInDescribesLink(text, start, end, genericSignInMatches, genericSignInMatchesByEnd)
 			// Explicit link context can identify an opaque credential URL even
 			// when its endpoint is generic. Generic sign-in cues must directly
 			// introduce a URL or be its anchor text; nearby navigation is not link context.

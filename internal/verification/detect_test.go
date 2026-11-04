@@ -52,6 +52,8 @@ func TestDetectCorpus(t *testing.T) {
 		{"generic sign-in navigation", "Your order is confirmed. Sign in to view your order: https://shop.example.test/login?return=%2Forders", "", "", 0},
 		{"generic sign-in footer near order UUID", "Your order is confirmed: https://shop.example.test/orders/550e8400-e29b-41d4-a716-446655440000. Sign in to view your account.", "", "", 0},
 		{"generic sign-in date", "Order date: 2026-11-03. Sign in to view your order.", "", "", 0},
+		{"ordinary QR-code invoice", "This is your invoice. Scan the QR code below.", "", "", 0},
+		{"QR-code invoice reference", "This is your invoice. Scan the QR code below. Reference 482913", "", "", 0},
 		{"one-time payment", "This is a one-time payment for your order.", "", "", 0},
 		{"one time purchase", "Your one time purchase is confirmed.", "", "", 0},
 		{"invoice", "Invoice 482913 total $154.00", "", "", 0},
@@ -259,6 +261,24 @@ func TestHTMLLinkCuesAcrossInlineTags(t *testing.T) {
 	}
 }
 
+func TestRepeatedGenericSignInAnchorsRemainDetectable(t *testing.T) {
+	const anchor = `<p><a href="https://example.com/go?token=abcdefghijklmnop">Sign in</a></p>`
+	f := Detect(Input{BodyHTML: strings.Repeat(anchor, 128)})
+	require.NotNil(t, f)
+	assert.Equal(t, "magic_link", f.Kind)
+	assert.Equal(t, []Secret{{Kind: "link", Value: "https://example.com/go?token=abcdefghijklmnop", Host: "example.com"}}, f.Values)
+}
+
+func BenchmarkDetectRepeatedSignInAnchors(b *testing.B) {
+	const anchor = `<p><a href="https://example.com/go?token=abcdefghijklmnop">Sign in</a></p>`
+	in := Input{BodyHTML: strings.Repeat(anchor, 1_000)}
+	b.SetBytes(int64(len(in.BodyHTML)))
+	b.ReportAllocs()
+	for b.Loop() {
+		Detect(in)
+	}
+}
+
 func TestDeepHTMLRetainsCodesAndLinks(t *testing.T) {
 	f := Detect(Input{BodyHTML: strings.Repeat("<div>", 600) + `Your verification code is 482913. <a href="https://example.com/login?id=729415">Sign <b>in</b></a>` + strings.Repeat("</div>", 600)})
 	require.NotNil(t, f)
@@ -331,6 +351,9 @@ func TestWhitespaceExpandedCuesRetainNearbyValues(t *testing.T) {
 			f = Detect(Input{BodyText: "Sign" + gap + "in: https://example.com/login?id=482913"})
 			require.NotNil(f)
 			assert.Equal([]Secret{{Kind: "link", Value: "https://example.com/login?id=482913", Host: "example.com"}}, f.Values)
+			f = Detect(Input{BodyText: "Sign" + gap + "in: 482913"})
+			require.NotNil(f)
+			assert.Equal([]Secret{{Kind: "code", Value: "482913"}}, f.Values)
 		})
 	}
 }

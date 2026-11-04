@@ -89,16 +89,18 @@ func TestBodyContextHiddenHTMLPrefixBoundaryNeedsVisibleSeparator(t *testing.T) 
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			plain, hiddenAtEnd, visibleSeparatorAtEnd := mime.StripHTMLPrefixWithBoundaryState(tc.html)
-			require.True(t, hiddenAtEnd)
-			assert.Equal(t, "needle", plain)
-			assert.Equal(t, tc.wantVisibleSeparator, visibleSeparatorAtEnd)
+			require.True(hiddenAtEnd)
+			assert.Equal("needle", plain)
+			assert.Equal(tc.wantVisibleSeparator, visibleSeparatorAtEnd)
 
 			state := bodyContextSourceState{spanBoundaryTruncated: hiddenAtEnd && !visibleSeparatorAtEnd}
 			chunk := bodyContextChunk{
 				body: plain, end: len(plain), coreEnd: len(plain),
 			}
-			assert.Equal(t, tc.wantSpanAtEndIsSafe, bodyContextSpanIsSafe(
+			assert.Equal(tc.wantSpanAtEndIsSafe, bodyContextSpanIsSafe(
 				chunk, bodyContextSpan{start: 0, end: len(plain)}, state,
 			))
 		})
@@ -114,17 +116,19 @@ func TestLoadBodyContextChunksSkipsOversizedBodies(t *testing.T) {
 		{name: "html", bodyHTML: strings.Repeat("<p>large body</p>", 32)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			db := metadataSearchDB(t)
 			_, err := db.Exec(`INSERT INTO message_bodies(message_id, body_text, body_html) VALUES (1, ?, ?)`,
 				tc.bodyText, tc.bodyHTML)
-			require.NoError(t, err)
+			require.NoError(err)
 
 			states, _, bodies, err := NewSQLiteEngine(db).loadBodyContextChunks(
 				t.Context(), []int64{1}, 32,
 			)
-			require.NoError(t, err)
-			assert.Empty(t, bodies[1])
-			assert.True(t, states[1].scanTruncated)
+			require.NoError(err)
+			assert.Empty(bodies[1])
+			assert.True(states[1].scanTruncated)
 		})
 	}
 }
