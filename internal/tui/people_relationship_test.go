@@ -385,12 +385,21 @@ func TestPeopleModeReentryRestartsAbandonedRelationshipLoad(t *testing.T) {
 
 // Opaque system and fixed-zone labels must not become analytics timezone names.
 func TestPeopleRelationshipTimezoneRequests(t *testing.T) {
+	newYork, err := time.LoadLocation("America/New_York")
+	require.NoError(t, err)
+	originalLocal := time.Local
+	t.Cleanup(func() { time.Local = originalLocal })
+	time.Local = newYork
+
 	for _, tt := range []struct {
 		name     string
 		location *time.Location
 		want     string
 	}{
-		{name: "opaque Local", location: time.Local, want: ""},
+		{name: "opaque Local", location: time.FixedZone("Local", 0), want: ""},
+		{name: "named Local", location: time.Local, want: "America/New_York"},
+		{name: "nil uses named Local", location: nil, want: "America/New_York"},
+		{name: "absolute zoneinfo path", location: time.FixedZone("/usr/share/zoneinfo/America/New_York", -5*60*60), want: ""},
 		{name: "UTC", location: time.UTC, want: "UTC"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

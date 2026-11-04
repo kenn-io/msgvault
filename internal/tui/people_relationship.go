@@ -30,10 +30,15 @@ func (m Model) peopleRelationshipTimezone() string {
 // An omitted timezone uses the daemon's UTC default, including year bounds.
 func (m Model) peopleRelationshipZone() (string, *time.Location) {
 	location := m.peopleState.location
-	if location == nil || location == time.Local || location.String() == "Local" {
-		return "", time.UTC
+	if location == nil {
+		location = time.Local
 	}
-	return location.String(), location
+	if name := location.String(); name != "Local" {
+		if loaded, err := time.LoadLocation(name); err == nil {
+			return name, loaded
+		}
+	}
+	return "", time.UTC
 }
 
 func (m *Model) initializePeopleRelationshipYears(contact *query.PersonSummary, now time.Time) {
