@@ -29,6 +29,27 @@ func TestLinkParticipantsCreatesEdgeAndBumpsRevision(t *testing.T) {
 	assert.Equal(map[int64]int64{a: min(a, b), b: min(a, b)}, clusters)
 }
 
+func TestLinkParticipantsTraversesBothDirectionsAndBindsPerson(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	ids := make([]int64, 7)
+	for i := range ids {
+		ids[i] = f.EnsureParticipant(fmt.Sprintf("participant-%d@example.com", i), "", "example.com")
+	}
+	// Traversal from the chain's end crosses from participant_b to participant_a.
+	for _, pair := range [][2]int{{0, 3}, {1, 3}, {1, 4}, {5, 6}} {
+		_, err := f.Store.LinkParticipants(ids[pair[0]], ids[pair[1]])
+		require.NoError(err)
+	}
+	person, _, err := f.Store.CreatePersonFromParticipant(ids[2])
+	require.NoError(err)
+	_, err = f.Store.LinkParticipants(ids[4], ids[2])
+	require.NoError(err)
+	got, err := f.Store.GetPerson(person.ID)
+	require.NoError(err)
+	assert.Equal(t, ids[:5], got.ParticipantIDs)
+}
+
 func TestLinkParticipantsExactEdgeIsIdempotent(t *testing.T) {
 	require := require.New(t)
 	f := storetest.New(t)

@@ -378,7 +378,7 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 			err,
 		)
 	}
-	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	edges, err := s.loadComponentEdgesTxContext(ctx, tx, loser, winner)
 	if err != nil {
 		return fmt.Errorf("load participant links (loser=%d, winner=%d): %w", loser, winner, err)
 	}
@@ -392,7 +392,7 @@ func (s *Store) mergeParticipant(ctx context.Context, tx *loggedTx, winner, lose
 	if err := s.rewriteLinksForMergeContext(ctx, tx, loser, winner); err != nil {
 		return fmt.Errorf("rewrite participant links (loser=%d, winner=%d): %w", loser, winner, err)
 	}
-	if err := s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
+	if err := s.reconcileObservationIdentityMatchesForParticipantTxContext(ctx, tx, winner); err != nil {
 		return fmt.Errorf(
 			"reconcile observation identity matches (loser=%d, winner=%d): %w",
 			loser,

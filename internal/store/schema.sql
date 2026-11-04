@@ -3438,6 +3438,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_identity_match_candidates_edge
         left_kind, left_id, right_kind, right_id, basis,
         service_id, scope_kind, scope_value, normalized_value
     );
+CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_right
+    ON identity_match_candidates(right_kind, right_id);
 CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_state
     ON identity_match_candidates(state, id);
 CREATE INDEX IF NOT EXISTS idx_identity_match_candidates_value

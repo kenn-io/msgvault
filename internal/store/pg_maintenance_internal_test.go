@@ -47,22 +47,22 @@ func replaceTestStoreDB(t *testing.T, st *Store, db *sql.DB) {
 // store without running InitSchema. Tests that need to observe a specific
 // schema-initialization boundary use this; ordinary tests use
 // newPGStoreInternal above.
-func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
-	t.Helper()
+func newUninitializedPGStoreInternal(tb testing.TB, dbURL string) *Store {
+	tb.Helper()
 
 	buf := make([]byte, 8)
 	_, err := rand.Read(buf)
-	require.NoError(t, err, "random schema name")
+	require.NoError(tb, err, "random schema name")
 	schemaName := "msgvault_test_" + hex.EncodeToString(buf)
 
 	setupDB, err := sql.Open("pgx", dbURL)
-	require.NoError(t, err, "open setup connection")
+	require.NoError(tb, err, "open setup connection")
 	_, schemaErr := setupDB.Exec("CREATE SCHEMA " + schemaName)
 	_ = setupDB.Close()
-	require.NoErrorf(t, schemaErr, "create schema %s", schemaName)
+	require.NoErrorf(tb, schemaErr, "create schema %s", schemaName)
 
 	var st *Store
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		if st != nil {
 			_ = st.Close()
 		}
@@ -81,7 +81,7 @@ func newUninitializedPGStoreInternal(t *testing.T, dbURL string) *Store {
 	testURL := dbURL + sep + "search_path=" + schemaName
 
 	st, err = Open(testURL)
-	require.NoError(t, err, "open store")
+	require.NoError(tb, err, "open store")
 	return st
 }
 
