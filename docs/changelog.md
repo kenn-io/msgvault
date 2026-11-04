@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: "2026-11-03"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,10 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+### API schema 3.42.0
+
+- Attribute definitions carry fixed, durable, or volatile stability metadata. Owners can edit the class through the API or `attribute-definition set-stability`. Subset exports preserve these choices. This requires archive schema 19 and HTTP API schema 3.42.0; embedded readers must use a matching archive schema.
 
 ### API schema 3.40.0
 

@@ -407,6 +407,7 @@ type PinState struct {
 }
 
 type ResolutionInput struct {
+	Stability                    Stability           `json:"Stability,omitzero"`
 	PersonID                     int64               `json:"PersonID"`
 	Target                       TargetDescriptor    `json:"Target"`
 	ResolvedAt                   time.Time           `json:"ResolvedAt"`
@@ -418,13 +419,14 @@ type ResolutionInput struct {
 }
 
 type ScoreBreakdown struct {
-	SourceClass   int `json:"source_class"`
-	Directness    int `json:"directness"`
-	Authority     int `json:"authority"`
-	Confidence    int `json:"confidence"`
-	Freshness     int `json:"freshness"`
-	Corroboration int `json:"corroboration"`
-	Total         int `json:"total"`
+	StabilityWindow bool `json:"stability_window,omitzero"`
+	SourceClass     int  `json:"source_class"`
+	Directness      int  `json:"directness"`
+	Authority       int  `json:"authority"`
+	Confidence      int  `json:"confidence"`
+	Freshness       int  `json:"freshness"`
+	Corroboration   int  `json:"corroboration"`
+	Total           int  `json:"total"`
 }
 
 type ProjectionOperation string
@@ -493,16 +495,37 @@ type GenerationResult struct {
 	Projections          []ProjectionRef       `json:"projections"`
 }
 
+type Stability string
+
+const (
+	StabilityFixed    Stability = "fixed"
+	StabilityDurable  Stability = "durable"
+	StabilityVolatile Stability = "volatile"
+)
+
+type FreshnessStep struct {
+	MaxAgeDays int `json:"MaxAgeDays"`
+	Points     int `json:"Points"`
+}
+
+type StabilityProfile struct {
+	Freshness          []FreshnessStep `json:"Freshness"`
+	ReplacementBonus   int             `json:"ReplacementBonus"`
+	MaxEvidenceAgeDays int             `json:"MaxEvidenceAgeDays"`
+	StaleAfterDays     int             `json:"StaleAfterDays"`
+}
+
 type Policy struct {
-	Version               string                      `json:"Version"`
-	ApplyThreshold        int                         `json:"ApplyThreshold"`
-	ReplacementMargin     int                         `json:"ReplacementMargin"`
-	HysteresisMargin      int                         `json:"HysteresisMargin"`
-	MinimumIdentityScore  int                         `json:"MinimumIdentityScore"`
-	MaxCorroborationBonus int                         `json:"MaxCorroborationBonus"`
-	SourceClassWeights    map[EvidenceSourceClass]int `json:"SourceClassWeights"`
-	DirectnessWeights     map[EvidenceDirectness]int  `json:"DirectnessWeights"`
-	AuthorityWeights      map[EvidenceAuthority]int   `json:"AuthorityWeights"`
+	Stability             map[Stability]StabilityProfile `json:"Stability,omitzero"`
+	Version               string                         `json:"Version"`
+	ApplyThreshold        int                            `json:"ApplyThreshold"`
+	ReplacementMargin     int                            `json:"ReplacementMargin"`
+	HysteresisMargin      int                            `json:"HysteresisMargin"`
+	MinimumIdentityScore  int                            `json:"MinimumIdentityScore"`
+	MaxCorroborationBonus int                            `json:"MaxCorroborationBonus"`
+	SourceClassWeights    map[EvidenceSourceClass]int    `json:"SourceClassWeights"`
+	DirectnessWeights     map[EvidenceDirectness]int     `json:"DirectnessWeights"`
+	AuthorityWeights      map[EvidenceAuthority]int      `json:"AuthorityWeights"`
 }
 
 type Resolver struct {
