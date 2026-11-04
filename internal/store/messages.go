@@ -883,31 +883,36 @@ func (s *Store) ListUnresolvedMessageReplies(sourceID int64, messageType string)
 func (s *Store) ListUnresolvedMessageRepliesAfter(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.ListUnresolvedMessageRepliesAfterContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // ListUnresolvedMessageRepliesAfterContext honors cancellation during ListUnresolvedMessageRepliesAfter.
 func (s *Store) ListUnresolvedMessageRepliesAfterContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	if limit <= 0 {
 		return nil, errors.New("list unresolved message replies: limit must be positive")
 	}
-	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(ctx, sourceID, messageType, afterID, limit, conversationID)
 }
 
 func (s *Store) listUnresolvedMessageReplies(
 	sourceID int64, messageType string, afterID int64, limit int,
 ) ([]UnresolvedMessageReply, error) {
-	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit)
+	return s.listUnresolvedMessageRepliesContext(context.Background(), sourceID, messageType, afterID, limit, 0)
 }
 
 // listUnresolvedMessageRepliesContext honors cancellation during listUnresolvedMessageReplies.
 func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
-	sourceID int64, messageType string, afterID int64, limit int,
+	sourceID int64, messageType string, afterID int64, limit int, conversationID int64,
 ) ([]UnresolvedMessageReply, error) {
 	limitClause := ""
 	args := []any{sourceID, messageType, afterID}
+	conversationClause := ""
+	if conversationID != 0 {
+		conversationClause = " AND conversation_id = ?"
+		args = append(args, conversationID)
+	}
 	if limit > 0 {
 		limitClause = " LIMIT ?"
 		args = append(args, limit)
@@ -921,7 +926,7 @@ func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
 		  AND reply_to_message_id IS NULL
 		  AND metadata IS NOT NULL
 		  AND CAST(metadata AS TEXT) LIKE '%"referenced_message_id"%'
-		ORDER BY id`+limitClause,
+		`+conversationClause+` ORDER BY id`+limitClause,
 		args...)
 	if err != nil {
 		return nil, fmt.Errorf("list unresolved message replies: %w", err)
@@ -3460,6 +3465,32 @@ func (s *Store) SetMessageSizeEstimate(messageID, sizeEstimate int64) error {
 	return s.withSyncMessageWriteContext(context.Background(), messageID, func(q querier) error {
 		_, err := q.Exec(`UPDATE messages SET size_estimate = ? WHERE id = ?`, sizeEstimate, messageID)
 		return err
+	})
+}
+
+// ReplaceMessageTextContext replaces a message's displayed text after a
+// provider edit or the redaction of one. The text, size, edited flag and
+// metadata commit together, so the metadata always names the edit shown.
+func (s *Store) ReplaceMessageTextContext(ctx context.Context, messageID int64, body, snippet string, edited bool, metadata sql.NullString) error {
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.lockMeetingEvidenceWith(ctx, tx, messageID); err != nil {
+			return err
+		}
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
+			return err
+		}
+		if err := s.updateMessageDerivedText(q, messageID, sql.NullString{String: body, Valid: body != ""}, sql.NullString{},
+			sql.NullString{String: snippet, Valid: snippet != ""}, FTSDoc{MessageID: messageID, Body: body}, s.dialect.FTSUpsert); err != nil {
+			return err
+		}
+		if _, err := q.Exec(`UPDATE messages SET size_estimate = ?, is_edited = ? WHERE id = ?`, int64(len(body)), edited, messageID); err != nil {
+			return err
+		}
+		if err := setMessageMetadataWith(q, s.dialect, messageID, metadata); err != nil {
+			return err
+		}
+		return s.refreshMeetingProjectionWith(ctx, tx, messageID)
 	})
 }
 
@@ -7299,7 +7330,7 @@ func (s *Store) ResolveDeferredMessageRepliesContext(ctx context.Context, source
 	afterID := int64(0)
 	for {
 		unresolved, err := s.ListUnresolvedMessageRepliesAfterContext(ctx,
-			sourceID, messageType, afterID, pageSize,
+			sourceID, messageType, afterID, pageSize, 0,
 		)
 		if err != nil {
 			return err

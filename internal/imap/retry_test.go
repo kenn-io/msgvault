@@ -725,7 +725,7 @@ func TestReconnectPreservesMailboxCursorState(t *testing.T) {
 
 	client.mu.Lock()
 	require.NoError(client.connect(t.Context()))
-	require.NoError(client.selectMailbox("INBOX"))
+	require.NoError(client.selectMailbox(t.Context(), "INBOX"))
 	uidValidity := client.selectedUIDValidity
 	client.messageListCache = []gmailapi.MessageID{{ID: "INBOX|1"}}
 	client.msgIDToLabels = map[string][]string{"message": {"INBOX"}}
@@ -737,7 +737,7 @@ func TestReconnectPreservesMailboxCursorState(t *testing.T) {
 	assert.Equal([]gmailapi.MessageID{{ID: "INBOX|1"}}, client.messageListCache)
 	assert.Equal(map[string][]string{"message": {"INBOX"}}, client.msgIDToLabels)
 	client.mu.Lock()
-	require.NoError(client.selectMailbox("INBOX"))
+	require.NoError(client.selectMailbox(t.Context(), "INBOX"))
 	client.mu.Unlock()
 	assert.Equal(uidValidity, client.selectedUIDValidity)
 }

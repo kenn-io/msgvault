@@ -1685,7 +1685,7 @@ func (c *Client) messageWebURL(ctx context.Context, id int64) string {
 	if id <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s/messages/%d", apiprotocol.BrowserOrigin(ctx, c.baseURL), id)
+	return fmt.Sprintf("%s/messages/%d", apiprotocol.BrowserOrigin(ctx, c.currentDaemonURL()), id)
 }
 
 func (c *Client) messageSummariesWithURLs(ctx context.Context, messages []generated.MessageSummary) []query.MessageSummary {

@@ -1478,6 +1478,41 @@ CREATE TABLE IF NOT EXISTS reaction_source_events (
 CREATE INDEX IF NOT EXISTS idx_reaction_source_events_reaction
     ON reaction_source_events(reaction_id);
 
+-- Matrix events archived while encrypted. The ciphertext stays after recovery,
+-- so a replay conflict can return a recovered message to its placeholder.
+CREATE TABLE IF NOT EXISTS matrix_encrypted_events (
+    message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    ciphertext TEXT NOT NULL,
+    recovered BOOLEAN NOT NULL DEFAULT FALSE,
+    tried_stamp TEXT,   -- key backup state of the last failed attempt
+    tried_at BIGINT     -- Unix seconds of the last failed attempt
+);
+CREATE INDEX IF NOT EXISTS idx_matrix_encrypted_events_pending
+    ON matrix_encrypted_events(conversation_id, message_id) WHERE NOT recovered;
+
+-- The first event to use each Megolm message index in a room. Later events
+-- with the same index are replays and stay encrypted.
+CREATE TABLE IF NOT EXISTS matrix_megolm_claims (
+    conversation_id BIGINT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    session_id TEXT NOT NULL,
+    message_index BIGINT NOT NULL,
+    event_id TEXT NOT NULL,
+    PRIMARY KEY (conversation_id, session_id, message_index)
+);
+
+-- Edits that arrived for a Matrix message whose keys are still unavailable.
+CREATE TABLE IF NOT EXISTS matrix_pending_edits (
+    target_message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    event_id TEXT NOT NULL,
+    origin_ts BIGINT NOT NULL,
+    event TEXT NOT NULL,
+    PRIMARY KEY (target_message_id, event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_matrix_pending_edits_event
+    ON matrix_pending_edits(event_id);
+
 -- ============================================================================
 -- ATTACHMENTS
 -- ============================================================================

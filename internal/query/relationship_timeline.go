@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -116,7 +117,15 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	// edge semi-joins — the aggregated participant list columns of the
 	// legacy view are never touched.
 	conditions, factArgs := buildIdentityFactConditions(explore)
-	args := make([]any, 0, len(factArgs)+4)
+	owners, err := e.relationshipOwnerCanonicalIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	args := make([]any, 0, len(owners)+len(factArgs)+5)
+	args = append(args, request.CanonicalID)
+	for _, owner := range owners {
+		args = append(args, owner)
+	}
 	args = append(args, request.CanonicalID)
 	args = append(args, factArgs...)
 
@@ -133,6 +142,7 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 
 	queryText := buildRelationshipTimelineSQL(
 		conditions,
+		len(owners)+1,
 		quoteIdentitySQLPath(e.parquetGlob()),
 		quoteIdentitySQLPath(e.parquetPath(datasetConversations)),
 	)
@@ -259,7 +269,7 @@ func validateRelationshipTimelineRequest(request RelationshipTimelineRequest) er
 // (MIME structure at sync time), not attachment_count: extraction can lag
 // or fail, leaving the flag true with a zero count, and the indicator must
 // match what the message list shows for the same message.
-func buildRelationshipTimelineSQL(conditions, messagesGlob, conversationsGlob string) string {
+func buildRelationshipTimelineSQL(conditions string, canonicalCount int, messagesGlob, conversationsGlob string) string {
 	// The membership IN-subquery is a semi-join whose build side is the
 	// subject's bare message IDs (compact even for archive-scale clusters);
 	// the outer scan then folds per-message facts and owner presence into
@@ -278,7 +288,9 @@ WITH subject_facts AS (
         any_value(a.has_attachments) AS has_attachments,
         bool_or(a.is_owner AND a.is_direct) AS with_owner
     FROM relationship_activity_expanded a
-    WHERE a.message_id IN (
+    -- Outer rows only need the subject's message facts and owner rows for with_owner.
+    WHERE a.canonical_id IN (` + strings.TrimSuffix(strings.Repeat("?,", canonicalCount), ",") + `)
+      AND a.message_id IN (
         SELECT f.message_id
         FROM relationship_activity_expanded f
         WHERE NOT f.unsent AND f.canonical_id = ? AND (` + conditions + `)

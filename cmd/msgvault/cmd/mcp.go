@@ -76,7 +76,7 @@ Add to Claude Desktop config:
 		if err != nil {
 			return usageErr(cmd, err)
 		}
-		st, info, err := OpenHTTPStore(cmd.Context())
+		st, info, err := openMCPHTTPStore(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
 		}
@@ -211,7 +211,7 @@ const messageTagsMinAPISchemaVersion = "3.15.0"
 const personAgendaMinAPISchemaVersion = "2.30.0"
 
 // personTierMinAPISchemaVersion adds read-only person tier previews.
-const personTierMinAPISchemaVersion = "3.30.0"
+const personTierMinAPISchemaVersion = "3.33.0"
 
 const contactRoutesMinAPISchemaVersion = "3.20.0"
 
