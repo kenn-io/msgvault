@@ -124,7 +124,7 @@ describe('DirectoryProfileController', () => {
     const definition: AttributeDefinition = {
       id: 8, universal_id: '34b52841-dcf5-40c6-a24e-628b049e85b2', object_type: 'person', slug: 'contact_frequency', label: 'Contact frequency',
       value_type: 'integer', field_type: 'duration', cardinality: 'single', ownership: 'system', display_order: 20,
-      is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1, options: { unit: 'days' },
+      is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1, stability: 'volatile', options: { unit: 'days' },
       created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', history_exempt: false, is_audited: true, is_deletable: false, is_required: false, is_searchable: false,
     };
     const previous: PersonAttributeValue = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'contact_frequency', ordinal: 0, value: { type: 'integer', integer: 2 }, source: 'user', active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z' };
