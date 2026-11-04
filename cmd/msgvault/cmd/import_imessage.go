@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -29,6 +30,8 @@ var (
 	importImessageContacts      string
 	importImessageMessagesRoot  string
 	importImessageNoAttachments bool
+
+	importImessageMaxMediaMB int64
 )
 
 var importImessageCmd = &cobra.Command{
@@ -62,7 +65,30 @@ Examples:
   msgvault import-imessage --limit 100
   msgvault import-imessage --db-path /path/to/chat.db
   msgvault import-imessage --contacts ~/contacts.vcf`,
-	RunE: runImportImessage,
+	PreRunE: validateImessageFlags,
+	RunE:    runImportImessage,
+}
+
+// validateImessageFlags rejects a bad --max-media-mb before the store opens.
+func validateImessageFlags(cmd *cobra.Command, _ []string) error {
+	if importImessageMaxMediaMB < 0 {
+		return usageErr(cmd, errors.New("--max-media-mb must be non-negative"))
+	}
+	if importImessageMaxMediaMB > math.MaxInt64>>20 {
+		return usageErr(cmd, errors.New("--max-media-mb is too large"))
+	}
+	return nil
+}
+
+// imessageMediaPolicy is the media policy for Messages, shared by import and
+// purge. It applies the [imessage] config limits and lets a positive
+// --max-media-mb override the size cap (import passes 0 for no override).
+func imessageMediaPolicy(overrideMB int64, cfg *config.Config) attachmentpolicy.Policy {
+	policy := cfg.IMessage.MediaPolicy()
+	if overrideMB > 0 {
+		policy.MaxBytes = overrideMB << 20
+	}
+	return policy
 }
 
 func runImportImessage(cmd *cobra.Command, args []string) error {
@@ -85,7 +111,11 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	clientOpts, err := buildImessageOpts(state.logger, state.cfg.AttachmentsDir(), importImessageMessagesRoot, importImessageNoAttachments)
+	clientOpts, err := buildImessageOpts(
+		state.logger, state.cfg.AttachmentsDir(), importImessageMessagesRoot,
+		importImessageNoAttachments,
+		imessageMediaPolicy(importImessageMaxMediaMB, state.cfg),
+	)
 	if err != nil {
 		return err
 	}
@@ -303,21 +333,13 @@ func resolveChatDBPath() (string, error) {
 	return path, nil
 }
 
-// imessageMediaPolicy is the media policy for Messages, shared by import and purge.
-func imessageMediaPolicy() attachmentpolicy.Policy {
-	return attachmentpolicy.Policy{
-		MaxParticipants: config.DefaultMediaMaxParticipants,
-		MaxBytes:        attachmentpolicy.DefaultChatMaxBytes,
-	}
-}
-
-func buildImessageOpts(logger *slog.Logger, attachmentsDir, messagesRoot string, noAttachments bool) ([]imessage.ClientOption, error) {
+func buildImessageOpts(logger *slog.Logger, attachmentsDir, messagesRoot string, noAttachments bool, policy attachmentpolicy.Policy) ([]imessage.ClientOption, error) {
 	if noAttachments {
 		attachmentsDir, messagesRoot = "", ""
 	}
 	opts := []imessage.ClientOption{
 		imessage.WithImessageLogger(logger),
-		imessage.WithAttachments(attachmentsDir, messagesRoot, imessageMediaPolicy()),
+		imessage.WithAttachments(attachmentsDir, messagesRoot, policy),
 	}
 
 	if importImessageAfter != "" {
@@ -467,6 +489,10 @@ func init() {
 	importImessageCmd.Flags().BoolVar(
 		&importImessageNoAttachments, "no-attachments", false,
 		"Do not store attachments to disk (messages and attachment metadata are still imported)",
+	)
+	importImessageCmd.Flags().Int64Var(
+		&importImessageMaxMediaMB, "max-media-mb", 0,
+		"maximum attachment size in MiB (0 = configured/default limit)",
 	)
 	rootCmd.AddCommand(importImessageCmd)
 }
