@@ -429,7 +429,8 @@ func imapFolderStateOptions(
 	}
 
 	opts := []imaplib.Option{imaplib.WithFilteredDeletionReconciliation(
-		cfg != nil && cfg.Sync.IMAPReconcileFilteredDeletions[src.Identifier],
+		cfg != nil && cfg.Sync.IMAPReconcileFilteredDeletions[src.Identifier] &&
+			len(syncFolders) == 0 && len(syncSkipFolders) == 0,
 	)}
 	states, err := loadIMAPFolderStates(s, src.ID)
 	if err != nil {
@@ -752,14 +753,14 @@ func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, 
 					state.logger.Warn("could not check IMAP folder exclusion accounts", "error", err)
 					return
 				}
-				for setting, accounts := range map[string][]string{
-					"IMAP folder exclusions":                         slices.Collect(maps.Keys(cfg.Sync.IMAPSkipFolders)),
-					"IMAP filtered deletion reconciliation settings": slices.Collect(maps.Keys(cfg.Sync.IMAPReconcileFilteredDeletions)),
-				} {
-					for _, account := range accounts {
-						if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
-							state.logger.Warn(setting+" match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
-						}
+				for _, account := range slices.Sorted(maps.Keys(cfg.Sync.IMAPSkipFolders)) {
+					if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
+						state.logger.Warn("IMAP folder exclusions match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
+					}
+				}
+				for _, account := range slices.Sorted(maps.Keys(cfg.Sync.IMAPReconcileFilteredDeletions)) {
+					if !slices.ContainsFunc(sources, func(src *store.Source) bool { return src.Identifier == account }) {
+						state.logger.Warn("IMAP filtered deletion reconciliation settings match no stored account; copy the ACCOUNT identifier from msgvault list-accounts", "account", account)
 					}
 				}
 			})

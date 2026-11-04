@@ -1016,9 +1016,11 @@ with the same exact `ACCOUNT` key:
 imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
 ```
 
-This setting applies to scheduled and manual syncs, including one-off folder
-flags. It has no effect on date-filtered runs. A move into any unscanned folder
-can make a message eligible for `gc` when no stored membership remains.
+This setting gives deletion reconciliation for the folders a sync with the saved
+exclusions scanned. It applies to scheduled and manual syncs without `--folder`
+or `--skip-folder` overrides. It has no effect on date-filtered runs. A move into
+any unscanned folder can make a message eligible for `gc` when no stored
+membership remains.
 See [IMAP folder filtering](usage/imap.md#what-filtering-changes) for the effects
 on archive membership, deletion tracking, cursor advancement, and `gc`.
 

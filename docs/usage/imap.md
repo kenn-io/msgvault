@@ -194,11 +194,13 @@ To reconcile deletions within scanned folders, enable the setting for the exact
 imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
 ```
 
-Restart the daemon after editing the file. This opt-in applies to scheduled and
-manual syncs, including `--folder` and `--skip-folder` overrides and stored folder
-allow lists. After a clean, complete run, msgvault advances cursors and replaces
-memberships only for scanned folders. Date-filtered, limited, resumed, failed or
-interrupted runs do not commit this reconciliation.
+Restart the daemon after editing the file. This opt-in gives deletion
+reconciliation for the folders a sync with the saved exclusions scanned. It
+applies to scheduled and manual syncs without `--folder` or `--skip-folder`
+overrides, including stored folder allow lists. After a clean, complete run,
+msgvault advances cursors and replaces memberships only for scanned folders.
+Date-filtered, limited, resumed, failed, or interrupted runs do not commit this
+reconciliation.
 
 A message is marked deleted from its source only when no stored folder membership
 remains. Moving it into any unscanned folder can therefore make it eligible for

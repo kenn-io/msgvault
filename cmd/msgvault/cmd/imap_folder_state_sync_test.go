@@ -102,15 +102,16 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 func TestIMAPSyncFolderFilter_UnmatchedAccounts(t *testing.T) {
 	const identifier = "imap://user@example.com"
 	const typo = "imap://typo@example.com"
-	for _, setting := range []string{"exclusions", "reconciliation"} {
+	for _, setting := range []string{"exclusions", "reconciliation", "both"} {
 		t.Run(setting, func(t *testing.T) {
 			st := testutil.NewTestStore(t)
 			_, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 			require.NoError(t, err)
 			cfg := testConfigValue()
-			if setting == "exclusions" {
+			if setting == "exclusions" || setting == "both" {
 				cfg.Sync.IMAPSkipFolders = map[string][]string{identifier: {"Trash"}, typo: {"Trash"}}
-			} else {
+			}
+			if setting == "reconciliation" || setting == "both" {
 				cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{identifier: true, typo: true}
 			}
 			state := testInvocationWithConfig(cfg)
@@ -118,7 +119,12 @@ func TestIMAPSyncFolderFilter_UnmatchedAccounts(t *testing.T) {
 			state.logger = slog.New(slog.NewTextHandler(&logs, nil))
 			imapSyncFolderFilter(st, identifier, state, nil, nil)
 			imapSyncFolderFilter(st, identifier, state, nil, nil)
-			assert.Equal(t, 1, strings.Count(logs.String(), "match no stored account"))
+			if setting == "both" {
+				assert.Equal(t, 2, strings.Count(logs.String(), "match no stored account"))
+				assert.Less(t, strings.Index(logs.String(), "IMAP folder exclusions"), strings.Index(logs.String(), "IMAP filtered deletion reconciliation settings"))
+			} else {
+				assert.Equal(t, 1, strings.Count(logs.String(), "match no stored account"))
+			}
 			assert.Contains(t, logs.String(), "account="+typo)
 			assert.NotContains(t, logs.String(), "account="+identifier)
 		})
@@ -780,9 +786,20 @@ func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.
 }
 
 func TestSaveIMAPFolderStates_FilteredReconciliation(t *testing.T) {
-	for _, name := range []string{"enabled", "default", "other account", "date", "errors", "interrupted", "resumed", "limited"} {
+	for _, name := range []string{"enabled", "default", "other account", "folder flag", "skip-folder flag", "date", "errors", "interrupted", "resumed", "limited"} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
+			savedFolders, savedSkipFolders := syncFolders, syncSkipFolders
+			t.Cleanup(func() {
+				syncFolders, syncSkipFolders = savedFolders, savedSkipFolders
+			})
+			syncFolders, syncSkipFolders = nil, nil
+			switch name {
+			case "folder flag":
+				syncFolders = []string{"INBOX"}
+			case "skip-folder flag":
+				syncSkipFolders = []string{"Trash"}
+			}
 			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://user@example.com")
@@ -807,7 +824,8 @@ func TestSaveIMAPFolderStates_FilteredReconciliation(t *testing.T) {
 				}
 				cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{key: true}
 			}
-			opts := append(imapFolderStateOptions(st, src, false, cfg, testDiscardLogger()), imaplib.WithFolderFilter(nil, []string{"Trash"}))
+			cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
+			opts := append(imapFolderStateOptions(st, src, false, cfg, testDiscardLogger()), imapSyncFolderFilter(st, src.Identifier, testInvocationWithConfig(cfg), syncFolders, syncSkipFolders))
 			if name == "date" {
 				opts = append(opts, imaplib.WithDateFilter(time.Now().AddDate(-1, 0, 0), time.Time{}))
 			}
