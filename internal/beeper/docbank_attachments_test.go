@@ -1550,7 +1550,7 @@ func TestAttachmentMirrorBusyUploadGateStopsPass(t *testing.T) {
 				more, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
 				if withFailure {
 					require.ErrorContains(t, err, "server_error")
-					assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
+					require.NotErrorIs(t, err, errBeeperMediaGateBusy)
 				} else {
 					require.NoError(t, err)
 				}
