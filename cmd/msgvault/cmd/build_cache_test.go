@@ -1199,6 +1199,88 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 	assert.Equal(int64(3), attachmentIDs, "durable attachment IDs")
 }
 
+func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	oldGOOS := cacheSnapshotGOOS
+	cacheSnapshotGOOS = "linux"
+	t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
+	t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", "")
+	duck, err := sql.Open("duckdb", "")
+	require.NoError(err)
+	defer func() { require.NoError(duck.Close()) }()
+	requireSQLiteScanner(t, duck)
+	tmp := setupTestSQLite(t)
+	dbPath := filepath.Join(tmp, "test.db")
+	incDir, fullDir := filepath.Join(tmp, "incremental"), filepath.Join(tmp, "full")
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	_, err = db.Exec(`INSERT INTO account_identities (source_id, address) VALUES (1, 'alice@example.com');
+		INSERT INTO attachments (message_id, filename, size) VALUES (1, 'old.txt', 42)`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, incDir, true)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO messages
+		(id, source_id, source_message_id, conversation_id, sender_id, sent_at, received_at, snippet, size_estimate, has_attachments, is_from_me, deleted_from_source_at)
+		VALUES (6, 1, 'delta-out', 101, 1, '2024-04-01 12:00:00+02:00', 1711965600.25, NULL, 1200, 1, 1, '2024-04-02 10:00:00'),
+		(7, 1, 'delta-in', 101, 2, 1712052000, '2024-04-02 12:00:00', CAST(X'6869ff' AS TEXT), NULL, 0, 0, NULL);
+		INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES
+		(6, 1, 'from', 'alice@example.com'), (6, 2, 'to', 'bob@example.org'),
+		(7, 2, 'from', 'bob@example.org'), (7, 1, 'to', NULL);
+		INSERT INTO message_labels (message_id, label_id) VALUES (6, 2), (7, 1);
+		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES (6, 'delta.txt', 'text/plain', 123);
+		UPDATE messages SET size_estimate = 'unreadable' WHERE id = 1;
+		UPDATE message_recipients SET participant_id = 'unreadable' WHERE message_id = 1 AND participant_id = 1;
+		UPDATE message_labels SET label_id = 'unreadable' WHERE message_id = 1 AND label_id = 1;
+		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, fullDir, true)
+	require.Error(err, "a full scan must trip over the old rows")
+	result, err := buildCache(dbPath, incDir, false)
+	require.NoError(err, "incremental exports must read only the new slice")
+	assert.False(result.Skipped)
+	assert.Equal(int64(7), result.ExportedCount)
+	_, err = db.Exec(`UPDATE messages SET size_estimate = 1000 WHERE id = 1;
+		UPDATE message_recipients SET participant_id = 1 WHERE message_id = 1 AND participant_id = 'unreadable';
+		UPDATE message_labels SET label_id = 1 WHERE message_id = 1 AND label_id = 'unreadable';
+		UPDATE attachments SET size = 42 WHERE message_id = 1`)
+	require.NoError(err)
+	_, err = buildCache(dbPath, fullDir, true)
+	require.NoError(err)
+	for _, dataset := range []string{"messages", "message_recipients", "message_labels", "attachments"} {
+		pattern := "*.parquet"
+		if dataset == "messages" {
+			pattern = "**/*.parquet"
+		}
+		inc := filepath.ToSlash(filepath.Join(incDir, dataset, pattern))
+		full := filepath.ToSlash(filepath.Join(fullDir, dataset, pattern))
+		var schemas [][]string
+		for _, path := range []string{full, inc} {
+			rows, err := duck.Query(`DESCRIBE SELECT * FROM read_parquet(?)`, path)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			var schema []string
+			for rows.Next() {
+				var name, typ string
+				var nullable, key, def, extra sql.NullString
+				require.NoError(rows.Scan(&name, &typ, &nullable, &key, &def, &extra))
+				schema = append(schema, name+":"+typ)
+			}
+			require.NoError(rows.Err())
+			schemas = append(schemas, schema)
+		}
+		assert.Equal(schemas[0], schemas[1], dataset)
+		var missing, extra int
+		require.NoError(duck.QueryRow(`SELECT
+			(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?))),
+			(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?)))`,
+			full, inc, inc, full).Scan(&missing, &extra), dataset)
+		assert.Zero(missing, dataset)
+		assert.Zero(extra, dataset)
+	}
+}
+
 // TestBuildCache_IncrementalExport tests that incremental exports only add new messages.
 func TestBuildCache_IncrementalExport(t *testing.T) {
 	require := require.New(t)
