@@ -1,3 +1,5 @@
+Agents: find the right command with: msgvault cli search "<what you want to do>"
+
 Archive email, chats, and meetings offline. Use the daemon
 or config.toml's [remote].url; --local forces local.
 
@@ -179,6 +181,7 @@ Maintenance and repair:
 
 Setup, daemon, and integrations:
   agent-token  Manage restricted agent grant tokens
+  cli          Discover commands for a task
   completion   Generate shell completion script
   credentials  Manage provider credentials on the daemon host
   daemon       Manage the background daemon
