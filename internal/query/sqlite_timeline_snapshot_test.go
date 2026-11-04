@@ -14,7 +14,7 @@ import (
 func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
 	require := require.New(t)
 	s := testutil.NewSQLiteTestStore(t)
-	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+query.SQLiteTimelineSnapshotProbe, 1, 1, 1)
+	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+query.SQLiteTimelineSnapshotProbe, 1, 1, 1, 1)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var plan strings.Builder
@@ -42,6 +42,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 		{"body edit", exec(`UPDATE message_bodies SET body_text = 'updated body' WHERE message_id = 802`), false},
 		// Raw SQL leaves updated_at alone, as a retitle within the same second would.
 		{"chat retitle", exec(`UPDATE conversations SET title = 'Updated' WHERE id = 701`), false},
+		{"chat source ID repair", exec(`UPDATE conversations SET source_conversation_id = 'repaired-chat-701' WHERE id = 701`), false},
 		{"roster removal", func(s *store.Store) error { return s.ReplaceConversationParticipants(701, nil) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
