@@ -1,14 +1,17 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 // RelationshipsHTTPRequest scopes and pages a relationship ranking request.
@@ -16,10 +19,12 @@ import (
 // query because ranking is over reciprocity signals, not lexical/semantic
 // search candidates.
 type RelationshipsHTTPRequest struct {
-	Filters []ExploreFilter `json:"filters,omitempty"`
-	ShowAll bool            `json:"show_all,omitzero"`
-	Cursor  string          `json:"cursor,omitempty"`
-	Limit   int             `json:"limit,omitzero" minimum:"0" maximum:"500"`
+	Filters       []ExploreFilter `json:"filters,omitempty"`
+	ShowAll       bool            `json:"show_all,omitzero"`
+	Cursor        string          `json:"cursor,omitempty"`
+	Limit         int             `json:"limit,omitzero" minimum:"0" maximum:"500"`
+	Cadence       string          `json:"cadence,omitempty" enum:"overdue,due,no_list,unknown"`
+	DueWithinDays *int            `json:"due_within_days,omitempty" minimum:"0" maximum:"3660"`
 }
 
 // RelationshipsHTTPResponse echoes both revisions a page was computed
@@ -116,6 +121,11 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 	if !decodeExploreJSON(w, r, &request) {
 		return
 	}
+	request.Cadence = strings.ToLower(strings.TrimSpace(request.Cadence))
+	if err := validateRelationshipCadence(request.Cadence, request.DueWithinDays); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_cadence", err.Error())
+		return
+	}
 	canonicalizeRelationshipFilters(request.Filters)
 	analyticalContext, err := exploreContext(request.Filters)
 	if err != nil {
@@ -154,11 +164,30 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 		s.writeExploreUnavailable(r.Context(), w, query.CacheAbsent)
 		return
 	}
-	result, err := analyzer.Relationships(r.Context(), query.RelationshipsRequest{
-		Context: analyticalContext, ShowAll: request.ShowAll, Limit: request.Limit, Offset: offset, Now: decayDate,
-	})
+	if request.Cadence != "" {
+		if _, ok := s.store.(relationshipDirectoryStore); !ok {
+			writeError(w, http.StatusServiceUnavailable, "persons_unavailable", "Person profiles are unavailable")
+			return
+		}
+	}
+	var result *query.RelationshipsResponse
+	if request.Cadence == "" {
+		result, err = analyzer.Relationships(r.Context(), query.RelationshipsRequest{
+			Context: analyticalContext, ShowAll: request.ShowAll, Limit: request.Limit, Offset: offset, Now: decayDate,
+		})
+		if err == nil {
+			err = s.hydrateRelationshipRows(r.Context(), result.Rows)
+		}
+	} else {
+		result, err = s.relationshipsWithCadenceFilter(r.Context(), analyzer, analyticalContext, request, decayDate, offset)
+	}
 	if err != nil {
-		s.writeExploreError(r.Context(), w, err)
+		var directoryErr *relationshipDirectoryError
+		if errors.As(err, &directoryErr) {
+			s.writeDirectoryPeopleError(w, directoryErr.err)
+		} else {
+			s.writeExploreError(r.Context(), w, err)
+		}
 		return
 	}
 	if request.Cursor != "" {
@@ -188,6 +217,173 @@ func (s *Server) handleRelationships(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// relationshipDirectoryStore is deliberately optional so analytical test
+// doubles and old embedders retain the original ranking contract. Production
+// *store.Store implements it through the keeper Directory projection.
+type relationshipDirectoryStore interface {
+	DirectoryPeopleForParticipantsContext(
+		context.Context, []int64,
+	) (map[int64]store.DirectoryPersonSummary, error)
+}
+
+type relationshipDirectoryError struct{ err error }
+
+func (e *relationshipDirectoryError) Error() string {
+	return fmt.Sprintf("hydrate relationship directory context: %v", e.err)
+}
+
+func (e *relationshipDirectoryError) Unwrap() error { return e.err }
+
+func (s *Server) hydrateRelationshipRows(ctx context.Context, rows []query.RelationshipRow) error {
+	lookup, ok := s.store.(relationshipDirectoryStore)
+	if !ok || len(rows) == 0 {
+		return nil
+	}
+	participantIDs := make([]int64, 0)
+	for _, row := range rows {
+		participantIDs = append(participantIDs, row.MemberIDs...)
+		if len(row.MemberIDs) == 0 {
+			participantIDs = append(participantIDs, row.CanonicalID)
+		}
+	}
+	people, err := lookup.DirectoryPeopleForParticipantsContext(ctx, participantIDs)
+	if err != nil {
+		return &relationshipDirectoryError{err: err}
+	}
+	for index := range rows {
+		members := rows[index].MemberIDs
+		if len(members) == 0 {
+			members = []int64{rows[index].CanonicalID}
+		}
+		var matchedParticipantID, matchedPersonID int64
+		for _, participantID := range members {
+			person, ok := people[participantID]
+			if !ok {
+				continue
+			}
+			if matchedPersonID != 0 && matchedPersonID != person.ID {
+				return &relationshipDirectoryError{err: fmt.Errorf(
+					"relationship cluster %d is bound to multiple directory people",
+					rows[index].CanonicalID,
+				)}
+			}
+			matchedPersonID = person.ID
+			matchedParticipantID = participantID
+		}
+		if matchedParticipantID != 0 {
+			person := people[matchedParticipantID]
+			personID := person.ID
+			rows[index].PersonID = &personID
+			rows[index].Cadence = &query.RelationshipCadence{
+				FrequencyDays: person.Cadence.FrequencyDays,
+				List:          person.Cadence.List,
+				DueAt:         person.Cadence.DueAt,
+				Status:        person.Cadence.Status,
+				DaysOverdue:   person.Cadence.DaysOverdue,
+				Stale:         person.Cadence.Stale,
+			}
+			rows[index].LastContactChannel = person.LastContactChannel
+		}
+	}
+	return nil
+}
+
+func validateRelationshipCadence(cadence string, dueWithinDays *int) error {
+	switch cadence {
+	case "", "overdue", "due", "no_list", "unknown":
+	default:
+		return fmt.Errorf("cadence must be overdue, due, no_list, or unknown")
+	}
+	if dueWithinDays == nil {
+		return nil
+	}
+	if cadence != "due" || *dueWithinDays < 0 || *dueWithinDays > 3660 {
+		return fmt.Errorf("due_within_days requires cadence=due and an integer from 0 to 3660")
+	}
+	return nil
+}
+
+func relationshipRowMatchesCadence(row query.RelationshipRow, cadence string, dueWithinDays *int, now time.Time) bool {
+	if cadence == "" {
+		return true
+	}
+	if row.Cadence == nil {
+		return false
+	}
+	schedule := row.Cadence
+	switch cadence {
+	case "overdue":
+		return schedule.Status == store.CadenceOverdue
+	case "due":
+		if schedule.DueAt == nil {
+			return false
+		}
+		horizon := 0
+		if dueWithinDays != nil {
+			horizon = *dueWithinDays
+		}
+		return !schedule.DueAt.After(now.AddDate(0, 0, horizon))
+	case "no_list":
+		return schedule.FrequencyDays == nil
+	case "unknown":
+		return schedule.FrequencyDays != nil && schedule.DueAt == nil
+	default:
+		return false
+	}
+}
+
+// relationshipsWithCadenceFilter expands the analytical ranking only for a
+// cadence-filtered request. The filter belongs to the durable-person Store,
+// so applying it after one bounded analytical page would silently drop a
+// matching person that ranked below that page. The full ranked set is bounded
+// by the analyzer's own total and is then paged after the join.
+func (s *Server) relationshipsWithCadenceFilter(
+	ctx context.Context,
+	analyzer query.RelationshipAnalyzer,
+	analyticalContext query.Context,
+	request RelationshipsHTTPRequest,
+	decayDate time.Time,
+	offset int,
+) (*query.RelationshipsResponse, error) {
+	const fetchLimit = 500
+	all := make([]query.RelationshipRow, 0)
+	pageOffset := 0
+	var revisions query.RelationshipsResponse
+	for {
+		page, err := analyzer.Relationships(ctx, query.RelationshipsRequest{
+			Context: analyticalContext, ShowAll: request.ShowAll, Limit: fetchLimit, Offset: pageOffset, Now: decayDate,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if pageOffset == 0 {
+			revisions = *page
+		}
+		all = append(all, page.Rows...)
+		if len(page.Rows) == 0 || len(all) >= int(page.TotalCount) || len(page.Rows) < fetchLimit {
+			break
+		}
+		pageOffset += len(page.Rows)
+	}
+	if err := s.hydrateRelationshipRows(ctx, all); err != nil {
+		return nil, err
+	}
+	filtered := make([]query.RelationshipRow, 0, len(all))
+	now := s.clockNow().UTC()
+	for _, row := range all {
+		if relationshipRowMatchesCadence(row, request.Cadence, request.DueWithinDays, now) {
+			filtered = append(filtered, row)
+		}
+	}
+	if offset > len(filtered) {
+		offset = len(filtered)
+	}
+	end := min(offset+request.Limit, len(filtered))
+	revisions.Rows = append([]query.RelationshipRow(nil), filtered[offset:end]...)
+	revisions.TotalCount = int64(len(filtered))
+	return &revisions, nil
 }
 
 // relationshipDecayDate returns the UTC decay date every page of one

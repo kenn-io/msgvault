@@ -65,12 +65,28 @@ func RelationshipScore(s RelationshipSignals) float64 {
 // RelationshipRow is one ranked counterpart: a canonical identity cluster
 // scored against the archive owner's interactions with it.
 type RelationshipRow struct {
-	CanonicalID  int64               `json:"canonical_id"`
-	DisplayLabel string              `json:"display_label"`
-	MemberIDs    []int64             `json:"member_ids"`
-	Score        float64             `json:"score"`
-	Signals      RelationshipSignals `json:"signals"`
-	LastAt       time.Time           `json:"last_at"`
+	CanonicalID        int64                `json:"canonical_id"`
+	DisplayLabel       string               `json:"display_label"`
+	MemberIDs          []int64              `json:"member_ids"`
+	Score              float64              `json:"score"`
+	Signals            RelationshipSignals  `json:"signals"`
+	LastAt             time.Time            `json:"last_at"`
+	PersonID           *int64               `json:"person_id,omitempty"`
+	Cadence            *RelationshipCadence `json:"cadence,omitempty"`
+	LastContactChannel string               `json:"last_contact_channel,omitempty"`
+}
+
+// RelationshipCadence is the additive, non-sensitive keep-in-touch context
+// attached by the API Store join. It deliberately mirrors the keeper
+// DirectoryCadence wire shape without making the analytical query engine
+// depend on the durable-person Store package.
+type RelationshipCadence struct {
+	FrequencyDays *int64     `json:"frequency_days,omitempty"`
+	List          string     `json:"list,omitempty"`
+	DueAt         *time.Time `json:"due_at,omitempty"`
+	Status        string     `json:"status"`
+	DaysOverdue   *int       `json:"days_overdue,omitempty"`
+	Stale         bool       `json:"stale"`
 }
 
 // RelationshipsRequest scopes and pages a relationship ranking query. Now is
