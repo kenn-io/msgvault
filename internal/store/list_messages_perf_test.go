@@ -153,3 +153,40 @@ func TestSearchMessages_DateBoundsUseInstantIndex(t *testing.T) {
 	assert.Contains(countPlan, indexName,
 		"date-filtered COUNT should seek the instant index:\n%s", countPlan)
 }
+
+func TestConversationWindow_UsesConversationTimelineIndex(t *testing.T) {
+	requirements := require.New(t)
+	s, err := OpenForTest(filepath.Join(t.TempDir(), "window-plan.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(s.Close()) })
+	requirements.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 2000)
+	var indexes int
+	requirements.NoError(s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_conversation_timeline'`).Scan(&indexes))
+	assert.Equal(t, 1, indexes)
+	start := time.Date(2015, 1, 1, 1, 0, 0, 0, time.UTC)
+	for _, dated := range []bool{false, true} {
+		for _, before := range []bool{false, true} {
+			for _, bound := range []*time.Time{nil, &start} {
+				t.Run(fmt.Sprintf("dated%t/before%t/bounded%t", dated, before, bound != nil), func(t *testing.T) {
+					assertions := assert.New(t)
+					segments := s.conversationWindowSegments(t.Context(), 1, 1000, dated, before, bound, nil)
+					countSQL, countArgs := conversationSegmentCounts(segments)
+					plan := explainPlan(t, s, "SELECT "+countSQL, countArgs...)
+					assertions.Contains(plan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
+					assertions.NotContains(plan, "TEMP B-TREE")
+					direction := "ASC"
+					if before {
+						direction = "DESC"
+					}
+					for _, segment := range segments {
+						args := append(append([]any{}, segment.args...), 25)
+						plan := explainPlan(t, s, segment.selection(direction), args...)
+						assertions.Contains(plan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
+						assertions.NotContains(plan, "TEMP B-TREE")
+					}
+				})
+			}
+		}
+	}
+}

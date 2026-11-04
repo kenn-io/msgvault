@@ -55,7 +55,7 @@ func (s *Store) ConversationExistsContext(ctx context.Context, conversationID in
 }
 
 // conversationRangeClause builds the optional time-bound SQL fragment for the
-// conversation window's ordered CTE, plus the matching bind args in the order
+// conversation window, plus the matching bind args in the order
 // they must appear (start before end). Either bound may be nil to leave that
 // side unrestricted. The returned clause is empty when both bounds are nil.
 func conversationRangeClause(start, end *time.Time) (clause string, args []any) {
@@ -73,12 +73,13 @@ func conversationRangeClause(start, end *time.Time) (clause string, args []any) 
 // anchorTimestampInRangeContext reports whether anchorID belongs to
 // conversationID (exists) and, if so, whether its timestamp
 // (COALESCE(sent_at, received_at, internal_date)) falls within [start, end).
+// dated reports whether the anchor has a timestamp.
 // A nil bound leaves that side unrestricted. exists is false when the anchor
 // is not a live message of the conversation, mirroring the visibility rules
 // GetConversationWindowContext itself applies.
 func (s *Store) anchorTimestampInRangeContext(
 	ctx context.Context, conversationID, anchorID int64, start, end *time.Time,
-) (inRange, exists bool, err error) {
+) (inRange, exists, dated bool, err error) {
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	query := fmt.Sprintf(`
 		SELECT COALESCE(m.sent_at, m.received_at, m.internal_date)
@@ -89,17 +90,91 @@ func (s *Store) anchorTimestampInRangeContext(
 	var ts nullableTimestamp
 	scanErr := s.db.QueryRowContext(ctx, s.dialect.Rebind(query), append([]any{conversationID, anchorID}, scopeArgs...)...).Scan(&ts)
 	if errors.Is(scanErr, sql.ErrNoRows) {
-		return false, false, nil
+		return false, false, false, nil
 	}
 	if scanErr != nil {
-		return false, false, fmt.Errorf("check conversation anchor range: %w", scanErr)
+		return false, false, false, fmt.Errorf("check conversation anchor range: %w", scanErr)
 	}
 	if !ts.Valid {
-		return false, true, nil
+		return false, true, false, nil
 	}
 	afterStart := start == nil || !ts.Time.Before(*start)
 	beforeEnd := end == nil || ts.Time.Before(*end)
-	return afterStart && beforeEnd, true, nil
+	return afterStart && beforeEnd, true, true, nil
+}
+
+const conversationTimelineKey = "COALESCE(m.sent_at, m.received_at, m.internal_date)"
+
+type conversationWindowSegment struct {
+	where   string
+	args    []any
+	undated bool
+}
+
+// Split the timeline at its NULL block so each segment can seek the index.
+// SQLite sorts NULL first in ascending order; PostgreSQL sorts it last.
+func (s *Store) conversationWindowSegments(ctx context.Context, conversationID, anchorID int64, dated, before bool, start, end *time.Time) []conversationWindowSegment {
+	op := ">"
+	if before {
+		op = "<"
+	}
+	rangeClause, rangeArgs := conversationRangeClause(start, end)
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	base := "m.conversation_id = ? AND " + LiveMessagesWhere("m", false) + rangeClause + scope
+	args := append([]any{conversationID}, rangeArgs...)
+	args = append(args, scopeArgs...)
+	add := func(predicate string, undated bool, extra ...any) conversationWindowSegment {
+		return conversationWindowSegment{base + " AND " + predicate, append(append([]any{}, args...), extra...), undated}
+	}
+	var near conversationWindowSegment
+	if dated {
+		// Keep the SQLite timestamp's stored representation inside SQL.
+		anchorKey := "(SELECT COALESCE(sent_at, received_at, internal_date) FROM messages WHERE id = ?)"
+		near = add(conversationTimelineKey+" "+op+"= "+anchorKey+" AND ("+conversationTimelineKey+" "+op+" "+anchorKey+" OR m.id "+op+" ?)", false, anchorID, anchorID, anchorID)
+	} else {
+		near = add(conversationTimelineKey+" IS NULL AND m.id "+op+" ?", true, anchorID)
+	}
+	segments := []conversationWindowSegment{near}
+	nullsFirst := !s.IsPostgreSQL()
+	if start == nil && end == nil && before == (dated == nullsFirst) {
+		predicate := conversationTimelineKey + " IS NULL"
+		if !dated {
+			predicate = conversationTimelineKey + " IS NOT NULL"
+		}
+		segments = append(segments, add(predicate, dated))
+	}
+	return segments
+}
+
+func conversationSegmentCounts(segments []conversationWindowSegment) (string, []any) {
+	counts := make([]string, 0, len(segments))
+	var args []any
+	for _, segment := range segments {
+		counts = append(counts, "(SELECT COUNT(*) FROM messages m WHERE "+segment.where+")")
+		args = append(args, segment.args...)
+	}
+	return strings.Join(counts, " + "), args
+}
+
+func (segment conversationWindowSegment) selection(direction string) string {
+	order := "timeline " + direction + ", id " + direction
+	if segment.undated {
+		order = "id " + direction
+	}
+	return "SELECT m.id, " + conversationTimelineKey + " AS timeline FROM messages m WHERE " + segment.where +
+		" ORDER BY " + order + " LIMIT ?"
+}
+
+func conversationSegmentSelection(segments []conversationWindowSegment, limit int, direction string) (string, []any) {
+	queries := make([]string, 0, len(segments))
+	var args []any
+	order := " ORDER BY timeline " + direction + ", id " + direction
+	for _, segment := range segments {
+		queries = append(queries, "SELECT * FROM ("+segment.selection(direction)+") AS segment")
+		args = append(args, segment.args...)
+		args = append(args, limit)
+	}
+	return "SELECT id FROM (" + strings.Join(queries, " UNION ALL ") + ") AS side" + order + " LIMIT ?", append(args, limit)
 }
 
 // GetConversationWindow returns full details around anchor in chronological
@@ -115,8 +190,8 @@ func (s *Store) GetConversationWindow(
 // start and end optionally bound the window to messages with a timestamp
 // (COALESCE(sent_at, received_at, internal_date)) in the half-open range
 // [start, end); either or both may be nil to leave that side unbounded.
-// When bounds are set, position numbering, total_count, and anchor_position
-// are all computed over the bounded subset only, so before/after and the
+// When bounds are set, Total and AnchorPosition describe the bounded subset,
+// so before/after and the
 // caller-derived HasBefore/HasAfter are relative to the range rather than
 // the full conversation. If the anchor exists in the conversation but its
 // timestamp falls outside the bounds, ErrConversationAnchorOutsideRange is
@@ -127,36 +202,37 @@ func (s *Store) GetConversationWindowContext(
 	before, after int,
 	start, end *time.Time,
 ) (*ConversationWindow, error) {
-	if start != nil || end != nil {
-		inRange, exists, err := s.anchorTimestampInRangeContext(ctx, conversationID, anchorID, start, end)
-		if err != nil {
-			return nil, err
-		}
-		if exists && !inRange {
-			return nil, ErrConversationAnchorOutsideRange
-		}
+	inRange, exists, dated, err := s.anchorTimestampInRangeContext(ctx, conversationID, anchorID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	window := &ConversationWindow{Messages: []APIMessage{}}
+	if !exists {
+		return window, nil
+	}
+	if (start != nil || end != nil) && !inRange {
+		return nil, ErrConversationAnchorOutsideRange
 	}
 
-	rangeClause, rangeArgs := conversationRangeClause(start, end)
-	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
-	rangeClause += scope
-	rangeArgs = append(rangeArgs, scopeArgs...)
+	beforeSegments := s.conversationWindowSegments(ctx, conversationID, anchorID, dated, true, start, end)
+	afterSegments := s.conversationWindowSegments(ctx, conversationID, anchorID, dated, false, start, end)
+	beforeCount, beforeArgs := conversationSegmentCounts(beforeSegments)
+	afterCount, afterArgs := conversationSegmentCounts(afterSegments)
+	countArgs := beforeArgs
+	countArgs = append(countArgs, afterArgs...)
+	var preceding, following int64
+	if err := s.db.QueryRowContext(ctx, s.dialect.Rebind("SELECT "+beforeCount+", "+afterCount), countArgs...).Scan(&preceding, &following); err != nil {
+		return nil, fmt.Errorf("count conversation window: %w", err)
+	}
+	window.AnchorPosition = preceding + 1
+	window.Total = preceding + 1 + following
+	beforeSQL, beforeArgs := conversationSegmentSelection(beforeSegments, before, "DESC")
+	afterSQL, afterArgs := conversationSegmentSelection(afterSegments, after, "ASC")
 	query := fmt.Sprintf(`
-		WITH ordered AS (
-			SELECT
-				m.id,
-				ROW_NUMBER() OVER (
-					ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) ASC, m.id ASC
-				) AS position,
-				COUNT(*) OVER () AS total_count
-			FROM messages m
-			WHERE m.conversation_id = ? AND %s%s
-		), anchor AS (
-			SELECT position AS anchor_position FROM ordered WHERE id = ?
-		), selected AS (
-			SELECT ordered.id, ordered.position, ordered.total_count, anchor.anchor_position
-			FROM ordered CROSS JOIN anchor
-			WHERE ordered.position BETWEEN anchor.anchor_position - ? AND anchor.anchor_position + ?
+		WITH selected AS (
+			SELECT id FROM (%s) AS before_window
+			UNION ALL SELECT id FROM messages WHERE id = ?
+			UNION ALL SELECT id FROM (%s) AS after_window
 		)
 		SELECT
 			m.id,
@@ -176,9 +252,6 @@ func (s *Store) GetConversationWindowContext(
 			m.is_from_me,
 			m.deleted_from_source_at,
 			COALESCE(LENGTH(mb.body_text), 0) + COALESCE(LENGTH(mb.body_html), 0),
-			selected.position,
-			selected.total_count,
-			selected.anchor_position,
 			CASE WHEN m.message_type IN ('chatwoot', 'meeting_transcript') THEN m.metadata ELSE NULL END
 		FROM selected
 		JOIN messages m ON m.id = selected.id
@@ -190,13 +263,12 @@ func (s *Store) GetConversationWindowContext(
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id
-		ORDER BY selected.position ASC
-	`, LiveMessagesWhere("m", false), rangeClause, participantSummarySenderSQL)
+		ORDER BY COALESCE(m.sent_at, m.received_at, m.internal_date) ASC, m.id ASC
+	`, beforeSQL, afterSQL, participantSummarySenderSQL)
 
-	args := make([]any, 0, 4+len(rangeArgs))
-	args = append(args, conversationID)
-	args = append(args, rangeArgs...)
-	args = append(args, anchorID, before, after)
+	args := beforeArgs
+	args = append(args, anchorID)
+	args = append(args, afterArgs...)
 
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
 	if err != nil {
@@ -204,7 +276,6 @@ func (s *Store) GetConversationWindowContext(
 	}
 	defer func() { _ = rows.Close() }()
 
-	window := &ConversationWindow{Messages: []APIMessage{}}
 	ids := make([]int64, 0, before+after+1)
 	bodySizes := make([]int64, 0, before+after+1)
 	for rows.Next() {
@@ -212,7 +283,7 @@ func (s *Store) GetConversationWindowContext(
 		var sentAt, deletedAt nullableTimestamp
 		var isFromMe sql.NullBool
 		var metadata sql.NullString
-		var position, bodySize int64
+		var bodySize int64
 		if err := rows.Scan(
 			&message.ID,
 			&message.SourceID,
@@ -234,9 +305,6 @@ func (s *Store) GetConversationWindowContext(
 			&isFromMe,
 			&deletedAt,
 			&bodySize,
-			&position,
-			&window.Total,
-			&window.AnchorPosition,
 			&metadata,
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)

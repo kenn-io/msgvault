@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -364,4 +365,74 @@ func TestConversationTitlesBatchContext(t *testing.T) {
 	titles, err = st.ConversationTitlesBatchContext(t.Context(), first.ID, nil)
 	require.NoError(err)
 	assert.Empty(titles)
+}
+
+func TestConversationWindowOrderAndCounts(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "window@example.com")
+	requirements.NoError(err)
+	conv, err := st.EnsureConversation(source.ID, "window-order", "Window order")
+	requirements.NoError(err)
+	base := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	ids := make([]int64, 8)
+	for i := range ids {
+		message := &store.Message{ConversationID: conv, SourceID: source.ID, SourceMessageID: strconv.Itoa(i), MessageType: "email"}
+		switch i {
+		case 0, 1, 6, 7:
+			message.SentAt = sql.NullTime{Time: base, Valid: true}
+		case 2:
+			message.ReceivedAt = sql.NullTime{Time: base.Add(time.Minute), Valid: true}
+		case 5:
+			message.InternalDate = sql.NullTime{Time: base.Add(2 * time.Minute), Valid: true}
+		}
+		ids[i], err = st.UpsertMessage(message)
+		requirements.NoError(err)
+	}
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_from_source_at = ? WHERE id = ?`), base, ids[5])
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET deleted_at = ? WHERE id = ?`), base, ids[6])
+	requirements.NoError(err)
+	// A second timestamp tie remains visible after the hidden message.
+	order := []int{3, 4, 0, 1, 7, 2, 5}
+	if st.IsPostgreSQL() {
+		order = []int{0, 1, 7, 2, 5, 3, 4}
+	}
+	for pos, anchor := range order {
+		for _, limits := range []struct{ before, after int }{{0, 0}, {1, 1}, {25, 25}, {0, 25}, {25, 0}} {
+			t.Run(fmt.Sprintf("anchor%d/%d/%d", anchor, limits.before, limits.after), func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				window, err := st.GetConversationWindow(conv, ids[anchor], limits.before, limits.after)
+				requirements.NoError(err)
+				want := []int64{}
+				for _, i := range order[max(0, pos-limits.before):min(len(order), pos+limits.after+1)] {
+					want = append(want, ids[i])
+				}
+				got := []int64{}
+				for _, message := range window.Messages {
+					got = append(got, message.ID)
+				}
+				assertions.Equal(want, got)
+				assertions.Equal(int64(7), window.Total)
+				assertions.Equal(int64(pos+1), window.AnchorPosition)
+			})
+		}
+	}
+	start, end := base.Add(time.Minute), base.Add(3*time.Minute)
+	window, err := st.GetConversationWindowContext(t.Context(), conv, ids[2], 25, 25, &start, &end)
+	requirements.NoError(err)
+	requirements.Len(window.Messages, 2)
+	assertions.Equal([]int64{ids[2], ids[5]}, []int64{window.Messages[0].ID, window.Messages[1].ID})
+	assertions.Equal(int64(2), window.Total)
+	assertions.Equal(int64(1), window.AnchorPosition)
+	_, err = st.GetConversationWindowContext(t.Context(), conv, ids[3], 25, 25, &start, &end)
+	requirements.ErrorIs(err, store.ErrConversationAnchorOutsideRange)
+	for _, anchor := range []int64{ids[6], ids[7] + 1000} {
+		window, err := st.GetConversationWindow(conv, anchor, 25, 25)
+		requirements.NoError(err)
+		assertions.Empty(window.Messages)
+		assertions.Zero(window.Total)
+	}
 }
