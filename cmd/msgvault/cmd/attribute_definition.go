@@ -79,13 +79,13 @@ var attributeDefinitionListCmd = &cobra.Command{
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
 		_, _ = fmt.Fprintln(w,
-			"ID\tSLUG\tLABEL\tOBJECT\tVALUE TYPE\tWIDGET\tCARDINALITY\tOWNER\tSENSITIVE\tMODE\tUNIVERSAL ID")
+			"ID\tSLUG\tLABEL\tOBJECT\tVALUE TYPE\tWIDGET\tCARDINALITY\tOWNER\tSENSITIVE\tSTABILITY\tMODE\tUNIVERSAL ID")
 		for _, definition := range resp.JSON200.Definitions {
-			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%t\t%s\t%s\n",
+			_, _ = fmt.Fprintf(w, "%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%t\t%s\t%s\t%s\n",
 				definition.ID, definition.Slug, definition.Label,
 				definition.ObjectType, definition.ValueType, definition.FieldType,
 				definition.Cardinality, definition.Ownership, definition.IsSensitive,
-				attributeDefinitionMode(definition), definition.UniversalID)
+				definition.Stability, attributeDefinitionMode(definition), definition.UniversalID)
 		}
 		return w.Flush()
 	},
@@ -218,6 +218,47 @@ var attributeDefinitionRenameCmd = &cobra.Command{
 						Header:     &generated.PatchAttributeDefinitionHeaders{IfMatch: etag},
 						Body:       &body,
 					})
+			})
+		if err != nil {
+			return err
+		}
+		return writeCLIAttributeDefinition(cmd, resp.JSON200)
+	},
+}
+
+var attributeDefinitionSetStabilityCmd = &cobra.Command{
+	Use:   "set-stability <definition-id> <fixed|durable|volatile>",
+	Short: "Change how quickly an attribute can change",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		id, err := positivePersonCLIArg(cmd, args[0], "attribute definition")
+		if err != nil {
+			return err
+		}
+		if !store.AttributeStability(args[1]).Valid() {
+			return usageErr(cmd, errors.New("stability must be fixed, durable, or volatile"))
+		}
+		client, _, err := OpenHTTPStore(cmd.Context())
+		if err != nil {
+			return err
+		}
+		defer func() { _ = client.Close() }()
+		current, err := getCLIAttributeDefinition(cmd, client, id)
+		if err != nil {
+			return err
+		}
+		if current.JSON200 == nil {
+			return errors.New("attribute definition response was empty")
+		}
+		etag := fmt.Sprintf(`"attribute-definition-%d-r%d"`, id, current.JSON200.Revision)
+		stability := generated.PatchAttributeDefinitionRequestStability(args[1])
+		resp, err := daemonclient.APIResponse(client,
+			func(api *apiclient.Client) (*generated.PatchAttributeDefinitionResp, error) {
+				return api.PatchAttributeDefinitionWithResponse(cmd.Context(), &generated.PatchAttributeDefinitionRequestOptions{
+					PathParams: &generated.PatchAttributeDefinitionPath{ID: id},
+					Header:     &generated.PatchAttributeDefinitionHeaders{IfMatch: etag},
+					Body:       &generated.PatchAttributeDefinitionBody{Stability: &stability},
+				})
 			})
 		if err != nil {
 			return err
@@ -385,10 +426,10 @@ func init() {
 	rootCmd.AddCommand(attributeDefinitionCmd)
 	attributeDefinitionCmd.AddCommand(attributeDefinitionListCmd,
 		attributeDefinitionGetCmd, attributeDefinitionCreateCmd,
-		attributeDefinitionRenameCmd, attributeDefinitionDeleteCmd)
+		attributeDefinitionRenameCmd, attributeDefinitionSetStabilityCmd, attributeDefinitionDeleteCmd)
 	for _, command := range []*cobra.Command{
 		attributeDefinitionListCmd, attributeDefinitionGetCmd,
-		attributeDefinitionCreateCmd, attributeDefinitionRenameCmd,
+		attributeDefinitionCreateCmd, attributeDefinitionRenameCmd, attributeDefinitionSetStabilityCmd,
 	} {
 		command.Flags().BoolVar(&attributeDefinitionJSON, flagJSON, false, "Output as JSON")
 	}

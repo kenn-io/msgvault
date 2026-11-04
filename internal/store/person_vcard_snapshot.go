@@ -367,6 +367,33 @@ func personVCardSnapshotFingerprint(snapshot *PersonVCardSnapshot) (string, erro
 	return hex.EncodeToString(sum[:]), nil
 }
 
+// personVCardFingerprintSnapshot keeps the snapshot's field order while using
+// a definition view that omits Stability, preserving the fingerprint encoding
+// from before that metadata was added.
+type personVCardFingerprintSnapshot struct {
+	Profile                     PersonProfile                     `json:"profile"`
+	MediaData                   []PersonVCardMediaData            `json:"media_data"`
+	Attributes                  []personVCardFingerprintAttribute `json:"attributes"`
+	Employments                 []PersonVCardEmployment           `json:"employments"`
+	Relationships               []PersonRelationshipView          `json:"relationships"`
+	RelationshipTypes           []RelationshipType                `json:"relationship_types"`
+	PendingRelationshipReviews  []RelationshipReview              `json:"pending_relationship_reviews"`
+	AcceptedRelationshipReviews []PersonVCardAcceptedReview       `json:"accepted_relationship_reviews"`
+}
+
+type personVCardFingerprintAttribute struct {
+	Definition personVCardFingerprintDefinition `json:"definition"`
+	Values     []PersonAttributeValue           `json:"values"`
+}
+
+// The zero, omitted outer field shadows AttributeDefinition.Stability only in
+// this fingerprint view. API and archive serialization keep the required field.
+type personVCardFingerprintDefinition struct {
+	AttributeDefinition `json:",embed"`
+
+	Stability AttributeStability `json:"stability,omitzero"`
+}
+
 // personVCardFingerprintView copies the snapshot with every field that is not
 // projection input zeroed. Revisions and timestamps are compare-and-swap
 // tokens and watermarks: the person record's move when a participant is
@@ -374,11 +401,12 @@ func personVCardSnapshotFingerprint(snapshot *PersonVCardSnapshot) (string, erro
 // just before such a write must still commit rather than conflict and produce
 // an identical card. Definition presentation fields (label, description,
 // display order) are likewise never projected, and their edits do not bump
-// the projection revision. Everything else stays, including the value
-// envelopes' own timestamps: those change only through component writes that
+// the projection revision. Stability is metadata too; it stays out of the
+// fingerprint so existing cards retain the same encoding. Value envelopes'
+// own timestamps stay because they change only through component writes that
 // do bump. The projection revision remains the lock; this is only what the
 // no-op check compares.
-func personVCardFingerprintView(snapshot *PersonVCardSnapshot) PersonVCardSnapshot {
+func personVCardFingerprintView(snapshot *PersonVCardSnapshot) personVCardFingerprintSnapshot {
 	view := *snapshot
 	view.Fingerprint = ""
 	view.Profile.Person = vcardFingerprintPerson(view.Profile.Person)
@@ -393,14 +421,22 @@ func personVCardFingerprintView(snapshot *PersonVCardSnapshot) PersonVCardSnapsh
 		employment.Organization.Organization.UpdatedAt = time.Time{}
 	}
 	view.Attributes = slices.Clone(view.Attributes)
+	fingerprintAttributes := make([]personVCardFingerprintAttribute, len(view.Attributes))
 	for i := range view.Attributes {
-		definition := &view.Attributes[i].Definition
+		attribute := &view.Attributes[i]
+		definition := &attribute.Definition
 		definition.Label = ""
 		definition.Description = nil
 		definition.DisplayOrder = 0
 		definition.Revision = 0
 		definition.CreatedAt = time.Time{}
 		definition.UpdatedAt = time.Time{}
+		fingerprintAttributes[i] = personVCardFingerprintAttribute{
+			Definition: personVCardFingerprintDefinition{
+				AttributeDefinition: *definition,
+			},
+			Values: attribute.Values,
+		}
 	}
 	view.RelationshipTypes = slices.Clone(view.RelationshipTypes)
 	for i := range view.RelationshipTypes {
@@ -409,7 +445,16 @@ func personVCardFingerprintView(snapshot *PersonVCardSnapshot) PersonVCardSnapsh
 		relationshipType.CreatedAt = time.Time{}
 		relationshipType.UpdatedAt = time.Time{}
 	}
-	return view
+	return personVCardFingerprintSnapshot{
+		Profile:                     view.Profile,
+		MediaData:                   view.MediaData,
+		Attributes:                  fingerprintAttributes,
+		Employments:                 view.Employments,
+		Relationships:               view.Relationships,
+		RelationshipTypes:           view.RelationshipTypes,
+		PendingRelationshipReviews:  view.PendingRelationshipReviews,
+		AcceptedRelationshipReviews: view.AcceptedRelationshipReviews,
+	}
 }
 
 // vcardFingerprintPerson keeps the person record fields a card projects:

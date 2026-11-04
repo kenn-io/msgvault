@@ -4,6 +4,7 @@
 import type { AttributeOptions } from "./attributeOptions";
 import type { CreateAttributeDefinitionRequestCardinality } from "./createAttributeDefinitionRequestCardinality";
 import type { CreateAttributeDefinitionRequestObjectType } from "./createAttributeDefinitionRequestObjectType";
+import type { CreateAttributeDefinitionRequestStability } from "./createAttributeDefinitionRequestStability";
 
 export interface CreateAttributeDefinitionRequest {
   cardinality?: CreateAttributeDefinitionRequestCardinality;
@@ -19,6 +20,7 @@ export interface CreateAttributeDefinitionRequest {
   options?: AttributeOptions;
   record_target?: string;
   slug?: string;
+  stability?: CreateAttributeDefinitionRequestStability;
   value_type: string;
   vcard_property?: string;
 }

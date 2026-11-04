@@ -124,7 +124,7 @@ describe('DirectoryProfileController', () => {
     const definition: AttributeDefinition = {
       id: 8, universal_id: '34b52841-dcf5-40c6-a24e-628b049e85b2', object_type: 'person', slug: 'contact_frequency', label: 'Contact frequency',
       value_type: 'integer', field_type: 'duration', cardinality: 'single', ownership: 'system', display_order: 20,
-      is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1, options: { unit: 'days' },
+      is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1, stability: 'volatile', options: { unit: 'days' },
       created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', history_exempt: false, is_audited: true, is_deletable: false, is_required: false, is_searchable: false,
     };
     const previous: PersonAttributeValue = { id: 41, person_id: 7, definition_id: 8, definition_slug: 'contact_frequency', ordinal: 0, value: { type: 'integer', integer: 2 }, source: 'user', active_from: '2026-08-01T00:00:00Z', created_at: '2026-08-01T00:00:00Z' };
@@ -413,7 +413,8 @@ describe('DirectoryProfileController', () => {
     const closed = { ...current, active_until: '2026-08-02T00:00:00Z', superseded_at: '2026-08-02T00:00:00Z' };
     const primaryDefinition = {
       id: 1, universal_id: 'primary-channel-id', object_type: 'person' as const, slug: 'primary_channel', label: 'Primary channel',
-      value_type: 'text' as const, field_type: 'select', cardinality: 'single' as const, display_order: 0,
+      value_type: 'text' as const, field_type: 'select', cardinality: 'single' as const,
+      display_order: 0, stability: 'durable' as const, inference_eligible: false,
       is_required: false, ownership: 'system' as const, ui_creatable: true, ui_editable: true, api_mutable: true,
       is_searchable: false, is_sensitive: false, is_audited: true, is_deletable: false, history_exempt: false,
       options: { choices: [{ value: 'chat', label: 'Chat' }] }, is_active: true, revision: 1,
@@ -445,7 +446,9 @@ describe('DirectoryProfileController', () => {
     const createdDefinition = {
       id: 71, universal_id: `created-${cardinality}`, object_type: 'person' as const, slug: `created_${cardinality}`,
       label: `Created ${cardinality}`, value_type: 'text' as const, field_type: 'text', cardinality,
-      display_order: 71, is_required: false, ownership: 'user' as const, ui_creatable: true, ui_editable: true,
+      display_order: 71, stability: 'durable' as const, inference_eligible: true,
+      is_required: false, ownership: 'user' as const,
+      ui_creatable: true, ui_editable: true,
       api_mutable: true, is_searchable: false, is_sensitive: false, is_audited: true, is_deletable: true,
       history_exempt: false, is_active: true, revision: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
     };
