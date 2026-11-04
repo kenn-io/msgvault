@@ -1997,7 +1997,7 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	imp, opts := testImporter(t, f)
 	st := imp.store
 
-	_, err := imp.Import(context.Background(), opts)
+	sum, err := imp.Import(context.Background(), opts)
 	require.NoError(err)
 
 	// A swept thread grows a 30-reply tail. A limited sweep must not fetch
@@ -2018,15 +2018,14 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	_, err = imp.Import(context.Background(), limited)
 	require.NoError(err)
 	// Count just the tail replies present after one limited run.
-	tailIDs := make([]any, len(tail))
+	tailIDs := make([]string, len(tail))
 	for i, ts := range tail {
 		tailIDs[i] = "C09:" + ts
 	}
 	tailCount := func() int {
-		var n int
-		require.NoError(st.DB().QueryRow(st.Rebind(
-			`SELECT COUNT(*) FROM messages WHERE source_message_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(tail)), ",")+`)`), tailIDs...).Scan(&n))
-		return n
+		archived, err := st.ArchivedSourceMessageIDs(sum.SourceID, tailIDs)
+		require.NoError(err)
+		return len(archived)
 	}
 	count := tailCount()
 	assert.LessOrEqual(count, 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
