@@ -57,7 +57,6 @@ func TestRelationshipHeatmapCellsHaveFixedWidthAcrossAllLevelsAndFuture(t *testi
 func TestRelationshipHeatmapWideUsesSundayRowsMonthsAndAlignedSummary(t *testing.T) {
 	assert := assert.New(t)
 	calendar := relationshipCalendarFixture()
-	calendar.Timezone = "America/New_York"
 	calendar.Days = relationshipElapsedDays(calendar.Year, time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC))
 	calendar.Days[1].Level = identityindex.HeatFirstQuartile
 	calendar.Days[2].Level = identityindex.HeatSecondQuartile
@@ -68,7 +67,6 @@ func TestRelationshipHeatmapWideUsesSundayRowsMonthsAndAlignedSummary(t *testing
 	view := strings.Join(lines, "\n")
 	require.NotEmpty(t, lines)
 	assert.Contains(lines[0], "● Relationship")
-	assert.True(strings.HasSuffix(lines[0], "2026"), "year is unbracketed and right aligned")
 	for _, month := range []string{"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"} {
 		assert.Contains(view, month)
 	}
@@ -90,7 +88,6 @@ func TestRelationshipHeatmapNarrowStacksEqualSizedHalfYearsAndLeavesFutureBlank(
 	calendar := relationshipCalendarFixture()
 	lines := relationshipHeatmapLines(calendar, 70, newStyles(true), true)
 	view := strings.Join(lines, "\n")
-	assert.True(strings.HasSuffix(lines[0], "2026 · UTC"), "UTC days are labeled by the year")
 	assert.Contains(view, "Jan")
 	assert.Contains(view, "Jun")
 	assert.Contains(view, "Jul")
@@ -110,6 +107,24 @@ func TestRelationshipHeatmapNarrowStacksEqualSizedHalfYearsAndLeavesFutureBlank(
 	assert.Contains(strings.Join(
 		relationshipHeatmapLines(empty, 70, newStyles(true), true), "\n",
 	), "No interactions in 2026.")
+}
+
+func TestRelationshipHeatmapYearLabel(t *testing.T) {
+	for _, tt := range []struct {
+		timezone string
+		want     string
+	}{
+		{timezone: "UTC", want: "2026 · UTC"},
+		{timezone: "America/New_York", want: "2026"},
+	} {
+		t.Run(tt.timezone, func(t *testing.T) {
+			calendar := relationshipCalendarFixture()
+			calendar.Timezone = tt.timezone
+			lines := relationshipHeatmapLines(calendar, 120, newStyles(true), true)
+			require.NotEmpty(t, lines)
+			assert.True(t, strings.HasSuffix(lines[0], tt.want), "year is unbracketed and right aligned with UTC labeled")
+		})
+	}
 }
 
 func TestRelationshipHeatmapSupportsFiftyThreeAndFiftyFourWeekYears(t *testing.T) {
