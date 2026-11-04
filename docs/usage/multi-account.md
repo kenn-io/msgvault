@@ -221,6 +221,7 @@ account address are listed with a `--type` repair hint. If you supplied an
 identifier, reuse it. The command skips accounts whose own address
 is already confirmed or is not a plain valid email address. Existing aliases
 do not prevent it from adding the primary account address.
+Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.
 
 ### Select an exact source
 

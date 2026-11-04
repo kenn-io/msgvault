@@ -39,8 +39,7 @@ already confirmed, and only plain, valid email addresses are touched. Other
 confirmed aliases do not suppress repair of the account address.
 Other email account types with an unconfirmed account address are listed with
 a --type repair hint. If you supplied an identifier, reuse it.
-Activity and contact state catch up at the daemon's next projection, or right
-away with msgvault activity build.
+Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.
 
 Examples:
   msgvault repair-identity                       # all Gmail accounts missing an identity
@@ -157,7 +156,7 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 		_, _ = fmt.Fprintf(out, "Skipped %d %s source(s) with an unconfirmed account address; re-run with %s.\n", skipped[skippedType], skippedType, hint)
 	}
 	if repaired > 0 {
-		_, _ = fmt.Fprintln(out, "Activity and contact state catch up at the daemon's next projection, or right away with msgvault activity build.")
+		_, _ = fmt.Fprintln(out, "Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.")
 	}
 	return repaired, errors.Join(failures...)
 }

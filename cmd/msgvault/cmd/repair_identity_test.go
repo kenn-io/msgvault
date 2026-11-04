@@ -34,7 +34,7 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	n, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
 	assert.Equal(1, n, "only the valid gmail address without an identity is repaired")
-	assert.Contains(buf.String(), "Activity and contact state catch up at the daemon's next projection, or right away with msgvault activity build.")
+	assert.Contains(buf.String(), "Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.")
 
 	ai, err := st.ListAccountIdentities(a.ID)
 	require.NoError(err)
