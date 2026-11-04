@@ -57,6 +57,7 @@ func TestRelationshipHeatmapCellsHaveFixedWidthAcrossAllLevelsAndFuture(t *testi
 func TestRelationshipHeatmapWideUsesSundayRowsMonthsAndAlignedSummary(t *testing.T) {
 	assert := assert.New(t)
 	calendar := relationshipCalendarFixture()
+	calendar.Timezone = "America/New_York"
 	calendar.Days = relationshipElapsedDays(calendar.Year, time.Date(2026, 8, 22, 0, 0, 0, 0, time.UTC))
 	calendar.Days[1].Level = identityindex.HeatFirstQuartile
 	calendar.Days[2].Level = identityindex.HeatSecondQuartile
@@ -89,6 +90,7 @@ func TestRelationshipHeatmapNarrowStacksEqualSizedHalfYearsAndLeavesFutureBlank(
 	calendar := relationshipCalendarFixture()
 	lines := relationshipHeatmapLines(calendar, 70, newStyles(true), true)
 	view := strings.Join(lines, "\n")
+	assert.True(strings.HasSuffix(lines[0], "2026 · UTC"), "UTC days are labeled by the year")
 	assert.Contains(view, "Jan")
 	assert.Contains(view, "Jun")
 	assert.Contains(view, "Jul")

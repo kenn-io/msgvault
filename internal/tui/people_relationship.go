@@ -204,9 +204,10 @@ func (m Model) changePeopleRelationshipYear(delta int) (Model, tea.Cmd) {
 	if delta == 0 || m.peopleState.contact == nil {
 		return m, nil
 	}
-	m.initializePeopleRelationshipYears(m.peopleState.contact, time.Now())
+	now := time.Now()
+	m.initializePeopleRelationshipYears(m.peopleState.contact, now)
 	_, location := m.peopleRelationshipZone()
-	currentYear := time.Now().In(location).Year()
+	currentYear := now.In(location).Year()
 	nextYear := m.peopleState.relationshipYear + delta
 	if nextYear < m.peopleState.relationshipFirstYear || nextYear > currentYear {
 		return m, nil

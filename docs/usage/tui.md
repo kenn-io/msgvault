@@ -192,6 +192,8 @@ attributes, inboxes, meetings, files, and dated activity together. See
 [People, Profiles, and Source Identities](/docs/usage/people/)
 for curation, tracking, and provider setup.
 
+The Relationship calendar groups days in your system's named timezone, or in UTC, shown as "UTC" by the year, when the system zone has no name, such as on Windows, while dated activity lists show local time.
+
 ### Person briefs
 
 In the People browser, a person's Overview tab shows their **Last time we
