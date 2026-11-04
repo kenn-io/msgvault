@@ -530,7 +530,7 @@ func TestPersonDirectoryCadenceRequiresNewDaemonMessage(t *testing.T) {
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 
 	output, err := runPersonDirectoryCommand(ctx, t, "--cadence", "due")
-	require.ErrorContains(err, "Upgrade the daemon to use contact-list filters or sorting.")
+	require.ErrorContains(err, "upgrade the daemon to use contact-list filters or sorting")
 	assert.Empty(output)
 	assert.Zero(lookups.Load())
 }
