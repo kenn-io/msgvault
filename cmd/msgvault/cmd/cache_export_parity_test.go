@@ -145,19 +145,6 @@ func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datas
 	}
 }
 
-func requireCacheExportParity(t *testing.T, duckDB *sql.DB, dataset, full, other string) {
-	t.Helper()
-	var rows, missing, extra int
-	require.NoError(t, duckDB.QueryRow(`SELECT
-		(SELECT count(*) FROM read_parquet(?)),
-		(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?))),
-		(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?)))`,
-		full, full, other, other, full).Scan(&rows, &missing, &extra), dataset)
-	require.Positive(t, rows, "%s must hold rows for the comparison to mean anything", dataset)
-	require.Zero(t, missing, "%s rows missing from the compared export", dataset)
-	require.Zero(t, extra, "%s rows only in the compared export", dataset)
-}
-
 func TestCacheExportParityCopyParquetRoundTrip(t *testing.T) {
 	require := require.New(t)
 	db, err := sql.Open("duckdb", "")

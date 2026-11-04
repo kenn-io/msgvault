@@ -1201,7 +1201,6 @@ func TestBuildCache_DataIntegrity(t *testing.T) {
 
 func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T) {
 	require := require.New(t)
-	assert := assert.New(t)
 	oldGOOS := cacheSnapshotGOOS
 	cacheSnapshotGOOS = "linux"
 	t.Cleanup(func() { cacheSnapshotGOOS = oldGOOS })
@@ -1250,33 +1249,7 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 	require.NoError(err)
 	_, err = buildCache(dbPath, fullDir, true)
 	require.NoError(err)
-	for _, dataset := range []string{"messages", "message_recipients", "message_labels", "attachments"} {
-		pattern := "*.parquet"
-		if dataset == "messages" {
-			pattern = "**/*.parquet"
-		}
-		inc := filepath.ToSlash(filepath.Join(incDir, dataset, pattern))
-		full := filepath.ToSlash(filepath.Join(fullDir, dataset, pattern))
-		var schemas [][]string
-		for _, path := range []string{full, inc} {
-			func() {
-				rows, err := duck.Query(`DESCRIBE SELECT * FROM read_parquet(?)`, path)
-				require.NoError(err)
-				defer func() { require.NoError(rows.Close()) }()
-				var schema []string
-				for rows.Next() {
-					var name, typ string
-					var nullable, key, def, extra sql.NullString
-					require.NoError(rows.Scan(&name, &typ, &nullable, &key, &def, &extra))
-					schema = append(schema, name+":"+typ)
-				}
-				require.NoError(rows.Err())
-				schemas = append(schemas, schema)
-			}()
-		}
-		assert.Equal(schemas[0], schemas[1], dataset)
-		requireCacheExportParity(t, duck, dataset, full, inc)
-	}
+	assertCacheExportParity(t, tmp, incDir, fullDir, []string{"messages", "message_recipients", "message_labels", "attachments"})
 }
 
 // TestBuildCache_IncrementalExport tests that incremental exports only add new messages.
