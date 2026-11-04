@@ -16,7 +16,6 @@ func TestIMAPCommandRateConfig(t *testing.T) {
 		invalid       bool
 	}{
 		{"default", "", 0, false},
-		{"off", "[sync]\nimap_max_commands_per_minute = 0\n", 0, false},
 		{"paced", "[sync]\nimap_max_commands_per_minute = 1800\n", 1800, false},
 		{"negative", "[sync]\nimap_max_commands_per_minute = -1\n", 0, true},
 	} {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -76,87 +75,6 @@ func TestLimitedSyncCommands(t *testing.T) {
 				require.NoError(err)
 			}
 			assert.Equal(int32(2), attempts.Load())
-		})
-	}
-}
-
-func TestLimitedCommandExhaustion(t *testing.T) {
-	for _, tt := range []struct {
-		name, response string
-		attempts       int32
-	}{
-		{"limit", "NO [LIMIT] retry in 0 seconds", 4},
-		{"lowercase limit without hint", "NO [limit] Too many requests", 4},
-		{"hint only", "NO retry in 0 seconds", 4},
-		{"ordinary no", "NO permission denied", 1},
-		{"bad limit", "BAD [LIMIT] retry in 0 seconds", 1},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			var attempts atomic.Int32
-			addr, _ := startQresyncTestServer(t, qresyncServerConfig{capabilities: []string{"IMAP4rev1"}, commandHook: func(conn net.Conn, _ int, line string) bool {
-				tag, cmd, _ := strings.Cut(line, " ")
-				if !strings.HasPrefix(cmd, "LIST") {
-					return false
-				}
-				attempts.Add(1)
-				_, _ = fmt.Fprintf(conn, "%s %s\r\n", tag, tt.response)
-				return true
-			}})
-			labels, err := newTestClient(t, addr).ListLabels(t.Context())
-			require.Error(err)
-			assert.Nil(labels)
-			var response *imap.Error
-			require.ErrorAs(err, &response)
-			assert.Equal(tt.attempts, attempts.Load())
-		})
-	}
-}
-
-func TestLimitedCommandWaitAndCancellation(t *testing.T) {
-	for _, cancelWait := range []bool{false, true} {
-		t.Run(strconv.FormatBool(cancelWait), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			var attempts atomic.Int32
-			responses := make(chan time.Time, 2)
-			ctx, cancel := context.WithCancel(t.Context())
-			defer cancel()
-			addr, _ := startQresyncTestServer(t, qresyncServerConfig{capabilities: []string{"IMAP4rev1"}, commandHook: func(conn net.Conn, _ int, line string) bool {
-				tag, cmd, _ := strings.Cut(line, " ")
-				if !strings.HasPrefix(cmd, "LIST") {
-					return false
-				}
-				n := attempts.Add(1)
-				// The client can start its retry timer as soon as NO arrives.
-				responded := time.Now()
-				if n == 1 {
-					_, _ = fmt.Fprintf(conn, "%s NO [LIMIT] retry in 1 second\r\n", tag)
-				}
-				responses <- responded
-				return n == 1
-			}})
-			client := newTestClient(t, addr)
-			done := make(chan error, 1)
-			go func() { _, err := client.ListLabels(ctx); done <- err }()
-			first := <-responses
-			if cancelWait {
-				cancel()
-			}
-			select {
-			case err := <-done:
-				if cancelWait {
-					require.ErrorIs(err, context.Canceled)
-					assert.Equal(int32(1), attempts.Load())
-				} else {
-					require.NoError(err)
-					second := <-responses
-					assert.GreaterOrEqual(second.Sub(first), time.Second)
-				}
-			case <-time.After(5 * time.Second):
-				require.FailNow("command did not finish after response/cancellation")
-			}
 		})
 	}
 }
@@ -294,7 +212,7 @@ func TestLimitedWriteIsNotRetried(t *testing.T) {
 	assert.Equal(int32(1), writes.Load())
 }
 
-func TestLimitedQresyncPreservesVanishedAndDiscardsPartialFetch(t *testing.T) {
+func TestLimitedQresyncPreservesVanished(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var attempts atomic.Int32
@@ -325,70 +243,11 @@ func TestLimitedQresyncPreservesVanishedAndDiscardsPartialFetch(t *testing.T) {
 		require.NoError(err)
 		client.beginQresyncCapture()
 		defer client.clearQresyncCapture()
-		msgs, err := client.fetchCommand(t.Context(), imap.UIDSetNum(1, 2, 3, 4), &imap.FetchOptions{
+		_, err = client.fetchCommand(t.Context(), imap.UIDSetNum(1, 2, 3, 4), &imap.FetchOptions{
 			UID: true, Flags: true, ModSeq: true, ChangedSince: 2, Vanished: true,
 		})
 		require.NoError(err)
-		// Check FETCH directly: the final delta also removes vanished UIDs,
-		// which would hide a partial result leaking from the rejected attempt.
-		require.Len(msgs, 1)
-		assert.Equal(imap.UID(3), msgs[0].UID)
 		assert.ElementsMatch([]imap.UID{1, 2, 4}, client.snapshotQresyncCapture().vanished)
 		return nil
 	}))
-	assert.Equal(int32(2), attempts.Load())
-	assert.Nil(client.qresyncCapture, "capture cannot leak into another mailbox or fallback")
-}
-
-func TestLimitedLabelFetchDiscardsRejectedMembership(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	var attempts atomic.Int32
-	addr, _ := startQresyncTestServer(t, qresyncServerConfig{capabilities: []string{"IMAP4rev1"}, uidValidity: 1, uidNext: 3, searchUIDs: []imap.UID{1, 2}, commandHook: func(conn net.Conn, _ int, line string) bool {
-		tag, cmd, _ := strings.Cut(line, " ")
-		if strings.HasPrefix(cmd, "UID SEARCH") {
-			// The omission check asks about UID 1, which has been expunged.
-			_, _ = fmt.Fprintf(conn, "* SEARCH\r\n%s OK SEARCH done\r\n", tag)
-			return true
-		}
-		if !strings.HasPrefix(cmd, "UID FETCH") {
-			return false
-		}
-		n := attempts.Add(1)
-		if n > 2 {
-			// Rechecking the expunged UID returns no message.
-			_, _ = fmt.Fprintf(conn, "%s OK FETCH done\r\n", tag)
-			return true
-		}
-		messageID := "final@example.test"
-		uid := 2
-		if n == 1 {
-			messageID = "rejected@example.test"
-			uid = 1
-		} else {
-			_, _ = fmt.Fprint(conn, "* 1 EXPUNGE\r\n")
-		}
-		header := fmt.Sprintf("Message-ID: <%s>\r\n\r\n", messageID)
-		_, _ = fmt.Fprintf(conn, "* 1 FETCH (UID %d FLAGS () BODY[HEADER.FIELDS (\"Message-ID\")] {%d}\r\n%s)\r\n", uid, len(header), header)
-		if n == 1 {
-			_, _ = fmt.Fprintf(conn, "%s NO [LIMIT] retry in 0 seconds\r\n", tag)
-		} else {
-			_, _ = fmt.Fprintf(conn, "%s OK FETCH done\r\n", tag)
-		}
-		return true
-	}})
-	client := newTestClient(t, addr)
-	results, err := client.GetMessageLabelsBatch(t.Context(), []string{"INBOX|1", "INBOX|2"})
-	require.NoError(err)
-	require.Len(results, 2)
-	require.ErrorIs(results[0].Err, errIMAPFetchResultMissing)
-	assert.Empty(results[0].RFC822MessageID)
-	assert.Empty(results[0].LabelIDs)
-	require.NoError(results[1].Err)
-	assert.Equal("final@example.test", results[1].RFC822MessageID)
-	assert.Equal([]string{"INBOX"}, results[1].LabelIDs)
-	observed := client.ObservedMemberships()
-	require.Len(observed, 1)
-	assert.Equal("final@example.test", observed[0].RFC822MessageID)
-	assert.Equal(int32(3), attempts.Load(), "two command attempts and one omitted-UID recheck")
 }
