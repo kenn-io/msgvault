@@ -3,19 +3,56 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestRunServePostgreSQLSkipsSQLiteMaintenance(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	_, dsn := openServePGSchema(t)
+	clearServerKeyEnvironment(t)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Data.DatabaseURL = dsn
+	cfg.Server.APIPort = freeTCPPort(t)
+	cfg.Analytics.Engine = config.AnalyticsEngineSQL
+	cfg.Analytics.AutoBuildCache = false
+
+	var logs bytes.Buffer
+	ctx, cancel := context.WithCancel(t.Context())
+	state := testInvocationWithConfig(cfg)
+	state.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	command := &cobra.Command{Use: "serve"}
+	command.SetContext(withInvocation(ctx, state))
+	done := make(chan error, 1)
+	go func() { done <- runServe(command, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			require.NoError(err)
+		case <-time.After(serveLifecycleTestTimeout):
+			require.FailNow("daemon did not stop")
+		}
+		assert.NotContains(logs.String(), "failed to start SQLite maintenance")
+	})
+	waitForServeHealthBounded(t, cfg.Server.APIPort, done)
+}
 
 // openServePGSchema creates an isolated per-test schema on
 // MSGVAULT_TEST_DB and returns a pgx *sql.DB scoped to it plus the
