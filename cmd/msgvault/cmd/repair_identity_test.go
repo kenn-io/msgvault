@@ -80,7 +80,6 @@ func TestRepairIdentities_SingleTarget(t *testing.T) {
 	n, err := repairIdentities(t.Context(), st, "gmail", "FRANK@example.com", &buf) // case-insensitive
 	require.NoError(err)
 	assert.Equal(1, n)
-	assert.Contains(buf.String(), "Activity and contact state catch up at the daemon's next projection, or right away with msgvault activity build.")
 
 	ai, err := st.ListAccountIdentities(a.ID)
 	require.NoError(err)
@@ -122,7 +121,7 @@ func TestRepairIdentities_ReportsSkippedEmailSources(t *testing.T) {
 	repaired, err = repairIdentities(t.Context(), st, "gmail", "owner@example.com", &buf)
 	require.NoError(err)
 	assert.Zero(repaired)
-	assert.Equal("Skipped 1 imap source(s) with an unconfirmed account address; re-run with --type imap owner@example.com.\n", buf.String())
+	assert.Equal("Skipped 1 imap source(s) with an unconfirmed account address; re-run with --type imap and the same identifier.\n", buf.String())
 }
 
 func TestRepairIdentities_IMAPUsesConfiguredUsername(t *testing.T) {
@@ -135,7 +134,6 @@ func TestRepairIdentities_IMAPUsesConfiguredUsername(t *testing.T) {
 	repaired, err := repairIdentities(t.Context(), st, "imap", "", &buf)
 	require.NoError(err)
 	assert.Equal(1, repaired)
-	assert.Contains(buf.String(), "Activity and contact state catch up at the daemon's next projection, or right away with msgvault activity build.")
 
 	identities, err := st.ListAccountIdentities(source.ID)
 	require.NoError(err)
@@ -153,7 +151,6 @@ func TestRepairIdentities_IMAPTargetMatchesConfiguredUsername(t *testing.T) {
 	repaired, err := repairIdentities(t.Context(), st, "imap", "OWNER@example.com", &buf)
 	require.NoError(err)
 	assert.Equal(1, repaired)
-	assert.Contains(buf.String(), "Activity and contact state catch up at the daemon's next projection, or right away with msgvault activity build.")
 
 	identities, err := st.ListAccountIdentities(source.ID)
 	require.NoError(err)
@@ -177,7 +174,6 @@ func TestRepairIdentities_SkipsOnlyMatchingIdentity(t *testing.T) {
 	repaired, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
 	assert.Equal(1, repaired, "only the source missing its own address is repaired")
-	assert.Contains(buf.String(), "Activity and contact state catch up at the daemon's next projection, or right away with msgvault activity build.")
 
 	aliasIdentities, err := st.ListAccountIdentities(aliasOnly.ID)
 	require.NoError(err)

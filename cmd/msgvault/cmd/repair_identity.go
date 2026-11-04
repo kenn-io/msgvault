@@ -38,7 +38,7 @@ It is idempotent and safe: a source is skipped when its account address is
 already confirmed, and only plain, valid email addresses are touched. Other
 confirmed aliases do not suppress repair of the account address.
 Other email account types with an unconfirmed account address are listed with
-a --type repair hint that preserves any identifier filter.
+a --type repair hint. If you supplied an identifier, reuse it.
 Activity and contact state catch up at the daemon's next projection, or right
 away with msgvault activity build.
 
@@ -105,7 +105,8 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 			!store.EqualIdentifier(address, onlyIdentifier) {
 			continue
 		}
-		if src.SourceType != sourceType && !store.SourceTypeUsesEmailIdentity(src.SourceType) {
+		selected := src.SourceType == sourceType
+		if !selected && !store.SourceTypeUsesEmailIdentity(src.SourceType) {
 			continue
 		}
 		parsed, parseErr := mail.ParseAddress(address)
@@ -114,7 +115,7 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 		}
 		existing, lerr := s.ListAccountIdentitiesContext(ctx, src.ID)
 		if lerr != nil {
-			if src.SourceType != sourceType {
+			if !selected {
 				continue
 			}
 			failures = append(failures,
@@ -131,7 +132,7 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 		if alreadyConfirmed {
 			continue // this account address is already confirmed
 		}
-		if src.SourceType != sourceType {
+		if !selected {
 			skipped[src.SourceType]++
 			continue
 		}
@@ -151,7 +152,7 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 	for _, skippedType := range slices.Sorted(maps.Keys(skipped)) {
 		hint := "--type " + skippedType
 		if onlyIdentifier != "" {
-			hint += " " + onlyIdentifier
+			hint += " and the same identifier"
 		}
 		_, _ = fmt.Fprintf(out, "Skipped %d %s source(s) with an unconfirmed account address; re-run with %s.\n", skipped[skippedType], skippedType, hint)
 	}

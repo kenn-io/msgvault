@@ -5128,7 +5128,7 @@ The optional identifier narrows the repair. `--type` selects a source type and
 defaults to `gmail`. Only plain, valid email addresses are confirmed. For
 reviewing other aliases, use [identity discovery](#identity).
 Other email account types with an unconfirmed account address are listed with
-a `--type` repair hint that preserves any identifier filter.
+a `--type` repair hint. If you supplied an identifier, reuse it.
 Activity and contact state catch up at the daemon's next projection, or right
 away with `msgvault activity build`.
 
