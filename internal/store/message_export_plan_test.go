@@ -54,10 +54,42 @@ func TestExportMessagesReadsWindowOnce(t *testing.T) {
 		assertions.Equal(fmt.Sprintf("m%d", i+1), id)
 	}
 	var messageQueries int
+	var bodyRootPage int
+	requirements.NoError(s.db.QueryRow(`SELECT rootpage FROM sqlite_master WHERE name = 'message_bodies'`).Scan(&bodyRootPage))
 	for _, query := range observer.Statements() {
 		if strings.Contains(query, "JOIN conversations c") &&
-			strings.Contains(query, "ORDER BY s.source_type, s.identifier, c.source_conversation_id,") {
+			strings.Contains(query, "SELECT metadata.*,") {
 			messageQueries++
+			assertions.Contains(explainPlan(t, s, query, start, start.Add(24*time.Hour)),
+				"SEARCH message_bodies USING INTEGER PRIMARY KEY (rowid=?)")
+			rows, err := s.db.Query("EXPLAIN "+query, start, start.Add(24*time.Hour))
+			requirements.NoError(err)
+			var sorters int
+			sortAddress, lastInsertAddress, bodyReadAddress := -1, -1, -1
+			for rows.Next() {
+				var addr, p1, p2, p3, p5 int
+				var opcode string
+				var p4, comment any
+				requirements.NoError(rows.Scan(&addr, &opcode, &p1, &p2, &p3, &p4, &p5, &comment))
+				switch opcode {
+				case "SorterOpen":
+					sorters++
+				case "SorterInsert":
+					lastInsertAddress = addr
+				case "SorterSort":
+					sortAddress = addr
+				case "OpenRead":
+					if p2 == bodyRootPage && p3 == 0 {
+						bodyReadAddress = addr
+					}
+				}
+			}
+			requirements.NoError(rows.Err())
+			requirements.NoError(rows.Close())
+			assertions.Equal(1, sorters, "sort the window once")
+			requirements.GreaterOrEqual(sortAddress, 0)
+			assertions.Greater(bodyReadAddress, sortAddress, "fetch bodies after sorting metadata")
+			assertions.Less(lastInsertAddress, bodyReadAddress, "keep bodies out of sorter records")
 		}
 	}
 	assertions.Equal(1, messageQueries)

@@ -43,6 +43,39 @@ func (s *collectingMessageExportSink) Message(message store.MessageExportMessage
 	return nil
 }
 
+func TestExportMessagesInMemory(t *testing.T) {
+	st, err := store.Open(":memory:")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	require.NoError(t, st.InitSchema())
+	source, err := st.GetOrCreateSource("text", "fixture")
+	require.NoError(t, err)
+	conversationID := insertMessageExportConversation(t, st, source.ID, "conversation", "", "direct_chat", `{}`)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	for _, id := range []string{"c", "a", "b"} {
+		messageID := insertMessageExportMessage(t, st, source.ID, conversationID, id, "text", start, "Body "+id, "", 0, false, false)
+		switch id {
+		case "b":
+			_, err = st.DB().Exec(`UPDATE message_bodies SET body_text = NULL WHERE message_id = ?`, messageID)
+			require.NoError(t, err)
+		case "c":
+			_, err = st.DB().Exec(`DELETE FROM message_bodies WHERE message_id = ?`, messageID)
+			require.NoError(t, err)
+		}
+	}
+
+	// Bound a blocked connection acquisition so a regression cannot hang the suite.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	sink := &collectingMessageExportSink{}
+	counts, err := st.ExportMessages(ctx, store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}, sink)
+	require.NoError(t, err)
+	assert.Equal(t, store.MessageExportCounts{Sources: 1, Conversations: 1, Messages: 3}, counts)
+	require.Len(t, sink.messages, 3)
+	assert.Equal(t, []string{"a", "b", "c"}, []string{sink.messages[0].ID, sink.messages[1].ID, sink.messages[2].ID})
+	assert.Equal(t, []string{"Body a", "", ""}, []string{sink.messages[0].Text, sink.messages[1].Text, sink.messages[2].Text})
+}
+
 func TestExportMessagesStreamsDeterministicPhases(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

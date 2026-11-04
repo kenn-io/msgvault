@@ -322,11 +322,20 @@ func (s *Store) exportMessageRows(
 	counts *MessageExportCounts,
 ) error {
 	predicate, args := messageExportPredicate("m", filter, true)
+	// The window makes SQLite sort metadata before evaluating the body subquery.
+	// Match the final order so both backends emit that order without another sort.
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
-		SELECT m.id, s.source_type, s.identifier, m.source_message_id,
+		SELECT metadata.*,
+		       ROW_NUMBER() OVER (
+		           ORDER BY metadata.source_type, metadata.identifier, metadata.source_conversation_id,
+		                    metadata.occurred_at, metadata.source_message_id, metadata.export_message_id
+		       ),
+		       (SELECT body_text FROM message_bodies WHERE message_id = metadata.export_message_id)
+		FROM (
+		SELECT m.id AS export_message_id, s.source_type, s.identifier, m.source_message_id,
 		       c.source_conversation_id, m.message_type,
 		       COALESCE(m.subject, ''), COALESCE(m.metadata, '{}'),
-		       COALESCE(m.sent_at, m.received_at, m.internal_date),
+		       COALESCE(m.sent_at, m.received_at, m.internal_date) AS occurred_at,
 		       m.deleted_from_source_at, p_sender.id,
 		       CASE
 		           WHEN m.sender_id IS NULL
@@ -350,9 +359,9 @@ func (s *Store) exportMessageRows(
 		LEFT JOIN participants p_sender
 		       ON p_sender.id = COALESCE(m.sender_id, mr_from.participant_id)
 		WHERE `+predicate+`
-		ORDER BY s.source_type, s.identifier, c.source_conversation_id,
-		         COALESCE(m.sent_at, m.received_at, m.internal_date),
-		         m.source_message_id, m.id
+		) metadata
+		ORDER BY metadata.source_type, metadata.identifier, metadata.source_conversation_id,
+		         metadata.occurred_at, metadata.source_message_id, metadata.export_message_id
 	`), args...)
 	if err != nil {
 		return fmt.Errorf("query message export messages: %w", err)
@@ -360,17 +369,10 @@ func (s *Store) exportMessageRows(
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		row, err := scanMessageExportRow(rows)
+		var text sql.NullString
+		row, err := scanMessageExportRow(rows, &text)
 		if err != nil {
 			return err
-		}
-		var text sql.NullString
-		if err := s.db.QueryRowContext(
-			ctx,
-			s.dialect.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`),
-			row.id,
-		).Scan(&text); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("load message export body: %w", err)
 		}
 		author, err := normalizeMessageExportAuthor(row)
 		if err != nil {
@@ -398,18 +400,20 @@ func (s *Store) exportMessageRows(
 	return nil
 }
 
-func scanMessageExportRow(rows *loggedRows) (messageExportMessageRow, error) {
+func scanMessageExportRow(rows *loggedRows, text *sql.NullString) (messageExportMessageRow, error) {
 	var (
 		row                                   messageExportMessageRow
 		sourceMessageID, sourceConversationID sql.NullString
 		occurredAt                            nullableTimestamp
 		deletedFromSource                     sql.NullTime
+		position                              int64
 	)
 	if err := rows.Scan(
 		&row.id, &row.sourceType, &row.sourceIdentifier, &sourceMessageID,
 		&sourceConversationID, &row.messageType, &row.subject, &row.metadata,
 		&occurredAt, &deletedFromSource, &row.senderID,
 		&row.recipientDisplayName, &row.personDisplayName, &row.senderDisplayName, &row.senderAddress,
+		&position, text,
 	); err != nil {
 		return row, fmt.Errorf("scan message export message: %w", err)
 	}
