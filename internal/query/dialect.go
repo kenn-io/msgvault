@@ -132,7 +132,7 @@ type Dialect interface {
 // SQLiteQueryDialect implements Dialect for SQLite.
 type SQLiteQueryDialect struct{}
 
-func (SQLiteQueryDialect) SourceTimelineColumn() string { return "+m.source_id" }
+func (SQLiteQueryDialect) SourceTimelineColumn() string { return "coalesce(m.source_id, m.source_id)" }
 
 func (SQLiteQueryDialect) Rebind(query string) string { return query }
 

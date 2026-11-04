@@ -2355,8 +2355,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id
 -- and idx_messages_source below already orders ties by rowid, so the
 -- composite added no coverage beyond the single-column index.
 CREATE INDEX IF NOT EXISTS idx_messages_source ON messages(source_id);
--- Only queries that write +m.source_id use this timeline index.
-CREATE INDEX IF NOT EXISTS idx_messages_source_sent_at ON messages(+source_id, sent_at);
+-- Only listings that write coalesce(m.source_id, m.source_id) use this timeline index.
+CREATE INDEX IF NOT EXISTS idx_messages_source_sent_at ON messages(coalesce(source_id, source_id), sent_at);
 CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sent_at ON messages(sent_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_type ON messages(message_type);
