@@ -119,6 +119,23 @@ func TestLegacyCSVRecoveryRejectsAmbiguousSeparatorRepairs(t *testing.T) {
 	}
 }
 
+func TestLegacyCSVRecoveryRejectsDifferentPDFWithValidCSVHeaders(t *testing.T) {
+	for name, header := range map[string]string{
+		"separator only":    "",
+		"additional header": "Content-Description: exported contacts\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			raw := bytes.Replace(legacyCSVFixture(true), []byte(recoveryCSV), []byte("first,last\r\nOther,Data\r\n"), 1)
+			raw = bytes.Replace(raw, []byte("filename=example.csv\r\n"), []byte("filename=example.csv\r\n"+header+"\r\n"), 1)
+			original := bytes.Clone(raw)
+
+			assert.Nil(recoverLegacyCSV(raw))
+			assert.Equal(original, raw)
+		})
+	}
+}
+
 func TestLegacyCSVRecoveryPreservesNonHeaderPayload(t *testing.T) {
 	for _, missing := range []bool{false, true} {
 		t.Run(fmt.Sprintf("missing_separators_%t", missing), func(t *testing.T) {
@@ -133,6 +150,152 @@ func TestLegacyCSVRecoveryPreservesNonHeaderPayload(t *testing.T) {
 			assert.Equal(bytes.TrimSuffix(payload, []byte("\r\n")), msg.Attachments[0].Content)
 			assert.Equal(original, raw)
 		})
+	}
+}
+
+func TestLegacyCSVRecoveryRejectsDifferentBoundaryLikePayloads(t *testing.T) {
+	for name, prefix := range map[string]string{
+		"inline":      "A--related",
+		"line prefix": "--related",
+	} {
+		for ending, newline := range map[string]string{"CRLF": "\r\n", "LF": "\n"} {
+			t.Run(name+"/"+ending, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				pdf := []byte("first,last\r\n" + prefix + "Y\r\n")
+				csv := []byte("first,last\r\n" + prefix + "X\r\n")
+				raw := bytes.Replace(legacyCSVFixture(true), []byte(recoveryCSV), pdf, 1)
+				raw = bytes.Replace(raw, []byte(recoveryCSV), csv, 1)
+				raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte(newline))
+				original := bytes.Clone(raw)
+
+				assert.Nil(recoverLegacyCSV(raw))
+				_, err := ParseWithRecovery(raw, "fallback")
+				require.Error(err)
+				assert.Equal(original, raw)
+			})
+		}
+	}
+}
+
+func TestLegacyCSVRecoveryPreservesBoundaryLikePayloads(t *testing.T) {
+	for name, line := range map[string]string{
+		"inline":              "A--relatedX",
+		"line prefix":         "--relatedX",
+		"trailing blank line": "A--relatedX\r\n",
+	} {
+		for ending, newline := range map[string]string{"CRLF": "\r\n", "LF": "\n"} {
+			t.Run(name+"/"+ending, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				payload := []byte("first,last\r\n" + line + "\r\n")
+				raw := bytes.ReplaceAll(legacyCSVFixture(true), []byte(recoveryCSV), payload)
+				raw = bytes.Replace(raw, []byte("--related--\r\n"), []byte("--related-- \t\r\n"), 1)
+				raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte(newline))
+				original := bytes.Clone(raw)
+				expected := bytes.TrimSuffix(bytes.ReplaceAll(payload, []byte("\r\n"), []byte(newline)), []byte(newline))
+
+				msg, err := ParseWithRecovery(raw, "fallback")
+				require.NoError(err)
+				require.Len(msg.Attachments, 1)
+				assert.Equal(expected, msg.Attachments[0].Content)
+				assert.Contains(msg.Errors, legacyCSVRecoveryNotice)
+				assert.Equal(original, raw)
+			})
+		}
+	}
+}
+
+func TestLegacyCSVRecoveryRejectsAmbiguousClosingBoundaryPayloads(t *testing.T) {
+	for _, different := range []bool{false, true} {
+		for ending, newline := range map[string]string{"CRLF": "\r\n", "LF": "\n"} {
+			t.Run(fmt.Sprintf("different_payloads_%t/%s", different, ending), func(t *testing.T) {
+				assert := assert.New(t)
+				csv := []byte("first,last\r\n--related--X\r\n")
+				pdf := csv
+				if different {
+					pdf = []byte("first,last\r\n--related--Y\r\n")
+				}
+				raw := bytes.Replace(legacyCSVFixture(true), []byte(recoveryCSV), pdf, 1)
+				raw = bytes.Replace(raw, []byte(recoveryCSV), csv, 1)
+				raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte(newline))
+				original := bytes.Clone(raw)
+
+				assert.Nil(recoverLegacyCSV(raw))
+				assert.Equal(original, raw)
+			})
+		}
+	}
+}
+
+func TestLegacyCSVRecoveryRejectsClosingBoundaryPayloadWithoutPDF(t *testing.T) {
+	for name, marker := range map[string]string{
+		"closing prefix":          "--related--X",
+		"inline closing prefix":   "A--related--X",
+		"delimiter whitespace":    "--related suffix",
+		"inline whitespace":       "A--related suffix",
+		"later inline whitespace": "A--relatedX B--related suffix",
+	} {
+		for _, missing := range []bool{false, true} {
+			for ending, newline := range map[string]string{"CRLF": "\r\n", "LF": "\n"} {
+				t.Run(fmt.Sprintf("%s/missing_separator_%t/%s", name, missing, ending), func(t *testing.T) {
+					assert := assert.New(t)
+					payload := []byte("first,last\r\n" + marker + "\r\nSample,Person\r\n")
+					raw := bytes.Replace(legacyCSVFixture(false), []byte(recoveryCSV), payload, 1)
+					if missing {
+						raw = bytes.Replace(raw, []byte("filename=example.csv\r\n\r\n"), []byte("filename=example.csv\r\n"), 1)
+					}
+					raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte(newline))
+					original := bytes.Clone(raw)
+
+					assert.Nil(recoverLegacyCSV(raw))
+					assert.Equal(original, raw)
+				})
+			}
+		}
+	}
+}
+
+func TestLegacyCSVRecoveryRejectsDifferentTrailingBlankLines(t *testing.T) {
+	for ending, newline := range map[string]string{"CRLF": "\r\n", "LF": "\n"} {
+		t.Run(ending, func(t *testing.T) {
+			assert := assert.New(t)
+			raw := bytes.Replace(legacyCSVFixture(true), []byte(recoveryCSV), []byte(recoveryCSV+"\r\n"), 1)
+			raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte(newline))
+			original := bytes.Clone(raw)
+
+			assert.Nil(recoverLegacyCSV(raw))
+			assert.Equal(original, raw)
+		})
+	}
+}
+
+func TestLegacyCSVRecoveryPreservesExtraCSVNewline(t *testing.T) {
+	for _, extra := range []int{1, 2} {
+		for ending, newline := range map[string]string{"CRLF": "\r\n", "LF": "\n"} {
+			t.Run(fmt.Sprintf("extra_newlines_%d/%s", extra, ending), func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				fixture := string(legacyCSVFixture(true))
+				csvStart := strings.LastIndex(fixture, recoveryCSV)
+				require.NotEqual(-1, csvStart)
+				raw := []byte(fixture[:csvStart] + recoveryCSV + strings.Repeat("\r\n", extra) + fixture[csvStart+len(recoveryCSV):])
+				raw = bytes.ReplaceAll(raw, []byte("\r\n"), []byte(newline))
+				original := bytes.Clone(raw)
+
+				if extra == 2 {
+					assert.Nil(recoverLegacyCSV(raw))
+					assert.Equal(original, raw)
+					return
+				}
+				msg, err := ParseWithRecovery(raw, "fallback")
+				require.NoError(err)
+				require.Len(msg.Attachments, 1)
+				assert.Equal([]byte(strings.ReplaceAll(recoveryCSV, "\r\n", newline)), msg.Attachments[0].Content)
+				assert.Contains(msg.Errors, legacyCSVRecoveryNotice)
+				assert.Equal(original, raw)
+			})
+		}
 	}
 }
 
