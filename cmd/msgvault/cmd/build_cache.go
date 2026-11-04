@@ -2043,9 +2043,6 @@ func (s *cacheSourceSnapshot) messageSliceRelation(table, idColumn string, after
 		columns = append(columns, column)
 		casts = append(casts, fmt.Sprintf("CAST(%s AS %s) AS %s", column, typ.DatabaseTypeName(), column))
 	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
-	}
 	sqliteSQL := fmt.Sprintf("SELECT %s FROM %s WHERE %s > %d AND %s <= %d", strings.Join(columns, ", "), table, idColumn, after, idColumn, through)
 	return "(SELECT " + strings.Join(casts, ", ") + " FROM sqlite_query('sqlite_db', '" + strings.ReplaceAll(sqliteSQL, "'", "''") + "'))", nil
 }
