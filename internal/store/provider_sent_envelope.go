@@ -7,6 +7,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 const sourceTypeIMAP = "imap"
@@ -51,7 +52,7 @@ func (s *Store) mergeProviderSentEnvelopeEvidenceTx(
 		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
 		JOIN messages survivor ON survivor.id=?
 		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
-		WHERE duplicate.id=? AND duplicate_source.source_type IN ('gmail','`+sourceTypeIMAP+`')
+		WHERE duplicate.id=? AND duplicate_source.source_type IN ('gmail','`+sourceTypeIMAP+`','msmail')
 		  AND survivor_source.source_type IN ('gmail','`+sourceTypeIMAP+`','msmail')`, survivorID, duplicateID).
 		Scan(&hasDuplicateSent, &hasSurvivorSent)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -86,8 +87,15 @@ func (s *Store) providerSentEnvelopeEvidenceSQL(message, source string) string {
 		WHERE ml.message_id=` + message + `.id AND l.source_id=` + message + `.source_id
 		  AND (l.system_role='` + LabelSystemRoleSent + `' OR (` + source + `.source_type='gmail' AND l.source_label_id='SENT')))`
 	providerSentOrigin := `(` + source + `.source_type='` + sourceTypeIMAP + `' AND COALESCE(` + origin + `,'')='sent')`
-	return `(((` + providerSentLabel + ` OR ` + providerSentOrigin + `) AND NOT ` + rawImported + `) OR ` +
-		providerSentEnvelopeSnapshotExistsSQL(s.dialect, message) + `)`
+	nativeProviderSent := `(` + source + `.source_type IN ('gmail','` + sourceTypeIMAP + `') AND (` +
+		providerSentLabel + ` OR ` + providerSentOrigin + `) AND NOT ` + rawImported + `)`
+	providerSnapshot := providerSentEnvelopeSnapshotExistsSQL(s.dialect, message)
+	microsoftSnapshot := microsoftSentEnvelopeSnapshotExistsSQL(s.dialect, message)
+	// Established provider snapshots can move with a message regardless of
+	// carrier. Derive a fresh provider envelope only from native Gmail/IMAP
+	// evidence, and never reconstruct live recipients when a Microsoft snapshot
+	// already marks those rows as replaceable.
+	return `(` + providerSnapshot + ` OR (` + nativeProviderSent + ` AND NOT ` + microsoftSnapshot + `))`
 }
 
 func (s *Store) copyProviderSentEnvelopeTx(ctx context.Context, tx *loggedTx, targetID, sentMessageID int64) error {
@@ -143,4 +151,66 @@ func persistMessageMetadataFlag(q boundQuerier, dialect Dialect, messageID int64
 		return fmt.Errorf("save message metadata flag %q: %w", key, err)
 	}
 	return nil
+}
+
+func preserveSentEvidenceMetadata(existing, incoming sql.NullString) (sql.NullString, error) {
+	if !incoming.Valid {
+		return incoming, nil
+	}
+	keys := []string{
+		microsoftSentEvidenceKey,
+		microsoftSentEnvelopeObservedKey,
+		providerSentEnvelopeObservedKey,
+	}
+	// Malformed or non-object metadata stays opaque, as it was before Sent
+	// evidence markers were preserved here.
+	existingValues := map[string]jsontext.Value{}
+	if existing.Valid {
+		var valid bool
+		existingValues, valid = decodeSentEvidenceMetadata(existing.String)
+		if !valid {
+			return incoming, nil
+		}
+	}
+	if existingValues == nil {
+		existingValues = make(map[string]jsontext.Value)
+	}
+	incomingValues, valid := decodeSentEvidenceMetadata(incoming.String)
+	if !valid {
+		for _, key := range keys {
+			if value, ok := existingValues[key]; ok && string(value) == "true" {
+				return existing, nil
+			}
+		}
+		return incoming, nil
+	}
+	preserved := false
+	for _, key := range keys {
+		if value, ok := existingValues[key]; ok && string(value) == "true" {
+			incomingValues[key] = value
+			preserved = true
+		}
+	}
+	if !preserved {
+		return incoming, nil
+	}
+	encoded, err := json.Marshal(incomingValues, json.Deterministic(true))
+	if err != nil {
+		return sql.NullString{}, fmt.Errorf("encode sent evidence metadata: %w", err)
+	}
+	return sql.NullString{String: string(encoded), Valid: true}, nil
+}
+
+func decodeSentEvidenceMetadata(raw string) (map[string]jsontext.Value, bool) {
+	values := map[string]jsontext.Value{}
+	if strings.TrimSpace(raw) == "" {
+		return values, true
+	}
+	if json.Unmarshal([]byte(raw), &values) != nil {
+		return nil, false
+	}
+	if values == nil {
+		values = make(map[string]jsontext.Value)
+	}
+	return values, true
 }

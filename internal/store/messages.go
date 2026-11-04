@@ -944,14 +944,13 @@ func (s *Store) listUnresolvedMessageRepliesContext(ctx context.Context,
 }
 
 // SetMessageMetadata writes the messages.metadata JSON/JSONB column for an
-// already-persisted message. The column exists in both dialects (schema.sql:
-// `metadata JSON`, schema_pg.sql: `metadata JSONB`) but the hot upsertMessageSQL
-// path never writes it, so non-email importers that need structured per-message
-// metadata (e.g. calendar events: end/all_day/status/recurrence) call this
-// immediately after UpsertMessage returns the id. Passing an invalid
-// sql.NullString writes SQL NULL, clearing the column. The dialect supplies the
-// JSONB cast on PG (?::JSONB) and a bare ? on SQLite, so a JSON string binds in
-// both backends.
+// already-persisted message. Valid updates retain durable sender Sent-evidence
+// markers; passing an invalid sql.NullString writes SQL NULL and clears the
+// column. The column exists in both dialects (schema.sql: `metadata JSON`,
+// schema_pg.sql: `metadata JSONB`) but the hot upsertMessageSQL path never
+// writes it, so importers that need structured per-message metadata call this
+// after the message row exists. The dialect supplies the JSONB cast on PG
+// (?::JSONB) and a bare ? on SQLite, so a JSON string binds in both backends.
 func (s *Store) SetMessageMetadata(messageID int64, metadata sql.NullString) error {
 	return s.SetMessageMetadataContext(context.Background(), messageID, metadata)
 }
@@ -964,6 +963,17 @@ func (s *Store) SetMessageMetadataContext(ctx context.Context, messageID int64, 
 		}
 		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
+		}
+		if metadata.Valid {
+			var existing sql.NullString
+			if err := tx.QueryRowContext(ctx, `SELECT metadata FROM messages WHERE id=?`, messageID).Scan(&existing); err != nil {
+				return fmt.Errorf("read existing sender evidence metadata: %w", err)
+			}
+			merged, err := preserveSentEvidenceMetadata(existing, metadata)
+			if err != nil {
+				return err
+			}
+			metadata = merged
 		}
 		if err := setMessageMetadataWith(boundQuerier{ctx: ctx, q: tx}, s.dialect, messageID, metadata); err != nil {
 			return err
@@ -2441,7 +2451,15 @@ func (s *Store) persistMessageWith(
 		}
 	}
 	if data.Metadata != nil {
-		if err := setMessageMetadataWith(q, s.dialect, messageID, *data.Metadata); err != nil {
+		var existingMetadata sql.NullString
+		if err := q.QueryRow(`SELECT metadata FROM messages WHERE id=?`, messageID).Scan(&existingMetadata); err != nil {
+			return 0, fmt.Errorf("read existing sender evidence metadata: %w", err)
+		}
+		metadata, err := preserveSentEvidenceMetadata(existingMetadata, *data.Metadata)
+		if err != nil {
+			return 0, err
+		}
+		if err := setMessageMetadataWith(q, s.dialect, messageID, metadata); err != nil {
 			return 0, fmt.Errorf("set metadata: %w", err)
 		}
 	}

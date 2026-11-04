@@ -161,11 +161,24 @@ func TestPersistIMAPRelocationReplacesCompleteSnapshotAtomically(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	fixture := seedIMAPRelocationFixture(t)
+	require.NoError(fixture.Store.SetMessageMetadata(fixture.TargetID, sql.NullString{
+		String: `{"msmail_sent_items_observed":true,"msmail_sent_envelope_observed":true,"provider_sent_envelope_observed":true}`,
+		Valid:  true,
+	}))
+	require.NoError(fixture.Store.SetMessageMetadata(fixture.TargetID, sql.NullString{
+		String: `{"imap_content_origin":"drafts"}`,
+		Valid:  true,
+	}))
+	metadata, err := fixture.Store.GetMessageMetadata(fixture.TargetID)
+	require.NoError(err)
+	assert.JSONEq(`{"imap_content_origin":"drafts","msmail_sent_items_observed":true,"msmail_sent_envelope_observed":true,"provider_sent_envelope_observed":true}`, metadata.String)
 
 	gotID, err := fixture.Scoped.PersistIMAPRelocationWithParticipantsContext(
 		t.Context(), fixture.Guard, imapRelocationParticipants(),
 		func(participantIDs []int64) *store.MessagePersistData {
-			return relocatedIMAPMessageData(fixture, participantIDs)
+			data := relocatedIMAPMessageData(fixture, participantIDs)
+			data.Metadata = &sql.NullString{String: `{"imap_content_origin":"sent"}`, Valid: true}
+			return data
 		}, true,
 	)
 	require.NoError(err)
@@ -183,6 +196,9 @@ func TestPersistIMAPRelocationReplacesCompleteSnapshotAtomically(t *testing.T) {
 	assert.Equal(1, after.AttachmentCount)
 	assert.False(after.EmbedGen.Valid)
 	assert.Equal([]int64{fixture.SentLabelID}, after.LabelIDs)
+	metadata, err = fixture.Store.GetMessageMetadata(gotID)
+	require.NoError(err)
+	assert.JSONEq(`{"imap_content_origin":"sent","msmail_sent_items_observed":true,"msmail_sent_envelope_observed":true,"provider_sent_envelope_observed":true}`, metadata.String)
 	require.Len(after.Recipients, 2)
 	assert.Equal("from", after.Recipients[0].Type)
 	assert.Equal("sent-author@example.test", after.Recipients[0].EnvelopeEmail.String)

@@ -530,11 +530,11 @@ func (s *Store) MergeDuplicates(
 			return fmt.Errorf("duplicate merge into %d would hide historical content", survivorID)
 		}
 		for _, dupID := range duplicateIDs {
-			if err := s.mergeMicrosoftSentEvidenceTx(ctx, tx, survivorID, dupID); err != nil {
-				return fmt.Errorf("merge Microsoft Sent Items provenance from %d: %w", dupID, err)
-			}
 			if err := s.mergeProviderSentEnvelopeEvidenceTx(ctx, tx, survivorID, dupID); err != nil {
 				return fmt.Errorf("merge provider Sent envelope provenance from %d: %w", dupID, err)
+			}
+			if err := s.mergeMicrosoftSentEvidenceTx(ctx, tx, survivorID, dupID); err != nil {
+				return fmt.Errorf("merge Microsoft Sent Items provenance from %d: %w", dupID, err)
 			}
 			res, err := tx.Exec(unionLabelsSQL, survivorID, dupID)
 			if err != nil {

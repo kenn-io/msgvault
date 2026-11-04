@@ -14,11 +14,11 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		if m.survivor == 0 {
 			continue
 		}
-		if err := s.mergeMicrosoftSentEvidenceTx(ctx, tx, m.survivor, m.id); err != nil {
-			return fmt.Errorf("preserve Microsoft Sent envelope from merged message %d: %w", m.id, err)
-		}
 		if err := s.mergeProviderSentEnvelopeEvidenceTx(ctx, tx, m.survivor, m.id); err != nil {
 			return fmt.Errorf("preserve provider Sent envelope from merged message %d: %w", m.id, err)
+		}
+		if err := s.mergeMicrosoftSentEvidenceTx(ctx, tx, m.survivor, m.id); err != nil {
+			return fmt.Errorf("preserve Microsoft Sent envelope from merged message %d: %w", m.id, err)
 		}
 	}
 	if err := preserveMergedIMAPDrafts(ctx, tx, from, into); err != nil {

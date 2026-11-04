@@ -565,6 +565,221 @@ func TestSenderRelationshipsProviderSentSnapshotSurvivesWithoutCurrentSentLabel(
 	}
 }
 
+func FuzzSenderSentEnvelopeMergesAcrossProviderCarriers(f *testing.F) {
+	for _, seed := range []struct {
+		scenario      uint8
+		emptySnapshot bool
+	}{
+		{0, true},
+		{1, false},
+		{1, true},
+		{2, false},
+		{2, true},
+		{3, false},
+		{3, true},
+	} {
+		f.Add(seed.scenario, seed.emptySnapshot)
+	}
+	f.Fuzz(func(t *testing.T, scenario uint8, emptySnapshot bool) {
+		if scenario > 3 {
+			t.Skip()
+		}
+		t.Run(fmt.Sprintf("scenario-%d-empty-%t", scenario, emptySnapshot), func(t *testing.T) {
+			runSenderSentEnvelopeCarrierScenario(t, scenario, emptySnapshot)
+		})
+	})
+}
+
+func runSenderSentEnvelopeCarrierScenario(t *testing.T, scenario uint8, emptySnapshot bool) {
+	t.Helper()
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+
+	var survivorID int64
+	var survivorSourceID int64
+	var addresses []string
+	wantKnown := map[string]bool{}
+	var duplicateID int64
+	switch scenario {
+	case 0:
+		// An explicitly empty Microsoft snapshot must keep a Sent-labeled
+		// survivor's replaceable live recipients out of the provider snapshot.
+		survivorID, survivorSourceID = senderRelationshipMessageForSource(
+			t, f, "msmail", "to", "draft-only@example.test",
+		)
+		duplicateID, _ = senderRelationshipMessageForSource(
+			t, f, "gmail", "to", "duplicate-only@example.test",
+		)
+		addSenderRelationshipSystemLabel(t, f, survivorSourceID, "msmail", store.LabelSystemRoleSent, survivorID)
+		addSenderSentEnvelopeSnapshot(t, f, survivorID, true)
+		addresses = []string{"draft-only@example.test", "duplicate-only@example.test"}
+	case 1:
+		// Capture a native Gmail Sent envelope before an incoming Microsoft
+		// snapshot makes the survivor's live recipient rows non-authoritative.
+		role := "bcc"
+		survivorID, survivorSourceID = senderRelationshipMessageForSource(
+			t, f, "gmail", role, "gmail-only@example.test",
+		)
+		duplicateID, _ = senderRelationshipMessageForSource(
+			t, f, "msmail", "to", "microsoft-live@example.test",
+		)
+		addSenderRelationshipSystemLabel(t, f, survivorSourceID, "gmail", store.LabelSystemRoleSent, survivorID)
+		var microsoftRecipients []string
+		if !emptySnapshot {
+			microsoftRecipients = []string{"microsoft-only@example.test"}
+		}
+		addSenderSentEnvelopeSnapshot(t, f, duplicateID, true, microsoftRecipients...)
+		addresses = []string{"gmail-only@example.test", "microsoft-only@example.test", "repeated-draft@example.test"}
+		wantKnown["gmail-only@example.test"] = true
+		wantKnown["microsoft-only@example.test"] = !emptySnapshot
+	case 2:
+		// An established Gmail snapshot can travel on a Microsoft carrier,
+		// including an empty snapshot that still marks the survivor as sent.
+		survivorID, survivorSourceID = senderRelationshipMessageForSource(
+			t, f, "msmail", "to", "draft-only@example.test",
+		)
+		duplicateID, _ = senderRelationshipMessageForSource(
+			t, f, "gmail", "to", "gmail-live@example.test",
+		)
+		addSenderRelationshipSystemLabel(t, f, survivorSourceID, "msmail", store.LabelSystemRoleDrafts, survivorID)
+		var providerRecipients []string
+		if !emptySnapshot {
+			providerRecipients = []string{"provider-only@example.test"}
+		}
+		addSenderSentEnvelopeSnapshot(t, f, duplicateID, false, providerRecipients...)
+		addresses = []string{"draft-only@example.test", "provider-only@example.test"}
+		wantKnown["provider-only@example.test"] = !emptySnapshot
+	case 3:
+		// Microsoft Sent evidence also has to override draft classification
+		// after it transfers to a Gmail draft survivor.
+		survivorID, survivorSourceID = senderRelationshipMessageForSource(
+			t, f, "gmail", "to", "draft-only@example.test",
+		)
+		duplicateID, _ = senderRelationshipMessageForSource(
+			t, f, "msmail", "to", "microsoft-live@example.test",
+		)
+		addSenderRelationshipSystemLabel(t, f, survivorSourceID, "gmail", store.LabelSystemRoleDrafts, survivorID)
+		var microsoftRecipients []string
+		if !emptySnapshot {
+			microsoftRecipients = []string{"microsoft-only@example.test"}
+		}
+		addSenderSentEnvelopeSnapshot(t, f, duplicateID, true, microsoftRecipients...)
+		addresses = []string{"draft-only@example.test", "microsoft-only@example.test"}
+		wantKnown["microsoft-only@example.test"] = !emptySnapshot
+	}
+
+	_, err := f.Store.MergeDuplicates(survivorID, []int64{duplicateID}, "sender-envelope-carrier")
+	requirements.NoError(err)
+	got, err := f.Store.SenderRelationships(ctx, addresses, nil)
+	requirements.NoError(err)
+	for _, address := range addresses {
+		want := "none"
+		if wantKnown[address] {
+			want = "known"
+		}
+		assertions.Equal(want, got[address].Relationship, address)
+	}
+
+	if scenario == 1 {
+		repeatedID, _ := senderRelationshipMessageForSource(
+			t, f, "msmail", "to", "repeated-draft@example.test",
+		)
+		_, err := f.Store.MergeDuplicates(survivorID, []int64{repeatedID}, "sender-envelope-carrier-repeat")
+		requirements.NoError(err)
+		got, err = f.Store.SenderRelationships(ctx, addresses, nil)
+		requirements.NoError(err)
+		assertions.Equal("known", got["gmail-only@example.test"].Relationship,
+			"the first merge must preserve survivor-only Bcc evidence across a later carrier merge")
+		assertions.Equal("none", got["repeated-draft@example.test"].Relationship,
+			"a later draft-only carrier must not contaminate either authoritative snapshot")
+	}
+
+	if scenario == 2 || scenario == 3 {
+		candidates, err := f.Store.LoadActivityCandidatesByIDContext(ctx, []int64{survivorID})
+		requirements.NoError(err)
+		requirements.Len(candidates, 1)
+		assertions.False(candidates[0].Unsent,
+			"transferred Sent provenance overrides draft evidence on every supported provider")
+		_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE id=?`), survivorID)
+		requirements.NoError(err)
+		candidates, err = f.Store.LoadActivityCandidatesByIDContext(ctx, []int64{survivorID})
+		requirements.NoError(err)
+		requirements.Len(candidates, 1)
+		assertions.True(candidates[0].Unsent,
+			"an explicit is_sent=false value takes precedence over transferred provenance")
+	}
+}
+
+func senderRelationshipMessageForSource(
+	t *testing.T, f *storetest.Fixture, sourceType, role string, recipients ...string,
+) (int64, int64) {
+	t.Helper()
+	requirements := require.New(t)
+	source, err := f.Store.GetOrCreateSource(sourceType, "owner@example.com")
+	requirements.NoError(err)
+	messageID := senderRelationshipMessage(t, f, true, role, recipients...)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE messages SET source_id=? WHERE id=?`), source.ID, messageID)
+	requirements.NoError(err)
+	return messageID, source.ID
+}
+
+func addSenderRelationshipSystemLabel(
+	t *testing.T, f *storetest.Fixture, sourceID int64, sourceType, role string, messageID int64,
+) {
+	t.Helper()
+	requirements := require.New(t)
+	providerLabelID := "Sent"
+	name := "Sent"
+	if role == store.LabelSystemRoleDrafts {
+		providerLabelID, name = "Drafts", "Drafts"
+	}
+	if sourceType == "gmail" {
+		providerLabelID = "SENT"
+		if role == store.LabelSystemRoleDrafts {
+			providerLabelID = "DRAFT"
+		}
+	}
+	var labelID int64
+	if sourceType == "msmail" {
+		providerLabelID = "sent"
+		if role == store.LabelSystemRoleDrafts {
+			providerLabelID = "drafts"
+		}
+		folders, err := f.Store.EnsureMicrosoftMailFoldersContext(t.Context(), sourceID,
+			map[string]store.LabelInfo{providerLabelID: {Name: name, Type: "system", SystemRole: role}})
+		requirements.NoError(err)
+		labelID = folders[providerLabelID]
+	} else {
+		labels, err := f.Store.EnsureLabelsBatch(sourceID, map[string]store.LabelInfo{
+			providerLabelID: {Name: name, Type: "system", SystemRole: role},
+		})
+		requirements.NoError(err)
+		labelID = labels[providerLabelID]
+	}
+	requirements.NoError(f.Store.AddMessageLabels(messageID, []int64{labelID}))
+}
+
+func addSenderSentEnvelopeSnapshot(
+	t *testing.T, f *storetest.Fixture, messageID int64, microsoft bool, addresses ...string,
+) {
+	t.Helper()
+	requirements := require.New(t)
+	metadata := `{"provider_sent_envelope_observed":true}`
+	statement := `INSERT INTO provider_sent_envelope_recipients(message_id, email_address) VALUES (?, ?)`
+	if microsoft {
+		metadata = `{"msmail_sent_items_observed":true,"msmail_sent_envelope_observed":true}`
+		statement = `INSERT INTO msmail_sent_envelope_recipients(message_id, email_address) VALUES (?, ?)`
+	}
+	requirements.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{String: metadata, Valid: true}))
+	for _, address := range addresses {
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(statement), messageID, address)
+		requirements.NoError(err)
+	}
+}
+
 func mergeMicrosoftSentRelationshipEvidenceCase(t *testing.T, duplicateSent, survivorSent, survivorDraft, survivorUnsent, duplicateBcc bool) map[string]store.SenderRelationshipEvidence {
 	t.Helper()
 	requirements := require.New(t)

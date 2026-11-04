@@ -350,7 +350,7 @@ func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, 
 	if err != nil {
 		return fmt.Errorf("check duplicate Microsoft Sent Items provenance: %w", err)
 	}
-	if !observed {
+	if !observed && !survivorObserved {
 		return nil
 	}
 	q := boundQuerier{ctx: ctx, q: tx}
@@ -359,8 +359,10 @@ func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, 
 			return fmt.Errorf("preserve survivor Microsoft Sent Items envelope: %w", err)
 		}
 	}
-	if err := persistMicrosoftSentEnvelopeRecipients(q, s.dialect, survivorID, duplicateID); err != nil {
-		return fmt.Errorf("preserve duplicate Microsoft Sent Items envelope: %w", err)
+	if observed {
+		if err := persistMicrosoftSentEnvelopeRecipients(q, s.dialect, survivorID, duplicateID); err != nil {
+			return fmt.Errorf("preserve duplicate Microsoft Sent Items envelope: %w", err)
+		}
 	}
 	if err := persistMicrosoftSentEvidenceMetadata(q, s.dialect, survivorID); err != nil {
 		return fmt.Errorf("preserve duplicate Microsoft Sent Items provenance: %w", err)
