@@ -39,7 +39,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	github.com/mooijtech/go-pst/v6 v6.0.2
 	github.com/netresearch/go-cron v0.18.0
-	github.com/pdfcpu/pdfcpu v0.16.4
+	github.com/pdfcpu/pdfcpu v0.15.0
 	github.com/rivo/uniseg v0.4.7
 	github.com/rotisserie/eris v0.5.4
 	github.com/shirou/gopsutil/v4 v4.26.9
@@ -169,7 +169,6 @@ require (
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
-	github.com/xdg-go/stringprep v1.0.4 // indirect
 	github.com/xo/terminfo v1.0.0 // indirect
 	github.com/yaronf/httpsign v0.6.2 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
