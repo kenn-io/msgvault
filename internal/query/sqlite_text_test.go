@@ -132,7 +132,8 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
 	`)
 	require.NoError(err)
-	pin("2022-01-01 00:00:00")
+	// Keep the maximum stamp on 801 so membership changes depend on the count.
+	pin("2019-01-01 00:00:00")
 	added, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
 	assert.NotEqual(first, added)
@@ -148,7 +149,7 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
 	`)
 	require.NoError(err)
-	pin("2022-01-01 00:00:00")
+	pin("2019-01-01 00:00:00")
 	reinserted, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
 	assert.Equal(added, reinserted)

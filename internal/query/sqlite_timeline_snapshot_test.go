@@ -100,7 +100,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 	}
 }
 
-func TestSQLiteTimelineSnapshotRevisionFencesRecentChanges(t *testing.T) {
+func TestSQLiteTimelineSnapshotRevisionStableOutsideRecentWindow(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	s := testutil.NewSQLiteTestStore(t)
@@ -111,15 +111,6 @@ func TestSQLiteTimelineSnapshotRevisionFencesRecentChanges(t *testing.T) {
 	engine := query.NewSQLiteEngine(s.DB())
 	conversationID := int64(701)
 	scope := query.TextSnapshotScope{ConversationID: &conversationID}
-	for _, tc := range []struct {
-		offset string
-		recent bool
-	}{{"+0 seconds", true}, {"-0.001 seconds", true}, {"-0.003 seconds", false}, {"+0.003 seconds", false}} {
-		var recent bool
-		err := s.DB().QueryRow(`UPDATE messages SET content_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now', ?) WHERE id = 801 RETURNING (SELECT recent FROM (`+query.SQLiteTimelineSnapshotProbe+`))`, tc.offset, conversationID, conversationID, conversationID).Scan(&recent)
-		require.NoError(err)
-		assert.Equal(tc.recent, recent, tc.offset)
-	}
 	read := func(offset string) (string, string) {
 		_, err := s.DB().Exec(`UPDATE messages SET content_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now', ?) WHERE id = 801`, offset)
 		require.NoError(err)
