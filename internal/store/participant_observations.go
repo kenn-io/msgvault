@@ -495,10 +495,16 @@ func (s *Store) SupersedeParticipantObservationContext(
 func (s *Store) reconcileCurrentObservationIdentityMatchesTxContext(
 	ctx context.Context, tx *loggedTx,
 ) error {
+	return s.reconcileObservationIdentityMatchesForParticipantTxContext(ctx, tx, 0)
+}
+
+func (s *Store) reconcileObservationIdentityMatchesForParticipantTxContext(
+	ctx context.Context, tx *loggedTx, participantID int64,
+) error {
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
 		return err
 	}
-	return s.recomputeUnsupportedCurrentObservationIdentityMatchesTxContext(ctx, tx)
+	return s.recomputeUnsupportedCurrentObservationIdentityMatchesTxContext(ctx, tx, participantID)
 }
 
 // deleteUnsupportedObservationIdentityConflictsContext removes generated

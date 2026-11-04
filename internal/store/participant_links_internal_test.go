@@ -1,6 +1,11 @@
 package store
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,7 +13,7 @@ import (
 )
 
 func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
-	tests := []string{"link", "reject"}
+	tests := []string{"link", "reject", "merge"}
 	for _, operation := range tests {
 		t.Run(operation, func(t *testing.T) {
 			require := require.New(t)
@@ -45,13 +50,19 @@ func TestLinkParticipantsReadsOnlyTouchedComponents(t *testing.T) {
 			switch operation {
 			case "link":
 				_, err = st.LinkParticipants(2, 3)
+			case "merge":
+				err = st.MergeParticipants(1, 2)
 			case "reject":
 				_, err = st.DecideIdentityMatchCandidateContext(t.Context(), rejectedID, IdentityMatchStateRejected, "user", nil)
 			}
 			require.NoError(err)
 			require.NotEmpty(sizes)
 			for _, size := range sizes {
-				assert.LessOrEqual(t, size, 2, "operation must read only the endpoint components")
+				limit := 2
+				if operation == "merge" {
+					limit = 3
+				}
+				assert.LessOrEqual(t, size, limit, "operation must read only the endpoint components")
 			}
 		})
 	}
@@ -177,4 +188,151 @@ func BenchmarkClustersFromEdgesDisjointComponents(b *testing.B) {
 			b.Fatalf("expected %d members, got %d", 2*components, len(got))
 		}
 	}
+}
+
+// Explain every emitted statement so an added scan fails without a timing threshold.
+func TestMergeParticipantsUsesIndexedLinkAndCandidateQueries(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(strconv.FormatBool(legacy), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := openTestStore(t)
+			seedDisjointOwnedParticipantLinks(t, st, 4, 3000)
+			_, err := st.db.Exec(`INSERT INTO participant_links (participant_a, participant_b) VALUES (1, 4), (2, 4)`)
+			require.NoError(err)
+			// Exercise both the self-link clear and the collision owner move.
+			_, err = st.db.Exec(`INSERT INTO identity_match_candidates (id, left_kind, left_id, right_kind, right_id, basis, state, source)
+    VALUES (1, 'participant', 1, 'participant', 2, 'display_name', 'accepted', 'system'),
+     (2, 'participant', 1, 'participant', 4, 'display_name', 'accepted', 'system'),
+     (3, 'participant', 2, 'participant', 4, 'display_name', 'accepted', 'system')`)
+			require.NoError(err)
+			_, err = st.db.Exec(`UPDATE participant_links SET identity_match_candidate_id = CASE participant_a WHEN 1 THEN 2 ELSE 3 END WHERE participant_a IN (1, 2)`)
+			require.NoError(err)
+			var statements []string
+			rebind := st.db.rebind
+			st.db.rebind = func(query string) string { statements = append(statements, query); return rebind(query) }
+			if legacy {
+				tx, err := st.db.BeginTx(t.Context(), nil)
+				require.NoError(err)
+				require.NoError(st.mergeParticipant(t.Context(), tx, 2, 1))
+				require.NoError(tx.Commit())
+			} else {
+				require.NoError(st.MergeParticipants(1, 2))
+			}
+			st.db.rebind = rebind
+			require.NotEmpty(statements)
+			tables := regexp.MustCompile(`(?i)\b(?:FROM|JOIN|UPDATE|INTO)\s+(participant_links|identity_match_candidates|identity_match_evidence)(?:\s+(?:AS\s+)?(\w+))?`)
+			scans := regexp.MustCompile(`(?i)\bSCAN (?:TABLE )?(\w+)`)
+			for _, statement := range statements {
+				targets := map[string]bool{"participant_links": true, "identity_match_candidates": true, "identity_match_evidence": true}
+				for _, match := range tables.FindAllStringSubmatch(statement, -1) {
+					switch strings.ToUpper(match[2]) {
+					case "WHERE", "SET", "ORDER", "ON", "VALUES", "SELECT", "":
+					default:
+						targets[match[2]] = true
+					}
+				}
+				args := make([]any, strings.Count(statement, "?"))
+				rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+statement, args...)
+				require.NoError(err, statement)
+				for rows.Next() {
+					var id, parent, unused int
+					var detail string
+					require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+					if scan := scans.FindStringSubmatch(detail); scan != nil {
+						assert.False(targets[scan[1]], "%s\n%s", statement, detail)
+					}
+				}
+				require.NoError(rows.Err())
+				require.NoError(rows.Close())
+			}
+			var owner int64
+			require.NoError(st.db.QueryRow(`SELECT identity_match_candidate_id FROM participant_links WHERE participant_a = 2 AND participant_b = 4`).Scan(&owner))
+			assert.Equal(int64(2), owner)
+		})
+	}
+}
+
+func TestInitSchemaAddsCandidateRightIndexBeforeLegacyMerge(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "existing.db")
+	st, err := OpenForTest(path)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	_, err = st.db.Exec(`DROP INDEX idx_identity_match_candidates_right;
+  DROP INDEX idx_participants_phone;
+  DELETE FROM applied_migrations WHERE name = '` + migrationPhoneUniqueIndex + `';
+  INSERT INTO participants (phone_number, display_name) VALUES ('+15550000001', 'First'), ('+15550000001', 'Second')`)
+	require.NoError(err)
+	require.NoError(st.Close())
+	st, err = OpenForTest(path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(st.Close()) })
+	rebind := st.db.rebind
+	checked := false
+	st.db.rebind = func(query string) string {
+		if !checked && strings.Contains(query, "JOIN participant_links") {
+			checked = true
+			var count int
+			require.NoError(st.db.DB.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_identity_match_candidates_right'`).Scan(&count))
+			require.Equal(1, count, "the index must exist when legacy merges begin")
+		}
+		return rebind(query)
+	}
+	require.NoError(st.InitSchema())
+	require.True(checked)
+	var count int
+	require.NoError(st.db.QueryRow(`SELECT count(*) FROM participants`).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
+func TestMergeParticipantsReappliesAcceptedMatchAfterScopedCleanup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := openTestStore(t)
+	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+		st = newPGStoreInternal(t)
+	}
+	seedDisjointOwnedParticipantLinks(t, st, 4, 1000)
+	source, err := st.GetOrCreateSource("slack", "merge-support@example.test")
+	require.NoError(err)
+	for participant, provider := range map[int64]string{1: "previous-provider", 2: "survivor-provider", 3: "previous-provider"} {
+		_, err := st.RecordContactObservationContext(t.Context(), participant, ParticipantContactObservationInput{
+			SourceID: &source.ID, AddressKind: ContactAddressEmail,
+			OriginalValue: "shared@example.test", ProviderUserID: new(provider),
+			Envelope: ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+		})
+		require.NoError(err)
+	}
+	lost, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
+		LeftKind: IdentityMatchParticipant, LeftID: 1, RightKind: IdentityMatchParticipant, RightID: 3,
+		Basis: IdentityMatchStableProviderID, NormalizedValue: new("previous-provider"),
+		State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation, SourceID: &source.ID,
+	})
+	require.NoError(err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), lost.ID, "system", nil)
+	require.NoError(err)
+	_, err = st.LinkParticipants(3, 4)
+	require.NoError(err)
+	redundant, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
+		LeftKind: IdentityMatchParticipant, LeftID: 2, RightKind: IdentityMatchParticipant, RightID: 4,
+		Basis: IdentityMatchStableProviderID, NormalizedValue: new("retained-provider"), State: IdentityMatchStateCandidate, Source: ProvenanceSystem,
+	})
+	require.NoError(err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), redundant.ID, "system", nil)
+	require.NoError(err)
+	before, err := st.IdentityRevisionContext(t.Context())
+	require.NoError(err)
+	require.NoError(st.MergeParticipants(1, 2))
+	_, err = st.GetIdentityMatchCandidateContext(t.Context(), lost.ID)
+	require.ErrorIs(err, ErrIdentityMatchNotFound)
+	var owner int64
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT identity_match_candidate_id FROM participant_links WHERE participant_a = 2 AND participant_b = 4`).Scan(&owner))
+	assert.Equal(redundant.ID, owner)
+	var unrelated int
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM participant_links WHERE participant_a > 4 AND identity_match_candidate_id IS NOT NULL`).Scan(&unrelated))
+	assert.Equal(1000, unrelated)
+	after, err := st.IdentityRevisionContext(t.Context())
+	require.NoError(err)
+	assert.Equal(before+2, after, "cleanup and the participant merge each bump the identity revision")
 }

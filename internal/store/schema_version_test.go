@@ -19,6 +19,24 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+func TestSchemaVersionCandidateRightIndexUpgrade(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().Exec("DROP INDEX idx_identity_match_candidates_right")
+	require.NoError(err)
+	_, err = f.Store.DB().Exec("UPDATE archive_metadata SET value='19' WHERE key='schema_version'")
+	require.NoError(err)
+	require.NoError(f.Store.InitSchemaContext(t.Context()))
+	require.NoError(f.Store.ValidateSchemaContext(t.Context()))
+	query := `SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_identity_match_candidates_right'`
+	if f.Store.IsPostgreSQL() {
+		query = `SELECT count(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'idx_identity_match_candidates_right'`
+	}
+	var count int
+	require.NoError(f.Store.DB().QueryRow(query).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
 func TestSchemaVersionDocumentRangesUpgrade(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -259,6 +277,7 @@ var (
 		17: "b8cd27ce189a5c7be16d8bef6208a46e622cf796362eb40ba19043fd5fa08bdf",
 		18: "aa3901c4c46a3dbf2575830f2ff6fc16f2f9f66ce8e2c395c8657663db56b8f0",
 		19: "5cf89cccb1daee63eb6ed983101263511b6f06990c4c4677e0ecc186166bf209",
+		22: "53cf1fadd4261519a7855976527374f1203720aa2655666f8d2c0cfccc9cc28e",
 	}
 	schemaContractPostgresDigests = []string{
 		1:  "7c554ff06468af9bf30950e6e4f2954b52f84d7dd0e6708f4fdd932fda007ed3",
@@ -280,6 +299,7 @@ var (
 		17: "08e0d79f0aced4f968ff10240fbd16b8af90bab114e8ac15e2dde7500c8eed86",
 		18: "0b50a4dde53b4c696b678b26f07bf34d09809231d76c264603a00fc1865b9f07",
 		19: "bc49846bd633ccbd5930a60cd90fdc50ce392b354b1789936df543306efa36a1",
+		22: "9d6fc86a68521d5ff778487034eae63b75daa709354a644b176e75f886295130",
 	}
 )
 

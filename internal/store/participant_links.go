@@ -96,7 +96,13 @@ func (s *Store) loadLinkEdgesTxContext(
 }
 
 func (s *Store) loadComponentEdgesTxContext(ctx context.Context, tx *loggedTx, a, b int64) ([]linkEdge, error) {
-	rows, err := tx.QueryContext(ctx, `WITH RECURSIVE walk(id, parent) AS (
+	return s.loadComponentEdgesContext(ctx, func(ctx context.Context, query string, args ...any) (rowsScanner, error) {
+		return tx.QueryContext(ctx, query, args...)
+	}, a, b)
+}
+
+func (s *Store) loadComponentEdgesContext(ctx context.Context, query sourceIdentityQuery, a, b int64) ([]linkEdge, error) {
+	rows, err := query(ctx, `WITH RECURSIVE walk(id, parent) AS (
 		SELECT id, CAST(0 AS BIGINT) FROM participants WHERE id IN (?, ?)
 		UNION
 		SELECT CASE WHEN l.participant_a = walk.id THEN l.participant_b ELSE l.participant_a END, walk.id
@@ -892,7 +898,7 @@ func (s *Store) rewriteLinksForMergeContext(
 	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
 		return err
 	}
-	edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+	edges, err := s.loadComponentEdgesTxContext(ctx, tx, loser, winner)
 	if err != nil {
 		return err
 	}
@@ -907,11 +913,7 @@ func (s *Store) rewriteLinksForMergeContext(
 		// simply disappears rather than being replaced by a self-loop.
 		return deleteMergeEdge(ctx, tx, loser, winner)
 	}
-	owners, err := loadParticipantLinkOwnersTxContext(ctx, tx)
-	if err != nil {
-		return err
-	}
-	return rebuildClusterAsSpanningTree(ctx, tx, members, owners, loser, winner)
+	return rebuildClusterAsSpanningTree(ctx, tx, members, loser, winner)
 }
 
 // linksReference reports whether any edge in edges has loser or winner as
@@ -957,12 +959,13 @@ type participantLinkOwner struct {
 }
 
 func loadParticipantLinkOwnersTxContext(
-	ctx context.Context, tx *loggedTx,
+	ctx context.Context, tx *loggedTx, ids []int64,
 ) ([]participantLinkOwner, error) {
+	filter, args := clusterEdgeFilter(ids)
 	rows, err := tx.QueryContext(ctx,
 		`SELECT participant_a, participant_b,
 			COALESCE(identity_match_candidate_id, 0)
-		 FROM participant_links`)
+		 FROM participant_links WHERE `+filter, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query participant link ownership: %w", err)
 	}
@@ -988,13 +991,17 @@ func loadParticipantLinkOwnersTxContext(
 // edge is invented, every rebuilt edge retains real provenance.
 func rebuildClusterAsSpanningTree(
 	ctx context.Context, tx *loggedTx, members map[int64]struct{},
-	owners []participantLinkOwner, loser, winner int64,
+	loser, winner int64,
 ) error {
 	ids := make([]int64, 0, len(members))
 	for m := range members {
 		ids = append(ids, m)
 	}
 	slices.Sort(ids)
+	owners, err := loadParticipantLinkOwnersTxContext(ctx, tx, ids)
+	if err != nil {
+		return err
+	}
 
 	contributions := mergeParticipantLinkOwners(owners, loser, winner)
 	newEdges := participantLinkSpanningTree(members, contributions)
@@ -1112,11 +1119,7 @@ func participantLinkSpanningTree(
 	return tree
 }
 
-// deleteClusterEdges removes every link edge with an endpoint in ids. Any
-// edge touching a merge's loser has its other endpoint in ids (that
-// endpoint is in componentOf(loser) by construction), so this also removes
-// the loser's edges without the loser needing to appear in ids.
-func deleteClusterEdges(ctx context.Context, tx *loggedTx, ids []int64) error {
+func clusterEdgeFilter(ids []int64) (string, []any) {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := make([]any, 0, 2*len(ids))
 	for range 2 {
@@ -1124,10 +1127,16 @@ func deleteClusterEdges(ctx context.Context, tx *loggedTx, ids []int64) error {
 			args = append(args, id)
 		}
 	}
-	if _, err := tx.ExecContext(ctx, fmt.Sprintf(
-		`DELETE FROM participant_links WHERE participant_a IN (%s) OR participant_b IN (%s)`,
-		placeholders, placeholders,
-	), args...); err != nil {
+	return fmt.Sprintf(`participant_a IN (%s) OR participant_b IN (%s)`, placeholders, placeholders), args
+}
+
+// deleteClusterEdges removes every link edge with an endpoint in ids. Any
+// edge touching a merge's loser has its other endpoint in ids (that
+// endpoint is in componentOf(loser) by construction), so this also removes
+// the loser's edges without the loser needing to appear in ids.
+func deleteClusterEdges(ctx context.Context, tx *loggedTx, ids []int64) error {
+	filter, args := clusterEdgeFilter(ids)
+	if _, err := tx.ExecContext(ctx, `DELETE FROM participant_links WHERE `+filter, args...); err != nil {
 		return fmt.Errorf("delete affected cluster links: %w", err)
 	}
 	return nil
