@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -1922,6 +1923,27 @@ func reconcileSubsetCommunicationServices(tx *sql.Tx, includeProfiles bool) erro
 				where: subsetSourceIdentityMatchCandidateWhere,
 			},
 		)
+		hasInstructions, err := sourceTableExists(tx, "person_instructions")
+		if err != nil {
+			return fmt.Errorf("check person instruction schema: %w", err)
+		}
+		if hasInstructions {
+			hasScopeKey, err := sourceColumnExists(tx, "person_instructions", "scope_key")
+			if err != nil {
+				return fmt.Errorf("check person instruction scope schema: %w", err)
+			}
+			if hasScopeKey {
+				if _, err := tx.Exec(`INSERT OR IGNORE INTO selected_profile_services (source_id)
+					SELECT CAST(json_extract(instruction.scope_key, '$.service_id') AS INTEGER)
+					FROM src.person_instructions instruction
+					WHERE instruction.person_id IN (SELECT id FROM persons)
+					  AND CASE WHEN json_valid(instruction.scope_key)
+						THEN json_type(instruction.scope_key, '$.service_id') = 'integer'
+						ELSE FALSE END`); err != nil {
+					return fmt.Errorf("select person instruction scope services: %w", err)
+				}
+			}
+		}
 		hasEmployments, err := sourceTableExists(tx, "employments")
 		if err != nil {
 			return fmt.Errorf("check employment schema: %w", err)
@@ -2268,6 +2290,250 @@ func copySubsetInferenceRevisions(tx *sql.Tx) error {
 	return nil
 }
 
+type subsetPersonInstructionKeyRemap struct {
+	source, destination string
+}
+
+func copyPersonInstructions(tx *sql.Tx) error {
+	hasInstructions, err := sourceTableExists(tx, "person_instructions")
+	if err != nil {
+		return fmt.Errorf("check person instruction schema: %w", err)
+	}
+	if !hasInstructions {
+		return nil
+	}
+	columns, err := commonColumns(tx, "person_instructions")
+	if err != nil {
+		return fmt.Errorf("list person instruction columns: %w", err)
+	}
+	if len(columns) == 0 {
+		return errors.New("source and destination share no person_instructions columns")
+	}
+	selectExpressions := make([]string, len(columns))
+	contactPointColumn := quoteIdentifier("contact_point_id")
+	for index, column := range columns {
+		selectExpressions[index] = "source_row." + column
+		if column == contactPointColumn {
+			selectExpressions[index] = `CASE
+				WHEN source_row.` + column + ` IS NOT NULL AND EXISTS (
+					SELECT 1 FROM person_contact_points destination_contact
+					WHERE destination_contact.id = source_row.` + column + `
+					  AND destination_contact.person_id = source_row.` + quoteIdentifier("person_id") + `
+				) THEN source_row.` + column + `
+				ELSE NULL END`
+		}
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`INSERT INTO person_instructions (%s)
+		SELECT %s FROM src.person_instructions source_row
+		WHERE source_row.person_id IN (SELECT id FROM persons)`,
+		strings.Join(columns, ", "), strings.Join(selectExpressions, ", "))); err != nil {
+		return fmt.Errorf("copy person instructions: %w", err)
+	}
+	if _, err := tx.Exec(`UPDATE person_instructions
+		SET original_text = normalized_text
+		WHERE person_id IN (SELECT id FROM persons) AND original_text = ''`); err != nil {
+		return fmt.Errorf("backfill copied person instruction text: %w", err)
+	}
+
+	type copiedInstruction struct {
+		id                                             int64
+		instructionKey, scopeKey                       string
+		destinationInstructionKey, destinationScopeKey string
+		temporaryInstructionKey                        string
+		kind                                           personfacts.InstructionKind
+		valueText, originalText                        string
+		normalizedText                                 string
+	}
+	rows, err := tx.Query(`SELECT instruction.id,instruction.instruction_key,instruction.scope_key,
+		instruction.kind,instruction.value_text,instruction.original_text,instruction.normalized_text
+	FROM person_instructions instruction
+	WHERE instruction.person_id IN (SELECT id FROM persons)
+	ORDER BY instruction.id`)
+	if err != nil {
+		return fmt.Errorf("load copied person instruction identities: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var instructions []copiedInstruction
+	for rows.Next() {
+		var instruction copiedInstruction
+		if err := rows.Scan(
+			&instruction.id, &instruction.instructionKey, &instruction.scopeKey,
+			&instruction.kind, &instruction.valueText, &instruction.originalText,
+			&instruction.normalizedText,
+		); err != nil {
+			return fmt.Errorf("scan copied person instruction identity: %w", err)
+		}
+		instructions = append(instructions, instruction)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate copied person instruction scopes: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close copied person instruction scopes: %w", err)
+	}
+	keyRemaps := make(map[int64]subsetPersonInstructionKeyRemap, len(instructions))
+	temporaryKeys := make(map[string]struct{}, len(instructions)*2)
+	for _, instruction := range instructions {
+		temporaryKeys[instruction.instructionKey] = struct{}{}
+	}
+	for index := range instructions {
+		instruction := &instructions[index]
+		scopeKey, err := remapSubsetPersonInstructionScope(tx, instruction.id, instruction.scopeKey)
+		if err != nil {
+			return err
+		}
+		text := instruction.originalText
+		if text == "" {
+			text = instruction.normalizedText
+		}
+		key := personfacts.InstructionKey(instruction.kind, scopeKey, instruction.valueText, text)
+		var temporaryKey string
+		for suffix := 0; ; suffix++ {
+			marker := fmt.Sprintf("subset-remap-%d-%d", instruction.id, suffix)
+			candidate := strings.Repeat("x", 64-len(marker)) + marker
+			if _, exists := temporaryKeys[candidate]; !exists {
+				temporaryKey = candidate
+				break
+			}
+		}
+		temporaryKeys[temporaryKey] = struct{}{}
+		instruction.destinationScopeKey = scopeKey
+		instruction.destinationInstructionKey = key
+		instruction.temporaryInstructionKey = temporaryKey
+		keyRemaps[instruction.id] = subsetPersonInstructionKeyRemap{source: instruction.instructionKey, destination: key}
+	}
+	// Stage every key before writing destination scopes. A live-key unique index
+	// would otherwise collide when one service maps onto another selected
+	// service ID whose instruction has not been remapped yet.
+	for _, instruction := range instructions {
+		if _, err := tx.Exec(`UPDATE person_instructions SET instruction_key=? WHERE id=?`,
+			instruction.temporaryInstructionKey, instruction.id,
+		); err != nil {
+			return fmt.Errorf("stage copied person instruction %d key remap: %w", instruction.id, err)
+		}
+	}
+	for _, instruction := range instructions {
+		if _, err := tx.Exec(
+			`UPDATE person_instructions SET scope_key=?,instruction_key=? WHERE id=?`,
+			instruction.destinationScopeKey, instruction.destinationInstructionKey, instruction.id,
+		); err != nil {
+			return fmt.Errorf("remap copied person instruction %d scope: %w", instruction.id, err)
+		}
+	}
+
+	hasEvents, err := sourceTableExists(tx, "person_instruction_events")
+	if err != nil {
+		return fmt.Errorf("check person instruction event schema: %w", err)
+	}
+	if !hasEvents {
+		return nil
+	}
+	if _, err := copyByName(tx, "person_instruction_events", `person_id IN (SELECT id FROM persons)`); err != nil {
+		return fmt.Errorf("copy person instruction events: %w", err)
+	}
+	if err := remapSubsetPersonInstructionEventKeys(tx, keyRemaps); err != nil {
+		return err
+	}
+	return nil
+}
+
+func remapSubsetPersonInstructionScope(tx *sql.Tx, instructionID int64, scopeKey string) (string, error) {
+	trimmed := strings.TrimSpace(scopeKey)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "{") {
+		return scopeKey, nil
+	}
+	var scope personInstructionScopeIdentity
+	if err := json.Unmarshal([]byte(scopeKey), &scope); err != nil {
+		return "", fmt.Errorf("decode copied person instruction %d scope: %w", instructionID, err)
+	}
+	if scope.AddressKind == "" {
+		return scopeKey, nil
+	}
+	if scope.ServiceID != nil {
+		var destinationID int64
+		err := tx.QueryRow(`SELECT destination_id FROM selected_profile_service_map WHERE source_id = ?`,
+			*scope.ServiceID).Scan(&destinationID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("copy person instruction %d: service %d has no destination mapping", instructionID, *scope.ServiceID)
+		}
+		if err != nil {
+			return "", fmt.Errorf("map copied person instruction %d scope service: %w", instructionID, err)
+		}
+		scope.ServiceID = &destinationID
+	}
+	encoded, err := json.Marshal(scope)
+	if err != nil {
+		return "", fmt.Errorf("encode copied person instruction %d scope: %w", instructionID, err)
+	}
+	return string(encoded), nil
+}
+
+func remapSubsetPersonInstructionEventKeys(
+	tx *sql.Tx, keyRemaps map[int64]subsetPersonInstructionKeyRemap,
+) error {
+	type copiedEvent struct {
+		id             int64
+		instructionID  sql.NullInt64
+		instructionKey string
+		detailJSON     []byte
+	}
+	rows, err := tx.Query(`SELECT id,instruction_id,instruction_key,detail_json
+		FROM person_instruction_events WHERE person_id IN (SELECT id FROM persons) ORDER BY id`)
+	if err != nil {
+		return fmt.Errorf("load copied person instruction events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var events []copiedEvent
+	for rows.Next() {
+		var event copiedEvent
+		if err := rows.Scan(&event.id, &event.instructionID, &event.instructionKey, &event.detailJSON); err != nil {
+			return fmt.Errorf("scan copied person instruction event: %w", err)
+		}
+		events = append(events, event)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate copied person instruction events: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("close copied person instruction events: %w", err)
+	}
+	for _, event := range events {
+		if !event.instructionID.Valid {
+			continue
+		}
+		remap, ok := keyRemaps[event.instructionID.Int64]
+		if !ok || remap.source == remap.destination {
+			continue
+		}
+		instructionKey := event.instructionKey
+		changed := false
+		if instructionKey == remap.source {
+			instructionKey = remap.destination
+			changed = true
+		}
+		var details map[string]any
+		if err := json.Unmarshal(event.detailJSON, &details); err != nil {
+			return fmt.Errorf("decode copied person instruction event %d details: %w", event.id, err)
+		}
+		if key, ok := details["new_key"].(string); ok && key == remap.source {
+			details["new_key"] = remap.destination
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		encodedDetails, err := json.Marshal(details)
+		if err != nil {
+			return fmt.Errorf("encode copied person instruction event %d details: %w", event.id, err)
+		}
+		if _, err := tx.Exec(`UPDATE person_instruction_events
+			SET instruction_key=?,detail_json=? WHERE id=?`, instructionKey, string(encodedDetails), event.id); err != nil {
+			return fmt.Errorf("remap copied person instruction event %d identity: %w", event.id, err)
+		}
+	}
+	return nil
+}
+
 func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 	hasProfiles, err := sourceTableExists(tx, "person_names")
 	if err != nil {
@@ -2305,6 +2571,9 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 		tx, "person_contact_points", `person_id IN (SELECT id FROM persons)`,
 	); err != nil {
 		return 0, fmt.Errorf("copy person_contact_points: %w", err)
+	}
+	if err := copyPersonInstructions(tx); err != nil {
+		return 0, err
 	}
 	if err := copyByNameWithCommunicationServiceMap(tx, "participant_contact_observations",
 		`participant_id IN (SELECT id FROM participants)`); err != nil {

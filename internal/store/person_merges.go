@@ -318,6 +318,18 @@ func (s *Store) mergePersonsOnce(
 			absorbed.Revision != request.ExpectedAbsorbedRevision {
 			return ErrPersonRevisionConflict
 		}
+		var hasInstructionHistory bool
+		if err := tx.QueryRowContext(ctx, `SELECT
+			EXISTS (SELECT 1 FROM person_instructions WHERE person_id = ?) OR
+			EXISTS (SELECT 1 FROM person_instruction_events WHERE person_id = ?)`,
+			absorbed.ID, absorbed.ID,
+		).Scan(&hasInstructionHistory); err != nil {
+			return fmt.Errorf("check absorbed person instruction history: %w", err)
+		}
+		if hasInstructionHistory {
+			return fmt.Errorf("%w: absorbed person has instruction history that cannot be preserved by this merge path",
+				ErrPersonMergeInvalid)
+		}
 		if err := s.lockPersonMergeVCardEnvelopesTx(
 			ctx, tx, survivor.ID, absorbed.ID,
 		); err != nil {
