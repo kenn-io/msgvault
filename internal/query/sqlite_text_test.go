@@ -93,14 +93,8 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	require := require.New(t)
 	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	dbtest.SeedTextTimeline(t, tdb.DB, "whatsapp")
 	_, err := tdb.DB.Exec(`
-		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'owner@chat.test');
-		INSERT INTO participants (id, phone_number, display_name) VALUES (11, '+15550000011', 'Alice');
-		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
-			(701, 7, 'chat-701', 'direct_chat', 'Alpha'),
-			(702, 7, 'chat-702', 'direct_chat', 'Beta');
-		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id) VALUES
-			(801, 701, 7, 'message-801', 'whatsapp', '2026-08-20 10:00:00', 'first', 11);
 		INSERT INTO message_bodies (message_id, body_text) VALUES (801, 'full first body');
 	`)
 	require.NoError(err)

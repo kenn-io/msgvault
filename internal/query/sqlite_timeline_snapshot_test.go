@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
@@ -49,29 +50,28 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			s := testutil.NewSQLiteTestStore(t)
+			messageType := "imessage"
+			if tc.roster {
+				messageType = "matrix"
+			}
+			dbtest.SeedTextTimeline(t, s.DB(), messageType)
+			_, err := s.DB().Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, sender_id)
+				VALUES (802, 701, 7, 'message-802', ?, '2020-01-01 11:00:00', 11)`, messageType)
+			require.NoError(err)
 			fixture := `
-				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
-				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
-					(701, 7, 'chat-701', 'direct_chat', 'Original'), (702, 7, 'chat-702', 'direct_chat', 'Other');
-				INSERT INTO participants (id, email_address, display_name) VALUES (11, 'sender@example.com', 'Original');
-				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, sender_id) VALUES
-					(801, 701, 7, 'message-801', 'imessage', '2020-01-01 10:00:00', 11),
-					(802, 701, 7, 'message-802', 'imessage', '2020-01-01 11:00:00', 11);
 				INSERT INTO message_bodies (message_id, body_text) VALUES (802, 'original body');
 				UPDATE messages SET content_changed_at = '2020-01-01 00:00:00';
 			`
 			if tc.roster {
 				fixture = `
-					INSERT INTO sources (id, source_type, identifier) VALUES (7, 'matrix', 'owner@example.com');
-					INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (701, 7, 'chat-701', 'group_chat');
-					INSERT INTO participants (id, email_address) VALUES (11, 'member@example.com'), (12, 'sender@example.com');
+					UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 701;
+					UPDATE participants SET email_address = 'member@example.com' WHERE id = 11;
+					INSERT INTO participants (id, email_address) VALUES (12, 'sender@example.com');
 					INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (701, 11);
-					INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, sender_id, content_changed_at) VALUES
-						(801, 701, 7, 'message-801', 'matrix', '2020-01-01 10:00:00', 12, '2020-01-01 00:00:00'),
-						(802, 701, 7, 'message-802', 'matrix', '2020-01-01 11:00:00', 12, '2020-01-01 00:00:00');
+					UPDATE messages SET sender_id = 12, content_changed_at = '2020-01-01 00:00:00';
 				`
 			}
-			_, err := s.DB().Exec(fixture)
+			_, err = s.DB().Exec(fixture)
 			require.NoError(err)
 			engine := query.NewSQLiteEngine(s.DB())
 			filter := query.TextFilter{Pagination: query.Pagination{Limit: 1}, SortDirection: query.SortAsc}
@@ -142,15 +142,15 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			s := testutil.NewSQLiteTestStore(t)
+			dbtest.SeedTextTimeline(t, s.DB(), "imessage")
 			_, err := s.DB().Exec(`
-				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
-				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (701, 7, 'chat-701', 'direct_chat');
 				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, content_changed_at) VALUES
-					(801, 701, 7, 'message-801', 'imessage', '2020-01-01 10:00:00', '2020-01-01 00:00:00'),
 					(802, 701, 7, 'message-802', 'imessage', '2020-01-01 11:00:00', '2020-01-01 00:00:00');
+				UPDATE messages SET sender_id = NULL, content_changed_at = '2020-01-01 00:00:00';
 				INSERT INTO labels (id, source_id, name) VALUES (901, 7, 'Important');
+				UPDATE participants SET display_name = 'Sender' WHERE id = 11;
 				INSERT INTO participants (id, email_address, display_name) VALUES
-					(11, 'sender@example.com', 'Sender'), (12, 'other@example.com', 'Other');
+					(12, 'other@example.com', 'Other');
 				INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES
 					(801, 11, 'from'), (802, 11, 'from');
 			`)
