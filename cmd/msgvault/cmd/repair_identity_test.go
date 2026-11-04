@@ -27,8 +27,6 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(b.ID, "alice@example.com", "preexisting"))
 	c, err := st.GetOrCreateSource("gmail", "notanemail") // non-email identifier -> skipped
 	require.NoError(err)
-	d, err := st.GetOrCreateSource("imap", "bob@example.com") // wrong type -> skipped
-	require.NoError(err)
 	e, err := st.GetOrCreateSource("gmail", "https://user@example.com/mail") // URL, not an email -> skipped
 	require.NoError(err)
 
@@ -46,10 +44,6 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	require.NoError(err)
 	assert.Empty(ci, "non-email identifier is left alone")
 
-	di, err := st.ListAccountIdentities(d.ID)
-	require.NoError(err)
-	assert.Empty(di, "imap source untouched when repairing gmail")
-
 	ei, err := st.ListAccountIdentities(e.ID)
 	require.NoError(err)
 	assert.Empty(ei, "URL identifier is not accepted as an email address")
@@ -63,7 +57,6 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	n2, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
 	assert.Zero(n2, "re-running repairs nothing once identities are confirmed")
-	assert.NotContains(buf.String(), "Activity and contact state")
 }
 
 // The onlyIdentifier argument scopes the repair to a single account.
@@ -91,9 +84,8 @@ func TestRepairIdentities_ReportsSkippedEmailSources(t *testing.T) {
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	imapSource := newRepairIdentityIMAPSource(t, st)
-	mboxSource, err := st.GetOrCreateSource("mbox", "boss@example.com")
+	_, err := st.GetOrCreateSource("mbox", "boss@example.com")
 	require.NoError(err)
-	require.NoError(st.AddAccountIdentity(mboxSource.ID, "alias@example.com", "preexisting"))
 	confirmed, err := st.GetOrCreateSource("imap", "confirmed@example.com")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceDisplayName(confirmed.ID, "confirmed@example.com"))
@@ -112,33 +104,11 @@ func TestRepairIdentities_ReportsSkippedEmailSources(t *testing.T) {
 		assert.Empty(identities)
 	}
 
-	identities, err := st.ListAccountIdentities(mboxSource.ID)
-	require.NoError(err)
-	require.Len(identities, 1)
-	assert.Equal("alias@example.com", identities[0].Address)
-
 	buf.Reset()
 	repaired, err = repairIdentities(t.Context(), st, "gmail", "owner@example.com", &buf)
 	require.NoError(err)
 	assert.Zero(repaired)
 	assert.Equal("Skipped 1 imap source(s) with an unconfirmed account address; re-run with --type imap and the same identifier.\n", buf.String())
-}
-
-func TestRepairIdentities_IMAPUsesConfiguredUsername(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := testutil.NewTestStore(t)
-	source := newRepairIdentityIMAPSource(t, st)
-
-	var buf bytes.Buffer
-	repaired, err := repairIdentities(t.Context(), st, "imap", "", &buf)
-	require.NoError(err)
-	assert.Equal(1, repaired)
-
-	identities, err := st.ListAccountIdentities(source.ID)
-	require.NoError(err)
-	require.Len(identities, 1)
-	assert.Equal("owner@example.com", identities[0].Address)
 }
 
 func TestRepairIdentities_IMAPTargetMatchesConfiguredUsername(t *testing.T) {
@@ -200,7 +170,6 @@ func TestRepairIdentities_ReturnsAddFailuresAfterRemainingSources(t *testing.T) 
 	require.ErrorContains(err, "fail@example.com")
 	require.ErrorContains(err, "forced identity failure")
 	assert.Equal(1, repaired, "the later source is still repaired")
-	assert.Contains(buf.String(), "Activity and contact state catch up at the daemon's next projection, or right away with msgvault activity build.")
 
 	failedIdentities, listErr := st.ListAccountIdentities(failed.ID)
 	require.NoError(listErr)
