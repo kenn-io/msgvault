@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 )
 
@@ -104,22 +103,14 @@ func (s *Store) RecordDocbankAttachmentProcessing(ctx context.Context, dest stri
 	if !nextActionAt.IsZero() {
 		next = s.timestampValue(nextActionAt)
 	}
-	// Consume a backfill request only after this job settles. A late poll must
-	// preserve the request while running, then retry a recoverable failure once.
-	const pendingRetry = `docbank_attachment_processing.outcome = 'retry_requested'
- AND docbank_attachment_processing.fingerprint = excluded.fingerprint`
-	recoverable := nextActionAt.IsZero() && slices.Contains(DocbankRequeueOutcomes, d.Outcome)
 	_, err := s.db.ExecContext(ctx, s.Rebind(`INSERT INTO docbank_attachment_processing
  (destination_key, content_hash, fingerprint, outcome, job_id, next_action_at) VALUES (?, ?, ?, ?, ?, ?)
  ON CONFLICT (destination_key, content_hash) DO UPDATE SET
  fingerprint = excluded.fingerprint,
- outcome = CASE WHEN `+pendingRetry+` AND ? THEN ''
-                WHEN `+pendingRetry+` AND excluded.next_action_at IS NOT NULL THEN 'retry_requested'
-                ELSE excluded.outcome END,
- job_id = CASE WHEN `+pendingRetry+` AND ? THEN '' ELSE excluded.job_id END,
- next_action_at = CASE WHEN `+pendingRetry+` AND ? THEN ? ELSE excluded.next_action_at END`),
-		dest, d.ContentHash, d.Fingerprint, d.Outcome, d.JobID, next,
-		recoverable, recoverable, recoverable, s.timestampValue(time.Now().UTC()))
+ outcome = excluded.outcome,
+ job_id = excluded.job_id,
+ next_action_at = excluded.next_action_at`),
+		dest, d.ContentHash, d.Fingerprint, d.Outcome, d.JobID, next)
 	if err != nil {
 		return fmt.Errorf("record attachment processing result: %w", err)
 	}
@@ -133,7 +124,7 @@ func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, pro
 	args := []any{"docbank-processing:" + dest + ":" + profile, dest}
 	args = append(args, visibleArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT
- CASE WHEN p.outcome = 'retry_requested' AND p.job_id = '' THEN '' ELSE COALESCE(p.outcome, '') END, COUNT(*)
+ COALESCE(p.outcome, ''), COUNT(*)
  FROM docbank_attachment_deliveries d LEFT JOIN docbank_attachment_processing p
  ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash
  AND p.fingerprint = (SELECT value FROM archive_metadata WHERE key = ?)
@@ -152,7 +143,7 @@ func (s *Store) DocbankAttachmentProcessingCounts(ctx context.Context, dest, pro
 		switch outcome {
 		case "":
 			result.Waiting += count
-		case "requested", "retry_requested":
+		case "requested":
 			result.Requested += count
 		case "extracted":
 			result.Extracted += count

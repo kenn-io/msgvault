@@ -460,8 +460,8 @@ func (s *Store) RecordDocbankAttachment(
 	return nil
 }
 
-// DocbankRequeueOutcomes are cleared by backfill so processing can be requested again.
-var DocbankRequeueOutcomes = []string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required", "invalid_receipt"}
+// docbankRequeueOutcomes are cleared by backfill so processing can be requested again.
+var docbankRequeueOutcomes = []string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required", "invalid_receipt"}
 
 // RetryDocbankAttachments requeues failures and restarts discovery in one transaction.
 func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string) error {
@@ -476,14 +476,8 @@ func (s *Store) RetryDocbankAttachments(ctx context.Context, destination string)
 		if _, err := q.Exec(`
 			DELETE FROM docbank_attachment_processing
 			WHERE destination_key = ? AND next_action_at IS NULL
-			  AND outcome IN ('`+strings.Join(DocbankRequeueOutcomes, "','")+`')`, destination); err != nil {
+			  AND outcome IN ('`+strings.Join(docbankRequeueOutcomes, "','")+`')`, destination); err != nil {
 			return fmt.Errorf("requeue recoverable attachment processing outcomes: %w", err)
-		}
-		if _, err := q.Exec(`
-			UPDATE docbank_attachment_processing SET outcome = 'retry_requested'
-			WHERE destination_key = ? AND outcome IN ('', 'requested')
-			  AND next_action_at IS NOT NULL`, destination); err != nil {
-			return fmt.Errorf("request retry after pending attachment processing: %w", err)
 		}
 		if _, err := q.Exec(`DELETE FROM archive_metadata WHERE key = ?`, beeperMediaScanKey(destination)); err != nil {
 			return fmt.Errorf("reset attachment mirror discovery: %w", err)
