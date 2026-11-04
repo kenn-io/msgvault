@@ -2041,7 +2041,7 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	t.Logf("tail drained in %d limited runs after the first", runs)
 	_, err = imp.Import(context.Background(), limited)
 	require.NoError(err)
-	assert.Equal(30, tailCount(), "repeated limited runs must drain the whole tail")
+	assert.Equal(30, tailCount(), "a further limited import keeps the tail complete")
 	var total, distinct int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(DISTINCT source_message_id) FROM messages WHERE message_type='slack'`).Scan(&distinct))
