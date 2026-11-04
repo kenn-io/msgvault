@@ -33,7 +33,11 @@ func (m Model) peopleRelationshipZone() (string, *time.Location) {
 	if location == nil {
 		location = time.Local
 	}
-	if name := location.String(); name != "Local" {
+	name := location.String()
+	if name == "Local" {
+		name = m.localTimezone
+	}
+	if name != "" && name != "Local" {
 		if loaded, err := time.LoadLocation(name); err == nil {
 			return name, loaded
 		}

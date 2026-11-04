@@ -392,12 +392,13 @@ func TestPeopleRelationshipTimezoneRequests(t *testing.T) {
 	time.Local = newYork
 
 	for _, tt := range []struct {
-		name     string
-		location *time.Location
-		want     string
+		name          string
+		location      *time.Location
+		localTimezone string
+		want          string
 	}{
 		{name: "opaque Local", location: time.FixedZone("Local", 0), want: ""},
-		{name: "named Local", location: time.Local, want: "America/New_York"},
+		{name: "resolved Local", location: time.FixedZone("Local", 0), localTimezone: "America/Chicago", want: "America/Chicago"},
 		{name: "nil uses named Local", location: nil, want: "America/New_York"},
 		{name: "absolute zoneinfo path", location: time.FixedZone("/usr/share/zoneinfo/America/New_York", -5*60*60), want: ""},
 		{name: "UTC", location: time.UTC, want: "UTC"},
@@ -407,6 +408,7 @@ func TestPeopleRelationshipTimezoneRequests(t *testing.T) {
 			backend := &fakePeopleRelationshipBackend{fakePeopleBackend: &fakePeopleBackend{}}
 			model := peopleContentModel(backend, &contact)
 			model.peopleState.location = tt.location
+			model.localTimezone = tt.localTimezone
 			loaded := relationshipCalendarMessage(t, model.beginPeopleRelationshipLoad())
 			require.NoError(t, loaded.err)
 			require.Len(t, backend.calendarRequests, 1)
