@@ -46,12 +46,12 @@ func ParseICSMetadata(raw []byte) (ICSMetadata, error) {
 }
 
 type ICSComponent struct {
-	Event                                          Event
-	UID                                            string
-	Sequence                                       int64
-	Stamp                                          time.Time
-	Summary, Description, Location, OrganizerEmail string
-	Raw                                            []byte
+	Event                                                   Event
+	UID                                                     string
+	Sequence                                                int64
+	Stamp                                                   time.Time
+	Summary, Description, Location, JoinURL, OrganizerEmail string
+	Raw                                                     []byte
 }
 
 // ICSMessageID is source-local and stable across input ordering and revisions.
@@ -458,6 +458,9 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 				}
 			}
 		}
+	}
+	if url := p.Get("URL"); url != nil {
+		c.JoinURL = url.Value
 	}
 
 	e := Event{Kind: "single", Status: "confirmed", CalendarTimeZone: loc.String()}

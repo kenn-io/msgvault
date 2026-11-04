@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -49,6 +50,7 @@ func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 		}
 		return store.PersonCandidate{}, &ErrAmbiguousReference{Candidates: c.t.Candidates}
 	}
+	c.personResolved = true
 	return r.value[0], nil
 }
 func (c *composer) setSubject(p store.PersonCandidate) {
@@ -113,25 +115,31 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var messages, calls readResult[store.ContactAggregate]
 	var transcripts readResult[[]int64]
 	var history readResult[activityWindow]
-	var cold readResult[store.BurstPage]
+	var cold readResult[coldActivityWindow]
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
-	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts}
-	parallel(c.ctx,
+	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts, MergeCopies: c.req.IncludeCold}
+	// Keep initial readers inside half the request budget so later meeting and
+	// activity hydration still has time to finish on the shared request context.
+	collectionCtx, cancel := context.WithTimeout(c.ctx, requestTimeout/2)
+	defer cancel()
+	cc := *c
+	cc.ctx = collectionCtx
+	parallel(collectionCtx,
 		func() {
 			if c.src.Activity != nil {
-				messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+				messages = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
 					return c.src.Activity.MessageContactAggregateContext(ctx, q)
 				})
-				transcripts = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]int64, error) {
+				transcripts = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]int64, error) {
 					ids, more, err := c.src.Activity.AttendedTranscriptIDsContext(ctx, q, 2000)
 					if more && err == nil {
 						err = errors.New("attended meeting limit reached")
 					}
 					return ids, err
 				})
-				history = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+				history = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
 					cc := *c
 					cc.ctx = ctx
 					return cc.readActivity(historyQuery)
@@ -141,11 +149,11 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, historyQuery)
+					cold = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+						return c.readColdActivity(ctx, historyQuery)
 					})
 				} else {
-					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
+					coldCount = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (int, error) {
 						return c.src.Cold.CountColdActivityMessagesContext(ctx, historyQuery)
 					})
 				}
@@ -153,21 +161,30 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Calls != nil {
-				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+				calls = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
 					return c.src.Calls.CallContactAggregateContext(ctx, q)
 				})
-				logicalCalls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond), ParticipantIDs: c.participants, Limit: 500})
+				logicalCalls = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+					dateBefore, err := addCivilDate(c.t.Now.In(c.loc).Format(time.DateOnly), 1)
+					if err != nil {
+						return nil, err
+					}
+					dateAfter := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
+					return c.readCalls(ctx, store.LogicalCallQuery{
+						After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond),
+						DateAfter: dateAfter, DateBefore: dateBefore, ParticipantIDs: c.participants, Limit: 500,
+					})
 				})
 			}
 		},
 		func() {
 			if c.src.Calendar != nil {
-				upcoming = c.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
+				upcoming = cc.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
 			}
 		},
-		func() { c.loadFreshness() },
+		func() { cc.loadFreshness() },
 	)
+	c.recoverSnapshotAfterCollection(collectionCtx)
 	c.gap("contact", messages.err, false)
 	c.gap("contact", calls.err, false)
 	c.gap("meetings", transcripts.err, len(transcripts.value) > 0)
@@ -193,52 +210,112 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		})
 		c.gap("meetings", r.err, false)
 		displays := c.displays(transcripts.value)
-		seen := map[string]bool{}
+		type transcriptMeetingGroup struct {
+			key          string
+			transcriptID int64
+			refs         []string
+		}
+		groupsByKey := map[string]*transcriptMeetingGroup{}
+		groups := []*transcriptMeetingGroup{}
+		occurrenceRefs := []string{}
 		for _, id := range transcripts.value {
 			info := r.value.ByTranscript[id]
 			key := info.Key
 			if key == "" {
 				key = messageRef(id)
 			}
-			if seen[key] {
-				continue
+			group := groupsByKey[key]
+			if group == nil {
+				group = &transcriptMeetingGroup{key: key, transcriptID: id}
+				groupsByKey[key] = group
+				groups = append(groups, group)
 			}
-			seen[key] = true
-			at := displays[id].OccurredAt
-			for _, ref := range info.ExactOccurrenceRefs {
-				if c.src.Calendar != nil {
-					d, e := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
-					if e == nil {
-						o := d.CalendarOccurrence
-						occurrences = append(occurrences, o)
-						stamp := o.Start
-						if o.AllDay {
-							stamp, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
-						}
-						at = &stamp
-						break
+			group.refs = append(group.refs, info.ExactOccurrenceRefs...)
+			occurrenceRefs = append(occurrenceRefs, info.ExactOccurrenceRefs...)
+		}
+		occurrenceIdentity := store.MeetingIdentityResult{ByOccurrence: map[string]store.MeetingIdentityInfo{}}
+		occurrenceRefs = sortedSet(occurrenceRefs)
+		if len(occurrenceRefs) > 0 {
+			resolved := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
+				return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: occurrenceRefs})
+			})
+			c.gap("meetings", resolved.err, false)
+			occurrenceIdentity = resolved.value
+		}
+		seenOccurrences := map[string]bool{}
+		for _, group := range groups {
+			resolvedOccurrence := false
+			for _, ref := range sortedSet(group.refs) {
+				if c.src.Calendar == nil {
+					continue
+				}
+				detail := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
+					return c.src.Calendar.GetCalendarOccurrenceContext(ctx, ref)
+				})
+				if detail.err != nil {
+					c.gap("meetings", detail.err, false)
+					continue
+				}
+				o, ok := c.canonicalOccurrence(detail.value.CalendarOccurrence, occurrenceIdentity.ByOccurrence[ref])
+				if !ok {
+					continue
+				}
+				resolvedOccurrence = true
+				key := occurrenceIdentity.ByOccurrence[ref].Key
+				if key == "" {
+					key = "occ:" + o.Ref
+				}
+				if seenOccurrences[key] {
+					continue
+				}
+				seenOccurrences[key] = true
+				occurrences = append(occurrences, o)
+				stamp := o.Start
+				if o.AllDay {
+					var exists bool
+					var err error
+					stamp, exists, err = civilDateBoundary(o.StartDate, c.loc)
+					if err != nil {
+						c.gap("meetings", err, false)
+						continue
 					}
-					c.gap("meetings", e, false)
+					if !exists {
+						continue
+					}
+				}
+				if !stamp.After(c.t.Now) && c.matchesSubject(Entry{Meeting: &MeetingEntry{People: c.occurrencePeople(o)}}) {
+					c.mergeContact(store.ContactAggregate{FirstAt: &stamp, LastAt: &stamp, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(stamp, c.t.Now, c.loc)}, false)
 				}
 			}
-			if at != nil && !at.After(c.t.Now) {
-				c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+			if !resolvedOccurrence {
+				at := displays[group.transcriptID].OccurredAt
+				if at != nil && !at.After(c.t.Now) {
+					c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+				}
 			}
 		}
 	}
 	c.calendarGaps(upcoming, "upcoming")
-	bursts := mergeBursts(history.value.bursts, cold.value.Bursts)
+	bursts, mergeNoise := mergeBurstsWithNoise(history.value.bursts, cold.value.Bursts, c.req.IncludeNoise)
+	c.t.Omitted.Noise += mergeNoise
 	slices.Reverse(bursts)
 	if len(bursts) > maxBursts {
 		bursts = bursts[:maxBursts]
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: "history", Code: "partial"})
 	}
-	entries, future := c.mergeEntries(bursts, history.value.meetings, occurrences, logicalCalls.value, nil)
+	meetings := append(slices.Clone(history.value.meetings), cold.value.meetings...)
+	entries, future := c.mergeEntries(bursts, meetings, occurrences, logicalCalls.value, nil)
 	c.t.Upcoming = c.filterSubject(future)
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
 	entries = c.filterSubject(entries)
-	entries = slices.DeleteFunc(entries, func(e Entry) bool { return e.Time.After(c.t.Now) })
+	entries = slices.DeleteFunc(entries, func(e Entry) bool {
+		precision := activitydate.PrecisionTimestamp
+		if e.Call != nil && e.Call.Precision == string(activitydate.PrecisionDay) {
+			precision = activitydate.PrecisionDay
+		}
+		return activitydate.Compare(e.Time, precision, c.t.Now, activitydate.PrecisionTimestamp, c.loc) > 0
+	})
 	c.sortAndContinue("history", entries, true)
 	entries = c.afterPosition("history", entries)
 	if len(entries) > 20 {
@@ -267,18 +344,27 @@ func monthlyAt(at, now time.Time, loc *time.Location) [12]int {
 	}
 	return monthly
 }
-func mergeTime(dst **time.Time, src *time.Time, first bool) {
-	if src != nil && (*dst == nil || first && src.Before(**dst) || !first && src.After(**dst)) {
+func mergeContactTime(dst **time.Time, dstPrecision *string, src *time.Time, srcPrecision string, first bool, loc *time.Location) {
+	if src == nil {
+		return
+	}
+	order := 0
+	if *dst != nil {
+		order = activitydate.Compare(*src, activitydate.DatePrecision(srcPrecision), **dst, activitydate.DatePrecision(*dstPrecision), loc)
+	}
+	morePrecise := order == 0 && *dst != nil && *dstPrecision == string(activitydate.PrecisionDay) && srcPrecision != string(activitydate.PrecisionDay)
+	if *dst == nil || first && order < 0 || !first && order > 0 || morePrecise {
 		at := src.UTC()
 		*dst = &at
+		*dstPrecision = srcPrecision
 	}
 }
 func (c *composer) mergeContact(a store.ContactAggregate, call bool) {
 	h := c.t.Person
-	mergeTime(&h.FirstAt, a.FirstAt, true)
-	mergeTime(&h.LastAt, a.LastAt, false)
-	mergeTime(&h.LastInboundAt, a.LastInboundAt, false)
-	mergeTime(&h.LastOutboundAt, a.LastOutboundAt, false)
+	mergeContactTime(&h.FirstAt, &h.FirstAtPrecision, a.FirstAt, a.FirstAtPrecision, true, c.loc)
+	mergeContactTime(&h.LastAt, &h.LastAtPrecision, a.LastAt, a.LastAtPrecision, false, c.loc)
+	mergeContactTime(&h.LastInboundAt, &h.LastInboundAtPrecision, a.LastInboundAt, a.LastInboundAtPrecision, false, c.loc)
+	mergeContactTime(&h.LastOutboundAt, &h.LastOutboundAtPrecision, a.LastOutboundAt, a.LastOutboundAtPrecision, false, c.loc)
 	h.InteractionCount += a.Count
 	if call {
 		if a.Count > 0 {
@@ -302,7 +388,7 @@ func (c *composer) loadFreshness() {
 		c.unavailable("freshness")
 		return
 	}
-	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
+	r := readWithin(c.ctx, inventoryTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
 	if r.err != nil {
 		c.gap("freshness", r.err, false)
 	} else {
@@ -320,7 +406,7 @@ func (c *composer) relationshipExtras(person int64) {
 	if c.src.Loops == nil {
 		c.unavailable("loops")
 	} else {
-		c.addLoops(c.collectLoops(person))
+		c.addLoops(c.collectLoops(store.ActivitySubject{PersonID: person}))
 	}
 	if c.src.Briefs == nil {
 		c.unavailable("brief")

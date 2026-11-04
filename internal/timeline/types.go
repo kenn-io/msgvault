@@ -127,21 +127,25 @@ type Person struct {
 	Credited      bool   `json:"credited,omitempty"`
 }
 type PersonHeader struct {
-	Person             Person          `json:"person"`
-	Ref                string          `json:"ref"`
-	Channels           []string        `json:"channels"`
-	FirstAt            *time.Time      `json:"first_at"`
-	LastAt             *time.Time      `json:"last_at"`
-	LastInboundAt      *time.Time      `json:"last_inbound_at"`
-	LastOutboundAt     *time.Time      `json:"last_outbound_at"`
-	InteractionCount   int             `json:"interaction_count"`
-	CadenceStatus      string          `json:"cadence_status,omitempty"`
-	DueAt              *time.Time      `json:"due_at,omitempty"`
-	InitiatedByContact int             `json:"initiated_by_contact"`
-	InitiatedByOwner   int             `json:"initiated_by_owner"`
-	Monthly            [12]int         `json:"monthly"`
-	Brief              *UntrustedText  `json:"brief,omitempty"`
-	Agenda             []UntrustedText `json:"agenda,omitempty"`
+	Person                  Person          `json:"person"`
+	Ref                     string          `json:"ref"`
+	Channels                []string        `json:"channels"`
+	FirstAt                 *time.Time      `json:"first_at"`
+	FirstAtPrecision        string          `json:"first_at_precision,omitempty"`
+	LastAt                  *time.Time      `json:"last_at"`
+	LastAtPrecision         string          `json:"last_at_precision,omitempty"`
+	LastInboundAt           *time.Time      `json:"last_inbound_at"`
+	LastInboundAtPrecision  string          `json:"last_inbound_at_precision,omitempty"`
+	LastOutboundAt          *time.Time      `json:"last_outbound_at"`
+	LastOutboundAtPrecision string          `json:"last_outbound_at_precision,omitempty"`
+	InteractionCount        int             `json:"interaction_count"`
+	CadenceStatus           string          `json:"cadence_status,omitempty"`
+	DueAt                   *time.Time      `json:"due_at,omitempty"`
+	InitiatedByContact      int             `json:"initiated_by_contact"`
+	InitiatedByOwner        int             `json:"initiated_by_owner"`
+	Monthly                 [12]int         `json:"monthly"`
+	Brief                   *UntrustedText  `json:"brief,omitempty"`
+	Agenda                  []UntrustedText `json:"agenda,omitempty"`
 }
 type Anchor struct {
 	Ref      string    `json:"ref"`
@@ -197,6 +201,8 @@ type MeetingEntry struct {
 	End                 time.Time     `json:"end,omitzero"`
 	Time                time.Time     `json:"time,omitzero"`
 	AllDay              bool          `json:"all_day"`
+	Status              string        `json:"status,omitempty"`
+	DeletedFromSource   bool          `json:"deleted_from_source,omitempty,omitzero"`
 	Attendees           []Person      `json:"attendees,omitempty"`
 	People              []Person      `json:"people,omitempty"`
 	Attended            bool          `json:"attended"`
@@ -216,6 +222,7 @@ type BurstEntry struct {
 	Snippet          UntrustedText `json:"untrusted_text"`
 	LatestMessageIDs []int64       `json:"latest_message_ids"`
 	Copies           map[int64]int `json:"copies,omitempty"`
+	copyKeys         map[string]struct{}
 }
 type MessageEntry struct {
 	PeopleCount     int           `json:"people_count"`
@@ -229,6 +236,8 @@ type CallEntry struct {
 	PeopleTruncated bool     `json:"people_truncated,omitzero"`
 	Outcome         string   `json:"outcome"`
 	DurationSeconds *float64 `json:"duration_seconds"`
+	Precision       string   `json:"precision,omitempty"`
+	Date            string   `json:"date,omitempty"`
 	People          []Person `json:"people"`
 }
 type LoopEntry struct {
@@ -253,7 +262,7 @@ func (e Entry) Validate() error {
 	}
 	valid := false
 	switch e.Kind {
-	case "meeting", "transcript":
+	case entryKindMeeting, "transcript":
 		valid = e.Meeting != nil
 	case "burst":
 		valid = e.Burst != nil
@@ -270,7 +279,7 @@ func (e Entry) Validate() error {
 		return fmt.Errorf("%w: entry must have exactly its kind's payload", ErrInvalidRequest)
 	}
 	switch e.Kind {
-	case "meeting":
+	case entryKindMeeting:
 		valid = strings.HasPrefix(e.AnchorRef, "evt:") && e.AnchorRef == e.Ref
 	case "burst":
 		valid = strings.HasPrefix(e.Key, "burst:") && e.AnchorRef == e.Key
@@ -281,7 +290,7 @@ func (e Entry) Validate() error {
 		valid = strings.HasPrefix(e.Ref, "msg:") && e.AnchorRef == e.Ref
 	}
 	parsed, err := ParseAnchor(e.AnchorRef, time.UTC)
-	if err != nil || !valid || (e.Kind == "meeting" && parsed.Kind != "meeting") || (e.Kind == "burst" && parsed.Kind != "burst") || (e.Kind == "note" && parsed.Kind != "date") || ((e.Kind == "message" || e.Kind == "transcript" || e.Kind == "call" || e.Kind == "loop") && parsed.Kind != "message") {
+	if err != nil || !valid || (e.Kind == entryKindMeeting && parsed.Kind != entryKindMeeting) || (e.Kind == "burst" && parsed.Kind != "burst") || (e.Kind == "note" && parsed.Kind != "date") || ((e.Kind == "message" || e.Kind == "transcript" || e.Kind == "call" || e.Kind == "loop") && parsed.Kind != "message") {
 		return fmt.Errorf("%w: invalid entry anchor", ErrInvalidRequest)
 	}
 	return nil

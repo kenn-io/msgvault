@@ -131,6 +131,44 @@ func TestMeetingLinksSuggestionsTimeWindow(t *testing.T) {
 	assertions.Empty(linkedMeetingRefs(t, st, uidless)[uidless])
 }
 
+func TestMeetingLinksSuggestionsFollowCalendarPages(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	for i := range 101 {
+		start := time.Date(2027, 3, 13, 11, 0, 0, 0, time.UTC).Add(time.Duration(i) * 10 * time.Minute)
+		raw := fmt.Sprintf(`{"id":%q,"start":{"dateTime":%q},"end":{"dateTime":%q}}`, fmt.Sprintf("before-%03d", i), start.Format(time.RFC3339), start.Add(time.Minute).Format(time.RFC3339))
+		calendarFixture(t, st, fmt.Sprintf("before-%03d", i), raw)
+	}
+	_, unsupported := calendarFixture(t, st, "unsupported", `{"id":"unsupported","start":{"dateTime":"2027-03-14T04:00:00Z"},"end":{"dateTime":"2027-03-14T04:30:00Z"},"recurrence":["RRULE:FREQ=INVALID"]}`)
+	targetStart := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
+	_, target := calendarFixture(t, st, "target", fmt.Sprintf(`{"id":"target","start":{"dateTime":%q},"end":{"dateTime":%q}}`, targetStart.Format(time.RFC3339), targetStart.Add(30*time.Minute).Format(time.RFC3339)))
+	_, noteID := projectionFixture(t, st, "note-after-first-page", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:15:00Z"}}`)
+
+	query := CalendarOccurrenceQuery{From: targetStart.Add(-24 * time.Hour), To: targetStart.Add(24 * time.Hour)}
+	first, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	requirements.Len(first.Occurrences, meetingSuggestionCalendarPageSize)
+	requirements.NotEmpty(first.NextCursor)
+	query.Cursor = first.NextCursor
+	second, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	var targetOnSecondPage bool
+	for _, occurrence := range second.Occurrences {
+		targetOnSecondPage = targetOnSecondPage || occurrence.MessageID == target
+	}
+	assertions.True(targetOnSecondPage)
+
+	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: noteID}, 10)
+	requirements.NoError(err)
+	var targetSuggested bool
+	for _, suggestion := range suggestions.Suggestions {
+		targetSuggested = targetSuggested || suggestion.Ref == fmt.Sprintf("evt:%d", target)
+	}
+	assertions.True(targetSuggested)
+	assertions.Contains(suggestions.Unexpandable, CalendarUnexpandable{MessageID: unsupported, Reason: "unsupported recurrence"})
+}
+
 func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 	for _, tc := range []struct{ zone, noteStart string }{
 		{"Asia/Tokyo", "2027-03-01T18:00:00Z"},

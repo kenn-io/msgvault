@@ -145,3 +145,22 @@ func TestOlderSummarySameNamePeopleHaveStableIdentityOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestOlderSummaryDeduplicatesSavedPersonAcrossParticipants(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	view := &Timeline{Mode: ModeDay, Timezone: "UTC", Now: now, Window: Window{From: "2026-10-19", To: "2026-10-22"}, Omitted: Omitted{Budget: map[string]any{}}}
+	c := composer{t: view, loc: time.UTC, keys: map[string]string{}, positions: map[string]string{}, entryDates: map[string]string{}}
+	day := now.AddDate(0, 0, -3)
+	entries := []Entry{
+		{Kind: entryKindBurst, Key: "first", Time: day, Burst: &BurstEntry{People: []Person{{PersonID: 7, ParticipantID: 71, Name: "Zoe", Tier: 2}}}},
+		{Kind: entryKindBurst, Key: "second", Time: day, Burst: &BurstEntry{People: []Person{{PersonID: 7, ParticipantID: 70, Name: "Alice", Tier: 1}}}},
+	}
+	c.groupDays(entries)
+	requirements.Len(view.Days, 1)
+	requirements.NotNil(view.Days[0].Summary)
+	assertions.Equal(1, view.Days[0].Summary.PeopleCount)
+	requirements.Len(view.Days[0].Summary.People, 1)
+	assertions.Equal(Person{PersonID: 7, ParticipantID: 70, Name: "Alice", Tier: 1}, view.Days[0].Summary.People[0])
+}

@@ -9,12 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 const requestTimeout = 10 * time.Second
+const inventoryTimeout = requestTimeout / 2
 const loopsTimeout = 5 * time.Second
 const maxBursts = 5000
 
@@ -56,7 +58,7 @@ func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
 			if target.at.IsZero() {
 				return resolveWindow(req, at, loc)
 			}
-			return anchorWindow(target.at, loc), nil
+			return anchorWindow(target, loc), nil
 		}
 	}
 	window, err := windowAt(now)
@@ -83,9 +85,14 @@ func Build(ctx context.Context, src Sources, req Request) (*Timeline, error) {
 			return nil, e
 		}
 		c.setSubject(p)
-		if req.Mode == ModeRelationship {
+		if c.personResolved && req.Mode == ModeRelationship {
 			c.buildRelationship(p)
 		}
+	}
+	if req.With != "" && !c.personResolved {
+		c.finishGaps()
+		SetContinuation(t, Continuation{Binding: binding, Positions: positions, More: c.more, SortKeys: c.keys})
+		return Fit(t, req.Format, req.Budget)
 	}
 	switch req.Mode {
 	case ModeDay:
@@ -166,32 +173,51 @@ func resolveWindow(req Request, now time.Time, loc *time.Location) (Window, erro
 		if req.Brief {
 			days = 2
 		}
-		from = now.In(loc).AddDate(0, 0, 1-days).Format(time.DateOnly)
+		var err error
+		from, err = addCivilDate(now.In(loc).Format(time.DateOnly), 1-days)
+		if err != nil {
+			return Window{}, ErrInvalidRequest
+		}
 	}
-	start, e1 := time.ParseInLocation(time.DateOnly, from, loc)
-	end, e2 := time.ParseInLocation(time.DateOnly, to, loc)
-	if e1 != nil || e2 != nil || end.Before(start) {
+	startDate, e1 := time.Parse(time.DateOnly, from)
+	endDate, e2 := time.Parse(time.DateOnly, to)
+	_, _, startErr := calrecur.CivilDateBoundary(from, loc)
+	_, _, endErr := calrecur.CivilDateBoundary(to, loc)
+	if e1 != nil || e2 != nil || startErr != nil || endErr != nil || endDate.Before(startDate) {
 		return Window{}, ErrInvalidRequest
 	}
-	if !end.Before(start.AddDate(0, 0, 31)) {
+	if !endDate.Before(startDate.AddDate(0, 0, 31)) {
 		return Window{}, ErrWindowTooLarge
 	}
 	return Window{From: from, To: to}, nil
 }
 
+func addCivilDate(date string, days int) (string, error) {
+	civil, err := time.Parse(time.DateOnly, date)
+	if err != nil {
+		return "", fmt.Errorf("parse civil date %q: %w", date, err)
+	}
+	return civil.AddDate(0, 0, days).Format(time.DateOnly), nil
+}
+
+func civilDateBoundary(date string, loc *time.Location) (time.Time, bool, error) {
+	return calrecur.CivilDateBoundary(date, loc)
+}
+
 type composer struct {
-	subject      store.ActivitySubject
-	participants []int64
-	ctx          context.Context
-	src          Sources
-	req          Request
-	t            *Timeline
-	loc          *time.Location
-	positions    map[string]string
-	entryDates   map[string]string
-	keys         map[string]string
-	more         map[string]bool
-	tiers        map[int64]store.PersonTier
+	subject        store.ActivitySubject
+	participants   []int64
+	personResolved bool
+	ctx            context.Context
+	src            Sources
+	req            Request
+	t              *Timeline
+	loc            *time.Location
+	positions      map[string]string
+	entryDates     map[string]string
+	keys           map[string]string
+	more           map[string]bool
+	tiers          map[int64]store.PersonTier
 }
 
 func (c *composer) gap(section string, err error, partial bool) {
@@ -275,10 +301,18 @@ func parallel(ctx context.Context, tasks ...func()) {
 	wg.Wait()
 }
 
+func (c *composer) recoverSnapshotAfterCollection(ctx context.Context) {
+	if ctx.Err() == nil || c.ctx.Err() != nil || !store.HasReadSnapshotContext(c.ctx) {
+		return
+	}
+	c.ctx = store.WithoutReadSnapshotContext(c.ctx)
+}
+
 func (c *composer) bounds() (time.Time, time.Time) {
-	from, _ := time.ParseInLocation(time.DateOnly, c.t.Window.From, c.loc)
-	to, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
-	return from, to.AddDate(0, 0, 1)
+	from, _, _ := civilDateBoundary(c.t.Window.From, c.loc)
+	afterTo, _ := addCivilDate(c.t.Window.To, 1)
+	to, _, _ := civilDateBoundary(afterTo, c.loc)
+	return from, to
 }
 func (c *composer) filters() store.ActivityFilters {
 	f := c.src.Filters
@@ -347,12 +381,23 @@ func (c *composer) tierPeople(people []Person) []Person {
 }
 func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person {
 	people := []Person{}
-	seen := map[int64]bool{}
+	type identity struct {
+		personID      int64
+		participantID int64
+	}
+	seen := map[identity]bool{}
 	for _, p := range counterparts {
-		if p.Excluded != "" || seen[p.ParticipantID] {
+		if p.Excluded != "" {
 			continue
 		}
-		seen[p.ParticipantID] = true
+		key := identity{participantID: p.ParticipantID}
+		if p.PersonID > 0 {
+			key = identity{personID: p.PersonID}
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
 		name := p.DisplayName
 		if name == "" {
 			name = p.Address
@@ -362,12 +407,12 @@ func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person
 	return people
 }
 
-func (c *composer) collectLoops(personID int64) readResult[loops.Result] {
+func (c *composer) collectLoops(subject store.ActivitySubject) readResult[loops.Result] {
 	limit := 10
 	if c.req.Brief {
 		limit = 5
 	}
 	return readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
-		return c.src.Loops.List(ctx, loops.Options{PersonID: personID, Limit: limit}, c.t.Now)
+		return c.src.Loops.List(ctx, loops.Options{PersonID: subject.PersonID, ParticipantIDs: slices.Clone(subject.ParticipantIDs), Limit: limit}, c.t.Now)
 	})
 }

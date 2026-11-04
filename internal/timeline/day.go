@@ -18,44 +18,66 @@ type activityWindow struct {
 	more     bool
 }
 
+type coldActivityWindow struct {
+	store.BurstPage
+
+	meetings []store.ActivityMessage
+}
+
+func (c *composer) readMeetingMessages(ctx context.Context, bursts []store.ActivityBurst, q store.BurstQuery, read func(context.Context, store.MessageQuery) ([]store.ActivityMessage, error)) ([]store.ActivityMessage, error) {
+	seen := map[int64]bool{}
+	result := []store.ActivityMessage{}
+	from, to := c.bounds()
+	for _, burst := range bursts {
+		if burst.Channel != store.ChannelMeeting || seen[burst.ConversationID] || burst.ConversationID <= 0 {
+			continue
+		}
+		seen[burst.ConversationID] = true
+		query := store.MessageQuery{ConversationID: burst.ConversationID, Limit: 500, Filters: q.Filters}
+		if q.FromDate != "" {
+			query.After, query.Before = &from, &to
+		} else {
+			query.After, query.Before = q.After, q.Before
+		}
+		for {
+			messages, err := read(ctx, query)
+			result = append(result, messages...)
+			if err != nil {
+				return result, err
+			}
+			if len(messages) < query.Limit {
+				break
+			}
+			last := messages[len(messages)-1]
+			query.AfterKey = &store.ActivityKey{OccurredAt: last.OccurredAt, MessageID: last.MessageID}
+		}
+	}
+	return result, nil
+}
+
 func (c *composer) readActivity(q store.BurstQuery) (activityWindow, error) {
 	page, err := c.src.Activity.ListActivityBurstsContext(c.ctx, q)
 	result := activityWindow{bursts: page.Bursts, noise: page.NoiseOmitted, more: page.NextKey != nil}
 	if err != nil {
 		return result, err
 	}
-	seen := map[int64]bool{}
-	from, to := c.bounds()
-	for _, burst := range page.Bursts {
-		if burst.Channel != store.ChannelMeeting || seen[burst.ConversationID] || burst.ConversationID <= 0 {
-			continue
-		}
-		seen[burst.ConversationID] = true
-		mq := store.MessageQuery{ConversationID: burst.ConversationID, Limit: 500, Filters: q.Filters}
-		if q.FromDate != "" {
-			mq.After, mq.Before = &from, &to
-		} else {
-			mq.After, mq.Before = q.After, q.Before
-		}
-		for {
-			messages, err := c.src.Activity.ListActivityMessagesContext(c.ctx, mq)
-			if err != nil {
-				return result, err
-			}
-			result.meetings = append(result.meetings, messages...)
-			if len(messages) < mq.Limit {
-				break
-			}
-			last := messages[len(messages)-1]
-			mq.AfterKey = &store.ActivityKey{OccurredAt: last.OccurredAt, MessageID: last.MessageID}
-		}
+	result.meetings, err = c.readMeetingMessages(c.ctx, page.Bursts, q, c.src.Activity.ListActivityMessagesContext)
+	return result, err
+}
+
+func (c *composer) readColdActivity(ctx context.Context, q store.BurstQuery) (coldActivityWindow, error) {
+	page, err := c.src.Cold.ListColdActivityBurstsContext(ctx, q)
+	result := coldActivityWindow{BurstPage: page}
+	if err != nil {
+		return result, err
 	}
-	return result, nil
+	result.meetings, err = c.readMeetingMessages(ctx, page.Bursts, q, c.src.Cold.ListColdActivityMessagesContext)
+	return result, err
 }
 
 type dayRead struct {
 	activity           readResult[activityWindow]
-	cold               readResult[store.BurstPage]
+	cold               readResult[coldActivityWindow]
 	coldCount          readResult[int]
 	calendar, upcoming readResult[store.CalendarOccurrencePage]
 	calls              readResult[[]store.LogicalCall]
@@ -66,32 +88,38 @@ type dayRead struct {
 
 func (c *composer) collectDay() dayRead {
 	from, to := c.bounds()
-	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Filters: c.filters(), Limit: maxBursts}
+	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), Limit: maxBursts, MergeCopies: c.req.IncludeCold}
+	// Keep the initial snapshot reads inside half the request budget so the
+	// subsequent display hydration still has time to use the same snapshot.
+	collectionCtx, cancel := context.WithTimeout(c.ctx, requestTimeout/2)
+	defer cancel()
+	cc := *c
+	cc.ctx = collectionCtx
 	var r dayRead
-	parallel(c.ctx,
+	parallel(collectionCtx,
 		func() {
 			if c.src.Activity != nil {
-				r.activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
-					cc := *c
-					cc.ctx = ctx
-					return cc.readActivity(query)
+				r.activity = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+					reader := cc
+					reader.ctx = ctx
+					return reader.readActivity(query)
 				})
 			}
 		},
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
+					r.cold = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+						return cc.readColdActivity(ctx, query)
 					})
 				} else {
-					r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
+					r.coldCount = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
 				}
 			}
 		},
 		func() {
 			if c.src.Calendar != nil {
-				r.calendar = c.readCalendar(from, to)
+				r.calendar = cc.readCalendar(from, to)
 			}
 		},
 		func() {
@@ -100,39 +128,46 @@ func (c *composer) collectDay() dayRead {
 				if c.req.Brief {
 					hours = 24
 				}
-				r.upcoming = c.readCalendar(c.t.Now, c.t.Now.Add(time.Duration(hours)*time.Hour))
+				r.upcoming = cc.readCalendar(c.t.Now, c.t.Now.Add(time.Duration(hours)*time.Hour))
 			}
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Calls != nil {
-				r.calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, Limit: 500})
+				r.calls = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+					dateBefore, err := addCivilDate(c.t.Window.To, 1)
+					if err != nil {
+						return nil, err
+					}
+					return cc.readCalls(ctx, store.LogicalCallQuery{
+						After: from, Before: to, DateAfter: c.t.Window.From, DateBefore: dateBefore, Limit: 500,
+					})
 				})
 			}
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Loops != nil {
-				r.loops = c.collectLoops(0)
+				r.loops = cc.collectLoops(c.subject)
 			}
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Notes != nil {
-				r.notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) { return c.readNotes(ctx, from, to) })
+				r.notes = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) { return cc.readNotes(ctx, from, to) })
 			}
 		},
 		func() {
 			if c.src.Inventory != nil {
-				r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
+				r.inventory = readWithin(collectionCtx, inventoryTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
 			}
 		},
 	)
+	c.recoverSnapshotAfterCollection(collectionCtx)
 	return r
 }
 func (c *composer) readCalendar(from, to time.Time) readResult[store.CalendarOccurrencePage] {
 	return readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrencePage, error) {
 		result := store.CalendarOccurrencePage{}
 		limit := 500
-		query := store.CalendarOccurrenceQuery{From: from, To: to, Limit: &limit}
+		query := store.CalendarOccurrenceQuery{From: from.In(c.loc), To: to.In(c.loc), Limit: &limit}
 		for {
 			page, err := c.src.Calendar.ListCalendarOccurrencesContext(ctx, query)
 			result.Occurrences = append(result.Occurrences, page.Occurrences...)
@@ -163,9 +198,14 @@ func (c *composer) readCalls(ctx context.Context, q store.LogicalCallQuery) ([]s
 }
 func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.DailyNoteEntry, error) {
 	result := []store.DailyNoteEntry{}
-	for date := from; date.Before(to); date = date.AddDate(0, 0, 1) {
+	if !from.Before(to) {
+		return result, nil
+	}
+	date := from.In(c.loc).Format(time.DateOnly)
+	lastDate := to.Add(-time.Nanosecond).In(c.loc).Format(time.DateOnly)
+	for date <= lastDate {
 		for offset := 0; ; offset += 100 {
-			notes, err := c.src.Notes.ListDailyNoteEntriesContext(ctx, date.Format(time.DateOnly), 100, offset)
+			notes, err := c.src.Notes.ListDailyNoteEntriesContext(ctx, date, 100, offset)
 			result = append(result, notes...)
 			if err != nil {
 				return result, err
@@ -174,6 +214,11 @@ func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.D
 				break
 			}
 		}
+		next, err := addCivilDate(date, 1)
+		if err != nil {
+			return result, fmt.Errorf("advance daily note date: %w", err)
+		}
+		date = next
 	}
 	return result, nil
 }
@@ -219,19 +264,28 @@ func (c *composer) buildDay() {
 	} else {
 		c.ownerGaps()
 	}
-	bursts := mergeBursts(r.activity.value.bursts, r.cold.value.Bursts)
+	bursts, mergeNoise := mergeBurstsWithNoise(r.activity.value.bursts, r.cold.value.Bursts, c.req.IncludeNoise)
+	c.t.Omitted.Noise += mergeNoise
 	if len(bursts) > maxBursts {
 		bursts = bursts[:maxBursts]
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: "days", Code: "partial"})
 	}
 	occurrences := append(slices.Clone(r.calendar.value.Occurrences), r.upcoming.value.Occurrences...)
-	entries, upcoming := c.mergeEntries(bursts, r.activity.value.meetings, occurrences, r.calls.value, r.notes.value)
+	meetings := append(slices.Clone(r.activity.value.meetings), r.cold.value.meetings...)
+	entries, upcoming := c.mergeEntries(bursts, meetings, occurrences, r.calls.value, r.notes.value)
+	if c.req.With != "" {
+		entries = c.filterSubject(entries)
+		upcoming = c.filterSubject(upcoming)
+	}
 	c.t.Upcoming = upcoming
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
 	c.groupDays(entries)
 	if c.req.Scope.Owner && c.src.Loops != nil {
 		c.addLoops(r.loops)
+		if c.req.With != "" && c.t.OpenLoops != nil {
+			c.t.OpenLoops.Items = c.filterSubject(c.t.OpenLoops.Items)
+		}
 	}
 }
 func (c *composer) calendarGaps(r readResult[store.CalendarOccurrencePage], section string) {

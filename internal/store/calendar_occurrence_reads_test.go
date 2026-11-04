@@ -17,6 +17,68 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
+func TestCalendarOccurrenceDetailsDecodeRetainedContent(t *testing.T) {
+	t.Run("ics", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		source := icsSource(t, st)
+		raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:content@example.org\r\nDTSTART:20270302T170000Z\r\nDURATION:PT1H\r\nSUMMARY:Planning\r\nDESCRIPTION:Discuss the launch\r\nLOCATION:Room 3\r\nURL:https://meet.example.org/launch\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+		imported, err := st.PersistICalendarContext(t.Context(), source, raw)
+		requirements.NoError(err)
+		requirements.Len(imported.MessageIDs, 1)
+
+		detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", imported.MessageIDs[0]))
+		requirements.NoError(err)
+		assertions.Equal(calevent.Content{Location: "Room 3", Description: "Discuss the launch", JoinURL: "https://meet.example.org/launch"}, detail.Content)
+	})
+
+	t.Run("caldav selects the stored component", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		const identifier = "https://calendar.example.org/calendars/synthetic"
+		source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, identifier)
+		requirements.NoError(err)
+		requirements.NoError(st.UpdateSourceSyncConfig(source.ID, `{"calendar_url":"https://calendar.example.org/calendars/synthetic","time_zone":"UTC"}`))
+		raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+			"BEGIN:VEVENT\r\nUID:first@example.org\r\nDTSTART:20270302T170000Z\r\nDURATION:PT1H\r\nSUMMARY:First\r\nLOCATION:First room\r\nEND:VEVENT\r\n" +
+			"BEGIN:VEVENT\r\nUID:second@example.org\r\nDTSTART:20270303T170000Z\r\nDURATION:PT1H\r\nSUMMARY:Second\r\nDESCRIPTION:Selected description\r\nLOCATION:Second room\r\nURL:https://meet.example.org/second\r\nEND:VEVENT\r\n" +
+			"END:VCALENDAR\r\n")
+		components, err := calevent.ParseCalDAVResource(t.Context(), raw, "UTC")
+		requirements.NoError(err)
+		requirements.Len(components, 2)
+		selected := components[1]
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: selected.Event.ProviderEventID, TimeZone: "UTC"})
+		requirements.NoError(err)
+		id, err := st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: selected.Event.ProviderEventID, MessageType: "calendar_event", Subject: sql.NullString{String: selected.Summary, Valid: true}},
+			Conversation: &ConversationPersistData{SourceConversationID: "compound-resource", ConversationType: "calendar", Title: "Compound resource"},
+			RawMIME:      raw,
+			RawFormat:    calevent.CalDAVRawFormat,
+			Metadata:     &sql.NullString{String: string(metadata), Valid: true},
+		})
+		requirements.NoError(err)
+
+		detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", id))
+		requirements.NoError(err)
+		assertions.Equal(calevent.Content{Location: "Second room", Description: "Selected description", JoinURL: "https://meet.example.org/second"}, detail.Content)
+	})
+}
+
+func TestCalendarOccurrenceDetailsUseStoredICSTimeZone(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	requirements.NoError(st.UpdateSourceSyncConfig(source, `{"time_zone":"Asia/Tokyo"}`))
+	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:tokyo@example.com\r\nDTSTART:20270302T090000\r\nDTEND:20270302T010000Z\r\nSUMMARY:Tokyo planning\r\nDESCRIPTION:Discuss the schedule\r\nLOCATION:Tokyo room\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	imported, err := st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	requirements.Len(imported.MessageIDs, 1)
+
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", imported.MessageIDs[0]))
+	requirements.NoError(err)
+	assertions.Equal(calevent.Content{Location: "Tokyo room", Description: "Discuss the schedule"}, detail.Content)
+}
+
 func TestCalendarOccurrencePagesMatchFullRead(t *testing.T) {
 	for _, budget := range []bool{false, true} {
 		t.Run(fmt.Sprintf("budget=%t", budget), func(t *testing.T) {

@@ -16,8 +16,9 @@ import (
 
 // Options selects which loops List returns. A zero Limit means the default.
 type Options struct {
-	PersonID int64
-	Limit    int
+	PersonID       int64
+	ParticipantIDs []int64
+	Limit          int
 }
 
 // Result is the oldest-first slice of open loops. Truncated is set when more
@@ -62,6 +63,7 @@ type Store interface {
 	LoopMarksContext(ctx context.Context) (map[int64]store.LoopMark, error)
 	GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error)
 	LoopOriginalEvidenceContext(ctx context.Context, messageID int64) (signals mime.AutomationSignals, hasFileAttachment bool, unreadable bool, err error)
+	ReadLoopMessageEvidenceSnapshotContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, bool, error)
 	LoopMessageEvidenceContext(ctx context.Context, messageID int64, version int) (store.LoopMessageEvidence, string, bool, error)
 	SaveLoopMessageEvidenceContext(ctx context.Context, messageID int64, version int, token string, evidence store.LoopMessageEvidence) error
 	MessageConversationContext(ctx context.Context, messageID int64) (store.MessageConversationRef, error)
@@ -93,7 +95,16 @@ func (r *storeReader) original(id int64) (mime.AutomationSignals, bool, bool, er
 }
 
 func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
-	e, token, hit, err := r.st.LoopMessageEvidenceContext(r.ctx, id, evidenceVersion)
+	snapshot := store.HasReadSnapshotContext(r.ctx)
+	var e store.LoopMessageEvidence
+	var token string
+	var hit bool
+	var err error
+	if snapshot {
+		e, hit, err = r.st.ReadLoopMessageEvidenceSnapshotContext(r.ctx, id, evidenceVersion)
+	} else {
+		e, token, hit, err = r.st.LoopMessageEvidenceContext(r.ctx, id, evidenceVersion)
+	}
 	if err != nil || hit {
 		return e, err
 	}
@@ -110,6 +121,9 @@ func (r *storeReader) Evidence(id int64) (store.LoopMessageEvidence, error) {
 		return e, err
 	}
 	e = classify(body, signals, attachment, unreadable)
+	if snapshot {
+		return e, nil
+	}
 	return e, r.st.SaveLoopMessageEvidenceContext(r.ctx, id, evidenceVersion, token, e)
 }
 
@@ -159,9 +173,15 @@ func List(ctx context.Context, st Store, opts Options, now time.Time) (Result, e
 		return Result{}, err
 	}
 	var kept []Loop
-	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID}, now, marks,
+	participants := slices.DeleteFunc(slices.Clone(opts.ParticipantIDs), func(id int64) bool { return id <= 0 })
+	slices.Sort(participants)
+	participants = slices.Compact(participants)
+	unparsed, err := find(ctx, st, store.LoopQuery{PersonID: opts.PersonID, ParticipantIDs: participants}, now, marks,
 		func(l Loop) error {
 			if opts.PersonID != 0 && l.Counterparty.PersonID != opts.PersonID {
+				return nil
+			}
+			if len(participants) > 0 && !slices.Contains(participants, l.Counterparty.ParticipantID) {
 				return nil
 			}
 			at, _ := slices.BinarySearchFunc(kept, l, func(a, b Loop) int {

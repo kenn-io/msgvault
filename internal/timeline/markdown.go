@@ -57,7 +57,11 @@ func Markdown(t *Timeline) string {
 	}
 	if p := t.Person; p != nil && t.Mode == ModeRelationship {
 		fmt.Fprintf(&b, "%s · %s · %d interactions\n", singleLine(p.Ref, 80), strings.Join(p.Channels, ", "), p.InteractionCount)
-		fmt.Fprintf(&b, "first %s · last %s · ↓ %s · ↑ %s\n", dateText(p.FirstAt, loc), dateText(p.LastAt, loc), dateText(p.LastInboundAt, loc), dateText(p.LastOutboundAt, loc))
+		fmt.Fprintf(&b, "first %s · last %s · ↓ %s · ↑ %s\n",
+			dateTextWithPrecision(p.FirstAt, p.FirstAtPrecision, loc),
+			dateTextWithPrecision(p.LastAt, p.LastAtPrecision, loc),
+			dateTextWithPrecision(p.LastInboundAt, p.LastInboundAtPrecision, loc),
+			dateTextWithPrecision(p.LastOutboundAt, p.LastOutboundAtPrecision, loc))
 		if p.CadenceStatus != "" {
 			fmt.Fprintf(&b, "cadence %s · due %s\n", singleLine(p.CadenceStatus, 80), dateText(p.DueAt, loc))
 		}
@@ -186,6 +190,12 @@ func entryRow(e Entry, loc *time.Location) string {
 			clock = "all-day"
 		}
 		body = clock + " " + textLine(m.Title, 80)
+		if m.Status == "cancelled" {
+			body += " (cancelled)"
+		}
+		if m.DeletedFromSource {
+			body += " (deleted from source)"
+		}
 		if m.Attended {
 			body += " ✓"
 		}
@@ -236,6 +246,9 @@ func entryRow(e Entry, loc *time.Location) string {
 			body += " \"" + textLine(e.Message.Snippet, 80) + "\""
 		}
 	case e.Call != nil:
+		if e.Call.Precision == "day" && e.Call.Date != "" {
+			clock = e.Call.Date
+		}
 		body = clock + " call " + singleLine(e.Call.Outcome, 80) + " " + peopleNames(e.Call.People, e.Call.PeopleCount)
 		if e.Call.DurationSeconds != nil {
 			body += fmt.Sprintf(" %.0fs", *e.Call.DurationSeconds)
@@ -312,6 +325,16 @@ func dateText(t *time.Time, loc *time.Location) string {
 		return "unknown"
 	}
 	return t.In(loc).Format("2006-01-02")
+}
+
+func dateTextWithPrecision(t *time.Time, precision string, loc *time.Location) string {
+	if t == nil {
+		return "unknown"
+	}
+	if precision == "day" {
+		return t.UTC().Format(time.DateOnly)
+	}
+	return dateText(t, loc)
 }
 
 func textLine(t UntrustedText, limit int) string {

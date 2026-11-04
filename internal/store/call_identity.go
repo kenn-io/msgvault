@@ -3,16 +3,23 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/callhistory"
 )
+
+const activityDatePrecisionDay = string(activitydate.PrecisionDay)
 
 // LogicalCallQuery selects complete call identities in [After, Before).
 type LogicalCallQuery struct {
 	After, Before  time.Time
+	DateAfter      string
+	DateBefore     string
 	ParticipantIDs []int64
 	Limit          int
 	AfterKey       string
@@ -31,9 +38,32 @@ type LogicalCall struct {
 	MessageID       int64
 	Kind            string
 	OccurredAt      time.Time
+	Precision       string
 	Outcome         string
 	DurationSeconds *float64
 	Participants    []CallParticipant
+}
+
+// CallIdentityForMessageContext returns the active logical-call key for one
+// observation. An empty key means the message is not an active call.
+func (s *Store) CallIdentityForMessageContext(ctx context.Context, messageID int64) (string, error) {
+	if messageID <= 0 {
+		return "", fmt.Errorf("invalid call message ID %d", messageID)
+	}
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	query := `SELECT ` + callIdentitySQL("c") + ` FROM call_details c
+ JOIN messages m ON m.id = c.message_id
+ WHERE c.message_id = ? AND NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL` + scope
+	args := append([]any{messageID}, scopeArgs...)
+	var key string
+	err := ReadDBContext(ctx, s.db.DB).QueryRowContext(ctx, s.Rebind(query), args...).Scan(&key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("resolve call identity for message %d: %w", messageID, err)
+	}
+	return key, nil
 }
 
 // ListLogicalCallsContext pages whole identities, ordered by time then key.
@@ -43,13 +73,38 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 	if q.Limit < 1 || q.Limit > 500 || !validLogicalCallTime(q.After) || !validLogicalCallTime(q.Before) || !q.After.Before(q.Before) {
 		return nil, "", fmt.Errorf("%w: logical call bounds", callhistory.ErrInvalid)
 	}
+	dateAfter, dateBefore, hasDateBounds, err := logicalCallDateBounds(q)
+	if err != nil {
+		return nil, "", err
+	}
 	for _, id := range q.ParticipantIDs {
 		if id <= 0 {
 			return nil, "", fmt.Errorf("%w: call participant", callhistory.ErrInvalid)
 		}
 	}
-	where := "i.occurred_at >= ? AND i.occurred_at < ?"
+	instantWindow := "i.occurred_at >= ? AND i.occurred_at < ?"
+	candidateWindow := "c.occurred_at >= ? AND c.occurred_at < ?"
+	where := "(" + instantWindow + ")"
+	candidateWhere := "(" + candidateWindow + ")"
 	bounds := []any{q.After.UTC(), q.Before.UTC()}
+	candidateBounds := []any{q.After.UTC(), q.Before.UTC()}
+	if hasDateBounds {
+		candidatePrecision := "m.metadata ->> 'precision'"
+		if s.dialect.DriverName() != postgresDriverName {
+			candidatePrecision = "CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'precision' END"
+		}
+		metadata := `(SELECT m.metadata FROM active evidence JOIN messages m ON m.id = evidence.message_id
+  WHERE evidence.identity_key = i.identity_key
+  ORDER BY evidence.occurred_at, evidence.message_id LIMIT 1)`
+		identityPrecision := "(" + metadata + ") ->> 'precision'"
+		if s.dialect.DriverName() != postgresDriverName {
+			identityPrecision = "CASE WHEN json_valid(" + metadata + ") THEN " + metadata + " ->> 'precision' END"
+		}
+		where = "((" + instantWindow + " AND COALESCE(" + identityPrecision + ", 'instant') = 'instant') OR (i.occurred_at >= ? AND i.occurred_at < ? AND " + identityPrecision + " = 'day'))"
+		candidateWhere = "((" + candidateWindow + " AND COALESCE(" + candidatePrecision + ", 'instant') = 'instant') OR (c.occurred_at >= ? AND c.occurred_at < ? AND " + candidatePrecision + " = 'day'))"
+		bounds = append(bounds, dateAfter, dateBefore)
+		candidateBounds = append(candidateBounds, dateAfter, dateBefore)
+	}
 	if len(q.ParticipantIDs) != 0 {
 		clause, args := messageExportInClause("p.participant_id", q.ParticipantIDs)
 		where += " AND EXISTS (SELECT 1 FROM call_participants p WHERE p.identity_key = i.identity_key AND " + clause + ")"
@@ -64,7 +119,7 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 		where += " AND (i.occurred_at > ? OR (i.occurred_at = ? AND i.identity_key > ?))"
 		bounds = append(bounds, timestamp.UTC(), timestamp.UTC(), key)
 	}
-	ctes, args := callScopedIdentityCTEs(ctx, "c.occurred_at >= ? AND c.occurred_at < ?", q.After.UTC(), q.Before.UTC())
+	ctes, args := callScopedIdentityCTEs(ctx, candidateWhere, candidateBounds...)
 	args = append(args, bounds...)
 	args = append(args, q.Limit+1)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+ctes+`, selected AS (
@@ -72,6 +127,9 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
  FROM identities i WHERE `+where+`
  ORDER BY i.occurred_at, i.identity_key LIMIT ?)
  SELECT i.identity_key, i.message_id, i.kind, i.occurred_at, i.category, i.duration_seconds,
+	(SELECT m.metadata FROM active evidence JOIN messages m ON m.id = evidence.message_id
+	 WHERE evidence.identity_key = i.identity_key
+	 ORDER BY evidence.occurred_at, evidence.message_id LIMIT 1),
  p.participant_id, p.person_id, p.participation, `+callCategorySQL("p.confirmed")+` = 'answered'
  FROM selected i LEFT JOIN call_participants p ON p.identity_key = i.identity_key
  ORDER BY i.occurred_at, i.identity_key, p.participant_id`), args...)
@@ -84,13 +142,22 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 		var c LogicalCall
 		var at requiredTimestamp
 		var duration sql.NullFloat64
+		var metadata sql.NullString
 		var participantID, personID sql.NullInt64
 		var participation sql.NullString
 		var credited sql.NullBool
-		if err := rows.Scan(&c.IdentityKey, &c.MessageID, &c.Kind, &at, &c.Outcome, &duration, &participantID, &personID, &participation, &credited); err != nil {
+		if err := rows.Scan(&c.IdentityKey, &c.MessageID, &c.Kind, &at, &c.Outcome, &duration, &metadata, &participantID, &personID, &participation, &credited); err != nil {
 			return nil, "", fmt.Errorf("scan logical call: %w", err)
 		}
+		if !metadata.Valid {
+			return nil, "", fmt.Errorf("logical call %q has no evidence metadata", c.IdentityKey)
+		}
+		var evidence callhistory.Evidence
+		if err := json.Unmarshal([]byte(metadata.String), &evidence); err != nil {
+			return nil, "", fmt.Errorf("decode logical call evidence: %w", err)
+		}
 		c.OccurredAt = at.Time.UTC()
+		c.Precision = evidence.Precision
 		if len(calls) == 0 || calls[len(calls)-1].IdentityKey != c.IdentityKey {
 			c.Participants = []CallParticipant{}
 			if duration.Valid {
@@ -113,6 +180,24 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 		next = last.OccurredAt.UTC().Format(time.RFC3339Nano) + "|" + last.IdentityKey
 	}
 	return calls, next, nil
+}
+
+func logicalCallDateBounds(q LogicalCallQuery) (time.Time, time.Time, bool, error) {
+	if q.DateAfter == "" && q.DateBefore == "" {
+		return time.Time{}, time.Time{}, false, nil
+	}
+	if q.DateAfter == "" || q.DateBefore == "" {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("%w: logical call date bounds", callhistory.ErrInvalid)
+	}
+	after, err := time.Parse(time.DateOnly, q.DateAfter)
+	if err != nil {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("%w: logical call date bounds", callhistory.ErrInvalid)
+	}
+	before, err := time.Parse(time.DateOnly, q.DateBefore)
+	if err != nil || !after.Before(before) {
+		return time.Time{}, time.Time{}, false, fmt.Errorf("%w: logical call date bounds", callhistory.ErrInvalid)
+	}
+	return after, before, true, nil
 }
 
 func validLogicalCallTime(at time.Time) bool {
@@ -159,15 +244,28 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q ContactQuery)
 		candidateSubject, subjectArgs = messageExportInClause("r.participant_id", q.Subject.ParticipantIDs)
 		subject, _ = messageExportInClause("p.participant_id", q.Subject.ParticipantIDs)
 	}
+	loc := q.Location
+	if loc == nil {
+		loc = time.UTC
+	}
+	localNow := q.Now.In(loc)
+	dayBefore := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, 1)
+	upperBound := q.Now.UTC()
+	if dayBefore.After(upperBound) {
+		upperBound = dayBefore
+	}
 	// Select only this subject's identities, then include all their active evidence
 	// so another observation can override credit without changing the call date.
 	ctes, args := callScopedIdentityCTEs(ctx, `c.message_id IN (SELECT r.message_id FROM message_recipients r
  WHERE r.recipient_type IN ('call_joined','call_invited','call_unknown')
  AND `+candidateSubject+`)`, subjectArgs...)
 	args = append(args, subjectArgs...)
-	args = append(args, q.Now.UTC())
+	args = append(args, upperBound)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+ctes+`
- SELECT i.identity_key, i.occurred_at, MAX(p.incoming), MAX(p.outgoing)
+	SELECT i.identity_key, i.occurred_at, MAX(p.incoming), MAX(p.outgoing),
+	 (SELECT m.metadata FROM active evidence JOIN messages m ON m.id = evidence.message_id
+	  WHERE evidence.identity_key = i.identity_key
+	  ORDER BY evidence.occurred_at, evidence.message_id LIMIT 1)
  FROM identities i JOIN call_participants p ON p.identity_key = i.identity_key
  WHERE `+subject+` AND `+callCategorySQL("p.confirmed")+` = 'answered' AND i.occurred_at <= ?
  GROUP BY i.identity_key, i.occurred_at ORDER BY i.occurred_at, i.identity_key`), args...)
@@ -175,31 +273,69 @@ func (s *Store) CallContactAggregateContext(ctx context.Context, q ContactQuery)
 		return result, fmt.Errorf("aggregate call contact: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	loc := q.Location
-	if loc == nil {
-		loc = time.UTC
-	}
-	now := q.Now.In(loc)
+	now := localNow
 	for rows.Next() {
 		var identity string
 		var timestamp requiredTimestamp
 		var incoming, outgoing int
-		if err := rows.Scan(&identity, &timestamp, &incoming, &outgoing); err != nil {
+		var metadata sql.NullString
+		if err := rows.Scan(&identity, &timestamp, &incoming, &outgoing, &metadata); err != nil {
 			return ContactAggregate{}, fmt.Errorf("scan call contact: %w", err)
 		}
+		if !metadata.Valid {
+			return ContactAggregate{}, fmt.Errorf("call identity %q has no evidence metadata", identity)
+		}
+		var evidence callhistory.Evidence
+		if err := json.Unmarshal([]byte(metadata.String), &evidence); err != nil {
+			return ContactAggregate{}, fmt.Errorf("decode call contact evidence: %w", err)
+		}
 		at := timestamp.Time.UTC()
-		if result.FirstAt == nil {
+		if evidence.Precision == activityDatePrecisionDay {
+			if !at.Before(dayBefore) {
+				continue
+			}
+		} else if at.After(q.Now.UTC()) {
+			continue
+		}
+		precision := ""
+		if evidence.Precision == activityDatePrecisionDay {
+			precision = activityDatePrecisionDay
+		}
+		datePrecision := activitydate.DatePrecision(precision)
+		if result.FirstAt == nil || activitydate.Compare(at, datePrecision, *result.FirstAt, activitydate.DatePrecision(result.FirstAtPrecision), loc) < 0 ||
+			activitydate.Compare(at, datePrecision, *result.FirstAt, activitydate.DatePrecision(result.FirstAtPrecision), loc) == 0 && result.FirstAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay {
 			result.FirstAt = &at
+			result.FirstAtPrecision = precision
 		}
-		result.LastAt = &at
-		if incoming != 0 {
+		lastOrder := 0
+		if result.LastAt != nil {
+			lastOrder = activitydate.Compare(at, datePrecision, *result.LastAt, activitydate.DatePrecision(result.LastAtPrecision), loc)
+		}
+		if result.LastAt == nil || lastOrder > 0 || lastOrder == 0 && result.LastAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay {
+			result.LastAt = &at
+			result.LastAtPrecision = precision
+		}
+		inboundOrder := 0
+		if result.LastInboundAt != nil {
+			inboundOrder = activitydate.Compare(at, datePrecision, *result.LastInboundAt, activitydate.DatePrecision(result.LastInboundAtPrecision), loc)
+		}
+		if incoming != 0 && (result.LastInboundAt == nil || inboundOrder > 0 || inboundOrder == 0 && result.LastInboundAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay) {
 			result.LastInboundAt = &at
+			result.LastInboundAtPrecision = precision
 		}
-		if outgoing != 0 {
+		outboundOrder := 0
+		if result.LastOutboundAt != nil {
+			outboundOrder = activitydate.Compare(at, datePrecision, *result.LastOutboundAt, activitydate.DatePrecision(result.LastOutboundAtPrecision), loc)
+		}
+		if outgoing != 0 && (result.LastOutboundAt == nil || outboundOrder > 0 || outboundOrder == 0 && result.LastOutboundAtPrecision == activityDatePrecisionDay && precision != activityDatePrecisionDay) {
 			result.LastOutboundAt = &at
+			result.LastOutboundAtPrecision = precision
 		}
 		result.Count++
 		local := at.In(loc)
+		if evidence.Precision == activityDatePrecisionDay {
+			local = at
+		}
 		monthsAgo := (now.Year()-local.Year())*12 + int(now.Month()-local.Month())
 		if monthsAgo >= 0 && monthsAgo < len(result.Monthly) {
 			result.Monthly[len(result.Monthly)-1-monthsAgo]++

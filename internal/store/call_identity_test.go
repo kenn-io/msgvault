@@ -197,12 +197,47 @@ func TestLogicalCallsPaginationAndValidation(t *testing.T) {
 		func(q *store.LogicalCallQuery) { q.Limit = 501 }, func(q *store.LogicalCallQuery) { q.Limit = 0 },
 		func(q *store.LogicalCallQuery) { q.Before = q.After }, func(q *store.LogicalCallQuery) { q.AfterKey = "invalid" },
 		func(q *store.LogicalCallQuery) { q.ParticipantIDs = []int64{-1} },
+		func(q *store.LogicalCallQuery) { q.DateAfter = "2026-10-01" },
+		func(q *store.LogicalCallQuery) { q.DateAfter, q.DateBefore = "bad", "2026-10-02" },
+		func(q *store.LogicalCallQuery) { q.DateAfter, q.DateBefore = "2026-10-02", "2026-10-02" },
 	} {
 		q := f.query()
 		change(&q)
 		_, _, err := f.st.ListLogicalCallsContext(t.Context(), q)
 		assertions.ErrorIs(err, callhistory.ErrInvalid)
 	}
+}
+
+func TestLogicalCallsDatePrecisionUsesCalendarDateBounds(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newLogicalCallFixture(t)
+	outsideDate := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
+	f.put(t, "outside-date", func(o *callhistory.Observation) {
+		o.OccurredAt = outsideDate
+		o.Precision = "day"
+	})
+	// An instant alias makes this identity a candidate through the instant path;
+	// its earliest day-precision evidence must still be filtered by civil date.
+	f.put(t, "outside-date", func(o *callhistory.Observation) {
+		o.OccurredAt = outsideDate.Add(time.Hour)
+		o.Precision = "instant"
+	})
+	wantDate := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	f.put(t, "inside-date", func(o *callhistory.Observation) {
+		o.OccurredAt = wantDate
+		o.Precision = "day"
+	})
+	q := f.query()
+	q.After = time.Date(2026, 10, 22, 7, 0, 0, 0, time.UTC)
+	q.Before = time.Date(2026, 10, 23, 7, 0, 0, 0, time.UTC)
+	q.DateAfter = "2026-10-22"
+	q.DateBefore = "2026-10-23"
+
+	calls, _, err := f.st.ListLogicalCallsContext(t.Context(), q)
+	requirements.NoError(err)
+	requirements.Len(calls, 1)
+	assertions.True(calls[0].OccurredAt.Equal(wantDate))
+	assertions.Equal("day", calls[0].Precision)
 }
 
 func TestCallContactAggregateCountsCreditedLogicalCalls(t *testing.T) {

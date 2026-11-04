@@ -86,6 +86,18 @@ func TestDateEventLocalDateAcrossZones(t *testing.T) {
 	}
 }
 
+func TestCompareDayPrecisionUsesCivilDates(t *testing.T) {
+	assertions := assert.New(t)
+	zone, err := time.LoadLocation("America/Los_Angeles")
+	require.NoError(t, err)
+	date := time.Date(2026, time.October, 22, 0, 0, 0, 0, time.UTC)
+	message := time.Date(2026, time.October, 22, 3, 0, 0, 0, time.UTC)
+
+	assertions.Equal(1, Compare(date, PrecisionDay, message, PrecisionTimestamp, zone))
+	assertions.Equal(-1, Compare(message, PrecisionTimestamp, date, PrecisionDay, zone))
+	assertions.Equal(0, Compare(date, PrecisionDay, time.Date(2026, time.October, 22, 7, 0, 0, 0, time.UTC), PrecisionTimestamp, zone))
+}
+
 func TestDateEventPrefersSentThenReceivedThenInternal(t *testing.T) {
 	tests := []struct {
 		name       string

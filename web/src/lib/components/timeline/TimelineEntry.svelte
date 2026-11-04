@@ -19,11 +19,17 @@
   const conversationID = $derived(safeID(entry.open?.find((open) => open.tool === 'list_messages')?.args.conversation_id));
   const transcriptIDs = $derived(entry.open?.find((open) => open.tool === 'get_meeting_context')?.args.message_ids);
   const meetingID = $derived(Array.isArray(transcriptIDs) ? safeID(transcriptIDs[0]) : undefined);
+  const calendarMessageID = $derived(messageIDFromEventRef(entry.open?.find((open) => open.tool === 'get_calendar_event')?.args.ref) ?? messageIDFromEventRef(entry.ref));
   const anchorMessageID = $derived(messageID ?? safeID(entry.burst?.latest_message_ids[0]));
   const copies = $derived(Object.values(entry.burst?.copies ?? {}).reduce((sum, count) => sum + Math.max(0, count - 1), 0));
 
   function safeID(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  }
+  function messageIDFromEventRef(value: unknown): number | undefined {
+    if (typeof value !== 'string') return undefined;
+    const match = /^evt:(\d+)(?:@|$)/.exec(value);
+    return match ? safeID(Number(match[1])) : undefined;
   }
   function navigate(event: MouseEvent, action: (() => void) | undefined): void {
     if (!action || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -77,6 +83,8 @@
         <a href={`/messages/${meetingID}`} onclick={(event) => navigate(event, onOpenMeeting ? () => onOpenMeeting!(meetingID!) : undefined)}>Open meeting</a>
       {:else if messageID}
         <a href={`/messages/${messageID}`} onclick={(event) => navigate(event, onOpenMessage ? () => onOpenMessage!(messageID!) : undefined)}>Open message</a>
+      {:else if calendarMessageID}
+        <a href={`/messages/${calendarMessageID}`} onclick={(event) => navigate(event, onOpenMessage ? () => onOpenMessage!(calendarMessageID!) : undefined)}>Open original message</a>
       {/if}
       {#if conversationID}
         <a href={conversationHref(conversationID, anchorMessageID)} onclick={(event) => navigate(event, onOpenConversation ? () => onOpenConversation!(conversationID!, anchorMessageID) : undefined)}>Open conversation</a>

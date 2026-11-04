@@ -9,6 +9,7 @@ import (
 
 	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/archivemarker"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 type coldActivityMessage struct {
@@ -19,6 +20,8 @@ type coldActivityMessage struct {
 	channel   ActivityChannel
 	copyKey   string
 	copies    int
+	counted   bool
+	nonNoise  bool
 }
 
 type coldActivityGroup struct {
@@ -112,20 +115,33 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	if err != nil {
 		return nil, filters, err
 	}
-	where := `m.message_type<>'call_record' AND m.conversation_id IN (SELECT conversation_id FROM conversation_policy WHERE effective_tier='cold')`
+	where := `COALESCE(m.message_type,'')<>'call_record' AND m.conversation_id IN (SELECT conversation_id FROM conversation_policy WHERE effective_tier='cold')`
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	if q.ConversationID > 0 {
 		where += ` AND m.conversation_id=?`
 		args = append(args, q.ConversationID)
 	}
+	occurredAt := `COALESCE(m.sent_at,m.received_at,m.internal_date)`
+	occurredKey := occurredAt
+	postgres := s.IsPostgreSQL()
+	if !postgres {
+		occurredKey = sqliteutil.TimestampKeyFunction + "(" + occurredAt + ")"
+	}
+	appendOccurredBound := func(bound time.Time) {
+		if postgres {
+			args = append(args, bound.UTC())
+			return
+		}
+		args = append(args, sqliteutil.TimestampKey(bound))
+	}
 	if q.After != nil {
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=?`
-		args = append(args, q.After.UTC())
+		where += ` AND ` + occurredKey + `>=?`
+		appendOccurredBound(*q.After)
 	}
 	if q.Before != nil {
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, q.Before.UTC())
+		where += ` AND ` + occurredKey + `<?`
+		appendOccurredBound(*q.Before)
 	}
 	if q.After == nil && q.Before == nil {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
@@ -135,8 +151,9 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		// DateEvent below applies the exact archive-zone civil-date boundary.
 		from, _ := time.Parse(time.DateOnly, q.FromDate)
 		to, _ := time.Parse(time.DateOnly, q.ToDate)
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=? AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, from.Add(-24*time.Hour), to.Add(48*time.Hour))
+		where += ` AND ` + occurredKey + `>=? AND ` + occurredKey + `<?`
+		appendOccurredBound(from.Add(-24 * time.Hour))
+		appendOccurredBound(to.Add(48 * time.Hour))
 	}
 	channel := `CASE WHEN m.message_type IN ('calendar_event','meeting_transcript') THEN 'meeting' WHEN m.message_type='call_record' THEN 'chat' WHEN c.conversation_type='email_thread' THEN 'email' WHEN c.conversation_type IN ('chat','group_chat','direct_chat','channel') THEN 'chat' ELSE 'other' END`
 	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")
@@ -251,9 +268,11 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 			g.burst.Channel = m.channel
 		}
 		counted := coldActivityCounted(m, q.Subject)
+		m.counted = counted
 		// A saved person's recipient aliases inherit the strongest contact
 		// role; noise follows original sender membership, as in the warm SQL.
 		nonNoise := (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender
+		m.nonNoise = nonNoise
 		if counted {
 			if m.Direction == DirectionInbound {
 				g.burst.Inbound++
@@ -266,7 +285,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		g.messages = append(g.messages, m)
 	}
 	for _, g := range groups {
-		finishColdActivityGroup(g)
+		finishColdActivityGroup(g, q.MergeCopies)
 	}
 	return groups, filters, nil
 }
@@ -289,7 +308,7 @@ func coldActivityCounted(m coldActivityMessage, subject ActivitySubject) bool {
 	return false
 }
 
-func finishColdActivityGroup(g *coldActivityGroup) {
+func finishColdActivityGroup(g *coldActivityGroup, mergeCopies bool) {
 	slices.SortFunc(g.messages, func(a, b coldActivityMessage) int {
 		if n := b.dating.OccurredAt.Compare(a.dating.OccurredAt); n != 0 {
 			return n
@@ -298,6 +317,12 @@ func finishColdActivityGroup(g *coldActivityGroup) {
 	})
 	counterparts := map[int64]ActivityMessageCounterpart{}
 	for _, m := range g.messages {
+		if mergeCopies {
+			g.burst.Messages = append(g.burst.Messages, ActivityBurstMessage{
+				MessageID: m.ID, CopyKey: m.copyKey, OccurredAt: m.dating.OccurredAt, Direction: m.Direction,
+				Counted: m.counted, NonNoise: m.nonNoise, CopyCount: m.copies, Counterparts: m.Counterparts,
+			})
+		}
 		if g.burst.AnchorMessageID == 0 {
 			g.burst.AnchorMessageID = m.ID
 		}

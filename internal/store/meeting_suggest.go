@@ -151,6 +151,11 @@ type MeetingLinkRef struct {
 	Kind string
 }
 
+const (
+	meetingSuggestionCalendarPageSize       = 100
+	meetingSuggestionCalendarCandidateLimit = 2000
+)
+
 // SuggestMeetingLinksContext ranks overlapping events or transcripts.
 func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkRef, limit int) (MeetingSuggestionPage, error) {
 	pageResult := MeetingSuggestionPage{Suggestions: []MeetingSuggestion{}, Unexpandable: []CalendarUnexpandable{}}
@@ -170,27 +175,51 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 		member := members[0]
 		// Include adjacent civil dates; ranking checks the actual instant overlap.
-		page, err := s.ListCalendarOccurrencesContext(ctx, CalendarOccurrenceQuery{From: member.Start.Add(-24 * time.Hour), To: member.End.Add(24 * time.Hour)})
-		if err != nil {
-			return pageResult, err
+		query := CalendarOccurrenceQuery{
+			From: member.Start.Add(-24 * time.Hour),
+			To:   member.End.Add(24 * time.Hour),
 		}
-		pageResult.Unexpandable = page.Unexpandable
-		for _, event := range page.Occurrences {
-			o := linkOccurrence{Start: event.Start, End: event.End, Row: CalendarEventRow{Subject: event.Subject, Event: calevent.Event{Status: event.Status, Attendees: event.Attendees}}}
-			if suggestion, ok := rankMeetingSuggestion(member, o); ok {
-				suggestion.Ref = event.Ref
-				// The calendar API addresses an exception by its message. Keep
-				// meeting suggestions on the resolver's series identity, in both
-				// directions, so existing link and unlink targets remain stable.
-				if event.SeriesMessageID != 0 && !strings.Contains(event.Ref, "@") {
-					target, err := resolveMeetingOccurrence(ctx, s.meetingReader(ctx), OccurrenceRef{MessageID: event.MessageID}, &budget)
-					if err != nil {
-						return pageResult, err
-					}
-					suggestion.Ref = formatMeetingOccurrence(target.Ref)
-				}
-				pageResult.Suggestions = append(pageResult.Suggestions, suggestion)
+		candidateCount := 0
+		for {
+			remaining := meetingSuggestionCalendarCandidateLimit - candidateCount
+			if remaining <= 0 {
+				return pageResult, ErrQueryTooBroad
 			}
+			pageSize := min(meetingSuggestionCalendarPageSize, remaining)
+			query.Limit = &pageSize
+			page, err := s.ListCalendarOccurrencesContext(ctx, query)
+			if err != nil {
+				return pageResult, err
+			}
+			pageResult.Unexpandable = append(pageResult.Unexpandable, page.Unexpandable...)
+			candidateCount += len(page.Occurrences)
+			if candidateCount > meetingSuggestionCalendarCandidateLimit {
+				return pageResult, ErrQueryTooBroad
+			}
+			for _, event := range page.Occurrences {
+				o := linkOccurrence{Start: event.Start, End: event.End, Row: CalendarEventRow{Subject: event.Subject, Event: calevent.Event{Status: event.Status, Attendees: event.Attendees}}}
+				if suggestion, ok := rankMeetingSuggestion(member, o); ok {
+					suggestion.Ref = event.Ref
+					// The calendar API addresses an exception by its message. Keep
+					// meeting suggestions on the resolver's series identity, in both
+					// directions, so existing link and unlink targets remain stable.
+					if event.SeriesMessageID != 0 && !strings.Contains(event.Ref, "@") {
+						target, err := resolveMeetingOccurrence(ctx, s.meetingReader(ctx), OccurrenceRef{MessageID: event.MessageID}, &budget)
+						if err != nil {
+							return pageResult, err
+						}
+						suggestion.Ref = formatMeetingOccurrence(target.Ref)
+					}
+					pageResult.Suggestions = append(pageResult.Suggestions, suggestion)
+				}
+			}
+			if page.NextCursor == "" {
+				break
+			}
+			if candidateCount >= meetingSuggestionCalendarCandidateLimit {
+				return pageResult, ErrQueryTooBroad
+			}
+			query.Cursor = page.NextCursor
 		}
 	} else {
 		target, err := resolveMeetingOccurrence(ctx, s.meetingReader(ctx), ref.OccurrenceRef, &budget)

@@ -181,7 +181,7 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 	}
 	boundedOnly := map[calendarSeriesKey]bool{}
 	for _, row := range rows {
-		if row.Event.Kind != "series" {
+		if row.Event.Kind != "series" || row.DeletedFromSource {
 			continue
 		}
 		e := row.Event
@@ -364,13 +364,7 @@ func (series *calendarSeries) expand(ctx context.Context, from, to time.Time, re
 
 // Resolve archived exceptions once, then suppress their original generated instances.
 func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
-	// A removed CalDAV override restores the original occurrence. Overrides
-	// deleted with their resource remain part of its final archived snapshot.
-	if row.SourceType == calevent.CalDAVSourceType {
-		exceptionRows = slices.DeleteFunc(slices.Clone(exceptionRows), func(x CalendarEventRow) bool {
-			return x.OverrideRemoved || x.DeletedFromSource && !row.DeletedFromSource
-		})
-	}
+	exceptionRows = eligibleCalendarExceptionRows(row, exceptionRows)
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set
 	if prepareErr == nil {
@@ -453,7 +447,8 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 
 // Freshness follows provider-observation order. Message IDs break ties when
 // multiple snapshots share the same migrated order.
-func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
+func calendarExceptionOverrides(master CalendarEventRow, rows []CalendarEventRow) map[string]CalendarEventRow {
+	rows = eligibleCalendarExceptionRows(master, rows)
 	overrides := make(map[string]CalendarEventRow, len(rows))
 	for _, row := range rows {
 		if row.Event.Original == nil {
@@ -488,6 +483,9 @@ func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
 	identified := make(map[identity]CalendarEventRow, len(rows))
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
+		if row.SourceType == calevent.CalDAVSourceType && row.OverrideRemoved {
+			continue
+		}
 		if row.Event.Original == nil {
 			byID[row.MessageID] = row
 			continue
@@ -507,6 +505,17 @@ func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
 	}
 	slices.SortFunc(exceptions, func(a, b CalendarEventRow) int { return cmp.Compare(a.MessageID, b.MessageID) })
 	return exceptions
+}
+
+// A removed CalDAV override restores its generated occurrence. Exceptions
+// removed with the master remain part of the final archived snapshot.
+func eligibleCalendarExceptionRows(master CalendarEventRow, rows []CalendarEventRow) []CalendarEventRow {
+	if master.SourceType == calevent.CalDAVSourceType {
+		rows = slices.DeleteFunc(slices.Clone(rows), func(row CalendarEventRow) bool {
+			return row.OverrideRemoved || row.DeletedFromSource && !master.DeletedFromSource
+		})
+	}
+	return calendarExceptionRows(rows)
 }
 
 func calendarRecurrenceBudgetError() error {
@@ -716,32 +725,33 @@ func calendarAllDayDurationDays(startDate, endDate string) (int, error) {
 	return int(end.Sub(start) / (24 * time.Hour)), nil
 }
 
-func readCalendarContent(ctx context.Context, r contextRowQuerier, messageID int64) (calevent.Content, error) {
-	raw, format, err := readCalendarRaw(ctx, r, messageID)
+func readCalendarContent(ctx context.Context, r contextRowQuerier, row CalendarEventRow) (calevent.Content, error) {
+	raw, format, metadata, err := readCalendarRaw(ctx, r, row.MessageID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return calevent.Content{}, nil
 	}
 	if err != nil {
 		return calevent.Content{}, err
 	}
-	return decodeCalendarContent(format, raw)
+	return decodeCalendarContent(ctx, format, raw, metadata, row.Event.CalendarTimeZone)
 }
 
-func readCalendarRaw(ctx context.Context, r contextRowQuerier, messageID int64) ([]byte, string, error) {
+func readCalendarRaw(ctx context.Context, r contextRowQuerier, messageID int64) ([]byte, string, []byte, error) {
 	var stored []byte
-	var format, compression sql.NullString
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, raw_format, compression FROM message_raw WHERE message_id = ?`, messageID).Scan(&stored, &format, &compression); err != nil {
-		return nil, "", fmt.Errorf("read calendar content: %w", err)
+	var format, compression, metadata sql.NullString
+	if err := r.QueryRowContext(ctx, `SELECT r.raw_data, r.raw_format, r.compression, CAST(m.metadata AS TEXT)
+FROM message_raw r JOIN messages m ON m.id = r.message_id WHERE r.message_id = ?`, messageID).Scan(&stored, &format, &compression, &metadata); err != nil {
+		return nil, "", nil, fmt.Errorf("read calendar content: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
 		err = fmt.Errorf("%w: %w", ErrInvalidMessageRaw, err)
 	}
-	return raw, format.String, err
+	return raw, format.String, []byte(metadata.String), err
 }
 
-func decodeCalendarContent(format string, raw []byte) (calevent.Content, error) {
-	content, err := calevent.DecodeContent(format, raw)
+func decodeCalendarContent(ctx context.Context, format string, raw, metadata []byte, calendarZone string) (calevent.Content, error) {
+	content, err := calevent.DecodeContent(ctx, format, raw, metadata, calendarZone)
 	if err != nil {
 		return calevent.Content{}, fmt.Errorf("decode calendar content: %w", err)
 	}
@@ -761,43 +771,79 @@ func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, ref string) (C
 	var series *calendarSeries
 	var occurrence CalendarOccurrence
 	var cancellation *calendarCancellationEvidence
-	if !recurring {
+	if !recurring && row.Event.Kind == "exception" && row.Event.Original != nil {
+		series, err = s.seriesMasterFor(ctx, row)
+		if err != nil {
+			return CalendarOccurrenceDetail{}, err
+		}
+		master := row
+		if series != nil {
+			master = series.row
+		}
+		effective, found, lookupErr := s.freshestCalendarExceptionAt(ctx, row, master, *row.Event.Original)
+		if lookupErr != nil {
+			return CalendarOccurrenceDetail{}, lookupErr
+		}
+		if found {
+			row = effective
+			occurrence, cancellation, err = series.exception(ctx, s, row)
+		} else if series == nil {
+			return CalendarOccurrenceDetail{}, ErrCalendarOccurrenceNotFound
+		} else if series.row.Event.Kind == "single" {
+			if !calendarOriginalMatchesStart(*row.Event.Original, series.row.Event) {
+				return CalendarOccurrenceDetail{}, ErrCalendarOccurrenceNotFound
+			}
+			row = series.row
+			series = nil
+			occurrence, cancellation, err = series.exception(ctx, s, row)
+		} else {
+			original = *row.Event.Original
+			row = series.row
+			ref = calendarOccurrenceRef(row.MessageID, original.Key())
+			recurring = true
+		}
+	} else if !recurring {
 		series, err = s.seriesMasterFor(ctx, row)
 		if err == nil {
 			occurrence, cancellation, err = series.exception(ctx, s, row)
 		}
-	} else {
-		series = newCalendarSeries(row)
-		related, readErr := s.calendarExceptionsAt(ctx, row, original)
-		if readErr != nil {
-			return CalendarOccurrenceDetail{}, readErr
+	}
+	if recurring && err == nil {
+		if series == nil {
+			series, err = s.calendarSeriesContext(ctx, row)
 		}
-		if len(related) > 0 {
-			row = related[0]
-			occurrence, cancellation, err = series.exception(ctx, s, row)
-		} else if series.err != nil {
-			err = errors.Join(calrecur.ErrUnsupportedRecurrence, series.err)
-		} else {
-			var o calrecur.Occurrence
-			var found bool
-			o, found, err = calrecur.Resolve(ctx, series.set, series.duration, series.days, original, calrecur.SeriesReadBudget)
-			if errors.Is(err, calrecur.ErrBudgetExceeded) {
-				err = ErrQueryTooBroad
-			} else if err == nil && !found {
-				err = ErrCalendarOccurrenceNotFound
+		if err == nil {
+			related, readErr := s.calendarExceptionsAt(ctx, row, original)
+			if readErr != nil {
+				return CalendarOccurrenceDetail{}, readErr
 			}
-			occurrence = calendarOccurrence(row, row.MessageID, ref, o)
+			if effective, found := freshestCalendarException(row, related); found {
+				row = effective
+				occurrence, cancellation, err = series.exception(ctx, s, row)
+			} else if series.err != nil {
+				err = errors.Join(calrecur.ErrUnsupportedRecurrence, series.err)
+			} else {
+				var o calrecur.Occurrence
+				var found bool
+				o, found, err = calrecur.Resolve(ctx, series.set, series.duration, series.days, original, calrecur.SeriesReadBudget)
+				if errors.Is(err, calrecur.ErrBudgetExceeded) {
+					err = ErrQueryTooBroad
+				} else if err == nil && !found {
+					err = ErrCalendarOccurrenceNotFound
+				}
+				occurrence = calendarOccurrence(row, row.MessageID, ref, o)
+			}
 		}
 	}
 	if err != nil {
 		return CalendarOccurrenceDetail{}, err
 	}
-	masterID := row.MessageID
+	master := row
 	if series != nil {
-		masterID = series.row.MessageID
+		master = series.row
 	}
 	row.Event.Status = occurrence.Status
-	content, err := s.calendarOccurrenceContent(ctx, row, masterID, cancellation)
+	content, err := s.calendarOccurrenceContent(ctx, row, master, cancellation)
 	return CalendarOccurrenceDetail{CalendarOccurrence: occurrence, Content: content}, err
 }
 
@@ -806,29 +852,91 @@ func (s *Store) calendarExceptionsAt(ctx context.Context, row CalendarEventRow, 
 	if original.AllDay {
 		identityPredicate, identityValue = "e.original_start_date = ?", original.Date
 	}
-	return queryCalendarEventRows(ctx, s.meetingReader(ctx), "e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND "+identityPredicate, []any{row.SourceID, row.Event.ProviderEventID, identityValue}, 1)
+	seriesID := row.Event.ProviderEventID
+	if row.Event.Kind == "exception" {
+		seriesID = row.Event.SeriesProviderID
+	}
+	return queryCalendarEventRowsWithinBudget(ctx, s.meetingReader(ctx), "e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND "+identityPredicate, []any{row.SourceID, seriesID, identityValue}, calrecur.SeriesReadBudget)
 }
 
-func (s *Store) calendarOccurrenceContent(ctx context.Context, row CalendarEventRow, masterID int64, cancellation *calendarCancellationEvidence) (calevent.Content, error) {
+func freshestCalendarException(master CalendarEventRow, rows []CalendarEventRow) (CalendarEventRow, bool) {
+	rows = eligibleCalendarExceptionRows(master, rows)
+	if len(rows) == 0 {
+		return CalendarEventRow{}, false
+	}
+	newest := rows[0]
+	for _, row := range rows[1:] {
+		if calendarEventSnapshotNewer(row, newest) {
+			newest = row
+		}
+	}
+	return newest, true
+}
+
+func (s *Store) freshestCalendarExceptionAt(ctx context.Context, row, master CalendarEventRow, original calrecur.Identity) (CalendarEventRow, bool, error) {
+	rows, err := s.calendarExceptionsAt(ctx, row, original)
+	if err != nil {
+		return CalendarEventRow{}, false, err
+	}
+	effective, found := freshestCalendarException(master, rows)
+	return effective, found, nil
+}
+
+func calendarOriginalMatchesStart(original calrecur.Identity, event calevent.Event) bool {
+	if original.AllDay {
+		return event.AllDay && original.Date == event.StartDate
+	}
+	return !event.AllDay && event.Start != nil && original.Instant.Equal(*event.Start)
+}
+
+func (s *Store) calendarOccurrenceContent(ctx context.Context, row, master CalendarEventRow, cancellation *calendarCancellationEvidence) (calevent.Content, error) {
 	var err error
-	if cancellation == nil && row.Event.Status == "cancelled" && row.MessageID != masterID {
+	if cancellation == nil && row.Event.Status == "cancelled" && row.MessageID != master.MessageID {
 		cancellation, err = readCalendarCancellationEvidence(ctx, s.db, row.MessageID)
 		if err != nil {
 			return calevent.Content{}, err
 		}
 	}
 	if cancellation == nil {
-		return readCalendarContent(ctx, s.db, row.MessageID)
+		return readCalendarContent(ctx, s.db, row)
 	}
 	var content calevent.Content
 	if cancellation.raw != nil {
-		content, err = decodeCalendarContent(cancellation.format, cancellation.raw)
+		content, err = decodeCalendarContent(ctx, cancellation.format, cancellation.raw, cancellation.metadata, row.Event.CalendarTimeZone)
 	}
-	if err != nil || !cancellation.sparse || (content.Location != "" && content.Description != "" && content.JoinURL != "") {
+	if err != nil || !cancellation.sparse {
 		return content, err
 	}
-	inherited, err := readCalendarContent(ctx, s.db, masterID)
-	return calevent.Content{Location: cmp.Or(content.Location, inherited.Location), Description: cmp.Or(content.Description, inherited.Description), JoinURL: cmp.Or(content.JoinURL, inherited.JoinURL)}, err
+	if cancellation.format == calevent.CalDAVRawFormat {
+		locationMissing := cancellation.fields["location"] == nil
+		descriptionMissing := cancellation.fields["description"] == nil
+		joinURLMissing := cancellation.fields["join_url"] == nil
+		if !locationMissing && !descriptionMissing && !joinURLMissing {
+			return content, nil
+		}
+		inherited, err := readCalendarContent(ctx, s.db, master)
+		if err != nil {
+			return content, err
+		}
+		if locationMissing {
+			content.Location = inherited.Location
+		}
+		if descriptionMissing {
+			content.Description = inherited.Description
+		}
+		if joinURLMissing {
+			content.JoinURL = inherited.JoinURL
+		}
+		return content, nil
+	}
+	if content.Location != "" && content.Description != "" && content.JoinURL != "" {
+		return content, nil
+	}
+	inherited, err := readCalendarContent(ctx, s.db, master)
+	if err != nil {
+		return content, err
+	}
+	return calevent.Content{Location: cmp.Or(content.Location, inherited.Location), Description: cmp.Or(content.Description, inherited.Description), JoinURL: cmp.Or(content.JoinURL, inherited.JoinURL)}, nil
 }
 
 func (s *Store) calendarOccurrenceAnchor(ctx context.Context, ref string) (CalendarEventRow, calrecur.Identity, bool, error) {
@@ -874,5 +982,17 @@ func (s *Store) seriesMasterFor(ctx context.Context, row CalendarEventRow) (*cal
 	if err != nil || len(masters) == 0 {
 		return nil, err
 	}
-	return newCalendarSeries(masters[0]), nil
+	return s.calendarSeriesContext(ctx, masters[0])
+}
+
+func (s *Store) calendarSeriesContext(ctx context.Context, row CalendarEventRow) (*calendarSeries, error) {
+	rows := []CalendarEventRow{row}
+	remaining := calrecur.RequestReadBudget - len(rows)
+	if remaining < 0 {
+		return nil, calendarRecurrenceBudgetError()
+	}
+	if err := loadCalendarICSRecurrenceErrors(ctx, s.db, rows, &remaining); err != nil {
+		return nil, err
+	}
+	return newCalendarSeries(rows[0]), nil
 }

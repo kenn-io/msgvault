@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/archivemarker"
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -82,6 +83,44 @@ func TestMalformedPersonReferenceIsInputError(t *testing.T) {
 	got, err := Build(t.Context(), f.src, relationshipRequest("person:1"))
 	requirements.NoError(err)
 	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+}
+
+func TestUnresolvedSubjectDoesNotExposeUnfilteredActivity(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	id := f.add(f.now.Add(-time.Hour), false)
+	f.project()
+	f.src.People = personReadFailure{f.src.People}
+
+	day := dayRequest()
+	day.Mode, day.With = ModeDay, "email:alice@example.com"
+	got, err := Build(t.Context(), f.src, day)
+	requirements.NoError(err)
+	assertions.Empty(got.Days)
+	assertions.Empty(got.Upcoming)
+	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+
+	anchor := anchorRequest(messageRef(id))
+	anchor.With = "email:alice@example.com"
+	got, err = Build(t.Context(), f.src, anchor)
+	requirements.NoError(err)
+	assertions.Nil(got.Anchor)
+	assertions.Empty(got.History)
+	assertions.Empty(got.Upcoming)
+	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+}
+
+func TestOccurrencePeopleKeepsDistinctAttendeesWithoutEmails(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	composer := composer{}
+	people := composer.occurrencePeople(store.CalendarOccurrence{Attendees: []calevent.Attendee{
+		{DisplayName: "Guest One"},
+		{DisplayName: "Guest Two"},
+	}})
+	requirements.Len(people, 2)
+	assertions.Equal([]string{"Guest One", "Guest Two"}, []string{people[0].Name, people[1].Name})
 }
 
 func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {
@@ -398,4 +437,21 @@ func TestSnapshotReadWaitsForCanceledReaderAndPreservesTimeout(t *testing.T) {
 			requirements.ErrorIs(got.err, tc.want)
 		})
 	}
+}
+
+func TestCounterpartPeopleDeduplicatesBySavedPersonAndUnsavedParticipant(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	people := counterpartPeople([]store.ActivityMessageCounterpart{
+		{PersonID: 7, ParticipantID: 71, DisplayName: "Alice", Address: "first@example.test"},
+		{PersonID: 7, ParticipantID: 72, DisplayName: "Alice", Address: "second@example.test"},
+		{ParticipantID: 80, DisplayName: "Unknown", Address: "unknown@example.test"},
+		{ParticipantID: 80, DisplayName: "Unknown", Address: "alias@example.test"},
+		{ParticipantID: 81, DisplayName: "Other", Address: "other@example.test"},
+	})
+	requirements.Len(people, 3)
+	assertions.Equal(int64(7), people[0].PersonID)
+	assertions.Equal(int64(71), people[0].ParticipantID)
+	assertions.Zero(people[1].PersonID)
+	assertions.Equal(int64(80), people[1].ParticipantID)
+	assertions.Equal(int64(81), people[2].ParticipantID)
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/activitydate"
 	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -16,9 +17,170 @@ import (
 const (
 	entryKindBurst   = "burst"
 	entryKindMessage = "message"
+	entryKindMeeting = "meeting"
 )
 
 func mergeBursts(full, cold []store.ActivityBurst) []store.ActivityBurst {
+	if activityBurstsHaveMessages(full, cold) {
+		return mergeBurstMessages(full, cold)
+	}
+	return mergeBurstRows(full, cold)
+}
+
+func mergeBurstsWithNoise(full, cold []store.ActivityBurst, includeNoise bool) ([]store.ActivityBurst, int) {
+	merged := mergeBursts(full, cold)
+	if includeNoise || !activityBurstsHaveMessages(full, cold) {
+		return merged, 0
+	}
+	visible := make([]store.ActivityBurst, 0, len(merged))
+	omitted := 0
+	for _, burst := range merged {
+		nonNoise := false
+		for _, message := range burst.Messages {
+			nonNoise = nonNoise || message.NonNoise
+		}
+		if burst.Inbound+burst.Outbound == 0 || !nonNoise {
+			omitted += len(burst.Messages)
+			continue
+		}
+		visible = append(visible, burst)
+	}
+	return visible, omitted
+}
+
+func activityBurstsHaveMessages(groups ...[]store.ActivityBurst) bool {
+	for _, group := range groups {
+		for _, burst := range group {
+			if len(burst.Messages) == 0 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+type burstMessageCandidate struct {
+	burst   store.ActivityBurst
+	message store.ActivityBurstMessage
+}
+
+func mergeBurstMessages(full, cold []store.ActivityBurst) []store.ActivityBurst {
+	best := map[string]burstMessageCandidate{}
+	copyCounts := map[string]int{}
+	seenMessages := map[int64]bool{}
+	for _, group := range [][]store.ActivityBurst{full, cold} {
+		for _, burst := range group {
+			for _, message := range burst.Messages {
+				if seenMessages[message.MessageID] {
+					continue
+				}
+				seenMessages[message.MessageID] = true
+				key := message.CopyKey
+				if key == "" {
+					key = fmt.Sprintf("id:%d", message.MessageID)
+				}
+				copyCounts[key] += max(message.CopyCount, 1)
+				candidate := burstMessageCandidate{burst: burst, message: message}
+				current, found := best[key]
+				if !found || betterBurstCopy(candidate, current) {
+					best[key] = candidate
+				}
+			}
+		}
+	}
+
+	merged := []store.ActivityBurst{}
+	indices := map[string]int{}
+	counterpartsByBurst := []map[int64]store.ActivityMessageCounterpart{}
+	for key, candidate := range best {
+		burst, found := indices[candidate.burst.Key]
+		if !found {
+			burst = len(merged)
+			indices[candidate.burst.Key] = burst
+			merged = append(merged, store.ActivityBurst{
+				Key: candidate.burst.Key, SourceID: candidate.burst.SourceID, ConversationID: candidate.burst.ConversationID,
+				Channel: candidate.burst.Channel, LocalDate: candidate.burst.LocalDate,
+				FirstAt: candidate.message.OccurredAt, LastAt: candidate.message.OccurredAt,
+				Cold: candidate.burst.Cold, LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{},
+				Counterparts: []store.ActivityMessageCounterpart{}, Messages: []store.ActivityBurstMessage{},
+			})
+			counterpartsByBurst = append(counterpartsByBurst, map[int64]store.ActivityMessageCounterpart{})
+		}
+		out := &merged[burst]
+		message := candidate.message
+		message.CopyKey = key
+		message.CopyCount = copyCounts[key]
+		message.Counterparts = slices.Clone(message.Counterparts)
+		out.Messages = append(out.Messages, message)
+		if message.OccurredAt.Before(out.FirstAt) {
+			out.FirstAt = message.OccurredAt
+		}
+		if message.OccurredAt.After(out.LastAt) {
+			out.LastAt = message.OccurredAt
+		}
+		if candidate.burst.Channel < out.Channel {
+			out.Channel = candidate.burst.Channel
+		}
+		out.Cold = out.Cold && candidate.burst.Cold
+		if message.Counted {
+			if message.Direction == store.DirectionInbound {
+				out.Inbound++
+			}
+			if message.Direction == store.DirectionOutbound {
+				out.Outbound++
+			}
+		}
+		if out.Channel == store.ChannelEmail {
+			out.CopyCounts[message.MessageID] = message.CopyCount
+		}
+		for _, counterpart := range message.Counterparts {
+			old, exists := counterpartsByBurst[burst][counterpart.ParticipantID]
+			if !exists || (!old.Counted && counterpart.Counted) {
+				counterpartsByBurst[burst][counterpart.ParticipantID] = counterpart
+			}
+		}
+	}
+	for i := range merged {
+		burst := &merged[i]
+		for _, counterpart := range counterpartsByBurst[i] {
+			burst.Counterparts = append(burst.Counterparts, counterpart)
+		}
+		slices.SortFunc(burst.Messages, func(a, b store.ActivityBurstMessage) int {
+			if n := b.OccurredAt.Compare(a.OccurredAt); n != 0 {
+				return n
+			}
+			return cmp.Compare(b.MessageID, a.MessageID)
+		})
+		if len(burst.Messages) > 0 {
+			burst.AnchorMessageID = burst.Messages[0].MessageID
+		}
+		for _, message := range burst.Messages[:min(len(burst.Messages), 5)] {
+			burst.LatestMessageIDs = append(burst.LatestMessageIDs, message.MessageID)
+		}
+		slices.SortFunc(burst.Counterparts, func(a, b store.ActivityMessageCounterpart) int {
+			return cmp.Compare(a.ParticipantID, b.ParticipantID)
+		})
+	}
+	slices.SortFunc(merged, func(a, b store.ActivityBurst) int {
+		if n := a.FirstAt.Compare(b.FirstAt); n != 0 {
+			return n
+		}
+		return compare(a.Key, b.Key)
+	})
+	return merged
+}
+
+func betterBurstCopy(a, b burstMessageCandidate) bool {
+	if a.message.Counted != b.message.Counted {
+		return a.message.Counted
+	}
+	if a.burst.SourceID != b.burst.SourceID {
+		return a.burst.SourceID < b.burst.SourceID
+	}
+	return a.message.MessageID < b.message.MessageID
+}
+
+func mergeBurstRows(full, cold []store.ActivityBurst) []store.ActivityBurst {
 	out := slices.Clone(full)
 	keys := map[string]bool{}
 	ids := map[int64]bool{}
@@ -176,11 +338,22 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if hidden {
 			snippet = ""
 		}
-		e := Entry{Kind: entryKindBurst, Key: b.Key, Ref: fmt.Sprintf("conv:%d", b.ConversationID), AnchorRef: b.Key, Time: b.LastAt, Open: append(c.open("list_messages", map[string]any{"conversation_id": b.ConversationID}), c.messageOpen(b.AnchorMessageID)...), HiddenText: hidden, Burst: &BurstEntry{Channel: string(b.Channel), People: people, PeopleCount: len(people), Inbound: b.Inbound, Outbound: b.Outbound, FirstAt: b.FirstAt, LastAt: b.LastAt, Snippet: UntrustedText{Text: snippet}, LatestMessageIDs: b.LatestMessageIDs, Copies: b.CopyCounts}}
+		copyKeys := make(map[string]struct{}, len(b.Messages))
+		for _, message := range b.Messages {
+			if message.CopyKey != "" {
+				copyKeys[message.CopyKey] = struct{}{}
+			}
+		}
+		e := Entry{Kind: entryKindBurst, Key: b.Key, Ref: fmt.Sprintf("conv:%d", b.ConversationID), AnchorRef: b.Key, Time: b.LastAt, Open: append(c.open("list_messages", map[string]any{"conversation_id": b.ConversationID}), c.messageOpen(b.AnchorMessageID)...), HiddenText: hidden, Burst: &BurstEntry{Channel: string(b.Channel), People: people, PeopleCount: len(people), Inbound: b.Inbound, Outbound: b.Outbound, FirstAt: b.FirstAt, LastAt: b.LastAt, Snippet: UntrustedText{Text: snippet}, LatestMessageIDs: b.LatestMessageIDs, Copies: b.CopyCounts, copyKeys: copyKeys}}
 		c.entryDates[e.Key] = b.LocalDate
 		entries = append(entries, e)
 	}
 	seen := map[string]bool{}
+	visibleLinkedTranscripts := map[int64]bool{}
+	windowFrom, windowTo := time.Time{}, time.Time{}
+	if c.req.Mode == ModeDay {
+		windowFrom, windowTo = c.bounds()
+	}
 	for _, o := range occurrences {
 		info := identity.ByOccurrence[o.Ref]
 		key := info.Key
@@ -209,14 +382,28 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if hidden {
 			title = ""
 		}
-		at := o.Start
+		at, end := o.Start, o.End
 		if o.AllDay {
-			at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+			var exists bool
+			var err error
+			at, exists, err = civilDateBoundary(o.StartDate, c.loc)
+			if err != nil {
+				c.gap("meetings", err, false)
+				continue
+			}
+			if !exists {
+				continue
+			}
+			end, _, err = civilDateBoundary(o.EndDate, c.loc)
+			if err != nil {
+				c.gap("meetings", err, false)
+				continue
+			}
 		}
 		if at.IsZero() {
 			continue
 		}
-		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: o.End, AllDay: o.AllDay, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
+		e := Entry{Kind: entryKindMeeting, Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, AllDay: o.AllDay, Status: o.Status, DeletedFromSource: o.DeletedFromSource, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
 		if len(linked) > 0 {
 			e.Open = append(e.Open, c.open("get_meeting_context", map[string]any{"message_ids": linked})...)
 		}
@@ -240,9 +427,19 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if o.AllDay {
 			date = o.StartDate
 		}
+		if c.req.Mode == ModeDay {
+			if date < c.t.Window.From {
+				date = c.t.Window.From
+			} else if date > c.t.Window.To {
+				date = c.t.Window.To
+			}
+		}
 		c.entryDates[e.Key] = date
-		if c.req.Mode != ModeDay || date >= c.t.Window.From && date <= c.t.Window.To {
+		if c.req.Mode != ModeDay || calendarEntryOverlapsWindow(o, windowFrom, windowTo) {
 			entries = append(entries, e)
+			for _, id := range linked {
+				visibleLinkedTranscripts[id] = true
+			}
 		}
 		until := c.t.Now.Add(48 * time.Hour)
 		if c.req.Mode == ModeRelationship {
@@ -251,13 +448,13 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if c.req.Brief {
 			until = c.t.Now.Add(24 * time.Hour)
 		}
-		if !at.Before(c.t.Now) && at.Before(until) {
+		if !strings.EqualFold(o.Status, "cancelled") && !o.DeletedFromSource && !at.Before(c.t.Now) && at.Before(until) {
 			upcoming = append(upcoming, e)
 		}
 	}
 	for _, m := range messages {
 		info, ok := identity.ByTranscript[m.MessageID]
-		if !ok || len(info.ExactOccurrenceRefs) > 0 {
+		if !ok || visibleLinkedTranscripts[m.MessageID] {
 			continue
 		}
 		d, ok := display[m.MessageID]
@@ -295,12 +492,18 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			person.Credited = p.Credited
 			people = append(people, person)
 		}
+		people = mergeDuplicateCallPeople(people)
 		people = c.tierPeople(people)
 		if !c.admitTier(people) {
 			continue
 		}
 		ref := messageRef(call.MessageID)
-		e := Entry{Kind: "call", Key: call.IdentityKey, Ref: ref, AnchorRef: ref, Time: call.OccurredAt, HiddenText: d.HiddenText, Open: c.messageOpen(call.MessageID), Call: &CallEntry{Outcome: call.Outcome, DurationSeconds: call.DurationSeconds, People: people, PeopleCount: len(people)}}
+		callEntry := &CallEntry{Outcome: call.Outcome, DurationSeconds: call.DurationSeconds, Precision: call.Precision, People: people, PeopleCount: len(people)}
+		if call.Precision == string(activitydate.PrecisionDay) {
+			callEntry.Date = call.OccurredAt.UTC().Format(time.DateOnly)
+			c.entryDates[call.IdentityKey] = callEntry.Date
+		}
+		e := Entry{Kind: "call", Key: call.IdentityKey, Ref: ref, AnchorRef: ref, Time: call.OccurredAt, HiddenText: d.HiddenText, Open: c.messageOpen(call.MessageID), Call: callEntry}
 		entries = append(entries, e)
 	}
 	for _, note := range notes {
@@ -312,13 +515,28 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if !c.admitTier(people) {
 			continue
 		}
-		at, _ := time.ParseInLocation(time.DateOnly, note.LocalDate, c.loc)
+		at, _, err := civilDateBoundary(note.LocalDate, c.loc)
+		if err != nil {
+			c.gap("notes", err, false)
+			continue
+		}
 		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: []Open{}, Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
 		c.entryDates[e.Key] = note.LocalDate
 		entries = append(entries, e)
 	}
 	return entries, upcoming
 }
+func calendarEntryOverlapsWindow(o store.CalendarOccurrence, from, to time.Time) bool {
+	if o.AllDay {
+		endDate := to.Format(time.DateOnly)
+		if to.Hour() != 0 || to.Minute() != 0 || to.Second() != 0 || to.Nanosecond() != 0 {
+			endDate = time.Date(to.Year(), to.Month(), to.Day()+1, 0, 0, 0, 0, time.UTC).Format(time.DateOnly)
+		}
+		return o.StartDate < endDate && o.EndDate > from.Format(time.DateOnly)
+	}
+	return from.Before(to) && o.Start.Before(to) && (o.End.After(from) || o.Start.Equal(o.End) && !o.Start.Before(from))
+}
+
 func displaySnippet(d store.MessageDisplay) string {
 	if d.HiddenText {
 		return ""
@@ -349,9 +567,12 @@ func (c *composer) canonicalOccurrence(o store.CalendarOccurrence, info store.Me
 
 func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	emails := []string{}
+	knownEmails := map[string]bool{}
 	for _, a := range o.Attendees {
-		if a.Role != "room" && !a.IsCopySelf && !calevent.IsRoomAttendee(a.Email, false) && c.src.Filters.Exclusions.ExcludesAddress(a.Email) == "" {
-			emails = append(emails, a.Email)
+		email := strings.ToLower(strings.TrimSpace(a.Email))
+		if email != "" && a.Role != "room" && !a.IsCopySelf && !calevent.IsRoomAttendee(email, false) && c.src.Filters.Exclusions.ExcludesAddress(email) == "" && !knownEmails[email] {
+			emails = append(emails, email)
+			knownEmails[email] = true
 		}
 	}
 	resolved := map[string]store.AddressParticipant{}
@@ -366,11 +587,25 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	seen := map[string]bool{}
 	for _, a := range o.Attendees {
 		email := strings.ToLower(strings.TrimSpace(a.Email))
-		if !slices.Contains(emails, a.Email) || seen[email] {
+		if a.Role == "room" || a.IsCopySelf || calevent.IsRoomAttendee(email, false) || c.src.Filters.Exclusions.ExcludesAddress(email) != "" {
 			continue
 		}
-		seen[email] = true
 		p := resolved[email]
+		key := ""
+		switch {
+		case p.PersonID > 0:
+			key = fmt.Sprintf("person:%d", p.PersonID)
+		case p.ParticipantID > 0:
+			key = fmt.Sprintf("participant:%d", p.ParticipantID)
+		case email != "":
+			key = "email:" + email
+		}
+		if key != "" && seen[key] {
+			continue
+		}
+		if key != "" {
+			seen[key] = true
+		}
 		name := a.DisplayName
 		if name == "" {
 			name = a.Email
@@ -379,6 +614,36 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	}
 	return c.tierPeople(people)
 }
+func mergeDuplicateCallPeople(people []Person) []Person {
+	merged := make([]Person, 0, len(people))
+	indexes := make(map[string]int, len(people))
+	for _, person := range people {
+		key := ""
+		if person.PersonID > 0 {
+			key = fmt.Sprintf("person:%d", person.PersonID)
+		} else if person.ParticipantID > 0 {
+			key = fmt.Sprintf("participant:%d", person.ParticipantID)
+		}
+		index, exists := indexes[key]
+		if key == "" || !exists {
+			if key != "" {
+				indexes[key] = len(merged)
+			}
+			merged = append(merged, person)
+			continue
+		}
+		current := &merged[index]
+		if current.Name == "" {
+			current.Name = person.Name
+		}
+		current.Credited = current.Credited || person.Credited
+		if (current.Participation != "joined" && person.Participation == "joined") || (current.Participation == "unknown" && person.Participation == "invited") {
+			current.Participation = person.Participation
+		}
+	}
+	return merged
+}
+
 func (c *composer) participantPerson(participant, person int64) Person {
 	p := Person{PersonID: person, ParticipantID: participant, TierSource: "none"}
 	if c.src.People != nil {
@@ -422,8 +687,13 @@ func reverseDigits(value string) string {
 func chronologicalKey(e Entry) string {
 	return e.Time.UTC().Format(sortTimeLayout) + "|" + e.Kind + "|" + e.Key
 }
-func historyKey(e Entry) string {
-	return reverseDigits(e.Time.UTC().Format(sortTimeLayout)) + "|" + e.Kind + "|" + e.Key
+func (c *composer) historyKey(e Entry) string {
+	date := e.Time.In(c.loc).Format(time.DateOnly)
+	if e.Call != nil && e.Call.Precision == string(activitydate.PrecisionDay) && e.Call.Date != "" {
+		date := e.Call.Date
+		return reverseDigits(date) + "|0|" + e.Kind + "|" + e.Key
+	}
+	return reverseDigits(date) + "|1|" + reverseDigits(e.Time.UTC().Format(sortTimeLayout)) + "|" + e.Kind + "|" + e.Key
 }
 func rankKey(e Entry) string {
 	tier := 3
@@ -471,7 +741,7 @@ func (c *composer) sortAndContinue(section string, entries []Entry, descending b
 	for _, e := range entries {
 		key := chronologicalKey(e)
 		if descending {
-			key = historyKey(e)
+			key = c.historyKey(e)
 		}
 		c.keys[section+"|"+e.Key] = key
 	}
@@ -501,8 +771,7 @@ func (c *composer) groupDays(entries []Entry) {
 	}
 	slices.Sort(dates)
 	slices.Reverse(dates)
-	newest, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
-	detailFrom := newest.AddDate(0, 0, -1).Format(time.DateOnly)
+	detailFrom, _ := addCivilDate(c.t.Window.To, -1)
 	for _, date := range dates {
 		day := Day{Date: date}
 		items := byDate[date]
@@ -512,18 +781,27 @@ func (c *composer) groupDays(entries []Entry) {
 			}
 			summary := &DaySummary{People: []Person{}}
 			people := map[string]Person{}
+			anonymous := []Person{}
 			for _, e := range items {
 				if e.Meeting != nil {
 					summary.Meetings++
 				}
 				for _, p := range entryPeople(e) {
-					key := fmt.Sprintf("%d:%d:%s", p.PersonID, p.ParticipantID, p.Name)
-					people[key] = p
+					key := daySummaryPersonKey(p)
+					if key == "" {
+						anonymous = append(anonymous, p)
+						continue
+					}
+					current, exists := people[key]
+					if !exists || daySummaryPersonPreferred(p, current) {
+						people[key] = p
+					}
 				}
 			}
 			for _, p := range people {
 				summary.People = append(summary.People, p)
 			}
+			summary.People = append(summary.People, anonymous...)
 			slices.SortFunc(summary.People, func(a, b Person) int {
 				if n := compare(a.Name, b.Name); n != 0 {
 					return n
@@ -548,7 +826,7 @@ func (c *composer) groupDays(entries []Entry) {
 			items = c.afterPosition("days", items)
 			for _, e := range items {
 				switch e.Kind {
-				case "meeting", "transcript":
+				case entryKindMeeting, "transcript":
 					day.Meetings = append(day.Meetings, e)
 				case entryKindBurst, entryKindMessage:
 					day.Bursts = append(day.Bursts, e)
@@ -565,6 +843,35 @@ func (c *composer) groupDays(entries []Entry) {
 		c.t.Days = append(c.t.Days, day)
 	}
 }
+
+func daySummaryPersonKey(p Person) string {
+	switch {
+	case p.PersonID > 0:
+		return fmt.Sprintf("person:%d", p.PersonID)
+	case p.ParticipantID > 0:
+		return fmt.Sprintf("participant:%d", p.ParticipantID)
+	default:
+		return ""
+	}
+}
+
+func daySummaryPersonPreferred(candidate, current Person) bool {
+	candidateName, currentName := strings.TrimSpace(candidate.Name), strings.TrimSpace(current.Name)
+	if (candidateName != "") != (currentName != "") {
+		return candidateName != ""
+	}
+	if n := compare(strings.ToLower(candidateName), strings.ToLower(currentName)); n != 0 {
+		return n < 0
+	}
+	if n := cmp.Compare(candidate.ParticipantID, current.ParticipantID); n != 0 {
+		return n < 0
+	}
+	if n := cmp.Compare(candidate.Tier, current.Tier); n != 0 {
+		return n < 0
+	}
+	return candidate.TierSource < current.TierSource
+}
+
 func entryPeople(e Entry) []Person {
 	switch {
 	case e.Burst != nil:
@@ -577,6 +884,8 @@ func entryPeople(e Entry) []Person {
 		return e.Message.People
 	case e.Note != nil:
 		return e.Note.People
+	case e.Loop != nil:
+		return []Person{e.Loop.Person}
 	}
 	return nil
 }

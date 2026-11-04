@@ -148,4 +148,15 @@ describe('TimelineWorkspace', () => {
     await fireEvent.click(meeting);
     expect(onOpenMeeting).toHaveBeenCalledWith(12);
   });
+
+  it('opens the original message when a calendar event has no supported detail action', async () => {
+    const calendar = { ...entries[0]!, open: [entries[0]!.open[0]!] };
+    const { onOpenMessage } = setup(vi.fn(async () =>
+      Response.json({ ...golden(), days: [], upcoming: [], open_loops: undefined, history: [calendar] })));
+    const row = await screen.findByRole('article', { name: `meeting ${calendar.ref}` });
+    const original = within(row).getByRole('link', { name: 'Open original message' });
+    expect(original.getAttribute('href')).toBe('/messages/1');
+    await fireEvent.click(original);
+    expect(onOpenMessage).toHaveBeenCalledWith(1);
+  });
 });

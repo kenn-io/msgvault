@@ -26,6 +26,7 @@ type CalendarEventRow struct {
 	ProviderObservationOrder  int64
 	ProviderUpdatedAtUnixNano sql.NullInt64
 	ProviderSequence          sql.NullInt64
+	icsMetadata               calevent.ICSMetadata
 	SourceType                string
 	Subject                   string
 	ICalUID                   string
@@ -65,6 +66,18 @@ func calendarUIDExpression(d Dialect, column string) string {
 	return "CASE WHEN json_valid(" + column + ") THEN json_extract(" + column + ", '$.ical_uid') END"
 }
 
+// CalDAV provider IDs retain the component UID as the first JSON string. Read
+// it when metadata predates the explicit ical_uid field.
+func calendarEventUIDExpression(d Dialect, metadata, providerID, sourceType string) string {
+	var providerUID string
+	if d.DriverName() == postgresDriverName {
+		providerUID = `CASE WHEN ` + sourceType + `='caldav' AND ` + providerID + ` ~ '^\["([^"\\]|\\.)*","([^"\\]|\\.)*"\]$' THEN (` + providerID + `::jsonb ->> 0) END`
+	} else {
+		providerUID = `CASE WHEN ` + sourceType + `='caldav' AND json_valid(` + providerID + `) AND json_type(` + providerID + `)='array' THEN json_extract(` + providerID + `, '$[0]') END`
+	}
+	return `COALESCE(NULLIF(` + calendarUIDExpression(d, metadata) + `, ''), ` + providerUID + `)`
+}
+
 // Keep unique archived events. A live copy wins over archived copies; among
 // archived copies, the lowest message ID wins within the merged source.
 // ICS revision and cancellation state excludes source-merge archive-only rows.
@@ -89,7 +102,33 @@ func calendarProviderMetadataNullableNumberExpression(d Dialect, column, key str
 	return "CASE WHEN json_valid(" + column + ") THEN CAST(json_extract(" + column + ", '$." + key + "') AS INTEGER) END"
 }
 
+func calendarProviderMetadataTextExpression(d Dialect, column, key string) string {
+	if d.DriverName() == postgresDriverName {
+		return "(" + column + " ->> '" + key + "')"
+	}
+	return "CASE WHEN json_valid(" + column + ") THEN json_extract(" + column + ", '$." + key + "') END"
+}
+
 func calendarEventSnapshotNewer(candidate, current CalendarEventRow) bool {
+	if candidate.rawFormat == rawFormatICS && current.rawFormat == rawFormatICS &&
+		candidate.icsMetadata.Version == 1 && current.icsMetadata.Version == 1 {
+		// ICS aliases can have distinct provider IDs for equivalent UTC and
+		// floating recurrence IDs. Their accepted revision metadata, rather
+		// than local import order, decides which snapshot is current.
+		if candidate.icsMetadata.Sequence != current.icsMetadata.Sequence {
+			return candidate.icsMetadata.Sequence > current.icsMetadata.Sequence
+		}
+		if !candidate.icsMetadata.Stamp.Equal(current.icsMetadata.Stamp) {
+			return candidate.icsMetadata.Stamp.After(current.icsMetadata.Stamp)
+		}
+		candidateCancelled := candidate.icsMetadata.Status == SyncStatusCancelled ||
+			candidate.icsMetadata.Status == "" && candidate.Event.Status == SyncStatusCancelled
+		currentCancelled := current.icsMetadata.Status == SyncStatusCancelled ||
+			current.icsMetadata.Status == "" && current.Event.Status == SyncStatusCancelled
+		if candidateCancelled != currentCancelled {
+			return candidateCancelled
+		}
+	}
 	if candidate.ProviderUpdatedAtUnixNano.Valid && current.ProviderUpdatedAtUnixNano.Valid && candidate.ProviderUpdatedAtUnixNano.Int64 != current.ProviderUpdatedAtUnixNano.Int64 {
 		return candidate.ProviderUpdatedAtUnixNano.Int64 > current.ProviderUpdatedAtUnixNano.Int64
 	}
@@ -131,7 +170,7 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	query := fmt.Sprintf(calendarEventSelect,
 		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "provider_updated_at_unix_nano"),
 		calendarProviderMetadataNullableNumberExpression(r.dialect, "m.metadata", "sequence"),
-		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
+		calendarEventUIDExpression(r.dialect, "m.metadata", "e.provider_event_id", "s.source_type")) + "(" + predicate + ")" + scope + " ORDER BY e.message_id"
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
@@ -191,8 +230,11 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 			e.StartWall = &value
 		}
 		if row.rawFormat == rawFormatICS {
-			if _, err := calevent.ParseICSMetadata([]byte(messageMetadata)); err != nil {
+			metadata, err := calevent.ParseICSMetadata([]byte(messageMetadata))
+			if err != nil {
 				row.evidenceError = "event data could not be decoded"
+			} else {
+				row.icsMetadata = metadata
 			}
 		}
 		if err := json.Unmarshal([]byte(recurrence), &e.Recurrence); err != nil {
@@ -366,7 +408,7 @@ func calendarEventRowsInWindow(ctx context.Context, r reboundReader, from, to ti
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND m.deleted_from_source_at IS NULL AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
@@ -595,20 +637,21 @@ func inheritCalendarCancellation(ctx context.Context, r contextRowQuerier, row, 
 type calendarCancellationEvidence struct {
 	raw        []byte
 	format     string
+	metadata   []byte
 	fields     map[string]any
 	sparse     bool
 	diagnostic string
 }
 
 func readCalendarCancellationEvidence(ctx context.Context, r contextRowQuerier, messageID int64) (*calendarCancellationEvidence, error) {
-	raw, format, err := readCalendarRaw(ctx, r, messageID)
+	raw, format, metadata, err := readCalendarRaw(ctx, r, messageID)
 	if err != nil {
 		if errors.Is(err, errMeetingRawTooLarge) || errors.Is(err, ErrInvalidMessageRaw) {
 			return &calendarCancellationEvidence{diagnostic: fmt.Sprintf("decode cancellation evidence: %s", err)}, nil
 		}
 		return nil, err
 	}
-	evidence := &calendarCancellationEvidence{raw: raw, format: format}
+	evidence := &calendarCancellationEvidence{raw: raw, format: format, metadata: metadata}
 	var fields map[string]any
 	switch format {
 	case rawFormatICS:
@@ -631,6 +674,50 @@ func readCalendarCancellationEvidence(ctx context.Context, r contextRowQuerier, 
 	case "gcal_json":
 		if err := json.Unmarshal(raw, &fields); err != nil {
 			evidence.diagnostic = fmt.Sprintf("decode cancellation evidence: %s", err)
+			return evidence, nil
+		}
+	case calevent.CalDAVRawFormat:
+		var selector calevent.CalDAVMetadata
+		if err := json.Unmarshal(metadata, &selector); err != nil {
+			evidence.diagnostic = fmt.Sprintf("decode CalDAV cancellation metadata: %s", err)
+			return evidence, nil
+		}
+		if selector.EventID == "" {
+			evidence.diagnostic = "decode CalDAV cancellation evidence: component selector missing or ambiguous"
+			return evidence, nil
+		}
+		zone := selector.TimeZone
+		if zone == "" {
+			zone = "UTC"
+		}
+		components, decodeErr := calevent.ParseCalDAVResource(ctx, raw, zone)
+		if decodeErr != nil {
+			evidence.diagnostic = fmt.Sprintf("decode CalDAV cancellation evidence: %s", decodeErr)
+			return evidence, nil
+		}
+		for _, component := range components {
+			if component.Event.ProviderEventID != selector.EventID {
+				continue
+			}
+			fields = make(map[string]any)
+			for key, present := range map[string]bool{
+				"summary":     component.Present.Summary,
+				"attendees":   component.Present.Attendees,
+				"organizer":   component.Present.Organizer,
+				"start":       component.Present.Start,
+				"end":         component.Present.End,
+				"location":    component.Present.Location,
+				"description": component.Present.Description,
+				"join_url":    component.Present.URL,
+			} {
+				if present {
+					fields[key] = true
+				}
+			}
+			break
+		}
+		if fields == nil {
+			evidence.diagnostic = "decode CalDAV cancellation evidence: component selector missing or ambiguous"
 			return evidence, nil
 		}
 	default:

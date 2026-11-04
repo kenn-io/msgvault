@@ -41,10 +41,15 @@ type CalDAVMetadata struct {
 }
 
 type CalDAVEvent struct {
-	Event                                 Event
-	ExplicitAttendees                     []gcalmodel.Attendee
-	Summary, OrganizerName                string
-	Description, Location, OrganizerEmail string
+	Event                                          Event
+	ExplicitAttendees                              []gcalmodel.Attendee
+	Present                                        CalDAVEventPresence
+	Summary, OrganizerName                         string
+	Description, Location, JoinURL, OrganizerEmail string
+}
+
+type CalDAVEventPresence struct {
+	Summary, Attendees, Organizer, Start, End, Location, Description, URL bool
 }
 
 // Keep one decoded resource while its components pass through the projection writer.
@@ -196,12 +201,22 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 			}
 		}
 	}
-	for _, name := range []string{"UID", "RECURRENCE-ID", "DTSTART", "DTEND", "DURATION", "SEQUENCE", "STATUS"} {
+	for _, name := range []string{"UID", "RECURRENCE-ID", "DTSTART", "DTEND", "DURATION", "SEQUENCE", "STATUS", "URL"} {
 		if len(p[name]) > 1 {
 			return CalDAVEvent{}, fmt.Errorf("duplicate CalDAV %s", name)
 		}
 	}
 	item := CalDAVEvent{Event: Event{CalendarTimeZone: calendarZone, Kind: "single", Status: "confirmed"}}
+	item.Present = CalDAVEventPresence{
+		Summary:     p.Get("SUMMARY") != nil,
+		Attendees:   len(p.Values("ATTENDEE")) > 0,
+		Organizer:   p.Get("ORGANIZER") != nil,
+		Start:       p.Get("DTSTART") != nil,
+		End:         p.Get("DTEND") != nil || p.Get("DURATION") != nil,
+		Location:    p.Get("LOCATION") != nil,
+		Description: p.Get("DESCRIPTION") != nil,
+		URL:         p.Get("URL") != nil,
+	}
 	e := &item.Event
 	var uid string
 	for _, field := range []struct {
@@ -217,6 +232,9 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 			return item, fmt.Errorf("CalDAV %s: %w", field.name, err)
 		}
 		*field.out = strings.Join(values, ",")
+	}
+	if url := p.Get("URL"); url != nil {
+		item.JoinURL = url.Value
 	}
 	if uid == "" {
 		return item, errors.New("CalDAV event has no UID")
