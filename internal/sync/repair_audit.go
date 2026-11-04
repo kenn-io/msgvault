@@ -133,6 +133,7 @@ func auditGmailEvidence(evidence store.GmailAuditEvidence) (RepairAuditResult, b
 		result.Error = textutil.FirstLine(err.Error())
 		return result, true
 	}
+	parsed.OmitNULIdentities()
 	result.Fields[AuditFieldRawMIME] = AuditMatch
 	result.Fields[AuditFieldRFC822MessageID] = compareOptionalString(
 		evidence.RFC822MessageID.Valid, evidence.RFC822MessageID.String, parsed.MessageID,

@@ -1743,6 +1743,8 @@ func (s *Syncer) prepareMessage(
 			"error", errMsg)
 	}
 
+	parsed.OmitNULIdentities()
+
 	// For IMAP sources, the API provides no real thread info —
 	// ThreadID is just the composite message ID. Derive a thread
 	// key from MIME threading headers to group related messages
@@ -1757,7 +1759,7 @@ func (s *Syncer) prepareMessage(
 	subject := textutil.EnsureUTF8(parsed.Subject)
 	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
-	snippet := textutil.EnsureUTF8(raw.Snippet)
+	snippet := textutil.ReplaceNUL(textutil.EnsureUTF8(raw.Snippet))
 
 	// Ensure participant names are valid UTF-8 before database insertion
 	ensureAddressUTF8(parsed.From)
