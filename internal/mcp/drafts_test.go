@@ -230,8 +230,8 @@ func TestDraftToolResultShapes(t *testing.T) {
 	}{
 		{name: "object", command: "draft-reply", args: map[string]any{"message_id": 7, "body": "reply"}, stdout: `{"status":"created","draft_id":"d1"}`, text: `{"draft_id":"d1","status":"created"}`},
 		{name: "array", command: "draft-get", args: map[string]any{"conversation": 7}, stdout: `[{"draft_id":"d1"}]`, text: `{"data":[{"draft_id":"d1"}]}`},
-		{name: "compose", command: "draft-compose", args: map[string]any{"body": "4111111111111111"}, stdout: `{"status":"created","draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
-		{name: "subject only", command: "draft-compose", args: map[string]any{"subject": "4111111111111111", "body": "clean"}, stdout: `{"status":"created"}`, text: `{"sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
+		{name: "compose", command: "draft-compose", args: map[string]any{"source_id": 9, "to": []string{"to@example.com"}, "body": "4111111111111111"}, stdout: `{"status":"created","draft_id":"d1"}`, text: `{"draft_id":"d1","sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
+		{name: "subject only", command: "draft-compose", args: map[string]any{"source_id": 9, "to": []string{"to@example.com"}, "subject": "4111111111111111", "body": "clean"}, stdout: `{"status":"created"}`, text: `{"sensitive_content":[{"hint":"ending 1111","kind":"payment_card"}],"status":"created"}`},
 		{name: "get", command: "draft-get", args: map[string]any{"draft_id": "d1"}, stdout: `{"body":"4111111111111111"}`, text: `{"body":"4111111111111111"}`},
 		{name: "daemon text", command: "draft-reply", args: map[string]any{"message_id": 7, "body": "4111111111111111"}, err: &DraftCommandError{Message: "not_permitted", Stderr: "{\"status\":\"pending\"}\n"}, text: "not_permitted\n{\"status\":\"pending\"}"},
 	} {
