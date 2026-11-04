@@ -228,17 +228,25 @@ func (c *Client) GetMessage(id int64) (*store.APIMessage, error) {
 
 // GetMessageContext fetches a single message by ID using the supplied context.
 func (c *Client) GetMessageContext(ctx context.Context, id int64) (*store.APIMessage, error) {
-	resp, err := APIResponseWithNotFound(
-		c,
-		func(client *apiclient.Client) (*generated.GetMessageResp, error) {
-			return client.GetMessageWithResponse(ctx, &generated.GetMessageRequestOptions{
-				PathParams: &generated.GetMessagePath{ID: id},
-			})
-		},
-		func(*generated.GetMessageResp) error {
-			return fmt.Errorf("message %d: %w", id, store.ErrMessageNotFound)
-		},
-	)
+	resp, err := retryRateLimitedResponse(ctx, func() (*generated.GetMessageResp, string, error) {
+		var retryAfter string
+		resp, err := APIResponseWithNotFound(
+			c,
+			func(client *apiclient.Client) (*generated.GetMessageResp, error) {
+				resp, err := client.GetMessageWithResponse(ctx, &generated.GetMessageRequestOptions{
+					PathParams: &generated.GetMessagePath{ID: id},
+				})
+				if resp != nil && resp.HTTPResponse != nil {
+					retryAfter = resp.HTTPResponse.Header.Get("Retry-After")
+				}
+				return resp, err
+			},
+			func(*generated.GetMessageResp) error {
+				return fmt.Errorf("message %d: %w", id, store.ErrMessageNotFound)
+			},
+		)
+		return resp, retryAfter, err
+	})
 	if err != nil {
 		return nil, err
 	}

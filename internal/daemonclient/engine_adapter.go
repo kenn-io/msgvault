@@ -869,6 +869,7 @@ func queryDetailFromAPIMessage(msg *store.APIMessage) *query.MessageDetail {
 		HiddenTextPresent:    msg.HiddenTextPresent,
 		Labels:               msg.Labels,
 		BodyText:             msg.Body,
+		BodyHTML:             msg.BodyHTML,
 		From:                 apiMessageFromAddress(msg),
 		To:                   apiMessageAddresses(msg.To),
 		Cc:                   apiMessageAddresses(msg.Cc),

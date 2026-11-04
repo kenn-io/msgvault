@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"sync/atomic"
 	"testing"
 
@@ -17,6 +18,7 @@ import (
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/msgsegment"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -127,6 +129,71 @@ func TestRemoteSearchFastZeroLimitKeepsDefaultPage(t *testing.T) {
 	assert.Len(messages, 3, "SearchFast keeps its default page; only the combined API uses zero for count-only")
 	assert.Equal(int32(1), requests.Load())
 	assert.Len(observer.Statements(), 3)
+}
+
+func TestDaemonMCPMessageSegmentsPreserveHTMLBodies(t *testing.T) {
+	x := newExportFixture(t)
+	var requests atomic.Int32
+	engine := metadataDaemonWithPeer(t, x.engine, &requests, nil, "", x.f.Store)
+	h := newTestHandlers(engine)
+
+	for _, tc := range []struct {
+		name             string
+		bodyText         string
+		bodyHTML         string
+		threadBodyFormat string
+	}{
+		{
+			name:             "HTML only",
+			bodyHTML:         `<p>Fresh HTML</p><div class="gmail_quote">Old HTML</div>`,
+			threadBodyFormat: "html",
+		},
+		{
+			name:             "multipart",
+			bodyText:         "Fresh plain text\n> Old plain text\n",
+			bodyHTML:         `<p>Fresh HTML</p><div class="gmail_quote">Old HTML</div>`,
+			threadBodyFormat: "text",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			require.NoError(x.f.Store.UpsertMessageBody(
+				x.noRaw,
+				sql.NullString{String: tc.bodyText, Valid: true},
+				sql.NullString{String: tc.bodyHTML, Valid: true},
+			))
+
+			message := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{
+				"id": float64(x.noRaw), "include_segments": true, "body_format": "html", "full_body": true,
+			})
+			assert.Equal("html", message.BodyFormat)
+			assert.Empty(message.BodyText)
+			assert.Equal(tc.bodyHTML, message.BodyHTML)
+			require.NotNil(message.Segments)
+			messageKinds := make([]msgsegment.Kind, 0, len(*message.Segments))
+			for _, segment := range *message.Segments {
+				messageKinds = append(messageKinds, segment.Kind)
+			}
+			assert.Contains(messageKinds, msgsegment.Quoted)
+
+			thread := runTool[threadSegmentsResponse](t, ToolListThread, h.listThread, map[string]any{
+				"id": float64(x.noRaw), "include_segments": true,
+			})
+			entryIndex := slices.IndexFunc(thread.Messages, func(entry threadSegmentMessage) bool {
+				return entry.ID == x.noRaw
+			})
+			require.GreaterOrEqual(entryIndex, 0)
+			entry := thread.Messages[entryIndex]
+			assert.Equal(tc.threadBodyFormat, entry.BodyFormat)
+			require.NotNil(entry.Segments)
+			threadKinds := make([]msgsegment.Kind, 0, len(*entry.Segments))
+			for _, segment := range *entry.Segments {
+				threadKinds = append(threadKinds, segment.Kind)
+			}
+			assert.Contains(threadKinds, msgsegment.Quoted)
+		})
+	}
 }
 
 // TestSearchByDomainsPagesThroughDaemon pages a real archive across offset

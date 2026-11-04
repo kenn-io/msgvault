@@ -1911,6 +1911,36 @@ func TestGetCLIMessageRateLimitRetryAfter(t *testing.T) {
 	}
 }
 
+func TestGetMessageContextRateLimitRetryAfter(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		start := time.Now()
+		const refusals = 2
+		var requests atomic.Int32
+		srv := httptest.NewTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			assert.Equal("/api/v1/messages/42", r.URL.Path)
+			w.Header().Set("Content-Type", "application/json")
+			if requests.Add(1) <= refusals {
+				w.Header().Set("Retry-After", "2")
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = w.Write([]byte(`{"error":"rate_limit_exceeded","message":"Try again later"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"id":42,"source_id":7,"source_message_id":"message-42","conversation_id":8,"subject":"Synthetic subject","message_type":"email","from":"alice@example.test","sent_at":"2026-11-03T10:00:00Z","body":"Plain body","body_html":"<p>HTML body</p>","attachments":[]}`))
+		}))
+		client := newTestStore(srv, "key")
+
+		message, err := client.GetMessageContext(t.Context(), 42)
+		require.NoError(err)
+		require.NotNil(message)
+		assert.Equal("Plain body", message.Body)
+		assert.Equal("<p>HTML body</p>", message.BodyHTML)
+		assert.Equal(int32(refusals+1), requests.Load())
+		assert.Equal(refusals*2*time.Second, time.Since(start))
+	})
+}
+
 func TestGetCLIMessageRateLimitWaitIsBounded(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

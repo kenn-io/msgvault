@@ -1405,12 +1405,37 @@ func (c *Client) RebuildCLIFTS(
 	return indexed, nil
 }
 
-func (c *Client) GetCLIMessage(ctx context.Context, id string) (*query.MessageDetail, error) {
-	// Thread pages can exhaust a remote daemon's shared request burst.
+func retryRateLimitedResponse[T any](ctx context.Context, request func() (T, string, error)) (T, error) {
+	var zero T
 	policy := backoff.NewExponentialBackOff()
 	policy.InitialInterval = time.Second
 	policy.MaxInterval = 10 * time.Second
-	resp, err := backoff.Retry(ctx, func() (*generated.GetCLIMessageResp, error) {
+	resp, err := backoff.Retry(ctx, func() (T, error) {
+		resp, retryAfter, err := request()
+		if err == nil {
+			return resp, nil
+		}
+		apiErr, ok := errors.AsType[*APIError](err)
+		if !ok || apiErr.Status != http.StatusTooManyRequests {
+			return zero, backoff.Permanent(err)
+		}
+		if delay, ok := httpretry.ParseRetryAfter(retryAfter, 0, time.Now()); ok {
+			return zero, backoff.RetryAfter(delay, err)
+		}
+		return zero, err
+	}, backoff.WithBackOff(policy), backoff.WithMaxElapsedTime(time.Minute))
+	if err != nil {
+		if ctx.Err() != nil {
+			return zero, ctx.Err()
+		}
+		return zero, backoff.AsRetryError(err).LastErr
+	}
+	return resp, nil
+}
+
+func (c *Client) GetCLIMessage(ctx context.Context, id string) (*query.MessageDetail, error) {
+	// Thread pages can exhaust a remote daemon's shared request burst.
+	resp, err := retryRateLimitedResponse(ctx, func() (*generated.GetCLIMessageResp, string, error) {
 		var retryAfter string
 		resp, err := APIResponseWithNotFound(
 			c,
@@ -1427,23 +1452,10 @@ func (c *Client) GetCLIMessage(ctx context.Context, id string) (*query.MessageDe
 				return fmt.Errorf("message %s: %w", id, store.ErrMessageNotFound)
 			},
 		)
-		if err == nil {
-			return resp, nil
-		}
-		apiErr, ok := errors.AsType[*APIError](err)
-		if !ok || apiErr.Status != http.StatusTooManyRequests {
-			return nil, backoff.Permanent(err)
-		}
-		if delay, ok := httpretry.ParseRetryAfter(retryAfter, 0, time.Now()); ok {
-			return nil, backoff.RetryAfter(delay, err)
-		}
-		return nil, err
-	}, backoff.WithBackOff(policy), backoff.WithMaxElapsedTime(time.Minute))
+		return resp, retryAfter, err
+	})
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return nil, backoff.AsRetryError(err).LastErr
+		return nil, err
 	}
 	message := cliMessageDetailFromGenerated(resp.JSON200)
 	if message != nil {

@@ -569,6 +569,7 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 			"has_attachments":     true,
 			"size_bytes":          2048,
 			"body":                "Hello, generated world!",
+			"body_html":           "<p>Generated HTML</p>",
 			"hidden_text_present": true,
 			"attachments": []map[string]any{{
 				"id":           52,
@@ -591,6 +592,8 @@ func TestEngineGetMessagePreservesGeneratedDetailMetadata(t *testing.T) {
 	assert.Equal(store.baseURL+"/messages/42", msg.WebURL)
 	assert.Equal("sms", msg.MessageType, "MessageType")
 	assert.True(msg.HiddenTextPresent)
+	assert.Equal("Hello, generated world!", msg.BodyText, "BodyText")
+	assert.Equal("<p>Generated HTML</p>", msg.BodyHTML, "BodyHTML")
 	require.NotNil(msg.DeletedAt, "DeletedAt")
 	assert.Equal(deletedAt, msg.DeletedAt.UTC().Format(time.RFC3339), "DeletedAt")
 	assert.True(msg.HasAttachments, "HasAttachments")
