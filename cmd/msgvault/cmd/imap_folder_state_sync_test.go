@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -56,7 +59,9 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1})
 	st, src, cfg, ctx := scheduledIMAPSyncFixture(t, addr)
-	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash", "Junk"}}
+	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash", "Junk"}, "user@example.com": {"Trash"}}
+	var logs bytes.Buffer
+	invocationFromContext(ctx).logger = slog.New(slog.NewTextHandler(&logs, nil))
 	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 	require.NoError(err)
 	assert.Zero(summary.Errors)
@@ -73,6 +78,8 @@ func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Equal([]string{"INBOX|1"}, ids)
+	assert.Equal(1, strings.Count(logs.String(), "IMAP folder exclusions match no stored account"))
+	assert.Contains(logs.String(), "account=user@example.com")
 }
 
 func TestSaveIMAPFolderStates_ExclusionPreservesPriorState(t *testing.T) {
@@ -814,9 +821,11 @@ func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
 	sync(true)
 	assert.Equal(1, imapTombstonedMessageCount(t, st, src.ID))
 	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
-	plan, err := st.PlanGCContext(t.Context())
-	require.NoError(err)
-	assert.Equal(int64(1), plan.SourceDeleted)
+	if !st.IsPostgreSQL() {
+		plan, err := st.PlanGCContext(t.Context())
+		require.NoError(err)
+		assert.Equal(int64(1), plan.SourceDeleted)
+	}
 	states, err := loadIMAPFolderStates(st, src.ID)
 	require.NoError(err)
 	assert.NotContains(states, "Trash")

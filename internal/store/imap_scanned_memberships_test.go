@@ -101,6 +101,7 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 				delta.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "INBOX|2"}}
 			case "incremental":
 				delta.Reset = false
+				delta.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "INBOX|2"}}
 			case "empty mailbox":
 				delta.Reset, delta.KnownUIDs = false, nil
 			case "new generation":
