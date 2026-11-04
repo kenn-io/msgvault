@@ -84,6 +84,45 @@ func TestRepairIdentities_SingleTarget(t *testing.T) {
 	assert.Len(ai, 1, "only the targeted account is confirmed")
 }
 
+func TestRepairIdentities_ReportsSkippedEmailSources(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	imapCfg := &imapclient.Config{
+		Host: "mail.example.com", Port: 993, TLS: true, Username: "owner@example.com",
+	}
+	imapSource, err := st.GetOrCreateSource("imap", imapCfg.Identifier())
+	require.NoError(err)
+	configJSON, err := imapCfg.ToJSON()
+	require.NoError(err)
+	require.NoError(st.UpdateSourceSyncConfig(imapSource.ID, configJSON))
+	mboxSource, err := st.GetOrCreateSource("mbox", "boss@example.com")
+	require.NoError(err)
+	confirmed, err := st.GetOrCreateSource("imap", "confirmed@example.com")
+	require.NoError(err)
+	require.NoError(st.UpdateSourceDisplayName(confirmed.ID, "confirmed@example.com"))
+	require.NoError(st.AddAccountIdentity(confirmed.ID, "confirmed@example.com", "preexisting"))
+	granolaSource, err := st.GetOrCreateSource("granola", "meeting@example.com")
+	require.NoError(err)
+
+	var buf bytes.Buffer
+	repaired, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
+	require.NoError(err)
+	assert.Zero(repaired)
+	assert.Equal("Skipped 1 imap source(s) with no confirmed identity; re-run with --type imap.\nSkipped 1 mbox source(s) with no confirmed identity; re-run with --type mbox.\n", buf.String())
+	for _, source := range []*store.Source{imapSource, mboxSource, granolaSource} {
+		identities, err := st.ListAccountIdentities(source.ID)
+		require.NoError(err)
+		assert.Empty(identities)
+	}
+
+	buf.Reset()
+	repaired, err = repairIdentities(t.Context(), st, "gmail", "owner@example.com", &buf)
+	require.NoError(err)
+	assert.Zero(repaired)
+	assert.Equal("Skipped 1 imap source(s) with no confirmed identity; re-run with --type imap.\n", buf.String())
+}
+
 func TestRepairIdentities_IMAPUsesConfiguredUsername(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

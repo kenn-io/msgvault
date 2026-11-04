@@ -5127,6 +5127,9 @@ msgvault repair-identity --type imap
 The optional identifier narrows the repair. `--type` selects a source type and
 defaults to `gmail`. Only plain, valid email addresses are confirmed. For
 reviewing other aliases, use [identity discovery](#identity).
+Other email account types needing repair are listed with the `--type` to use.
+Activity and contact state catch up at the daemon's next projection, or right
+away with `msgvault activity build`.
 
 ## repair-senders
 

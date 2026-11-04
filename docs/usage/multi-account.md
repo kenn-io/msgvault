@@ -216,7 +216,8 @@ msgvault repair-identity you@example.com
 msgvault repair-identity --type imap
 ```
 
-The default source type is Gmail. The command skips accounts whose own address
+The default source type is Gmail. Other email account types needing repair are
+listed with the `--type` to use. The command skips accounts whose own address
 is already confirmed or is not a plain valid email address. Existing aliases
 do not prevent it from adding the primary account address.
 
