@@ -398,6 +398,8 @@ func TestPeopleRelationshipTimezoneRequests(t *testing.T) {
 		{name: "UTC", location: time.UTC, want: "UTC"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			contact := testPerson(7, "Calendar Person")
 			contact.CacheRevision = "cache-1"
 			backend := &fakePeopleRelationshipBackend{fakePeopleBackend: &fakePeopleBackend{}}
@@ -410,16 +412,16 @@ func TestPeopleRelationshipTimezoneRequests(t *testing.T) {
 			model.peopleState.location = tt.location
 			model.localTimezone = tt.localTimezone
 			loaded := relationshipCalendarMessage(t, model.beginPeopleRelationshipLoad())
-			require.NoError(t, loaded.err)
-			require.Len(t, backend.calendarRequests, 1)
-			assert.Equal(t, tt.want, backend.calendarRequests[0].Timezone)
+			require.NoError(loaded.err)
+			require.Len(backend.calendarRequests, 1)
+			assert.Equal(tt.want, backend.calendarRequests[0].Timezone)
 			if tt.revisit {
 				model = sendMsg(t, model, loaded)
-				require.NotNil(t, model.peopleState.relationshipCalendar)
-				require.NoError(t, model.peopleState.relationshipErr)
-				assert.Nil(t, model.beginPeopleRelationshipLoad(), "revisiting the default-zone calendar uses its cached UTC response")
-				assert.False(t, model.peopleState.relationshipLoading)
-				assert.Len(t, backend.calendarRequests, 1)
+				require.NotNil(model.peopleState.relationshipCalendar)
+				require.NoError(model.peopleState.relationshipErr)
+				assert.Nil(model.beginPeopleRelationshipLoad(), "revisiting the default-zone calendar uses its cached UTC response")
+				assert.False(model.peopleState.relationshipLoading)
+				assert.Len(backend.calendarRequests, 1)
 			}
 		})
 	}
