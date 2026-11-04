@@ -133,6 +133,9 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 	}{
 		{"label", query.TextFilter{Label: "Important"}},
 		{"search", query.TextFilter{SearchQuery: "needle"}},
+		{"contact phone recipient", query.TextFilter{ContactPhone: "sender@example.com"}},
+		{"contact name recipient", query.TextFilter{ContactName: "Sender"}},
+		{"contact name repair", query.TextFilter{ContactName: "Sender"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -145,6 +148,10 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 					(801, 701, 7, 'message-801', 'imessage', '2020-01-01 10:00:00', '2020-01-01 00:00:00'),
 					(802, 701, 7, 'message-802', 'imessage', '2020-01-01 11:00:00', '2020-01-01 00:00:00');
 				INSERT INTO labels (id, source_id, name) VALUES (901, 7, 'Important');
+				INSERT INTO participants (id, email_address, display_name) VALUES
+					(11, 'sender@example.com', 'Sender'), (12, 'other@example.com', 'Other');
+				INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES
+					(801, 11, 'from'), (802, 11, 'from');
 			`)
 			require.NoError(err)
 			require.NoError(s.AddMessageLabels(801, []int64{901}))
@@ -162,18 +169,33 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 			assert.Equal(int64(801), page[0].ID)
 
 			for step := range 2 {
-				if tc.name == "label" {
+				switch tc.name {
+				case "label":
 					if step == 0 {
 						require.NoError(s.AddMessageLabels(802, []int64{901}))
 					} else {
 						require.NoError(s.ReplaceMessageLabels(802, nil))
 					}
-				} else if step == 0 {
-					_, err = s.DB().Exec(`DELETE FROM messages_fts`)
-					require.NoError(err)
-				} else {
-					require.NoError(s.UpsertFTS(801, "", "needle", "", "", ""))
-					require.NoError(s.UpsertFTS(802, "", "needle", "", "", ""))
+				case "search":
+					if step == 0 {
+						_, err = s.DB().Exec(`DELETE FROM messages_fts`)
+						require.NoError(err)
+					} else {
+						require.NoError(s.UpsertFTS(801, "", "needle", "", "", ""))
+						require.NoError(s.UpsertFTS(802, "", "needle", "", "", ""))
+					}
+				case "contact phone recipient", "contact name recipient":
+					participantID := int64(12)
+					if step == 1 {
+						participantID = 11
+					}
+					require.NoError(s.ReplaceMessageRecipientsContext(t.Context(), 801, "from", []int64{participantID}, nil))
+				case "contact name repair":
+					displayName := "Renamed"
+					if step == 1 {
+						displayName = "Sender"
+					}
+					require.NoError(s.RepairParticipantDisplayNames([]store.ParticipantDisplayNameRepair{{ParticipantID: 11, DisplayName: displayName}}))
 				}
 				page, after, err := engine.ListConversationMessagesSnapshot(t.Context(), conversationID, filter)
 				require.NoError(err)
@@ -181,8 +203,11 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 				revision, err := engine.TextSnapshotRevision(t.Context(), scope)
 				require.NoError(err)
 				assert.Equal(after, revision)
-				if tc.name == "search" && step == 0 {
+				if (tc.name == "search" || tc.name == "contact name repair") && step == 0 {
 					assert.Empty(page)
+				} else if (tc.name == "contact phone recipient" || tc.name == "contact name recipient") && step == 0 {
+					require.Len(page, 1)
+					assert.Equal(int64(802), page[0].ID)
 				} else {
 					require.Len(page, 1)
 					assert.Equal(int64(801), page[0].ID)

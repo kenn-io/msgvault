@@ -24,13 +24,14 @@ var _ TextSnapshotReader = (*SQLiteEngine)(nil)
 
 // TextSnapshotRevision tracks chat message changes, including body edits, and
 // conversation titles. Conversation-list revisions hash the ordered metadata.
-// Search- and label-filtered timelines hash their full filtered result.
+// Timelines filtered by search, label, contact name, or contact phone hash
+// their full filtered result.
 // Pagination is excluded from all revisions.
 func (e *SQLiteEngine) TextSnapshotRevision(
 	ctx context.Context, scope TextSnapshotScope,
 ) (string, error) {
 	if scope.ConversationID != nil {
-		if scope.Filter.SearchQuery != "" || scope.Filter.Label != "" {
+		if scope.Filter.SearchQuery != "" || scope.Filter.Label != "" || scope.Filter.ContactName != "" || scope.Filter.ContactPhone != "" {
 			_, revision, err := readSQLiteTextSnapshot(
 				ctx, e, scope, 500, false, scanTextMessageSnapshotRow,
 			)
@@ -58,13 +59,13 @@ func (e *SQLiteEngine) ListConversationsSnapshot(
 
 // ListConversationMessagesSnapshot returns one timeline page and a revision
 // that tracks message and body edits and the conversation title
-// from the same read transaction. Search- and label-filtered timelines hash
-// their full filtered result.
+// from the same read transaction. Timelines filtered by search, label, contact
+// name, or contact phone hash their full filtered result.
 func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 	ctx context.Context, conversationID int64, filter TextFilter,
 ) ([]MessageSummary, string, error) {
 	scope := TextSnapshotScope{ConversationID: &conversationID, Filter: filter}
-	if filter.SearchQuery != "" || filter.Label != "" {
+	if filter.SearchQuery != "" || filter.Label != "" || filter.ContactName != "" || filter.ContactPhone != "" {
 		return readSQLiteTextSnapshot(ctx, e, scope, 500, true, scanTextMessageSnapshotRow)
 	}
 	return readSQLiteTimelineSnapshot(ctx, e, scope, true)
