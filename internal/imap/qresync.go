@@ -155,7 +155,6 @@ func (c *Client) tryBuildQresyncMessageList(
 func (c *Client) collectQresyncMailbox(
 	ctx context.Context, mailbox string, prior FolderState,
 ) (MailboxDelta, error) {
-	c.clearQresyncCapture()
 	selected, err := c.selectCommand(ctx, mailbox, &imap.SelectOptions{CondStore: true})
 	if err != nil {
 		return MailboxDelta{}, fmt.Errorf("CONDSTORE SELECT %q: %w", mailbox, err)

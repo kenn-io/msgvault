@@ -4,15 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cenkalti/backoff/v7"
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	"go.kenn.io/msgvault/internal/httpretry"
 	"golang.org/x/time/rate"
 )
 
@@ -26,11 +25,7 @@ func commandRetryDelay(err error) (time.Duration, bool) {
 		return 0, false
 	}
 	if match := retryHint.FindStringSubmatch(response.Text); match != nil {
-		seconds, parseErr := strconv.ParseUint(match[1], 10, 64)
-		if parseErr != nil || seconds > math.MaxInt64/uint64(time.Second) {
-			return 0, false
-		}
-		return time.Duration(seconds) * time.Second, true
+		return httpretry.ParseRetryAfter(match[1], 0, time.Time{})
 	}
 	if strings.EqualFold(string(response.Code), string(imap.ResponseCodeLimit)) {
 		return time.Second, true

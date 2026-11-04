@@ -300,32 +300,43 @@ func TestLimitedQresyncPreservesVanishedAndDiscardsPartialFetch(t *testing.T) {
 	var attempts atomic.Int32
 	count := uint32(2)
 	addr, _ := startQresyncTestServer(t, qresyncServerConfig{
-		capabilities: []string{"IMAP4rev1 ENABLE CONDSTORE QRESYNC"}, uidValidity: 1, uidNext: 5, highestModSeq: 5, numMessages: &count,
-		searchUIDs: []imap.UID{3, 4}, fetchChanged: []imap.UID{3}, fetchVanished: []imap.UID{2}, fetchModSeq: map[imap.UID]uint64{3: 5, 4: 1},
+		capabilities: []string{"IMAP4rev1 ENABLE CONDSTORE QRESYNC"}, uidValidity: 1, uidNext: 5, highestModSeq: 6, selectHighestModSeq: 5, numMessages: &count,
+		searchUIDs: []imap.UID{3, 4}, fetchChanged: []imap.UID{3}, fetchVanished: []imap.UID{2},
 		commandHook: func(conn net.Conn, _ int, line string) bool {
 			tag, cmd, _ := strings.Cut(line, " ")
 			if !strings.HasPrefix(cmd, "UID FETCH") || !strings.Contains(cmd, "CHANGEDSINCE") {
 				return false
 			}
 			if attempts.Add(1) != 1 {
+				// UID 4 was expunged and UID 3 changed after the rejected FETCH.
+				_, _ = fmt.Fprint(conn, "* VANISHED 4\r\n")
 				return false
 			}
 			// UID 4's partial flags belong only to the rejected attempt. VANISHED
-			// 1 remains true even though the succeeding command reports only 2.
-			_, _ = fmt.Fprintf(conn, "* VANISHED (EARLIER) 1\r\n* 1 FETCH (UID 4 FLAGS (\\Flagged) MODSEQ (5))\r\n%s NO [LIMIT] retry in 0 seconds\r\n", tag)
+			// 1 remains true even though the succeeding command reports 2 and 4.
+			_, _ = fmt.Fprintf(conn, "* VANISHED (EARLIER) 1\r\n* 2 FETCH (UID 4 FLAGS (\\Flagged) MODSEQ (5))\r\n%s NO [LIMIT] retry in 0 seconds\r\n", tag)
 			return true
 		},
 	})
-	client := newQresyncTestClient(t, addr, map[string]FolderState{"INBOX": {UIDValidity: 1, UIDNext: 5, HighestModSeq: 2, KnownUIDs: []uint32{1, 2, 3, 4}}})
-	response, err := client.ListMessages(t.Context(), "", "")
-	require.NoError(err)
-	require.Len(response.Messages, 1)
-	assert.Equal("INBOX|3", response.Messages[0].ID)
-	deltas := client.ObservedMailboxDeltas()
-	require.Len(deltas, 1)
-	assert.Equal([]imap.UID{1, 2}, deltas[0].VanishedUIDs)
-	assert.Equal([]imap.UID{3}, deltas[0].ChangedUIDs)
-	assert.Equal([]uint32{3, 4}, deltas[0].State.KnownUIDs)
+	client := newTestClient(t, addr)
+	require.NoError(client.withConn(t.Context(), func(*imapclient.Client) error {
+		require.True(client.enableQresync(t.Context()))
+		_, err := client.selectCommand(t.Context(), "INBOX", &imap.SelectOptions{CondStore: true})
+		require.NoError(err)
+		client.beginQresyncCapture()
+		defer client.clearQresyncCapture()
+		msgs, err := client.fetchCommand(t.Context(), imap.UIDSetNum(1, 2, 3, 4), &imap.FetchOptions{
+			UID: true, Flags: true, ModSeq: true, ChangedSince: 2, Vanished: true,
+		})
+		require.NoError(err)
+		// Check FETCH directly: the final delta also removes vanished UIDs,
+		// which would hide a partial result leaking from the rejected attempt.
+		require.Len(msgs, 1)
+		assert.Equal(imap.UID(3), msgs[0].UID)
+		assert.ElementsMatch([]imap.UID{1, 2, 4}, client.snapshotQresyncCapture().vanished)
+		return nil
+	}))
+	assert.Equal(int32(2), attempts.Load())
 	assert.Nil(client.qresyncCapture, "capture cannot leak into another mailbox or fallback")
 }
 
@@ -333,18 +344,32 @@ func TestLimitedLabelFetchDiscardsRejectedMembership(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	var attempts atomic.Int32
-	addr, _ := startQresyncTestServer(t, qresyncServerConfig{capabilities: []string{"IMAP4rev1"}, uidValidity: 1, uidNext: 2, searchUIDs: []imap.UID{1}, commandHook: func(conn net.Conn, _ int, line string) bool {
+	addr, _ := startQresyncTestServer(t, qresyncServerConfig{capabilities: []string{"IMAP4rev1"}, uidValidity: 1, uidNext: 3, searchUIDs: []imap.UID{1, 2}, commandHook: func(conn net.Conn, _ int, line string) bool {
 		tag, cmd, _ := strings.Cut(line, " ")
+		if strings.HasPrefix(cmd, "UID SEARCH") {
+			// The omission check asks about UID 1, which has been expunged.
+			_, _ = fmt.Fprintf(conn, "* SEARCH\r\n%s OK SEARCH done\r\n", tag)
+			return true
+		}
 		if !strings.HasPrefix(cmd, "UID FETCH") {
 			return false
 		}
 		n := attempts.Add(1)
+		if n > 2 {
+			// Rechecking the expunged UID returns no message.
+			_, _ = fmt.Fprintf(conn, "%s OK FETCH done\r\n", tag)
+			return true
+		}
 		messageID := "final@example.test"
+		uid := 2
 		if n == 1 {
 			messageID = "rejected@example.test"
+			uid = 1
+		} else {
+			_, _ = fmt.Fprint(conn, "* 1 EXPUNGE\r\n")
 		}
 		header := fmt.Sprintf("Message-ID: <%s>\r\n\r\n", messageID)
-		_, _ = fmt.Fprintf(conn, "* 1 FETCH (UID 1 FLAGS () BODY[HEADER.FIELDS (\"Message-ID\")] {%d}\r\n%s)\r\n", len(header), header)
+		_, _ = fmt.Fprintf(conn, "* 1 FETCH (UID %d FLAGS () BODY[HEADER.FIELDS (\"Message-ID\")] {%d}\r\n%s)\r\n", uid, len(header), header)
 		if n == 1 {
 			_, _ = fmt.Fprintf(conn, "%s NO [LIMIT] retry in 0 seconds\r\n", tag)
 		} else {
@@ -353,14 +378,17 @@ func TestLimitedLabelFetchDiscardsRejectedMembership(t *testing.T) {
 		return true
 	}})
 	client := newTestClient(t, addr)
-	results, err := client.GetMessageLabelsBatch(t.Context(), []string{"INBOX|1"})
+	results, err := client.GetMessageLabelsBatch(t.Context(), []string{"INBOX|1", "INBOX|2"})
 	require.NoError(err)
-	require.Len(results, 1)
-	require.NoError(results[0].Err)
-	assert.Equal("final@example.test", results[0].RFC822MessageID)
-	assert.Equal([]string{"INBOX"}, results[0].LabelIDs)
+	require.Len(results, 2)
+	require.ErrorIs(results[0].Err, errIMAPFetchResultMissing)
+	assert.Empty(results[0].RFC822MessageID)
+	assert.Empty(results[0].LabelIDs)
+	require.NoError(results[1].Err)
+	assert.Equal("final@example.test", results[1].RFC822MessageID)
+	assert.Equal([]string{"INBOX"}, results[1].LabelIDs)
 	observed := client.ObservedMemberships()
 	require.Len(observed, 1)
 	assert.Equal("final@example.test", observed[0].RFC822MessageID)
-	assert.Equal(int32(2), attempts.Load())
+	assert.Equal(int32(3), attempts.Load(), "two command attempts and one omitted-UID recheck")
 }
