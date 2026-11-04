@@ -211,7 +211,7 @@ const messageTagsMinAPISchemaVersion = "3.15.0"
 const personAgendaMinAPISchemaVersion = "2.30.0"
 
 // personTierMinAPISchemaVersion adds read-only person tier previews.
-const personTierMinAPISchemaVersion = "3.30.0"
+const personTierMinAPISchemaVersion = "3.33.0"
 
 const contactRoutesMinAPISchemaVersion = "3.20.0"
 
