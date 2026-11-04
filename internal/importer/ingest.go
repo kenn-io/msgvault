@@ -80,7 +80,8 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 	}
 
 	subject := textutil.EnsureUTF8(parsed.Subject)
-	bodyText := textutil.EnsureUTF8(parsed.GetBodyText())
+	bodyText := textutil.EnsureUTF8(parsed.BodyText)
+	bodyForSnippet := textutil.EnsureUTF8(parsed.GetBodyText())
 	bodyHTML := textutil.EnsureUTF8(parsed.BodyHTML)
 
 	// Sanitize address fields in place so all downstream consumers
@@ -162,7 +163,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		internalDate = sql.NullTime{Time: fallbackDate.UTC(), Valid: true}
 	}
 
-	snippet := textutil.SnippetFromBody(bodyText)
+	snippet := textutil.SnippetFromBody(bodyForSnippet)
 	hasAttachments := len(parsed.Attachments) > 0
 	attachmentCount := len(parsed.Attachments)
 
@@ -262,7 +263,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		toAddrs := joinEmails(parsed.To)
 		ccAddrs := joinEmails(parsed.Cc)
 		if err := st.UpsertFTS(
-			messageID, subject, bodyText,
+			messageID, subject, mime.SearchableBodyText(bodyText, bodyHTML),
 			fromAddr, toAddrs, ccAddrs,
 		); err != nil {
 			incomplete(fmt.Errorf("index message: %w", err))

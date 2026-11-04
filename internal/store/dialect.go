@@ -222,6 +222,11 @@ type Dialect interface {
 	// check supported by the archive's search tables.
 	FTSBackfillMissingBatchSQL(ctx context.Context, db *sql.DB) (string, error)
 
+	// FTSBackfillHTMLOnlyCandidateSQL selects IDs needing the HTML-only body
+	// pass for a full or missing-only backfill. It returns IDs only; callers load
+	// body and recipient details for those candidates by primary key.
+	FTSBackfillHTMLOnlyCandidateSQL(ctx context.Context, db *sql.DB, onlyMissing bool) (string, error)
+
 	// FTSAvailable reports whether full-text search is available for this database.
 	// For SQLite this probes the FTS5 virtual table; for PostgreSQL it checks
 	// that the tsvector column exists.

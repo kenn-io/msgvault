@@ -1498,6 +1498,11 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 		return fmt.Errorf("ensure migration ledger version column: %w", err)
 	}
 	if err := s.runOnceMigration(
+		ctx, migrationLoopEvidenceBodyHTML, 1, false, s.migrateLoopEvidenceBodyHTML,
+	); err != nil {
+		return fmt.Errorf("migrate loop evidence body_html invalidation: %w", err)
+	}
+	if err := s.runOnceMigration(
 		ctx, migrationPersonInferenceProviderV2, 1, false,
 		s.migratePersonInferenceProviderV2,
 	); err != nil {

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -2873,7 +2874,90 @@ func populateFTS(db *sql.DB) error {
 			), '')
 		FROM messages m
 		LEFT JOIN message_bodies mb ON mb.message_id = m.id`)
-	return err
+	if err != nil {
+		return err
+	}
+	return populateSubsetHTMLOnlyFTS(db)
+}
+
+func populateSubsetHTMLOnlyFTS(db *sql.DB) error {
+	type htmlRow struct {
+		id   int64
+		html string
+	}
+	const batchSize = 500
+	const updateQuery = `UPDATE messages_fts SET body = ? WHERE rowid = ?`
+	var afterID int64
+	for {
+		batch, err := func() (batch []htmlRow, err error) {
+			rows, err := db.Query(`
+			SELECT m.id, mb.body_html
+			FROM messages m
+			JOIN message_bodies mb ON mb.message_id = m.id
+			WHERE m.id > ? AND m.message_type IN ('email', 'google_chat')
+			  AND COALESCE(mb.body_text, '') = ''
+			  AND COALESCE(mb.body_html, '') != ''
+			ORDER BY m.id
+			LIMIT ?`, afterID, batchSize)
+			if err != nil {
+				return nil, fmt.Errorf("query subset HTML-only FTS rows: %w", err)
+			}
+			defer func() {
+				if closeErr := rows.Close(); closeErr != nil && err == nil {
+					err = fmt.Errorf("close subset HTML-only FTS rows: %w", closeErr)
+				}
+			}()
+			batch = make([]htmlRow, 0, batchSize)
+			for rows.Next() {
+				var row htmlRow
+				if err := rows.Scan(&row.id, &row.html); err != nil {
+					return nil, fmt.Errorf("scan subset HTML-only FTS row: %w", err)
+				}
+				batch = append(batch, row)
+			}
+			if err := rows.Err(); err != nil {
+				return nil, fmt.Errorf("iterate subset HTML-only FTS rows: %w", err)
+			}
+			return batch, nil
+		}()
+		if err != nil {
+			return err
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+
+		tx, err := db.Begin()
+		if err != nil {
+			return fmt.Errorf("begin subset HTML-only FTS batch: %w", err)
+		}
+		err = func() (err error) {
+			stmt, err := tx.Prepare(updateQuery)
+			if err != nil {
+				return fmt.Errorf("prepare subset HTML-only FTS update: %w", err)
+			}
+			defer func() {
+				if closeErr := stmt.Close(); closeErr != nil && err == nil {
+					err = fmt.Errorf("close subset HTML-only FTS update: %w", closeErr)
+				}
+			}()
+			for _, row := range batch {
+				body := mime.SearchableBodyText("", row.html)
+				if _, err := stmt.Exec(body, row.id); err != nil {
+					return fmt.Errorf("update subset HTML-only FTS row %d: %w", row.id, err)
+				}
+			}
+			return nil
+		}()
+		if err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit subset HTML-only FTS batch: %w", err)
+		}
+		afterID = batch[len(batch)-1].id
+	}
 }
 
 // copySubsetAccountIdentities copies the confirmed identities of the subset's

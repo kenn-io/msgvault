@@ -57,7 +57,7 @@ func alternativeRelocationRaw(
 	))
 }
 
-func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
+func TestIMAPRelocationAdoptsEditedHTMLOnlySentSnapshot(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
@@ -72,15 +72,16 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 		Body("draftword").
 		CRLF().
 		Bytes()
-	sentRaw := alternativeRelocationRaw(
-		messageID,
-		"Sent subject",
+	sentRaw := []byte(fmt.Sprintf(
+		"From: %s\r\nTo: %s\r\nCc: %s\r\nSubject: %s\r\n"+
+			"Date: Mon, 01 Jan 2024 12:00:00 +0000\r\n"+
+			"Message-ID: <%s>\r\nMIME-Version: 1.0\r\n"+
+			"Content-Type: text/html; charset=utf-8\r\n\r\n%s\r\n",
 		"Final Sender <final-sender@example.com>",
 		"Final Recipient <final-recipient@example.com>",
 		"Final Copy <final-copy@example.com>",
-		"finalword",
-		"<p>htmlfinal</p>",
-	)
+		"Sent subject", messageID, "<p>htmlfinal</p>",
+	))
 
 	addr, user := testutil.StartIMAPMemServerWithSpecialUse(
 		t,
@@ -123,10 +124,13 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 	assert.Equal("final-sender@example.com", message.FromEmail)
 	assert.Equal([]string{"Final Recipient <final-recipient@example.com>"}, message.To)
 	assert.Equal([]string{"Final Copy <final-copy@example.com>"}, message.Cc)
-	assert.Contains(message.BodyText, "finalword")
+	assert.Empty(message.BodyText)
 	assert.NotContains(message.BodyText, "draftword")
 	assert.Contains(message.BodyHTML, "htmlfinal")
 	assert.Empty(message.Snippet)
+	storedBodyText, err := env.Store.GetMessageBodyTextContext(t.Context(), initialID)
+	require.NoError(err)
+	assert.Empty(storedBodyText, "HTML-only relocation should keep canonical plain text empty")
 	assert.Equal(int64(len(sentRaw)), message.SizeEstimate)
 	assert.ElementsMatch([]string{"Envoyes"}, message.Labels)
 	raw, err := env.Store.GetMessageRaw(initialID)
@@ -134,7 +138,7 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 	assert.Equal(sentRaw, raw)
 	assertMessageCount(t, env.Store, 1)
 	results, total, err := env.Store.SearchMessagesQuery(
-		&search.Query{TextTerms: []string{"finalword"}}, 0, 10)
+		&search.Query{TextTerms: []string{"htmlfinal"}}, 0, 10)
 	require.NoError(err)
 	assert.Equal(int64(1), total)
 	require.Len(results, 1)
@@ -153,7 +157,8 @@ func TestIMAPRelocationAdoptsEditedSentSnapshot(t *testing.T) {
 	})
 	message, err = env.Store.GetMessage(initialID)
 	require.NoError(err)
-	assert.Contains(message.BodyText, "finalword")
+	assert.Empty(message.BodyText)
+	assert.Contains(message.BodyHTML, "htmlfinal")
 	assertMessageCount(t, env.Store, 1)
 	require.NoError(thirdClient.Close())
 }

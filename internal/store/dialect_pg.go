@@ -548,6 +548,28 @@ func (d *PostgreSQLDialect) FTSBackfillMissingBatchSQL(_ context.Context, _ *sql
 	), nil
 }
 
+func (d *PostgreSQLDialect) FTSBackfillHTMLOnlyCandidateSQL(
+	_ context.Context, _ *sql.DB, onlyMissing bool,
+) (string, error) {
+	indexedPredicate := ""
+	if onlyMissing {
+		indexedPredicate = fmt.Sprintf(
+			" AND (m.search_fts IS NULL OR m.indexing_version IS DISTINCT FROM %d)",
+			CurrentFTSIndexingVersion,
+		)
+	}
+	return `SELECT m.id FROM messages m
+		WHERE m.id >= ? AND m.id < ?
+		  AND m.message_type IN ('email', 'google_chat')
+		  AND EXISTS (
+			SELECT 1 FROM message_bodies mb
+			WHERE mb.message_id = m.id
+			  AND COALESCE(mb.body_text, '') = ''
+			  AND COALESCE(mb.body_html, '') <> ''
+		  )` + indexedPredicate + `
+		ORDER BY m.id`, nil
+}
+
 // FTSAvailable reports whether tsvector search is available.
 // PostgreSQL always supports tsvector — check that the column exists.
 func (d *PostgreSQLDialect) FTSAvailable(ctx context.Context, db *sql.DB) (bool, error) {

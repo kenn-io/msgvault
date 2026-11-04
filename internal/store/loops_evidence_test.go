@@ -35,6 +35,7 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 		args      []any
 	}{
 		{`UPDATE message_bodies SET body_text = 'Thanks!' WHERE message_id = ?`, []any{id}},
+		{`UPDATE message_bodies SET body_html = '<p>Thanks!</p>' WHERE message_id = ?`, []any{id}},
 		{`DELETE FROM message_bodies WHERE message_id = ?`, []any{id}},
 		{`INSERT INTO message_bodies(message_id,body_text) VALUES (?, 'Can you send it?')`, []any{id}},
 		{`DELETE FROM message_raw WHERE message_id = ?`, []any{id}},
@@ -88,6 +89,61 @@ func TestLoopMessageEvidenceInvalidation(t *testing.T) {
 	var count int
 	require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM loop_message_evidence`).Scan(&count))
 	assert.Zero(count, "deleting a message cascades its cached facts")
+}
+
+func TestLoopEvidenceBodyHTMLMigrationReplacesTriggerAndInvalidatesCache(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
+	ctx := t.Context()
+	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE message_bodies
+		SET body_text = '', body_html = ? WHERE message_id = ?`), `<p>Can you send the report?</p>`, id)
+	require.NoError(err)
+
+	if isPostgresTestDB() {
+		_, err = f.Store.DB().ExecContext(ctx, `CREATE OR REPLACE FUNCTION invalidate_loop_evidence_message_bodies() RETURNS TRIGGER AS $$
+		BEGIN
+		 IF TG_OP = 'UPDATE' AND OLD.message_id IS NOT DISTINCT FROM NEW.message_id AND OLD.body_text IS NOT DISTINCT FROM NEW.body_text THEN
+		  RETURN NULL;
+		 END IF;
+		 DELETE FROM loop_message_evidence WHERE message_id = NEW.message_id OR message_id = OLD.message_id;
+		 RETURN NULL;
+		END;
+		$$ LANGUAGE plpgsql;`)
+		require.NoError(err)
+		_, err = f.Store.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies ON message_bodies`)
+		require.NoError(err)
+		_, err = f.Store.DB().ExecContext(ctx, `CREATE TRIGGER trg_loop_evidence_message_bodies AFTER INSERT OR UPDATE OR DELETE ON message_bodies
+			FOR EACH ROW EXECUTE FUNCTION invalidate_loop_evidence_message_bodies()`)
+	} else {
+		_, err = f.Store.DB().ExecContext(ctx, `DROP TRIGGER IF EXISTS trg_loop_evidence_message_bodies_update;
+			CREATE TRIGGER trg_loop_evidence_message_bodies_update AFTER UPDATE ON message_bodies FOR EACH ROW
+			WHEN OLD.message_id IS NOT NEW.message_id OR OLD.body_text IS NOT NEW.body_text BEGIN
+				DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
+			END;`)
+	}
+	require.NoError(err, "install the pre-migration body_text-only trigger")
+
+	_, token, hit, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	require.False(hit)
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 1, token, store.LoopMessageEvidence{Asks: true}))
+
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`DELETE FROM applied_migrations WHERE name = ?`), "loop_evidence_body_html_v1")
+	require.NoError(err)
+	require.NoError(f.Store.InitSchemaContext(ctx))
+
+	_, token, hit, err = f.Store.LoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	assert.False(hit, "migration clears classifications created before HTML invalidation")
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 1, token, store.LoopMessageEvidence{Asks: true}))
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE message_bodies
+		SET body_html = ? WHERE message_id = ?`), `<p>Thanks!</p>`, id)
+	require.NoError(err)
+	_, _, hit, err = f.Store.LoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	assert.False(hit, "HTML-only body edits invalidate cached classifications")
 }
 
 func TestLoopMessageEvidenceConcurrentMissesShareToken(t *testing.T) {

@@ -4766,7 +4766,7 @@ AFTER INSERT ON message_bodies FOR EACH ROW BEGIN
 END;
 CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_update
 AFTER UPDATE ON message_bodies FOR EACH ROW
-WHEN OLD.message_id IS NOT NEW.message_id OR OLD.body_text IS NOT NEW.body_text BEGIN
+WHEN OLD.message_id IS NOT NEW.message_id OR OLD.body_text IS NOT NEW.body_text OR OLD.body_html IS NOT NEW.body_html BEGIN
  DELETE FROM loop_message_evidence WHERE message_id IN (OLD.message_id, NEW.message_id);
 END;
 CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
