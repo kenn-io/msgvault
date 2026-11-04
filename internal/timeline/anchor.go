@@ -199,7 +199,7 @@ func anchorWindow(target anchorTarget, loc *time.Location) Window {
 	return Window{From: from, To: to}
 }
 
-func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
+func (c *composer) probeAnchor(ctx context.Context, target anchorTarget, days int) []Entry {
 	center := target.at.In(c.loc)
 	if target.callPrecision == string(activitydate.PrecisionDay) {
 		var err error
@@ -222,10 +222,12 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	var calls readResult[[]store.LogicalCall]
 	var notes readResult[[]store.DailyNoteEntry]
 	dateBefore, dateErr := addCivilDate(to.In(c.loc).Format(time.DateOnly), 1)
-	parallel(c.ctx,
+	cc := *c
+	cc.ctx = ctx
+	parallel(ctx,
 		func() {
 			if c.src.Activity != nil {
-				activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+				activity = readWithin(ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
 					if c.req.Conversation {
 						page, err := c.src.Activity.ListActivityBurstsContext(ctx, q)
 						return activityWindow{noise: page.NoiseOmitted, more: page.NextKey != nil}, err
@@ -239,7 +241,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+					cold = readWithin(ctx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
 						if c.req.Conversation {
 							page, err := c.src.Cold.ListColdActivityBurstsContext(ctx, q)
 							return coldActivityWindow{BurstPage: page}, err
@@ -247,7 +249,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 						return c.readColdActivity(ctx, q)
 					})
 				} else {
-					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
+					coldCount = readWithin(ctx, requestTimeout, func(ctx context.Context) (int, error) {
 						return c.src.Cold.CountColdActivityMessagesContext(ctx, q)
 					})
 				}
@@ -255,7 +257,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		},
 		func() {
 			if c.src.Calendar != nil && !c.req.Conversation {
-				calendar = c.readCalendar(from, to)
+				calendar = cc.readCalendar(from, to)
 			}
 		},
 		func() {
@@ -264,7 +266,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 					calls.err = dateErr
 					return
 				}
-				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+				calls = readWithin(ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
 					return c.readCalls(ctx, store.LogicalCallQuery{
 						After: from, Before: to, DateAfter: from.In(c.loc).Format(time.DateOnly), DateBefore: dateBefore,
 						ParticipantIDs: c.participants, Limit: 500,
@@ -274,7 +276,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Notes != nil && !c.req.Conversation {
-				notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
+				notes = readWithin(ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
 					start, _, err := civilDateBoundary(from.In(c.loc).Format(time.DateOnly), c.loc)
 					if err != nil {
 						return nil, err
@@ -372,7 +374,6 @@ func (c *composer) calendarAnchorFallback(target anchorTarget) Entry {
 	}
 }
 func (c *composer) buildAnchor(target anchorTarget) {
-	c.loadFreshness()
 	if c.src.Activity == nil {
 		c.unavailable("history")
 	}
@@ -390,12 +391,15 @@ func (c *composer) buildAnchor(target anchorTarget) {
 		c.ownerGaps()
 	}
 	if target.at.IsZero() {
+		c.loadFreshness()
 		return
 	}
 	c.t.Anchor = &Anchor{Ref: target.ref.Ref, Kind: target.ref.Kind, Time: target.at}
+	collectionCtx, cancel := context.WithTimeout(c.ctx, requestTimeout/2)
+	defer cancel()
 	var entries []Entry
 	for _, days := range []int{1, 2, 4, 8, 16, 31} {
-		entries = c.probeAnchor(target, days)
+		entries = c.probeAnchor(collectionCtx, target, days)
 		before, after := 0, 0
 		for _, e := range entries {
 			if anchorMatches(e, target) {
@@ -407,7 +411,7 @@ func (c *composer) buildAnchor(target anchorTarget) {
 				after++
 			}
 		}
-		if before >= c.req.Before && after >= c.req.After {
+		if (before >= c.req.Before && after >= c.req.After) || collectionCtx.Err() != nil {
 			break
 		}
 	}
@@ -437,6 +441,7 @@ func (c *composer) buildAnchor(target anchorTarget) {
 		entries = entries[max(0, pivot-c.req.Before):min(len(entries), pivot+c.req.After)]
 	}
 	c.t.History = c.afterPosition("history", entries)
+	c.loadFreshness()
 	if !c.req.Scope.Owner {
 		c.ownerGaps()
 	}

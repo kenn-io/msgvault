@@ -121,6 +121,22 @@ func TestAnchorSlowFreshnessLeavesTimeForHistoryProbe(t *testing.T) {
 	assertions.True(got.History[1].Anchor)
 }
 
+func TestAnchorSlowCalendarLeavesTimeForHistoryHydration(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	anchorID := f.add(f.now, false)
+	f.project()
+	calendar := &blockingTimelineCalendar{CalendarSource: f.src.Calendar}
+	f.src.Calendar = calendar
+	req := anchorRequest(messageRef(anchorID))
+
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(got.History, 1)
+	assertions.True(got.History[0].Anchor)
+	assertions.Equal(1, calendar.reads)
+}
+
 func TestAnchorFilteredAnchorStillShown(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

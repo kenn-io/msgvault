@@ -120,20 +120,26 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
 	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts, MergeCopies: c.req.IncludeCold}
-	parallel(c.ctx,
+	// Keep initial readers inside half the request budget so later meeting and
+	// activity hydration still has time to finish on the shared request context.
+	collectionCtx, cancel := context.WithTimeout(c.ctx, requestTimeout/2)
+	defer cancel()
+	cc := *c
+	cc.ctx = collectionCtx
+	parallel(collectionCtx,
 		func() {
 			if c.src.Activity != nil {
-				messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+				messages = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
 					return c.src.Activity.MessageContactAggregateContext(ctx, q)
 				})
-				transcripts = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]int64, error) {
+				transcripts = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]int64, error) {
 					ids, more, err := c.src.Activity.AttendedTranscriptIDsContext(ctx, q, 2000)
 					if more && err == nil {
 						err = errors.New("attended meeting limit reached")
 					}
 					return ids, err
 				})
-				history = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+				history = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
 					cc := *c
 					cc.ctx = ctx
 					return cc.readActivity(historyQuery)
@@ -143,11 +149,11 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		func() {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold {
-					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
+					cold = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (coldActivityWindow, error) {
 						return c.readColdActivity(ctx, historyQuery)
 					})
 				} else {
-					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
+					coldCount = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (int, error) {
 						return c.src.Cold.CountColdActivityMessagesContext(ctx, historyQuery)
 					})
 				}
@@ -155,10 +161,10 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Calls != nil {
-				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+				calls = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
 					return c.src.Calls.CallContactAggregateContext(ctx, q)
 				})
-				logicalCalls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+				logicalCalls = readWithin(collectionCtx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
 					dateBefore, err := addCivilDate(c.t.Now.In(c.loc).Format(time.DateOnly), 1)
 					if err != nil {
 						return nil, err
@@ -173,7 +179,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		},
 		func() {
 			if c.src.Calendar != nil {
-				upcoming = c.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
+				upcoming = cc.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
 			}
 		},
 		func() { cc.loadFreshness() },
