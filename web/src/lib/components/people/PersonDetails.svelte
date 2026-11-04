@@ -11,6 +11,7 @@
   import OrganizationEmploymentTab from '../directory/OrganizationEmploymentTab.svelte';
   import RelationshipsTab from '../directory/RelationshipsTab.svelte';
   import PersonNetwork from '../directory/PersonNetwork.svelte';
+  import PersonOpenLoops from '../directory/PersonOpenLoops.svelte';
   import PersonAgenda from '../directory/PersonAgenda.svelte';
   import PersonBriefCard from '../directory/PersonBriefCard.svelte';
   let { client, directory, personID, onOpenPerson = () => undefined, onAnnounce, onOpenSettings, sweepConfigured, onOpenMeeting }:
@@ -47,6 +48,7 @@
       <RelationshipsTab {client} controller={entity} {personID} {onOpenPerson} />
       <PersonNetwork controller={entity} {onOpenPerson} onOpenOrganization={(id) => organizationRequest = { id, key: ++requestKey }} />
     {/if}
+    <PersonOpenLoops {client} {personID} />
     <PersonAgenda {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={() => onOpenSettings?.('tasks')} />
     <PersonFacts {client} {personID} refreshKey={profile.person} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
     <PersonBriefCard {client} {personID} refreshKey={String(profile.person?.revision)} {onAnnounce} onSetUp={sweepConfigured === false ? () => onOpenSettings?.('enrichment') : undefined} />
