@@ -407,3 +407,36 @@ func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
 	assertions.Equal("2027-03-02T09:00:00Z", occurrence.Start.Format(time.RFC3339))
 	assertions.Equal("2027-03-02T10:00:00Z", occurrence.End.Format(time.RFC3339))
 }
+
+func TestReconcileSourceMessageSnapshotTombstonesCalDAVEvents(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, "snapshot@example.com")
+	require.NoError(t, err)
+	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:deleted-resource@example.org\r\n" +
+		"DTSTART:20270314T130000Z\r\nDTEND:20270314T140000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	events, err := calevent.ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: events[0].Event.ProviderEventID, TimeZone: "UTC"})
+	require.NoError(t, err)
+	messageID, err := st.PersistMessage(&MessagePersistData{
+		Message:      &Message{SourceID: source.ID, SourceMessageID: events[0].Event.ProviderEventID, MessageType: "calendar_event"},
+		Conversation: &ConversationPersistData{SourceConversationID: "deleted-resource", ConversationType: "calendar"},
+		RawMIME:      []byte(raw), RawFormat: calevent.CalDAVRawFormat,
+		Metadata: &sql.NullString{String: string(metadata), Valid: true},
+	})
+	require.NoError(t, err)
+
+	syncID, err := st.StartSync(source.ID, "full")
+	require.NoError(t, err)
+	reader := st.ScopedToSync(source.ID, syncID)
+	reconciled, err := reader.ReconcileSourceMessageSnapshot(t.Context(), source.ID, map[string]struct{}{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), reconciled)
+	var deletedAt sql.NullString
+	require.NoError(t, st.db.QueryRow(`SELECT deleted_from_source_at FROM messages WHERE id = ?`, messageID).Scan(&deletedAt))
+	assert.True(t, deletedAt.Valid)
+	var projections int
+	require.NoError(t, st.db.QueryRow(`SELECT COUNT(*) FROM calendar_events WHERE message_id = ?`, messageID).Scan(&projections))
+	assert.Equal(t, 1, projections, "the retained event projection remains readable after its source tombstone")
+}
