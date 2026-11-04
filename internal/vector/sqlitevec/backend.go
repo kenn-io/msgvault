@@ -974,9 +974,6 @@ func deleteForMessageIDs(ctx context.Context, tx *sql.Tx, vecTable, acceleratorT
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read embedding ids: %w", err)
 	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("close embedding ids: %w", err)
-	}
 	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf(deleteVectorSQL, vecTable))
 	if err != nil {
 		return fmt.Errorf("prepare vector delete: %w", err)
