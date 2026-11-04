@@ -1833,6 +1833,33 @@ func (d *SQLiteDialect) EnsureActivityProjectionTriggers(q querier) error {
 		             revision = activity_projection_queue.revision + 1,
 		             queued_at = CURRENT_TIMESTAMP;
 		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_insert`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_insert
+		     AFTER INSERT ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (NEW.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_update`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_update
+		     AFTER UPDATE ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (OLD.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (NEW.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
+		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_people_delete`,
+		`CREATE TRIGGER trg_activity_queue_conversation_people_delete
+		     AFTER DELETE ON conversation_participants FOR EACH ROW
+		     BEGIN
+		         INSERT INTO activity_projection_conversation_queue (conversation_id)
+		         VALUES (OLD.conversation_id)
+		         ON CONFLICT(conversation_id) DO UPDATE SET after_message_id = 0;
+		     END`,
 		`DROP TRIGGER IF EXISTS trg_activity_queue_conversation_type_update`,
 		`CREATE TRIGGER trg_activity_queue_conversation_type_update
 		     AFTER UPDATE OF conversation_type ON conversations FOR EACH ROW

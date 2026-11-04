@@ -4429,6 +4429,13 @@ CREATE TABLE IF NOT EXISTS activity_projection_queue (
     queued_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Membership writes mark one conversation; the activity drain expands its messages.
+-- No foreign key: a cascading conversation delete can leave a harmless marker.
+CREATE TABLE IF NOT EXISTS activity_projection_conversation_queue (
+    conversation_id INTEGER PRIMARY KEY,
+    after_message_id INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending
     ON activity_projection_queue(message_id)
     WHERE revision > processed_revision;
@@ -4478,48 +4485,7 @@ BEGIN
         queued_at = CURRENT_TIMESTAMP;
 END;
 
-CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_insert
-AFTER INSERT ON conversation_participants FOR EACH ROW
-BEGIN
-    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
-    SELECT id, 1, CURRENT_TIMESTAMP
-    FROM messages
-    WHERE conversation_id = NEW.conversation_id
-    ON CONFLICT(message_id) DO UPDATE SET
-        revision = activity_projection_queue.revision + 1,
-        queued_at = CURRENT_TIMESTAMP;
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_update
-AFTER UPDATE ON conversation_participants FOR EACH ROW
-BEGIN
-    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
-    SELECT id, 1, CURRENT_TIMESTAMP
-    FROM messages
-    WHERE conversation_id = OLD.conversation_id
-    ON CONFLICT(message_id) DO UPDATE SET
-        revision = activity_projection_queue.revision + 1,
-        queued_at = CURRENT_TIMESTAMP;
-    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
-    SELECT id, 1, CURRENT_TIMESTAMP
-    FROM messages
-    WHERE conversation_id = NEW.conversation_id
-    ON CONFLICT(message_id) DO UPDATE SET
-        revision = activity_projection_queue.revision + 1,
-        queued_at = CURRENT_TIMESTAMP;
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_activity_queue_conversation_people_delete
-AFTER DELETE ON conversation_participants FOR EACH ROW
-BEGIN
-    INSERT INTO activity_projection_queue (message_id, revision, queued_at)
-    SELECT id, 1, CURRENT_TIMESTAMP
-    FROM messages
-    WHERE conversation_id = OLD.conversation_id
-    ON CONFLICT(message_id) DO UPDATE SET
-        revision = activity_projection_queue.revision + 1,
-        queued_at = CURRENT_TIMESTAMP;
-END;
+-- Membership triggers are installed by SQLiteDialect.EnsureActivityProjectionTriggers.
 
 -- Conversation updates are classification input: changing email/chat/channel
 -- semantics must reproject every native message already in the conversation.
