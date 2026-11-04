@@ -113,7 +113,7 @@ func TestLegacyCSVRecoveryRejectsAmbiguousSeparatorRepairs(t *testing.T) {
 			original := bytes.Clone(raw)
 			assert.Nil(t, recoverLegacyCSV(raw))
 			_, err := ParseWithRecovery(raw, "fallback")
-			assert.Error(t, err)
+			require.Error(t, err)
 			assert.Equal(t, original, raw)
 		})
 	}
