@@ -59,6 +59,10 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 				assert.Equal(batchUnasked, i, "unasked files come first")
 				batchUnasked++
 				unasked++
+				d.Fingerprint = "fp"
+				d.Outcome = "requested"
+				d.JobID = d.VersionID
+				require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, time.Now().Add(time.Minute)))
 			}
 		}
 		assert.LessOrEqual(batchUnasked, 5, "discovery leaves room for due polls")

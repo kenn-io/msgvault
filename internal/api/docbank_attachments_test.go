@@ -153,7 +153,7 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	sched.jobStatuses = []JobStatus{{Name: DocbankAttachmentMirrorJob, LastError: lastError}}
 	var withoutProfile DocbankAttachmentStatus
 	require.NoError(json.Unmarshal(get().Body.Bytes(), &withoutProfile))
-	assert.Equal(lastError, withoutProfile.LastError)
+	assert.Empty(withoutProfile.LastError)
 	assert.Nil(withoutProfile.Processing)
 
 	cfg.Integrations.Docbank.DocumentProfile = "documents"
@@ -163,6 +163,7 @@ func TestDocbankAttachmentStatus(t *testing.T) {
 	var processing DocbankAttachmentStatus
 	require.NoError(json.Unmarshal(get().Body.Bytes(), &processing))
 	require.NotNil(processing.Processing)
+	assert.Equal(lastError, processing.LastError)
 	assert.Equal("documents", processing.Processing.Profile)
 	assert.Equal(int64(1), processing.Processing.Requested)
 	sched.scheduledJobs[DocbankAttachmentMirrorJob] = false
