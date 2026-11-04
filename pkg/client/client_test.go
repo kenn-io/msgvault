@@ -39,6 +39,8 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 }
 
 func TestGeneratedPersonInstructionAcceptsEmptyScopeAndValue(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
 	const response = `{
 		"adopted":false,
 		"content_trust":"owner",
@@ -61,10 +63,10 @@ func TestGeneratedPersonInstructionAcceptsEmptyScopeAndValue(t *testing.T) {
 		"visible_to_agents":false
 	}`
 	var instruction generated.PersonInstruction
-	require.NoError(t, json.Unmarshal([]byte(response), &instruction))
-	assert.Empty(t, instruction.ScopeKey)
-	assert.Empty(t, instruction.ValueText)
-	require.NoError(t, instruction.Validate())
+	requirements.NoError(json.Unmarshal([]byte(response), &instruction))
+	assertions.Empty(instruction.ScopeKey)
+	assertions.Empty(instruction.ValueText)
+	requirements.NoError(instruction.Validate())
 }
 
 func TestGeneratedPersonMergeRequiredResponseExposesProfiles(t *testing.T) {

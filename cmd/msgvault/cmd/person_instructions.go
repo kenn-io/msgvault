@@ -73,7 +73,7 @@ func newPersonInstructionsCommand() *cobra.Command {
 		}
 		return writeInstructionCLIList(cmd, response.Body, jsonOutput)
 	}}
-	review.Flags().Int64Var(&limit, "limit", 50, "Maximum rows (1–200)")
+	review.Flags().Int64Var(&limit, "limit", 50, "Instructions (1–200)")
 	var kind, text, value, until string
 	var contact int64
 	add := &cobra.Command{Use: "add <person-id>", Short: "Record a person's stated instruction", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -243,10 +243,7 @@ func writeInstructionCLIRows(cmd *cobra.Command, rows []store.PersonInstruction)
 		return fmt.Errorf("write instruction table header: %w", err)
 	}
 	for _, row := range rows {
-		scope := row.ScopeKey
-		if scope == "" {
-			scope = "person"
-		}
+		scope := personInstructionScopeLabel(row.ScopeKey)
 		if _, err := fmt.Fprintf(writer, "%d\t%d\t%s\t%s\t%s\t%s\t%s\t%s\n", row.ID, row.PersonID, textutil.SanitizeTerminal(scope), row.Kind, row.Status, row.ReviewState, textutil.SanitizeTerminal(row.ValueText), textutil.SanitizeTerminal(row.Text)); err != nil {
 			return fmt.Errorf("write instruction table row %d: %w", row.ID, err)
 		}
@@ -255,4 +252,40 @@ func writeInstructionCLIRows(cmd *cobra.Command, rows []store.PersonInstruction)
 		return fmt.Errorf("flush instruction table: %w", err)
 	}
 	return nil
+}
+
+func personInstructionScopeLabel(scopeKey string) string {
+	if scopeKey == "" {
+		return "person"
+	}
+	var scope struct {
+		AddressKind     string  `json:"address_kind"`
+		ServiceID       *int64  `json:"service_id"`
+		ScopeKind       *string `json:"scope_kind"`
+		ScopeValue      *string `json:"scope_value"`
+		NormalizedValue string  `json:"normalized_value"`
+	}
+	if err := json.Unmarshal([]byte(scopeKey), &scope); err == nil &&
+		scope.AddressKind != "" && scope.NormalizedValue != "" {
+		label := scope.AddressKind + ": " + scope.NormalizedValue
+		details := make([]string, 0, 2)
+		if scope.ServiceID != nil && *scope.ServiceID > 0 {
+			details = append(details, fmt.Sprintf("service #%d", *scope.ServiceID))
+		}
+		if scope.ScopeKind != nil && scope.ScopeValue != nil &&
+			strings.TrimSpace(*scope.ScopeKind) != "" && strings.TrimSpace(*scope.ScopeValue) != "" {
+			details = append(details, strings.TrimSpace(*scope.ScopeKind)+" "+strings.TrimSpace(*scope.ScopeValue))
+		}
+		if len(details) > 0 {
+			label += " (" + strings.Join(details, ", ") + ")"
+		}
+		return label
+	}
+	if !strings.HasPrefix(strings.TrimSpace(scopeKey), "{") {
+		kind, value, ok := strings.Cut(scopeKey, ":")
+		if ok && strings.TrimSpace(kind) != "" && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(kind) + ": " + strings.TrimSpace(value)
+		}
+	}
+	return scopeKey
 }

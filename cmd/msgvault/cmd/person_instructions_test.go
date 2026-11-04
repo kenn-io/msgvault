@@ -54,6 +54,27 @@ func TestWriteInstructionCLIRowsWrapsFlushError(t *testing.T) {
 	require.ErrorIs(err, writeErr)
 }
 
+func TestWriteInstructionCLIRowsFormatsContactScopes(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	cmd := newPersonInstructionsCommand()
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	rows := []store.PersonInstruction{
+		{ID: 1, PersonID: 42, ScopeKey: `{"address_kind":"email","normalized_value":"alice@example.com"}`},
+		{ID: 2, PersonID: 42, ScopeKey: `{"address_kind":"username","service_id":11,"scope_kind":"network","scope_value":"irc.example.test","normalized_value":"alice"}`},
+		{ID: 3, PersonID: 42, ScopeKey: `{"address_kind":"username","service_id":12,"scope_kind":"workspace","scope_value":"team.example.test","normalized_value":"alice"}`},
+		{ID: 4, PersonID: 42, ScopeKey: "phone:+12025550123"},
+	}
+
+	require.NoError(writeInstructionCLIRows(cmd, rows))
+
+	assert.Contains(output.String(), "email: alice@example.com")
+	assert.Contains(output.String(), "username: alice (service #11, network irc.example.test)")
+	assert.Contains(output.String(), "username: alice (service #12, workspace team.example.test)")
+	assert.Contains(output.String(), "phone: +12025550123")
+}
+
 func TestPersonInstructionsAddListRevokeThroughDaemon(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -118,6 +139,7 @@ func TestPersonInstructionsReviewIdentifiesPersonAndScopeThroughDaemon(t *testin
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	var instructions []*store.PersonInstruction
+	expectedScopeByID := make(map[int64]string)
 	for _, name := range []string{"alice", "bob"} {
 		participant, err := st.EnsureParticipantByIdentifier("email", name+"@example.com", name)
 		require.NoError(err)
@@ -126,6 +148,7 @@ func TestPersonInstructionsReviewIdentifiesPersonAndScopeThroughDaemon(t *testin
 		row, err := st.AddPersonInstructionContext(t.Context(), store.PersonInstructionInput{PersonID: person.ID, Kind: personfacts.InstructionKindTiming, Text: "no calls before 9am", Actor: "owner"})
 		require.NoError(err)
 		instructions = append(instructions, row)
+		expectedScopeByID[row.ID] = "person"
 		if name == "bob" {
 			for _, address := range []string{"bob.work@example.com", "bob.home@example.com"} {
 				point, err := st.AddPersonContactPointContext(t.Context(), person.ID, store.PersonContactPointInput{AddressKind: store.ContactAddressEmail, OriginalValue: address, Envelope: store.ValueEnvelopeInput{Source: store.ProvenanceUser}})
@@ -133,6 +156,7 @@ func TestPersonInstructionsReviewIdentifiesPersonAndScopeThroughDaemon(t *testin
 				row, err := st.AddPersonInstructionContext(t.Context(), store.PersonInstructionInput{PersonID: person.ID, Kind: personfacts.InstructionKindAvoidAddress, Text: "do not use this address", ContactPointID: &point.Envelope.ID, Actor: "owner"})
 				require.NoError(err)
 				instructions = append(instructions, row)
+				expectedScopeByID[row.ID] = "email: " + address
 			}
 		}
 	}
@@ -150,19 +174,17 @@ func TestPersonInstructionsReviewIdentifiesPersonAndScopeThroughDaemon(t *testin
 	assert.Equal([]string{"ID", "PERSON", "SCOPE", "KIND", "STATUS", "REVIEW", "VALUE", "TEXT"}, strings.Fields(lines[0]))
 	for _, row := range instructions {
 		var fields []string
+		var rowLine string
 		for _, line := range lines[1:] {
 			candidate := strings.Fields(line)
 			if candidate[0] == strconv.FormatInt(row.ID, 10) {
 				fields = candidate
+				rowLine = line
 				break
 			}
 		}
 		require.GreaterOrEqual(len(fields), 3)
 		assert.Equal(strconv.FormatInt(row.PersonID, 10), fields[1])
-		scope := row.ScopeKey
-		if scope == "" {
-			scope = "person"
-		}
-		assert.Equal(scope, fields[2])
+		assert.Contains(rowLine, expectedScopeByID[row.ID])
 	}
 }
