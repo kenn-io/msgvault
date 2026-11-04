@@ -314,8 +314,8 @@ const missingMergedAttachmentPredicate = `(
 
 func (s *Store) copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, originalSource int64) error {
 	untrustedRawSent := s.untrustedRawImportedSentSQL("source_message", "source_owner")
-	sentLabel := `(` + sentFolderLabelSQL("source_label_def") + ` OR ` +
-		sentGmailLabelSQL("source_label_def", "source_owner") + `)`
+	sentLabel := `COALESCE((` + sentFolderLabelSQL("source_label_def") + ` OR ` +
+		sentGmailLabelSQL("source_label_def", "source_owner") + `), FALSE)`
 	labelSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_labels(message_id, label_id)
 		SELECT ?, source_label.label_id
 		FROM message_labels source_label

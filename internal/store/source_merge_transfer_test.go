@@ -521,12 +521,16 @@ func TestMergeSourcesDoesNotTransferRawImportSentLabelToNativeSurvivor(t *testin
 	duplicate := emailMergeFixtureMessage(t, st, from.ID, "eml-"+strings.Repeat("d", 64), []string{recipient}, true)
 
 	for _, sourceID := range []int64{from.ID, into.ID} {
-		labels, err := st.EnsureLabelsBatch(sourceID, map[string]store.LabelInfo{
+		labelInfo := map[string]store.LabelInfo{
 			"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
-		})
+		}
+		if sourceID == from.ID {
+			labelInfo["imported-tag"] = store.LabelInfo{Name: "Imported tag", Type: "user"}
+		}
+		labels, err := st.EnsureLabelsBatch(sourceID, labelInfo)
 		require.NoError(err)
 		if sourceID == from.ID {
-			require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+			require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"], labels["imported-tag"]}))
 		}
 	}
 
@@ -544,6 +548,11 @@ func TestMergeSourcesDoesNotTransferRawImportSentLabelToNativeSurvivor(t *testin
 		JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=? AND l.system_role=?`),
 		survivor, store.LabelSystemRoleSent).Scan(&sentLabels))
 	assert.Zero(sentLabels, "the raw import's Sent label must not be copied to the native survivor")
+	var importedLabels int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_labels ml
+		JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=? AND l.name=? AND l.source_id=?`),
+		survivor, "Imported tag", into.ID).Scan(&importedLabels))
+	assert.Equal(1, importedLabels, "ordinary raw-import labels must still transfer to the native survivor")
 }
 
 func FuzzRawImporterSentLabelsDoNotEstablishSenderOwnership(f *testing.F) {
@@ -712,10 +721,11 @@ func TestMergeDuplicatesDoesNotTransferRawImportSentLabelToNativeSurvivor(t *tes
 			}
 
 			labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
-				"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+				"SENT":         {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+				"imported-tag": {Name: "Imported tag", Type: "user"},
 			})
 			require.NoError(err)
-			require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+			require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"], labels["imported-tag"]}))
 			_, err = st.MergeDuplicates(survivor, []int64{duplicate}, "native-survivor-raw-sent-label")
 			require.NoError(err)
 
@@ -725,6 +735,12 @@ func TestMergeDuplicatesDoesNotTransferRawImportSentLabelToNativeSurvivor(t *tes
 			require.NoError(err)
 			assert.Equal("none", got["imported-recipient@example.test"].Relationship,
 				"a raw import's Sent label must not establish ownership on a native incoming survivor")
+			assert.Equal("none", got["native-recipient@example.test"].Relationship,
+				"a raw import's Sent label must not transfer owner-send evidence to the native survivor")
+			var importedLabels int
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_labels
+				WHERE message_id=? AND label_id=?`), survivor, labels["imported-tag"]).Scan(&importedLabels))
+			assert.Equal(1, importedLabels, "ordinary raw-import labels must still transfer to the native survivor")
 		})
 	}
 }

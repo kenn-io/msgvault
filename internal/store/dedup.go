@@ -501,8 +501,8 @@ func (s *Store) MergeDuplicates(
 
 	result := &MergeResult{}
 	untrustedRawSent := s.untrustedRawImportedSentSQL("duplicate", "duplicate_source")
-	duplicateSentLabel := `(` + sentFolderLabelSQL("duplicate_label") + ` OR ` +
-		sentGmailLabelSQL("duplicate_label", "duplicate_source") + `)`
+	duplicateSentLabel := `COALESCE((` + sentFolderLabelSQL("duplicate_label") + ` OR ` +
+		sentGmailLabelSQL("duplicate_label", "duplicate_source") + `), FALSE)`
 	unionLabelsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_labels (message_id, label_id)
 			SELECT ?, duplicate_label.id
 			FROM message_labels duplicate_ml
