@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -86,6 +87,46 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, msgs, 2)
 		assert.Equal(t, []string{gmailSourceID(2), gmailSourceID(1)}, []string{msgs[0].SourceMessageID, msgs[1].SourceMessageID})
+		if st.IsPostgreSQL() {
+			t.Run("bounded_probe", func(t *testing.T) {
+				require := require.New(t)
+				st := testutil.NewTestStore(t)
+				src, err := st.GetOrCreateSource("gmail", "large@example.org")
+				require.NoError(err)
+				convID, err := st.EnsureConversation(src.ID, "large", "Large sender")
+				require.NoError(err)
+				aliceID, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+				require.NoError(err)
+				eng := query.NewEngine(st.DB(), true)
+				db := st.DB()
+				db.SetMaxOpenConns(1)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO messages(source_id,conversation_id,source_message_id,sent_at,message_type,sender_id)
+ SELECT $1,$2,'bulk-' || id,TIMESTAMPTZ '2024-07-01 00:00:00' + id * INTERVAL '1 second','email',$3 FROM generate_series(1,25000) id`, src.ID, convID, aliceID)
+				require.NoError(err)
+				_, err = db.ExecContext(t.Context(), `INSERT INTO message_recipients(message_id,participant_id,recipient_type)
+ SELECT id,$1,'from' FROM messages WHERE source_message_id LIKE 'bulk-%'`, aliceID)
+				require.NoError(err)
+				var schema string
+				require.NoError(db.QueryRowContext(t.Context(), `SELECT current_schema()`).Scan(&schema))
+				_, err = db.ExecContext(t.Context(), fmt.Sprintf(`
+CREATE TEMP SEQUENCE sender_message_visits;
+CREATE FUNCTION pg_temp.record_sender_visit(bigint) RETURNS boolean LANGUAGE plpgsql VOLATILE AS $$
+BEGIN PERFORM nextval('pg_temp.sender_message_visits'); RETURN true; END $$;
+CREATE TEMP VIEW messages AS SELECT * FROM %q.messages WHERE pg_temp.record_sender_visit(id)`, schema))
+				require.NoError(err)
+				messages, err := eng.ListMessages(t.Context(), query.MessageFilter{
+					Sender:     "alice@example.com",
+					Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
+					Pagination: query.Pagination{Limit: 100},
+				})
+				require.NoError(err)
+				require.Len(messages, 100)
+				assert.Equal(t, "bulk-25000", messages[0].SourceMessageID)
+				var visits int64
+				require.NoError(db.QueryRowContext(t.Context(), `SELECT last_value FROM pg_temp.sender_message_visits`).Scan(&visits))
+				assert.Less(t, visits, int64(26000), "PostgreSQL sender lists must avoid an extra candidate scan before paging")
+			})
+		}
 	})
 
 	t.Run("pipe_or", func(t *testing.T) {

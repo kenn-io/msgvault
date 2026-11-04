@@ -3,6 +3,7 @@
 package query_test
 
 import (
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -45,20 +46,7 @@ func TestSenderListBoundedWork(t *testing.T) {
 			st, err = store.Open(path) // Include the production open-time optimizer.
 			setupRequire.NoError(err)
 			defer func() { setupRequire.NoError(st.Close()) }()
-			st.DB().SetMaxOpenConns(1)
-			conn, err := st.DB().Conn(t.Context())
-			setupRequire.NoError(err)
-			visits := 0
-			setupRequire.NoError(conn.Raw(func(raw any) error {
-				c, ok := raw.(*sqlite3.SQLiteConn)
-				setupRequire.True(ok)
-				return c.RegisterFunc("record_message_visit", func(int64) bool { visits++; return true }, false)
-			}))
-			// A flattened view keeps the real message indexes and counts rows evaluated
-			// by the production query, including its unsuccessful date walk.
-			_, err = conn.ExecContext(t.Context(), `CREATE TEMP VIEW messages AS SELECT * FROM main.messages WHERE record_message_visit(id)`)
-			setupRequire.NoError(err)
-			setupRequire.NoError(conn.Close())
+			visits := countSenderMessageVisits(t, st.DB())
 			for _, tc := range []struct {
 				sender, label string
 				want          int
@@ -67,13 +55,13 @@ func TestSenderListBoundedWork(t *testing.T) {
 			} {
 				t.Run(tc.sender+tc.label, func(t *testing.T) {
 					require := require.New(t)
-					visits = 0
+					*visits = 0
 					messages, err := query.NewSQLiteEngine(st.DB()).ListMessages(t.Context(), query.MessageFilter{Sender: tc.sender, Label: tc.label,
 						Sorting: query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc}, Pagination: query.Pagination{Limit: 100}})
 					require.NoError(err)
 					assert.Len(t, messages, tc.want)
 					// The probe, membership query, and result query each visit sender candidates.
-					assert.Less(t, visits, 4000, "sender work must stay bounded as unrelated messages grow")
+					assert.Less(t, *visits, 4000, "sender work must stay bounded as unrelated messages grow")
 				})
 			}
 			for _, scope := range []string{"single", "multiple", "context"} {
@@ -90,7 +78,7 @@ func TestSenderListBoundedWork(t *testing.T) {
 					case "context":
 						ctx = sourcescope.WithSourceIDs(ctx, []int64{2})
 					}
-					visits = 0
+					*visits = 0
 					messages, err := query.NewSQLiteEngine(st.DB()).ListMessages(ctx, filter)
 					require.NoError(err)
 					ids := make([]int64, len(messages))
@@ -98,13 +86,13 @@ func TestSenderListBoundedWork(t *testing.T) {
 						ids[i] = message.ID
 					}
 					assert.Equal([]int64{40001}, ids)
-					assert.Less(visits, 4000, "small source filters must retain bounded sender work")
+					assert.Less(*visits, 4000, "small source filters must retain bounded sender work")
 					filter.Sender = "absent@example.org"
-					visits = 0
+					*visits = 0
 					messages, err = query.NewSQLiteEngine(st.DB()).ListMessages(ctx, filter)
 					require.NoError(err)
 					assert.Empty(messages)
-					assert.Less(visits, 4000, "absent sender work must stay bounded inside a small source")
+					assert.Less(*visits, 4000, "absent sender work must stay bounded inside a small source")
 				})
 			}
 		})
@@ -144,18 +132,7 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
 			st, err = store.Open(path)
 			require.NoError(err)
 			defer func() { require.NoError(st.Close()) }()
-			st.DB().SetMaxOpenConns(1)
-			conn, err := st.DB().Conn(t.Context())
-			require.NoError(err)
-			visits := 0
-			require.NoError(conn.Raw(func(raw any) error {
-				c, ok := raw.(*sqlite3.SQLiteConn)
-				require.True(ok)
-				return c.RegisterFunc("record_message_visit", func(int64) bool { visits++; return true }, false)
-			}))
-			_, err = conn.ExecContext(t.Context(), `CREATE TEMP VIEW messages AS SELECT * FROM main.messages WHERE record_message_visit(id)`)
-			require.NoError(err)
-			require.NoError(conn.Close())
+			visits := countSenderMessageVisits(t, st.DB())
 			filter := query.MessageFilter{
 				Sender: "bounded@example.org", HideDeletedFromSource: tc.hideSource,
 				Sorting: query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc}, Pagination: query.Pagination{Limit: 100},
@@ -165,7 +142,7 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
 			require.NoError(err)
 			require.Len(messages, tc.want)
 			assert.Equal(t, tc.firstID, messages[0].ID)
-			assert.Less(t, visits, 20000, "overlap and hidden messages must retain bounded sender work")
+			assert.Less(t, *visits, 20000, "overlap and hidden messages must retain bounded sender work")
 			if tc.hideSource {
 				filter.HideDeletedFromSource = false
 				messages, err = engine.ListMessages(t.Context(), filter)
@@ -178,7 +155,7 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
 }
 
 func TestSenderListEquivalence(t *testing.T) {
-	dbtest.SkipIfPostgres(t, "SQLite forced-bound comparison")
+	dbtest.SkipIfPostgres(t, "SQLite candidate-path comparison")
 	st := testutil.NewSQLiteTestStore(t)
 	fixture := &dbtest.TestDB{DB: st.DB(), T: t}
 	fixture.SeedStandardDataSet()
@@ -198,47 +175,159 @@ func TestSenderListEquivalence(t *testing.T) {
  INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(7,3,'from')`)
 	require.NoError(t, err)
 	engine := query.NewSQLiteEngine(st.DB())
-	for _, tc := range []struct {
-		name   string
-		filter query.MessageFilter
-		want   []int64
-	}{
-		{"multi-author and duplicate", query.MessageFilter{Sender: "alice@example.com"}, []int64{9, 8, 3, 2, 1}},
-		{"same author", query.MessageFilter{Sender: "alice@example.com", SenderName: "Bob"}, []int64{}},
-		{"override", query.MessageFilter{Sender: "alice@example.com", SenderName: "Override"}, []int64{2}},
-		{"phone", query.MessageFilter{Sender: "+12025550123", SenderName: "Carol White"}, []int64{7, 6}},
-		{"source", query.MessageFilter{Sender: "alice@example.com", SourceID: new(int64(1))}, []int64{9, 3, 2, 1}},
-		{"conversation", query.MessageFilter{Sender: "alice@example.com", ConversationID: new(int64(1))}, []int64{3, 2, 1}},
-		{"label", query.MessageFilter{Sender: "alice@example.com", Label: "Work"}, []int64{1}},
-		{"name only", query.MessageFilter{SenderName: "Override"}, []int64{2}},
-		{"absent", query.MessageFilter{Sender: "absent@example.org"}, []int64{}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			filter := tc.filter
-			filter.Sorting = query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc}
-			messages, err := engine.ListMessages(t.Context(), filter)
-			require.NoError(err)
-			ids := make([]int64, len(messages))
-			for i, m := range messages {
-				ids[i] = m.ID
-			}
-			assert.Equal(tc.want, ids)
-			for _, field := range []query.MessageSortField{query.MessageSortByDate, query.MessageSortBySubject, query.MessageSortBySize} {
-				for _, direction := range []query.SortDirection{query.SortAsc, query.SortDesc} {
-					for _, offset := range []int{0, 1, 20} {
-						filter.Sorting = query.MessageSorting{Field: field, Direction: direction}
-						filter.Pagination = query.Pagination{Limit: 2, Offset: offset}
-						want, err := engine.ListMessagesWithSenderBound(t.Context(), filter, 0)
-						require.NoError(err)
-						for _, bound := range []int{2, 5000} {
-							got, err := engine.ListMessagesWithSenderBound(t.Context(), filter, bound)
+	baseline := make(map[string][]query.MessageSummary)
+	for _, extra := range []int{0, 10001} {
+		if extra > 0 {
+			_, err := st.DB().Exec(`WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<10100)
+INSERT INTO messages(id,source_id,conversation_id,source_message_id,message_type,sent_at,sender_id,deleted_at)
+SELECT id,1,1,'hidden-' || id,'email','2024-01-01 00:00:00',1,'2024-06-01 00:00:00' FROM ids;
+INSERT INTO message_recipients(message_id,participant_id,recipient_type)
+SELECT id,3,'from' FROM messages WHERE id>=100`)
+			require.NoError(t, err)
+		}
+		for _, tc := range []struct {
+			name   string
+			filter query.MessageFilter
+			want   []int64
+		}{
+			{"multi-author and duplicate", query.MessageFilter{Sender: "alice@example.com"}, []int64{9, 8, 3, 2, 1}},
+			{"same author", query.MessageFilter{Sender: "alice@example.com", SenderName: "Bob"}, []int64{}},
+			{"override", query.MessageFilter{Sender: "alice@example.com", SenderName: "Override"}, []int64{2}},
+			{"phone", query.MessageFilter{Sender: "+12025550123", SenderName: "Carol White"}, []int64{7, 6}},
+			{"source", query.MessageFilter{Sender: "alice@example.com", SourceID: new(int64(1))}, []int64{9, 3, 2, 1}},
+			{"conversation", query.MessageFilter{Sender: "alice@example.com", ConversationID: new(int64(1))}, []int64{3, 2, 1}},
+			{"label", query.MessageFilter{Sender: "alice@example.com", Label: "Work"}, []int64{1}},
+			{"name only", query.MessageFilter{SenderName: "Override"}, []int64{2}},
+			{"absent", query.MessageFilter{Sender: "absent@example.org"}, []int64{}},
+		} {
+			t.Run(fmt.Sprintf("%s/extra=%d", tc.name, extra), func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				filter := tc.filter
+				filter.Sorting = query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc}
+				messages, err := engine.ListMessages(t.Context(), filter)
+				require.NoError(err)
+				ids := make([]int64, len(messages))
+				for i, m := range messages {
+					ids[i] = m.ID
+				}
+				assert.Equal(tc.want, ids)
+				for _, field := range []query.MessageSortField{query.MessageSortByDate, query.MessageSortBySubject, query.MessageSortBySize} {
+					for _, direction := range []query.SortDirection{query.SortAsc, query.SortDesc} {
+						for _, offset := range []int{0, 1, 20} {
+							filter.Sorting = query.MessageSorting{Field: field, Direction: direction}
+							filter.Pagination = query.Pagination{Limit: 2, Offset: offset}
+							got, err := engine.ListMessages(t.Context(), filter)
 							require.NoError(err)
-							assert.Equal(want, got, "field=%v direction=%v offset=%d bound=%d", field, direction, offset, bound)
+							key := fmt.Sprintf("%s/%v/%v/%d", tc.name, field, direction, offset)
+							if extra == 0 {
+								baseline[key] = got
+							} else {
+								assert.Equal(baseline[key], got, key)
+							}
 						}
 					}
 				}
+			})
+		}
+	}
+}
+
+func countSenderMessageVisits(t *testing.T, db *sql.DB) *int {
+	t.Helper()
+	require := require.New(t)
+	db.SetMaxOpenConns(1)
+	conn, err := db.Conn(t.Context())
+	require.NoError(err)
+	visits := new(int)
+	require.NoError(conn.Raw(func(raw any) error {
+		c, ok := raw.(*sqlite3.SQLiteConn)
+		require.True(ok)
+		return c.RegisterFunc("record_message_visit", func(int64) bool { (*visits)++; return true }, false)
+	}))
+	// A flattened view keeps the real message indexes and counts rows evaluated
+	// by the production query, including its unsuccessful date walk.
+	_, err = conn.ExecContext(t.Context(), `CREATE TEMP VIEW messages AS SELECT * FROM main.messages WHERE record_message_visit(id)`)
+	require.NoError(err)
+	require.NoError(conn.Close())
+	return visits
+}
+
+func TestSenderListProbeWork(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite row-visit instrumentation")
+	for _, hidden := range []bool{false, true} {
+		t.Run(fmt.Sprintf("hidden-prefix=%v", hidden), func(t *testing.T) {
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "archive.db")
+			st := testutil.NewSQLiteTestStoreAt(t, path)
+			fixture := &dbtest.TestDB{DB: st.DB(), T: t}
+			fixture.SeedStandardDataSet()
+			_, err := st.DB().Exec(`INSERT INTO participants(id,email_address) VALUES(4,'large@example.org');
+WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<200099)
+INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,message_type,deleted_at)
+SELECT id,1,1,'large-' || id,datetime('2024-06-01','+' || id || ' seconds'),'email',
+ CASE WHEN ? AND id<100100 THEN '2024-06-02 00:00:00' END FROM ids;
+INSERT INTO message_recipients(message_id,participant_id,recipient_type)
+SELECT id,4,'from' FROM messages WHERE id>=100`, hidden)
+			require.NoError(err)
+			require.NoError(st.Close())
+			st, err = store.Open(path)
+			require.NoError(err)
+			defer func() { require.NoError(st.Close()) }()
+			visits := countSenderMessageVisits(t, st.DB())
+			messages, err := query.NewSQLiteEngine(st.DB()).ListMessages(t.Context(), query.MessageFilter{
+				Sender:     "large@example.org",
+				Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
+				Pagination: query.Pagination{Limit: 100},
+			})
+			require.NoError(err)
+			require.Len(messages, 100)
+			assert.Equal(t, int64(200099), messages[0].ID)
+			// The fallback sorts this fixture's live rows. Allow that work,
+			// plus fewer than 1,000 extra reads, without walking hidden history.
+			maxVisits := 201000
+			if hidden {
+				maxVisits = 101000
+			}
+			assert.Less(t, *visits, maxVisits, "the probe must avoid reading message rows")
+		})
+	}
+}
+
+func TestSenderListRowBoundary(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite candidate row boundary")
+	for _, rows := range []int{10000, 10001} {
+		t.Run(strconv.Itoa(rows), func(t *testing.T) {
+			require := require.New(t)
+			st := testutil.NewSQLiteTestStore(t)
+			fixture := &dbtest.TestDB{DB: st.DB(), T: t}
+			fixture.SeedStandardDataSet()
+			_, err := st.DB().Exec(`INSERT INTO participants(id,email_address) VALUES(4,'boundary@example.org');
+WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<30099)
+INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,sender_id,message_type)
+SELECT id,1,1,'boundary-' || id,datetime('2024-06-01','+' || id || ' seconds'),CASE WHEN id<5100 THEN 4 ELSE 1 END,'email' FROM ids;
+INSERT INTO message_recipients(message_id,participant_id,recipient_type)
+SELECT id,4,'from' FROM messages WHERE sender_id=4`)
+			require.NoError(err)
+			wantFirst := int64(5099)
+			if rows == 10001 {
+				_, err = st.DB().Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type) VALUES(30099,4,'from')`)
+				require.NoError(err)
+				wantFirst = 30099
+			}
+			engine := query.NewSQLiteEngine(st.DB())
+			messages, err := engine.ListMessages(t.Context(), query.MessageFilter{
+				Sender:     "boundary@example.org",
+				Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
+				Pagination: query.Pagination{Limit: 100},
+			})
+			require.NoError(err)
+			require.Len(messages, 100)
+			assert.Equal(t, wantFirst, messages[0].ID)
+			seen := make(map[int64]bool)
+			for _, message := range messages {
+				assert.False(t, seen[message.ID], "overlapping sender representations must return one message")
+				seen[message.ID] = true
 			}
 		})
 	}
