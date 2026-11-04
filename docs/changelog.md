@@ -8,6 +8,8 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- [Topic search](usage/people.md#find-who-knows-about-a-topic) lists the people who wrote about a topic, with dated message citations. Available as `person who-knows` and the owner-only `GET /api/v1/people/who-knows`.
+
 - Start bounded Gmail or IMAP historical imports through MCP with `--allow-import-writes`, and follow their durable job status.
 
 - Find overlapping meeting notes and calendar events with `meetings suggest`, the API, or MCP, then link the copies you choose.

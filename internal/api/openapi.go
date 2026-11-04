@@ -428,7 +428,8 @@ import (
 // 5.12.0 adds owner-only email family lookup.
 // 5.13.0 adds fact decision outcomes, evidence filtering, and a person fact summary.
 // 5.14.0 adds each decision's submitted claim value to its history row.
-const APISchemaVersion = "5.14.0"
+// 5.15.0 adds owner-only people/who-knows, a ranking of authors by cited topic evidence.
+const APISchemaVersion = "5.15.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

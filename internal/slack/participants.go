@@ -10,7 +10,8 @@ import (
 
 // participantIdentifierType namespaces Slack user IDs in
 // participant_identifiers. IDs are only unique per workspace, so the stored
-// identifier value is "<team_id>:<user_id>".
+// identifier value is "<team_id>:<user_id>", with an additional
+// "<team_id>:bot:<user_id>" identifier for is_bot users.
 const participantIdentifierType = "slack"
 
 // participantResolver resolves Slack user IDs to msgvault participant IDs,
@@ -123,6 +124,11 @@ func (r *participantResolver) resolveID(ctx context.Context, userID string) (int
 	pid, err := r.store.EnsureParticipantByIdentifierContext(ctx, participantIdentifierType, r.identifierValue(userID), name)
 	if err != nil {
 		return 0, err
+	}
+	if known && u.IsBot {
+		if err := r.store.SetParticipantIdentifierContext(ctx, pid, participantIdentifierType, r.identifierValue("bot:"+userID)); err != nil {
+			return 0, err
+		}
 	}
 	r.fallback[userID] = pid
 	return pid, nil
