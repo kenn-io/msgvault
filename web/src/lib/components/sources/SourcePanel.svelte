@@ -6,7 +6,7 @@
   import type { SourceStatus, Setting } from '../../api/generated/models';
   import { persistedValue, readOnlyValue } from '../../settings/catalog';
   import { scheduleSummary } from '../../settings/cron';
-  import { sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
+  import { sourceFailure, sourceRunState, sourceTypeLabel, syncRunning, syncCommand, syncUnavailableLabel, unmeasuredReasonLabel, SOURCE_SETTING_PREFIX } from '../../sources/labels';
   import { operationStateChip } from '../../operations/labels';
   import { formatDateTime } from '../../util/format';
   import SidePanel from '../common/SidePanel.svelte';
@@ -36,6 +36,7 @@
   const chip = $derived(operationStateChip(sourceRunState(source) ?? 'Never synced'));
   const lastGood = $derived(source.last_successful_sync?.completed_at);
   const latest = $derived(source.latest_sync);
+  const unmeasured = $derived(unmeasuredReasonLabel(latest));
   const runs = $derived([latest, source.last_successful_sync?.id !== latest?.id ? source.last_successful_sync : undefined].filter((run): run is NonNullable<typeof run> => Boolean(run)));
   const attachments = $derived(ATTACHMENTS.flatMap(([suffix, label]) => {
     const setting = settings.find(setting => setting.key === `${prefix}.${suffix}`);
@@ -75,6 +76,7 @@
       </div>
     </div>
     {@render notice()}
+    {#if unmeasured}<section class="block" aria-label="Measurement"><p>{unmeasured}</p></section>{/if}
     {#if failure}<section class="block" aria-label="Failure"><p class="failure">{failure}</p>{#if source.scheduler_last_error && source.scheduler_last_error !== failure}<p class="failure">{source.scheduler_last_error}</p>{/if}</section>{/if}
     {#if source.source_type !== 'meeting_import' && !source.can_sync && !syncing}
       {@const command = syncCommand(source)}

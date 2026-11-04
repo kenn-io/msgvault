@@ -5,9 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
@@ -23,6 +28,12 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.WhatsAppAppleJobName(src.Phone)))
 	}()
+	if state == nil || state.cfg == nil {
+		return errors.New("configuration is unavailable")
+	}
+	if !strings.HasPrefix(src.Phone, "+") {
+		return fmt.Errorf("whatsapp_apple source %q: phone must be in E.164 format (starting with +)", src.Name)
+	}
 	path := src.Path
 	if path == "" {
 		home, err := os.UserHomeDir()
@@ -31,12 +42,43 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 		}
 		path = filepath.Join(home, defaultWhatsAppAppleStorePath)
 	}
+	const syncType = "whatsapp_apple_import"
+	readStartedAt := time.Now()
+	if err := checkAppleSourceReadable(path); err != nil {
+		recordUnreadableSource(ctx, s, "whatsapp", src.Phone, syncType, path, readStartedAt, err)
+		return fmt.Errorf("whatsapp_apple source %q: %w", src.Name, err)
+	}
+	writerAlive := whatsAppWriterAlive()
+
 	opts := whatsapp.DefaultOptions()
+	opts.WriterAlive = writerAlive
 	opts.Phone = src.Phone
 	opts.DisplayName = src.DisplayName
+	opts.AttachmentsDir = state.cfg.AttachmentsDir()
 	summary, err := whatsapp.NewImporter(s, scheduledWhatsAppProgress{logger: state.logger, source: src.Name}).Import(ctx, path, opts)
 	if err != nil {
+		if summary != nil && summary.SyncID != 0 {
+			markRunIfSourceUnreadable(ctx, s, summary.SyncID, path, readStartedAt)
+		} else {
+			recordUnreadableSource(ctx, s, "whatsapp", src.Phone, syncType, path, readStartedAt, err)
+		}
 		return fmt.Errorf("whatsapp apple source %q: %w", src.Name, err)
+	}
+	if summary.SourceID != 0 {
+		m := store.SyncMeasurement{
+			ReadStartedAt: &readStartedAt,
+			SourceMtime:   appleSourceMtime(path),
+			WriterAlive:   writerAlive,
+		}.ClassifyOutcome(summary.MessagesAdded+summary.MessagesUpdated > 0)
+		if err := s.SetSyncMeasurement(context.WithoutCancel(ctx), summary.SyncID, m); err != nil {
+			state.logger.Warn("could not record sync measurement", "error", err)
+		}
+		// A run that could not see new data must not make the source look fresh.
+		if m.Outcome != store.SyncOutcomeUnmeasured {
+			if err := s.TouchSourceLastSyncAt(context.WithoutCancel(ctx), summary.SourceID); err != nil {
+				return fmt.Errorf("update source freshness: %w", err)
+			}
+		}
 	}
 	// The import committed; record its owner and finish the migration even
 	// when a stop request arrives now.
@@ -68,19 +110,26 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 			return err
 		}
 	}
-	client, err := imessage.NewClient(ctx, path, opts...)
-	if err != nil {
-		return fmt.Errorf("open iMessage database: %w", err)
+	if cfg.Window != "" {
+		window, err := time.ParseDuration(cfg.Window)
+		if err != nil || window <= 0 {
+			return fmt.Errorf("imessage.window %q must be a positive duration", cfg.Window)
+		}
+		opts = append(opts, imessage.WithAfterDate(time.Now().Add(-window)))
 	}
-	defer func() { _ = client.Close() }()
 	src, err := resolveImessageSource(s)
 	if err != nil {
 		return fmt.Errorf("get or create source: %w", err)
 	}
+	client, err := openImessageClientRecorded(ctx, s, src, path, opts, time.Now())
+	if err != nil {
+		return err
+	}
+	defer func() { _ = client.Close() }()
 	if err := runPostSourceCreateMigrationsForInvocation(ctx, s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)
 	}
-	summary, err := importImessageRecorded(ctx, s, client, src.ID)
+	summary, err := importImessageRecorded(ctx, s, client, src.ID, path)
 	if attachmentImportOnly(err) {
 		state.logger.Warn("imessage attachment import warning", "error", err)
 	} else if err != nil {
@@ -106,4 +155,123 @@ type scheduledWhatsAppProgress struct {
 
 func (p scheduledWhatsAppProgress) OnError(err error) {
 	p.logger.Warn("whatsapp apple import warning", "source", p.source, "error", err)
+}
+
+// openImessageClientRecorded opens chat.db. When src is set and the source
+// cannot be read (missing, or denied by Full Disk Access), it also records an
+// unmeasured run on src, so every caller reports the gap the same way.
+func openImessageClientRecorded(
+	ctx context.Context, s *store.Store, src *store.Source, path string,
+	opts []imessage.ClientOption, readStartedAt time.Time,
+) (*imessage.Client, error) {
+	err := checkAppleSourceReadable(path)
+	var client *imessage.Client
+	if err == nil {
+		client, err = imessage.NewClient(ctx, path, opts...)
+	}
+	if err != nil {
+		if src != nil {
+			recordUnreadableSource(ctx, s, src.SourceType, src.Identifier, "imessage_import", path, readStartedAt, err)
+		}
+		return nil, fmt.Errorf("open iMessage database: %w", err)
+	}
+	return client, nil
+}
+
+// whatsAppWriterAlive reports whether WhatsApp for Mac is running on this
+// machine. While it is closed, ChatStorage stays readable but nothing new
+// reaches it, so a run that changes nothing proves nothing. It returns nil when
+// that cannot be known: off macOS, or when pgrep itself fails. Tests replace it.
+var whatsAppWriterAlive = func() *bool {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
+	alive := true
+	if err := exec.Command("pgrep", "-qx", "WhatsApp").Run(); err != nil {
+		// pgrep exits 1 when no process matches; anything else is a failed probe.
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) || exitErr.ExitCode() != 1 {
+			return nil
+		}
+		alive = false
+	}
+	return &alive
+}
+
+// checkAppleSourceReadable opens path read-only to separate a missing source
+// from a denied one. Tests replace it to inject a denial without relying on
+// file modes, which not every OS enforces.
+var checkAppleSourceReadable = func(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// sourceUnreadableReason probes path and names why it cannot be read, or
+// returns "" when it can. Failures are classified by probing the source rather
+// than by their text, so an archive-side error such as a PostgreSQL
+// "permission denied" is never reported as a source the daemon cannot read.
+func sourceUnreadableReason(path string) string {
+	err := checkAppleSourceReadable(path)
+	switch {
+	case err == nil:
+		return ""
+	case errors.Is(err, fs.ErrNotExist):
+		return store.SyncReasonSourceMissing
+	case errors.Is(err, fs.ErrPermission):
+		return store.SyncReasonFDADenied
+	default:
+		return ""
+	}
+}
+
+// recordUnreadableSource records an unmeasured run after cause when the source
+// at path cannot be read and no run was started, so status shows the gap
+// rather than the previous run's result.
+func recordUnreadableSource(
+	ctx context.Context, s *store.Store, sourceType, identifier, syncType, path string,
+	readStartedAt time.Time, cause error,
+) {
+	reason := sourceUnreadableReason(path)
+	if reason == "" {
+		return
+	}
+	src, err := s.GetOrCreateSource(sourceType, identifier)
+	if err != nil {
+		return
+	}
+	_ = s.RecordUnmeasuredSync(context.WithoutCancel(ctx), src.ID, syncType, reason, cause.Error(),
+		store.SyncMeasurement{ReadStartedAt: &readStartedAt})
+}
+
+// markRunIfSourceUnreadable marks a failed run unmeasured when its source
+// became unreadable, and returns the reason ("" when the source is readable).
+func markRunIfSourceUnreadable(
+	ctx context.Context, s *store.Store, syncID int64, path string, readStartedAt time.Time,
+) string {
+	reason := sourceUnreadableReason(path)
+	if reason == "" {
+		return ""
+	}
+	_ = s.SetSyncMeasurement(context.WithoutCancel(ctx), syncID, store.SyncMeasurement{
+		Outcome: store.SyncOutcomeUnmeasured, Reason: reason, ReadStartedAt: &readStartedAt,
+	})
+	return reason
+}
+
+// appleSourceMtime returns the newest mtime of the SQLite file and its WAL:
+// writers append to the WAL long before the main file changes.
+func appleSourceMtime(path string) *time.Time {
+	var newest time.Time
+	for _, p := range []string{path, path + "-wal"} {
+		if info, err := os.Stat(p); err == nil && info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+	if newest.IsZero() {
+		return nil
+	}
+	return &newest
 }

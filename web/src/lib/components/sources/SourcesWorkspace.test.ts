@@ -81,6 +81,17 @@ describe('SourcesWorkspace', () => {
     expect(await screen.findByText('Channel unavailable')).toBeDefined();
   });
 
+  it('shows an unmeasured run as not measured and explains why', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [
+      source({ display_name: 'WhatsApp', latest_sync: run('completed', 0, { outcome: 'unmeasured', reason: 'writer_not_running' }) })
+    ] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    expect(await screen.findByText('Not measured')).toBeDefined();
+    expect(screen.queryByText('Succeeded')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Details for WhatsApp' }));
+    expect(await screen.findByText('The app that writes this source was not running, so nothing new could have arrived')).toBeDefined();
+  });
+
   it('shows a scheduled sync that queues after the page opens until it starts', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     const queuedAt = '2026-10-01T15:04:00Z';

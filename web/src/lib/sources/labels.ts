@@ -1,4 +1,4 @@
-import type { SourceStatus } from '../api/generated/models';
+import type { SourceStatus, SyncRunStatus } from '../api/generated/models';
 import { sentenceCase } from '../explore/labels';
 
 // Curated friendly labels for daemon source types. Other codes use
@@ -14,6 +14,14 @@ const SOURCE_TYPES: Readonly<Record<string, string>> = {
   apple_messages: 'Apple Messages', facebook_messenger: 'Facebook Messenger',
   'google-groups': 'Google Groups'
 };
+
+// Why a run could not prove it read its source (sync run `reason`).
+const UNMEASURED_REASONS: Readonly<Record<string, string>> = {
+  fda_denied: 'Full Disk Access is denied, so the source could not be read',
+  source_missing: 'The source file is missing',
+  writer_not_running: 'The app that writes this source was not running, so nothing new could have arrived'
+};
+
 export function sourceTypeLabel(code: string): string {
   return Object.hasOwn(SOURCE_TYPES, code) ? SOURCE_TYPES[code]! : sentenceCase(code);
 }
@@ -30,11 +38,24 @@ export function sourceRunState(source: StateSource): string | undefined {
   if (syncRunning(source)) return 'running';
   if (source.scheduler_queued && latest?.status !== 'failed' && !(latest?.status === 'completed' && latest.errors_count > 0)) return 'queued';
   if (!latest) return undefined;
+  // An unmeasured run did not prove it read the source: its zero new messages
+  // say nothing, whatever its terminal status.
+  if (latest.outcome === 'unmeasured') return 'unmeasured';
   if (latest.status === 'paused') return 'paused';
   if (latest.status === 'cancelled') return 'cancelled';
   if (latest.status === 'failed') return 'failed';
   if (latest.status === 'completed') return latest.errors_count > 0 ? 'partial' : 'succeeded';
   return undefined;
+}
+
+/** Why a run did not measure its source, or undefined for a run that did. */
+export function unmeasuredReasonLabel(
+  run: Pick<SyncRunStatus, 'outcome' | 'reason'> | null | undefined
+): string | undefined {
+  if (run?.outcome !== 'unmeasured') return undefined;
+  const reason = run.reason;
+  if (reason !== undefined && Object.hasOwn(UNMEASURED_REASONS, reason)) return UNMEASURED_REASONS[reason]!;
+  return reason ? `Not measured: ${sentenceCase(reason).toLowerCase()}` : 'The source was not measured';
 }
 
 /** The stored reason a source last failed. */

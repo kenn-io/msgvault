@@ -605,6 +605,7 @@ func TestImportSummarizesAttachmentFailures(t *testing.T) {
 	require.ErrorIs(err, ErrAttachmentImport)
 	assert.Equal(13, summary.AttachmentFailures)
 	assert.Equal(13, summary.MessagesImported)
+	assert.Equal(13, summary.MessagesAdded, "a committed message with a failed attachment is still an addition")
 	assert.Zero(summary.Skipped)
 	require.EqualError(err, "13 messages had attachment errors: "+ErrAttachmentImport.Error())
 	var messages int
