@@ -622,12 +622,12 @@ func (s *Store) CheckpointWALContext(ctx context.Context) error {
 // tables instead of relying on query history from whichever pooled connection
 // database/sql selects. PostgreSQL maintains planner statistics server-side.
 func (s *Store) optimizeSQLite(ctx context.Context) error {
-	return s.optimizeSQLiteWithin(ctx, sqliteOptimizeTimeout)
+	return s.optimizeSQLiteWithin(ctx, sqliteOptimizeTimeout, false)
 }
 
 // optimizeSQLiteWithin is optimizeSQLite with a caller-chosen budget covering
-// both the pool reservation and the statistics refresh.
-func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration) error {
+// the pool reservation and sampled refresh. Full message analysis has its own budget.
+func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration, full bool) (result error) {
 	if s.IsPostgreSQL() || s.readOnly {
 		return nil
 	}
@@ -637,10 +637,7 @@ func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration)
 		return nil
 	}
 	defer s.sqliteOptimizeMu.Unlock()
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// Reserve every pool slot before refreshing statistics. ANALYZE loads its
+	// Reserve every pool slot for sampled maintenance and reload. ANALYZE loads its
 	// results only into the SQLite connection that runs it; holding every slot
 	// lets us reload each existing connection and prevents database/sql from
 	// opening an unrefreshed one concurrently. Connections opened after this
@@ -652,10 +649,24 @@ func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration)
 			_ = conn.Close()
 		}
 	}()
-	for range poolSize {
+	if full {
+		analyzeCtx, cancel := context.WithTimeout(ctx, dailyOptimizeTimeout)
+		conn, err := s.db.Conn(analyzeCtx)
+		if err == nil {
+			connections = append(connections, conn)
+			_, err = conn.ExecContext(analyzeCtx, "ANALYZE sqlite_schema; PRAGMA analysis_limit=0; ANALYZE messages")
+		}
+		cancel()
+		if err != nil {
+			result = fmt.Errorf("analyze SQLite messages: %w", err)
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	for len(connections) < poolSize {
 		conn, err := s.db.Conn(ctx)
 		if err != nil {
-			return fmt.Errorf("reserve SQLite connection pool for planner statistics: %w", err)
+			return errors.Join(result, fmt.Errorf("reserve SQLite connection pool for planner statistics: %w", err))
 		}
 		connections = append(connections, conn)
 	}
@@ -664,21 +675,44 @@ func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration)
 	// statistics in milliseconds rather than scanning every index.
 	for _, conn := range connections {
 		if _, err := conn.ExecContext(ctx, "PRAGMA analysis_limit=1000"); err != nil {
-			return fmt.Errorf("limit SQLite planner statistics analysis: %w", err)
+			return errors.Join(result, fmt.Errorf("limit SQLite planner statistics analysis: %w", err))
 		}
 	}
 	if _, err := connections[0].ExecContext(ctx, "PRAGMA optimize=0x10002"); err != nil {
-		return fmt.Errorf("optimize SQLite planner statistics: %w", err)
+		result = errors.Join(result, fmt.Errorf("optimize SQLite planner statistics: %w", err))
 	}
-	if err := dropFTSDataStatistics(ctx, connections[0]); err != nil {
-		return err
-	}
+	result = errors.Join(result, dropFTSDataStatistics(ctx, connections[0]))
 	for _, conn := range connections {
 		if _, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema"); err != nil {
-			return fmt.Errorf("reload SQLite planner statistics: %w", err)
+			return errors.Join(result, fmt.Errorf("reload SQLite planner statistics: %w", err))
 		}
 	}
-	return nil
+	return result
+}
+
+// ReloadSQLitePlannerStatistics loads committed statistics on every serving connection.
+func (s *Store) ReloadSQLitePlannerStatistics(ctx context.Context) {
+	if s.IsPostgreSQL() || s.readOnly {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sqliteOptimizeTimeout)
+	defer cancel()
+	var connections []*sql.Conn
+	defer func() {
+		for _, conn := range connections {
+			_ = conn.Close()
+		}
+	}()
+	for range max(1, s.db.Stats().MaxOpenConnections) {
+		conn, err := s.db.Conn(ctx)
+		if err != nil {
+			logSQLiteOptimizeError("child exit", err)
+			return
+		}
+		connections = append(connections, conn)
+		_, err = conn.ExecContext(ctx, "ANALYZE sqlite_schema")
+		logSQLiteOptimizeError("child exit", err)
+	}
 }
 
 // dropFTSDataStatistics keeps planner statistics off FTS5 _data shadow tables.
@@ -709,8 +743,8 @@ func dropFTSDataStatistics(ctx context.Context, db contextStatementQuerier) erro
 	return nil
 }
 
-func (s *Store) optimizeSQLiteBestEffort(ctx context.Context, trigger string) {
-	logSQLiteOptimizeError(trigger, s.optimizeSQLite(ctx))
+func (s *Store) optimizeSQLiteBestEffort(ctx context.Context, trigger string, full bool) {
+	logSQLiteOptimizeError(trigger, s.optimizeSQLiteWithin(ctx, sqliteOptimizeTimeout, full))
 }
 
 // syncOptimizeInterval throttles the planner maintenance successful syncs
@@ -735,7 +769,7 @@ func (s *Store) optimizeAfterSync(ctx context.Context) {
 		if s.syncOptimizeHook != nil {
 			s.syncOptimizeHook()
 		}
-		s.optimizeSQLiteBestEffort(ctx, "successful sync")
+		s.optimizeSQLiteBestEffort(ctx, "successful sync", true)
 	}
 }
 
@@ -2402,7 +2436,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// Schema initialization can add indexes to an existing archive. Refresh
 	// statistics after all schema work so SQLite can cost those indexes against
 	// the archive's actual data distribution.
-	s.optimizeSQLiteBestEffort(ctx, "schema initialization")
+	s.optimizeSQLiteBestEffort(ctx, "schema initialization", false)
 
 	if err := s.ensureFilenameDiscoveryInfrastructure(ctx); err != nil {
 		return err
