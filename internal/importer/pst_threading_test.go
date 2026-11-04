@@ -3,6 +3,7 @@ package importer
 import (
 	"crypto/sha256"
 	"database/sql"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -15,7 +16,56 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	pstreader "go.kenn.io/msgvault/internal/pst"
+	"go.kenn.io/msgvault/internal/testutil"
 )
+
+func TestPstThreadingNUL(t *testing.T) {
+	for _, tc := range []struct {
+		name, mid, parent, refs, wantID, wantParent, wantKey string
+	}{
+		{"all invalid", "bad\x00id@example.test", "bad\x00parent@example.test", "<bad\x00root@example.test>", "", "", ""},
+		{"message", "bad\x00id@example.test", "parent@example.test", "<root@example.test>", "", "parent@example.test", "root@example.test"},
+		{"parent", "child@example.test", "bad\x00parent@example.test", "", "child@example.test", "", "child@example.test"},
+		{"references", "child@example.test", "parent@example.test", "<bad\x00root@example.test> <root@example.test>", "child@example.test", "parent@example.test", "root@example.test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource("pst", "owner@example.test")
+			require.NoError(err)
+			headers, body := "From: sender@example.test\r\nSubject: Thread\r\n", "Synthetic body"
+			entry := pstreader.ExtractMessage(&pstlib.Message{Identifier: 1, Properties: &properties.Message{
+				InternetMessageId: &tc.mid, InReplyToId: &tc.parent, InternetReferences: &tc.refs,
+				TransportMessageHeaders: &headers, Body: &body,
+			}}, "Inbox")
+			require.NotNil(entry)
+			raw, err := pstreader.BuildRFC5322(entry, nil)
+			require.NoError(err)
+			require.NoError(pstMessageIngester(nil)(t.Context(), st, src.ID, src.Identifier,
+				t.TempDir(), nil, "pst-synthetic", "synthetic-hash", raw, time.Time{}, slog.Default()))
+			ids, err := st.MessageExistsBatch(src.ID, []string{"pst-synthetic"})
+			require.NoError(err)
+			require.Contains(ids, "pst-synthetic")
+			// The existing-row repair path must not restore the omitted facts either.
+			require.NoError(recordPstMessageHeadersByID(t.Context(), st, src.ID, ids["pst-synthetic"], raw))
+			var mid, metadata sql.NullString
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT rfc822_message_id, metadata FROM messages WHERE id = ?`), ids["pst-synthetic"]).Scan(&mid, &metadata))
+			assert.Equal(tc.wantID, mid.String)
+			facts := map[string]string{}
+			if metadata.Valid {
+				require.NoError(json.Unmarshal([]byte(metadata.String), &facts))
+			}
+			assert.Equal(tc.wantParent, facts["email_in_reply_to"])
+			assert.Equal(tc.wantKey, facts["pst_thread_key"])
+			require.NoError(st.ResolveEmailReplyParentsContext(t.Context(), src.ID, 0, nil))
+			require.NoError(st.ReconcilePstEmailThreadsContext(t.Context(), src.ID))
+			stored, err := st.GetMessageRaw(ids["pst-synthetic"])
+			require.NoError(err)
+			assert.Equal(raw, stored)
+		})
+	}
+}
 
 func TestPstThreadingPipeline(t *testing.T) {
 	for _, order := range [][]int{{0, 1, 2}, {2, 1, 0}, {1, 2, 0}} {

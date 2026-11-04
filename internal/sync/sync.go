@@ -1654,6 +1654,7 @@ func (s *Syncer) syncLabels(ctx context.Context, sourceID int64) (map[string]int
 
 // messageData holds all parsed data for a message before persistence.
 type messageData struct {
+	originalMessageID string // Parsed identity evidence, before omission from new projections.
 	metadata          *sql.NullString
 	message           *store.Message
 	threadID          string
@@ -1751,6 +1752,7 @@ func (s *Syncer) prepareMessage(
 			"error", errMsg)
 	}
 
+	originalMessageID := parsed.MessageID
 	parsed.OmitNULIdentities()
 
 	// For IMAP sources, the API provides no real thread info —
@@ -1852,6 +1854,7 @@ func (s *Syncer) prepareMessage(
 	}
 
 	return &messageData{
+		originalMessageID: originalMessageID,
 		metadata:          metadata,
 		message:           msg,
 		threadID:          threadID,

@@ -12,7 +12,7 @@ func TestEmailNULRederive(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, source, id := archiveEmailSource(t, "mbox", "stale body")
-	raw, err := os.ReadFile("../mime/testdata/nul.eml")
+	raw, err := os.ReadFile("../mime/testdata/nul-projections.eml")
 	require.NoError(err)
 	require.NoError(st.UpsertMessageRaw(id, raw))
 	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET snippet = ? WHERE id = ?`), "stale body", id)

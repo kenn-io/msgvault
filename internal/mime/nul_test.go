@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 func TestParseNULProjections(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	raw, err := os.ReadFile("testdata/nul.eml")
+	raw, err := os.ReadFile("testdata/nul-projections.eml")
 	require.NoError(err)
 	original := bytes.Clone(raw)
 	msg, fingerprints, err := ParseWithRecoveryAndPartFingerprints(raw, "")
@@ -84,7 +85,7 @@ func TestParseNULBodyEncodings(t *testing.T) {
 func TestParseNULContentIDAndGroups(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	raw, err := os.ReadFile("testdata/nul.eml")
+	raw, err := os.ReadFile("testdata/nul-projections.eml")
 	require.NoError(err)
 	raw = bytes.ReplaceAll(raw, []byte("Content-Type: application/octet-stream"),
 		[]byte("Content-ID: <bad\x00id@example.org>\r\nContent-Type: application/octet-stream"))
@@ -128,4 +129,32 @@ func TestNULIdentityHeaders(t *testing.T) {
 	msg, err := Parse([]byte("From: bad\x00sender@example.org, good@example.org\r\n\r\nbody"))
 	require.NoError(err)
 	assert.Equal([]Address{{Email: "good@example.org", Domain: "example.org"}}, msg.From)
+}
+
+func TestParseNULAddressFallback(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		t.Run(strconv.FormatBool(recovery), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			raw := []byte("From: \"Sender\x00Name\" <sender@example.org>\r\n" +
+				"To: \"Recipient\x00Name\" <valid@example.org>, other@example.org (note\x00text),\r\n" +
+				" bad\x00address@example.org, malformed..address@example.org\r\n\r\nBody")
+			if recovery {
+				raw = append([]byte("Content-Type: multipart/mixed\r\n"), raw...)
+			}
+			msg, err := ParseWithRecovery(raw, "")
+			if recovery {
+				require.Error(err)
+			} else {
+				require.NoError(err)
+			}
+			require.Len(msg.From, 1)
+			assert.Equal("sender@example.org", msg.From[0].Email)
+			var emails []string
+			for _, address := range msg.To {
+				emails = append(emails, address.Email)
+			}
+			assert.ElementsMatch([]string{"valid@example.org", "other@example.org", "malformed..address@example.org"}, emails)
+		})
+	}
 }

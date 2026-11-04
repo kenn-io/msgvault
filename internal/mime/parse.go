@@ -464,10 +464,11 @@ func parseAddressList(env *enmime.Envelope, header string) []Address {
 func fallbackAddressList(value string) []Address {
 	var addresses []Address
 	for _, token := range splitAddressTokens(value) {
+		token = stripAddressDecorations(token)
 		if strings.ContainsRune(token, 0) {
 			continue
 		}
-		for _, email := range emailAddressTokenRe.FindAllString(stripAddressDecorations(token), -1) {
+		for _, email := range emailAddressTokenRe.FindAllString(token, -1) {
 			email = strings.ToLower(email)
 			addresses = append(addresses, Address{
 				Email:  email,

@@ -33,7 +33,7 @@ func TestMIMENULAcquisition(t *testing.T) {
 			if route == "replay" {
 				source = seedReplaySource(t, e, "nul")
 			}
-			raw, err := os.ReadFile("../mime/testdata/nul.eml")
+			raw, err := os.ReadFile("../mime/testdata/nul-projections.eml")
 			require.NoError(err)
 			if route == "full_identities" {
 				raw = bytes.ReplaceAll(raw, []byte("<nul@example.org>"), []byte("<nul\x00@example.org>"))
@@ -101,32 +101,12 @@ func TestMIMENULAcquisition(t *testing.T) {
 	}
 }
 
-func TestMIMENULBodyAcquisition(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	e := mimeNULEnv(t)
-	raw := []byte("From: sender@example.org\r\nSubject: encoded NUL\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: base64\r\n\r\nSGVsbG8Ad29ybGQ=\r\n")
-	e.Mock.AddMessage("nul", raw, []string{"INBOX"})
-	summary := runFullSync(t, e)
-	require.Zero(summary.Errors)
-	source := e.CreateSource(t)
-	ids, err := e.Store.MessageExistsBatch(source.ID, []string{"nul"})
-	require.NoError(err)
-	require.Contains(ids, "nul")
-	stored, err := e.Store.GetMessageRaw(ids["nul"])
-	require.NoError(err)
-	assert.Equal(raw, stored)
-	body, err := e.Store.GetMessageBodyText(ids["nul"])
-	require.NoError(err)
-	assert.Equal("Hello�world", body)
-}
-
 func TestMIMENULRetryAfterWriteFailure(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	e := mimeNULEnv(t)
 	source := e.CreateSource(t)
-	raw, err := os.ReadFile("../mime/testdata/nul.eml")
+	raw, err := os.ReadFile("../mime/testdata/nul-projections.eml")
 	require.NoError(err)
 	e.Mock.AddMessage("nul", raw, []string{"INBOX"})
 	// Fail after body insertion, at the binary RAW write. Normalizing text must

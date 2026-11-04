@@ -19,7 +19,7 @@ func TestIngestRawMessageNUL(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("mbox", "archive@example.org")
 	require.NoError(err)
-	raw, err := os.ReadFile("../mime/testdata/nul.eml")
+	raw, err := os.ReadFile("../mime/testdata/nul-projections.eml")
 	require.NoError(err)
 	err = IngestRawMessage(t.Context(), st, source.ID, source.Identifier, t.TempDir(), nil,
 		"nul", fmt.Sprintf("%x", sha256.Sum256(raw)), raw, time.Time{}, slog.Default())
