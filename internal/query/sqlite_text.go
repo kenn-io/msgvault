@@ -23,7 +23,7 @@ var _ TextSnapshotter = (*SQLiteEngine)(nil)
 var _ TextSnapshotReader = (*SQLiteEngine)(nil)
 
 // TextSnapshotRevision tracks chat message changes, including body edits, and
-// displayed sender names and conversation titles. Conversation-list revisions
+// displayed sender details and conversation titles. Conversation-list revisions
 // hash the ordered metadata. Pagination is excluded from both revisions.
 func (e *SQLiteEngine) TextSnapshotRevision(
 	ctx context.Context, scope TextSnapshotScope,
@@ -50,7 +50,7 @@ func (e *SQLiteEngine) ListConversationsSnapshot(
 }
 
 // ListConversationMessagesSnapshot returns one timeline page and a revision
-// that tracks message and body edits, sender names, and the conversation title
+// that tracks message and body edits, sender details, and the conversation title
 // from the same read transaction.
 func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 	ctx context.Context, conversationID int64, filter TextFilter,
@@ -65,75 +65,60 @@ func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 
 const sqliteTimelineSnapshotProbe = `SELECT
 	COUNT(*), MAX(content_changed_at),
-	COALESCE(julianday(MAX(content_changed_at)) >= julianday('now', '-0.002 seconds'), 0) AS recent,
+	COALESCE(julianday(MAX(content_changed_at)) BETWEEN julianday('now', '-0.002 seconds') AND julianday('now'), 0) AS recent,
 	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_display_name_revision'), '0'),
+	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_identifier_revision'), '0'),
+	COALESCE((SELECT value FROM archive_metadata WHERE key = 'identity_revision'), '0'),
 	COALESCE((SELECT updated_at FROM conversations WHERE id = ?), ''),
 	COALESCE((SELECT title FROM conversations WHERE id = ?), '')
 FROM messages WHERE conversation_id = ?`
 
 func readSQLiteTimelineSnapshot(
 	ctx context.Context, e *SQLiteEngine, scope TextSnapshotScope, collectPage bool,
-) (page []MessageSummary, revision string, err error) {
-	tx, err := e.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, "", fmt.Errorf("begin text timeline snapshot: %w", err)
-	}
-	defer func() {
-		if rollbackErr := tx.Rollback(); err == nil && rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
-			err = fmt.Errorf("finish text timeline snapshot: %w", rollbackErr)
+) ([]MessageSummary, string, error) {
+	return withSQLiteTextSnapshot(ctx, e, scope, func(tx *sql.Tx, hasher hash.Hash) ([]MessageSummary, error) {
+		conversationID := *scope.ConversationID
+		var count int64
+		var recent bool
+		var changedAt sql.NullString
+		var participantRevision, identifierRevision, identityRevision, conversationUpdatedAt, conversationTitle string
+		if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID, conversationID).Scan(
+			&count, &changedAt, &recent, &participantRevision, &identifierRevision, &identityRevision, &conversationUpdatedAt, &conversationTitle,
+		); err != nil {
+			return nil, fmt.Errorf("probe text timeline snapshot: %w", err)
 		}
-	}()
+		for _, field := range []any{conversationID, count, changedAt.String, participantRevision, identifierRevision, identityRevision, conversationUpdatedAt, conversationTitle} {
+			writeSnapshotField(hasher, snapshotFieldBytes(field))
+		}
+		// A second edit can share a fresh millisecond stamp, so fence reads
+		// within two milliseconds after that stamp.
+		if recent {
+			var nonce [16]byte
+			if _, err := rand.Read(nonce[:]); err != nil {
+				return nil, fmt.Errorf("generate text timeline revision nonce: %w", err)
+			}
+			writeSnapshotField(hasher, nonce[:])
+		}
 
-	conversationID := *scope.ConversationID
-	var count int64
-	var recent bool
-	var changedAt sql.NullString
-	var participantRevision, conversationUpdatedAt, conversationTitle string
-	if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID, conversationID).Scan(
-		&count, &changedAt, &recent, &participantRevision, &conversationUpdatedAt, &conversationTitle,
-	); err != nil {
-		return nil, "", fmt.Errorf("probe text timeline snapshot: %w", err)
-	}
-	identity, err := textSnapshotFilterIdentity(scope)
-	if err != nil {
-		return nil, "", err
-	}
-	hasher := sha256.New()
-	writeSnapshotField(hasher, identity)
-	for _, field := range []any{conversationID, count, changedAt.String, participantRevision, conversationUpdatedAt, conversationTitle} {
-		writeSnapshotField(hasher, snapshotFieldBytes(field))
-	}
-	// A second edit can share a fresh millisecond stamp, so fence each read
-	// until SQLite's clock has moved past that stamp.
-	if recent {
-		var nonce [16]byte
-		if _, err := rand.Read(nonce[:]); err != nil {
-			return nil, "", fmt.Errorf("generate text timeline revision nonce: %w", err)
+		if collectPage {
+			query, args := e.sqliteConversationMessagesQuery(conversationID, scope.Filter)
+			rows, err := tx.QueryContext(ctx, e.dialect.Rebind(query), args...)
+			if err != nil {
+				return nil, fmt.Errorf("query text timeline snapshot: %w", err)
+			}
+			defer func() { _ = rows.Close() }()
+			page, err := scanMessageSummaries(rows)
+			closeErr := rows.Close()
+			if err != nil {
+				return nil, fmt.Errorf("scan text timeline snapshot: %w", err)
+			}
+			if closeErr != nil {
+				return nil, fmt.Errorf("close text timeline snapshot rows: %w", closeErr)
+			}
+			return page, nil
 		}
-		writeSnapshotField(hasher, nonce[:])
-	}
-	revision = "text-" + hex.EncodeToString(hasher.Sum(nil))
-
-	if collectPage {
-		query, args := e.sqliteConversationMessagesQuery(conversationID, scope.Filter)
-		rows, err := tx.QueryContext(ctx, e.dialect.Rebind(query), args...)
-		if err != nil {
-			return nil, "", fmt.Errorf("query text timeline snapshot: %w", err)
-		}
-		defer func() { _ = rows.Close() }()
-		page, err = scanMessageSummaries(rows)
-		closeErr := rows.Close()
-		if err != nil {
-			return nil, "", fmt.Errorf("scan text timeline snapshot: %w", err)
-		}
-		if closeErr != nil {
-			return nil, "", fmt.Errorf("close text timeline snapshot rows: %w", closeErr)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return nil, "", fmt.Errorf("commit text timeline snapshot: %w", err)
-	}
-	return page, revision, nil
+		return nil, nil
+	})
 }
 
 type textSnapshotRowScanner[T any] func(*sql.Rows) (T, []any, error)
@@ -145,6 +130,50 @@ func readSQLiteTextSnapshot[T any](
 	defaultLimit int,
 	collectPage bool,
 	scan textSnapshotRowScanner[T],
+) ([]T, string, error) {
+	return withSQLiteTextSnapshot(ctx, e, scope, func(tx *sql.Tx, hasher hash.Hash) ([]T, error) {
+		query, args := e.sqliteTextSnapshotQuery(scope)
+		rows, err := tx.QueryContext(ctx, e.dialect.Rebind(query), args...)
+		if err != nil {
+			return nil, fmt.Errorf("query text snapshot: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+
+		var page []T
+		limit := scope.Filter.Pagination.Limit
+		if limit == 0 {
+			limit = defaultLimit
+		}
+		offset := scope.Filter.Pagination.Offset
+		rowIndex := 0
+		for rows.Next() {
+			row, fields, scanErr := scan(rows)
+			if scanErr != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan text snapshot: %w", scanErr)
+			}
+			for _, field := range fields {
+				writeSnapshotField(hasher, snapshotFieldBytes(field))
+			}
+			if collectPage && rowIndex >= offset && rowIndex-offset < limit {
+				page = append(page, row)
+			}
+			rowIndex++
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("iterate text snapshot: %w", err)
+		}
+		if err := rows.Close(); err != nil {
+			return nil, fmt.Errorf("close text snapshot rows: %w", err)
+		}
+		return page, nil
+	})
+}
+
+func withSQLiteTextSnapshot[T any](
+	ctx context.Context, e *SQLiteEngine, scope TextSnapshotScope,
+	read func(*sql.Tx, hash.Hash) ([]T, error),
 ) (page []T, revision string, err error) {
 	tx, err := e.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
@@ -155,47 +184,15 @@ func readSQLiteTextSnapshot[T any](
 			err = fmt.Errorf("finish text snapshot: %w", rollbackErr)
 		}
 	}()
-
-	hasher := sha256.New()
 	identity, err := textSnapshotFilterIdentity(scope)
 	if err != nil {
 		return nil, "", err
 	}
+	hasher := sha256.New()
 	writeSnapshotField(hasher, identity)
-
-	query, args := e.sqliteTextSnapshotQuery(scope)
-	rows, err := tx.QueryContext(ctx, e.dialect.Rebind(query), args...)
+	page, err = read(tx, hasher)
 	if err != nil {
-		return nil, "", fmt.Errorf("query text snapshot: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	limit := scope.Filter.Pagination.Limit
-	if limit == 0 {
-		limit = defaultLimit
-	}
-	offset := scope.Filter.Pagination.Offset
-	rowIndex := 0
-	for rows.Next() {
-		row, fields, scanErr := scan(rows)
-		if scanErr != nil {
-			_ = rows.Close()
-			return nil, "", fmt.Errorf("scan text snapshot: %w", scanErr)
-		}
-		for _, field := range fields {
-			writeSnapshotField(hasher, snapshotFieldBytes(field))
-		}
-		if collectPage && rowIndex >= offset && rowIndex-offset < limit {
-			page = append(page, row)
-		}
-		rowIndex++
-	}
-	if err := rows.Err(); err != nil {
-		_ = rows.Close()
-		return nil, "", fmt.Errorf("iterate text snapshot: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return nil, "", fmt.Errorf("close text snapshot rows: %w", err)
+		return nil, "", err
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, "", fmt.Errorf("commit text snapshot: %w", err)

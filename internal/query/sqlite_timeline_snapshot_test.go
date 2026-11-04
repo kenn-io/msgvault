@@ -8,13 +8,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil/storetest"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
 	require := require.New(t)
-	f := storetest.New(t)
-	rows, err := f.Store.DB().Query("EXPLAIN QUERY PLAN "+query.SQLiteTimelineSnapshotProbe, 1, 1, 1)
+	s := testutil.NewSQLiteTestStore(t)
+	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+query.SQLiteTimelineSnapshotProbe, 1, 1, 1)
 	require.NoError(err)
 	defer func() { require.NoError(rows.Close()) }()
 	var plan strings.Builder
@@ -46,13 +46,19 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 		{"sender rename", func(s *store.Store) error {
 			return s.RepairParticipantDisplayNames([]store.ParticipantDisplayNameRepair{{ParticipantID: 11, DisplayName: "Updated"}})
 		}},
+		{"sender email repair", func(s *store.Store) error {
+			return s.RepairParticipantEmailAddresses([]store.ParticipantEmailRepair{{ParticipantID: 11, EmailAddress: "updated@example.com"}})
+		}},
+		{"sender identifier", func(s *store.Store) error {
+			return s.SetParticipantIdentifier(11, "email", "alternate@example.com")
+		}},
 		// Raw SQL leaves updated_at alone, as a retitle within the same second would.
 		{"chat retitle", exec(`UPDATE conversations SET title = 'Updated' WHERE id = 701`)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			s := storetest.New(t).Store
+			s := testutil.NewSQLiteTestStore(t)
 			_, err := s.DB().Exec(`
 				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
 				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
@@ -77,9 +83,13 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 			require.NoError(tc.change(s))
 			_, err = s.DB().Exec(`UPDATE messages SET content_changed_at = '2021-01-01 00:00:00' WHERE content_changed_at > '2022-01-01'`)
 			require.NoError(err)
-			_, after, err := engine.ListConversationMessagesSnapshot(t.Context(), 701, filter)
+			page, after, err := engine.ListConversationMessagesSnapshot(t.Context(), 701, filter)
 			require.NoError(err)
 			assert.NotEqual(before, after)
+			if tc.name == "sender email repair" {
+				require.Len(page, 1)
+				assert.Equal("updated@example.com", page[0].FromEmail)
+			}
 		})
 	}
 }
@@ -87,12 +97,25 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 func TestSQLiteTimelineSnapshotRevisionFencesRecentChanges(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	f := storetest.New(t)
-	id := f.CreateMessage("recent-message")
-	engine := query.NewSQLiteEngine(f.Store.DB())
-	scope := query.TextSnapshotScope{ConversationID: &f.ConvID}
+	s := testutil.NewSQLiteTestStore(t)
+	_, err := s.DB().Exec(`INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (701, 7, 'chat-701', 'direct_chat');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type) VALUES (801, 701, 7, 'recent-message', 'imessage')`)
+	require.NoError(err)
+	engine := query.NewSQLiteEngine(s.DB())
+	conversationID := int64(701)
+	scope := query.TextSnapshotScope{ConversationID: &conversationID}
+	for _, tc := range []struct {
+		offset string
+		recent bool
+	}{{"+0 seconds", true}, {"-0.001 seconds", true}, {"-0.003 seconds", false}, {"+0.003 seconds", false}} {
+		var recent bool
+		err := s.DB().QueryRow(`UPDATE messages SET content_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now', ?) WHERE id = 801 RETURNING (SELECT recent FROM (`+query.SQLiteTimelineSnapshotProbe+`))`, tc.offset, conversationID, conversationID, conversationID).Scan(&recent)
+		require.NoError(err)
+		assert.Equal(tc.recent, recent, tc.offset)
+	}
 	read := func(offset string) (string, string) {
-		_, err := f.Store.DB().Exec(`UPDATE messages SET content_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now', ?) WHERE id = ?`, offset, id)
+		_, err := s.DB().Exec(`UPDATE messages SET content_changed_at = strftime('%Y-%m-%d %H:%M:%f', 'now', ?) WHERE id = 801`, offset)
 		require.NoError(err)
 		first, err := engine.TextSnapshotRevision(t.Context(), scope)
 		require.NoError(err)
@@ -100,10 +123,8 @@ func TestSQLiteTimelineSnapshotRevisionFencesRecentChanges(t *testing.T) {
 		require.NoError(err)
 		return first, second
 	}
-	// A stamp ahead of the clock keeps the fence active if the runner pauses
-	// between the two reads.
-	first, second := read("+1 second")
-	assert.NotEqual(first, second)
+	first, second := read("+1 day")
+	assert.Equal(first, second)
 	first, second = read("-1 second")
 	assert.Equal(first, second)
 }
