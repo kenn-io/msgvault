@@ -91,7 +91,7 @@ Sync also recovers earlier placeholders in quiet or left rooms that pass the roo
 
 Edits waiting for an encrypted original are accepted only from that original's outer sender. Each original keeps at most 32 pending edits, retaining the newest by timestamp and then event ID. Older edits evicted from this queue are not replayed automatically.
 
-Recovery runs after joined-room history finishes. The pending count includes all remaining placeholders in the selected rooms, with or without a saved key. The recovered count includes message rows replaced with decrypted content, excluding edits and reactions.
+Recovery runs after joined-room history finishes. The pending count includes all remaining placeholders in the selected rooms, with or without a saved key. The recovered count includes messages replaced with decrypted content, excluding edits and reactions.
 
 Matrix messages use per-message semantic indexing. Once imported, their text is
 available to keyword, semantic, and people workflows enabled for the archive.

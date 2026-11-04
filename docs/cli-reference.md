@@ -1655,7 +1655,7 @@ msgvault sync-matrix --full
 | `--account` | all registered | Sync only this exact Matrix user ID |
 | `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
 
-Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry rules described in the [Matrix guide](usage/matrix.md). The recovered count includes message rows replaced with decrypted content, excluding edits and reactions.
+Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry rules described in the [Matrix guide](usage/matrix.md). The recovered count includes messages replaced with decrypted content, excluding edits and reactions.
 
 ---
 

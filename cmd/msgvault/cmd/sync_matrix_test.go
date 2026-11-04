@@ -57,6 +57,7 @@ func TestMatrixSyncSummaryBackupFailureAndKeyHint(t *testing.T) {
 		req.NoError(matrixsource.SaveCredentials(cfg.TokensDir(), creds))
 		var out bytes.Buffer
 		req.ErrorContains(runMatrixSync(t.Context(), s, cfg, "", false, nil, &out), "key backup unavailable: ")
+		assert.Contains(t, out.String(), "1 encrypted placeholders", "the summary reports the pending count")
 	})
 	t.Run("single hint across sources", func(t *testing.T) {
 		req, check := require.New(t), assert.New(t)
