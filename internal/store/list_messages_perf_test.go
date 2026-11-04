@@ -161,32 +161,59 @@ func TestConversationWindow_UsesConversationTimelineIndex(t *testing.T) {
 	t.Cleanup(func() { requirements.NoError(s.Close()) })
 	requirements.NoError(s.InitSchema())
 	seedLiveMessages(t, s, 2000)
-	var indexes int
-	requirements.NoError(s.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_messages_conversation_timeline'`).Scan(&indexes))
-	assert.Equal(t, 1, indexes)
 	start := time.Date(2015, 1, 1, 1, 0, 0, 0, time.UTC)
 	for _, dated := range []bool{false, true} {
-		for _, before := range []bool{false, true} {
-			for _, bound := range []*time.Time{nil, &start} {
-				t.Run(fmt.Sprintf("dated%t/before%t/bounded%t", dated, before, bound != nil), func(t *testing.T) {
-					assertions := assert.New(t)
-					segments := s.conversationWindowSegments(t.Context(), 1, 1000, dated, before, bound, nil)
-					countSQL, countArgs := conversationSegmentCounts(segments)
-					plan := explainPlan(t, s, "SELECT "+countSQL, countArgs...)
-					assertions.Contains(plan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
-					assertions.NotContains(plan, "TEMP B-TREE")
-					direction := "ASC"
-					if before {
-						direction = "DESC"
-					}
-					for _, segment := range segments {
-						args := append(append([]any{}, segment.args...), 25)
-						plan := explainPlan(t, s, segment.selection(direction), args...)
-						assertions.Contains(plan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
-						assertions.NotContains(plan, "TEMP B-TREE")
-					}
-				})
+		for _, bound := range []*time.Time{nil, &start} {
+			if !dated && bound != nil {
+				continue // Bounded windows reject undated anchors before querying the window.
 			}
+			t.Run(fmt.Sprintf("dated%t/bounded%t", dated, bound != nil), func(t *testing.T) {
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				var timestamp any
+				if dated {
+					timestamp = start.Add(940 * time.Minute)
+				}
+				_, err := s.db.Exec(`UPDATE messages SET sent_at = ? WHERE id = 1000`, timestamp)
+				requirements.NoError(err)
+
+				// Capture the actual count and hydration statements, including the
+				// segment wrappers, unions, and outer ordering used by the reader.
+				var countSQL, hydrateSQL string
+				rebind := s.db.rebind
+				s.db.rebind = func(query string) string {
+					if strings.HasPrefix(query, "SELECT (SELECT COUNT(*)") {
+						countSQL = query
+					}
+					if strings.Contains(query, "WITH selected AS") {
+						hydrateSQL = query
+					}
+					return rebind(query)
+				}
+				t.Cleanup(func() { s.db.rebind = rebind })
+				_, err = s.GetConversationWindowContext(t.Context(), 1, 1000, 25, 25, bound, nil)
+				requirements.NoError(err)
+				s.db.rebind = rebind
+				requirements.NotEmpty(countSQL)
+				requirements.NotEmpty(hydrateSQL)
+
+				before := s.conversationWindowSegments(t.Context(), 1, 1000, dated, true, bound, nil)
+				after := s.conversationWindowSegments(t.Context(), 1, 1000, dated, false, bound, nil)
+				_, beforeArgs := conversationSegmentCounts(before)
+				_, afterArgs := conversationSegmentCounts(after)
+				countPlan := explainPlan(t, s, countSQL, append(beforeArgs, afterArgs...)...)
+				assertions.Contains(countPlan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
+				assertions.NotContains(countPlan, "SCAN m")
+				assertions.NotContains(countPlan, "TEMP B-TREE")
+
+				_, beforeArgs = conversationSegmentSelection(before, 25, "DESC")
+				_, afterArgs = conversationSegmentSelection(after, 25, "ASC")
+				beforeArgs = append(beforeArgs, int64(1000))
+				beforeArgs = append(beforeArgs, afterArgs...)
+				plan := explainPlan(t, s, hydrateSQL, beforeArgs...)
+				assertions.Contains(plan, "SEARCH m USING INDEX idx_messages_conversation_timeline")
+				assertions.NotContains(plan, "SCAN m")
+			})
 		}
 	}
 }
