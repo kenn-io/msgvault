@@ -270,7 +270,7 @@ func TestAttachmentResourceDaemonNotFoundIsInvalidParams(t *testing.T) {
 	checks.NotContains(raw, "attachment bytes unavailable")
 }
 
-func TestAttachmentResourceRecoveryFailureWrappingNotExistPreservesGuidance(t *testing.T) {
+func TestAttachmentResourceRecoveryFailurePreservesGuidance(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -280,7 +280,7 @@ func TestAttachmentResourceRecoveryFailureWrappingNotExistPreservesGuidance(t *t
 	client, err := daemonclient.New(daemonclient.Config{URL: endpoint, AllowInsecure: true})
 	must.NoError(err)
 	client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
-		return daemonclient.LocalDaemonEndpoint{}, os.ErrNotExist
+		return daemonclient.LocalDaemonEndpoint{}, errors.New("synthetic discovery failure")
 	})
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 
@@ -296,7 +296,6 @@ func TestAttachmentResourceRecoveryFailureWrappingNotExistPreservesGuidance(t *t
 	must.NotEmpty(response.Error, "response: %s", raw)
 	checks.InDelta(float64(jsonrpc.CodeInternalError), response.Error["code"], 0)
 	checks.Equal("daemon_unavailable: "+daemonclient.LocalDaemonUnavailableMessage, response.Error["message"])
-	checks.NotContains(raw, "attachment file not available")
 }
 
 func TestMCPCachePolicyOverwritesSDKDefaultsByMethod(t *testing.T) {

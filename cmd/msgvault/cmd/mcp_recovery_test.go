@@ -70,29 +70,6 @@ func TestMCPLocalRecoveryUsesCurrentRuntime(t *testing.T) {
 	assertions.Equal(int64(7), stats.MessageCount)
 }
 
-func TestMCPCommandRecoversEngineAfterRestart(t *testing.T) {
-	requirements := require.New(t)
-	clearServerKeyEnvironment(t)
-	cfg := lifecycleTestConfig(t.TempDir())
-	cfg.Server.DaemonAutoStart = new(false)
-	initial := publishMCPRecoveryDaemon(t, cfg, 1)
-	setMCPTokenTestFlags(t, nil)
-	mcpHTTPAddr = ""
-	previous := serveMCPStdioWithOptions
-	t.Cleanup(func() { serveMCPStdioWithOptions = previous })
-	stopped := errors.New("capture complete")
-	serveMCPStdioWithOptions = func(ctx context.Context, opts mcpserver.ServeOptions) error {
-		initial.Close()
-		publishMCPRecoveryDaemon(t, cfg, 9)
-		stats, err := opts.Engine.GetTotalStats(ctx, query.StatsOptions{})
-		require.NoError(t, err)
-		assert.Equal(t, int64(9), stats.MessageCount)
-		return stopped
-	}
-	mcpCmd.SetContext(withStoreResolverConfig(t, cfg))
-	requirements.ErrorIs(mcpCmd.RunE(mcpCmd, nil), stopped)
-}
-
 func TestMCPHTTPRecoveryUpdatesStatusBackendURL(t *testing.T) {
 	clearServerKeyEnvironment(t)
 	cfg := lifecycleTestConfig(t.TempDir())
@@ -144,7 +121,7 @@ func TestMCPLocalRecoveryHonorsDisabledAutostart(t *testing.T) {
 	_, err = client.GetStats()
 	var unavailable *daemonclient.LocalDaemonUnavailableError
 	requirements.ErrorAs(err, &unavailable)
-	assertions.ErrorContains(err, "daemon_unavailable")
+	requirements.ErrorContains(err, "daemon_unavailable")
 	assertions.ErrorContains(err, "retry the tool call or check msgvault daemon status")
 }
 

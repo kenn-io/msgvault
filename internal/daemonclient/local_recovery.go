@@ -154,9 +154,3 @@ func (t *localDaemonRecovery) reconnect(ctx context.Context, failedGeneration ui
 	t.mu.Unlock()
 	return next, nil
 }
-
-func (t *localDaemonRecovery) CloseIdleConnections() {
-	if closer, ok := t.transport.(interface{ CloseIdleConnections() }); ok {
-		closer.CloseIdleConnections()
-	}
-}

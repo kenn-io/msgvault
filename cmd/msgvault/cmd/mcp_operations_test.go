@@ -309,13 +309,15 @@ func TestMCPOperationsLocalRecoveryFailure(t *testing.T) {
 	backend := &daemonMCPOperations{client: client, supported: []string{"get_source_scheduler_status", "sync_source"}}
 	for _, name := range backend.supported {
 		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			result, err := backend.ExecuteOperation(t.Context(), name, map[string]any{"account": "sender@example.com", "source_type": "gmail"})
-			require.Error(t, err)
-			require.NotNil(t, result)
-			assert.True(t, result.IsError)
+			require.Error(err)
+			require.NotNil(result)
+			assert.True(result.IsError)
 			data, marshalErr := json.Marshal(result.Output)
-			require.NoError(t, marshalErr)
-			assert.JSONEq(t, `{"error":"daemon_unavailable","operation_may_have_completed":false}`, string(data))
+			require.NoError(marshalErr)
+			assert.JSONEq(`{"error":"daemon_unavailable","operation_may_have_completed":false}`, string(data))
 		})
 	}
 }

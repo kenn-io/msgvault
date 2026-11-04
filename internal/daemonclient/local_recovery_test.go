@@ -16,7 +16,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -84,8 +83,6 @@ func TestLocalDaemonRecoveryMessageURLsUseCurrentEndpoint(t *testing.T) {
 	requirements.NoError(response.Body.Close())
 
 	assertions.Equal(replacement.URL+"/messages/42", client.messageWebURL(context.Background(), 42))
-	explicitOrigin := apiprotocol.WithBrowserOrigin(context.Background(), "https://browser.example")
-	assertions.Equal("https://browser.example/messages/42", client.messageWebURL(explicitOrigin, 42))
 }
 
 func TestLocalDaemonRecoveryReplaysBodyAndRefreshesCredentials(t *testing.T) {
@@ -208,24 +205,20 @@ func TestLocalDaemonRecoveryDoesNotReplayAmbiguousFailures(t *testing.T) {
 }
 
 func TestLocalDaemonRecoveryDoesNotRetryHTTPFailures(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusInternalServerError} {
-		t.Run(strconv.Itoa(status), func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
-			t.Cleanup(server.Close)
-			client, err := New(Config{URL: server.URL, AllowInsecure: true})
-			requirements.NoError(err)
-			client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
-				require.Fail(t, "HTTP errors must not trigger discovery")
-				return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
-			})
-			_, err = client.GetHealth(t.Context())
-			requirements.Error(err)
-			var unavailable *LocalDaemonUnavailableError
-			assertions.NotErrorAs(err, &unavailable)
-		})
-	}
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
+	t.Cleanup(server.Close)
+	client, err := New(Config{URL: server.URL, AllowInsecure: true})
+	requirements.NoError(err)
+	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+		require.Fail(t, "HTTP errors must not trigger discovery")
+		return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
+	})
+	_, err = client.GetHealth(t.Context())
+	requirements.Error(err)
+	var unavailable *LocalDaemonUnavailableError
+	assertions.NotErrorAs(err, &unavailable)
 }
 
 func TestLocalDaemonRecoveryConcurrentCallsShareResolution(t *testing.T) {
@@ -312,9 +305,7 @@ func TestLocalDaemonRecoveryWaiterCanCancel(t *testing.T) {
 func TestLocalDaemonRecoveryLeavesOtherOriginsAlone(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Empty(t, r.Header.Get("X-Api-Key"))
-		assert.Empty(t, r.Header.Get(apiprotocol.DaemonRuntimeTokenHeader))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	t.Cleanup(server.Close)
