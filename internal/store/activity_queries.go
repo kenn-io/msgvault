@@ -150,7 +150,8 @@ func (s *Store) activityCandidateColumns() string {
 const activityConversationExpandMessages = 1000
 
 // ExpandActivityConversationQueueContext expands one bounded chunk of a dirty
-// conversation. The marker lock precedes message queue locks, as in roster writes.
+// conversation. Identity coordination precedes marker and message queue locks
+// so expansion serializes with source removal before either touches the queues.
 // The return value reports whether a marker was claimed.
 func (s *Store) ExpandActivityConversationQueueContext(ctx context.Context, checkpoint func() error) (bool, error) {
 	var pending bool
@@ -166,7 +167,7 @@ func (s *Store) ExpandActivityConversationQueueContext(ctx context.Context, chec
 	claimed := false
 	err := retryBusyWriteErr(ctx, s, "expand activity conversation queue", func() error {
 		claimed = false
-		return s.withTxContext(ctx, func(tx *loggedTx) error {
+		return s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
 			skipLocked := ""
 			if s.IsPostgreSQL() {
 				skipLocked = " FOR UPDATE SKIP LOCKED"
