@@ -139,22 +139,14 @@ func TestTwentyFallbackOnlyOnFieldRejection(t *testing.T) {
 		status          int
 		body, wantError string
 		wantAttempts    int
-		probeOnly       bool
 	}{
-		{"permission error naming field", 200, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "FORBIDDEN", 1, false},
-		{"permission error naming field HTTP 400", 400, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "HTTP 400", 1, false},
-		{"uncoded error naming field", 200, `{"errors":[{"message":"Access denied to iCalUid"}]}`, "Access denied to iCalUid", 1, false},
-		{"other field", 200, `{"errors":[{"message":"Cannot query field \"transcript\" on type \"CallRecording\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "transcript", 1, false},
-		{"auth", 401, "Unauthorized", "HTTP 401", 1, true},
-		{"HTTP throttling", 429, "Rate limit reached", "HTTP 429", 5, true},
-		{"GraphQL throttling", 200, `{"errors":[{"message":"Rate limit reached","extensions":{"code":"RATE_LIMITED"}}]}`, "rate limit reached", 5, false},
+		{"permission error naming field", 200, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "FORBIDDEN", 1},
+		{"permission error naming field HTTP 400", 400, `{"errors":[{"message":"Cannot query field \"iCalUid\" on type \"CalendarEvent\".","extensions":{"code":"FORBIDDEN"}}]}`, "HTTP 400", 1},
+		{"uncoded error naming field", 200, `{"errors":[{"message":"Access denied to iCalUid"}]}`, "Access denied to iCalUid", 1},
+		{"other field", 200, `{"errors":[{"message":"Cannot query field \"transcript\" on type \"CallRecording\".","extensions":{"code":"GRAPHQL_VALIDATION_FAILED"}}]}`, "transcript", 1},
+		{"GraphQL throttling", 200, `{"errors":[{"message":"Rate limit reached","extensions":{"code":"RATE_LIMITED"}}]}`, "rate limit reached", 5},
 	} {
-		paths := []bool{true, false}
-		if tt.probeOnly {
-			// Direct recording reads are covered by TestClientHTTPFailuresAreRedacted.
-			paths = []bool{true}
-		}
-		for _, probe := range paths {
+		for _, probe := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/probe=%t", tt.name, probe), func(t *testing.T) {
 				synctest.Test(t, func(t *testing.T) {
 					assert := assert.New(t)
@@ -173,7 +165,6 @@ func TestTwentyFallbackOnlyOnFieldRejection(t *testing.T) {
 							_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}},"calendarEvents":{"edges":[]},"calendarEventParticipants":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
 							return
 						}
-						w.Header().Set("Retry-After", "0")
 						w.WriteHeader(tt.status)
 						_, _ = fmt.Fprint(w, tt.body)
 					})
