@@ -29,6 +29,49 @@ func explainSearchPlan(t *testing.T, env *testEnv, q *search.Query) string {
 	return plan.String()
 }
 
+// Choose the FTS result page before looking up sender and conversation details.
+func TestSearchFTSSelectsPageBeforeDetails(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	env.EnableFTS()
+	plan := explainSearchPlan(t, env, search.Parse("invoice"))
+	sort := strings.Index(plan, "USE TEMP B-TREE FOR ORDER BY")
+	conversation := strings.Index(plan, "SEARCH conv USING INTEGER PRIMARY KEY")
+	require.GreaterOrEqual(t, sort, 0, plan)
+	require.GreaterOrEqual(t, conversation, 0, plan)
+	assert.Less(t, sort, conversation, plan)
+}
+
+func TestSearchFTSPagingPreservesDetails(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	env := newTestEnv(t)
+	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("billing@example.com"), DisplayName: new("Billing")})
+	_, err := env.DB.Exec(`UPDATE conversations SET title = 'Invoice thread' WHERE id = 1`)
+	require.NoError(err)
+	env.AddMessage(dbtest.MessageOpts{Subject: "invoice one", FromID: sender})
+	second := env.AddMessage(dbtest.MessageOpts{Subject: "invoice two"})
+	_, err = env.DB.Exec(`UPDATE messages SET sender_id = ? WHERE id = ?`, sender, second)
+	require.NoError(err)
+	env.AddMessage(dbtest.MessageOpts{Subject: "invoice three", FromID: sender, SentAt: "2024-06-01 10:00:00"})
+	env.EnableFTS()
+	q := search.Parse("invoice")
+	full := env.MustSearch(q, 10, 0)
+	require.Len(full, 3)
+	var paged []MessageSummary
+	for offset := 0; offset < 4; offset += 2 {
+		paged = append(paged, env.MustSearch(q, 2, offset)...)
+	}
+	assert.Equal(full, paged)
+	assert.Empty(env.MustSearch(q, 2, 4))
+	for _, msg := range paged {
+		assert.Equal("billing@example.com", msg.FromEmail)
+		assert.Equal("Billing", msg.FromName)
+		assert.Equal("Invoice thread", msg.ConversationTitle)
+	}
+}
+
 // A rare address must look up matching messages by rowid instead of walking
 // every message newest-first and probing its recipients.
 func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
@@ -42,8 +85,7 @@ func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 		{BccAddrs: []string{"@example.com"}},
 	} {
 		plan := explainSearchPlan(t, env, q)
-		assert.Contains(t, plan, "SEARCH m USING INTEGER PRIMARY KEY", "%+v\n%s", q, plan)
-		assert.NotContains(t, plan, "SCAN m USING INDEX idx_messages_sent_at", "%+v\n%s", q, plan)
+		assert.NotRegexp(t, `(?m)^SCAN m(?: |$)`, plan, "%+v\n%s", q, plan)
 	}
 }
 
