@@ -1394,8 +1394,6 @@ func buildCacheLockedAttempt(
 			afterMessageIDs[dataset] = 0
 		}
 	}
-	afterMessageIDs["source_merge_archive_only_messages"] = lastMessageID
-	afterMessageIDs[tableMessages] = lastMessageID
 	if err := sourceSnapshot.Prepare(maxID, afterMessageIDs); err != nil {
 		return nil, err
 	}
@@ -2100,22 +2098,6 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		messageTypes += ", 'account_address': 'VARCHAR', 'account_path': 'VARCHAR'"
 	}
 	messageTypes += "}"
-	// Old rows keep id, conversation_id, sent_at, and deleted_at for conversations
-	// and conversation_participants exports and fingerprints, related-dataset
-	// parent filters, and related stats. Only the messages append boundary
-	// determines which rows need full payloads, even during child repairs.
-	after := afterMessageIDs[tableMessages]
-	if after > 0 {
-		columns := strings.Split(messageColumns, ", ")
-		for i, column := range columns {
-			switch column {
-			case "id", "conversation_id", "sent_at", "deleted_at":
-			default:
-				columns[i] = fmt.Sprintf("CASE WHEN id > %d THEN %s END AS %s", after, column, column)
-			}
-		}
-		messageColumns = strings.Join(columns, ", ")
-	}
 
 	// Every column carries an explicit type so the schema DuckDB sees never
 	// depends on the data: read_csv_auto sniffs empty or all-NULL columns as
@@ -2128,7 +2110,7 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		// on the sqlite_scanner path; otherwise DuckDB binds against a
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
-		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages" + childFilter("source_merge_archive_only_messages"), "types={'message_id': 'BIGINT'}", nil},
+		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
 		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients" + childFilter("message_recipients"),
 			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},

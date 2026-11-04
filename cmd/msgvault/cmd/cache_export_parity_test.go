@@ -94,8 +94,7 @@ func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender
 	id, err := st.UpsertMessage(&store.Message{
 		ConversationID: conv, SourceID: sourceID, SourceMessageID: fmt.Sprintf("message-%d", i), MessageType: "email",
 		SenderID: sql.NullInt64{Int64: sender, Valid: true},
-		Subject:  sql.NullString{String: "Subject", Valid: true}, Snippet: sql.NullString{String: "Snippet", Valid: true},
-		SentAt: sql.NullTime{Time: time.Date(2025, 4, i+1, 12, 0, 0, 0, time.UTC), Valid: true},
+		SentAt:   sql.NullTime{Time: time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err)
 	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{""}))
