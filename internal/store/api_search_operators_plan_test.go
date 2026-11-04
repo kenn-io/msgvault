@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,4 +79,45 @@ func TestSearchOperatorsLookupPlan(t *testing.T) {
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{1})
 	plan := s.buildMessageSearchSQL(ctx, search.Parse("from:rare"), true)
 	checks.NotContains(plan.where, "m.id IN (SELECT")
+}
+
+func TestSearchOperatorsLookupDeduplicatesMessages(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "operators.db")
+	s, err := Open(path)
+	require.NoError(err)
+	require.NoError(s.InitSchema())
+	seedLiveMessages(t, s, 80)
+	for id := 2; id <= 12; id++ {
+		_, err = s.db.Exec(`INSERT INTO participants (id, email_address) VALUES (?, ?)`, id, fmt.Sprintf("fanout%d@example.com", id))
+		require.NoError(err)
+		_, err = s.db.Exec(`INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (1, ?, 'to')`, id)
+		require.NoError(err)
+		_, err = s.db.Exec(`INSERT INTO labels (id, source_id, source_label_id, name) VALUES (?, 1, ?, ?)`, id, fmt.Sprint(id), fmt.Sprintf("fanout%d", id))
+		require.NoError(err)
+		_, err = s.db.Exec(`INSERT INTO message_labels (message_id, label_id) VALUES (1, ?)`, id)
+		require.NoError(err)
+	}
+	require.NoError(s.Close())
+	s, err = Open(path)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(s.Close()) })
+	for _, input := range []string{"to:fanout", "label:fanout"} {
+		t.Run(input, func(t *testing.T) {
+			q := search.Parse(input)
+			plan := s.buildMessageSearchSQL(t.Context(), q, true)
+			assert.Contains(t, plan.where, "m.id IN (SELECT")
+			explained := explainPlan(t, s, "SELECT COUNT(*) FROM messages m WHERE "+plan.where, plan.args...)
+			assert.NotRegexp(t, `SCAN m\b`, explained)
+			rows, total, err := s.SearchMessagesQueryContext(t.Context(), q, 0, 50)
+			require.NoError(err)
+			assert.Equal(t, int64(1), total)
+			require.Len(rows, 1)
+			assert.Equal(t, int64(1), rows[0].ID)
+			ids, total, err := s.SearchMessageIDsQueryContext(t.Context(), q, 50)
+			require.NoError(err)
+			assert.Equal(t, int64(1), total)
+			assert.Equal(t, []int64{1}, ids)
+		})
+	}
 }

@@ -545,6 +545,7 @@ func (s *Store) SearchMessagesQueryContext(
 type searchOperator struct {
 	condition int
 	matching  string
+	arg       string
 }
 
 type messageSearchSQL struct {
@@ -822,19 +823,16 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	// Operators come last so a condition before them identifies a search
 	// already narrowed by another filter.
 	var operators []searchOperator
-	recipientsTable := "message_recipients mr2"
-	if !s.IsPostgreSQL() {
-		recipientsTable += " INDEXED BY idx_message_recipients_participant"
-	}
 	for _, group := range []struct {
 		role  string
 		addrs []string
 	}{{"from", q.FromAddrs}, {"to", q.ToAddrs}, {"cc", q.CcAddrs}, {"bcc", q.BccAddrs}} { //nolint:goconst // Search recipient roles are independent of meeting senders.
 		for _, addr := range group.addrs {
+			arg := "%" + escapeLike(strings.ToLower(addr)) + "%"
 			if !rowIDs {
-				operators = append(operators, searchOperator{len(conditions), fmt.Sprintf(`SELECT mr2.message_id FROM %s
+				operators = append(operators, searchOperator{condition: len(conditions), matching: fmt.Sprintf(`SELECT mr2.message_id FROM message_recipients mr2 INDEXED BY idx_message_recipients_participant
 					WHERE mr2.recipient_type = '%s' AND mr2.participant_id IN
-					(SELECT p2.id FROM participants p2 WHERE LOWER(p2.email_address) LIKE ? ESCAPE '\')`, recipientsTable, group.role)})
+					(SELECT p2.id FROM participants p2 WHERE LOWER(p2.email_address) LIKE ? ESCAPE '\')`, group.role), arg: arg})
 			}
 			conditions = append(conditions, fmt.Sprintf(`EXISTS (
 			SELECT 1 FROM message_recipients mr2
@@ -843,13 +841,14 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			AND mr2.recipient_type = '%s'
 			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
 		)`, group.role))
-			args = append(args, "%"+escapeLike(strings.ToLower(addr))+"%")
+			args = append(args, arg)
 		}
 	}
 	for _, lbl := range q.Labels {
+		arg := "%" + escapeLike(strings.ToLower(lbl)) + "%"
 		if !rowIDs {
-			operators = append(operators, searchOperator{len(conditions), `SELECT ml2.message_id FROM message_labels ml2
-				WHERE ml2.label_id IN (SELECT l2.id FROM labels l2 WHERE LOWER(l2.name) LIKE ? ESCAPE '\')`})
+			operators = append(operators, searchOperator{condition: len(conditions), matching: `SELECT ml2.message_id FROM message_labels ml2
+				WHERE ml2.label_id IN (SELECT l2.id FROM labels l2 WHERE LOWER(l2.name) LIKE ? ESCAPE '\')`, arg: arg})
 		}
 		conditions = append(conditions, `EXISTS (
 			SELECT 1 FROM message_labels ml2
@@ -857,7 +856,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			WHERE ml2.message_id = m.id
 			AND LOWER(l2.name) LIKE ? ESCAPE '\'
 		)`)
-		args = append(args, "%"+escapeLike(strings.ToLower(lbl))+"%")
+		args = append(args, arg)
 	}
 
 	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
@@ -890,8 +889,8 @@ func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQ
 	best := -1
 	for i, operator := range plan.operators {
 		var count int64
-		if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ("+operator.matching+" LIMIT ?) AS matches",
-			plan.args[operator.condition], limit+1).Scan(&count); err != nil {
+		if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM (SELECT DISTINCT message_id FROM ("+operator.matching+") LIMIT ?) AS matches",
+			operator.arg, limit+1).Scan(&count); err != nil {
 			return
 		}
 		if count <= limit {
