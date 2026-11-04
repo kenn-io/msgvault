@@ -90,6 +90,16 @@ func readSQLiteTimelineSnapshot(
 		for _, field := range []any{conversationID, count, changedAt.String, participantRevision, identifierRevision, identityRevision, conversationUpdatedAt, conversationTitle} {
 			writeSnapshotField(hasher, snapshotFieldBytes(field))
 		}
+		if len(scope.Filter.ParticipantIDs) > 0 {
+			condition, args := sqliteTextParticipantCondition("c.id", scope.Filter.ParticipantIDs)
+			args = append([]any{conversationID}, args...)
+			var matches bool
+			query := `SELECT EXISTS(SELECT 1 FROM conversations c WHERE c.id = ? AND ` + condition + `)`
+			if err := tx.QueryRowContext(ctx, e.dialect.Rebind(query), args...).Scan(&matches); err != nil {
+				return nil, fmt.Errorf("probe text timeline participants: %w", err)
+			}
+			writeSnapshotField(hasher, snapshotFieldBytes(matches))
+		}
 		// A second edit can share a fresh millisecond stamp, so fence reads
 		// within two milliseconds after that stamp.
 		if recent {
@@ -361,6 +371,36 @@ func sqliteDirection(d SortDirection) string {
 	return "DESC"
 }
 
+func sqliteTextParticipantCondition(conversation string, participantIDs []int64) (string, []any) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(participantIDs)), ",")
+	condition := fmt.Sprintf(`(
+			EXISTS (
+				SELECT 1 FROM conversation_participants cp
+				WHERE cp.conversation_id = %s
+				  AND cp.participant_id IN (%s)
+			)
+			OR EXISTS (
+				SELECT 1 FROM messages m_participant
+				WHERE m_participant.conversation_id = %s
+				  AND (
+					m_participant.sender_id IN (%s)
+					OR EXISTS (
+						SELECT 1 FROM message_recipients mr_participant
+						WHERE mr_participant.message_id = m_participant.id
+						  AND mr_participant.participant_id IN (%s)
+					)
+				  )
+			)
+		)`, conversation, placeholders, conversation, placeholders, placeholders)
+	args := make([]any, 0, 3*len(participantIDs))
+	for range 3 {
+		for _, id := range participantIDs {
+			args = append(args, id)
+		}
+	}
+	return condition, args
+}
+
 // buildSQLiteTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the m. prefix for the messages table.
 func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []any) {
@@ -385,31 +425,9 @@ func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []an
 		args = append(args, *filter.SourceID)
 	}
 	if len(filter.ParticipantIDs) > 0 {
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(filter.ParticipantIDs)), ",")
-		conditions = append(conditions, `(
-			EXISTS (
-				SELECT 1 FROM conversation_participants cp
-				WHERE cp.conversation_id = m.conversation_id
-				  AND cp.participant_id IN (`+placeholders+`)
-			)
-			OR EXISTS (
-				SELECT 1 FROM messages m_participant
-				WHERE m_participant.conversation_id = m.conversation_id
-				  AND (
-					m_participant.sender_id IN (`+placeholders+`)
-					OR EXISTS (
-						SELECT 1 FROM message_recipients mr_participant
-						WHERE mr_participant.message_id = m_participant.id
-						  AND mr_participant.participant_id IN (`+placeholders+`)
-					)
-				  )
-			)
-		)`)
-		for range 3 {
-			for _, id := range filter.ParticipantIDs {
-				args = append(args, id)
-			}
-		}
+		condition, participantArgs := sqliteTextParticipantCondition("m.conversation_id", filter.ParticipantIDs)
+		conditions = append(conditions, condition)
+		args = append(args, participantArgs...)
 	}
 	if filter.ContactPhone != "" {
 		conditions = append(conditions, `EXISTS (

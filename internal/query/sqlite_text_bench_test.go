@@ -30,6 +30,7 @@ func BenchmarkSQLiteConversationMessagesSnapshot(b *testing.B) {
 				(id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
 				VALUES (?, 1, 1, ?, 'imessage', datetime('2020-01-01', '+' || ? || ' seconds'), 'benchmark message', 1)`)
 			require.NoError(b, err)
+			defer func() { _ = stmt.Close() }()
 			for id := 1; id <= size; id++ {
 				_, err = stmt.Exec(id, strconv.Itoa(id), id)
 				require.NoError(b, err)
