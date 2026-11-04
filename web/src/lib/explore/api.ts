@@ -1,5 +1,7 @@
 import { runCLI as generatedRunCLI } from '../api/generated/api/api';
 import {
+  getDomainTimeline,
+  getParticipantTimeline,
   countExploreMatches as generatedCountExploreMatches,
   explore as generatedExplore,
   exploreGroups as generatedExploreGroups,
@@ -13,7 +15,7 @@ import type {
   ExploreFilter,
   ExploreFilesLoadResult,
   ExploreFilesResponse,
-  ExploreGroupDimension,
+  ExploreRequestGroupDimension,
   ExploreGroupLoadResult,
   ExploreGroupsPredicate,
   ExploreGroupsResponse,
@@ -101,18 +103,26 @@ function messageFor(error: unknown, status: number): string {
     ? String(error.message)
     : `Exploration request failed (${status})`;
 }
+export class ExploreAPIError extends Error {
+  readonly code: string | undefined;
+  constructor(readonly status: number, error: unknown) {
+    super(messageFor(error, status));
+    this.code = typeof error === 'object' && error !== null && 'error' in error && typeof error.error === 'string'
+      ? error.error : undefined;
+  }
+}
 export interface ExploreAPI {
   explore(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreLoadResult>;
   groups(
     predicate: ExploreGroupsPredicate,
-    dimension: ExploreGroupDimension,
+    dimension: ExploreRequestGroupDimension,
     signal?: AbortSignal,
   ): Promise<ExploreGroupLoadResult>;
   fileGroups(
     predicate: ExplorePredicate,
     filenameQuery: string,
     mimeFamilies: FileMIMEFamily[],
-    dimension: ExploreGroupDimension,
+    dimension: ExploreRequestGroupDimension,
     signal?: AbortSignal,
   ): Promise<ExploreGroupLoadResult>;
   files(predicate: ExplorePredicate, signal?: AbortSignal): Promise<ExploreFilesLoadResult>;
@@ -147,18 +157,21 @@ function requireCompletedCLIRun(stream: string): void {
   }
   if (!completed) throw new Error('Semantic index action did not complete');
 }
-export function createExploreAPI(client: APIClient): ExploreAPI {
+export type TimelineScope = { kind: 'person'; id: number } | { kind: 'domain'; domain: string };
+export function createExploreAPI(client: APIClient, scope?: TimelineScope): ExploreAPI {
   return {
     async explore(predicate, signal) {
-      const { data, error, response } = await generatedExplore(predicate, {
-        ...client,
-        signal,
-      });
+      const options = { ...client, signal };
+      const { data, error, response } = await (scope?.kind === 'person'
+        ? getParticipantTimeline({ id: scope.id }, predicate, options)
+        : scope?.kind === 'domain'
+          ? getDomainTimeline({ domain: scope.domain }, predicate, options)
+          : generatedExplore(predicate, options));
       if (data) return { status: 'ready', result: normalize(data) };
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async groups(predicate, dimension, signal) {
       const body = {
@@ -166,6 +179,8 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
         ...(predicate.filters ? { filters: predicate.filters } : {}),
         ...(predicate.query ? { query: predicate.query, search_mode: predicate.search_mode } : {}),
         ...(predicate.group_key ? { group_key: predicate.group_key } : {}),
+        ...('sent_only' in predicate ? { sent_only: Boolean(predicate.sent_only) } : {}),
+        ...(predicate.timezone ? { timezone: predicate.timezone } : {}),
         grouping: [dimension],
         limit: predicate.limit,
         presentation: 'table' as const,
@@ -178,7 +193,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async fileGroups(predicate, filenameQuery, mimeFamilies, dimension, signal) {
       const { cursor, ...context } = predicate;
@@ -200,7 +215,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async files(predicate, signal) {
       const { cursor, ...context } = predicate;
@@ -215,7 +230,7 @@ export function createExploreAPI(client: APIClient): ExploreAPI {
       if (response.status === 503 && isCacheUnavailable(error)) {
         return { status: 'unavailable', unavailable: error };
       }
-      throw new Error(messageFor(error, response.status));
+      throw new ExploreAPIError(response.status, error);
     },
     async coverage(filters, signal) {
       const { data, error, response } = await generatedGetSearchCoverage(

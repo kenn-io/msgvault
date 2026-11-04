@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -6,10 +7,6 @@ import { DirectoryEntityController } from '../../directory/entity-controller.sve
 import type { PersonNetwork as PersonNetworkProjection } from '../../directory/models';
 import { chooseSelectOption } from '../../../test/kit-ui';
 import PersonNetwork from './PersonNetwork.svelte';
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function rootOnly(depth = 1): PersonNetworkProjection {
   return {

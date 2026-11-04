@@ -9,6 +9,8 @@ const suite = process.env.MSGVAULT_PLAYWRIGHT_SUITE ?? 'browser';
 const ciReporters: ReporterDescription[] = process.env.CI
   ? [['json', { outputFile: `test-results/playwright/${suite}.json` }]]
   : [];
+const e2eSpecs = ['e2e/**/*.spec.ts', 'conversation-content-frame.spec.ts', 'files-viewer.spec.ts'];
+const virtualizerSpecs = ['everything-virtualization.spec.ts', 'files-workspace.spec.ts'];
 
 export default defineConfig({
   testDir: './tests',
@@ -19,10 +21,19 @@ export default defineConfig({
   ],
   // In CI, retry a failed test twice.
   retries: process.env.CI ? 2 : 0,
-  // Deep virtualizer fixtures intentionally exercise tens of thousands of rows.
-  // Serial execution keeps their timing and visual rasterization deterministic
-  // across developer laptops and the Linux CI runner.
-  workers: 1,
+  projects: [
+    { name: 'browser', testIgnore: [...e2eSpecs, ...virtualizerSpecs] },
+    {
+      name: 'virtualizer',
+      dependencies: ['browser'],
+      testMatch: virtualizerSpecs,
+      // Deep virtualizer fixtures intentionally exercise tens of thousands of rows.
+      // Serial execution keeps their timing and visual rasterization deterministic
+      // across developer laptops and the Linux CI runner.
+      workers: 1
+    },
+    { name: 'e2e', testMatch: e2eSpecs, workers: 1 }
+  ],
   // CI containers run the archive-fixture generation and first renders much
   // slower than developer machines; keep the strict budget locally.
   timeout: process.env.CI ? 60_000 : 30_000,

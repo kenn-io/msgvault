@@ -204,7 +204,7 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 		case TimeMonth:
 			gran = timeGranularityMonth
 		case TimeDay:
-			gran = "day"
+			gran = timeGranularityDay
 		default:
 			return aggDimension{}, fmt.Errorf("unsupported time granularity: %d", timeGranularity)
 		}
@@ -576,7 +576,7 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (stri
 		case TimeMonth:
 			gran = timeGranularityMonth
 		case TimeDay:
-			gran = "day"
+			gran = timeGranularityDay
 		default:
 			gran = timeGranularityMonth
 		}
@@ -1421,15 +1421,6 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		`, whereClause)
 	}
 
-	if err := e.queryRowContext(ctx, msgQuery, args...).Scan(
-		&stats.MessageCount,
-		&stats.ActiveMessageCount,
-		&stats.SourceDeletedMessageCount,
-		&stats.TotalSize,
-	); err != nil {
-		return nil, fmt.Errorf("message stats: %w", err)
-	}
-
 	// Attachment stats — use IN subquery only when search joins are present.
 	var attQuery string
 	if joinClause != "" {
@@ -1451,20 +1442,44 @@ func (e *SQLiteEngine) GetTotalStats(ctx context.Context, opts StatsOptions) (*T
 		`, whereClause)
 	}
 
-	if err := e.queryRowContext(ctx, attQuery, args...).Scan(&stats.AttachmentCount, &stats.AttachmentSize); err != nil {
-		return nil, fmt.Errorf("attachment stats: %w", err)
-	}
-
 	// Inventory counts include permitted accounts and labels with no messages.
 	labelConditions, labelArgs := appendSourceFilter([]string{"TRUE"}, nil, "", opts.SourceID, nil)
 	labelConditions, labelArgs = appendSourceFilter(labelConditions, labelArgs, "", nil, sourcescope.IDs(ctx))
-	if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM labels WHERE "+strings.Join(labelConditions, " AND "), labelArgs...).Scan(&stats.LabelCount); err != nil {
-		return nil, fmt.Errorf("label count: %w", err)
-	}
 	accountConditions, accountArgs := appendIDFilter([]string{"TRUE"}, nil, "id", opts.SourceID, nil)
 	accountConditions, accountArgs = appendIDFilter(accountConditions, accountArgs, "id", nil, sourcescope.IDs(ctx))
-	if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources WHERE "+strings.Join(accountConditions, " AND "), accountArgs...).Scan(&stats.AccountCount); err != nil {
-		return nil, fmt.Errorf("account count: %w", err)
+
+	if err := store.RunIndependentReads(ctx, e.db,
+		func(ctx context.Context) error {
+			if err := e.queryRowContext(ctx, msgQuery, args...).Scan(
+				&stats.MessageCount,
+				&stats.ActiveMessageCount,
+				&stats.SourceDeletedMessageCount,
+				&stats.TotalSize,
+			); err != nil {
+				return fmt.Errorf("message stats: %w", err)
+			}
+			return nil
+		},
+		func(ctx context.Context) error {
+			if err := e.queryRowContext(ctx, attQuery, args...).Scan(&stats.AttachmentCount, &stats.AttachmentSize); err != nil {
+				return fmt.Errorf("attachment stats: %w", err)
+			}
+			return nil
+		},
+		func(ctx context.Context) error {
+			if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM labels WHERE "+strings.Join(labelConditions, " AND "), labelArgs...).Scan(&stats.LabelCount); err != nil {
+				return fmt.Errorf("label count: %w", err)
+			}
+			return nil
+		},
+		func(ctx context.Context) error {
+			if err := e.queryRowContext(ctx, "SELECT COUNT(*) FROM sources WHERE "+strings.Join(accountConditions, " AND "), accountArgs...).Scan(&stats.AccountCount); err != nil {
+				return fmt.Errorf("account count: %w", err)
+			}
+			return nil
+		},
+	); err != nil {
+		return nil, err
 	}
 
 	return stats, nil
@@ -1656,7 +1671,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 		case TimeMonth:
 			gran = timeGranularityMonth
 		case TimeDay:
-			gran = "day"
+			gran = timeGranularityDay
 		default:
 			gran = timeGranularityMonth
 		}
@@ -2308,17 +2323,33 @@ func (e *SQLiteEngine) SearchDeepWithStats(
 	ctx context.Context, searchQuery *search.Query, filter MessageFilter, limit, offset int,
 ) (*SearchFastResult, error) {
 	conditions, args, ftsJoin := e.buildFilteredDeepSearchQueryParts(ctx, searchQuery, filter)
-	results, err := e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
-	if err != nil {
+	var (
+		results  []MessageSummary
+		count    int64
+		countErr error
+		stats    *TotalStats
+	)
+	if err := store.RunIndependentReads(ctx, e.db,
+		func(ctx context.Context) error {
+			var err error
+			results, err = e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+			return err
+		},
+		func(ctx context.Context) error {
+			count, countErr = e.executeSearchCount(ctx, conditions, args, ftsJoin)
+			return nil
+		},
+		func(ctx context.Context) error {
+			stats, _ = e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
+			return nil
+		},
+	); err != nil {
 		return nil, err
 	}
-
-	count, countErr := e.executeSearchCount(ctx, conditions, args, ftsJoin)
 	if countErr != nil {
 		log.Printf("warning: deep search count failed (using -1): %v", countErr)
 		count = -1
 	}
-	stats, _ := e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
 
 	return &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}, nil
 }
@@ -2672,29 +2703,12 @@ func (e *SQLiteEngine) getSearchMatchStats(ctx context.Context, conditions []str
 			COUNT(DISTINCT source_id)
 		FROM search_matches
 	`, searchMatches)
-	if err := e.queryRowContext(ctx, messageStatsQuery, args...).Scan(
-		&stats.MessageCount,
-		&stats.ActiveMessageCount,
-		&stats.SourceDeletedMessageCount,
-		&stats.TotalSize,
-		&stats.AccountCount,
-	); err != nil {
-		return nil, fmt.Errorf("search match message stats: %w", err)
-	}
-
 	attachmentStatsQuery := fmt.Sprintf(`
 		WITH search_matches AS (%s)
 		SELECT COUNT(*), COALESCE(SUM(a.size), 0)
 		FROM attachments a
 		JOIN search_matches sm ON sm.id = a.message_id
 	`, searchMatches)
-	if err := e.queryRowContext(ctx, attachmentStatsQuery, args...).Scan(
-		&stats.AttachmentCount,
-		&stats.AttachmentSize,
-	); err != nil {
-		return nil, fmt.Errorf("search match attachment stats: %w", err)
-	}
-
 	labelStatsQuery := fmt.Sprintf(`
 		WITH search_matches AS (%s)
 		SELECT COUNT(DISTINCT l.name)
@@ -2702,8 +2716,36 @@ func (e *SQLiteEngine) getSearchMatchStats(ctx context.Context, conditions []str
 		JOIN message_labels ml ON ml.label_id = l.id
 		JOIN search_matches sm ON sm.id = ml.message_id
 	`, searchMatches)
-	if err := e.queryRowContext(ctx, labelStatsQuery, args...).Scan(&stats.LabelCount); err != nil {
-		return nil, fmt.Errorf("search match label stats: %w", err)
+	if err := store.RunIndependentReads(ctx, e.db,
+		func(ctx context.Context) error {
+			if err := e.queryRowContext(ctx, messageStatsQuery, args...).Scan(
+				&stats.MessageCount,
+				&stats.ActiveMessageCount,
+				&stats.SourceDeletedMessageCount,
+				&stats.TotalSize,
+				&stats.AccountCount,
+			); err != nil {
+				return fmt.Errorf("search match message stats: %w", err)
+			}
+			return nil
+		},
+		func(ctx context.Context) error {
+			if err := e.queryRowContext(ctx, attachmentStatsQuery, args...).Scan(
+				&stats.AttachmentCount,
+				&stats.AttachmentSize,
+			); err != nil {
+				return fmt.Errorf("search match attachment stats: %w", err)
+			}
+			return nil
+		},
+		func(ctx context.Context) error {
+			if err := e.queryRowContext(ctx, labelStatsQuery, args...).Scan(&stats.LabelCount); err != nil {
+				return fmt.Errorf("search match label stats: %w", err)
+			}
+			return nil
+		},
+	); err != nil {
+		return nil, err
 	}
 
 	return stats, nil
@@ -2718,30 +2760,41 @@ func (e *SQLiteEngine) SearchFastWithStats(ctx context.Context, q *search.Query,
 	}
 	conditions, args, ftsJoin := e.buildFilteredMetadataSearchQueryParts(ctx, q, filter)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
-	var results []MessageSummary
-	if limit != 0 {
-		var err error
-		results, err = e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
-		if err != nil {
-			return nil, err
-		}
+	var (
+		results  []MessageSummary
+		count    int64
+		countErr error
+		stats    *TotalStats
+	)
+	reads := []func(context.Context) error{
+		// Best-effort count and stats; cancellation is checked after the reads.
+		func(ctx context.Context) error {
+			count, countErr = e.executeSearchCount(ctx, conditions, args, ftsJoin)
+			return nil
+		},
 	}
-
-	// Best-effort count, but cancellation must stop the request's remaining work.
-	count, countErr := e.executeSearchCount(ctx, conditions, args, ftsJoin)
+	if limit != 0 {
+		reads = append(reads, func(ctx context.Context) error {
+			var err error
+			results, err = e.executeSearchQuery(ctx, conditions, args, ftsJoin, limit, offset)
+			return err
+		})
+	}
+	if statsGroupBy != ViewNoStats {
+		reads = append(reads, func(ctx context.Context) error {
+			stats, _ = e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
+			return nil
+		})
+	}
+	if err := store.RunIndependentReads(ctx, e.db, reads...); err != nil {
+		return nil, err
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if countErr != nil {
 		log.Printf("warning: search count failed (using -1): %v", countErr)
 		count = -1
-	}
-	var stats *TotalStats
-	if statsGroupBy != ViewNoStats {
-		stats, _ = e.getSearchMatchStats(ctx, conditions, args, ftsJoin)
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
 	}
 	return &SearchFastResult{Messages: results, TotalCount: count, Stats: stats}, nil
 }

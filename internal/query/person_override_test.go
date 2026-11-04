@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 func personOverrideFixture(t *testing.T) (*TestDataBuilder, int64, int64) {
@@ -35,6 +36,7 @@ func addPersonOverride(b *TestDataBuilder, participantID, personID int64, name *
 }
 
 func TestSearchPeopleAppliesPersonDisplayNameOverride(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, alice, alias := personOverrideFixture(t)
@@ -56,6 +58,7 @@ func TestSearchPeopleAppliesPersonDisplayNameOverride(t *testing.T) {
 }
 
 func TestPersonOverrideLabelMatchesAcrossIndexedAndLegacyPaths(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, alice, alias := personOverrideFixture(t)
@@ -77,6 +80,7 @@ func TestPersonOverrideLabelMatchesAcrossIndexedAndLegacyPaths(t *testing.T) {
 }
 
 func TestSearchPeopleMatchesCuratedNameAndPreservesObservedAliases(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, _, alias := personOverrideFixture(t)
@@ -95,6 +99,7 @@ func TestSearchPeopleMatchesCuratedNameAndPreservesObservedAliases(t *testing.T)
 }
 
 func TestRelationshipsListUsesPersonDisplayName(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b, _, alias := personOverrideFixture(t)
@@ -108,6 +113,7 @@ func TestRelationshipsListUsesPersonDisplayName(t *testing.T) {
 }
 
 func TestPersonOverrideDeterministicAcrossConflictingBindings(t *testing.T) {
+	t.Parallel()
 	for _, samePerson := range []bool{false, true} {
 		t.Run(strconv.FormatBool(samePerson), func(t *testing.T) {
 			assertions := assert.New(t)
@@ -140,6 +146,7 @@ func TestPersonOverrideDeterministicAcrossConflictingBindings(t *testing.T) {
 }
 
 func TestPersonOverrideLeavesUnboundAndBlankNameLabelsUnchanged(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"unbound", "null", "blank"} {
 		t.Run(mode, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -191,6 +198,8 @@ func TestPersonOverrideLeavesUnboundAndBlankNameLabelsUnchanged(t *testing.T) {
 }
 
 func TestPersonProfileRevisionComesFromStoreNotCache(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st, err := store.Open(filepath.Join(t.TempDir(), "profile.db"))

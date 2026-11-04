@@ -1,8 +1,6 @@
 import { listPersonRelationshipReviews as generatedListPersonRelationshipReviews } from '../api/generated/api/api';
 import type { APIClient } from '../api/client';
 import type { RelationshipReview as GeneratedRelationshipReview } from '../api/generated/models';
-import type { RelationshipReviewState } from '../explore/models';
-export type { RelationshipReviewState } from '../explore/models';
 type GeneratedReview = GeneratedRelationshipReview;
 export type RelationshipReviewRow = Pick<
   GeneratedReview,
@@ -18,90 +16,67 @@ export type RelationshipReviewRow = Pick<
   | 'updated_at'
   | 'reviewed_at'
 >;
-type RelationshipReviewCommit = (patch: { relationshipReviewState?: RelationshipReviewState }) => void;
 export class RelationshipReviewController {
-  active = $state(false);
-  state = $state<RelationshipReviewState>('pending');
+  personID = $state<number>();
   rows = $state<RelationshipReviewRow[]>([]);
   loading = $state(false);
   error = $state<string | null>(null);
-  lastSuccessfulState = $state<RelationshipReviewState | null>(null);
   private readonly client: APIClient;
-  private readonly commit: RelationshipReviewCommit;
   private requestAbort: AbortController | undefined;
   private requestGeneration = 0;
   private contextGeneration = $state(0);
   private disposed = false;
-  constructor(client: APIClient, commit: RelationshipReviewCommit = () => undefined) {
+  constructor(client: APIClient) {
     this.client = client;
-    this.commit = commit;
   }
-  get contextToken(): number {
-    return this.contextGeneration;
-  }
-  isContextCurrent(token: number): boolean {
-    return !this.disposed && this.active && this.contextGeneration === token;
-  }
-  applyContext(active: boolean, state: RelationshipReviewState, historyRestoration: boolean): void {
-    if (this.disposed) return;
-    const changed = this.active !== active || this.state !== state;
-    if (!changed && !historyRestoration) return;
-    this.replaceContext(active, state);
-    if (active) void this.load();
-  }
-  setState(state: RelationshipReviewState): void {
-    if (this.disposed || !this.active || this.state === state) return;
-    this.commit({ relationshipReviewState: state });
-    this.replaceContext(true, state);
+  applyPerson(personID: number): void {
+    if (this.disposed || this.personID === personID) return;
+    this.personID = personID;
+    this.replaceContext();
     void this.load();
   }
   async load(): Promise<boolean> {
-    if (this.disposed || !this.active) return false;
+    if (this.disposed || this.personID === undefined) return false;
     this.requestAbort?.abort();
     const abort = new AbortController();
     this.requestAbort = abort;
     const request = ++this.requestGeneration;
     const context = this.contextGeneration;
-    const state = this.state;
     this.loading = true;
     this.error = null;
     try {
       const response = await generatedListPersonRelationshipReviews(
-        { status: state },
+        { person_id: this.personID },
         {
           ...this.client,
           signal: abort.signal,
         },
       );
-      if (!this.ownsRequest(abort, request, context, state)) return false;
+      if (!this.ownsRequest(abort, request, context)) return false;
       if (response.data) {
-        const rows = safeRows(response.data.reviews, state);
+        const rows = safeRows(response.data.reviews);
         if (!rows) {
           this.error = 'Unable to load imported relationship reviews.';
           return false;
         }
         this.rows = rows;
-        this.lastSuccessfulState = state;
         return true;
       }
-      this.error =
-        response.response.status === 400 && errorCode(response.error) === 'invalid_status'
-          ? 'The imported relationship review state is invalid.'
-          : 'Unable to load imported relationship reviews.';
+      this.error = 'Unable to load imported relationship reviews.';
       return false;
     } catch {
-      if (!this.ownsRequest(abort, request, context, state)) return false;
+      if (!this.ownsRequest(abort, request, context)) return false;
       this.error = 'Unable to load imported relationship reviews.';
       return false;
     } finally {
-      if (this.ownsRequest(abort, request, context, state)) {
+      if (this.ownsRequest(abort, request, context)) {
         this.requestAbort = undefined;
         this.loading = false;
       }
     }
   }
   async retry(): Promise<void> {
-    if (this.disposed || !this.active || this.loading || !this.error || this.rows.length > 0) return;
+    if (this.disposed || this.personID === undefined || this.loading || !this.error) return;
     await this.load();
   }
   destroy(): void {
@@ -111,44 +86,35 @@ export class RelationshipReviewController {
     this.requestAbort = undefined;
     ++this.requestGeneration;
     ++this.contextGeneration;
-    this.active = false;
     this.rows = [];
     this.loading = false;
     this.error = null;
-    this.lastSuccessfulState = null;
   }
-  private replaceContext(active: boolean, state: RelationshipReviewState): void {
+  private replaceContext(): void {
     this.requestAbort?.abort();
     this.requestAbort = undefined;
     ++this.requestGeneration;
     ++this.contextGeneration;
-    this.active = active;
-    this.state = state;
     this.rows = [];
     this.loading = false;
     this.error = null;
-    this.lastSuccessfulState = null;
   }
   private ownsRequest(
     abort: AbortController,
     request: number,
     context: number,
-    state: RelationshipReviewState,
   ): boolean {
     return (
       !this.disposed &&
-      this.active &&
       !abort.signal.aborted &&
       this.requestAbort === abort &&
       this.requestGeneration === request &&
-      this.contextGeneration === context &&
-      this.state === state
+      this.contextGeneration === context
     );
   }
 }
 function safeRows(
   values: GeneratedReview[] | null,
-  selectedState: RelationshipReviewState,
 ): RelationshipReviewRow[] | undefined {
   if (values === null) return [];
   const rows: RelationshipReviewRow[] = [];
@@ -159,7 +125,7 @@ function safeRows(
       typeof value.raw_related_value !== 'string' ||
       typeof value.raw_related_type !== 'string' ||
       typeof value.value_kind !== 'string' ||
-      value.status !== selectedState ||
+      !['pending', 'accepted', 'rejected'].includes(value.status) ||
       typeof value.source !== 'string' ||
       typeof value.created_at !== 'string' ||
       typeof value.updated_at !== 'string' ||
@@ -184,9 +150,4 @@ function safeRows(
 }
 function positiveID(value: number | undefined): value is number {
   return value !== undefined && Number.isSafeInteger(value) && value > 0;
-}
-function errorCode(error: unknown): string | undefined {
-  return typeof error === 'object' && error !== null && 'error' in error && typeof error.error === 'string'
-    ? error.error
-    : undefined;
 }

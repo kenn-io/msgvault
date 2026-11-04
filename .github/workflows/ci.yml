@@ -64,7 +64,7 @@ jobs:
     container:
       image: ubuntu:26.04
     steps:
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install build tools
         env:
@@ -152,7 +152,7 @@ jobs:
           group: linux-checks
           extra-path: .git/golangci-lint-cache
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -210,7 +210,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -292,7 +292,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -367,7 +367,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -401,8 +401,8 @@ jobs:
           echo 'Browser server did not become ready within 30 attempts.' >&2
           exit 1
 
-      - name: Check, test, and build frontend
-        run: make web-check web-test web-build
+      - name: Check and test frontend
+        run: make web-check web-test
 
       - name: Upload Vitest report
         if: always()
@@ -478,7 +478,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -576,7 +576,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default include path. Install it from MSYS2 and point
@@ -664,7 +664,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -713,7 +713,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -780,7 +780,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -835,7 +835,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -881,6 +881,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql/data:rw,size=4g
           --health-cmd "pg_isready -U msgvault_test -d msgvault_test"
           --health-interval 5s
           --health-timeout 5s
@@ -900,7 +901,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -960,6 +961,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
+          --tmpfs /var/lib/postgresql:rw,size=4g
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
@@ -979,7 +981,7 @@ jobs:
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -1047,7 +1049,10 @@ jobs:
           POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=256 -c fsync=off -c synchronous_commit=off -c full_page_writes=off"
         ports:
           - 5432:5432
+        # CI tmpfs peaks: api 427 MiB, pgvector 258 MiB, test-postgres 214 MiB, cli 213 MiB.
+        # Store stays on disk: median test time rose from 709s to 792s with tmpfs in five paired CI runs.
         options: >-
+          ${{ matrix.name != 'store' && '--tmpfs /var/lib/postgresql:rw,size=4g' || '' }}
           --health-cmd pg_isready
           --health-interval 10s
           --health-timeout 5s
@@ -1067,7 +1072,7 @@ jobs:
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap

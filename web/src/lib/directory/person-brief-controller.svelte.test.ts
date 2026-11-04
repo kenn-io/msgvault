@@ -1,11 +1,8 @@
+import { requestOf } from './entity-fixtures.test-support';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { PersonBriefController, briefFailureClassLabel } from './person-brief-controller.svelte';
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 // Fields the card must never project: the evidence content hash, the internal
 // source URL, the packet-local citation IDs, and the provider fingerprints.
@@ -379,6 +376,52 @@ describe('PersonBriefController', () => {
     expect(controller.briefError).toBeNull();
     expect(controller.announcement).toBe('Brief version 2 rejected.');
     expect(briefReads).toBe(1);
+    controller.destroy();
+  });
+
+  it.each(['enrollment', 'brief'])('keeps a rejected brief missing when an earlier %s refresh finishes', async (phase) => {
+    const staleRead = deferredResponse();
+    const rejection = deferredResponse();
+    let refreshing = false;
+    let readStarted = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST' && path === '/api/v1/people/7/brief/reject') return rejection.promise;
+      if (request.method === 'GET' && path === '/api/v1/people/7/brief-enrollment') {
+        if (refreshing && phase === 'enrollment') {
+          readStarted = true;
+          return staleRead.promise;
+        }
+        return Response.json(enrollment(true));
+      }
+      if (request.method === 'GET' && path === '/api/v1/people/7/brief') {
+        if (refreshing && phase === 'brief') {
+          readStarted = true;
+          return staleRead.promise;
+        }
+        return Response.json(brief());
+      }
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const controller = new PersonBriefController(createAPIClient(fetchFn));
+    await controller.setPerson(7);
+    refreshing = true;
+    const refresh = controller.refresh();
+    await vi.waitFor(() => expect(readStarted).toBe(true));
+
+    const rejecting = controller.reject('Wrong person');
+    rejection.resolve(Response.json(brief({ status: 'rejected', rejected_at: '2026-08-30T00:00:00Z' })));
+    expect(await rejecting).toEqual({ kind: 'confirmed' });
+    expect(controller.briefMissing).toBe(true);
+
+    staleRead.resolve(Response.json(phase === 'enrollment' ? enrollment(true) : brief()));
+    await refresh;
+
+    expect(controller.brief).toBeUndefined();
+    expect(controller.briefMissing).toBe(true);
+    expect(controller.enrollmentLoading).toBe(false);
+    expect(controller.briefLoading).toBe(false);
     controller.destroy();
   });
 

@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -13,10 +14,6 @@ const forbidden = {
   packetSHA: 'forbidden-packet-sha',
   claimKey: 'forbidden-claim-key'
 };
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function structured() {
   return {
@@ -254,7 +251,6 @@ describe('PersonBriefCard', () => {
     const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(screen.getByRole('checkbox', { name: 'Also track this person' })).toBeDefined();
-    expect(screen.getByText('This person is not enrolled, so no brief is generated or shown.')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Generate a brief now' })).toBeNull();
     expect(paths).toEqual(['/api/v1/people/7/brief-enrollment']);
   });
@@ -289,6 +285,22 @@ describe('PersonBriefCard', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('switch')));
   });
 
+  it('keeps unenrollment available when sweep setup is required', async () => {
+    const writes: unknown[] = []; const archive = enrolledArchive();
+    const client = createAPIClient(async input => {
+      const request = requestOf(input);
+      if (request.method === 'PUT') { writes.push(await request.json()); return Response.json(enrollment(false)); }
+      return archive(request);
+    });
+    const onSetUp = vi.fn();
+    render(PersonBriefCard, { client, personID: 7, onSetUp });
+    await fireEvent.click(screen.getByRole('button', { name: 'Set up Briefs' }));
+    expect(onSetUp).toHaveBeenCalledOnce();
+    await screen.findByRole('button', { name: sentenceTexts[0] });
+    await fireEvent.click(screen.getByRole('switch', { name: 'Enroll this person in briefs' }));
+    await waitFor(() => expect(writes).toEqual([{ enrolled: false, track: false }]));
+  });
+
   it('resets "also track" after unenrolling so a later enrollment does not retrack them', async () => {
     const bodies: Array<{ enrolled: boolean; track: boolean }> = [];
     let enrolled = false;
@@ -316,12 +328,12 @@ describe('PersonBriefCard', () => {
       await fireEvent.click(toggle);
       await waitFor(() => {
         expect(bodies).toHaveLength(previousCount + 1);
-        expect(toggle.checked).toBe(nextEnrolled);
         expect(toggle.disabled).toBe(false);
+        expect(toggle.checked).toBe(nextEnrolled);
         expect(document.activeElement).toBe(toggle);
       });
       if (nextEnrolled) await screen.findByText('No brief yet.');
-      else await screen.findByText('This person is not enrolled, so no brief is generated or shown.');
+      else await screen.findByRole('checkbox', { name: 'Also track this person' });
     }
 
     // Check "also track", then enrol: the enrolment PUT carries track: true.
@@ -521,8 +533,95 @@ describe('PersonBriefCard', () => {
 
     await view.rerender({ client: createAPIClient(fetchFn), personID: 9 });
 
-    expect(await screen.findByText('This person is not enrolled, so no brief is generated or shown.')).toBeDefined();
-    expect(screen.queryByRole('button', { name: sentenceTexts[1] })).toBeNull();
+    await waitFor(() => expect(screen.queryByRole('button', { name: sentenceTexts[1] })).toBeNull());
+    const toggle = await screen.findByRole('switch', { name: 'Enroll this person in briefs' }) as HTMLInputElement;
+    await waitFor(() => expect(toggle.checked).toBe(false));
     expect(document.body.textContent).not.toContain('Said by this person');
+  });
+
+  it('preserves the rejection draft, expansion, and open history when the same person refreshes', async () => {
+    let version = 2;
+    const archive = enrolledArchive();
+    const client = createAPIClient(async (input) => {
+      const request = requestOf(input);
+      if (new URL(request.url).pathname === '/api/v1/people/7/brief') {
+        return Response.json(brief({ version }));
+      }
+      if (new URL(request.url).pathname === '/api/v1/people/7/brief/versions') {
+        return Response.json({ versions: [brief({ version })] });
+      }
+      return archive(request);
+    });
+    const view = render(PersonBriefCard, { client, personID: 7, refreshKey: '1' });
+    const reason = await screen.findByRole('textbox', { name: 'Why this brief is wrong (optional)' }) as HTMLInputElement;
+    await fireEvent.input(reason, { target: { value: 'Wrong person' } });
+    await fireEvent.click(screen.getByRole('button', { name: sentenceTexts[1] }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Show brief version history' }));
+    await screen.findByRole('list', { name: 'Brief version history' });
+
+    version = 3;
+    await view.rerender({ refreshKey: '2' });
+
+    await waitFor(() => expect(within(screen.getByRole('list', { name: 'Brief version history' })).getByText('Version 3 · Current')).toBeDefined());
+    expect((screen.getByRole('textbox', { name: 'Why this brief is wrong (optional)' }) as HTMLInputElement).value).toBe('Wrong person');
+    expect(screen.getByRole('button', { name: sentenceTexts[1] }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('list', { name: 'Brief version history' })).toBeDefined();
+  });
+
+  it.each(['generate', 'reject', 'enrollment'] as const)('defers same-person refreshes until %s settles', async (action) => {
+    const mutation = deferredResponse();
+    const onAnnounce = vi.fn();
+    let mutationRequest: Request | undefined;
+    let currentBrief: ReturnType<typeof brief> | null = brief();
+    let enrolled = true;
+    const reads: string[] = [];
+    const client = createAPIClient(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method !== 'GET') {
+        mutationRequest = request;
+        return mutation.promise;
+      }
+      reads.push(path);
+      if (path === '/api/v1/people/7/brief-enrollment') return Response.json(enrollment(enrolled));
+      if (path === '/api/v1/people/7/brief') {
+        return currentBrief ? Response.json(currentBrief) : Response.json({ error: 'person_brief_not_found' }, { status: 404 });
+      }
+      if (path === '/api/v1/people/7/brief/versions') return Response.json({ versions: currentBrief ? [currentBrief] : [] });
+      throw new Error(`Unexpected ${request.method} ${path}`);
+    });
+    const view = render(PersonBriefCard, { client, personID: 7, refreshKey: '1', onAnnounce });
+    await screen.findByRole('button', { name: 'Regenerate this brief' });
+    const control = action === 'enrollment'
+      ? screen.getByRole('switch', { name: 'Enroll this person in briefs' })
+      : screen.getByRole('button', { name: action === 'generate' ? 'Regenerate this brief' : 'Reject this brief version' });
+    await fireEvent.click(control);
+    await waitFor(() => expect(mutationRequest).toBeDefined());
+    const initialReads = reads.length;
+
+    await view.rerender({ refreshKey: '2' });
+    await view.rerender({ refreshKey: '3' });
+
+    expect(mutationRequest!.signal.aborted).toBe(false);
+    expect((control as HTMLInputElement | HTMLButtonElement).disabled).toBe(true);
+    expect(reads).toHaveLength(initialReads);
+    if (action === 'generate') {
+      currentBrief = brief({ version: 3 });
+      mutation.resolve(Response.json({ run_id: 'run-1', attempt_id: 'attempt-1', brief_version: 3, brief_failure_class: '' }));
+    } else if (action === 'reject') {
+      currentBrief = null;
+      mutation.resolve(Response.json(brief({ status: 'rejected' })));
+    } else {
+      enrolled = false;
+      mutation.resolve(Response.json(enrollment(false)));
+    }
+
+    const announcement = action === 'generate' ? 'Brief version 3 generated.'
+      : action === 'reject' ? 'Brief version 2 rejected.' : 'Brief enrollment disabled.';
+    await waitFor(() => expect(onAnnounce).toHaveBeenCalledExactlyOnceWith(announcement));
+    await waitFor(() => expect(reads.filter((path) => path.endsWith('/brief-enrollment'))).toHaveLength(2));
+    if (action === 'generate') await screen.findByText(/Version 3 · Current/);
+    else if (action === 'reject') await screen.findByText('No brief yet.');
+    else expect((screen.getByRole('switch') as HTMLInputElement).checked).toBe(false);
   });
 });

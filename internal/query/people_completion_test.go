@@ -11,6 +11,7 @@ import (
 )
 
 func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)
@@ -50,6 +51,7 @@ func TestPeopleCompletionRanksExactPrefixSubstringAndTypedSources(t *testing.T) 
 }
 
 func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "sms")
 	primary := b.AddParticipant("alice@example.test", "example.test", "Alice Example")
@@ -75,6 +77,7 @@ func TestPeopleCompletionMatchesPhoneDigitsAcrossLinkedAliases(t *testing.T) {
 }
 
 func TestPeopleCompletionMatchesAtPrefixedUsername(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("archive@example.test", "slack")
 	participantID := b.AddParticipant("alice@example.test", "example.test", "Alice")
@@ -98,6 +101,7 @@ func TestPeopleCompletionMatchesAtPrefixedUsername(t *testing.T) {
 }
 
 func TestPeopleCompletionValidatesQueryAndLimit(t *testing.T) {
+	t.Parallel()
 	engine := NewTestDataBuilder(t).BuildEngine()
 
 	tests := []PeopleCompletionRequest{
@@ -113,6 +117,7 @@ func TestPeopleCompletionValidatesQueryAndLimit(t *testing.T) {
 }
 
 func TestPeopleCompletionUsesTemperatureBeforeRecencyForEqualTextMatches(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 	b := NewTestDataBuilder(t)

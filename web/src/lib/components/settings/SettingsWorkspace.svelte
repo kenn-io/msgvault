@@ -1,7 +1,7 @@
 <script lang="ts">
+  import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
   import {
     getEmbeddingStatus as generatedGetEmbeddingStatus,
-    getOperationStatus as generatedGetOperationStatus,
     getSettings as generatedGetSettings,
     getVisualAttachmentStatus as generatedGetVisualAttachmentStatus,
     patchSettings as generatedPatchSettings,
@@ -15,7 +15,6 @@
     ProviderCredentialResponse as GeneratedProviderCredentialResponse,
     SettingUpdate as GeneratedSettingUpdate,
     SettingsResponse as GeneratedSettingsResponse,
-    OperationLaneStatus,
     Status as VisualStatus,
   } from '../../api/generated/models';
   import { createExploreAPI } from '../../explore/api';
@@ -23,12 +22,14 @@
   import type { SavedAppearance } from '../../theme/preferences.svelte';
   import { PeopleInferenceController } from '../../settings/people-inference-controller.svelte';
   import { runOperationAction } from '../../operations/actions';
+  import type { OperationsController } from '../../operations/controller.svelte';
   import { pendingSecret } from '../../settings/secrets';
   import type { SearchCoverageValue } from '../../search/modes';
   import {
     isChange,
     isIncompleteNumber,
     persistedValue,
+    readOnlyValue,
     typedValue,
     valueText,
     type SettingState,
@@ -51,6 +52,7 @@
   import SecretField from './SecretField.svelte';
   import ProviderCredentialControl from './ProviderCredentialControl.svelte';
   import SettingField from './SettingField.svelte';
+  import type { OperationStatusAuthority } from '../../explore/models';
   import SettingsOverview from './SettingsOverview.svelte';
 
   type SecretUpdate = { action: 'set'; value: string } | { action: 'clear' };
@@ -61,24 +63,32 @@
 
   let {
     client,
+    operationsController,
     plainHTTPWarning = false,
     cardDAVRequest = undefined,
     navigationTarget = undefined,
     category = 'overview',
     onCategoryChange = () => undefined,
     onSources = () => undefined,
+    onOpenStatus = () => undefined,
     onCardDAVRequestConsumed = () => undefined,
     onAppearanceSaved = () => undefined,
+    onStatusChange = () => undefined,
+    onDirectoryChange,
   }: {
     client: APIClient;
+    operationsController: OperationsController;
     plainHTTPWarning?: boolean;
     cardDAVRequest?: CardDAVSettingsRequest;
     navigationTarget?: SettingsNavigationTarget;
     category?: string;
     onSources?: () => void;
+    onOpenStatus?: (authority: OperationStatusAuthority) => void;
     onCategoryChange?: (categoryID: string) => void;
     onCardDAVRequestConsumed?: (key: number) => void;
     onAppearanceSaved?: (saved: SavedAppearance) => void;
+    onStatusChange?: () => void;
+    onDirectoryChange?: () => void | Promise<void>;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -100,9 +110,9 @@
   let root = $state<HTMLElement>();
   let embeddingStatus = $state<EmbeddingStatus>();
   let visualStatus = $state<VisualStatus>();
-  let lanes = $state<OperationLaneStatus[]>();
+  const operationStatus = $derived(operationsController.snapshot);
+  const lanes = $derived(operationStatus.statusLanes.flatMap(lane => lane.kinds));
   let coverage = $state<Pick<SearchCoverageValue, 'status' | 'actions'>>();
-  let statusSettled = $state(false);
   let building = $state<Record<string, boolean>>({});
   let consumedCategoryRequestKey: number | undefined;
   let focusedNavigationSettingKey: string | undefined;
@@ -135,7 +145,7 @@
   // An emptied number field is a draft in progress, not a value: it keeps the
   // row on, cannot be saved, and never stands in for the off value.
   const incompleteDrafts = $derived(Object.entries(drafts).filter(([key, value]) => isIncompleteNumber(find(key), value)).length);
-  const features = $derived(overviewRows(lanes ?? [], embeddingStatus, visualStatus, coverage));
+  const features = $derived(overviewRows(lanes, embeddingStatus, visualStatus, coverage));
 
   onMount(() => {
     void loadSettings(false);
@@ -158,7 +168,7 @@
     onCategoryChange(activeCategory = categoryID);
   }
 
-  // Overview owns feature status and index actions. Status reloads when a build starts or ends.
+  // Refresh index counts when a build starts or ends.
   let statusRevision = $state(0);
   $effect(() => {
     if (activeCategory !== 'overview') return;
@@ -177,28 +187,28 @@
         if (!controller.signal.aborted) visualStatus = response.ok ? data : undefined;
       })
       .catch(() => { if (!controller.signal.aborted) visualStatus = undefined; });
-    void generatedGetOperationStatus({ ...client, signal: controller.signal })
-      .then(({ data, response }) => {
-        if (controller.signal.aborted) return;
-        lanes = response.ok ? data?.lanes : undefined;
-        statusSettled = true;
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) { lanes = undefined; statusSettled = true; }
-      });
     return () => controller.abort();
   });
+
+  function refreshFeatureStatus(): void {
+    statusRevision += 1;
+    void operationsController.refreshStatus();
+  }
 
   async function build(id: string, run: () => Promise<void>): Promise<void> {
     if (building[id]) return;
     building[id] = true;
     buildError = '';
     try {
-      await run();
+      const operation = run();
+      onStatusChange();
+      await operation;
     } catch (cause) {
       buildError = cause instanceof Error ? cause.message : "Can't build the index.";
     } finally {
       delete building[id];
+      statusRevision += 1;
+      onStatusChange();
     }
   }
 
@@ -239,7 +249,7 @@
     const request = cardDAVRequest;
     if (!request || request.key === consumedCategoryRequestKey) return;
     activeCategory = 'carddav';
-    if (request.conflictID === undefined) {
+    if (request.conflictID === undefined && request.connection === undefined) {
       consumedCategoryRequestKey = request.key;
       onCardDAVRequestConsumed(request.key);
     }
@@ -373,6 +383,7 @@
     } finally {
       statusRevision += 1;
       saving = false;
+      onStatusChange();
     }
   }
   function apiErrorMessage(responseError: unknown, fallback: string): string {
@@ -409,13 +420,6 @@
   function humanizeKey(key: string): string {
     const words = (key.split('.').at(-1) ?? key).replaceAll('_', ' ');
     return words.charAt(0).toUpperCase() + words.slice(1);
-  }
-  function readOnlyValue(setting: SettingState): string {
-    if (setting.kind === 'secret') return setting.secret?.configured ? setting.secret.hint || 'Set' : 'None';
-    const value = valueText(persistedValue(setting));
-    const off = setting.validation?.off;
-    if (off && value === (off.value ?? '')) return off.label;
-    return value || 'Not set';
   }
   // Rows that only matter once something else is on stay out of the way until then.
   function visible(setting: SettingState): boolean {
@@ -556,7 +560,7 @@
     <PageHeader title="Settings">
       {#snippet actions()}
         {#if activeCategory === 'overview'}
-          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={() => (statusRevision += 1)}><RefreshCwIcon size={16} /></IconButton></span>
+          <span class="feature-refresh"><IconButton ariaLabel="Refresh feature status" onclick={refreshFeatureStatus}><RefreshCwIcon size={16} /></IconButton></span>
         {/if}
       {/snippet}
     </PageHeader>
@@ -588,20 +592,26 @@
 
         <fieldset class="settings-fields" disabled={saving}>
         {#if activeId === 'overview'}
-          {#if !statusSettled}
+          {#if operationStatus.statusError}
+            <EmptyState title="Can't load status"><Button label="Retry" onclick={refreshFeatureStatus} /></EmptyState>
+          {:else if !operationStatus.statusReadable}
             <p class="state" role="status">Loading…</p>
-          {:else if !lanes}
-            <EmptyState title="Can't load status"><Button label="Retry" onclick={() => (statusRevision += 1)} /></EmptyState>
           {:else}
-            <SettingsOverview {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
+            <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
+        {:else if activeId === 'people_catalog'}
+          <PeopleCatalogSettings {client} {onDirectoryChange} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
+            {onStatusChange}
             {client}
             {settings}
             {cardDAVRequest}
             {onCardDAVRequestConsumed}
-            onSettingsRefresh={() => loadSettings(true)}
+            onSettingsRefresh={async () => {
+              await loadSettings(true);
+              onStatusChange();
+            }}
           />
         {:else}
           {@render blocks(layout.blocks)}

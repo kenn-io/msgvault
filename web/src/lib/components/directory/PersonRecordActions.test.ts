@@ -1,3 +1,4 @@
+import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -33,54 +34,83 @@ describe('PersonRecordActions', () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
+      if (request.method === 'GET') return Response.json({ message: 'Readback unavailable' }, { status: 503 });
       requests.push(request);
       return new Response(JSON.stringify({ ...person(), revision: 4, display_name: 'Renamed User' }), {
         headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' }
       });
     }));
 
-    await choose('Rename person');
+    await choose('Rename');
     expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
     await fireEvent.input(screen.getByRole('textbox', { name: 'Display name' }), { target: { value: 'Renamed User' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
 
-    await waitFor(() => expect(requests).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull());
+    expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe('PATCH');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
     await expect(requests[0]!.clone().json()).resolves.toEqual({ display_name: 'Renamed User' });
   });
 
-  it('locks rename controls while the non-abortable write is pending', async () => {
+  it('locks the rename input through the pending write and deferred readback', async () => {
     let resolveRename!: (response: Response) => void;
-    const pendingRename = new Promise<Response>((resolve) => { resolveRename = resolve; });
-    const controller = renderActions(vi.fn<typeof fetch>(async () => pendingRename));
-
-    await choose('Rename person');
-    await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
-
-    await waitFor(() => expect(controller.mutationPending).toBe(true));
-    expect(screen.getByRole('button', { name: 'Cancel rename' })).toHaveProperty('disabled', true);
-    expect(screen.getByRole('button', { name: 'Renaming…' })).toHaveProperty('disabled', true);
-
-    resolveRename(new Response(JSON.stringify({ ...person(), revision: 4 }), {
-      headers: { 'Content-Type': 'application/json', ETag: '"person-7-r4"' }
+    let releaseReadback!: () => void;
+    const pendingRename = new Promise<Response>(resolve => resolveRename = resolve);
+    const pendingReadback = new Promise<void>(resolve => releaseReadback = resolve);
+    const renamed = { ...person(), revision: 4, display_name: 'Renamed User' };
+    const controller = renderActions(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (request.method !== 'GET') return pendingRename;
+      await pendingReadback;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/profile')) return Response.json(emptyProfile(renamed), { headers: { ETag: '"person-7-r4"' } });
+      if (path.endsWith('/attributes')) return Response.json({ person_id: 7, attributes: [] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      if (path.endsWith('/contact-state')) return Response.json({ person_id: 7, cadence_status: 'unknown', interaction_count: 0, computed_at: when, stale: false });
+      return Response.json(renamed, { headers: { ETag: '"person-7-r4"' } });
     }));
-    await waitFor(() => expect(controller.mutationPending).toBe(false));
+    try {
+      await choose('Rename');
+      const input = screen.getByRole('textbox', { name: 'Display name' });
+      await fireEvent.input(input, { target: { value: 'Renamed User' } });
+      await fireEvent.click(screen.getByRole('button', { name: 'Save display name' }));
+
+      await waitFor(() => expect(controller.mutationPending).toBe(true));
+      expect(input).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: 'Cancel rename' })).toHaveProperty('disabled', true);
+      expect(screen.getByRole('button', { name: 'Renaming…' })).toHaveProperty('disabled', true);
+
+      resolveRename(Response.json(renamed, { headers: { ETag: '"person-7-r4"' } }));
+      await waitFor(() => expect(controller.reloadPending).toBe(true));
+      expect(controller.mutationPending).toBe(false);
+      expect(input).toHaveProperty('disabled', true);
+      expect(input).toHaveProperty('value', 'Renamed User');
+      releaseReadback();
+      await waitFor(() => expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull());
+    } finally {
+      resolveRename(Response.json(renamed, { headers: { ETag: '"person-7-r4"' } }));
+      releaseReadback();
+      await waitFor(() => expect(controller.reloadPending).toBe(false));
+      controller.destroy();
+    }
   });
 
   it('requires confirmation and the current strong ETag before deleting a person', async () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
-      requests.push(input instanceof Request ? input : new Request(input));
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
       return new Response(null, { status: 204 });
     }));
 
-    await choose('Delete person');
+    await choose('Delete');
     expect(requests).toHaveLength(0);
     expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
 
-    await waitFor(() => expect(requests).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByRole('group', { name: 'Confirm deleting person' })).toBeNull());
+    expect(requests).toHaveLength(1);
     expect(requests[0]!.method).toBe('DELETE');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r3"');
   });
@@ -90,7 +120,7 @@ describe('PersonRecordActions', () => {
     const pendingDelete = new Promise<Response>((resolve) => { resolveDelete = resolve; });
     const controller = renderActions(vi.fn<typeof fetch>(async () => pendingDelete));
 
-    await choose('Delete person');
+    await choose('Delete');
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm delete person' }));
 
     await waitFor(() => expect(controller.mutationPending).toBe(true));
@@ -101,28 +131,15 @@ describe('PersonRecordActions', () => {
     await waitFor(() => expect(controller.mutationPending).toBe(false));
   });
 
-  it('shows one of rename or delete at a time', async () => {
-    renderActions(vi.fn());
-
-    await choose('Rename person');
-    await choose('Delete person');
-    expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Confirm deleting person' })).toBeDefined();
-
-    await choose('Rename person');
-    expect(screen.queryByRole('group', { name: 'Confirm deleting person' })).toBeNull();
-    expect(screen.getByRole('group', { name: 'Rename person' })).toBeDefined();
-  });
-
   it('disables both write actions when the person cannot be written', async () => {
     renderActions(vi.fn(), null);
 
     await fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
-    expect(screen.getByRole('menuitem', { name: 'Rename person' }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByRole('menuitem', { name: 'Delete person' }).getAttribute('aria-disabled')).toBe('true');
-    expect(screen.getByRole('menuitem', { name: 'View profile history' }).getAttribute('aria-disabled')).toBeNull();
+    expect(screen.getByRole('menuitem', { name: 'Rename' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Delete' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'History' }).getAttribute('aria-disabled')).toBeNull();
 
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename person' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Rename' }));
     expect(screen.queryByRole('group', { name: 'Rename person' })).toBeNull();
   });
 
@@ -133,12 +150,12 @@ describe('PersonRecordActions', () => {
     })));
     const trigger = screen.getByRole('button', { name: 'More actions' });
 
-    await choose('View profile history');
-    const dialog = await screen.findByRole('dialog', { name: 'Profile history' });
+    await choose('History');
+    const dialog = await screen.findByRole('dialog', { name: 'History' });
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true));
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
 
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Profile history' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'History' })).toBeNull());
     expect(document.activeElement).toBe(trigger);
   });
 });

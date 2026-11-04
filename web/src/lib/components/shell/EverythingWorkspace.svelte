@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button, PageHeader, SegmentedControl } from '@kenn-io/kit-ui';
+  import { tasksSettingsDestination } from './navigation';
+  import { Button, PageHeader } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -29,7 +30,7 @@
   import { groupingByDimension } from '../../grouping/catalog';
   import { canonicalFingerprint, createAllMatchingSelection, predicateFingerprint } from '../../explore/selection';
   import type { ExploreSelectionState, ExploreState } from '../../explore/state.svelte';
-  import ColumnsMenu from '../explore/ColumnsMenu.svelte';
+  import { readerPosition } from '../../explore/reader-position.svelte';
   import ContextBar from '../explore/ContextBar.svelte';
   import EverythingTable from '../explore/EverythingTable.svelte';
   import GroupTable from '../explore/GroupTable.svelte';
@@ -40,7 +41,7 @@
   import TranscriptHits from '../search/TranscriptHits.svelte';
   import ReadingPane, { type ReadingPaneSelection, type ReadingPaneStatus } from '../reader/ReadingPane.svelte';
   import type { SearchCoverageAction } from '../../search/modes';
-  import MeetingPanel from '../meetings/MeetingPanel.svelte';
+  import MessageMeetingSummary from '../meetings/MessageMeetingSummary.svelte';
   import {
     exploreMeetingScope,
     filtersToMeetingTranscripts,
@@ -52,6 +53,11 @@
   type ExplorePreflight = GeneratedExplorePreflightResponse;
 
   interface Props {
+    meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
+    scope?: import('../../explore/models').ExploreFilter;
+    conversationStart?: string;
+    conversationEnd?: string;
+    resultsWidth?: number;
     client: APIClient;
     exploreState: ExploreState;
     loader: ExploreLoader;
@@ -65,7 +71,7 @@
     selectionPreflight: ExplorePreflight | undefined;
     meetingSelection: GeneratedExploreSelection | undefined;
     exportSelection: () => void;
-    onReviewDeletion: (mode: 'explicit' | 'all_matching') => void;
+    onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
     commitNavigation: (patch: Partial<ExploreURLState>) => void;
     commitSearch: (query: string, mode: ExploreSearchMode) => void;
     commitWorkspace: (workspace: ExploreWorkspace) => void;
@@ -80,9 +86,15 @@
     changeConversationAnchor: (anchorId: number) => void;
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onSaveView: () => void;
+    onStatusChange?: () => void;
   }
 
   let {
+    meetingContext = undefined,
+    scope = undefined,
+    conversationStart = undefined,
+    conversationEnd = undefined,
+    resultsWidth = $bindable(0),
     client,
     exploreState,
     loader,
@@ -111,6 +123,7 @@
     changeConversationAnchor,
     onOpenMeeting = undefined,
     onSaveView,
+    onStatusChange = () => undefined,
   }: Props = $props();
 
   const api = createExploreAPI(untrack(() => client));
@@ -153,27 +166,8 @@
     return `${count.toLocaleString()} ${count === 1 ? one : many}`;
   });
 
-  function storedPreviewPosition(): 'below' | 'right' {
-    try {
-      return localStorage.getItem('msgvault.reading-pane.position') === 'right' ? 'right' : 'below';
-    } catch {
-      return 'below';
-    }
-  }
-
-  let previewPosition = $state(storedPreviewPosition());
-  let resultsWidth = $state(0);
   const canPreviewRight = $derived(resultsWidth >= 960);
-  const previewRight = $derived(canPreviewRight && previewPosition === 'right');
-
-  function setPreviewPosition(value: string): void {
-    previewPosition = value === 'right' ? 'right' : 'below';
-    try {
-      localStorage.setItem('msgvault.reading-pane.position', previewPosition);
-    } catch {
-      // Keep the control usable when browser storage is unavailable.
-    }
-  }
+  const previewRight = $derived(canPreviewRight && readerPosition.value === 'right');
 
   // coverage, coveragePollAttempts/coveragePollKey, visibleLexicalRowKeys,
   // lexicalCountCache/canonicalQueryHashes, and readingGroupDetail/
@@ -401,7 +395,7 @@
     const loading = loader.loading;
     const generation = loader.resultGeneration;
     const resultFingerprint = loader.resultFingerprint;
-    const isMeetingView = exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
+    const isMeetingView = !meetingContext && exploreState.current.workspace === 'everything' && filtersToMeetingTranscripts(predicate);
     untrack(() => {
       if (!isMeetingView || session.meetingOverview?.fingerprint !== fingerprint) session.meetingOverview = undefined;
       if (!isMeetingView || !result || loading || resultFingerprint !== fingerprint) return;
@@ -610,6 +604,8 @@
         detail: cause instanceof Error ? cause.message : 'The semantic index action failed.',
         actions: ['retry'],
       };
+    } finally {
+      onStatusChange();
     }
   }
 
@@ -632,12 +628,14 @@
   });
 </script>
 
-<main class="everything-workspace" aria-label="Everything">
-  <PageHeader title="Everything">
+<svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
+  {#if !scope}<PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
-  </PageHeader>
+  </PageHeader>{/if}
 
   <ContextBar
+    messages
+    lockedFilter={scope}
     {client}
     query={exploreState.current.query}
     searchMode={exploreState.current.searchMode}
@@ -683,22 +681,6 @@
         scrollAnchor: null,
       })}
   >
-    {#snippet extra()}
-      {#if exploreState.current.presentation === 'table' && exploreState.current.groupingChain.length === 0}
-        <ColumnsMenu
-          columns={exploreState.current.columns}
-          onchange={(columns) => exploreState.replaceTransient({ columns })}
-        />
-      {/if}
-      {#if canPreviewRight}
-        <SegmentedControl
-          ariaLabel="Preview position"
-          options={[{ value: 'below', label: 'Below' }, { value: 'right', label: 'Right' }]}
-          value={previewPosition}
-          onchange={setPreviewPosition}
-        />
-      {/if}
-    {/snippet}
   </ContextBar>
   <span class="kit-sr-only" role="status" aria-label="Sort status" aria-live="polite">{sortNotice}</span>
 
@@ -728,9 +710,10 @@
     <p class="scope-note" role="status">Semantic search covers active messages only.</p>
   {/if}
 
-  {#if meetingScope}
+  {#if meetingContext?.error}<p role="status">{meetingContext.error}</p>{/if}
+  {#if meetingContext?.scope || meetingScope}
     <div class="meeting-overview">
-      <MeetingPanel {client} scope={meetingScope} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
+      <MessageMeetingSummary {client} scope={(meetingContext?.scope ?? meetingScope)!} refreshKey={String(session.meetingOverview?.refreshKey ?? 0)}
         onReloadScope={reloadOverviewMeetings} {onOpenMeeting} />
     </div>
   {/if}
@@ -819,7 +802,7 @@
             {:else}
               <EverythingTable
                 rows={loader.rows}
-                {selection}
+                selection={scope ? undefined : selection}
                 columns={exploreState.current.columns}
                 columnWidths={exploreState.current.columnWidths}
                 focusedKey={exploreState.current.activeRow}
@@ -845,7 +828,7 @@
                 onRetry={loader.retry}
               />
             {/if}
-            <SelectionBar
+            {#if !scope}<SelectionBar
               {selection}
               totalCount={loader.result?.totalCount}
               allMatching={allMatchingSelection}
@@ -857,6 +840,7 @@
               {onReviewDeletion}
               onClear={focusGrid}
             />
+            {/if}
           {/if}
         </div>
       {/snippet}
@@ -874,8 +858,10 @@
             onClose={closeReadingPane}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
-            onOpenSettings={() => commitWorkspace('settings')}
-            onOpenRelationship={openRelationship}
+            onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
+            onOpenPerson={openRelationship}
+            {conversationStart}
+            {conversationEnd}
             {conversationAnchorId}
             onConversationAnchorChange={changeConversationAnchor}
           />
@@ -884,7 +870,7 @@
     </SplitPane>
   </div>
 
-</main>
+</svelte:element>
 
 <style>
   .everything-workspace {

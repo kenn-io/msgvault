@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // NewTestStore creates a temporary database for testing.
@@ -23,7 +24,7 @@ import (
 //   - unset or empty: SQLite (default)
 //   - starts with "postgres://" or "postgresql://": PostgreSQL
 //
-// For PostgreSQL, each test gets its own schema (created and dropped for isolation).
+// PostgreSQL tests get a template clone or, when cloning is unavailable, a private schema.
 func NewTestStore(t *testing.T) *store.Store {
 	t.Helper()
 
@@ -82,18 +83,12 @@ func NewSQLiteTestStoreAt(t *testing.T, dbPath string) *store.Store {
 // by the Dialect interface.
 func SkipIfPostgres(t *testing.T, reason string) {
 	t.Helper()
-	testDB := os.Getenv("MSGVAULT_TEST_DB")
-	if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
-		t.Skipf("skipping on PostgreSQL: %s", reason)
-	}
+	dbtest.SkipIfPostgres(t, reason)
 }
 
-// newPostgresTestStore creates a test-isolated PostgreSQL store: a clone of
-// the binary's template database, or — when the server cannot build one, or
-// cloning is switched off — a private schema in the configured database,
-// created and migrated here exactly as before templates existed. Either way
-// the database is private to this test, never previously used, and dropped on
-// cleanup.
+// newPostgresTestStore creates an isolated PostgreSQL store for the given URL.
+// It clones the test binary's template database or, if cloning is unavailable
+// or disabled, initializes a private schema. Cleanup drops the clone or schema.
 func newPostgresTestStore(t *testing.T, dbURL string) *store.Store {
 	t.Helper()
 

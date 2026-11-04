@@ -1,4 +1,7 @@
 :root {
+  --label-gap: var(--space-2);
+  --control-h: 28px;
+  --control-h-lg: 36px;
   --font-reading: Charter, 'Bitstream Charter', Georgia, serif;
   --bg-canvas: var(--bg-surface);
   --bg-subtle: var(--bg-inset);
@@ -31,6 +34,7 @@
   --pane-pad-y: var(--space-4);
   --section-gap: var(--space-6);
   --field-gap: var(--space-4);
+  --detail-label-width: 120px;
   --control-gap: var(--space-3);
   --control-pad-x: var(--space-5);
   --chip-pad-x: var(--space-4);
@@ -42,6 +46,12 @@
 @media (max-width: 760px) {
   :root {
     --page-gutter: var(--space-4);
+  }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --detail-label-width: 88px;
   }
 }
 

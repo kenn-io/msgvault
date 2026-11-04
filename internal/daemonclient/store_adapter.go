@@ -173,8 +173,12 @@ func generatedDetailToAPIMessage(m *generated.MessageDetail) *store.APIMessage {
 		HiddenTextPresent: m.HiddenTextPresent,
 		SizeEstimate:      m.SizeBytes,
 		Body:              m.Body,
+		BodyText:          m.Body,
 		BodyHTML:          stringValue(m.BodyHTML),
 		Attachments:       apiAttachmentsFromGenerated(m.Attachments),
+	}
+	if m.BodyText != nil {
+		msg.BodyText = *m.BodyText
 	}
 	return msg
 }

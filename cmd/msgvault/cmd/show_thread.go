@@ -109,7 +109,8 @@ Examples:
 				if !msg.SentAt.IsZero() {
 					date = msg.SentAt.Format("2006-01-02 15:04:05Z07:00")
 				}
-				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nMessage %d · %s · %s\n%s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject), textutil.SanitizeTerminalMultiline(messageTextBody(msg, stripQuoted))); err != nil {
+				body, _ := messageTextBody(msg, stripQuoted)
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "\nMessage %d · %s · %s\n%s\n%s\n", msg.ID, date, textutil.SanitizeTerminal(formatAddresses(msg.From)), textutil.SanitizeTerminal(msg.Subject), textutil.SanitizeTerminalMultiline(body)); err != nil {
 					return fmt.Errorf("write thread: %w", err)
 				}
 			}

@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-02"
+last_edited: "2026-11-03"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -296,8 +296,7 @@ listener serves plain HTTP, so put non-loopback connections behind TLS or an
 encrypted private network to prevent the bearer token and archive data from
 being exposed in transit.
 
-On unreleased `main`, select an independent inbound key without writing a
-config file:
+Select an independent inbound key without writing a config file:
 
 ```sh
 msgvault mcp --http 0.0.0.0:8081 --http-token-file /run/secrets/mcp-key
@@ -359,6 +358,8 @@ instructions or write authorization. Follow the
 [Kata decision-context workflow](kata-issues.md#check-before-asking-the-owner-again)
 for lookup limits, recording answers, and the `msgvault` label and `person:<id>`
 conventions.
+
+For an agent-oriented workflow, see the [agent quickstart](../guides/agent-quickstart.md).
 
 ## Available Tools
 
@@ -586,10 +587,13 @@ Free text in `search_metadata` matches subject, snippet, and sender/recipient me
 ### `search_in_message`
 
 Pass a message `id` from any list or search result plus a `query`. The tool
-performs case-insensitive literal matching in `body_text` and
-returns an exact `total`, paginated `data`, and a `char_offset`, `line`, and
-centered `snippet` for every match. Feed `char_offset` to `get_message` as
+performs case-insensitive literal matching in the plain-text body, or the raw
+HTML body for HTML-only mail. This is the same body `get_message` returns with
+the automatic body format. The tool returns an exact `total`, paginated `data`,
+and a `char_offset`, `line`, and centered `snippet` for every match. Offsets
+index that body. Feed `char_offset` to `get_message` as
 `center_at` to read a larger body window around that occurrence.
+Offsets index the body as returned; for HTML-only mail, archiving remote images can change the HTML and shift offsets from an earlier call.
 
 The tool defaults to `limit = 10`. For semantic search across the archive, use
 `semantic_search_messages`; `msgvault mcp` does not expose a vector mode for
@@ -854,8 +858,8 @@ msgvault mcp --http 8080
 | `--force-sql` | `false` | Deprecated in 0.17.0; use `[analytics].engine = "sql"` in `config.toml` instead. See [Configuration: analytics](/docs/configuration/#analytics). |
 | `--no-sqlite-scanner` | `false` | Deprecated in 0.17.0; cache engine selection is daemon-managed. Use `[analytics].engine = "sql"` for live SQL. |
 | `--http` | — | Serve over MCP StreamableHTTP instead of stdio. Bare ports bind to `127.0.0.1`; non-loopback addresses require an effective inbound key or `--http-allow-insecure`. |
-| `--http-token-file` | — | On unreleased `main`, read an independent inbound bearer key from an owner-only file; requires `--http`. |
-| `--http-token-env` | — | On unreleased `main`, name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
+| `--http-token-file` | — | Read an independent inbound bearer key from an owner-only file; requires `--http`. |
+| `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
 | `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |

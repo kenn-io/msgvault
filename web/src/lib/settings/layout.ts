@@ -6,6 +6,7 @@ export const RAIL = [
   { id: 'server', label: 'Server' },
   { id: 'search', label: 'Search & AI' },
   { id: 'enrichment', label: 'People lookups' },
+  { id: 'people_catalog', label: 'People' },
   { id: 'tasks', label: 'Tasks' },
   { id: 'carddav', label: 'Contacts' },
   { id: 'sources', label: 'Sources' },

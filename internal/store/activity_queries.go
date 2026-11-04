@@ -111,27 +111,35 @@ const activityCandidateStateCTE = `
 		)
 	)`
 
-// activityUnsentSQL keeps sent copies eligible even when dedup retained draft
-// evidence. Saved IMAP Sent origin survives moves out of Sent.
+// activityUnsentSQL keeps confirmed sent copies eligible even when dedup
+// retained draft evidence, including saved provider sent-envelope evidence.
 func (s *Store) activityUnsentSQL() string {
 	return activityUnsentInSchemaSQL(s.dialect, "")
 }
 
 func activityUnsentInSchemaSQL(dialect Dialect, schema string) string {
-	origin := `m.metadata ->> 'imap_content_origin'`
 	microsoftSent := `COALESCE(m.metadata ->> 'msmail_sent_items_observed'='true', FALSE)`
 	if dialect.DriverName() != postgresDriverName {
-		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
 		microsoftSent = `COALESCE(CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.msmail_sent_items_observed') END=1, FALSE)`
 	}
 	providerSent := metadataFlagSQL(dialect, "m", providerSentEnvelopeObservedKey)
 	transferredSent := `(src.source_type IN ('gmail','imap','msmail') AND (` + microsoftSent + ` OR ` + providerSent + `))`
 	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceInSchemaSQL(schema, "m", "src") + `
-		AND COALESCE(` + origin + `, '') <> 'sent'
 		AND NOT ` + transferredSent + `
-		AND NOT EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
-		WHERE ml.message_id = m.id AND l.source_id = m.source_id
-		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`
+		AND NOT ` + sentConfirmedSQL(dialect, schema, "m", "src") + `))`
+}
+
+// sentConfirmedSQL is true when message m has saved IMAP Sent origin or a Sent
+// label of its own source, which stay after dedup retains draft evidence.
+func sentConfirmedSQL(dialect Dialect, schema, m, src string) string {
+	origin := m + `.metadata ->> 'imap_content_origin'`
+	if dialect.DriverName() != postgresDriverName {
+		origin = `CASE WHEN json_valid(` + m + `.metadata) THEN ` + m + `.metadata ->> 'imap_content_origin' END`
+	}
+	return `(COALESCE(` + origin + `, '') = 'sent'
+		OR EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
+		WHERE ml.message_id = ` + m + `.id AND l.source_id = ` + m + `.source_id
+		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", src) + `)))`
 }
 
 func (s *Store) activityCandidateColumns() string {

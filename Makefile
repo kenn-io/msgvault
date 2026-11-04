@@ -110,7 +110,7 @@ PG_TEST_TAGS := fts5 sqlite_vec pgvector
 # configuration. Verified by `make pg-shipped-only-check`, which re-derives the
 # closure from `go list`.
 NOCGO_LINT_PKGS := ./pkg/archive/... ./pkg/mcp/... ./internal/postgresprofile/... ./internal/sqliteutil/... ./internal/duckdbutil/... ./internal/muesli/...
-PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
+PG_SHIPPED_ONLY_PKGS := ./cmd/msgvault ./cmd/msgvault/cmd ./internal/api ./internal/daemonclient ./internal/mcp ./internal/scheduler ./internal/store ./internal/tui ./internal/vector/chunkmatch ./internal/vector/document ./internal/vector/embed ./internal/vector/hybrid ./internal/vector/pgvector ./internal/vector/sqlitevec ./pkg/archive ./pkg/mcp ./scripts/contextual-retrieval-eval
 
 OPENAPI_ARTIFACTS := api/openapi.yaml pkg/client/openapi.yaml pkg/client/generated
 WEB_INSTALL_STAMP := web/node_modules/.msgvault-install-stamp
@@ -395,7 +395,7 @@ web-check: web-install
 	cd web && bun run check:kit-ui
 
 web-test:
-	cd web && bun run test
+	cd web && bun run test $(WEB_TEST_ARGS)
 
 # Use the remote browser server in CI, or install the locked Chromium locally.
 # Keep other projects' cached browsers.
@@ -404,11 +404,9 @@ web-browser-install: web-install
 		cd web && PLAYWRIGHT_SKIP_BROWSER_GC=1 bun node_modules/playwright/cli.js install chromium; \
 	fi
 
-# test:browser runs everything under web/tests, including tests/e2e specs
-# whose fixtures spawn the repo-root msgvault daemon, so the binary must
-# exist before Playwright starts. Same invariant as web-e2e below.
-web-test-browser: build web-browser-install
-	cd web && bun run test:browser
+# These specs do not start the repo-root daemon; Playwright builds the app.
+web-test-browser: web-browser-install
+	cd web && bun run test:browser $(WEB_BROWSER_TEST_ARGS)
 
 # Browser gates use local Chromium or the remote Playwright server in CI.
 # Build the real daemon and embedded UI before Playwright test timeouts start.
@@ -631,7 +629,7 @@ help:
 	@echo "  web-generate   - Regenerate browser API types from the OpenAPI schema"
 	@echo "  web-check      - Check browser types and generated API artifacts"
 	@echo "  web-test       - Run browser application unit tests"
-	@echo "  web-test-browser - Run browser application Playwright tests"
+	@echo "  web-test-browser - Run browser and virtualizer Playwright tests"
 	@echo "  web-build      - Build the browser application"
 	@echo "  web-embed      - Build, stage, and validate browser assets for Go embedding"
 	@echo "  web-assets-check - Validate the release asset graph and run the validator's tests"

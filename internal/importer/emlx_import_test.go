@@ -42,6 +42,7 @@ func mkMailboxDir(t *testing.T, base string, emlxFiles map[string][]byte) {
 
 func openTestStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err, "canonical fixture root")
 	dbPath := filepath.Join(tmp, "msgvault.db")

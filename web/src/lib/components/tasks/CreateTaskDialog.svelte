@@ -1,10 +1,13 @@
 <script lang="ts">
+  import { createBrowserRequestID } from '../../api/request-id';
   import { createOrLinkMessageTask as generatedCreateOrLinkMessageTask } from '../../api/generated/api/api';
-  import { Button, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { Button, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   let {
     client,
+    pending = $bindable(false),
+    disabled = false,
     messageId,
     project,
     defaultTitle,
@@ -20,6 +23,8 @@
     onclose = () => undefined,
   }: {
     client: APIClient;
+    pending?: boolean;
+    disabled?: boolean;
     messageId: number;
     project: string;
     defaultTitle: string;
@@ -38,9 +43,8 @@
   let description = $state('');
   let priority = $state('');
   let labels = $state('');
-  let pending = $state(false);
   let error = $state('');
-  let browserRequestID = globalThis.crypto.randomUUID();
+  let browserRequestID = createBrowserRequestID();
   let addedAt = $state(new Date().toISOString());
   let lastAttemptFingerprint = $state<string>();
   const priorityOptions = [
@@ -58,7 +62,7 @@
     lastAttemptFingerprint = undefined;
   });
   async function create(): Promise<void> {
-    if (!title.trim() || pending) return;
+    if (!title.trim() || pending || disabled) return;
     const payload = currentPayload();
     const fingerprint = JSON.stringify(payload);
     lastAttemptFingerprint = fingerprint;
@@ -85,7 +89,7 @@
     }
   }
   function rotateRetryIdentity(): void {
-    browserRequestID = globalThis.crypto.randomUUID();
+    browserRequestID = createBrowserRequestID();
     const now = new Date().toISOString();
     addedAt = now > addedAt ? now : new Date(Date.parse(addedAt) + 1).toISOString();
   }
@@ -114,17 +118,12 @@
       ? value.message
       : 'Unable to create task.';
   }
-  /** Every dismissal path (Cancel, Escape, backdrop, the × button) funnels
-   * through here: while the create request is in flight the dialog must stay
-   * visible until the outcome is known — hiding it would let the task be
-   * created (or fail) invisibly. */
   function requestClose(): void {
     if (pending) return;
     onclose();
   }
 </script>
 
-<Modal title="Create task" onclose={requestClose}>
   <form
     aria-busy={pending}
     onsubmit={(event) => {
@@ -203,10 +202,9 @@
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
       <Button surface="soft" label="Cancel" disabled={pending} onclick={requestClose} />
-      <Button type="submit" tone="info" surface="solid" label="Create task" disabled={pending || !title.trim()} />
+      <Button type="submit" tone="info" surface="solid" label="Create task" disabled={pending || disabled || !title.trim()} />
     </div>
   </form>
-</Modal>
 
 <style>
   form {

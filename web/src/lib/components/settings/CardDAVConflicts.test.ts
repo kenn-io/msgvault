@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -54,10 +55,6 @@ function conflictDetail(id: number, overrides: Record<string, unknown> = {}) {
     ...forbidden,
     ...overrides
   };
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
 }
 
 function deferredResponse() {

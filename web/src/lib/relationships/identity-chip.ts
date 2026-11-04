@@ -23,13 +23,17 @@ const basisLabels: Record<string, string> = {
   conversation_membership: 'shared conversation'
 };
 
+export function identityBasisLabel(basis: string): string {
+  return basisLabels[basis] || basis.replaceAll('_', ' ');
+}
+
 function linkOriginText(edge: PersonClusterEdge): string {
   const origin = edge.link_origin;
   if (origin?.kind === 'manual') return 'linked manually';
   if (origin?.kind !== 'candidate') return '';
   const source = origin.source || '';
   const from = sourceLabels[source] || source.replaceAll('_', ' ');
-  const basis = basisLabels[origin.basis || ''] || origin.basis?.replaceAll('_', ' ');
+  const basis = identityBasisLabel(origin.basis || '');
   return `matched from ${from || 'another source'}${basis ? ` (${basis})` : ''}`;
 }
 
@@ -45,16 +49,15 @@ export function identityChipText(
   const origin = linkOrigins(edges);
   if (identifier) {
     const ordinary = identifier.type === 'email' || identifier.type === 'phone';
-    const title = identifier.service_label
-      || typeLabels[identifier.type] || identifier.type.replaceAll('_', ' ');
-    const address = ordinary ? identifier.value : '';
+    const title = ordinary ? identifier.display_value?.trim() || identifier.value
+      : identifier.service_label || typeLabels[identifier.type] || identifier.type.replaceAll('_', ' ');
     const name = identifier.participant_display_name || member?.display_name || '';
     const scope = identifier.scope_kind && identifier.scope_value
-      ? `${identifier.scope_kind}: ${identifier.scope_value}` : '';
+      ? `${identifier.scope_kind}: ${identifier.scope_value}` : identifier.scope_kind || identifier.scope_value || '';
     return {
       title,
-      subtitle: [address, name, identifier.scope_kind === 'account' ? '' : scope, origin].filter(Boolean).join(' · '),
-      detail: [identifier.value, scope].filter(Boolean).join(' · ')
+      subtitle: [name === title ? '' : name, origin].filter(Boolean).join(' · '),
+      detail: [identifier.value === title ? '' : identifier.value, scope].filter(Boolean).join(' · ')
     };
   }
   const name = member?.display_name || '';

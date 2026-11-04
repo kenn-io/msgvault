@@ -232,6 +232,33 @@ func TestCardDAVMultipleConnectionsReadSelectorsAndNamedOnlyStatus(t *testing.T)
 	assertions.Equal("work", books.Books[0].Connection)
 }
 
+func TestCardDAVMultipleConnectionsReportsIdleSchedule(t *testing.T) {
+	assertions := assert.New(t)
+	require := require.New(t)
+	controller, baseURL := multipleCardDAVController(t)
+	_, err := controller.Save(t.Context(), CardDAVAccountRequest{Connection: "work", BaseURL: baseURL,
+		Username: "work", Password: "work-synthetic-secret", // gitleaks:allow -- synthetic in-memory test credential
+		Enabled: new(true), Schedule: "0 1 * * *"})
+	require.NoError(err)
+	next := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
+	sched := newMockScheduler()
+	sched.jobStatuses = []JobStatus{
+		{Name: "unrelated", NextRun: next.Add(-time.Hour)},
+		{Name: "carddav:work", NextRun: next},
+	}
+	response := getCardDAVRead(t, cardDAVReadServer(t, controller.cfg, controller, sched), "/api/v1/carddav/connections")
+	require.Equal(http.StatusOK, response.Code, response.Body.String())
+	var summaries CardDAVConnectionsResponse
+	require.NoError(json.NewDecoder(response.Body).Decode(&summaries))
+	require.Len(summaries.Connections, 1)
+	assertions.Equal("work", summaries.Connections[0].Connection)
+	status := summaries.Connections[0].Status
+	assertions.Nil(status.Active)
+	assertions.True(status.Scheduled)
+	require.NotNil(status.NextScheduledAt)
+	assertions.Equal(next, *status.NextScheduledAt)
+}
+
 func TestCardDAVMultipleConnectionsRouteGlobalTarget(t *testing.T) {
 	assertions := assert.New(t)
 	require := require.New(t)

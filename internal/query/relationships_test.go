@@ -19,6 +19,7 @@ import (
 // canonical_id = min(A, A2); B is gated out by default; ShowAll lifts the
 // gate; and the result is deterministic given an injected Now.
 func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	srcID := b.AddSource("owner@example.com")
 	ownerID := b.AddParticipant("owner@example.com", "example.com", "Owner")
@@ -119,6 +120,7 @@ func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
 }
 
 func TestRelationshipsRepeatedRequestsAreIndependentAndRevisioned(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -171,6 +173,7 @@ func TestRelationshipsRepeatedRequestsAreIndependentAndRevisioned(t *testing.T) 
 }
 
 func TestRelationshipsCanceledWaiterUsesItsOwnContext(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	b := NewTestDataBuilder(t)
 	sourceID := b.AddSource("owner@example.com")
@@ -204,6 +207,7 @@ func TestRelationshipsCanceledWaiterUsesItsOwnContext(t *testing.T) {
 }
 
 func TestDateWindowRelationshipsUseExactActivityReduction(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -248,6 +252,7 @@ func TestDateWindowRelationshipsUseExactActivityReduction(t *testing.T) {
 // participant, the whole cluster is excluded from ranking (you never rank
 // yourself, even under an alias).
 func TestRelationshipsExcludesClusteredOwners(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -281,6 +286,7 @@ func TestRelationshipsExcludesClusteredOwners(t *testing.T) {
 // the same instant: the two must produce identical decayed sums, whatever
 // the DuckDB session's date-diff decay for that instant happens to be.
 func TestRelationshipsDoesNotDoubleCountClusteredRecipientsInOneEntry(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -334,6 +340,7 @@ func TestRelationshipsDoesNotDoubleCountClusteredRecipientsInOneEntry(t *testing
 // attendee, consistent with how owner-cluster exclusion already resolves
 // aliases through canon.
 func TestRelationshipsWithOwnerResolvesAlias(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -371,6 +378,7 @@ func TestRelationshipsWithOwnerResolvesAlias(t *testing.T) {
 // message's own source's account identities (the personal address is not an
 // identity on source B).
 func TestRelationshipsOwnerIdentitiesAreGlobalAcrossSources(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	srcA := b.AddSource("owner@personal.example")
 	srcB := b.AddSource("owner@work.example")
@@ -467,6 +475,7 @@ func TestRelationshipsOwnerIdentitiesAreGlobalAcrossSources(t *testing.T) {
 // unlinked participants are unaffected, and a cluster with several named
 // members deterministically renders the smallest-ID member's name.
 func TestRelationshipsClusterLabelPrefersNamedMember(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -527,6 +536,7 @@ func TestRelationshipsClusterLabelPrefersNamedMember(t *testing.T) {
 // the same instant and shares one display name, so score, timestamp, and
 // label all collide and only CanonicalID can break the tie.
 func TestRelationshipsPaginationStableAcrossFullyTiedRows(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -602,6 +612,7 @@ func TestRelationshipsPaginationStableAcrossFullyTiedRows(t *testing.T) {
 // meeting, so Y must not appear in the results at all — a meeting the owner
 // never attended is not evidence of any relationship with the owner.
 func TestRelationshipsOwnerAbsentMeetingContributesNoModality(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -637,6 +648,7 @@ func TestRelationshipsOwnerAbsentMeetingContributesNoModality(t *testing.T) {
 }
 
 func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
+	t.Parallel()
 	assert := assert.New(t)
 	require := require.New(t)
 
@@ -663,6 +675,7 @@ func TestRelationshipsClampsFutureEntryDecayAtOne(t *testing.T) {
 }
 
 func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	b := NewTestDataBuilder(t)
@@ -743,6 +756,7 @@ func TestRelationshipsFutureRowsPreserveGateModalitiesAndLastTimestamp(t *testin
 // canonical ID or the alias ID, so the two filters agree and both include the
 // alias-owned activity — matching Explore/Files.
 func TestRelationshipsParticipantFilterExpandsClusters(t *testing.T) {
+	t.Parallel()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 

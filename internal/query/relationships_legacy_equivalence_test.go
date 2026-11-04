@@ -205,6 +205,7 @@ func compareRelationshipIndexWithLegacy(
 }
 
 func TestRelationshipIndexMatchesLegacyForAuthoredLinkedCoRecipient(t *testing.T) {
+	t.Parallel()
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -236,6 +237,7 @@ func TestRelationshipIndexMatchesLegacyForAuthoredLinkedCoRecipient(t *testing.T
 }
 
 func TestRelationshipIndexMatchesLegacyAcrossAdversarialSemantics(t *testing.T) {
+	t.Parallel()
 	requirementsForTest := require.New(t)
 	assertionsForTest := assert.New(t)
 	builder := NewTestDataBuilder(t)
@@ -367,6 +369,7 @@ func futureIDTime(builder *TestDataBuilder, messageID int64) time.Time {
 }
 
 func TestRelationshipIndexDeletionScopesMatchLegacy(t *testing.T) {
+	t.Parallel()
 	builder := NewTestDataBuilder(t)
 	sourceID := builder.AddSourceWithType("archive@example.com", "gmail")
 	ownerID := builder.AddParticipant("owner@example.com", "example.com", "Owner")

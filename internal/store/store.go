@@ -148,6 +148,17 @@ type Store struct {
 // fcntl) and a no-op on other platforms.
 const defaultSQLiteParams = "?_journal_mode=WAL&_busy_timeout=30000&_synchronous=FULL&_fullfsync=true&_foreign_keys=ON"
 
+// sqlitePoolSize bounds open SQLite connections. All of them stay idle in the
+// pool: each connection has its own page cache and preloads the metadata FTS
+// tables when it opens, and RunIndependentReads uses several at once, so
+// closing and reopening extras would repeat that work on every request.
+const sqlitePoolSize = 4
+
+func setSQLitePoolSize(db *sql.DB) {
+	db.SetMaxOpenConns(sqlitePoolSize)
+	db.SetMaxIdleConns(sqlitePoolSize)
+}
+
 // IsPostgresURL returns true if the path looks like a PostgreSQL connection URL.
 // Exported so cmd-side helpers can decide whether to skip SQLite-only code
 // paths (e.g., the Parquet analytics cache) without first opening a Store.
@@ -240,7 +251,7 @@ func openSQLiteContext(ctx context.Context, dbPath, params string) (*Store, erro
 	if dbPath == ":memory:" || strings.Contains(dbPath, ":memory:") {
 		db.SetMaxOpenConns(1)
 	} else {
-		db.SetMaxOpenConns(4)
+		setSQLitePoolSize(db)
 	}
 
 	dialect := &SQLiteDialect{}
@@ -414,7 +425,7 @@ func OpenReadOnlyContext(ctx context.Context, dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("ping database: %w", err)
 	}
 
-	db.SetMaxOpenConns(4)
+	setSQLitePoolSize(db)
 
 	dialect := &SQLiteDialect{}
 	if err := dialect.InitConn(db); err != nil {
@@ -2964,19 +2975,23 @@ func (s *Store) GetStatsForScopeContext(ctx context.Context, sourceIDs []int64) 
 		stats.SourceCount = int64(len(seen))
 	}
 
-	for _, q := range queries {
-		var row *sql.Row
-		if len(q.args) > 0 {
-			row = s.db.QueryRowContext(ctx, q.query, q.args...)
-		} else {
-			row = s.db.QueryRowContext(ctx, q.query)
-		}
-		if err := row.Scan(q.dest); err != nil {
-			if s.dialect.IsNoSuchTableError(err) {
-				continue
+	reads := make([]func(context.Context) error, len(queries))
+	for i, q := range queries {
+		reads[i] = func(ctx context.Context) error {
+			var row *sql.Row
+			if len(q.args) > 0 {
+				row = s.db.QueryRowContext(ctx, q.query, q.args...)
+			} else {
+				row = s.db.QueryRowContext(ctx, q.query)
 			}
-			return nil, fmt.Errorf("get stats %q: %w", q.query, err)
+			if err := row.Scan(q.dest); err != nil && !s.dialect.IsNoSuchTableError(err) {
+				return fmt.Errorf("get stats %q: %w", q.query, err)
+			}
+			return nil
 		}
+	}
+	if err := RunIndependentReads(ctx, s.db.DB, reads...); err != nil {
+		return nil, err
 	}
 
 	// Scoped snapshots omit global size without acquiring a second connection.

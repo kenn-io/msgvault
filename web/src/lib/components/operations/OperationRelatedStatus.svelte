@@ -95,8 +95,7 @@
 
 <section class="related-status" aria-label={labels[authority]}>
   <header>
-    <h1>{labels[authority]}</h1>
-    <Button size="sm" surface="soft" label="Back to operations" onclick={onClose} />
+    <Button size="sm" surface="soft" label="Back" onclick={onClose} />
   </header>
 
   {#if loading}
@@ -164,9 +163,8 @@
 
 <style>
   .related-status { display: grid; align-content: start; gap: var(--space-4); min-height: 0; padding: var(--space-5) var(--page-gutter) var(--space-4); overflow: auto; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  h1, .summary p { margin: 0; }
-  h1 { color: var(--text-primary); font-size: var(--font-size-xl); font-weight: 650; line-height: 1.25; }
+  header { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-3); }
+  .summary p { margin: 0; }
   .summary { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--bg-surface); }
   .summary p { display: flex; align-items: center; gap: var(--space-2); color: var(--text-muted); }
   .notice { padding: var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-md); }

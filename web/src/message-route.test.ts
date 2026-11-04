@@ -31,6 +31,6 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
   });
   render(App, { session });
   expect((await screen.findByRole('article', { name: 'Message 42001' })).textContent).toContain('The requested old message');
-  expect(requested.filter((path) => path.startsWith('/api/v1/messages/') || path.startsWith('/api/v1/conversations/'))).toHaveLength(2);
+  expect(requested.filter((path) => /^\/api\/v1\/(?:messages|conversations)\/\d+(?:\?|$)/.test(path))).toHaveLength(2);
   expect(requested.some((path) => path.startsWith('/api/v1/explore'))).toBe(false);
 });

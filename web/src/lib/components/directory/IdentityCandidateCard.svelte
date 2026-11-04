@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Card, Chip } from '@kenn-io/kit-ui';
+  import { Card, Chip } from '@kenn-io/kit-ui';
 
   import { reviewStateChip } from '../../directory/labels';
   import type { IdentityMatchCandidate } from '../../directory/review-controller.svelte';
@@ -7,11 +7,9 @@
   interface Props {
     candidate: IdentityMatchCandidate;
     pending: boolean;
-    onAccept: () => void;
-    onReject: () => void;
   }
 
-  let { candidate, pending, onAccept, onReject }: Props = $props();
+  let { candidate, pending }: Props = $props();
   const headingID = $derived(`identity-match-${candidate.id}-heading`);
   const chip = $derived(reviewStateChip(candidate.state));
   const evidence = $derived(candidate.evidence ?? []);
@@ -72,12 +70,6 @@
       {/if}
     </section>
 
-    {#if (candidate.state === 'candidate' || candidate.state === 'conflict') && (candidate.actionable || candidate.blocker === 'person_merge_required')}
-      <div class="actions">
-        <Button label="Keep separate" size="sm" disabled={pending} onclick={onReject} />
-        <Button label="Link identities" size="sm" tone="info" surface="solid" disabled={pending} onclick={onAccept} />
-      </div>
-    {/if}
   </article>
 </Card>
 
@@ -100,5 +92,4 @@
   li { display: grid; gap: var(--space-2); padding: var(--space-3); border-left: 2px solid var(--border-default); border-start-start-radius: 0; border-end-start-radius: 0; background: var(--bg-inset); }
   li dl { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--space-2) var(--space-4); }
   .empty-evidence { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .actions { display: flex; justify-content: flex-end; gap: var(--space-2); width: 100%; }
 </style>

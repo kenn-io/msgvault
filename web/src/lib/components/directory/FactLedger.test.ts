@@ -1,3 +1,4 @@
+import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tick } from 'svelte';
@@ -9,10 +10,6 @@ import FactLedger from './FactLedger.svelte';
 afterEach(() => cleanup());
 
 const revision = `sha256:${'a'.repeat(64)}`;
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function deferredResponse() {
   let resolve!: (response: Response) => void;

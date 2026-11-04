@@ -1,69 +1,29 @@
+import { mergeResult, person, requestOf } from '../../directory/entity-fixtures.test-support';
 import { appShortcuts } from '@kenn-io/kit-ui';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import * as requestID from '../../api/request-id';
 import { createAPIClient } from '../../api/client';
-import type { Person as GeneratedPerson } from '../../api/generated/models';
 import type { PersonMergeSuccess, ValidatedPersonMergeRequired } from '../../directory/person-merge';
 import PersonBindingConflictModal from './PersonBindingConflictModal.svelte';
-
-type Person = GeneratedPerson;
 
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
 
-function person(id: number, revision: number, displayName: string): Person {
-  return {
-    id,
-    revision,
-    display_name: displayName,
-    participant_ids: [id * 10],
-    created_at: '2026-08-01T00:00:00Z',
-    updated_at: '2026-08-02T00:00:00Z',
-    vcard_uid: `synthetic-${id}`,
-  };
-}
-
 function conflict(): ValidatedPersonMergeRequired {
   return {
     error: 'person_merge_required',
     message: 'Choose a survivor',
     profiles: [
-      { person: person(7, 4, 'Synthetic One'), etag: '"person-7-r4"' },
-      { person: person(9, 2, 'Synthetic Two'), etag: '"person-9-r2"' },
+      { person: person(7, 4, [70], 'Synthetic One'), etag: '"person-7-r4"' },
+      { person: person(9, 2, [90], 'Synthetic Two'), etag: '"person-9-r2"' },
     ],
   };
 }
 
-function mergeResult(survivor: Person, cacheState: 'ready' | 'stale' = 'ready') {
-  return {
-    cache_state: cacheState,
-    identity_revision: 8,
-    merge: {
-      id: 41,
-      survivor_person_id: survivor.id,
-      absorbed_person_id: survivor.id === 7 ? 9 : 7,
-      current_person_id: survivor.id,
-      survivor_vcard_uid: survivor.vcard_uid,
-      absorbed_vcard_uid: survivor.id === 7 ? 'synthetic-9' : 'synthetic-7',
-      survivor_revision_before: survivor.revision - 1,
-      absorbed_revision_before: 2,
-      survivor_revision_after: survivor.revision,
-      actor: 'web',
-      snapshot_version: 1,
-      snapshot_sha256: 'synthetic-digest',
-      created_at: '2026-08-03T00:00:00Z',
-    },
-    person: survivor,
-    review_candidates: [],
-  } as const;
-}
-
-function requestOf(input: RequestInfo | URL): Request {
-  return input instanceof Request ? input : new Request(input);
-}
 
 function renderModal(
   fetchFn: typeof fetch,
@@ -94,13 +54,13 @@ async function selectSurvivor(label = 'Synthetic One (Person 7)'): Promise<void>
 describe('PersonBindingConflictModal', () => {
   it('sends the exact survivor-first merge request and reports operation-result metadata once', async () => {
     const requests: Request[] = [];
-    const merged = person(7, 5, 'Synthetic One');
+    const merged = person(7, 5, [70], 'Synthetic One');
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       requests.push(request);
       return Response.json(mergeResult(merged, 'stale'), { headers: { ETag: '"person-7-r5"' } });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('11111111-1111-4111-8111-111111111111');
+    vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValue('123-456-789-12');
     const { onSuccess, onClose } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -110,7 +70,7 @@ describe('PersonBindingConflictModal', () => {
     expect(requests).toHaveLength(1);
     expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/people/7/merge');
     expect(requests[0]!.headers.get('If-Match')).toBe('"person-7-r4", "person-9-r2"');
-    expect(requests[0]!.headers.get('Idempotency-Key')).toBe('11111111-1111-4111-8111-111111111111');
+    expect(requests[0]!.headers.get('Idempotency-Key')).toBe('123-456-789-12');
     await expect(requests[0]!.clone().json()).resolves.toEqual({ absorbed_person_id: 9 });
     expect(onSuccess).toHaveBeenCalledWith({
       result: mergeResult(merged, 'stale'),
@@ -121,9 +81,9 @@ describe('PersonBindingConflictModal', () => {
     expect(screen.queryByRole('button', { name: 'Merge into selected survivor' })).toBeNull();
   });
 
-  it('reuses one UUID only for an explicit unchanged transport retry', async () => {
+  it('reuses one request ID only for an explicit unchanged transport retry', async () => {
     const requests: Request[] = [];
-    const merged = person(7, 5, 'Synthetic One');
+    const merged = person(7, 5, [70], 'Synthetic One');
     let attempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       requests.push(requestOf(input));
@@ -131,7 +91,7 @@ describe('PersonBindingConflictModal', () => {
       if (attempts === 1) throw new TypeError('connection reset');
       return Response.json(mergeResult(merged), { headers: { ETag: '"person-7-r5"' } });
     });
-    const uuid = vi.spyOn(globalThis.crypto, 'randomUUID').mockReturnValueOnce('11111111-1111-4111-8111-111111111111');
+    const requestIDSpy = vi.spyOn(requestID, 'createBrowserRequestID').mockReturnValueOnce('123-456-789-12');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -141,10 +101,10 @@ describe('PersonBindingConflictModal', () => {
 
     await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '11111111-1111-4111-8111-111111111111',
+      '123-456-789-12',
+      '123-456-789-12',
     ]);
-    expect(uuid).toHaveBeenCalledOnce();
+    expect(requestIDSpy).toHaveBeenCalledOnce();
   });
 
   it('changing the survivor clears confirmation and rotates the full-snapshot key', async () => {
@@ -154,9 +114,9 @@ describe('PersonBindingConflictModal', () => {
       requests.push(request);
       throw new TypeError('offline');
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+    vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     renderModal(fetchFn);
 
     await selectSurvivor();
@@ -175,15 +135,15 @@ describe('PersonBindingConflictModal', () => {
     expect(new URL(requests[1]!.url).pathname).toBe('/api/v1/people/9/merge');
     expect(requests[1]!.headers.get('If-Match')).toBe('"person-9-r2", "person-7-r4"');
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222',
+      '123-456-789-12',
+      '234-567-890-23',
     ]);
   });
 
   it('reloads both exact profiles atomically and requires a fresh survivor selection and confirmation', async () => {
     const requests: Request[] = [];
-    const refreshedSeven = person(7, 5, 'Synthetic One Updated');
-    const refreshedNine = person(9, 3, 'Synthetic Two Updated');
+    const refreshedSeven = person(7, 5, [70], 'Synthetic One Updated');
+    const refreshedNine = person(9, 3, [90], 'Synthetic Two Updated');
     let mergeAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
@@ -199,11 +159,11 @@ describe('PersonBindingConflictModal', () => {
       if (mergeAttempts === 1) {
         return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
       }
-      return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), { headers: { ETag: '"person-7-r6"' } });
+      return Response.json(mergeResult(person(7, 6, [70], 'Synthetic One Updated')), { headers: { ETag: '"person-7-r6"' } });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+    vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -239,7 +199,7 @@ describe('PersonBindingConflictModal', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts).toHaveLength(2);
     expect(posts[1]!.headers.get('If-Match')).toBe('"person-7-r5", "person-9-r3"');
-    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('22222222-2222-4222-8222-222222222222');
+    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('234-567-890-23');
   });
 
   it.each([
@@ -252,10 +212,10 @@ describe('PersonBindingConflictModal', () => {
       requests.push(requestOf(input));
       return Response.json({ error, message: 'Application failure' }, { status });
     });
-    const uuid = vi
-      .spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+    const requestIDSpy = vi
+      .spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     renderModal(fetchFn);
 
     await selectSurvivor();
@@ -271,25 +231,25 @@ describe('PersonBindingConflictModal', () => {
 
     await waitFor(() => expect(requests).toHaveLength(2));
     expect(requests.map((request) => request.headers.get('Idempotency-Key'))).toEqual([
-      '11111111-1111-4111-8111-111111111111',
-      '22222222-2222-4222-8222-222222222222',
+      '123-456-789-12',
+      '234-567-890-23',
     ]);
-    expect(uuid).toHaveBeenCalledTimes(2);
+    expect(requestIDSpy).toHaveBeenCalledTimes(2);
   });
 
   it.each([
     {
       name: 'a wrong self-consistent person ID',
       responses: {
-        7: { body: person(8, 5, 'Wrong Person'), etag: '"person-8-r5"' },
-        9: { body: person(9, 3, 'Synthetic Two Updated'), etag: '"person-9-r3"' },
+        7: { body: person(8, 5, [80], 'Wrong Person'), etag: '"person-8-r5"' },
+        9: { body: person(9, 3, [90], 'Synthetic Two Updated'), etag: '"person-9-r3"' },
       },
     },
     {
       name: 'swapped self-consistent person IDs',
       responses: {
-        7: { body: person(9, 3, 'Synthetic Two Updated'), etag: '"person-9-r3"' },
-        9: { body: person(7, 5, 'Synthetic One Updated'), etag: '"person-7-r5"' },
+        7: { body: person(9, 3, [90], 'Synthetic Two Updated'), etag: '"person-9-r3"' },
+        9: { body: person(7, 5, [70], 'Synthetic One Updated'), etag: '"person-7-r5"' },
       },
     },
   ])('rejects the entire stale reload when it returns $name', async ({ responses }) => {
@@ -328,9 +288,9 @@ describe('PersonBindingConflictModal', () => {
       requests.push(request);
       const path = new URL(request.url).pathname;
       if (request.method === 'GET' && path === '/api/v1/people/7') {
-        return Response.json(person(7, 5, 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
+        return Response.json(person(7, 5, [70], 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
       }
-      if (request.method === 'GET') return Response.json(person(9, 3, 'Synthetic Two Updated'));
+      if (request.method === 'GET') return Response.json(person(9, 3, [90], 'Synthetic Two Updated'));
       return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
     });
     renderModal(fetchFn);
@@ -354,9 +314,9 @@ describe('PersonBindingConflictModal', () => {
         return Response.json({ error: 'person_merge_revision_conflict', message: 'Reload profiles' }, { status: 409 });
       }
       if (path === '/api/v1/people/7') {
-        return Response.json(person(7, 5, 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
+        return Response.json(person(7, 5, [70], 'Synthetic One Updated'), { headers: { ETag: '"person-7-r5"' } });
       }
-      return Response.json(person(9, 3, 'Synthetic Two Updated'));
+      return Response.json(person(9, 3, [90], 'Synthetic Two Updated'));
     });
     renderModal(fetchFn);
 
@@ -429,8 +389,8 @@ describe('PersonBindingConflictModal', () => {
 
   it('uses only fresh tags after an explicit reload, fresh survivor selection, and reconfirmation', async () => {
     const requests: Request[] = [];
-    const refreshedSeven = person(7, 5, 'Synthetic One Updated');
-    const refreshedNine = person(9, 3, 'Synthetic Two Updated');
+    const refreshedSeven = person(7, 5, [70], 'Synthetic One Updated');
+    const refreshedNine = person(9, 3, [90], 'Synthetic Two Updated');
     const getCounts = new Map<number, number>();
     let mergeAttempts = 0;
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -445,7 +405,7 @@ describe('PersonBindingConflictModal', () => {
             { status: 409 },
           );
         }
-        return Response.json(mergeResult(person(7, 6, 'Synthetic One Updated')), {
+        return Response.json(mergeResult(person(7, 6, [70], 'Synthetic One Updated')), {
           headers: { ETag: '"person-7-r6"' },
         });
       }
@@ -456,9 +416,9 @@ describe('PersonBindingConflictModal', () => {
       const refreshed = requestedID === 7 ? refreshedSeven : refreshedNine;
       return Response.json(refreshed, { headers: { ETag: `"person-${requestedID}-r${refreshed.revision}"` } });
     });
-    vi.spyOn(globalThis.crypto, 'randomUUID')
-      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
-      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222');
+    vi.spyOn(requestID, 'createBrowserRequestID')
+      .mockReturnValueOnce('123-456-789-12')
+      .mockReturnValueOnce('234-567-890-23');
     const { onSuccess } = renderModal(fetchFn);
 
     await selectSurvivor();
@@ -493,7 +453,7 @@ describe('PersonBindingConflictModal', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(posts).toHaveLength(2);
     expect(posts[1]!.headers.get('If-Match')).toBe('"person-7-r5", "person-9-r3"');
-    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('22222222-2222-4222-8222-222222222222');
+    expect(posts[1]!.headers.get('Idempotency-Key')).toBe('234-567-890-23');
   });
 
   it('offers one non-mutating inspection action per profile', async () => {
@@ -502,9 +462,9 @@ describe('PersonBindingConflictModal', () => {
     renderModal(fetchFn, { onOpenProfile });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic One profile' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Open Synthetic Two profile' }));
 
-    expect(onOpenProfile).toHaveBeenCalledOnce();
-    expect(onOpenProfile).toHaveBeenCalledWith(7);
+    expect(onOpenProfile.mock.calls).toEqual([[7], [9]]);
     expect(fetchFn).not.toHaveBeenCalled();
   });
 

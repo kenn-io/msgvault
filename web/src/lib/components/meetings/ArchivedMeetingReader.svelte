@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { Button, Modal, appShortcuts } from '@kenn-io/kit-ui';
+  import { claimDialogEscape } from '../common/dialog-escape';
+  import { Button, Modal } from '@kenn-io/kit-ui';
   import { onMount } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { MeetingRef, MessageDetail } from '../../api/generated/models';
   import type { ExplorePredicate } from '../../explore/models';
   import ReadingPane from '../reader/ReadingPane.svelte';
 
-  let { client, message, loading, error, predicate, anchorID, onClose, onReload, onOpenMeeting, onAnchorChange }: {
+  let { client, message, loading, error, predicate, anchorID, onClose, onReload, onOpenMeeting, onAnchorChange, onOpenPerson, onOpenSettings }: {
     client: APIClient;
     message?: MessageDetail;
     loading: boolean;
@@ -15,10 +16,12 @@
     anchorID?: number;
     onClose: () => void;
     onReload: () => void;
+    onOpenPerson?: (participantID: number) => void;
+    onOpenSettings?: () => void;
     onOpenMeeting: (meeting: MeetingRef) => void;
     onAnchorChange: (id: number) => void;
   } = $props();
-  onMount(() => appShortcuts.pushScope('archived-meeting-reader'));
+  onMount(() => claimDialogEscape('archived-meeting-reader', onClose));
 </script>
 
 <Modal ariaLabel="Archived meeting" closeLabel="Close archived meeting" title="Archived meeting"
@@ -27,7 +30,7 @@
     {#if message}
       <ReadingPane {client} selection={{ kind: 'archive', message }} {predicate}
         conversationAnchorId={anchorID} onConversationAnchorChange={onAnchorChange}
-        {onOpenMeeting} onClose={onClose} />
+        {onOpenMeeting} {onOpenPerson} {onOpenSettings} onClose={onClose} />
     {:else if loading}
       <p role="status">Loading archived meeting…</p>
     {:else if error}

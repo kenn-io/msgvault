@@ -8,12 +8,30 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### API schema 3.40.0
+
+- People Details brings saved profile fields, identity actions, Work, Connections, Network, Tasks, Facts, briefs, and person-scoped meetings onto the same page.
+
+- People brings people, domains, and saved profile filters into one list. Person and domain pages share Messages and Files, with a daily Activity calendar; Details keeps identity actions and links to full Directory profiles. API schema 3.40.0 adds timezone-aware daily grouping and sent-only group counts.
+
+### API schema 3.39.0
+
+- Staged deletion list summaries include the optional `account` so clients can identify the mailbox for each batch.
+
+### API schema 3.38.0
+
+- Messages keeps files and task actions beside each message, links exact participants, and summarizes meeting follow-ups; daemon task linking works again. API schema 3.38.0 adds optional participant IDs to messages in conversation responses.
+- Canonical `kind` filters select Email, Conversation, Event, Meeting, and Item entries. Conversation classification includes older chat messages whose stored message type is empty.
+
+### Other changes
+
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Import Telegram Desktop JSON exports with senders, replies, edit markers, and available media using [`import-telegram`](usage/text-messages.md#import-telegram). Overlapping exports add new messages while preserving archived content.
 
 - Message details for calendar events now include a typed `calendar` object (status, sequence, start, end, all-day, time zone, iCal UID) in the HTTP API, CLI message route, and MCP `get_message`, so clients can tell cancelled or rescheduled events apart without parsing the body. API schema 3.28.0.
 - Automatic search-index backfill preserves completed work across restarts and keeps indexed messages searchable while filling gaps. `msgvault rebuild-fts` still discards and rebuilds the full index.
 - IMAP syncs honor per-account [`sync.imap_skip_folders`](configuration.md#sync) exclusions in `config.toml`, including scheduled syncs. Command folder flags replace the saved filter for one run. See [folder filtering](usage/imap.md#what-filtering-changes) for its effects on deletion tracking and `gc`.
+- The web UI opens Messages first, alongside People, Files, and Sources. Saved views move into the sidebar with Undo, run history opens from the status dot's Past runs menu, and Display combines appearance controls. Old Operations links open Settings Overview, with Past runs open when they include a run, status, or history filter. Old Saved views links open Messages.
 - Each Gmail incremental sync retries messages earlier syncs couldn't download or save, until they're archived or Gmail reports them gone. Failures recorded before upgrading and before the source's latest completed incremental sync aren't retried; run a full sync to recover them. A source with no completed incremental sync retries every recorded failure on its first incremental sync after upgrading.
 - Media search in Everything, `msgvault media search`, the HTTP API, and MCP now finds text Docbank has extracted from mirrored attachments. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`; add a Person filter to narrow the search.
 - Opening a person you've only drafted to shows them with no sent or received messages instead of "not found" and hides the relationship calendar; the API omits `first_at` and `last_at` for a person with no sent or received messages, and `pkg/client` declares them as `*time.Time`. A person ID that doesn't exist reads "Person not found." in the web view.

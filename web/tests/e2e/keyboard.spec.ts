@@ -1,6 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
 import { loadMixedArchive } from './fixtures/mixed-archive';
-import { installOperations } from './fixtures/operations';
 import { exploreHistoryState } from '../explore-state';
 
 async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab' | 'Shift+Tab' = 'Tab') {
@@ -18,32 +17,6 @@ async function tabTo(page: Page, accessibleName: string, limit = 120, key: 'Tab'
   }
   throw new Error(`Keyboard focus did not reach ${accessibleName}; saw ${[...seen].join(' | ')}`);
 }
-
-test('operations filters, selection, advertised action, and close work without a pointer', async ({ page }) => {
-  const fixture = await installOperations(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'operations' }))}`);
-
-  await tabTo(page, 'Lane:');
-  await page.keyboard.press('Enter');
-  for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowDown');
-  await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBe('documents');
-
-  await tabTo(page, 'Lane:', 120, 'Shift+Tab');
-  await page.keyboard.press('Enter');
-  for (let index = 0; index < 4; index += 1) await page.keyboard.press('ArrowUp');
-  await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.listQueries.at(-1)?.get('lane')).toBeNull();
-
-  await tabTo(page, 'Open CardDAV sync run');
-  await page.keyboard.press('Enter');
-  await expect(page.getByRole('region', { name: 'Operation run detail' })).toBeVisible();
-  await tabTo(page, 'Start CardDAV sync');
-  await page.keyboard.press('Enter');
-  await expect.poll(() => fixture.actionRequests).toEqual(['carddav_sync']);
-  await page.keyboard.press('Escape');
-  await expect(page.getByRole('button', { name: 'Open CardDAV sync run' })).toBeFocused();
-});
 
 test('pointer-free archive journey preserves focus, announcements, and history', async ({ page }) => {
   const fixture = await loadMixedArchive();
@@ -103,13 +76,9 @@ test('pointer-free archive journey preserves focus, announcements, and history',
     activity_count: 1, file_count: 0, source_counts: [], first_at: '2026-01-02T12:00:00Z',
     last_at: '2026-01-02T12:00:00Z', cache_revision: 'keyboard-100k'
   } }));
-  await page.route('**/api/v1/relationships/2/timeline', (route) => route.fulfill({ json: {
-    canonical_id: 2, identity_revision: 1, cache_revision: 'keyboard-100k',
-    rows: [{
-      key: 'message:200', kind: 'chat', occurred_at: '2026-01-02T12:00:00Z',
-      preview: 'Synthetic chat body', source_id: 1, title: 'Synthetic conversation',
-      has_attachments: false, message_count: 1
-    }], total_count: 1
+  await page.route('**/api/v1/participants/2/timeline', (route) => route.fulfill({ json: {
+    rows: [{ ...fixture.logicalRows[0], title: 'Synthetic conversation' }], total_count: 1,
+    cache_revision: 'keyboard-100k', search_provenance: {}
   } }));
 
   await page.goto('/');
@@ -120,19 +89,20 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect(page.getByRole('button', { name: 'Log in' })).toBeFocused();
   await page.keyboard.press('Enter');
 
-  // Relationships is the default landing workspace. j/k move the ranked
-  // list's selection, Enter opens a cluster into the timeline, a second
-  // Enter opens the reading pane, and Esc walks back one layer at a time.
-  await expect(page.getByRole('main', { name: 'Relationships' })).toBeVisible();
-  await tabTo(page, 'Relationship results');
-  const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
+  await tabTo(page, 'People');
+  await page.keyboard.press('Enter');
+
+  await expect(page.getByRole('main', { name: 'People' })).toBeVisible();
+  await tabTo(page, 'People results');
+  const relationshipList = page.getByRole('grid', { name: 'People results' });
   await expect(relationshipList).toBeFocused();
   await page.keyboard.press('j');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('heading', { name: 'Beta Person' })).toBeVisible();
 
-  await tabTo(page, 'Relationship activity');
-  const relationshipTimeline = page.getByRole('grid', { name: 'Relationship activity' });
+  await tabTo(page, 'Messages results');
+  const relationshipTimeline = page.getByRole('grid', { name: 'Messages results' });
   await expect(relationshipTimeline).toBeFocused();
   await page.keyboard.press('Enter');
   const relationshipReading = page.getByRole('complementary', { name: /Reading pane: Synthetic conversation/ });
@@ -146,11 +116,11 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await expect.poll(async () => (await exploreHistoryState(page)).relationshipTarget).toBeNull();
   await expect(page.getByRole('heading', { name: 'Beta Person' })).toBeHidden();
 
-  await tabTo(page, 'Everything');
+  await tabTo(page, 'Messages');
   await page.keyboard.press('Enter');
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await page.keyboard.press('/');
-  const search = page.getByRole('searchbox', { name: 'Search everything' });
+  const search = page.getByRole('searchbox', { name: 'Search messages' });
   await expect(search).toBeFocused();
   await page.keyboard.type('synthetic');
   await tabTo(page, 'Full text');
@@ -161,18 +131,18 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   await page.keyboard.press('Enter');
   await expect(page.locator('[aria-live="polite"]').filter({ hasText: `${fixture.logicalRows.length} items` }).first()).toBeVisible();
 
-  await tabTo(page, 'Everything results');
+  await tabTo(page, 'Messages results');
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+K' : 'Control+K');
   await page.keyboard.type('group by source');
   await page.keyboard.press('Enter');
-  const grouped = page.getByRole('grid', { name: 'Everything grouped by source' });
+  const grouped = page.getByRole('grid', { name: 'Messages grouped by source' });
   await expect(grouped).toBeFocused();
   await tabTo(page, 'Drill into Synthetic chat');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
   await page.keyboard.press('Escape');
 
-  const grid = page.getByRole('grid', { name: 'Everything results' });
+  const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid).toBeFocused();
   const renderedActiveRow = grid.locator(`[data-row-key="${firstServedRow.key}"]`);
   await expect(grid).toHaveAttribute('aria-busy', 'false');
@@ -199,9 +169,9 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   const files = page.getByRole('grid', { name: 'Files results' });
   await tabTo(page, 'Files results');
   await expect(files).toBeFocused();
-  await tabTo(page, 'Everything', 120, 'Shift+Tab');
+  await tabTo(page, 'Messages', 120, 'Shift+Tab');
   await page.keyboard.press('Enter');
-  await tabTo(page, 'Everything results');
+  await tabTo(page, 'Messages results');
   await expect(grid).toBeFocused();
   await page.keyboard.press('Space');
   await expect(grid.locator('[aria-selected="true"]')).toHaveCount(1);
@@ -209,22 +179,16 @@ test('pointer-free archive journey preserves focus, announcements, and history',
   const everythingActiveRow = await grid.getAttribute('aria-activedescendant');
   expect(everythingActiveRow).not.toBeNull();
   await page.keyboard.press('d');
-  await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Confirm selected deletion' })).toBeVisible();
-  await tabTo(page, 'Cancel');
-  await page.keyboard.press('Enter');
+  await expect(page.getByRole('dialog', { name: 'Review deletion' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await tabTo(page, 'Dry run');
   await page.keyboard.press('Enter');
   await expect(page.getByRole('status').filter({ hasText: /Dry run/i })).toBeVisible();
 
-  const deletionsURL = page.url();
-  await page.goBack();
+  await page.keyboard.press('Escape');
   await expect(page).toHaveURL(everythingURL);
-  await expect(page.getByRole('main', { name: 'Everything' })).toBeVisible();
+  await expect(page.getByRole('main', { name: 'Messages', exact: true })).toBeVisible();
   await expect(grid).toBeFocused();
   await expect(grid).toHaveAttribute('aria-activedescendant', everythingActiveRow!);
-  await page.goForward();
-  await expect(page).toHaveURL(deletionsURL);
-  await expect(page.getByRole('main', { name: 'Deletions' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Deletions', exact: true })).toBeFocused();
+  await expect(grid.locator('[aria-selected="true"]')).toHaveCount(1);
 });

@@ -47,7 +47,7 @@ require (
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.12.1
 	github.com/teambition/rrule-go v1.8.2
-	go.kenn.io/docbank v0.16.1-0.20261030132435-c87f7a8b7983
+	go.kenn.io/docbank v0.16.1-0.20261103172823-754412df3483
 	go.kenn.io/kata v0.20.0
 	go.kenn.io/kit v0.47.5
 	go.opentelemetry.io/otel v1.47.0
@@ -99,7 +99,7 @@ require (
 	github.com/duckdb/duckdb-go-bindings v0.20000.0 // indirect
 	github.com/dunglas/httpsfv v1.1.2 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/ebitengine/purego v0.11.2 // indirect
+	github.com/ebitengine/purego v0.12.0-alpha.1.0.20261015130536-d456b1bb95e8 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect

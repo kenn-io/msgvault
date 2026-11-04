@@ -15,9 +15,10 @@ import (
 )
 
 type domainPopulationProfile struct {
-	Type      string                    `json:"type"`
-	ExtraInfo map[string]any            `json:"extra_info"`
-	Children  []domainPopulationProfile `json:"children"`
+	Type             string                    `json:"type"`
+	ExtraInfo        map[string]any            `json:"extra_info"`
+	Children         []domainPopulationProfile `json:"children"`
+	IntermediateRows int64                     `json:"intermediate_rows"`
 }
 
 // Profile the public entry point so the regression also exercises dispatch
@@ -69,6 +70,7 @@ func FuzzExploreDomainPopulationShared(f *testing.F) {
 	f.Add("missing.example", true)
 	f.Add("quote'\x00.example", false)
 	f.Fuzz(func(t *testing.T, domain string, additionalOnly bool) {
+		t.Parallel()
 		engine, _ := buildFastPathEquivalenceEngine(t)
 		filter := Context{Domains: []string{domain}}
 		if additionalOnly {
@@ -91,6 +93,7 @@ func FuzzExploreDomainPopulationShared(f *testing.F) {
 }
 
 func TestExploreDomainPopulationKeepsMembershipAndPages(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("owner@example.com")
 	alpha := b.AddParticipant("sender@alpha.example", "alpha.example", "Alpha")
@@ -178,6 +181,7 @@ func (p domainPopulationProfile) hasFilteredPopulation() bool {
 }
 
 func TestExploreEmptyDomainGroupsKeepScalarRescans(t *testing.T) {
+	t.Parallel()
 	engine, _ := buildFastPathEquivalenceEngine(t)
 	for _, tc := range []struct {
 		name   string
@@ -199,6 +203,7 @@ func TestExploreEmptyDomainGroupsKeepScalarRescans(t *testing.T) {
 // Domain groups intersect per message before chat fragments are collapsed.
 // Matching different groups in separate fragments must not qualify the chat.
 func TestExploreDomainIntersectionIsPerMessage(t *testing.T) {
+	t.Parallel()
 	b := NewTestDataBuilder(t)
 	source := b.AddSource("owner@example.com")
 	alpha := b.AddParticipant("person@alpha.example", "alpha.example", "Alpha")
@@ -223,6 +228,7 @@ func FuzzExploreDomainGroupFormsAgree(f *testing.F) {
 	f.Add("missing.example", 1000, 0)
 	f.Add("\xc5XAMPLE.COM", 1, 0)
 	f.Fuzz(func(t *testing.T, domain string, limit, offset int) {
+		t.Parallel()
 		if limit < 0 || limit > maxExploreLimit || offset < 0 {
 			t.Skip("pagination is outside Explore's supported range")
 		}

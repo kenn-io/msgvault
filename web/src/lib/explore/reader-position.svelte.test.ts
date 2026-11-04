@@ -1,0 +1,22 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const KEY = 'msgvault.reading-pane.position';
+
+async function load() {
+  vi.resetModules();
+  return (await import('./reader-position.svelte')).readerPosition;
+}
+
+describe('readerPosition', () => {
+  beforeEach(() => localStorage.clear());
+
+  it('remembers a move to the right across page loads', async () => {
+    const first = await load();
+    expect(first.value).toBe('below');
+    first.set('right');
+    expect(first.value).toBe('right');
+    expect(localStorage.getItem(KEY)).toBe('right');
+    expect((await load()).value).toBe('right');
+  });
+
+});

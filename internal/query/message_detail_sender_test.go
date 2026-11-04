@@ -10,6 +10,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 type messageDetailReader interface {
@@ -19,6 +20,7 @@ type messageDetailReader interface {
 
 func seedMessageDetailSenderFixture(t *testing.T) (string, *sql.DB) {
 	t.Helper()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	dbPath := filepath.Join(t.TempDir(), "msgvault.db")
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err, "open sqlite fixture")
@@ -84,12 +86,14 @@ func assertMessageDetailSenderFallback(t *testing.T, reader messageDetailReader)
 }
 
 func TestSQLiteMessageDetailUsesDirectSenderFallback(t *testing.T) {
+	t.Parallel()
 	_, db := seedMessageDetailSenderFixture(t)
 	t.Cleanup(func() { _ = db.Close() })
 	assertMessageDetailSenderFallback(t, NewSQLiteEngine(db))
 }
 
 func TestDuckDBMessageDetailUsesDirectSenderFallback(t *testing.T) {
+	t.Parallel()
 	dbPath, db := seedMessageDetailSenderFixture(t)
 	require.NoError(t, db.Close(), "close SQLite writer")
 
@@ -103,6 +107,7 @@ func TestDuckDBMessageDetailUsesDirectSenderFallback(t *testing.T) {
 }
 
 func TestMessageDetailExposesRFCMessageID(t *testing.T) {
+	t.Parallel()
 	for _, backend := range []string{"sqlite", "duckdb"} {
 		t.Run(backend, func(t *testing.T) {
 			assertions := assert.New(t)

@@ -655,9 +655,13 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 		return nil, err
 	}
 	domainWhere := []string{"domain <> ''"}
+	// An exact lookup reads only that domain's activity edges. Filtering after
+	// domain_population would first expand and aggregate every domain in the
+	// archive, which exhausts the interactive memory budget on large archives.
+	edgePredicate := "a.participant_domain <> ''"
 	if exactDomain != "" {
-		domainWhere = append(domainWhere, "domain = ?")
-		args = append(args, exactDomain)
+		edgePredicate = "a.participant_domain = ?"
+		args = append(args, exactDomain, exactDomain)
 	}
 	if searchText := strings.TrimSpace(request.Query); searchText != "" {
 		domainWhere = append(domainWhere, "contains(lower(domain), lower(?))")
@@ -686,7 +690,7 @@ func (e *DuckDBEngine) searchDomainsLegacy(ctx context.Context, request DomainSe
 				"a.is_direct AS is_direct, "+
 				"(le.entry_kind = 'conversation') AS is_chat_entry, "+
 				"le.occurred_at, le.attachment_count, le.source_type",
-			"a.participant_domain <> ''", "a.participant_domain <> ''") + `
+			edgePredicate, edgePredicate) + `
 ), domain_entries AS (
 	SELECT DISTINCT entry_key, domain, occurred_at, attachment_count, source_type
 	FROM domain_edges

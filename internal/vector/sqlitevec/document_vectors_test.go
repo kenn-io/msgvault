@@ -13,12 +13,14 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/document"
 )
 
 func openDocumentBackendForTest(t *testing.T) (*Backend, *DocumentBackend) {
 	t.Helper()
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	b, err := Open(context.Background(), Options{
 		Path:      filepath.Join(t.TempDir(), "vectors.db"),
 		Dimension: 3,

@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/vector"
@@ -1086,4 +1087,14 @@ func newExploreDuckDBFixtureWithClusters(
 	require.NoError(tb, err)
 	tb.Cleanup(func() { require.NoError(tb, engine.Close()) })
 	return engine, analyticsDir
+}
+
+func TestExploreGroupsSupportsDailyActivity(t *testing.T) {
+	t.Parallel()
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{}}
+	srv := newTestServerWithEngine(t, engine)
+	response := postExploreJSON(t, srv, "/api/v1/explore/groups", `{"grouping":["day"],"timezone":"Pacific/Pago_Pago","sent_only":true,"limit":366}`)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	assert.Equal(t, "Pacific/Pago_Pago", engine.groupRequest.Timezone)
+	assert.True(t, engine.groupRequest.Explore.SentOnly)
 }
