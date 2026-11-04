@@ -39,6 +39,19 @@ func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	requirements.NoError(entries[0].Validate())
 }
 
+func TestBuildDayIncludesZeroDurationMidnightMeeting(t *testing.T) {
+	f := newTimelineFixture(t)
+	eventID := f.calendar("midnight", `{"id":"midnight","iCalUID":"midnight@example.test","summary":"Midnight event","start":{"dateTime":"2026-10-22T00:00:00Z"},"end":{"dateTime":"2026-10-22T00:00:00Z"}}`)
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	require.NoError(t, err)
+	require.Len(t, got.Days, 1)
+	require.Len(t, got.Days[0].Meetings, 1)
+	assert.Equal(t, fmt.Sprintf("evt:%d", eventID), got.Days[0].Meetings[0].Ref)
+	assert.True(t, got.Days[0].Meetings[0].Meeting.Start.Equal(got.Days[0].Meetings[0].Meeting.End))
+	assert.Equal(t, time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC), got.Days[0].Meetings[0].Time)
+}
+
 func TestBuildDayUsesCivilBoundariesAcrossSkippedMidnight(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	loc, err := time.LoadLocation("America/Sao_Paulo")

@@ -398,7 +398,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if c.req.Mode == ModeDay {
 			var dayWindowEnd time.Time
 			dayWindowStart, dayWindowEnd = c.bounds()
-			inDayWindow = at.Before(dayWindowEnd) && end.After(dayWindowStart)
+			inDayWindow = at.Before(dayWindowEnd) && (end.After(dayWindowStart) || (end.Equal(at) && !at.Before(dayWindowStart)))
 			if inDayWindow && at.Before(dayWindowStart) {
 				displayAt = dayWindowStart
 			}
