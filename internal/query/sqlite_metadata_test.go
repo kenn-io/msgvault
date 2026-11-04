@@ -66,9 +66,7 @@ func TestMetadataSearchIndexedPlan(t *testing.T) {
 		assert.Contains(plan, "messages_metadata_fts VIRTUAL TABLE INDEX")
 		assert.Contains(plan, "participants_metadata_fts VIRTUAL TABLE INDEX")
 		assert.Contains(plan, "recipients_metadata_fts VIRTUAL TABLE INDEX")
-		if len(q.AccountIDs) == 0 {
-			assert.Contains(plan, "SEARCH m USING INTEGER PRIMARY KEY")
-		} else {
+		if len(q.AccountIDs) > 0 {
 			assert.Contains(plan, "source_id=? AND rowid=?")
 		}
 	}

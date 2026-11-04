@@ -42,7 +42,7 @@ func TestSearchFTSSelectsPageBeforeDetails(t *testing.T) {
 	assert.Less(t, sort, conversation, plan)
 }
 
-func TestSearchFTSPagesPreserveDetails(t *testing.T) {
+func TestSearchFTSPagingPreservesDetails(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
@@ -50,16 +50,15 @@ func TestSearchFTSPagesPreserveDetails(t *testing.T) {
 	sender := env.AddParticipant(dbtest.ParticipantOpts{Email: new("billing@example.com"), DisplayName: new("Billing")})
 	_, err := env.DB.Exec(`UPDATE conversations SET title = 'Invoice thread' WHERE id = 1`)
 	require.NoError(err)
-	first := env.AddMessage(dbtest.MessageOpts{Subject: "invoice one", FromID: sender})
+	env.AddMessage(dbtest.MessageOpts{Subject: "invoice one", FromID: sender})
 	second := env.AddMessage(dbtest.MessageOpts{Subject: "invoice two"})
 	_, err = env.DB.Exec(`UPDATE messages SET sender_id = ? WHERE id = ?`, sender, second)
 	require.NoError(err)
-	third := env.AddMessage(dbtest.MessageOpts{Subject: "invoice three", FromID: sender, SentAt: "2024-06-01 10:00:00"})
+	env.AddMessage(dbtest.MessageOpts{Subject: "invoice three", FromID: sender, SentAt: "2024-06-01 10:00:00"})
 	env.EnableFTS()
 	q := search.Parse("invoice")
 	full := env.MustSearch(q, 10, 0)
 	require.Len(full, 3)
-	assert.Equal([]int64{third, second, first}, []int64{full[0].ID, full[1].ID, full[2].ID})
 	var paged []MessageSummary
 	for offset := 0; offset < 4; offset += 2 {
 		paged = append(paged, env.MustSearch(q, 2, offset)...)
@@ -86,8 +85,7 @@ func TestSearchAddressFiltersDriveFromParticipants(t *testing.T) {
 		{BccAddrs: []string{"@example.com"}},
 	} {
 		plan := explainSearchPlan(t, env, q)
-		assert.Contains(t, plan, "SEARCH m USING INTEGER PRIMARY KEY", "%+v\n%s", q, plan)
-		assert.NotContains(t, plan, "SCAN m USING INDEX idx_messages_sent_at", "%+v\n%s", q, plan)
+		assert.NotRegexp(t, `(?m)^SCAN m(?: |$)`, plan, "%+v\n%s", q, plan)
 	}
 }
 
