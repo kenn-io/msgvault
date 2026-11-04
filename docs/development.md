@@ -223,6 +223,8 @@ schema in the configured database.
 
 `dbtest.NewTestDB` copies an in-memory `schema.sql` template per test with
 SQLite's backup API.
+Query Parquet fixtures are built once per distinct content and copied per test,
+so each test can change its own directory freely.
 Query tests call `t.Parallel()`; a test that replaces a package global stays
 serial and explains why in a `// serial:` comment.
 
