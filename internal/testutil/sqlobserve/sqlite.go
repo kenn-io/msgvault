@@ -104,3 +104,8 @@ func (c *observedConn) ExecContext(ctx context.Context, statement string, args [
 	c.observer.record(ctx, statement)
 	return c.SQLiteConn.ExecContext(ctx, statement, args) //nolint:wrapcheck // Preserve database/sql driver sentinels and typed errors.
 }
+
+func (c *observedConn) PrepareContext(ctx context.Context, statement string) (driver.Stmt, error) {
+	c.observer.record(ctx, statement)
+	return c.SQLiteConn.PrepareContext(ctx, statement) //nolint:wrapcheck // Preserve database/sql driver sentinels and typed errors.
+}
