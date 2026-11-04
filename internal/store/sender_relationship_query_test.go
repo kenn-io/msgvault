@@ -113,7 +113,7 @@ func TestSenderHistoryMessageIDsDeduplicatesSentSnapshots(t *testing.T) {
 	assertions.Equal([]int64{messageID}, ids, "a live row and its preserved Sent snapshot describe one message")
 }
 
-func FuzzSenderAudienceIsBroadcastMonotonicWithSentSnapshot(f *testing.F) {
+func FuzzSenderAudienceUsesAuthoritativeSentSnapshot(f *testing.F) {
 	f.Add([]byte{}, false, uint8(DefaultMaxDirectActivityCounterparts))
 	f.Add([]byte{1, 2, 3, 1, 2, 3}, false, uint8(2))
 	f.Add([]byte{1, 2, 3}, true, uint8(25))
@@ -131,9 +131,10 @@ func FuzzSenderAudienceIsBroadcastMonotonicWithSentSnapshot(f *testing.F) {
 			limit = DefaultMaxDirectActivityCounterparts
 		}
 		got := senderAudienceIsBroadcast(liveBroadcast, true, addresses, int(configuredLimit))
-		assert.Equal(t, liveBroadcast || len(unique) > limit, got)
-		assert.False(t, senderAudienceIsBroadcast(false, false, addresses, int(configuredLimit)),
-			"without saved Sent provenance, historical audience data must not affect the result")
+		assert.Equal(t, len(unique) > limit, got,
+			"a saved Sent snapshot is authoritative over replaceable live recipient rows")
+		assert.Equal(t, liveBroadcast, senderAudienceIsBroadcast(liveBroadcast, false, addresses, int(configuredLimit)),
+			"without saved Sent provenance, the activity classifier determines the result")
 	})
 }
 

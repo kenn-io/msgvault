@@ -228,6 +228,41 @@ func TestSenderRelationshipsUsesSavedSentAudienceAfterRecipientRefresh(t *testin
 		"a refreshed MIME recipient list must not narrow the saved Sent broadcast audience")
 }
 
+func TestSenderRelationshipsUsesSavedSentAudienceForBroadcastDraftSurvivor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+
+	draftRecipients := []string{"draft-only@example.test"}
+	for i := range 30 {
+		draftRecipients = append(draftRecipients, fmt.Sprintf("draft-%02d@example.test", i))
+	}
+	survivorID, sourceID := senderRelationshipMessageForSource(t, f, "gmail", "to", draftRecipients...)
+	addSenderRelationshipSystemLabel(t, f, sourceID, "gmail", store.LabelSystemRoleDrafts, survivorID)
+
+	sentCopyID, sentSourceID := senderRelationshipMessageForSource(t, f, "gmail", "to", "sent-recipient@example.test")
+	addSenderRelationshipSystemLabel(t, f, sentSourceID, "gmail", store.LabelSystemRoleSent, sentCopyID)
+	addSenderSentEnvelopeSnapshot(t, f, sentCopyID, false, "sent-recipient@example.test")
+	_, err := f.Store.MergeDuplicates(survivorID, []int64{sentCopyID}, "saved-sent-broadcast-draft")
+	requirements.NoError(err)
+
+	candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{survivorID})
+	requirements.NoError(err)
+	requirements.Len(candidates, 1)
+	assertions.True(store.ClassifyActivityCandidate(candidates[0], store.DefaultMaxDirectActivityCounterparts).Broadcast,
+		"the retained draft recipient rows exceed the direct-message limit")
+
+	addresses := append([]string{"sent-recipient@example.test"}, draftRecipients...)
+	got, err := f.Store.SenderRelationships(t.Context(), addresses, nil)
+	requirements.NoError(err)
+	assertions.Equal("known", got["sent-recipient@example.test"].Relationship,
+		"the saved direct Sent audience must take precedence over the retained draft audience")
+	for _, address := range draftRecipients {
+		assertions.Equal("none", got[address].Relationship,
+			"draft-only recipients must remain outside the authoritative Sent snapshot")
+	}
+}
+
 func TestSenderRelationshipsMicrosoftSentEvidenceSurvivesRawImportSurvivor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

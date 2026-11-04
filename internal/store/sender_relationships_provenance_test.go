@@ -135,6 +135,11 @@ func TestCopySubsetBackfillsMicrosoftSentEnvelopeFromSchema20Source(t *testing.T
 		SELECT EXISTS(SELECT 1 FROM applied_migrations WHERE name=?)
 	`), "msmail_sent_envelope_recipients_v1").Scan(&applied))
 	assertions.True(applied, "the copied destination must complete the Sent envelope backfill after copying")
+	var copiedRecipient bool
+	requirements.NoError(destination.DB().QueryRowContext(ctx, destination.Rebind(`
+		SELECT EXISTS(SELECT 1 FROM msmail_sent_envelope_recipients WHERE message_id=? AND email_address=?)
+	`), messageID, "target@example.test").Scan(&copiedRecipient))
+	assertions.True(copiedRecipient, "the copied destination must contain the backfilled Sent recipient")
 	got, err := destination.SenderRelationships(ctx, []string{"target@example.test"}, nil)
 	requirements.NoError(err)
 	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["target@example.test"])

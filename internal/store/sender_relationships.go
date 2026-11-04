@@ -632,27 +632,24 @@ func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids [
 	return result, sentSnapshots, rows.Err()
 }
 
-// senderAudienceIsBroadcast preserves a saved Sent audience when refreshed
-// MIME has narrowed the live recipient rows. The address count is a
-// conservative upper bound on distinct people.
+// senderAudienceIsBroadcast uses a saved Sent audience in place of mutable
+// recipient rows. The address count is a conservative upper bound on distinct
+// people.
 func senderAudienceIsBroadcast(
 	classifiedBroadcast, hasSentSnapshot bool, sentAudience []string, maxDirectCounterparts int,
 ) bool {
-	if classifiedBroadcast {
-		return true
-	}
-	if !hasSentSnapshot {
-		return false
-	}
-	if maxDirectCounterparts <= 0 {
-		maxDirectCounterparts = DefaultMaxDirectActivityCounterparts
-	}
-	uniqueAddresses := make(map[string]struct{}, len(sentAudience))
-	for _, address := range sentAudience {
-		address = strings.ToLower(strings.TrimSpace(address))
-		if address != "" {
-			uniqueAddresses[address] = struct{}{}
+	if hasSentSnapshot {
+		if maxDirectCounterparts <= 0 {
+			maxDirectCounterparts = DefaultMaxDirectActivityCounterparts
 		}
+		uniqueAddresses := make(map[string]struct{}, len(sentAudience))
+		for _, address := range sentAudience {
+			address = strings.ToLower(strings.TrimSpace(address))
+			if address != "" {
+				uniqueAddresses[address] = struct{}{}
+			}
+		}
+		return len(uniqueAddresses) > maxDirectCounterparts
 	}
-	return len(uniqueAddresses) > maxDirectCounterparts
+	return classifiedBroadcast
 }
