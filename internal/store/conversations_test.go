@@ -436,3 +436,30 @@ func TestConversationWindowOrderAndCounts(t *testing.T) {
 		assertions.Zero(window.Total)
 	}
 }
+
+func TestConversationWindowStoredZeroTimestamp(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st, conv, ids := seedBudgetConversation(t, []int{0, 0, 0})
+	// Importers can persist a zero timestamp as a non-NULL SQL value.
+	_, err := st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = ? WHERE id = ?`), time.Time{}, ids[0])
+	requirements.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sent_at = NULL WHERE id = ?`), ids[1])
+	requirements.NoError(err)
+
+	want := []int64{ids[1], ids[0], ids[2]}
+	position := int64(2)
+	if st.IsPostgreSQL() {
+		want = []int64{ids[0], ids[2], ids[1]}
+		position = 1
+	}
+	window, err := st.GetConversationWindow(conv, ids[0], 25, 25)
+	requirements.NoError(err)
+	got := make([]int64, 0, len(window.Messages))
+	for _, message := range window.Messages {
+		got = append(got, message.ID)
+	}
+	assertions.Equal(want, got)
+	assertions.Equal(int64(3), window.Total)
+	assertions.Equal(position, window.AnchorPosition)
+}

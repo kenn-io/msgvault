@@ -73,7 +73,7 @@ func conversationRangeClause(start, end *time.Time) (clause string, args []any) 
 // anchorTimestampInRangeContext reports whether anchorID belongs to
 // conversationID (exists) and, if so, whether its timestamp
 // (COALESCE(sent_at, received_at, internal_date)) falls within [start, end).
-// dated reports whether the anchor has a timestamp.
+// dated reports SQL nullness independently of timestamp parsing.
 // A nil bound leaves that side unrestricted. exists is false when the anchor
 // is not a live message of the conversation, mirroring the visibility rules
 // GetConversationWindowContext itself applies.
@@ -82,13 +82,14 @@ func (s *Store) anchorTimestampInRangeContext(
 ) (inRange, exists, dated bool, err error) {
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	query := fmt.Sprintf(`
-		SELECT COALESCE(m.sent_at, m.received_at, m.internal_date)
+		SELECT COALESCE(m.sent_at, m.received_at, m.internal_date),
+			COALESCE(m.sent_at, m.received_at, m.internal_date) IS NOT NULL
 		FROM messages m
 		WHERE m.conversation_id = ? AND m.id = ? AND %s%s
 	`, LiveMessagesWhere("m", false), scope)
 
 	var ts nullableTimestamp
-	scanErr := s.db.QueryRowContext(ctx, s.dialect.Rebind(query), append([]any{conversationID, anchorID}, scopeArgs...)...).Scan(&ts)
+	scanErr := s.db.QueryRowContext(ctx, s.dialect.Rebind(query), append([]any{conversationID, anchorID}, scopeArgs...)...).Scan(&ts, &dated)
 	if errors.Is(scanErr, sql.ErrNoRows) {
 		return false, false, false, nil
 	}
@@ -96,7 +97,7 @@ func (s *Store) anchorTimestampInRangeContext(
 		return false, false, false, fmt.Errorf("check conversation anchor range: %w", scanErr)
 	}
 	if !ts.Valid {
-		return false, true, false, nil
+		return false, true, dated, nil
 	}
 	afterStart := start == nil || !ts.Time.Before(*start)
 	beforeEnd := end == nil || ts.Time.Before(*end)
@@ -202,6 +203,13 @@ func (s *Store) GetConversationWindowContext(
 	before, after int,
 	start, end *time.Time,
 ) (*ConversationWindow, error) {
+	// Anchor validation, counts, selection, and hydration share one snapshot.
+	ctx, release, err := s.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	inRange, exists, dated, err := s.anchorTimestampInRangeContext(ctx, conversationID, anchorID, start, end)
 	if err != nil {
 		return nil, err
