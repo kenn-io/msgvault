@@ -131,7 +131,7 @@ func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datas
 		columns := "*"
 		if dataset == "relationship_people" {
 			// Each build records its own wall-clock watermark.
-			columns = "* EXCLUDE (temperature_effective_at)"
+			columns = "* EXCLUDE (temperature_effective_at, temperature_effective_date)"
 		}
 		var rows, missing, extra int
 		require.NoError(duckDB.QueryRow(fmt.Sprintf(`SELECT

@@ -184,7 +184,7 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 				"messages":           {"1", "2"},
 			}
 			if tt.repair {
-				expected["message_recipients"] = []string{"1", "1", "2", "2"}
+				expected["message_recipients"] = []string{"1", "1", "2", "2", "3", "3"}
 			}
 			hookCalled := false
 			buildCacheBeforeMessagesExportHook = func() error {

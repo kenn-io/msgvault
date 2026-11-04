@@ -2057,6 +2057,9 @@ func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) er
 
 func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]int64) []cacheSnapshotTable {
 	childFilter := func(dataset string) string {
+		if afterMessageIDs[dataset] <= 0 {
+			return ""
+		}
 		return fmt.Sprintf(" WHERE message_id IN (SELECT m.id FROM messages m WHERE %s AND m.id > %d AND m.id <= %d)",
 			exportableMessageWhere("m"), afterMessageIDs[dataset], through)
 	}
