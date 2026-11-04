@@ -18,6 +18,11 @@ func BenchmarkMemberInsertLargeChat(b *testing.B) {
 					require.NoError(b, err)
 					b.Cleanup(func() { require.NoError(b, s.Close()) })
 					require.NoError(b, s.InitSchema())
+					// Isolate the embedding guard from the activity queue's membership fanout.
+					for _, event := range []string{"insert", "update", "delete"} {
+						_, err := s.db.Exec("DROP TRIGGER trg_activity_queue_conversation_people_" + event)
+						require.NoError(b, err)
+					}
 					seedMembershipEmbeddingGuard(b, s, size)
 					if stats == "analyzed" {
 						_, err = s.db.Exec("ANALYZE")
