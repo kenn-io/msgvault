@@ -460,7 +460,16 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 ) bool {
 	// Pre-coverage tokens (including legacy untyped requests) may have been
 	// obtained from a Gmail listing excluding Spam/Trash. Restart those scans.
-	return checkpointMatchesRequest(run, requestFingerprint)
+	if !checkpointMatchesRequest(run, requestFingerprint) {
+		return false
+	}
+	if (s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) &&
+		s.opts.Query == "" && s.opts.Limit == 0 {
+		// A continuation without its original History boundary could skip
+		// arrivals in the already processed prefix. Restart legacy scans.
+		return run.CursorAfter.Valid && run.CursorAfter.String != ""
+	}
+	return true
 }
 
 // Keep the old store fingerprint unchanged: legacy migrations must not stamp
@@ -512,6 +521,9 @@ func (s *Syncer) initSyncState(
 			}
 			if priorSync.CursorBefore.Valid {
 				state.pageToken = priorSync.CursorBefore.String
+			}
+			if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+				state.handoffCursor = priorSync.CursorAfter.String
 			}
 			state.checkpoint = &store.Checkpoint{
 				PageToken:         state.pageToken,
@@ -1328,8 +1340,8 @@ func (s *Syncer) full(
 	startTime := time.Now()
 	summary = &gmail.SyncSummary{StartTime: startTime}
 
-	// Recovery may only resume a run that pinned its history handoff cursor.
-	// Ordinary full-sync checkpoints predate that cursor and are unsafe to reuse.
+	// Recovery has its own phase protocol and cannot reuse an ordinary
+	// full-sync checkpoint, even if it pinned a History boundary.
 	var state *syncState
 	if reconcilePresence {
 		state, err = s.initHistoryRecoveryState(ctx, source.ID, execution)
@@ -1367,10 +1379,10 @@ func (s *Syncer) full(
 		}
 	}()
 
-	if reconcilePresence && state.handoffCursor != "" {
+	if state.handoffCursor != "" {
 		if err := s.saveFullCheckpoint(ctx, state); err != nil {
 			s.failStoppedSync(state.syncID, err)
-			return nil, fmt.Errorf("inherit Gmail recovery checkpoint: %w", err)
+			return nil, fmt.Errorf("inherit Gmail full-sync checkpoint: %w", err)
 		}
 	}
 
@@ -1385,18 +1397,18 @@ func (s *Syncer) full(
 		return nil, err
 	}
 	handoffHistoryID := profile.HistoryID
-	if reconcilePresence {
+	if source.SourceType == sourceTypeGmail && s.opts.Query == "" && s.opts.Limit == 0 {
 		if state.handoffCursor == "" {
 			state.handoffCursor = strconv.FormatUint(profile.HistoryID, 10)
 			if err := s.saveFullCheckpoint(ctx, state); err != nil {
 				s.failStoppedSync(state.syncID, err)
-				return nil, fmt.Errorf("pin Gmail history recovery cursor: %w", err)
+				return nil, fmt.Errorf("pin Gmail full-sync history cursor: %w", err)
 			}
 		} else {
 			handoffHistoryID, err = strconv.ParseUint(state.handoffCursor, 10, 64)
 			if err != nil {
 				s.failStoppedSync(state.syncID, err)
-				return nil, fmt.Errorf("parse Gmail history recovery cursor %q: %w", state.handoffCursor, err)
+				return nil, fmt.Errorf("parse Gmail full-sync history cursor %q: %w", state.handoffCursor, err)
 			}
 		}
 	}
