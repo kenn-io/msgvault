@@ -16,6 +16,10 @@ describe('source labels', () => {
     ['beeper', 'Beeper'], ['slack', 'Slack'], ['matrix', 'Matrix'], ['eml', 'EML import'], ['maildir', 'Maildir import'],
     ['whatsapp', 'WhatsApp'], ['apple_messages', 'Apple Messages'],
     ['facebook_messenger', 'Facebook Messenger'], ['google-groups', 'Google Groups'],
+    ['facebook_comments', 'Facebook Page comments'],
+    ['instagram_comments', 'Instagram comments'],
+    ['facebook_messages', 'Messenger inbox'],
+    ['instagram_messages', 'Instagram inbox'],
     ['', ''], ['future_source', 'Future source'], ['constructor', 'Constructor']
   ])('names source type %j', (code, want) => {
     expect(sourceTypeLabel(code)).toBe(want);

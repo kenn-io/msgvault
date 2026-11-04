@@ -585,6 +585,11 @@ type Config struct {
 	GCal               []GCalSource                    `toml:"gcal"`
 	Beeper             BeeperConfig                    `toml:"beeper"`
 	Chatwoot           []ChatwootSource                `toml:"chatwoot"`
+	MetaWebhooks       MetaWebhooksConfig              `toml:"meta_webhooks"`
+	FacebookMessages   []MetaMessagesSource            `toml:"facebook_messages"`
+	InstagramMessages  []MetaMessagesSource            `toml:"instagram_messages"`
+	FacebookComments   []FacebookCommentsSource        `toml:"facebook_comments"`
+	InstagramComments  []InstagramCommentsSource       `toml:"instagram_comments"`
 	Matrix             MatrixConfig                    `toml:"matrix"`
 	Slack              SlackConfig                     `toml:"slack"`
 	Inline             InlineConfig                    `toml:"inline"`
@@ -915,6 +920,7 @@ func NewDefaultConfig() *Config {
 			Model:      "gpt-oss-128k",
 			MaxResults: 20,
 		},
+		MetaWebhooks: MetaWebhooksConfig{MaxBodyBytes: 8388608, MaxSpoolBytes: 1073741824, DoneRetention: "720h"},
 		Server: ServerConfig{
 			APIPort:           0,
 			BindAddr:          "127.0.0.1",
@@ -1124,6 +1130,18 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	cfg.People.Sweep.ApplyDefaults()
 	for _, key := range metadata.Undecoded() {
+		if len(key) > 0 && key[0] == "meta_webhooks" {
+			return nil, fmt.Errorf("unknown Meta webhooks config key %q", key.String())
+		}
+		if len(key) > 0 && (key[0] == "facebook_messages" || key[0] == "instagram_messages") {
+			return nil, fmt.Errorf("unknown Meta messages config key %q", key.String())
+		}
+		if len(key) > 0 && key[0] == "instagram_comments" {
+			return nil, fmt.Errorf("unknown Instagram comments config key %q", key.String())
+		}
+		if len(key) > 0 && key[0] == "facebook_comments" {
+			return nil, fmt.Errorf("unknown Facebook comments config key %q", key.String())
+		}
 		if len(key) > 0 && key[0] == "chatwoot" {
 			return nil, fmt.Errorf("unknown Chatwoot config key %q", key.String())
 		}
@@ -1276,6 +1294,21 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
 	if err := cfg.validateChatwootSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateMetaWebhooks(); err != nil {
+		return nil, err
+	}
+	if err := validateMetaMessagesSources("facebook_messages", cfg.FacebookMessages, false); err != nil {
+		return nil, err
+	}
+	if err := validateMetaMessagesSources("instagram_messages", cfg.InstagramMessages, true); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateFacebookCommentsSources(); err != nil {
+		return nil, err
+	}
+	if err := cfg.validateInstagramCommentsSources(); err != nil {
 		return nil, err
 	}
 	cfg.applyMeetingSourceDefaults()

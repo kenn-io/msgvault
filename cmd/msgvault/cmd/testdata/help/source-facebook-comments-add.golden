@@ -1,0 +1,9 @@
+Omit identifier to register all [[facebook_comments]] profiles. Page tokens come from the named daemon environment variable.
+
+Usage:
+  msgvault source facebook-comments add [identifier] [flags]
+
+Flags:
+  -h, --help   help for add
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')

@@ -1,0 +1,17 @@
+Add and sync provider sources
+
+Usage:
+  msgvault source [command]
+
+Available Commands:
+  facebook-comments  Archive comments from a configured Facebook Page
+  facebook-messages  Register and archive facebook inbox messages
+  instagram-comments Archive comments from a linked Instagram account
+  instagram-messages Register and archive instagram inbox messages
+
+Flags:
+  -h, --help   help for source
+
+Global Flags: --agent-allow-insecure, --agent-token-file, --agent-url, --config, --home, --local, --log-file, --log-level, --log-sql, --log-sql-slow-ms, --no-log-file, -v/--verbose (see 'msgvault --help')
+
+Use "msgvault source [command] --help" for more information about a command.

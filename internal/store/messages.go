@@ -2145,6 +2145,49 @@ func (s *Store) persistAttachmentSnapshotWith(q querier, messageID int64, replac
 	return nil
 }
 
+// PersistMessageContextWithArchiveWatermark skips a stale provider snapshot
+// when a newer watermark was committed while its provider request was in
+// flight. The message and its watermark advance in the same transaction.
+func (s *Store) PersistMessageContextWithArchiveWatermark(
+	ctx context.Context, data *MessagePersistData, watermark ArchiveWatermark,
+) (int64, bool, error) {
+	if data == nil || data.Message == nil {
+		return 0, false, errors.New("persist message requires a message")
+	}
+	if watermark.Key == "" || watermark.ObservedAt <= 0 || watermark.Floor < 0 {
+		return 0, false, errors.New("invalid archive watermark")
+	}
+	stale := false
+	prepare := func(ctx context.Context, tx *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
+		q := boundQuerier{ctx: ctx, q: tx}
+		current, err := s.lockArchiveWatermarkWith(q, watermark.Key, watermark.Floor)
+		if err != nil {
+			return nil, err
+		}
+		if current > watermark.ObservedAt {
+			stale = true
+			return nil, ErrStaleArchiveWatermark
+		}
+		return data, nil
+	}
+	afterPersist := func(ctx context.Context, tx *loggedTx, _ *MessagePersistData, _ int64) error {
+		q := boundQuerier{ctx: ctx, q: tx}
+		current, err := s.lockArchiveWatermarkWith(q, watermark.Key, watermark.Floor)
+		if err != nil {
+			return err
+		}
+		return advanceArchiveWatermarkWith(q, watermark.Key, current, watermark.ObservedAt)
+	}
+	id, err := s.persistMessageWithParticipantsTransaction(
+		ctx, attributionLockForMessage(data.Message.SourceID, data.Message.MessageType),
+		nil, nil, func([]int64) *MessagePersistData { return data }, prepare, afterPersist,
+	)
+	if stale && errors.Is(err, ErrStaleArchiveWatermark) {
+		return 0, true, nil
+	}
+	return id, false, err
+}
+
 // PersistMessageWithParticipantsContext resolves participants and persists the
 // message snapshot in one request-aware transaction. build receives IDs in the
 // same order as participants and must return the snapshot that references them.

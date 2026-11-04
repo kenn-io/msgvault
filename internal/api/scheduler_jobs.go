@@ -9,6 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/granola"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
 	"go.kenn.io/msgvault/internal/omi"
@@ -102,6 +103,25 @@ func classifySourceScheduling(sourceType, identifier string) sourceScheduleClass
 // they are governed by the account scheduler, not a generic job.
 func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 	switch sourceType {
+	case meta.SourceTypeFacebookMessages, meta.SourceTypeInstagramMessages:
+		platform := meta.PlatformMessenger
+		if sourceType == meta.SourceTypeInstagramMessages {
+			platform = meta.PlatformInstagram
+		}
+		if _, ok := meta.ParseDMSourceIdentifier(platform, identifier); !ok {
+			return "", false
+		}
+		return sourceType + ":" + identifier, true
+	case meta.InstagramSourceType:
+		if _, ok := meta.ParseInstagramSourceIdentifier(identifier); !ok {
+			return "", false
+		}
+		return meta.InstagramSourceType + ":" + identifier, true
+	case meta.SourceType:
+		if _, _, ok := meta.ParseSourceIdentifier(identifier); !ok {
+			return "", false
+		}
+		return meta.SourceType + ":" + identifier, true
 	case chatwoot.SourceType:
 		baseURL, accountID, _, ok := chatwoot.ParseSourceIdentifier(identifier)
 		if !ok {
@@ -166,9 +186,13 @@ func SchedulerJobNameForSource(sourceType, identifier string) (string, bool) {
 
 // isSourceSyncJobName reports whether a generic scheduler job syncs a source.
 func isSourceSyncJobName(name string) bool {
-	kind, _, _ := strings.Cut(name, ":")
+	kind, identifier, _ := strings.Cut(name, ":")
 	if kind == CardDAVJobName {
 		return true
+	}
+	if kind == meta.SourceType || kind == meta.InstagramSourceType || kind == meta.SourceTypeFacebookMessages || kind == meta.SourceTypeInstagramMessages {
+		canonical, ok := SchedulerJobNameForSource(kind, identifier)
+		return ok && canonical == name
 	}
 	_, ok := SchedulerJobNameForSource(strings.ReplaceAll(kind, "-", "_"), "source/calendar")
 	return ok

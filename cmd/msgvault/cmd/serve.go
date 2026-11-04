@@ -36,6 +36,7 @@ import (
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/meta"
 	"go.kenn.io/msgvault/internal/msmail"
 	"go.kenn.io/msgvault/internal/muesli"
 	"go.kenn.io/msgvault/internal/notionmeetings"
@@ -641,6 +642,54 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	for _, source := range cfg.FacebookComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Facebook comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledFacebookCommentsSources() {
+		if err := registerScheduledFacebookCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredFacebookCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Facebook comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
+	for _, source := range cfg.InstagramComments {
+		if source.Enabled && source.Schedule == "" {
+			logger.Warn("Instagram comments profile is enabled but has no schedule", "profile", source.Identifier)
+		}
+	}
+	for _, source := range cfg.ScheduledInstagramCommentsSources() {
+		if err := registerScheduledInstagramCommentsJob(sched, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+			return runConfiguredInstagramCommentsSync(ctx, s, source)
+		})); err != nil {
+			logger.Error("failed to schedule Instagram comments", "profile", source.Identifier, "error", err)
+		}
+	}
+
+	for _, inbox := range []struct {
+		platform  meta.DMPlatform
+		profiles  []config.MetaMessagesSource
+		scheduled []config.MetaMessagesSource
+	}{
+		{meta.PlatformMessenger, cfg.FacebookMessages, cfg.ScheduledFacebookMessagesSources()},
+		{meta.PlatformInstagram, cfg.InstagramMessages, cfg.ScheduledInstagramMessagesSources()},
+	} {
+		for _, source := range inbox.profiles {
+			if source.Enabled && source.Schedule == "" {
+				logger.Warn("inbox profile is enabled but has no schedule", "platform", inbox.platform, "profile", source.Identifier)
+			}
+		}
+		for _, source := range inbox.scheduled {
+			if err := registerScheduledMetaMessagesJob(sched, inbox.platform, source, attachmentMaint, invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredMetaMessagesSync(ctx, s, inbox.platform, source)
+			})); err != nil {
+				logger.Error("failed to schedule inbox sync", "platform", inbox.platform, "profile", source.Identifier, "error", err)
+			}
+		}
+	}
+
 	for _, source := range cfg.Chatwoot {
 		if source.Enabled && source.Schedule == "" {
 			logger.Warn("chatwoot profile is enabled but has no schedule", "profile", source.Identifier,
@@ -1007,6 +1056,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}()
 	var serverStartupErr error
+	var metaWebhooks *metaWebhookRuntime
+	var metaWebhookErrors <-chan error
 	startErr := apiServer.WaitStarted(ctx)
 	if startErr != nil {
 		if ctx.Err() == nil {
@@ -1025,6 +1076,13 @@ func runServe(cmd *cobra.Command, args []string) error {
 	} else {
 		listenerReserved = false
 		analyticsServerStarted = true
+		metaWebhooks, err = startMetaWebhooks(ctx, cfg, s, idleTracker, operationGate)
+		if err != nil {
+			serverStartupErr = fmt.Errorf("start Meta webhooks: %w", err)
+			cancel()
+		} else {
+			metaWebhookErrors = metaWebhooks.errors
+		}
 		resourceCleanupSafe = false
 		if analyticsAsync {
 			analyticsInit = startDaemonAnalyticsInitializer(
@@ -1087,6 +1145,10 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("API server error", "error", err)
 			fmt.Printf("\nAPI server error: %v\n", err)
 			serverStartupErr = err
+		case err := <-metaWebhookErrors:
+			logger.Error("Meta webhook receiver error", "error", err)
+			serverStartupErr = fmt.Errorf("meta webhook receiver: %w", err)
+			cancel()
 		case err := <-analyticsInit.Fatal():
 			if ctx.Err() == nil {
 				logger.Error("analytics initialization error", "error", err)
@@ -1115,7 +1177,8 @@ func runServe(cmd *cobra.Command, args []string) error {
 			mcpInitErr = errors.New("native MCP initialization did not stop during shutdown")
 		}
 	}
-	shutdownErr := errors.Join(mcpInitErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
+	metaWebhookShutdownErr := metaWebhooks.Shutdown(shutdownCtx)
+	shutdownErr := errors.Join(mcpInitErr, metaWebhookShutdownErr, shutdownServeRuntime(shutdownCtx, cmd.OutOrStdout(), apiServer, serveSchedulers{sched, mediaSched}, operationGate))
 	if !cacheJobs.waitContext(shutdownCtx) {
 		logger.Warn("analytics cache build did not stop within the shutdown drain timeout")
 		shutdownErr = errors.Join(shutdownErr, errors.New("analytics cache build did not stop during shutdown"))

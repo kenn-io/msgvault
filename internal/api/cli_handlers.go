@@ -1695,6 +1695,9 @@ func cliRunCommandAllowed(args []string) bool {
 	if len(args) == 0 {
 		return false
 	}
+	if args[0] == "source" {
+		return len(args) >= 3 && (args[1] == "facebook-comments" || args[1] == "instagram-comments" || args[1] == "facebook-messages" || args[1] == "instagram-messages") && (args[2] == "add" || args[2] == "sync")
+	}
 	// Internal subprocess commands are callable only by their owning public
 	// command on the daemon host, never through the generic HTTP runner.
 	if len(args) > 1 && strings.HasPrefix(args[1], "__") {
@@ -1709,6 +1712,10 @@ func cliRunCommandAllowed(args []string) bool {
 	if IsCLIRunDraftLifecycle(args) {
 		return len(args) >= 2
 	}
+	if args[0] == "meta-webhooks" {
+		return len(args) >= 2 && (args[1] == "subscribe" || args[1] == "status" || args[1] == "replay")
+	}
+
 	if args[0] == "backup" {
 		return len(args) >= 2 && args[1] == "create"
 	}

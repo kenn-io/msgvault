@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-01"
+last_edited: 2026-11-03
 title: Changelog
 description: Release history for msgvault
 ---
@@ -25,6 +25,19 @@ All notable changes to msgvault, grouped by release.
 
 ### Other changes
 
+- [Meta webhooks](usage/meta-webhooks.md) durably spool signed deliveries and apply Page feed comments, with owner subscription, status, and replay commands. Other fields are held for a future release.
+- Archive recent [Messenger](usage/facebook-messages.md) and [Instagram inbox](usage/instagram-messages.md)
+  messages as searchable chats, and link their participants manually.
+  Backfill is capped at 20 messages per thread; the Meta webhook receiver adds
+  live messages, echoes, reactions, Messenger edits, and Instagram deletion marks.
+
+- [Instagram comment sync](usage/instagram-comments.md) archives linked professional
+  account media comments and replies for search and existing person linking.
+  Sending and ad-only discovery are not included.
+- [Facebook Page comment sync](usage/facebook-comments.md) archives comments and
+  nested replies on organic, visitor, and ad posts returned for a selected Page.
+  Search the archive and link commenters through existing people tools. This
+  does not send messages or include Instagram or ad-creative discovery.
 - `msgvault person directory --query` finds saved people by curated names, contact points, or organizations without semantic search. `--address` matches literal address and identifier fragments on their current bound participants or curated contact points. Address filtering requires daemon API schema 3.29.0; the CLI reports an upgrade error for older daemons.
 - Import Telegram Desktop JSON exports with senders, replies, edit markers, and available media using [`import-telegram`](usage/text-messages.md#import-telegram). Overlapping exports add new messages while preserving archived content.
 
