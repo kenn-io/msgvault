@@ -50,9 +50,14 @@ func FuzzDirectoryCadenceAssignment(f *testing.F) {
 }
 
 func FuzzContactFrequencyColumnIsolation(f *testing.F) {
-	f.Add(uint16(2), int64(21), true)
-	f.Add(uint16(511), int64(0), true)
-	f.Fuzz(func(t *testing.T, mask uint16, days int64, integerKind bool) {
+	columnMasks := [...]uint16{1, 2, 4, 8, 16, 32, 64, 384}
+	for column := range columnMasks {
+		f.Add(uint8(column), int64(21), false)
+		f.Add(uint8(column), int64(21), true)
+	}
+	f.Add(uint8(1), int64(0), true)
+	f.Fuzz(func(t *testing.T, column uint8, days int64, integerKind bool) {
+		mask := columnMasks[int(column)%len(columnMasks)]
 		var fields [9]sql.NullString
 		for i := range fields {
 			fields[i] = sql.NullString{Valid: mask&(1<<i) != 0, String: strconv.FormatInt(days, 10)}
@@ -62,7 +67,7 @@ func FuzzContactFrequencyColumnIsolation(f *testing.F) {
 			kind = "integer"
 		}
 		value := decodeContactFrequency(kind, fields)
-		wantValid := integerKind && mask&511 == 2
+		wantValid := integerKind && mask == 2
 		assert.Equal(t, wantValid, value.Valid)
 		if wantValid {
 			assert.Equal(t, days, value.Days)

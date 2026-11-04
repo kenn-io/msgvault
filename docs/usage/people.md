@@ -219,7 +219,7 @@ msgvault person directory --cadence no_list
 | `--cadence` | Matches |
 |---|---|
 | `overdue` | Due date has passed |
-| `due` | Due today or earlier, or within `--due-within-days` UTC days (0 to 3660) |
+| `due` | Due on or before the end of the UTC date `--due-within-days` days from today (0 to 3660) |
 | `no_list` | No contact list |
 | `unknown` | Has a list but no trustworthy due date: no last contact yet, or contact state is still being recomputed |
 

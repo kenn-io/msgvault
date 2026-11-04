@@ -217,6 +217,74 @@ func TestDirectoryCadenceCursorRetainsEvaluationInstant(t *testing.T) {
 	assert.Nil(page.People[0].Cadence.DaysOverdue)
 }
 
+func TestDirectoryCadenceDueIncludesWholeUTCHorizonDate(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		dueWithinDays int
+	}{
+		{name: "later today", dueWithinDays: 0},
+		{name: "last horizon date", dueWithinDays: 7},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f, firstID := newActivityQueryFixture(t)
+			boundaryParticipant := f.EnsureParticipant("boundary-horizon@example.test", "Boundary Example", "example.test")
+			boundary, _, err := f.Store.CreatePersonFromParticipant(boundaryParticipant)
+			require.NoError(err)
+			outsideParticipant := f.EnsureParticipant("outside-horizon@example.test", "Outside Example", "example.test")
+			outside, _, err := f.Store.CreatePersonFromParticipant(outsideParticipant)
+			require.NoError(err)
+
+			current := time.Now().UTC()
+			evaluationDate := time.Date(current.Year(), current.Month(), current.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, -1)
+			evaluationTime := evaluationDate.Add(12 * time.Hour)
+			ids := []int64{firstID, boundary.ID, outside.ID}
+			dueDates := []time.Time{
+				evaluationDate.AddDate(0, 0, -1).Add(23*time.Hour + 59*time.Minute),
+				evaluationDate.AddDate(0, 0, tc.dueWithinDays).Add(23*time.Hour + 59*time.Minute),
+				evaluationDate.AddDate(0, 0, tc.dueWithinDays+1),
+			}
+			for i, id := range ids {
+				dueAt := dueDates[i]
+				seedProjectedActivity(t, f, id, []time.Time{dueAt.AddDate(0, 0, -21)})
+				days := int64(21)
+				_, err = f.Store.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+					PersonID: id, DefinitionSlug: store.AttributeSlugContactFrequency,
+					Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser,
+				})
+				require.NoError(err)
+			}
+			revisions, err := f.Store.ContactRevisionsContext(t.Context())
+			require.NoError(err)
+			seedActivityReconciledEpoch(t, f.Store, revisions)
+
+			days := tc.dueWithinDays
+			query := store.DirectoryPeopleQuery{Cadence: "due", DueWithinDays: &days, Sort: "next_due", Limit: 1}
+			firstPage, err := f.Store.DirectoryPeoplePageContext(t.Context(), query)
+			require.NoError(err)
+			require.Len(firstPage.People, 1)
+			assert.Equal(firstID, firstPage.People[0].ID)
+			require.NotEmpty(firstPage.NextCursor)
+
+			cursorBytes, err := base64.RawURLEncoding.DecodeString(firstPage.NextCursor)
+			require.NoError(err)
+			var cursor map[string]any
+			require.NoError(json.Unmarshal(cursorBytes, &cursor))
+			cursor["evaluated_at"] = evaluationTime.Format(time.RFC3339Nano)
+			cursorBytes, err = json.Marshal(cursor)
+			require.NoError(err)
+			query.Cursor = base64.RawURLEncoding.EncodeToString(cursorBytes)
+
+			secondPage, err := f.Store.DirectoryPeoplePageContext(t.Context(), query)
+			require.NoError(err)
+			require.Len(secondPage.People, 1)
+			assert.Equal(boundary.ID, secondPage.People[0].ID)
+			assert.Empty(secondPage.NextCursor)
+		})
+	}
+}
+
 func TestContactListFirstCreationIsCompareAndSwap(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
