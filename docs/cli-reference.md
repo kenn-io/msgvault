@@ -1356,7 +1356,9 @@ msgvault add-hex [identifier]
 
 Uses `[[hex]]` and its required `account_email`. With one entry, the identifier
 can be omitted. Remote mode reads on the recorder; same-host mode reads on the
-daemon's host. Re-registration resets remote upload receipts.
+daemon's host. Re-registration resets remote upload receipts. Keep the daemon
+running for same-host scheduled capture, or keep `sync-hex <identifier> --watch`
+running on the remote recorder.
 
 ### sync-hex
 

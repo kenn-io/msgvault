@@ -973,26 +973,36 @@ The default paths and `meetings_dir` override are in the configuration reference
 Hex defaults to keeping new meetings for **24 hours**. Schedule sync well
 inside that window, such as every 30 minutes, or change Hex's **Keep meetings**
 setting. A sleeping recorder cannot sync; allow for that when choosing retention.
-Archived copies survive Hex's expiry and source deletion.
+Archived copies survive Hex's expiry and source deletion. Shutdown or offline
+time beyond retention can lose calls that have never synced.
 
-Every scan revisits stopped meetings so edits update the archive. Held or
+Every scan revisits stopped meetings so edits update the archive. If a transcript
+vanishes or becomes unreadable after archival, the previous complete snapshot is
+retained with a warning, including during `--full`. A final transcript never
+regresses to rolling evidence. Notes edits wait for a readable replacement in
+those cases. Metadata-only first imports and updates remain supported. Held or
 unreadable `active.lock` files defer a folder. Stale recording states are
 classified in memory using Hex's recovery rules; msgvault never repairs or
-changes source files. Final NDJSON is preferred; rolling NDJSON is retained
+changes source files. Final NDJSON alone counts as publication, including while
+Markdown is pending; rolling NDJSON is retained
 when final text is absent. Unterminated last lines are ignored, and malformed
 complete lines or bad folders count as source warnings. Unsupported source
 schema versions are skipped. Interrupted, failed and metadata-only records
 remain searchable, with absent notes and transcript explicitly represented.
 
-The literal manifest title, notes summary and chapters are preserved. Calendar
+Hex's display title becomes the searchable subject: user, call and calendar titles
+win; default titles yield to the notes title, then provisional title. All title
+evidence, the notes summary and chapters are preserved. Calendar
 attendee strings remain context evidence. Only explicit valid email strings
 become recipients; names never identify people. `account_email` is the organizer.
 Transcript offsets keep the source's **You** and **Them** labels; **Them** can
-represent several people. Hex has no structured action items, so action coverage
+represent several people. Duration uses provider timing when present; otherwise
+the last transcript end offset is labeled a transcript-span estimate, which may
+cover less than the whole meeting. Hex has no structured action items, so action coverage
 is unsupported in the existing meeting CLI, HTTP and MCP queries.
 
-For daemon scheduling, set `enabled = true` and a five-field `schedule` in
-`[[hex]]`. For a remote recorder, keep `msgvault sync-hex --watch` running on
+For same-host capture, keep the daemon running and set `enabled = true` and a
+five-field `schedule` in `[[hex]]`. For a remote recorder, keep `msgvault sync-hex --watch` running on
 that computer. The watcher performs an initial scan and serial scheduled rescans.
 It retries file and network failures on the next scan; rejected credentials or
 an incompatible daemon stop it. Hex has no executable completion hook.

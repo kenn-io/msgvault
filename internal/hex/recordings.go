@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -64,7 +65,7 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 	if err != nil || message.SourceID != source.ID || message.MessageType != "meeting_transcript" {
 		return false, ErrRemoteRecordValidation
 	}
-	changed, err := meetingarchive.StoreRecordingStream(ctx, imp.store, "hex:"+u.Track, u.MessageID, dir, u.Hash, u.Size, u.MIMEType, input)
+	changed, err := meetingarchive.StoreRecordingStream(ctx, imp.store, "hex:"+u.Track, fmt.Sprintf("meeting-%d-%s.wav", u.MessageID, u.Track), u.MessageID, dir, u.Hash, u.Size, u.MIMEType, input)
 	if errors.Is(err, meetingarchive.ErrRecordingValidation) {
 		err = ErrRemoteRecordValidation
 	}
@@ -81,7 +82,7 @@ func (imp *Importer) importRecordings(ctx context.Context, opts ImportOptions, m
 		if r == nil {
 			sum.RecordingsSkipped++
 		} else {
-			changed, writeErr := meetingarchive.StoreRecording(ctx, imp.store, "hex:"+track, messageID, opts.AttachmentsDir, r)
+			changed, writeErr := meetingarchive.StoreRecording(ctx, imp.store, "hex:"+track, fmt.Sprintf("meeting-%d-%s.wav", messageID, track), messageID, opts.AttachmentsDir, r)
 			err = writeErr
 			_ = r.Close()
 			if err == nil {

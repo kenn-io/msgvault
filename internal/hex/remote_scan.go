@@ -23,7 +23,11 @@ func ForgetRemoteUploads(ctx context.Context, opts ImportOptions) error {
 		return err
 	}
 	defer func() { _ = lock.Unlock() }()
-	err = os.Remove(meetingimport.RecorderUploadsPath(dir, canonical, opts.Identifier, opts.RemoteTarget))
+	path := meetingimport.RecorderUploadsPath(dir, canonical, opts.Identifier, opts.RemoteTarget)
+	if _, err := meetingimport.LoadRecorderUploads[string](path); err != nil {
+		return err
+	}
+	err = os.Remove(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -129,6 +133,7 @@ func pushMeeting(ctx context.Context, opts ImportOptions, m Meeting, send Remote
 		return errors.Join(failures...)
 	}
 	result, err := send(ctx, request)
+	sum.Warnings += result.Warnings
 	if result.SourceID != 0 {
 		sum.SourceID = result.SourceID
 	}
@@ -161,6 +166,8 @@ func pushMeeting(ctx context.Context, opts ImportOptions, m Meeting, send Remote
 		receipts.RecordRecording(m.Manifest.ID+":"+track, r.Hash)
 		sum.RecordingsStored++
 	}
-	receipts.Record(m.Manifest.ID, digest)
+	if result.Warnings == 0 {
+		receipts.Record(m.Manifest.ID, digest)
+	}
 	return errors.Join(failures...)
 }

@@ -3,31 +3,41 @@ package meetingcontent
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
-	"net/mail"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/hex/evidence"
 )
 
 func decodeHex(fields map[string]jsontext.Value) Content {
-	var m hexMeeting
-	if json.Unmarshal(fields["meeting"], &m) != nil || m.Manifest.SchemaVersion != 1 {
+	var version int
+	if json.Unmarshal(fields["version"], &version) != nil || version != evidence.Version {
+		return unavailableContent("unsupported_version")
+	}
+	var m evidence.Meeting
+	if json.Unmarshal(fields["meeting"], &m) != nil || m.Validate() != nil {
 		return unavailableContent(reasonInvalidSection)
 	}
 	content := baseRecognizedContent()
 	content.Summary = Section{State: StateEmpty}
 	content.Notes = Section{State: StateEmpty}
 	content.Transcript = Transcript{State: StateEmpty}
-	if m.Manifest.Notes != nil && strings.TrimSpace(m.Manifest.Notes.Summary) != "" {
-		content.Summary = Section{State: StateAvailable, Text: m.Manifest.Notes.Summary}
+	if m.Manifest.Notes != nil && strings.TrimSpace(string(m.Manifest.Notes.Summary)) != "" {
+		content.Summary = Section{State: StateAvailable, Text: string(m.Manifest.Notes.Summary)}
 	}
 	var notes []string
+	if m.Manifest.Notes != nil && m.Manifest.Notes.Title != "" {
+		notes = append(notes, "Notes title: "+m.Manifest.Notes.Title)
+	}
+	if m.Manifest.ProvisionalTitle != "" {
+		notes = append(notes, "Provisional title: "+m.Manifest.ProvisionalTitle)
+	}
 	if m.Manifest.Calendar != nil {
 		notes = append(notes, "Calendar: "+m.Manifest.Calendar.Title)
 		people := []personWire{}
 		for _, value := range m.Manifest.Calendar.Attendees {
 			person := personWire{Name: value}
-			if email := hexAttendeeEmail(value); email != "" {
+			if email := evidence.AttendeeEmail(value); email != "" {
 				person = personWire{Email: email}
 			}
 			people = append(people, person)
@@ -35,7 +45,7 @@ func decodeHex(fields map[string]jsontext.Value) Content {
 		content.SourceParticipants = participantsFromPeople(nil, people)
 	}
 	for _, chapter := range m.Manifest.Chapters {
-		notes = append(notes, hexTranscriptLine(time.Duration(chapter.StartMS)*time.Millisecond, chapter.Title, chapter.Summary))
+		notes = append(notes, FormatTranscriptLine(time.Duration(chapter.StartMS)*time.Millisecond, chapter.Title, chapter.Summary))
 	}
 	if len(notes) > 0 {
 		content.Notes = Section{State: StateAvailable, Text: strings.Join(notes, "\n")}
@@ -43,12 +53,16 @@ func decodeHex(fields map[string]jsontext.Value) Content {
 	var lines []string
 	for _, entry := range m.Entries {
 		offset := float64(entry.StartMS) / 1000
-		content.Transcript.Segments = append(content.Transcript.Segments, Segment{Speaker: entry.Speaker(), Text: entry.Text, OffsetSeconds: &offset})
-		lines = append(lines, hexTranscriptLine(time.Duration(entry.StartMS)*time.Millisecond, entry.Speaker(), entry.Text))
+		end := time.UnixMilli(m.Manifest.CreatedAtMS + entry.EndMS).UTC()
+		content.Transcript.Segments = append(content.Transcript.Segments, Segment{Speaker: entry.Speaker(), Text: entry.Text, OffsetSeconds: &offset, EndedAt: &end})
+		lines = append(lines, FormatTranscriptLine(time.Duration(entry.StartMS)*time.Millisecond, entry.Speaker(), entry.Text))
 	}
 	if len(lines) > 0 {
 		content.Transcript.State = StateAvailable
 		content.Transcript.Text = strings.Join(lines, "\n")
+	}
+	if m.TranscriptState == "missing" || m.TranscriptState == "unreadable" {
+		content.Transcript.State = StateUnavailable
 	}
 	if m.TranscriptState != "final" {
 		content.Transcript.Reason = "hex_" + m.TranscriptState
@@ -56,62 +70,20 @@ func decodeHex(fields map[string]jsontext.Value) Content {
 	content.ActionCoverage = CoverageUnsupported
 	content.ActionReason = "no_structured_actions"
 	if m.Manifest.DurationMS != nil {
-		setDuration(&content, float64(*m.Manifest.DurationMS)/1000, DurationProvider)
-	} else if m.Manifest.EndedAtMS != nil {
+		seconds := float64(*m.Manifest.DurationMS) / 1000
+		content.DurationSeconds = &seconds
+		content.DurationBasis = DurationProvider
+	} else if m.Manifest.EndedAtMS != nil && *m.Manifest.EndedAtMS > m.Manifest.CreatedAtMS {
 		setDuration(&content, float64(*m.Manifest.EndedAtMS-m.Manifest.CreatedAtMS)/1000, DurationProvider)
+	} else {
+		var end int64
+		for _, entry := range m.Entries {
+			if entry.EndMS > end {
+				end = entry.EndMS
+			}
+		}
+		setDuration(&content, float64(end)/1000, DurationTranscriptSpan)
 	}
+
 	return content
-}
-
-// The evidence wire is decoded independently of the importer: Store consumes
-// this package, so importing a provider would introduce an archive cycle.
-type hexMeeting struct {
-	Manifest struct {
-		SchemaVersion int `json:"schema_version"`
-		Notes         *struct {
-			Summary string `json:"summary"`
-		} `json:"notes"`
-		Calendar *struct {
-			Title     string   `json:"title"`
-			Attendees []string `json:"attendees"`
-		} `json:"calendar"`
-		Chapters []struct {
-			StartMS int64  `json:"start_ms"`
-			Title   string `json:"title"`
-			Summary string `json:"summary"`
-		} `json:"chapters"`
-		DurationMS  *int64 `json:"duration_ms"`
-		EndedAtMS   *int64 `json:"ended_at_ms"`
-		CreatedAtMS int64  `json:"created_at_ms"`
-	} `json:"manifest"`
-	Entries         []hexEntry `json:"entries"`
-	TranscriptState string     `json:"transcript_state"`
-}
-type hexEntry struct {
-	Source  string `json:"source"`
-	StartMS int64  `json:"start_ms"`
-	Text    string `json:"text"`
-}
-
-func (e hexEntry) Speaker() string {
-	if e.Source == "microphone" {
-		return "You"
-	}
-	return "Them"
-}
-func hexAttendeeEmail(value string) string {
-	value = strings.TrimSpace(value)
-	parsed, err := mail.ParseAddress(value)
-	if err != nil || parsed.Address != value || !strings.Contains(value, "@") {
-		return ""
-	}
-	return strings.ToLower(value)
-}
-func hexTranscriptLine(offset time.Duration, speaker, text string) string {
-	total := int64(offset / time.Second)
-	stamp := fmt.Sprintf("[%02d:%02d]", total/60, total%60)
-	if total >= 3600 {
-		stamp = fmt.Sprintf("[%d:%02d:%02d]", total/3600, total/60%60, total%60)
-	}
-	return stamp + " " + speaker + ": " + text
 }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -339,16 +340,7 @@ func emailDomain(email string) string {
 // FormatTranscriptLine renders "[mm:ss] Speaker: text", or "[h:mm:ss]" past
 // the first hour. Callers pick their own label for an unnamed speaker.
 func FormatTranscriptLine(offset time.Duration, speaker, text string) string {
-	if offset < 0 {
-		offset = 0
-	}
-	total := int(offset.Seconds())
-	h, m, s := total/3600, (total%3600)/60, total%60
-	stamp := fmt.Sprintf("[%02d:%02d]", m, s)
-	if h > 0 {
-		stamp = fmt.Sprintf("[%d:%02d:%02d]", h, m, s)
-	}
-	return stamp + " " + speaker + ": " + text
+	return meetingcontent.FormatTranscriptLine(offset, speaker, text)
 }
 
 // Snippet is the preview stored with a meeting: the trimmed body cut to 200 runes.

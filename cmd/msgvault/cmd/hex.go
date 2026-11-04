@@ -32,7 +32,7 @@ const hexConfigHint = `Add to your config.toml:
   account_email = "you@example.com"   # you, the person who records the meetings
   enabled = true
   # meetings_dir = "/path/to/hex/meetings"  # uses Hex's platform default when omitted
-  # schedule = "*/30 * * * *"         # daemon schedule, or remote client --watch`
+  schedule = "*/30 * * * *"         # daemon schedule, or remote client --watch`
 
 func hexSources(cfg *config.Config) meetingSources[config.HexSource] {
 	sources := meetingSources[config.HexSource]{
@@ -105,7 +105,7 @@ Examples:
 			return fmt.Errorf("post-source-create migrations: %w", err)
 		}
 		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "\nHex source %s registered.\n", source.Identifier)
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault sync-hex %s\n", source.Identifier)
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Run: msgvault sync-hex %s\nKeep the daemon running for scheduled capture. Hex normally expires unsynced meetings after 24 hours.\n", source.Identifier)
 		return nil
 	},
 }

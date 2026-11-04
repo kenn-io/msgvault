@@ -98,9 +98,15 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 			break
 		}
 		sum.MeetingsProcessed++
-		snapshot, err := m.ArchiveSnapshot(source.ID, opts.Identifier, opts.AccountEmail)
+		snapshot, retained, err := NewImporter(scoped).prepareArchive(ctx, m, source.ID, opts.Identifier, opts.AccountEmail)
 		if err == nil {
-			result, writeErr := meetingarchive.New(scoped).Upsert(ctx, snapshot, meetingarchive.UpsertOptions{Force: opts.Full})
+			result := meetingarchive.Result{MessageID: retained}
+			var writeErr error
+			if retained != 0 {
+				sum.Warnings++
+			} else {
+				result, writeErr = meetingarchive.New(scoped).Upsert(ctx, snapshot, meetingarchive.UpsertOptions{Force: opts.Full})
+			}
 			err = writeErr
 			if result.Created {
 				sum.MeetingsAdded++

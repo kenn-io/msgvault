@@ -3,7 +3,6 @@ package hex
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json/v2"
 	"errors"
 	"os"
@@ -108,26 +107,11 @@ func TestImportMetadataOnlyAndFilters(t *testing.T) {
 	_, err = imp.Import(ctx, opts)
 	assert.ErrorIs(t, err, context.Canceled)
 }
-func wavBytes() []byte {
-	b := make([]byte, 48)
-	copy(b, "RIFF")
-	binary.LittleEndian.PutUint32(b[4:], 40)
-	copy(b[8:], "WAVEfmt ")
-	binary.LittleEndian.PutUint32(b[16:], 16)
-	binary.LittleEndian.PutUint16(b[20:], 1)
-	binary.LittleEndian.PutUint16(b[22:], 1)
-	binary.LittleEndian.PutUint32(b[24:], 16000)
-	binary.LittleEndian.PutUint32(b[28:], 32000)
-	binary.LittleEndian.PutUint16(b[32:], 2)
-	binary.LittleEndian.PutUint16(b[34:], 16)
-	copy(b[36:], "data")
-	binary.LittleEndian.PutUint32(b[40:], 4)
-	return b
-}
+
 func writeTrack(t *testing.T, dir, track string) {
 	t.Helper()
 	path := filepath.Join(dir, track+".wav")
-	require.NoError(t, os.WriteFile(path, wavBytes(), 0600))
+	require.NoError(t, os.WriteFile(path, testutil.RecordingWAV(), 0600))
 	old := time.Now().Add(-time.Minute)
 	require.NoError(t, os.Chtimes(path, old, old))
 }

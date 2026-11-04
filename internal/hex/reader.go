@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"unicode"
+	"time"
 
 	"github.com/gofrs/flock"
-	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/hex/evidence"
 )
 
 const maxEvidenceBytes = 16 << 20
@@ -70,7 +70,7 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 				continue
 			}
 			lock := flock.New(lockPath, flock.SetFlag(os.O_RDONLY))
-			ok, lockErr := lock.TryLock()
+			ok, lockErr := lock.TryRLock()
 			if lockErr != nil || !ok {
 				_ = lock.Close()
 				out.Deferred++
@@ -88,7 +88,7 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 			continue
 		}
 		var manifest Manifest
-		if json.Unmarshal(data, &manifest) != nil || manifest.SchemaVersion != 1 || manifest.ID != id || !validID(id) || manifest.CreatedAtMS <= 0 {
+		if json.Unmarshal(data, &manifest) != nil || manifest.SchemaVersion != 1 || manifest.ID != id || !evidence.ValidID(id) || manifest.CreatedAtMS <= 0 {
 			out.Warnings++
 			continue
 		}
@@ -100,6 +100,7 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 			out.Warnings++
 			continue
 		}
+		manifest.ResolveTitleSource(time.Local)
 		m := Meeting{Manifest: manifest, TranscriptState: "missing"}
 		data, err = r.read(filepath.Join(id, "transcript.ndjson"))
 		if errors.Is(err, os.ErrNotExist) {
@@ -112,13 +113,16 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 			m.TranscriptState = "missing"
 		} else if err != nil {
 			out.Warnings++
-			m.TranscriptState = "unreadable"
+			continue
 		} else {
 			reader := bufio.NewReader(strings.NewReader(string(data)))
 			for {
 				line, readErr := reader.ReadBytes('\n')
 				if readErr != nil {
 					break
+				}
+				if strings.TrimSpace(string(line)) == "" {
+					continue
 				}
 				var header struct {
 					Covered jsontext.Value `json:"covered_ms"`
@@ -128,20 +132,17 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 					continue
 				}
 				var entry Entry
-				if json.Unmarshal(line, &entry) != nil || !validEntry(entry) {
+				if json.Unmarshal(line, &entry) != nil || !evidence.ValidEntry(entry) {
 					out.Warnings++
 					continue
 				}
-				m.Entries = append(m.Entries, entry)
+				if strings.TrimSpace(entry.Text) != "" {
+					m.Entries = append(m.Entries, entry)
+				}
 			}
 		}
 
-		finalPublished := false
-		if m.TranscriptState == "final" {
-			if _, err := r.root.Stat(filepath.Join(id, "transcript.md")); err == nil {
-				finalPublished = true
-			}
-		}
+		finalPublished := m.TranscriptState == "final"
 		switch {
 		case finalPublished && (m.Manifest.Status == "transcribing" || m.Manifest.Status == "interrupted" || m.Manifest.Status == "failed"):
 			m.Manifest.Status = "complete"
@@ -150,11 +151,19 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 		case m.Manifest.Status == "starting" || m.Manifest.Status == "recording" || m.Manifest.Status == "transcribing":
 			m.Manifest.Status = "interrupted"
 		}
-		// Apply the same field bounds used by remote transfer before local archival.
-		if _, err := (RemoteRequest{Action: "upsert", Source: meetingimport.Source{Identifier: "validation", AccountEmail: "recorder@example.com"}, Meeting: &m}).Normalize(); err != nil {
+		if err := evidence.Meeting(m).Validate(); err != nil {
 			out.Warnings++
 			continue
 		}
+		slices.SortStableFunc(m.Entries, func(a, b Entry) int {
+			if a.StartMS < b.StartMS {
+				return -1
+			}
+			if a.StartMS > b.StartMS {
+				return 1
+			}
+			return 0
+		})
 		out.Meetings = append(out.Meetings, m)
 	}
 	return out, nil
@@ -170,10 +179,4 @@ func (r *Reader) read(path string) ([]byte, error) {
 		return nil, errors.New("Hex evidence exceeds 16 MiB")
 	}
 	return b, err
-}
-func validID(id string) bool {
-	return id != "" && id != "." && id != ".." && !strings.ContainsAny(id, "/\\\x00") && strings.IndexFunc(id, unicode.IsControl) < 0
-}
-func validEntry(e Entry) bool {
-	return (e.Source == "system" || e.Source == "microphone") && e.StartMS >= 0 && e.EndMS >= e.StartMS
 }

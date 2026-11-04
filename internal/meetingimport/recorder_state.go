@@ -44,6 +44,12 @@ func LoadRecorderUploads[K comparable](path string) (*RecorderUploads[K], error)
 	if err != nil {
 		return nil, fmt.Errorf("read meeting upload record: %w", err)
 	}
+	var header struct {
+		Version int `json:"version"`
+	}
+	if json.Unmarshal(data, &header) == nil && header.Version > recorderUploadsVersion {
+		return nil, fmt.Errorf("unsupported meeting upload record version %d", header.Version)
+	}
 	var stored RecorderUploads[K]
 	if json.Unmarshal(data, &stored) != nil || stored.Meetings == nil {
 		// An unreadable cache only means every meeting is offered again; the

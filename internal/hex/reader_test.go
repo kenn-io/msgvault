@@ -23,7 +23,7 @@ func fixtureMeeting(t *testing.T, root, id, status string) string {
 func TestReaderRecoveryAndWarnings(t *testing.T) {
 	root := t.TempDir()
 	final := fixtureMeeting(t, root, "a-final", "transcribing")
-	require.NoError(t, os.WriteFile(filepath.Join(final, "transcript.ndjson"), []byte("{\"source\":\"microphone\",\"start_ms\":1500,\"end_ms\":2000,\"text\":\"Final words\"}\ninvalid\n{\"source\":\"system\"}"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(final, "transcript.ndjson"), []byte(" \t\n{\"source\":\"microphone\",\"start_ms\":1500,\"end_ms\":2000,\"text\":\"Final words\"}\ninvalid\n{\"source\":\"system\"}"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(final, "transcript.md"), []byte("published"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(final, "transcript.rolling.ndjson"), []byte("ignored\n"), 0600))
 	rolling := fixtureMeeting(t, root, "b-rolling", "recording")

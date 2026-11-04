@@ -2132,7 +2132,11 @@ The default folder is `~/Library/Application Support/hex/meetings` on macOS,
 `%APPDATA%\hex\meetings` on Windows, and
 `${XDG_DATA_HOME:-~/.local/share}/hex/meetings` on Linux.
 `HEX_APPLICATION_SUPPORT_DIR` overrides the support root; its `meetings`
-subfolder is used. See [Hex meetings](usage/meetings.md#hex) for retention and
+subfolder is used. Register with `msgvault add-hex recorder`. For same-host
+capture, keep the daemon running. For remote capture, keep
+`msgvault sync-hex recorder --watch` running on the Hex computer; the remote
+daemon cannot read its folders. Hex defaults to 24-hour retention, so being
+offline longer can lose meetings before they are archived. See [Hex meetings](usage/meetings.md#hex) for retention and
 partial-evidence behavior.
 
 ### Muesli Sources

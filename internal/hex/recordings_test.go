@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/meetingimport"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestRecordingConfinementAndImmutableSnapshot(t *testing.T) {
@@ -28,17 +29,17 @@ func TestRecordingConfinementAndImmutableSnapshot(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "system.wav"), []byte("changed source"), 0600))
 	data, err := io.ReadAll(r.File)
 	require.NoError(t, err)
-	assert.Equal(t, wavBytes(), data)
+	assert.Equal(t, testutil.RecordingWAV(), data)
 	// A symlink cannot redirect retained audio out of the meeting root.
 	outside := filepath.Join(t.TempDir(), "outside.wav")
-	require.NoError(t, os.WriteFile(outside, wavBytes(), 0600))
+	require.NoError(t, os.WriteFile(outside, testutil.RecordingWAV(), 0600))
 	old := time.Now().Add(-time.Minute)
 	require.NoError(t, os.Chtimes(outside, old, old))
 	require.NoError(t, os.Symlink(outside, filepath.Join(dir, "microphone.wav")))
 	deferred, err := prepareTrack(t.Context(), opts, m, "microphone")
 	require.NoError(t, err)
 	assert.Nil(t, deferred)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "system.wav"), wavBytes(), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "system.wav"), testutil.RecordingWAV(), 0600))
 	future := time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
 	require.NoError(t, os.Chtimes(filepath.Join(dir, "system.wav"), future, future))
 	deferred, err = prepareTrack(t.Context(), opts, m, "system")
@@ -51,7 +52,7 @@ func TestRecordingUploadValidationAndSourceMembership(t *testing.T) {
 	sum, err := imp.Import(t.Context(), opts)
 	require.NoError(t, err)
 	id := messageID(t, st, sum.SourceID, "upload")
-	data := wavBytes()
+	data := testutil.RecordingWAV()
 	digest := sha256.Sum256(data)
 	upload := RecordingUpload{Source: meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}, MessageID: id, Track: "system", Hash: hex.EncodeToString(digest[:]), Size: int64(len(data)), MIMEType: "audio/wav"}
 	for _, tt := range []struct {

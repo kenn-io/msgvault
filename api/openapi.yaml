@@ -6748,12 +6748,16 @@ components:
           type: string
         notes:
           $ref: "#/components/schemas/HexNotes"
+        provisional_title:
+          type: string
         schema_version:
           format: int64
           type: integer
         status:
           type: string
         title:
+          type: string
+        title_source:
           type: string
       required:
         - schema_version
@@ -6830,6 +6834,9 @@ components:
             - unchanged
             - refreshed
           type: string
+        warnings:
+          format: int64
+          type: integer
       required:
         - status
         - source_id

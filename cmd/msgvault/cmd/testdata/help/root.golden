@@ -61,6 +61,7 @@ Add and sync sources:
   add-circleback         Authorize a Circleback account (browser OAuth)
   add-discord            Register Discord guilds for bot-based archival
   add-granola            Register a Granola account and validate its API key
+  add-hex                Register a local Hex meeting folder
   add-imap               Add an IMAP account
   add-inline             Authorize an Inline account
   add-matrix             Add a read-only Matrix account as an archive source
@@ -94,6 +95,7 @@ Add and sync sources:
   sync-discord           Sync registered Discord guild history
   sync-full              Perform a full sync of Gmail accounts
   sync-granola           Sync Granola meeting notes and transcripts
+  sync-hex               Sync meetings from a local Hex folder
   sync-inline            Archive Inline chats
   sync-matrix            Sync joined rooms from Matrix
   sync-muesli            Sync meetings from a local Muesli database

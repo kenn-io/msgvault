@@ -3,31 +3,26 @@ package hex
 import (
 	"encoding/json/v2"
 	"fmt"
-	"net/mail"
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/hex/evidence"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 )
 
-func AttendeeEmail(value string) string {
-	value = strings.TrimSpace(value)
-	parsed, err := mail.ParseAddress(value)
-	if err != nil || parsed.Address != value || !strings.Contains(value, "@") {
-		return ""
-	}
-	return strings.ToLower(value)
-}
 func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meetingarchive.Snapshot, error) {
-	raw, err := json.Marshal(struct {
-		Version int     `json:"version"`
-		Meeting Meeting `json:"meeting"`
-	}{1, m}, json.Deterministic(true))
+	raw, err := json.Marshal(evidence.Envelope{Version: evidence.Version, Meeting: evidence.Meeting(m)}, json.Deterministic(true))
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
 	v := m.Manifest
-	lines := []string{v.Title, "Status: " + v.Status}
+	lines := []string{v.DisplayTitle(), "Manifest title: " + v.Title, "Status: " + v.Status}
+	if v.ProvisionalTitle != "" {
+		lines = append(lines, "Provisional title: "+v.ProvisionalTitle)
+	}
+	if v.Notes != nil {
+		lines = append(lines, "Notes title: "+v.Notes.Title)
+	}
 	if v.Calendar != nil {
 		lines = append(lines, "Calendar: "+v.Calendar.Title, "Attendees: "+strings.Join(v.Calendar.Attendees, ", "))
 	}
@@ -48,10 +43,10 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 	if err != nil {
 		return meetingarchive.Snapshot{}, err
 	}
-	snapshot := meetingarchive.Snapshot{SourceID: sourceID, AccountEmail: email, SourceMessageID: "meeting:" + v.ID, Title: v.Title, StartedAt: time.UnixMilli(v.CreatedAtMS).UTC(), Body: body, Snippet: meetingarchive.Snippet(body), Raw: raw, RawFormat: RawFormat, Metadata: metadata, Organizer: &meetingarchive.Person{Email: email}}
+	snapshot := meetingarchive.Snapshot{SourceID: sourceID, AccountEmail: email, SourceMessageID: "meeting:" + v.ID, Title: v.DisplayTitle(), StartedAt: time.UnixMilli(v.CreatedAtMS).UTC(), Body: body, Snippet: meetingarchive.Snippet(body), Raw: raw, RawFormat: RawFormat, Metadata: metadata, Organizer: &meetingarchive.Person{Email: email}}
 	if v.Calendar != nil {
 		for _, value := range v.Calendar.Attendees {
-			if address := AttendeeEmail(value); address != "" {
+			if address := evidence.AttendeeEmail(value); address != "" {
 				snapshot.Attendees = append(snapshot.Attendees, meetingarchive.Person{Email: address})
 			}
 		}

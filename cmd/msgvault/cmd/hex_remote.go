@@ -53,7 +53,7 @@ func runHexClientAdd(cmd *cobra.Command, args []string) error {
 	if err := hex.ForgetRemoteUploads(cmd.Context(), opts); err != nil {
 		return err
 	}
-	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Hex source registered. Run msgvault sync-hex.")
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Hex source registered. Keep this running on the recorder for scheduled capture:\n  msgvault sync-hex %s --watch\nHex normally expires unsynced meetings after 24 hours.\n", source.Identifier)
 	return nil
 }
 

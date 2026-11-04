@@ -3,6 +3,7 @@ package muesli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"strings"
@@ -106,12 +107,20 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 }
 
 func (imp *Importer) storeRecording(ctx context.Context, messageID int64, dir string, r *Recording) (bool, error) {
-	return meetingarchive.StoreRecording(ctx, imp.store, recordingPartKey, messageID, dir, r)
+	return meetingarchive.StoreRecording(ctx, imp.store, recordingPartKey, recordingFilename(messageID, r.MIMEType), messageID, dir, r)
 }
 func (imp *Importer) storeRecordingStream(ctx context.Context, messageID int64, dir, hash string, size int64, mime string, input io.Reader) (bool, error) {
-	changed, err := meetingarchive.StoreRecordingStream(ctx, imp.store, recordingPartKey, messageID, dir, hash, size, mime, input)
+	changed, err := meetingarchive.StoreRecordingStream(ctx, imp.store, recordingPartKey, recordingFilename(messageID, mime), messageID, dir, hash, size, mime, input)
 	if errors.Is(err, meetingarchive.ErrRecordingValidation) {
 		err = ErrRemoteRecordValidation
 	}
 	return changed, err
+}
+
+func recordingFilename(id int64, mime string) string {
+	extension := ".m4a"
+	if mime == "audio/wav" {
+		extension = ".wav"
+	}
+	return fmt.Sprintf("meeting-%d%s", id, extension)
 }

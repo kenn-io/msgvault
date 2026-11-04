@@ -2,12 +2,7 @@ package daemonclient
 
 import (
 	"context"
-	"errors"
-	"io"
-	"net/http"
 
-	"github.com/cenkalti/backoff/v7"
-	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/muesli"
 )
 
@@ -34,46 +29,5 @@ func (c *Client) ImportMuesliRecording(ctx context.Context, upload muesli.Record
 	if recording == nil || recording.File == nil || upload.Hash != recording.Hash || upload.Size != recording.Size || upload.MIMEType != recording.MIMEType {
 		return muesli.ErrRemoteRecordValidation
 	}
-	client, err := c.GeneratedClient()
-	if err != nil {
-		return err
-	}
-	waiter := &operationBusyWaiter{c: c}
-	_, err = backoff.Retry(ctx, func() (struct{}, error) {
-		req, err := client.APIClient().CreateRequest(ctx, runtime.RequestOptionsParameters{
-			RequestURL: client.APIClient().GetBaseURL() + "/api/v1/import/muesli/recording", Method: http.MethodPost, Options: muesliRecordingOptions{upload: upload},
-		})
-		if err != nil {
-			return struct{}{}, backoff.Permanent(err)
-		}
-		req.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(io.NewSectionReader(recording.File, 0, recording.Size)), nil
-		}
-		req.Body, _ = req.GetBody()
-		req.ContentLength = recording.Size
-		resp, err := doRequestWithRootContext(c.requestContext(), httpClientWithoutTimeout(c.httpClient), req, maxErrorBodyBytes)
-		if err != nil {
-			return struct{}{}, backoff.Permanent(err)
-		}
-		defer func() { _ = resp.Body.Close() }()
-		if resp.StatusCode == http.StatusRequestEntityTooLarge {
-			return struct{}{}, backoff.Permanent(muesli.ErrRecordingTooLarge)
-		}
-		if resp.StatusCode == http.StatusTooManyRequests {
-			return struct{}{}, backoff.RetryAfter(retryAfterDelay(resp.Header.Get("Retry-After")), HandleErrorResponse(resp))
-		}
-		_, err = decodeMuesliResponse(resp)
-		if _, busy := errors.AsType[*OperationInProgressError](err); err != nil && !busy {
-			return struct{}{}, backoff.Permanent(err)
-		}
-		return struct{}{}, err
-	}, backoff.WithBackOff(backoff.NewConstantBackOff(operationBusyRetryDelay)), backoff.WithMaxTries(0), backoff.WithMaxElapsedTime(0), backoff.WithNotify(waiter.notify))
-	if err == nil {
-		return nil
-	}
-	retryErr := backoff.AsRetryError(err)
-	if !errors.Is(retryErr.Cause, backoff.ErrPermanent) {
-		return ctx.Err()
-	}
-	return retryErr.LastErr
+	return sendRecorderRecording[muesli.RemoteResult](ctx, c, "/api/v1/import/muesli/recording", muesliRecordingOptions{upload: upload}, recording, muesliRecorderErrors)
 }

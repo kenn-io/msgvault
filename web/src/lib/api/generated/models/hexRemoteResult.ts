@@ -8,5 +8,6 @@ export interface HexRemoteResult {
   message_id?: number;
   source_id: number;
   status: HexRemoteResultStatus;
+  warnings?: number;
   [key: string]: unknown;
 }

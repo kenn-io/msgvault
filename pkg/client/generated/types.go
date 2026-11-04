@@ -6428,17 +6428,19 @@ func (h HexEntry) Validate() error {
 }
 
 type HexManifest struct {
-	App           *string      `json:"app,omitzero"`
-	Calendar      *HexCalendar `json:"calendar,omitempty"`
-	Chapters      []HexChapter `json:"chapters,omitempty"`
-	CreatedAtMs   int64        `json:"created_at_ms"`
-	DurationMs    *int64       `json:"duration_ms,omitempty"`
-	EndedAtMs     *int64       `json:"ended_at_ms,omitempty"`
-	ID            string       `json:"id" validate:"required"`
-	Notes         *HexNotes    `json:"notes,omitempty"`
-	SchemaVersion int64        `json:"schema_version"`
-	Status        string       `json:"status" validate:"required"`
-	Title         string       `json:"title" validate:"required"`
+	App              *string      `json:"app,omitzero"`
+	Calendar         *HexCalendar `json:"calendar,omitempty"`
+	Chapters         []HexChapter `json:"chapters,omitempty"`
+	CreatedAtMs      int64        `json:"created_at_ms"`
+	DurationMs       *int64       `json:"duration_ms,omitempty"`
+	EndedAtMs        *int64       `json:"ended_at_ms,omitempty"`
+	ID               string       `json:"id" validate:"required"`
+	Notes            *HexNotes    `json:"notes,omitempty"`
+	ProvisionalTitle *string      `json:"provisional_title,omitzero"`
+	SchemaVersion    int64        `json:"schema_version"`
+	Status           string       `json:"status" validate:"required"`
+	Title            string       `json:"title" validate:"required"`
+	TitleSource      *string      `json:"title_source,omitzero"`
 }
 
 func (h HexManifest) Validate() error {
@@ -6556,6 +6558,7 @@ type HexRemoteResult struct {
 	MessageID *int64                `json:"message_id,omitempty"`
 	SourceID  int64                 `json:"source_id"`
 	Status    HexRemoteResultStatus `json:"status" validate:"required"`
+	Warnings  *int64                `json:"warnings,omitempty"`
 }
 
 func (h HexRemoteResult) Validate() error {

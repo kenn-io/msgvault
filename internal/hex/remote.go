@@ -2,14 +2,13 @@ package hex
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"slices"
 	"strings"
-	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/hex/evidence"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/store"
@@ -35,31 +34,17 @@ type RemoteResult struct {
 	SourceID  int64  `json:"source_id"`
 	MessageID int64  `json:"message_id,omitempty"`
 	Changed   bool   `json:"changed"`
+	Warnings  int64  `json:"warnings,omitempty"`
 }
 
 func DecodeRemoteRequest(reader io.Reader, limit int64) (RemoteRequest, error) {
-	if limit <= 0 {
-		return RemoteRequest{}, ErrRemoteTooLarge
-	}
-	if limit > MaxRemoteRequestBytes {
-		limit = MaxRemoteRequestBytes
-	}
-	if reader == nil {
-		return RemoteRequest{}, ErrRemoteMalformed
-	}
-	data, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	r, err := meetingimport.DecodeRecorderJSON[RemoteRequest](reader, limit, ErrRemoteMalformed, ErrRemoteTooLarge)
 	if err != nil {
-		return RemoteRequest{}, ErrRemoteMalformed
-	}
-	if int64(len(data)) > limit {
-		return RemoteRequest{}, ErrRemoteTooLarge
-	}
-	var r RemoteRequest
-	if !utf8.Valid(data) || json.Unmarshal(data, &r, json.RejectUnknownMembers(true)) != nil {
-		return r, ErrRemoteMalformed
+		return r, err
 	}
 	return r.Normalize()
 }
+
 func (r RemoteRequest) Normalize() (RemoteRequest, error) {
 	source, err := meetingimport.NormalizeRecorderSource(r.Source)
 	if err != nil {
@@ -82,39 +67,8 @@ func (r RemoteRequest) Normalize() (RemoteRequest, error) {
 	default:
 		return r, ErrRemoteValidation
 	}
-	m := r.Meeting
-	v := m.Manifest
-	if !validID(v.ID) || len(v.ID) > 256 || v.SchemaVersion != 1 || v.CreatedAtMS <= 0 || v.CreatedAtMS > 253402300799999 || len(v.Title) > 16384 || len(v.App) > 1024 {
+	if err := evidence.Meeting(*r.Meeting).Validate(); err != nil {
 		return r, ErrRemoteRecordValidation
-	}
-	if v.EndedAtMS != nil && (*v.EndedAtMS < v.CreatedAtMS || *v.EndedAtMS > 253402300799999) {
-		return r, ErrRemoteRecordValidation
-	}
-	if v.DurationMS != nil && (*v.DurationMS < 0 || *v.DurationMS > 9223372036854) {
-		return r, ErrRemoteRecordValidation
-	}
-	switch v.Status {
-	case "complete", "interrupted", "failed":
-	default:
-		return r, ErrRemoteRecordValidation
-	}
-	switch m.TranscriptState {
-	case "final", "rolling", "missing", "unreadable":
-	default:
-		return r, ErrRemoteRecordValidation
-	}
-	if v.Calendar != nil && len(v.Calendar.Attendees) > 200 {
-		return r, ErrRemoteRecordValidation
-	}
-	for _, e := range m.Entries {
-		if !validEntry(e) || e.EndMS > 9223372036854 {
-			return r, ErrRemoteRecordValidation
-		}
-	}
-	for _, c := range v.Chapters {
-		if c.StartMS < 0 || c.StartMS > 9223372036854 {
-			return r, ErrRemoteRecordValidation
-		}
 	}
 	return r, nil
 }
@@ -179,9 +133,15 @@ func (imp *Importer) ImportRemote(ctx context.Context, r RemoteRequest) (result 
 		result.Status = "refreshed"
 		return result, nil
 	}
-	snapshot, err := r.Meeting.ArchiveSnapshot(source.ID, r.Source.Identifier, r.Source.AccountEmail)
+	snapshot, retained, err := imp.prepareArchive(ctx, *r.Meeting, source.ID, r.Source.Identifier, r.Source.AccountEmail)
 	if err != nil {
-		return result, ErrRemoteRecordValidation
+		return result, err
+	}
+	if retained != 0 {
+		result.Status = "unchanged"
+		result.MessageID = retained
+		result.Warnings = 1
+		return result, nil
 	}
 	archiver := meetingarchive.New(imp.store)
 	if !r.Full {

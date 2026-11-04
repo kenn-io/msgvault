@@ -31,7 +31,7 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 		return "GCal" + name
 	case "go.kenn.io/msgvault/internal/calcontrol":
 		return "Calendar" + name
-	case "go.kenn.io/msgvault/internal/hex":
+	case "go.kenn.io/msgvault/internal/hex", "go.kenn.io/msgvault/internal/hex/evidence":
 		return "Hex" + name
 	case "go.kenn.io/msgvault/internal/muesli":
 		return "Muesli" + name

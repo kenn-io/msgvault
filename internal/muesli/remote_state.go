@@ -23,6 +23,9 @@ func ForgetRemoteUploads(ctx context.Context, opts ImportOptions) error {
 	}
 	defer func() { _ = lock.Unlock() }()
 	path := meetingimport.RecorderUploadsPath(lockDir, canonical, opts.Identifier, opts.RemoteTarget)
+	if _, err := meetingimport.LoadRecorderUploads[int64](path); err != nil {
+		return err
+	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("clear Muesli upload record: %w", err)
 	}

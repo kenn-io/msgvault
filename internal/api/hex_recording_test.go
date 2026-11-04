@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -38,24 +37,8 @@ func (s *hexRecordingBoundaryStore) ImportHexRecording(_ context.Context, _ hexs
 	return true, err
 }
 
-func syntheticHexRecording() []byte {
-	return []byte("RIFF\x04\x00\x00\x00WAVE")
-}
-
-func syntheticHexM4A() []byte {
-	data := make([]byte, 32)
-	binary.BigEndian.PutUint32(data, 16)
-	copy(data[4:], "ftyp")
-	copy(data[8:], "M4A ")
-	binary.BigEndian.PutUint32(data[16:], 8)
-	copy(data[20:], "moov")
-	binary.BigEndian.PutUint32(data[24:], 8)
-	copy(data[28:], "mdat")
-	return data
-}
-
 func TestHexRecordingOwnerBoundaryAndSizeCap(t *testing.T) {
-	recordings := map[string][]byte{"audio/wav": syntheticHexRecording(), "audio/mp4": syntheticHexM4A()}
+	recordings := map[string][]byte{"audio/wav": syntheticMuesliRecording(), "audio/mp4": syntheticMuesliM4A()}
 	for _, tt := range []struct {
 		name, key, size, media string
 		cap                    int64
@@ -130,7 +113,7 @@ func (r *hexPausedRecordingReader) Read(p []byte) (int, error) {
 }
 
 func TestHexRecordingReceivesBodyBeforeTakingOperationGate(t *testing.T) {
-	recording := syntheticHexRecording()
+	recording := syntheticMuesliRecording()
 	digest := sha256.Sum256(recording)
 	url := fmt.Sprintf("%s?track=system&identifier=recorder&account_email=user%%40example.com&message_id=42&sha256=%s&size=%d", hexRecordingEndpointPath, hex.EncodeToString(digest[:]), len(recording))
 	body := &hexPausedRecordingReader{reader: bytes.NewReader(recording), started: make(chan struct{}), resume: make(chan struct{})}

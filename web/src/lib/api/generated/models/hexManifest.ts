@@ -14,7 +14,9 @@ export interface HexManifest {
   ended_at_ms?: number;
   id: string;
   notes?: HexNotes;
+  provisional_title?: string;
   schema_version: number;
   status: string;
   title: string;
+  title_source?: string;
 }

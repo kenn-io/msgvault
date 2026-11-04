@@ -301,7 +301,7 @@ func StageRecordingUpload(ctx context.Context, hashValue string, sizeClaim int64
 	return recording, nil
 }
 
-func StoreRecording(ctx context.Context, st *store.Store, partKey string, messageID int64, dir string, r *Recording) (bool, error) {
+func StoreRecording(ctx context.Context, st *store.Store, partKey, filename string, messageID int64, dir string, r *Recording) (bool, error) {
 	mediaType, err := recordingMediaType(r.File, r.Size)
 	if err != nil {
 		return false, err
@@ -316,10 +316,10 @@ func StoreRecording(ctx context.Context, st *store.Store, partKey string, messag
 	if err != nil {
 		return false, err
 	}
-	return recordStoredRecording(ctx, st, partKey, messageID, path, gotHash, gotSize, mediaType)
+	return recordStoredRecording(ctx, st, partKey, filename, messageID, path, gotHash, gotSize, mediaType)
 }
 
-func StoreRecordingStream(ctx context.Context, st *store.Store, partKey string, messageID int64, dir, hashValue string, size int64, mediaType string, input io.Reader) (bool, error) {
+func StoreRecordingStream(ctx context.Context, st *store.Store, partKey, filename string, messageID int64, dir, hashValue string, size int64, mediaType string, input io.Reader) (bool, error) {
 	// Read a small signature before writing CAS. Hash and byte-count validation
 	// at EOF abort publication when the transfer is truncated or changed.
 	buffered := bufio.NewReader(input)
@@ -338,10 +338,10 @@ func StoreRecordingStream(ctx context.Context, st *store.Store, partKey string, 
 	if err != nil {
 		return false, err
 	}
-	return recordStoredRecording(ctx, st, partKey, messageID, path, gotHash, gotSize, mediaType)
+	return recordStoredRecording(ctx, st, partKey, filename, messageID, path, gotHash, gotSize, mediaType)
 }
 
-func recordStoredRecording(ctx context.Context, st *store.Store, partKey string, messageID int64, path, gotHash string, gotSize int64, mediaType string) (bool, error) {
+func recordStoredRecording(ctx context.Context, st *store.Store, partKey, filename string, messageID int64, path, gotHash string, gotSize int64, mediaType string) (bool, error) {
 	attachments, err := st.MessageAttachmentsByPartKeyContext(ctx, messageID, partKey)
 	if err != nil {
 		return false, err
@@ -350,14 +350,6 @@ func recordStoredRecording(ctx context.Context, st *store.Store, partKey string,
 		if att.ContentHash == gotHash && att.MimeType == mediaType {
 			return false, nil
 		}
-	}
-	extension := ".m4a"
-	if mediaType == "audio/wav" {
-		extension = ".wav"
-	}
-	filename := fmt.Sprintf("meeting-%d%s", messageID, extension)
-	if partKey == "hex:system" || partKey == "hex:microphone" {
-		filename = fmt.Sprintf("meeting-%d-%s%s", messageID, strings.TrimPrefix(partKey, "hex:"), extension)
 	}
 	write := store.AttachmentWrite{Filename: filename, MIMEType: mediaType,
 		StoragePath: path, ContentHash: gotHash, Size: gotSize, MediaType: "audio", SourcePartKey: partKey,
