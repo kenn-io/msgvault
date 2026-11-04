@@ -99,6 +99,9 @@ func (w *AttachmentMirror) runPass(ctx context.Context, deadline time.Time) (boo
 	}
 	processMore, processErr := w.processDocuments(ctx, queueDeadline)
 	uploadMore, err := w.drain(ctx, deadline)
+	if errors.Is(err, errBeeperMediaGateBusy) {
+		return false, processErr
+	}
 	return discoverMore || replayMore || processMore || uploadMore, errors.Join(processErr, endMediaPass(err))
 }
 

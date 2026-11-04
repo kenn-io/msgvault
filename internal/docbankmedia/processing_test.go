@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +25,7 @@ func TestProfile(t *testing.T) {
 	require.NoError(err)
 	profile, err := client.Profile(t.Context(), "documents")
 	require.NoError(err)
-	assert.Equal(docbanktest.ProcessingFingerprint("profile-one"), profile.Fingerprint)
+	assert.Equal(strings.Repeat("a", 64), profile.Fingerprint)
 	assert.True(profile.Rendition)
 	_, err = client.Profile(t.Context(), "missing")
 	require.ErrorContains(err, "not listed by Docbank")
