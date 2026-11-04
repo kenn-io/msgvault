@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/personfacts"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -151,6 +152,102 @@ func TestMergePersons_RootsAndBindings(t *testing.T) {
 		IdempotencyKey:           "merge-already-absorbed", Actor: "test",
 	})
 	require.ErrorIs(err, store.ErrPersonNotFound)
+}
+
+func TestMergePersons_PreservesAbsorbedInstructionHistory(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	survivor := mustPromotedPerson(t, f.Store, "merge-instruction-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t, f.Store, "merge-instruction-absorbed@example.com", "Absorbed")
+	instruction := addTestInstruction(t, f.Store, absorbed.ID, "Vee")
+
+	survivor, err := f.Store.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = f.Store.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "merge-instruction-history", Actor: "test",
+	})
+	require.NoError(err)
+	require.NotNil(merged)
+	assert.Equal(survivor.ID, merged.Person.ID)
+
+	instructions, err := f.Store.ListPersonInstructionsContext(ctx, merged.Person.ID, store.PersonInstructionFilter{})
+	require.NoError(err)
+	require.Len(instructions, 1)
+	assert.Equal(instruction.ID, instructions[0].ID)
+	assert.Equal("Vee", instructions[0].ValueText)
+	assert.Equal(1, instructionEventCount(t, f.Store, instruction.ID, "propose"))
+	assert.Equal(1, instructionEventCount(t, f.Store, instruction.ID, "merge_moved"))
+}
+
+func TestMergePersons_PrefersLaterOwnerProposalAfterFractionalConfirmation(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := context.Background()
+	survivor := mustPromotedPerson(t, f.Store, "merge-decision-survivor@example.com", "Survivor")
+	absorbed := mustPromotedPerson(t, f.Store, "merge-decision-absorbed@example.com", "Absorbed")
+
+	confirmedInstruction := addTestInstruction(t, f.Store, survivor.ID, "Vee")
+	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(
+		`UPDATE person_instructions SET review_state=? WHERE id=?`,
+	), personfacts.InstructionReviewUnsure, confirmedInstruction.ID)
+	require.NoError(err)
+	confirmed, err := f.Store.DecidePersonInstructionContext(ctx, store.PersonInstructionDecision{
+		InstructionID: confirmedInstruction.ID, ExpectedRevision: confirmedInstruction.Revision,
+		Action: personfacts.InstructionActionConfirm, Actor: "owner",
+	})
+	require.NoError(err)
+	assert.Equal(personfacts.InstructionOriginOwner, confirmed.Instruction.Origin)
+	proposal, err := f.Store.AddPersonInstructionContext(ctx, store.PersonInstructionInput{
+		PersonID: absorbed.ID, Kind: personfacts.InstructionKindAddressAs,
+		ValueText: "VEE", Text: "call me VEE", Actor: "owner",
+	})
+	require.NoError(err)
+	assert.Equal(personfacts.InstructionOriginOwner, proposal.Origin)
+	assert.Equal(confirmed.Instruction.InstructionKey, proposal.InstructionKey)
+	proposalAt := proposal.UpdatedAt
+	var proposalEventAt time.Time
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT created_at FROM person_instruction_events WHERE instruction_id=? AND action='propose'`), proposal.ID).Scan(&proposalEventAt))
+	assert.Equal(proposalAt, proposalEventAt)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("the second-precision ordering regression is specific to SQLite's CURRENT_TIMESTAMP default")
+	}
+	if proposalAt.Nanosecond() < 2_000 {
+		t.Skip("proposal timestamp needs at least two microseconds within its second")
+	}
+
+	priorConfirmationAt := proposalAt.Truncate(time.Second).Add(time.Duration(proposalAt.Nanosecond() / 2)).Truncate(time.Microsecond)
+	assert.Equal(proposalAt.Truncate(time.Second), priorConfirmationAt.Truncate(time.Second))
+	assert.True(priorConfirmationAt.After(proposalAt.Truncate(time.Second)))
+	assert.True(priorConfirmationAt.Before(proposalAt))
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_instructions SET confirmed_at=?,updated_at=? WHERE id=?`), priorConfirmationAt, priorConfirmationAt, confirmedInstruction.ID)
+	require.NoError(err)
+	_, err = f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE person_instruction_events SET created_at=? WHERE instruction_id=? AND action='confirm'`), priorConfirmationAt, confirmedInstruction.ID)
+	require.NoError(err)
+
+	survivor, err = f.Store.GetPersonContext(ctx, survivor.ID)
+	require.NoError(err)
+	absorbed, err = f.Store.GetPersonContext(ctx, absorbed.ID)
+	require.NoError(err)
+	merged, err := f.Store.MergePersonsContext(ctx, store.PersonMergeRequest{
+		SurvivorID: survivor.ID, AbsorbedID: absorbed.ID,
+		ExpectedSurvivorRevision: survivor.Revision,
+		ExpectedAbsorbedRevision: absorbed.Revision,
+		IdempotencyKey:           "merge-decision-fractional-proposal", Actor: "owner",
+	})
+	require.NoError(err)
+	rows, err := f.Store.ListPersonInstructionsContext(ctx, merged.Person.ID, store.PersonInstructionFilter{})
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal("VEE", rows[0].ValueText)
+	assert.Equal("call me VEE", rows[0].Text)
 }
 
 func TestMergePersons_CardDAVState(t *testing.T) {

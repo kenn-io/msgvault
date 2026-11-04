@@ -38,8 +38,38 @@ func TestGeneratedSavedViewStateRoundTripsCanonicalDefinition(t *testing.T) {
 	assert.JSONEq(t, want, string(got))
 }
 
+func TestGeneratedPersonInstructionAcceptsEmptyScopeAndValue(t *testing.T) {
+	const response = `{
+		"adopted":false,
+		"content_trust":"owner",
+		"created_at":"2026-10-31T09:00:00Z",
+		"id":1,
+		"instruction_key":"timing::during-work-hours",
+		"kind":"timing",
+		"normalized_text":"contact during work hours",
+		"origin":"owner",
+		"person_id":42,
+		"review_state":"none",
+		"revision":1,
+		"scope_key":"",
+		"scope_missing":false,
+		"status":"active",
+		"text":"Contact during work hours",
+		"updated_at":"2026-10-31T09:00:00Z",
+		"valid_from":"2026-10-31T09:00:00Z",
+		"value_text":"",
+		"visible_to_agents":false
+	}`
+	var instruction generated.PersonInstruction
+	require.NoError(t, json.Unmarshal([]byte(response), &instruction))
+	assert.Empty(t, instruction.ScopeKey)
+	assert.Empty(t, instruction.ValueText)
+	require.NoError(t, instruction.Validate())
+}
+
 func TestGeneratedPersonMergeRequiredResponseExposesProfiles(t *testing.T) {
-	requirements := require.New(t)
+	require := require.New(t)
+	assert := assert.New(t)
 	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
 	payload, err := json.Marshal(generated.PersonMergeRequiredError{
 		ErrorData: "person_merge_required",
@@ -52,15 +82,15 @@ func TestGeneratedPersonMergeRequiredResponseExposesProfiles(t *testing.T) {
 			},
 		}},
 	})
-	requirements.NoError(err)
+	require.NoError(err)
 
 	var response generated.LinkIdentityParticipantsErrorResponse
-	requirements.NoError(json.Unmarshal(payload, &response))
+	require.NoError(json.Unmarshal(payload, &response))
 	conflict := response.LinkIdentityParticipants_ErrorResponse_AnyOf
-	requirements.NotNil(conflict)
-	requirements.True(conflict.IsA())
-	requirements.Len(conflict.A.Profiles, 1)
-	assert.Equal(t, int64(7), conflict.A.Profiles[0].Person.ID)
+	require.NotNil(conflict)
+	require.True(conflict.IsA())
+	require.Len(conflict.A.Profiles, 1)
+	assert.Equal(int64(7), conflict.A.Profiles[0].Person.ID)
 }
 
 func TestGeneratedEmploymentSourceConstantsRemainAssignable(t *testing.T) {
