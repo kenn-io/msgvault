@@ -949,10 +949,15 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 // senderIDBound caps candidate sorting while leaving large senders on the existing query.
 const senderIDBound = 5000
 
-func senderCandidateSQL(filter MessageFilter) (string, []any) {
+func senderCandidateSQL(filter MessageFilter, liveOnly bool) (string, []any) {
 	participants := `SELECT id FROM participants WHERE email_address = ? OR phone_number = ?`
-	from := `SELECT mr.message_id FROM message_recipients mr
+	from := `SELECT mr.message_id AS id FROM message_recipients mr
 		WHERE mr.recipient_type = 'from' AND mr.participant_id IN (` + participants + `)`
+	if liveOnly {
+		from = `SELECT mr.message_id AS id FROM message_recipients mr
+			CROSS JOIN messages candidate
+			WHERE candidate.id = mr.message_id AND ` + store.LiveMessagesWhere("candidate", filter.HideDeletedFromSource) + ` AND mr.recipient_type = 'from' AND mr.participant_id IN (` + participants + `)`
+	}
 	directParticipants := participants
 	args := []any{filter.Sender, filter.Sender}
 	if filter.SenderName != "" {
@@ -964,7 +969,12 @@ func senderCandidateSQL(filter MessageFilter) (string, []any) {
 	if filter.SenderName != "" {
 		args = append(args, filter.SenderName)
 	}
-	return from + ` UNION ALL SELECT id FROM messages WHERE sender_id IN (` + directParticipants + `)`, args
+	direct := `SELECT id FROM messages WHERE sender_id IN (` + directParticipants + `)`
+	if liveOnly {
+		direct = `SELECT candidate.id FROM (` + directParticipants + `) p CROSS JOIN messages candidate
+			WHERE candidate.sender_id = p.id AND ` + store.LiveMessagesWhere("candidate", filter.HideDeletedFromSource)
+	}
+	return from + ` UNION ALL ` + direct, args
 }
 
 // ListMessages retrieves messages matching the filter.
@@ -976,13 +986,13 @@ func (e *SQLiteEngine) listMessages(ctx context.Context, filter MessageFilter, s
 	var senderSQL string
 	var senderArgs []any
 	if filter.Sender != "" {
-		candidateSQL, candidateArgs := senderCandidateSQL(filter)
+		candidateSQL, candidateArgs := senderCandidateSQL(filter, true)
 		var count int
-		if err := e.queryRowContext(ctx, `SELECT COUNT(*) FROM (`+candidateSQL+` LIMIT ?) AS sender_candidates`, append(candidateArgs, senderBound+1)...).Scan(&count); err != nil {
+		if err := e.queryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT DISTINCT id FROM (`+candidateSQL+`) AS candidates LIMIT ?) AS sender_candidates`, append(candidateArgs, senderBound+1)...).Scan(&count); err != nil {
 			return nil, fmt.Errorf("probe sender candidates: %w", err)
 		}
 		if count <= senderBound {
-			senderSQL, senderArgs = candidateSQL, candidateArgs
+			senderSQL, senderArgs = senderCandidateSQL(filter, false)
 			filter.EmptyValueTargets = maps.Clone(filter.EmptyValueTargets)
 			delete(filter.EmptyValueTargets, ViewSenders)
 			if filter.SenderName != "" {
@@ -998,15 +1008,10 @@ func (e *SQLiteEngine) listMessages(ctx context.Context, filter MessageFilter, s
 	}
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 
-	// Build ORDER BY with validation. Every structured filter in
-	// buildFilterJoinsAndConditions resolves through an EXISTS / NOT EXISTS
-	// correlated subquery — including the from-side Sender, SenderName and
-	// Domain branches — so the message_recipients/participants 1:N
-	// relationships cannot multiply a message into duplicate result rows, and
-	// SELECT DISTINCT is therefore unnecessary (and avoided per the SQL
-	// guideline: never DISTINCT + JOIN). The displayed sender is resolved via
-	// a correlated scalar subquery (LIMIT 1) so messages with multiple 'from'
-	// rows still produce exactly one result row.
+	// IN and EXISTS predicates keep each matching message to one row, so
+	// SELECT DISTINCT is unnecessary (and avoided per the SQL guideline:
+	// never DISTINCT + JOIN). The displayed sender uses a scalar subquery
+	// with LIMIT 1 so multiple 'from' rows still produce one result row.
 	var orderBy string
 	switch filter.Sorting.Field {
 	case MessageSortByDate:
@@ -1036,6 +1041,15 @@ func (e *SQLiteEngine) listMessages(ctx context.Context, filter MessageFilter, s
 	whereClause := "1=1"
 	if len(conditions) > 0 {
 		whereClause = strings.Join(conditions, " AND ")
+	}
+	offset := filter.Pagination.Offset
+	if senderSQL != "" {
+		// Sort and page candidates before resolving display names and conversations.
+		// Otherwise those lookups run for every candidate before the sort's LIMIT.
+		whereClause = fmt.Sprintf(`m.id IN (SELECT m.id FROM messages m %s WHERE %s ORDER BY %s LIMIT ? OFFSET ?)`, filterJoins, whereClause, orderBy)
+		args = append(args, limit, offset)
+		filterJoins = ""
+		offset = 0
 	}
 
 	query := fmt.Sprintf(`
@@ -1067,7 +1081,7 @@ func (e *SQLiteEngine) listMessages(ctx context.Context, filter MessageFilter, s
 		LIMIT ? OFFSET ?
 	`, sqliteSenderNameExpr, sqliteSenderJoin, filterJoins, whereClause, orderBy)
 
-	args = append(args, limit, filter.Pagination.Offset)
+	args = append(args, limit, offset)
 
 	rows, err := e.queryContext(ctx, query, args...)
 	if err != nil {

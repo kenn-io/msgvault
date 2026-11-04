@@ -111,6 +111,72 @@ func TestSenderListBoundedWork(t *testing.T) {
 	}
 }
 
+func TestSenderListLiveCandidateWork(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite row-visit instrumentation")
+	for _, tc := range []struct {
+		name, hidden string
+		count, want  int
+		firstID      int64
+		hideSource   bool
+	}{
+		{"overlapping sender paths", "", 4000, 100, 4099, false},
+		{"deduplicated messages", "deleted_at", 6000, 1, 100, false},
+		{"source-deleted messages", "deleted_from_source_at", 6000, 1, 100, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			path := filepath.Join(t.TempDir(), "archive.db")
+			st := testutil.NewSQLiteTestStoreAt(t, path)
+			fixture := &dbtest.TestDB{DB: st.DB(), T: t}
+			fixture.SeedStandardDataSet()
+			_, err := st.DB().Exec(fmt.Sprintf(`INSERT INTO participants(id,email_address) VALUES(4,'bounded@example.org');
+ WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<300099)
+ INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,sender_id,message_type)
+ SELECT id,1,1,'bulk-' || id,'2024-06-01 00:00:00',CASE WHEN id<%d THEN 4 ELSE 1 END,'email' FROM ids;
+ INSERT INTO message_recipients(message_id,participant_id,recipient_type)
+ SELECT id,4,'from' FROM messages WHERE sender_id=4 AND ?`, 100+tc.count), tc.hidden == "")
+			require.NoError(err)
+			if tc.hidden != "" {
+				_, err = st.DB().Exec("UPDATE messages SET " + tc.hidden + "='2024-06-02 00:00:00' WHERE id>100 AND sender_id=4")
+				require.NoError(err)
+			}
+			require.NoError(st.Close())
+			st, err = store.Open(path)
+			require.NoError(err)
+			defer func() { require.NoError(st.Close()) }()
+			st.DB().SetMaxOpenConns(1)
+			conn, err := st.DB().Conn(t.Context())
+			require.NoError(err)
+			visits := 0
+			require.NoError(conn.Raw(func(raw any) error {
+				c, ok := raw.(*sqlite3.SQLiteConn)
+				require.True(ok)
+				return c.RegisterFunc("record_message_visit", func(int64) bool { visits++; return true }, false)
+			}))
+			_, err = conn.ExecContext(t.Context(), `CREATE TEMP VIEW messages AS SELECT * FROM main.messages WHERE record_message_visit(id)`)
+			require.NoError(err)
+			require.NoError(conn.Close())
+			filter := query.MessageFilter{
+				Sender: "bounded@example.org", HideDeletedFromSource: tc.hideSource,
+				Sorting: query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc}, Pagination: query.Pagination{Limit: 100},
+			}
+			engine := query.NewSQLiteEngine(st.DB())
+			messages, err := engine.ListMessages(t.Context(), filter)
+			require.NoError(err)
+			require.Len(messages, tc.want)
+			assert.Equal(t, tc.firstID, messages[0].ID)
+			assert.Less(t, visits, 20000, "overlap and hidden messages must retain bounded sender work")
+			if tc.hideSource {
+				filter.HideDeletedFromSource = false
+				messages, err = engine.ListMessages(t.Context(), filter)
+				require.NoError(err)
+				require.Len(messages, 100)
+				assert.Equal(t, int64(6099), messages[0].ID)
+			}
+		})
+	}
+}
+
 func TestSenderListEquivalence(t *testing.T) {
 	dbtest.SkipIfPostgres(t, "SQLite forced-bound comparison")
 	st := testutil.NewSQLiteTestStore(t)
