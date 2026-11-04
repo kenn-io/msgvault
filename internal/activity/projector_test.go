@@ -207,6 +207,75 @@ func TestProjectorIncludesChannelMembersWhenFromRecipientExists(t *testing.T) {
 	}, got)
 }
 
+func TestProjectorReconcilesConversationMemberMutations(t *testing.T) {
+	req := require.New(t)
+	f := storetest.New(t)
+	req.NoError(f.Store.AddAccountIdentity(f.Source.ID, "owner@example.com", "manual"))
+	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
+	existing := f.EnsureParticipant("existing@example.com", "Existing", "example.com")
+	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
+	senderPerson, _, err := f.Store.CreatePersonFromParticipant(sender)
+	req.NoError(err)
+	_, _, err = f.Store.CreatePersonFromParticipant(existing)
+	req.NoError(err)
+	memberPerson, _, err := f.Store.CreatePersonFromParticipant(member)
+	req.NoError(err)
+	first, err := f.Store.EnsureConversationWithType(f.Source.ID, "first-chat", "group_chat", "First chat")
+	req.NoError(err)
+	other, err := f.Store.EnsureConversationWithType(f.Source.ID, "other-chat", "group_chat", "Other chat")
+	req.NoError(err)
+	for _, id := range []int64{sender, existing} {
+		req.NoError(f.Store.EnsureConversationParticipant(first, id, "member"))
+	}
+	var messageIDs []int64
+	now := time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+	for i, conversation := range []int64{first, first, other} {
+		message := f.NewMessage().WithSourceMessageID(fmt.Sprintf("member-mutation-%d", i)).WithSentAt(now).Build()
+		message.ConversationID = conversation
+		id, err := f.Store.UpsertMessage(message)
+		req.NoError(err)
+		messageIDs = append(messageIDs, id)
+		req.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{"Sender"}))
+	}
+	projector, err := NewProjector(f.Store, Options{Timezone: "UTC", BatchSize: 1})
+	req.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	req.NoError(err)
+	for _, step := range []struct {
+		name string
+		sql  string
+		args []any
+		want []int64
+	}{
+		{"insert", `INSERT INTO conversation_participants (conversation_id, participant_id, role) VALUES (?, ?, 'member')`, []any{first, member}, messageIDs[:2]},
+		{"update", `UPDATE conversation_participants SET conversation_id = ? WHERE conversation_id = ? AND participant_id = ?`, []any{other, first, member}, messageIDs[2:]},
+		{"delete", `DELETE FROM conversation_participants WHERE conversation_id = ? AND participant_id = ?`, []any{other, member}, nil},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			req := require.New(t)
+			check := assert.New(t)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(step.sql), step.args...)
+			req.NoError(err)
+			state, err := f.Store.ContactStateContext(t.Context(), senderPerson.ID, now)
+			req.NoError(err)
+			check.True(state.Stale)
+			_, err = projector.RunOnce(t.Context())
+			req.NoError(err)
+			rows, err := f.Store.DB().QueryContext(t.Context(), f.Store.Rebind(`SELECT message_id FROM activity_event_persons WHERE person_id = ? ORDER BY message_id`), memberPerson.ID)
+			req.NoError(err)
+			defer func() { req.NoError(rows.Close()) }()
+			var got []int64
+			for rows.Next() {
+				var id int64
+				req.NoError(rows.Scan(&id))
+				got = append(got, id)
+			}
+			req.NoError(rows.Err())
+			check.Equal(step.want, got)
+		})
+	}
+}
+
 func TestProjectorReconcilesChangedDirectCounterpartLimit(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

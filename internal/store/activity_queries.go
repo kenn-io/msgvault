@@ -147,6 +147,65 @@ func (s *Store) activityCandidateColumns() string {
 	r.direct_limit_active, r.direct_limit_target, r.direct_limit_generation`
 }
 
+// expandActivityConversationQueueContext defers membership fanout until the drain.
+func (s *Store) expandActivityConversationQueueContext(ctx context.Context) error {
+	var pending bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM activity_projection_conversation_queue)`).Scan(&pending); err != nil {
+		return fmt.Errorf("check activity conversation queue: %w", err)
+	}
+	if !pending {
+		return nil
+	}
+	const batchSize = 200
+	for {
+		claimed := 0
+		err := retryBusyWriteErr(ctx, s, "expand activity conversation queue", func() error {
+			return s.withTxContext(ctx, func(tx *loggedTx) error {
+				rows, err := tx.QueryContext(ctx, `SELECT conversation_id FROM activity_projection_conversation_queue ORDER BY conversation_id LIMIT 200`)
+				if err != nil {
+					return fmt.Errorf("read activity conversation queue: %w", err)
+				}
+				var ids []any
+				for rows.Next() {
+					var id int64
+					if err := rows.Scan(&id); err != nil {
+						_ = rows.Close()
+						return fmt.Errorf("scan activity conversation queue: %w", err)
+					}
+					ids = append(ids, id)
+				}
+				if err := rows.Close(); err != nil {
+					return fmt.Errorf("close activity conversation queue: %w", err)
+				}
+				if err := rows.Err(); err != nil {
+					return fmt.Errorf("read activity conversation queue: %w", err)
+				}
+				claimed = len(ids)
+				if claimed == 0 {
+					return nil
+				}
+				in := "(" + strings.TrimSuffix(strings.Repeat("?, ", len(ids)), ", ") + ")"
+				// Lock message queue rows before markers, matching the usual import
+				// order. PostgreSQL marker upserts hold their row lock until commit.
+				if _, err := tx.ExecContext(ctx, s.dialect.Rebind(requeueActivityProjectionSQL(
+					`SELECT id, 1, CURRENT_TIMESTAMP FROM messages WHERE conversation_id IN `+in,
+				)), ids...); err != nil {
+					return fmt.Errorf("expand activity conversation queue: %w", err)
+				}
+				if _, err := tx.ExecContext(ctx, s.dialect.Rebind(
+					`DELETE FROM activity_projection_conversation_queue WHERE conversation_id IN `+in,
+				), ids...); err != nil {
+					return fmt.Errorf("delete expanded activity conversations: %w", err)
+				}
+				return nil
+			})
+		})
+		if err != nil || claimed < batchSize {
+			return err
+		}
+	}
+}
+
 // LoadQueuedActivityCandidatesContext loads the next pending queue batch in
 // stable message order. Ineligible rows stay in the result as retractions.
 func (s *Store) LoadQueuedActivityCandidatesContext(
@@ -155,6 +214,9 @@ func (s *Store) LoadQueuedActivityCandidatesContext(
 ) ([]ActivityCandidate, error) {
 	if limit <= 0 {
 		return []ActivityCandidate{}, nil
+	}
+	if err := s.expandActivityConversationQueueContext(ctx); err != nil {
+		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(
 		activityCandidateStateCTE+`

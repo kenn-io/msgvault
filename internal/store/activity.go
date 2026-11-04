@@ -211,6 +211,11 @@ func validActivityDate(value string) bool {
 	return err == nil && parsed.Format(time.DateOnly) == value
 }
 
+// activityProjectionPendingSQL includes roster changes awaiting message expansion.
+const activityProjectionPendingSQL = `EXISTS (
+    SELECT 1 FROM activity_projection_queue WHERE revision > processed_revision
+) OR EXISTS (SELECT 1 FROM activity_projection_conversation_queue)`
+
 type ActivityProjectionQueueItem struct {
 	MessageID int64
 	Revision  int64
@@ -394,10 +399,7 @@ func (s *Store) CompleteActivityDirectLimitTransitionContext(
 			}
 		}
 		var pending int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM activity_projection_queue
-			WHERE revision > processed_revision
-		`).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT CASE WHEN `+activityProjectionPendingSQL+` THEN 1 ELSE 0 END`).Scan(&pending); err != nil {
 			return fmt.Errorf("check pending activity queue: %w", err)
 		}
 		if pending != 0 {
@@ -560,10 +562,7 @@ func (s *Store) CompleteActivityTimezoneTransitionContext(
 			}
 		}
 		var pending int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*) FROM activity_projection_queue
-			WHERE revision > processed_revision
-		`).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT CASE WHEN `+activityProjectionPendingSQL+` THEN 1 ELSE 0 END`).Scan(&pending); err != nil {
 			return fmt.Errorf("check pending activity queue: %w", err)
 		}
 		if pending != 0 {
@@ -2120,11 +2119,7 @@ func (s *Store) RecomputeContactStateContext(
 			return err
 		}
 		var pending int64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COUNT(*)
-			FROM activity_projection_queue
-			WHERE revision > processed_revision
-		`).Scan(&pending); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT CASE WHEN `+activityProjectionPendingSQL+` THEN 1 ELSE 0 END`).Scan(&pending); err != nil {
 			return fmt.Errorf("count pending activity projections: %w", err)
 		}
 		if pending > 0 {
@@ -2166,7 +2161,7 @@ func (s *Store) lockActivityProjectionQueueFreshnessTx(
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx,
-		`LOCK TABLE activity_projection_queue IN SHARE MODE`); err != nil {
+		`LOCK TABLE activity_projection_queue, activity_projection_conversation_queue IN SHARE MODE`); err != nil {
 		return fmt.Errorf("lock activity projection queue freshness: %w", err)
 	}
 	return nil

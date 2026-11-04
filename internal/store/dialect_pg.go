@@ -2168,22 +2168,29 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		     RETURN OLD;
 		 END;
 		 $$ LANGUAGE plpgsql`,
+		`CREATE OR REPLACE FUNCTION mark_activity_projection_conversation(p_conversation_id BIGINT) RETURNS VOID AS $$
+		 BEGIN
+		     INSERT INTO activity_projection_conversation_queue (conversation_id)
+		     VALUES (p_conversation_id)
+		     ON CONFLICT (conversation_id) DO UPDATE SET conversation_id = excluded.conversation_id;
+		 END;
+		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_insert() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM enqueue_activity_projection_conversation(NEW.conversation_id);
+		     PERFORM mark_activity_projection_conversation(NEW.conversation_id);
 		     RETURN NEW;
 		 END;
 		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_update() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM enqueue_activity_projection_conversation(OLD.conversation_id);
-		     PERFORM enqueue_activity_projection_conversation(NEW.conversation_id);
+		     PERFORM mark_activity_projection_conversation(OLD.conversation_id);
+		     PERFORM mark_activity_projection_conversation(NEW.conversation_id);
 		     RETURN NEW;
 		 END;
 		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_delete() RETURNS trigger AS $$
 		 BEGIN
-		     PERFORM enqueue_activity_projection_conversation(OLD.conversation_id);
+		     PERFORM mark_activity_projection_conversation(OLD.conversation_id);
 		     RETURN OLD;
 		 END;
 		 $$ LANGUAGE plpgsql`,
@@ -2387,7 +2394,7 @@ var exclusiveLockTables = []string{
 	// archive. The queue is trigger-written by every message/participant
 	// mutation, so it belongs to the same exclusive write set.
 	"activity_events", "activity_event_persons", "person_contact_state",
-	"activity_projection_queue",
+	"activity_projection_queue", "activity_projection_conversation_queue",
 	// The chat member queue is trigger-written by message and recipient
 	// mutations; the projection cascades with conversations and participants.
 	"chat_members", "chat_members_dirty", "chat_anchors",

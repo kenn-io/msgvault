@@ -1879,7 +1879,7 @@ func TestCopySubset_UpgradedMessageColumnOrder(t *testing.T) {
 		ALTER TABLE messages DROP COLUMN source_is_from_me;
 		DELETE FROM applied_migrations
 		WHERE name IN ('message_attribution_provenance_v3',
-		               'activity_projection_triggers_v5',
+		               'activity_projection_triggers_v6',
 		               'cache_message_source_attribution',
 		               'chat_members_v1');
 	`)
