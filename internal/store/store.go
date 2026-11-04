@@ -1143,6 +1143,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 	concurrentIndexes := []struct{ name, definition string }{
 		{"idx_messages_conversation_id", "ON messages(conversation_id, id)"},
 		{"idx_messages_conversation_timeline", "ON messages(conversation_id, COALESCE(sent_at, received_at, internal_date), id) WHERE deleted_at IS NULL"},
+		{"idx_messages_beeper_conversation", "ON messages(conversation_id, message_type) WHERE deleted_at IS NULL"},
 		{"idx_messages_source_id", "ON messages(source_id, id)"},
 		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
 		{"idx_messages_account", messagesAccountIndexDefinition},
@@ -2045,6 +2046,13 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if !s.IsPostgreSQL() {
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
 			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)`); err != nil {
+				return err
+			}
+			// Beeper context guards on membership and title triggers seek live messages by conversation.
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_beeper_conversation
+				    ON messages(conversation_id, message_type) WHERE deleted_at IS NULL
+			`); err != nil {
 				return err
 			}
 			// Conversation windows retain source-deleted messages and seek by timestamp and ID.
