@@ -687,7 +687,7 @@ func messageExportColumns(source *cacheSourceSnapshot, ownerParticipant, attribu
 // attribution candidate: consumers gate it on is_from_me, so it can be
 // resolved independently without duplicating this predicate in the export.
 func messageCacheAttributionSQL(
-	sourceAttribution string,
+	sourceAttribution, recipientsRelation string,
 	hasSourceAttribution, hasEnvelope bool,
 	envelopePresence, primaryEmailPresence string,
 ) (string, string) {
@@ -708,7 +708,7 @@ func messageCacheAttributionSQL(
 		recipients += ", " + cacheIdentityTextSQL("email_address") + " AS email_address"
 		recipients += ", " + envelopePresence + " AS envelope_present"
 	}
-	recipients += " FROM sqlite_db.message_recipients) smr"
+	recipients += " FROM " + recipientsRelation + ") smr"
 	participantFallback := fmt.Sprintf(`(
 			EXISTS (
 				SELECT 1 FROM %s
@@ -1527,8 +1527,16 @@ func buildCacheLockedAttempt(
 	messagesDir := filepath.Join(staging.root, tableMessages)
 	escapedMessagesDir := strings.ReplaceAll(messagesDir, "'", "''")
 
+	messagesRelation, err := sourceSnapshot.messageSliceRelation("messages", "id", lastMessageID, maxID)
+	if err != nil {
+		return nil, err
+	}
+	recipientsRelation, err := sourceSnapshot.messageSliceRelation("message_recipients", "message_id", lastMessageID, maxID)
+	if err != nil {
+		return nil, err
+	}
 	messageAttribution, messageOwnerParticipant := messageCacheAttributionSQL(
-		messageSourceAttribution,
+		messageSourceAttribution, recipientsRelation,
 		sourceSnapshot.hasMessageSourceAttribution,
 		sourceSnapshot.hasRecipientEnvelope,
 		sourceSnapshot.identityPresenceSQL("email_address", "envelope_present"),
@@ -1542,7 +1550,7 @@ func buildCacheLockedAttempt(
 		SELECT %s,
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
-		FROM sqlite_db.messages m
+		FROM %s m
 		WHERE `+exportableMessageWhere("m")+`%s
 	) TO '%s' (
 		FORMAT PARQUET,
@@ -1550,7 +1558,7 @@ func buildCacheLockedAttempt(
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, columns, idFilter, escapedMessagesDir))
+	`, columns, messagesRelation, idFilter, escapedMessagesDir))
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
@@ -2010,6 +2018,36 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 		return s.duckTx
 	}
 	return s.duckDB
+}
+
+// messageSliceRelation lets SQLite use its message indexes before DuckDB
+// reads an incremental slice. Cast back to the attached schema because
+// sqlite_query transports columns as VARCHAR.
+func (s *cacheSourceSnapshot) messageSliceRelation(table, idColumn string, after, through int64) (string, error) {
+	relation := "sqlite_db." + table
+	if s.csvSnapshot || after == 0 {
+		return relation, nil
+	}
+	rows, err := s.DuckDB().Query("SELECT * FROM " + relation + " LIMIT 0")
+	if err != nil {
+		return "", fmt.Errorf("describe message slice %s: %w", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	types, err := rows.ColumnTypes()
+	if err != nil {
+		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
+	}
+	var columns, casts []string
+	for _, typ := range types {
+		column := `"` + typ.Name() + `"`
+		columns = append(columns, column)
+		casts = append(casts, fmt.Sprintf("CAST(%s AS %s) AS %s", column, typ.DatabaseTypeName(), column))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
+	}
+	sqliteSQL := fmt.Sprintf("SELECT %s FROM %s WHERE %s > %d AND %s <= %d", strings.Join(columns, ", "), table, idColumn, after, idColumn, through)
+	return "(SELECT " + strings.Join(casts, ", ") + " FROM sqlite_query('sqlite_db', '" + strings.ReplaceAll(sqliteSQL, "'", "''") + "'))", nil
 }
 
 // identityPresenceSQL preserves raw address presence independently of UTF-8
