@@ -238,9 +238,9 @@ WHERE m.message_type = 'beeper'
 GROUP BY is_share;
 ```
 
-## Mirror all attachments to Docbank (unreleased)
+## Mirror all attachments to Docbank
 
-Mirror stored attachments from all sources with [attachment upload consent](../configuration.md#mirror-stored-attachments-to-docbank-unreleased).
+Mirror stored attachments from all sources with [attachment upload consent](../configuration.md#mirror-stored-attachments-to-docbank).
 
 ## Send audio to Docbank
 

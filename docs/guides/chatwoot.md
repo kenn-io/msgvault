@@ -11,10 +11,6 @@ Each inbox becomes a separate source for search and account filters. Messages
 retain the contact or employee who sent them. Voice notes retain available
 transcripts; voice calls also appear as linked meetings.
 
-!!! note "Available on main"
-    Chatwoot ingestion is available in builds from `main`. It is not part of the
-    latest release documented in the [changelog](../changelog.md).
-
 ## Connect an account
 
 Non-loopback instances must use HTTPS.

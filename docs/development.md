@@ -535,7 +535,7 @@ versions before DDL and stamps this version only after its required steps succee
 using the caller's context. Keep optional and best-effort maintenance behavior separate from that
 completion guarantee.
 
-The initial contract is new on `main`, after v0.21.0. Existing archives start at
+The contract began in 0.22.0. Existing archives start at
 `0`; successful initialization upgrades them to the binary's expected version.
 The [CLI reference](cli-reference.md#schema-version) owns the probe contract,
 and [Setup](setup.md#migrate-before-replacing-the-executable) owns the operator
