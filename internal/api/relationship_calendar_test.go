@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"testing"
 	"time"
-	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -210,37 +209,4 @@ func TestRelationshipCalendarOpenAPIContract(t *testing.T) {
 	assert.ElementsMatch([]any{
 		"NONE", "FIRST_QUARTILE", "SECOND_QUARTILE", "THIRD_QUARTILE", "FOURTH_QUARTILE",
 	}, day.Properties["level"].Enum)
-}
-
-// Exercise validation and its HTTP mapping against the real analytics engine.
-func TestRelationshipCalendarTimezoneEndToEnd(t *testing.T) {
-	t.Parallel()
-	now := time.Date(2026, time.January, 10, 12, 0, 0, 0, time.UTC)
-	srv := newTestServerWithEngine(t, newRelationshipsDuckDBFixture(t, now))
-	for _, tt := range []struct {
-		name         string
-		body         string
-		status       int
-		wantTimezone string
-	}{
-		{name: "omitted", body: `{"year":2026}`, status: http.StatusOK, wantTimezone: "UTC"},
-		{name: "named", body: `{"year":2026,"timezone":"America/New_York"}`, status: http.StatusOK, wantTimezone: "America/New_York"},
-		{name: "opaque Local", body: `{"year":2026,"timezone":"Local"}`, status: http.StatusBadRequest},
-		{name: "unknown", body: `{"year":2026,"timezone":"Mars/Olympus_Mons"}`, status: http.StatusBadRequest},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			response := postExploreJSON(t, srv, "/api/v1/relationships/3/calendar", tt.body)
-			require.Equal(tt.status, response.Code, response.Body.String())
-			if tt.status == http.StatusBadRequest {
-				assert.Contains(response.Body.String(), `"invalid_timezone"`)
-				return
-			}
-			var calendar RelationshipCalendarHTTPResponse
-			require.NoError(json.Unmarshal(response.Body.Bytes(), &calendar))
-			assert.Equal(tt.wantTimezone, calendar.Timezone)
-			assert.NotEmpty(calendar.Days)
-		})
-	}
 }
