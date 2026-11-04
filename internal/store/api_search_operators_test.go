@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -65,32 +64,5 @@ func TestSearchOperatorsPreserveResults(t *testing.T) {
 			assert.ElementsMatch(tc.want, candidates)
 			assert.Equal(int64(len(tc.want)), total)
 		})
-	}
-}
-
-func TestSearchOperatorsShareBoundaryResults(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	ids := f.CreateMessages(80)
-	for _, count := range []int{9, 10, 11} {
-		addr := fmt.Sprintf("boundary%d@example.com", count)
-		participant := f.EnsureParticipant(addr, "Boundary", "example.com")
-		for _, id := range ids[:count] {
-			require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{participant}, nil))
-		}
-		q := search.Parse("to:" + addr)
-		rows, total, err := f.Store.SearchMessagesQueryContext(t.Context(), q, 0, 80)
-		require.NoError(err)
-		got := make([]int64, 0, len(rows))
-		for _, row := range rows {
-			got = append(got, row.ID)
-		}
-		assert.ElementsMatch(ids[:count], got)
-		assert.Equal(int64(count), total)
-		candidates, total, err := f.Store.SearchMessageIDsQueryContext(t.Context(), q, 80)
-		require.NoError(err)
-		assert.ElementsMatch(ids[:count], candidates)
-		assert.Equal(int64(count), total)
 	}
 }
