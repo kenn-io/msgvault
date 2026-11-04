@@ -148,19 +148,20 @@ func TestRelocationRawFetchRejectsEpochChangeAndBypassesDedup(t *testing.T) {
 func TestRelocationFilteredScanRecoversCanonicalCopy(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Archive": 0, "Trash": 1})
 			testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "same@example.com")
 			testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "same@example.com")
 			first := newTestClient(t, addr)
 			listAllMessages(t, first)
 			saved := first.ObservedFolderStates()
-			require.NoError(t, first.Close())
+			require.NoError(first.Close())
 			testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
 			// Trash remains on the server but is absent from this scan.
 			client := newTestClient(t, addr, WithFolderStates(saved), WithFolderFilter(nil, []string{"Trash"}),
 				WithFilteredDeletionReconciliation(enabled),
 				WithRelocationCandidateLoader(func(_ context.Context, lost []string) ([]RelocationCandidate, error) {
-					assert.Equal(t, []string{"INBOX|1"}, lost)
+					assert.Equal([]string{"INBOX|1"}, lost)
 					return []RelocationCandidate{{
 						Target:  gmail.MessageRelocationTarget{InternalID: 12, SourceID: 3, SourceMessageID: "INBOX|1", RFC822MessageID: "same@example.com"},
 						Mailbox: "Archive", UIDValidity: saved["Archive"].UIDValidity, UID: 1,
@@ -168,29 +169,30 @@ func TestRelocationFilteredScanRecoversCanonicalCopy(t *testing.T) {
 				}))
 			ids := listAllMessages(t, client)
 			if enabled {
-				assert.Equal(t, []string{"Archive|1"}, ids)
+				assert.Equal([]string{"Archive|1"}, ids)
 				target, ok := client.MessageRelocationTarget("Archive|1")
-				require.True(t, ok)
-				assert.Equal(t, "INBOX|1", target.SourceMessageID)
-				assert.Equal(t, "Archive|1", target.NewSourceMessageID)
+				require.True(ok)
+				assert.Equal("INBOX|1", target.SourceMessageID)
+				assert.Equal("Archive|1", target.NewSourceMessageID)
 			} else {
-				assert.Empty(t, ids)
+				assert.Empty(ids)
 				_, ok := client.MessageRelocationTarget("Archive|1")
-				assert.False(t, ok)
+				assert.False(ok)
 			}
 		})
 	}
 	for _, mode := range []string{"deleted selected", "listed skipped"} {
 		t.Run(mode, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
 			addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Drafts": 0, "Sent": 0, "Trash": 0})
 			testutil.AppendIMAPRawMessage(t, user, "Drafts", []byte("Message-ID: <same@example.com>\r\n\r\ndraftobsoleteword\r\n"))
 			testutil.AppendIMAPRawMessage(t, user, "Sent", []byte("Message-ID: <same@example.com>\r\n\r\nsentfinalword\r\n"))
 			first := newTestClient(t, addr)
 			listAllMessages(t, first)
 			saved := first.ObservedFolderStates()
-			require.NoError(t, first.Close())
+			require.NoError(first.Close())
 			if mode != "listed skipped" {
-				require.NoError(t, user.Delete("Drafts"))
+				require.NoError(user.Delete("Drafts"))
 			}
 			exclude := []string{"Trash"}
 			if mode == "listed skipped" {
@@ -203,17 +205,17 @@ func TestRelocationFilteredScanRecoversCanonicalCopy(t *testing.T) {
 			ids := listAllMessages(t, client)
 			target, ok := client.MessageRelocationTarget("Sent|1")
 			if mode != "deleted selected" {
-				assert.False(t, ok)
-				assert.Empty(t, ids)
+				assert.False(ok)
+				assert.Empty(ids)
 				return
 			}
-			require.True(t, ok)
-			assert.Equal(t, "Drafts|1", target.SourceMessageID)
-			assert.Equal(t, "Sent|1", target.NewSourceMessageID)
-			assert.Equal(t, []string{"Sent|1"}, ids)
+			require.True(ok)
+			assert.Equal("Drafts|1", target.SourceMessageID)
+			assert.Equal("Sent|1", target.NewSourceMessageID)
+			assert.Equal([]string{"Sent|1"}, ids)
 			raw, err := client.GetMessageRaw(t.Context(), "Sent|1")
-			require.NoError(t, err)
-			assert.Contains(t, string(raw.Raw), "sentfinalword")
+			require.NoError(err)
+			assert.Contains(string(raw.Raw), "sentfinalword")
 		})
 	}
 }

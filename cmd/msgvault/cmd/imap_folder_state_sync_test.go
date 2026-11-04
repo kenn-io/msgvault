@@ -83,6 +83,7 @@ func TestIMAPSyncFolderFilter_UnmatchedAccounts(t *testing.T) {
 	const typo = "imap://typo@example.com"
 	for _, setting := range []string{"exclusions", "reconciliation", "both"} {
 		t.Run(setting, func(t *testing.T) {
+			assert := assert.New(t)
 			st := testutil.NewTestStore(t)
 			_, err := st.GetOrCreateSource(sourceTypeIMAP, identifier)
 			require.NoError(t, err)
@@ -99,13 +100,13 @@ func TestIMAPSyncFolderFilter_UnmatchedAccounts(t *testing.T) {
 			imapSyncFolderFilter(st, identifier, state, nil, nil)
 			imapSyncFolderFilter(st, identifier, state, nil, nil)
 			if setting == "both" {
-				assert.Equal(t, 2, strings.Count(logs.String(), "match no stored account"))
-				assert.Less(t, strings.Index(logs.String(), "IMAP folder exclusions"), strings.Index(logs.String(), "IMAP filtered deletion reconciliation settings"))
+				assert.Equal(2, strings.Count(logs.String(), "match no stored account"))
+				assert.Less(strings.Index(logs.String(), "IMAP folder exclusions"), strings.Index(logs.String(), "IMAP filtered deletion reconciliation settings"))
 			} else {
-				assert.Equal(t, 1, strings.Count(logs.String(), "match no stored account"))
+				assert.Equal(1, strings.Count(logs.String(), "match no stored account"))
 			}
-			assert.Contains(t, logs.String(), "account="+typo)
-			assert.NotContains(t, logs.String(), "account="+identifier)
+			assert.Contains(logs.String(), "account="+typo)
+			assert.NotContains(logs.String(), "account="+identifier)
 		})
 	}
 }
@@ -875,4 +876,60 @@ func scheduledIMAPSyncFixture(t *testing.T, addr string) (*store.Store, *store.S
 	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
 	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
 	return st, src, cfg, testInvocationContext(t.Context(), cfg, invocationOptions{})
+}
+
+func TestSaveIMAPFolderStates_FilteredUntrackedRows(t *testing.T) {
+	for _, mode := range []string{"expunged", "deleted selected", "deleted skipped"} {
+		t.Run(mode, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Old": 1, "Trash": 1})
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource(sourceTypeIMAP, "imap://user@example.com")
+			require.NoError(err)
+			first, _ := syncedIMAPClient(t, addr)
+			// An interrupted import saved content and cursors, but no memberships.
+			seedObservedIMAPMessages(t, st, src, first)
+			var states []store.IMAPFolderState
+			for mailbox, state := range first.ObservedFolderStates() {
+				states = append(states, store.IMAPFolderState{Mailbox: mailbox, UIDValidity: state.UIDValidity, UIDNext: state.UIDNext, HighestModSeq: state.HighestModSeq})
+			}
+			require.NoError(st.UpsertIMAPFolderStates(src.ID, states))
+			require.NoError(first.Close())
+			if mode == "expunged" {
+				testutil.ExpungeIMAPMessage(t, addr, "Old", 1)
+			} else {
+				require.NoError(user.Delete("Old"))
+			}
+			exclusions := []string{"Trash"}
+			if mode == "deleted skipped" {
+				exclusions = append(exclusions, "Old")
+			}
+			cfg := testConfigValue()
+			cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: exclusions}
+			cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{src.Identifier: true}
+			opts := append(imapFolderStateOptions(st, src, false, cfg, testDiscardLogger()), imapSyncFolderFilter(st, src.Identifier, testInvocationWithConfig(cfg), nil, nil))
+			second, _ := syncedIMAPClient(t, addr, opts...)
+			if mode == "expunged" {
+				var found bool
+				for _, delta := range second.ObservedMailboxDeltas() {
+					if delta.Mailbox == "Old" {
+						found = true
+						assert.False(delta.Reset)
+						assert.Empty(delta.VanishedUIDs, "untracked UIDs were absent from the saved membership baseline")
+						assert.Empty(delta.State.KnownUIDs)
+					}
+				}
+				require.True(found)
+			}
+			require.NoError(saveIMAPFolderStates(t.Context(), st, src, second, completedIMAPSyncSummary(t, st, src), 0))
+			want := 1
+			if mode == "deleted skipped" {
+				want = 0
+			}
+			assert.Equal(want, imapTombstonedMessageCount(t, st, src.ID))
+			var skippedDeleted bool
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_from_source_at IS NOT NULL FROM messages WHERE source_id = ? AND source_message_id = 'Trash|1'`), src.ID).Scan(&skippedDeleted))
+			assert.False(skippedDeleted)
+		})
+	}
 }

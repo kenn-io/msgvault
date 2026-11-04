@@ -33,6 +33,7 @@ type IMAPMailboxDelta struct {
 	State        IMAPFolderState
 	Memberships  []IMAPMembershipObservation
 	VanishedUIDs []uint32
+	KnownUIDs    []uint32 // Complete resulting UID set for an incremental scan.
 	Reset        bool
 }
 
@@ -231,11 +232,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
-		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations, currentMailboxes); err != nil {
+		affected := make(map[int64]struct{})
+		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations, currentMailboxes, affected); err != nil {
 			return err
 		}
 
-		affected := make(map[int64]struct{})
 		if err := resolver.captureUntracked(s, len(generations) != 0, normalizedDeltas, fullTopology, affected); err != nil {
 			return err
 		}
@@ -793,7 +794,7 @@ type imapMembershipResolver struct {
 	legacyMessages    map[string]int64
 }
 
-func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration, listed map[string]struct{}) error {
+func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration, listed map[string]struct{}, affected map[int64]struct{}) error {
 	current := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
 	for _, delta := range deltas {
 		current[delta.mailbox] = delta
@@ -842,14 +843,14 @@ func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailb
 		if present && generation == delta.uidValidity && !staleMemberships[mailbox] {
 			continue
 		}
-		if err := r.retireMailboxKeys(mailbox, generation, delta, present); err != nil {
+		if err := r.retireMailboxKeys(mailbox, generation, delta, present, affected); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint32, delta normalizedIMAPMailboxDelta, present bool) error {
+func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint32, delta normalizedIMAPMailboxDelta, present bool, affected map[int64]struct{}) error {
 	observations := make(map[uint32]IMAPMembershipObservation, len(delta.delta.Memberships))
 	for _, observation := range delta.delta.Memberships {
 		observation.Mailbox, observation.UIDValidity = mailbox, delta.uidValidity
@@ -859,6 +860,7 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 	args := append([]any{mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID}, keyArgs...)
 	rows, err := r.tx.Query(`
 		SELECT messages.id, messages.source_message_id, messages.deleted_from_source_at IS NOT NULL,
+		  EXISTS (SELECT 1 FROM source_merge_archive_only_messages marker WHERE marker.message_id = messages.id),
 		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id = messages.id),
 		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id = messages.id
 		    AND m.mailbox = ? AND messages.source_message_id = m.mailbox || '|' || CAST(m.uid AS TEXT) AND m.uidvalidity <> ?),
@@ -869,16 +871,17 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		return fmt.Errorf("read obsolete IMAP keys for %q: %w", mailbox, err)
 	}
 	type candidate struct {
-		id      int64
-		key     string
-		uid     uint32
-		deleted bool
+		id        int64
+		key       string
+		uid       uint32
+		deleted   bool
+		untracked bool
 	}
 	var candidates []candidate
 	for rows.Next() {
 		var c candidate
-		var memberships, old, protected bool
-		if err := rows.Scan(&c.id, &c.key, &c.deleted, &memberships, &old, &protected); err != nil {
+		var memberships, old, protected, archiveOnly bool
+		if err := rows.Scan(&c.id, &c.key, &c.deleted, &archiveOnly, &memberships, &old, &protected); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -895,6 +898,7 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		// changes generation or is retired, including live untracked imports;
 		// and legacy tombstoned orphans whose UID is observed again.
 		if old || changed || (previous == 0 && c.deleted && !memberships && observed) {
+			c.untracked = !memberships && !archiveOnly
 			candidates = append(candidates, c)
 		}
 	}
@@ -904,6 +908,11 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		return err
 	}
 	for _, c := range candidates {
+		// A retired mailbox proves these rows gone. Capture their IDs while
+		// their source keys still name the mailbox, before invalidating them.
+		if !present && !c.deleted && c.untracked {
+			affected[c.id] = struct{}{}
+		}
 		if observation, ok := observations[c.uid]; ok {
 			id, err := r.resolveIdentity(observation, true)
 			// Sync validates content before apply. Missing or ambiguous identity
@@ -972,17 +981,19 @@ func (r *imapMembershipResolver) captureUntracked(
 
 // captureScannedUntracked marks rows without memberships whose source key
 // names delta's mailbox at its saved UIDVALIDITY and a UID the scan proves
-// absent: unobserved by a Reset delta, or vanished from an incremental one.
+// absent: unobserved by a Reset delta, or missing from the resulting UID set.
 func (r *imapMembershipResolver) captureScannedUntracked(
 	delta normalizedIMAPMailboxDelta, affected map[int64]struct{},
 ) error {
-	absent := func(uid uint32) bool { return slices.Contains(delta.delta.VanishedUIDs, uid) }
+	observed := make(map[uint32]struct{}, len(delta.delta.KnownUIDs))
+	for _, uid := range delta.delta.KnownUIDs {
+		observed[uid] = struct{}{}
+	}
 	if delta.delta.Reset {
-		observed := make(map[uint32]struct{}, len(delta.delta.Memberships))
+		observed = make(map[uint32]struct{}, len(delta.delta.Memberships))
 		for _, observation := range delta.delta.Memberships {
 			observed[observation.UID] = struct{}{}
 		}
-		absent = func(uid uint32) bool { _, ok := observed[uid]; return !ok }
 	}
 	predicate, keyArgs := r.sourceKeyPrefix(delta.mailbox)
 	args := append(append([]any{r.sourceID}, keyArgs...), r.sourceID, delta.mailbox, delta.uidValidity)
@@ -1006,8 +1017,10 @@ func (r *imapMembershipResolver) captureScannedUntracked(
 		if err := rows.Scan(&id, &key); err != nil {
 			return fmt.Errorf("scan untracked IMAP message for %q: %w", delta.mailbox, err)
 		}
-		if uid, valid := imapSourceKeyUID(key, delta.mailbox); valid && absent(uid) {
-			affected[id] = struct{}{}
+		if uid, valid := imapSourceKeyUID(key, delta.mailbox); valid {
+			if _, present := observed[uid]; !present {
+				affected[id] = struct{}{}
+			}
 		}
 	}
 	return rows.Err()

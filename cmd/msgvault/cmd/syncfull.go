@@ -543,6 +543,7 @@ func applyIMAPMailboxDeltas(
 			},
 			Memberships:  byMailbox[delta.Mailbox],
 			VanishedUIDs: vanished,
+			KnownUIDs:    delta.State.KnownUIDs,
 			Reset:        delta.Reset,
 		})
 		delete(byMailbox, delta.Mailbox)
