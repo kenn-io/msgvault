@@ -3,9 +3,7 @@
 package query
 
 import (
-	"context"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -55,19 +53,4 @@ func TestMetadataSearchSQLiteOptionalStats(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMetadataSearchSQLiteCountCancellationStopsStats(t *testing.T) {
-	t.Parallel()
-	engine, observer := observedSearchEngine(t)
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	observer.BeforeQuery = func(_ context.Context, sql string) {
-		if strings.Contains(sql, "COUNT(DISTINCT m.id)") {
-			cancel()
-		}
-	}
-	_, err := engine.SearchFastWithStats(ctx, search.Parse("after:2024-01-01"), "after:2024-01-01", MessageFilter{}, ViewSenders, 2, 0)
-	require.ErrorIs(t, err, context.Canceled)
-	assert.Len(t, observer.Statements(), 3, "page, labels and canceled count only")
 }

@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/attachmentstore"
@@ -647,10 +648,28 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Vector stats are best-effort and bounded: log errors but still
+	// include whatever partial stats came back. They live in a separate
+	// database, so they are collected while the archive stats load.
+	_, backend, _ := s.vectorComponents()
+	vectorCtx, cancelVector := context.WithTimeout(r.Context(), s.vectorStatsTimeout)
+	var (
+		vs             *vector.StatsView
+		vsErr          error
+		vectorTimedOut bool
+		vectorDone     sync.WaitGroup
+	)
+	vectorDone.Go(func() {
+		vs, vsErr = vector.CollectStats(vectorCtx, backend)
+		vectorTimedOut = errors.Is(vectorCtx.Err(), context.DeadlineExceeded)
+	})
+
 	stats, asOf, stale, err := s.statsSnapshots.get(
 		r.Context(), s.importContext, "", s.statsSnapshotWait, s.getStats,
 	)
 	if err != nil {
+		cancelVector()
+		vectorDone.Wait()
 		if s.writeIfContextError(w, err) {
 			return
 		}
@@ -658,13 +677,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve statistics")
 		return
 	}
-
-	// Vector stats are best-effort and bounded: log errors but still
-	// include whatever partial stats came back.
-	_, backend, _ := s.vectorComponents()
-	vectorCtx, cancelVector := context.WithTimeout(r.Context(), s.vectorStatsTimeout)
-	vs, vsErr := vector.CollectStats(vectorCtx, backend)
-	vectorTimedOut := errors.Is(vectorCtx.Err(), context.DeadlineExceeded)
+	vectorDone.Wait()
 	cancelVector()
 	if vsErr != nil {
 		s.logger.Warn("vector stats", "error", vsErr)

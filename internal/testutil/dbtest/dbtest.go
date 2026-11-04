@@ -80,6 +80,8 @@ func NewTestDB(tb testing.TB, schemaPath string) *TestDB {
 
 	db, err := sql.Open(sqliteutil.DriverName(), ":memory:")
 	require.NoError(tb, err, "open db")
+	// Every connection to ":memory:" is a separate empty database, so keep
+	// concurrent reads on the one connection that holds the schema.
 	db.SetMaxOpenConns(1)
 	tb.Cleanup(func() { _ = db.Close() })
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -144,14 +145,6 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sour
 	// Get total count. Use the canonical live-messages predicate so
 	// dedup-hidden rows (deleted_at) are excluded alongside source-
 	// deleted rows.
-	var total int64
-	err := s.db.QueryRowContext(ctx,
-		"SELECT COUNT(*) FROM messages m WHERE "+LiveMessagesWhere("m", true)+scope, args...,
-	).Scan(&total)
-	if err != nil {
-		return nil, 0, err
-	}
-
 	// Query messages with sender info
 	query := fmt.Sprintf(`
 		SELECT
@@ -181,14 +174,28 @@ func (s *Store) ListMessagesContext(ctx context.Context, offset, limit int, sour
 		LIMIT ? OFFSET ?
 	`, participantSummarySenderSQL, LiveMessagesWhere("m", true)+scope)
 
-	rows, err := s.db.QueryContext(ctx, query, append(args, limit, offset)...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	// Use scanMessageRows for robust date parsing
-	messages, ids, err := scanMessageRows(rows)
+	var (
+		total    int64
+		messages []APIMessage
+		ids      []int64
+	)
+	err := RunIndependentReads(ctx, s.db.DB,
+		func(ctx context.Context) error {
+			return s.db.QueryRowContext(ctx,
+				"SELECT COUNT(*) FROM messages m WHERE "+LiveMessagesWhere("m", true)+scope, args...,
+			).Scan(&total)
+		},
+		func(ctx context.Context) error {
+			rows, err := s.db.QueryContext(ctx, query, append(slices.Clip(args), limit, offset)...)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = rows.Close() }()
+			// Use scanMessageRows for robust date parsing
+			messages, ids, err = scanMessageRows(rows)
+			return err
+		},
+	)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -897,14 +904,6 @@ func (s *Store) searchMessagesQueryImpl(
 		WHERE %s
 	`, plan.join, plan.where)
 
-	var total int64
-	if err := s.db.QueryRowContext(ctx, countSQL, plan.args...).Scan(&total); err != nil {
-		if plan.fts && ctx.Err() == nil {
-			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
-		}
-		return nil, 0, fmt.Errorf("count search results: %w", err)
-	}
-
 	// Results query.
 	searchSQL := fmt.Sprintf(`
 		SELECT
@@ -942,21 +941,43 @@ func (s *Store) searchMessagesQueryImpl(
 	resultArgs = append(resultArgs, plan.args...)
 	resultArgs = append(resultArgs, plan.orderArgs...)
 	resultArgs = append(resultArgs, limit, offset)
-	rows, err := s.db.QueryContext(ctx, searchSQL, resultArgs...)
-	if err != nil {
-		// FTS5 not available -- fall back if we used it. Skip the fallback
-		// when the context was cancelled: the error is the abort we asked
-		// for, not an FTS capability problem, and re-running would ignore it.
-		if plan.fts && ctx.Err() == nil {
-			return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
-		}
-		return nil, 0, err
-	}
-	defer func() { _ = rows.Close() }()
 
-	messages, ids, err := scanMessageRows(rows)
-	if err != nil {
-		return nil, 0, err
+	var (
+		total              int64
+		countErr, queryErr error
+		messages           []APIMessage
+		ids                []int64
+	)
+	scanErr := RunIndependentReads(ctx, s.db.DB,
+		func(ctx context.Context) error {
+			countErr = s.db.QueryRowContext(ctx, countSQL, plan.args...).Scan(&total)
+			return nil
+		},
+		func(ctx context.Context) error {
+			rows, err := s.db.QueryContext(ctx, searchSQL, resultArgs...)
+			if err != nil {
+				queryErr = err
+				return nil
+			}
+			defer func() { _ = rows.Close() }()
+			messages, ids, err = scanMessageRows(rows)
+			return err
+		},
+	)
+	// FTS5 not available -- fall back if we used it. Skip the fallback when
+	// the context was cancelled: the error is the abort we asked for, not an
+	// FTS capability problem, and re-running would ignore it.
+	if (countErr != nil || queryErr != nil) && plan.fts && ctx.Err() == nil {
+		return s.searchMessagesQueryNoFTS(ctx, q, offset, limit)
+	}
+	if countErr != nil {
+		return nil, 0, fmt.Errorf("count search results: %w", countErr)
+	}
+	if queryErr != nil {
+		return nil, 0, queryErr
+	}
+	if scanErr != nil {
+		return nil, 0, scanErr
 	}
 
 	if len(ids) > 0 {
@@ -1176,20 +1197,25 @@ func (s *Store) batchPopulate(messages []APIMessage, ids []int64) error {
 // the count/result queries, instead of running to completion on a background
 // context after the request budget is exceeded.
 func (s *Store) batchPopulateContext(ctx context.Context, messages []APIMessage, ids []int64) error {
-	recipientMap, err := s.batchGetRecipients(ctx, ids, "to")
-	if err != nil {
-		return err
+	var recipientMap, ccMap, bccMap map[int64][]ParticipantDisplay
+	var labelMap map[int64][]string
+	recipients := func(dest *map[int64][]ParticipantDisplay, recipientType string) func(context.Context) error {
+		return func(ctx context.Context) error {
+			var err error
+			*dest, err = s.batchGetRecipients(ctx, ids, recipientType)
+			return err
+		}
 	}
-	ccMap, err := s.batchGetRecipients(ctx, ids, "cc")
-	if err != nil {
-		return err
-	}
-	bccMap, err := s.batchGetRecipients(ctx, ids, "bcc")
-	if err != nil {
-		return err
-	}
-	labelMap, err := s.batchGetLabels(ctx, ids)
-	if err != nil {
+	if err := RunIndependentReads(ctx, s.db.DB,
+		recipients(&recipientMap, "to"),
+		recipients(&ccMap, "cc"),
+		recipients(&bccMap, "bcc"),
+		func(ctx context.Context) error {
+			var err error
+			labelMap, err = s.batchGetLabels(ctx, ids)
+			return err
+		},
+	); err != nil {
 		return err
 	}
 	for i := range messages {
