@@ -178,18 +178,13 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchRequest(t *testing.T) {
 	f := storetest.New(t)
 	st := f.Store
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = tx.Rollback() })
 	persist := func(key, subject, body string) {
-		conversation, err := st.EnsureConversation(f.Source.ID, key, "Synthetic selection")
-		require.NoError(t, err)
-		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-			Message: &store.Message{
-				SourceID: f.Source.ID, ConversationID: conversation, SourceMessageID: key,
-				MessageType: "email", Subject: sql.NullString{String: subject, Valid: true},
-			},
-			BodyText: sql.NullString{String: body, Valid: true},
-			FTS:      &store.FTSDoc{Subject: subject, Body: body},
-			RawMIME:  []byte("Subject: " + subject + "\r\n\r\n" + body),
-		})
+		var id int64
+		require.NoError(t, tx.QueryRow(st.Rebind(`INSERT INTO messages (conversation_id, source_id, source_message_id, message_type, subject) VALUES (?, ?, ?, 'email', ?) RETURNING id`), f.ConvID, f.Source.ID, key, subject).Scan(&id))
+		_, err := tx.Exec(st.Rebind(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`), id, body)
 		require.NoError(t, err)
 	}
 	var metadataIDs, bodyIDs []string
@@ -203,6 +198,9 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		persist(id, "plain", "bodyneedle")
 		bodyIDs = append(bodyIDs, id)
 	}
+	require.NoError(t, tx.Commit())
+	_, err = st.BackfillFTS(nil)
+	require.NoError(t, err)
 	var requests atomic.Int32
 	var boundedRequests atomic.Int32
 	daemon := metadataDaemonWithPeer(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests,
