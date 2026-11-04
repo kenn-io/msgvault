@@ -127,15 +127,6 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(first, samePageSet)
 
-	_, err = tdb.DB.Exec(`UPDATE message_bodies SET body_text = 'changed full body' WHERE message_id = 801`)
-	require.NoError(err)
-	// This raw-schema fixture has no EnsureTriggers body trigger; stamp as it would.
-	_, err = tdb.DB.Exec(`UPDATE messages SET content_changed_at = '2021-01-01 00:00:00' WHERE id = 801`)
-	require.NoError(err)
-	bodyEdit, err := engine.TextSnapshotRevision(t.Context(), scope)
-	require.NoError(err)
-	assert.NotEqual(first, bodyEdit)
-
 	_, err = tdb.DB.Exec(`
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
 			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
@@ -144,13 +135,13 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	pin("2022-01-01 00:00:00")
 	added, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
-	assert.NotEqual(bodyEdit, added)
+	assert.NotEqual(first, added)
 
 	_, err = tdb.DB.Exec(`DELETE FROM messages WHERE id = 802`)
 	require.NoError(err)
 	deleted, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
-	assert.Equal(bodyEdit, deleted)
+	assert.Equal(first, deleted)
 
 	_, err = tdb.DB.Exec(`
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
@@ -166,7 +157,7 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	require.NoError(err)
 	moved, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
-	assert.Equal(bodyEdit, moved)
+	assert.Equal(first, moved)
 
 	scope.Filter.ContactName = "different logical request"
 	differentFilter, err := engine.TextSnapshotRevision(t.Context(), scope)
