@@ -237,7 +237,8 @@ func TestCardDAVMultipleConnectionsReportsIdleSchedule(t *testing.T) {
 	require := require.New(t)
 	controller, baseURL := multipleCardDAVController(t)
 	_, err := controller.Save(t.Context(), CardDAVAccountRequest{Connection: "work", BaseURL: baseURL,
-		Username: "work", Password: "work-synthetic-secret", Enabled: new(true), Schedule: "0 1 * * *"})
+		Username: "work", Password: "work-synthetic-secret", // gitleaks:allow -- synthetic in-memory test credential
+		Enabled: new(true), Schedule: "0 1 * * *"})
 	require.NoError(err)
 	next := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
 	sched := newMockScheduler()

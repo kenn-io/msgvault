@@ -500,8 +500,17 @@ func (s *Store) MergeDuplicates(
 	}
 
 	result := &MergeResult{}
+	untrustedRawSent := s.untrustedRawImportedSentSQL("duplicate", "duplicate_source")
+	duplicateSentLabel := `COALESCE((` + sentFolderLabelSQL("duplicate_label") + ` OR ` +
+		sentGmailLabelSQL("duplicate_label", "duplicate_source") + `), FALSE)`
 	unionLabelsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_labels (message_id, label_id)
-			SELECT ?, label_id FROM message_labels WHERE message_id = ?`)
+			SELECT ?, duplicate_label.id
+			FROM message_labels duplicate_ml
+			JOIN labels duplicate_label ON duplicate_label.id=duplicate_ml.label_id
+			JOIN messages duplicate ON duplicate.id=duplicate_ml.message_id
+			JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
+			WHERE duplicate_ml.message_id = ?
+			  AND NOT (` + untrustedRawSent + ` AND ` + duplicateSentLabel + `)`)
 	backfillRawSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_raw
 			  (message_id, raw_data, raw_format, compression)
 			SELECT ?, raw_data, raw_format, compression
@@ -530,6 +539,12 @@ func (s *Store) MergeDuplicates(
 			return fmt.Errorf("duplicate merge into %d would hide historical content", survivorID)
 		}
 		for _, dupID := range duplicateIDs {
+			if err := s.mergeProviderSentEnvelopeEvidenceTx(ctx, tx, survivorID, dupID); err != nil {
+				return fmt.Errorf("merge provider Sent envelope provenance from %d: %w", dupID, err)
+			}
+			if err := s.mergeMicrosoftSentEvidenceTx(ctx, tx, survivorID, dupID); err != nil {
+				return fmt.Errorf("merge Microsoft Sent Items provenance from %d: %w", dupID, err)
+			}
 			res, err := tx.Exec(unionLabelsSQL, survivorID, dupID)
 			if err != nil {
 				return fmt.Errorf("union labels from %d: %w", dupID, err)

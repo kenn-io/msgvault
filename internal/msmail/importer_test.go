@@ -34,6 +34,7 @@ type fakeGraph struct {
 	folders    []string            // folder IDs, in list order
 	names      map[string]string   // folder ID -> display name, when not derived from the ID
 	folder     map[string]string   // message ID -> folder ID; absent when deleted
+	rawBodies  map[string]string   // message ID -> explicit MIME source body
 	log        []change            // one entry per change
 	expired    map[string]bool     // folder IDs whose next delta reports an expired token
 	gone       map[string]bool     // folder IDs whose every delta answers 410
@@ -66,7 +67,7 @@ type change struct{ id, from string }
 
 func newFakeGraph(t *testing.T) *fakeGraph {
 	t.Helper()
-	f := &fakeGraph{t: t, folder: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2, stopStatus: http.StatusBadRequest}
+	f := &fakeGraph{t: t, folder: map[string]string{}, rawBodies: map[string]string{}, expired: map[string]bool{}, gone: map[string]bool{}, version: map[string]int{}, withAttachment: map[string]bool{}, shifted: map[string]bool{}, attachmentBody: map[string]string{}, broken: map[string]bool{}, goneOnValue: map[string]bool{}, badValue: map[string]bool{}, pageSize: 2, stopStatus: http.StatusBadRequest}
 	f.folders = []string{"inbox", "archive"}
 	f.expiredStatus = http.StatusGone
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
@@ -172,6 +173,9 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		body := raw(id, f.version[id])
 		if f.withAttachment[id] {
 			body = rawWithAttachment(id, f.shifted[id], f.attachmentBody[id])
+		}
+		if f.rawBodies[id] != "" {
+			body = f.rawBodies[id]
 		}
 		if f.broken[id] {
 			body = "From: a@example.com\r\nSubject: " + id + "\r\nMIME-Version: 1.0\r\n" +
@@ -398,6 +402,137 @@ func TestImportFirstSyncThenNoChange(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(0, sum.Added)
 	assert.EqualValues(0, f.mimeCalls.Load())
+}
+
+func TestImportSentItemsEstablishesKnownSenderRelationship(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "sentitems")
+	f.put("sent-message", "sentitems")
+	f.rawBodies["sent-message"] = "From: me@example.com\r\nTo: target@example.com\r\n" +
+		"Subject: sent message\r\nMessage-ID: <sent-message@example.com>\r\n" +
+		"Date: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody\r\n"
+
+	_, err := f.sync(t, st)
+	requirements.NoError(err)
+
+	got, err := st.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["target@example.com"])
+	var metadata string
+	requirements.NoError(st.DB().QueryRow(`SELECT CAST(metadata AS TEXT) FROM messages WHERE source_message_id='sent-message'`).Scan(&metadata))
+	assertions.JSONEq(`{"msmail_sent_items_observed":true}`, metadata)
+	_, err = st.DB().Exec(`UPDATE messages SET metadata=NULL WHERE source_message_id='sent-message'`)
+	requirements.NoError(err)
+
+	f.put("sent-message", "archive")
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	assertions.Equal("Archive", state(t, st)["sent-message"], "the provider Sent label is removed after the move")
+	got, err = st.SenderRelationships(t.Context(), []string{"target@example.com"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["target@example.com"],
+		"provider-observed Sent Items provenance must survive folder changes")
+}
+
+func TestImportingDraftThatMovesToSentRefreshesEnvelopeBeforeCapture(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "drafts", "sentitems")
+	f.put("draft-to-sent", "drafts")
+	message := func(recipient string) string {
+		return "From: me@example.test\r\nTo: " + recipient + "\r\n" +
+			"Subject: changed draft recipients\r\nMessage-ID: <draft-to-sent@example.test>\r\n" +
+			"Date: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody\r\n"
+	}
+	f.rawBodies["draft-to-sent"] = message("draft-only@example.test")
+	initial, err := f.sync(t, st)
+	requirements.NoError(err)
+
+	ids, err := st.MessageExistsBatch(initial.SourceID, []string{"draft-to-sent"})
+	requirements.NoError(err)
+	messageID := ids["draft-to-sent"]
+	requirements.NotZero(messageID)
+
+	// Expire only Sent Items so the next sync exercises its full-walk path.
+	// A known message moving from Drafts must refresh its MIME before the first
+	// provider-observed Sent envelope is saved.
+	f.rawBodies["draft-to-sent"] = message("actual-recipient@example.test")
+	f.put("draft-to-sent", "sentitems")
+	f.expired["sentitems"] = true
+	f.mimeCalls.Store(0)
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	assertions.EqualValues(1, f.mimeCalls.Load(), "the newly Sent message is refreshed once")
+
+	var savedRecipients []string
+	rows, err := st.DB().QueryContext(t.Context(), st.Rebind(`SELECT email_address
+		FROM msmail_sent_envelope_recipients WHERE message_id=? ORDER BY email_address`), messageID)
+	requirements.NoError(err)
+	defer func() {
+		requirements.NoError(rows.Close())
+	}()
+	for rows.Next() {
+		var address string
+		requirements.NoError(rows.Scan(&address))
+		savedRecipients = append(savedRecipients, address)
+	}
+	requirements.NoError(rows.Err())
+	assertions.Equal([]string{"actual-recipient@example.test"}, savedRecipients)
+
+	got, err := st.SenderRelationships(t.Context(), []string{
+		"actual-recipient@example.test", "draft-only@example.test",
+	}, nil)
+	requirements.NoError(err)
+	assertions.Equal("known", got["actual-recipient@example.test"].Relationship)
+	assertions.Equal("none", got["draft-only@example.test"].Relationship)
+}
+
+func TestImportSentEnvelopeRecipientsSurviveDedupAndDeltaRefresh(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.folders = append(f.folders, "sentitems")
+	f.put("archive-copy", "archive")
+	f.put("sent-copy", "sentitems")
+	message := func(bcc string) string {
+		headers := "From: me@example.com\r\nTo: target@example.test\r\n"
+		if bcc != "" {
+			headers += "Bcc: " + bcc + "\r\n"
+		}
+		return headers + "Subject: shared message\r\nMessage-ID: <shared-delta@example.test>\r\n" +
+			"Date: Mon, 1 Jan 2024 10:00:00 +0000\r\n\r\nbody\r\n"
+	}
+	f.rawBodies["archive-copy"] = message("")
+	f.rawBodies["sent-copy"] = message("bcc@example.test")
+
+	summary, err := f.sync(t, st)
+	requirements.NoError(err)
+	messageIDs, err := st.MessageExistsBatch(summary.SourceID, []string{"archive-copy", "sent-copy"})
+	requirements.NoError(err)
+	requirements.Len(messageIDs, 2)
+	_, err = st.MergeDuplicates(messageIDs["archive-copy"], []int64{messageIDs["sent-copy"]}, "msmail-delta-sent-evidence")
+	requirements.NoError(err)
+
+	f.rawBodies["archive-copy"] = message("")
+	f.put("archive-copy", "archive")
+	updated, err := f.sync(t, st)
+	requirements.NoError(err)
+	assertions.Equal(1, updated.Updated)
+	var liveBccRows int
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*) FROM message_recipients
+		WHERE message_id=? AND recipient_type='bcc' AND email_address='bcc@example.test'`), messageIDs["archive-copy"]).Scan(&liveBccRows))
+	assertions.Zero(liveBccRows, "the refresh must replace the live MIME recipient rows")
+
+	got, err := st.SenderRelationships(t.Context(), []string{"bcc@example.test"}, nil)
+	requirements.NoError(err)
+	assertions.Equal(store.SenderRelationshipEvidence{Relationship: "known", SeenInArchive: true}, got["bcc@example.test"],
+		"the provider-observed sent envelope must survive a real delta refresh")
 }
 
 func TestImportMoveAndDelete(t *testing.T) {

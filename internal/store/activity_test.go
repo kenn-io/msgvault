@@ -1636,6 +1636,31 @@ func TestActivityCandidateUsesLiveUnsentEvidence(t *testing.T) {
 	}
 }
 
+func TestActivityCandidateSupportsLegacySchemaWithoutMicrosoftSentEnvelopes(t *testing.T) {
+	require := require.New(t)
+	f := storetest.New(t)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(
+		`UPDATE sources SET source_type = 'msmail' WHERE id = ?`), f.Source.ID)
+	require.NoError(err)
+	messageID := f.NewMessage().WithSentAt(time.Now()).Create(t, f.Store)
+	labels, err := f.Store.EnsureLabelsBatch(f.Source.ID, map[string]store.LabelInfo{
+		"DRAFT": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+	})
+	require.NoError(err)
+	require.NoError(f.Store.AddMessageLabels(messageID, []int64{labels["DRAFT"]}))
+	require.NoError(f.Store.SetMessageMetadata(messageID, sql.NullString{
+		String: `{"msmail_sent_items_observed":true}`, Valid: true,
+	}))
+	_, err = f.Store.DB().ExecContext(t.Context(), `DROP TABLE msmail_sent_envelope_recipients`)
+	require.NoError(err)
+
+	candidates, err := f.Store.LoadQueuedActivityCandidatesContext(t.Context(), 10)
+	require.NoError(err)
+	require.Len(candidates, 1)
+	require.False(candidates[0].Unsent)
+	require.True(candidates[0].Eligible)
+}
+
 func TestActivityFlagReplayKeepsFormerDraftQueueDrained(t *testing.T) {
 	for _, tc := range []struct {
 		name     string

@@ -1079,6 +1079,38 @@ func (s *Store) ensureFromAddressIndex(ctx context.Context) error {
 	return nil
 }
 
+// ensureSenderRelationshipAddressIndex builds the address-first index used by
+// the batched historical-envelope lookup. The table can already be large, so
+// build the required SQLite index through runMaintenance instead of the
+// pool's normal statement timeout.
+func (s *Store) ensureSenderRelationshipAddressIndex(ctx context.Context) error {
+	// PostgreSQL creates the same large-table index through the concurrent
+	// index builder below; SQLite cannot create indexes concurrently.
+	if s.IsPostgreSQL() {
+		return nil
+	}
+
+	const name = "idx_message_recipients_email_address_normalized"
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?)`, name).Scan(&exists); err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	started := time.Now()
+	slog.Info("building index", slog.String("index", name), slog.String("table", "message_recipients"))
+	if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS `+name+`
+			ON message_recipients(LOWER(COALESCE(TRIM(email_address), '')), message_id)`)
+		return err
+	}); err != nil {
+		return fmt.Errorf("create sender relationship recipient index: %w", err)
+	}
+	slog.Info("built index", slog.String("index", name), slog.Duration("elapsed", time.Since(started)))
+	return nil
+}
+
 // buildLargeIndexesConcurrently creates big-table indexes without blocking
 // writers. CREATE INDEX CONCURRENTLY cannot run inside a transaction (unlike
 // the runMaintenance escape hatch, which only disables the pool-wide
@@ -1142,10 +1174,12 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 		{"idx_messages_account_pending", messagesAccountPendingIndexDefinition},
 		{rfc822CanonicalIndexName, s.dialect.RFC822CanonicalIDIndexDefinition()},
 		{"idx_participants_email_lower", "ON participants(LOWER(email_address))"},
+		{"idx_participants_email_normalized", "ON participants(LOWER(TRIM(email_address)))"},
 		{"idx_participant_identifiers_value_lower", "ON participant_identifiers(LOWER(identifier_value))"},
 		{"idx_person_match_scoring_contact_lookup", "ON participant_contact_observations(address_kind, normalized_value, participant_id) WHERE active_until IS NULL AND superseded_at IS NULL"},
 		{"idx_beeper_media_occurrences_source", "ON beeper_media_occurrences(source_type, source_identifier, source_message_id, destination_key)"},
 		{"idx_message_recipients_email_from", "ON message_recipients(LOWER(email_address), message_id) WHERE recipient_type = 'from'"},
+		{"idx_message_recipients_email_address_normalized", "ON message_recipients(LOWER(COALESCE(TRIM(email_address), '')), message_id)"},
 	}
 	for _, index := range concurrentIndexes {
 		if dropErr := dropInvalidIndexConcurrently(ctx, conn, index.name); dropErr != nil {
@@ -1914,6 +1948,16 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("ensure activity projection triggers: %w", err)
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationMicrosoftSentEnvelopeRecipients, 1, false,
+		func(ctx context.Context) error {
+			return s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+				return s.backfillMicrosoftSentEnvelopeRecipients(ctx, tx)
+			})
+		},
+	); err != nil {
+		return fmt.Errorf("backfill Microsoft Sent envelope recipients: %w", err)
+	}
 
 	if err := s.runOnceMigration(ctx, migrationMessagesHiddenTextBackfill, 1, false, s.backfillMessagesHiddenText); err != nil {
 		return fmt.Errorf("backfill messages hidden text flags: %w", err)
@@ -2084,6 +2128,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 
 		if err := s.ensureFromAddressIndex(ctx); err != nil {
 			return fmt.Errorf("create identity From-envelope index: %w", err)
+		}
+		if err := s.ensureSenderRelationshipAddressIndex(ctx); err != nil {
+			return err
 		}
 	}
 

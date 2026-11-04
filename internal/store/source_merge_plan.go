@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -130,7 +131,7 @@ func mergeMessageFingerprint(ctx context.Context, tx *loggedTx, m mergeMessage) 
 		Media                                           []string
 	}{
 		mergeFingerprintConversation(m), m.kind.String, m.subject.String, text.String, html.String,
-		m.metadata.String, m.sent.Time.UTC().Format(time.RFC3339Nano),
+		mergeFingerprintMetadata(m.metadata.String), m.sent.Time.UTC().Format(time.RFC3339Nano),
 		strings.ToLower(strings.TrimSpace(m.rfcID.String)), strings.ToLower(strings.TrimSpace(m.listID.String)),
 		m.sender.Int64, senderEvidence, recipients, media})
 	if err != nil {
@@ -138,6 +139,37 @@ func mergeMessageFingerprint(ctx context.Context, tx *loggedTx, m mergeMessage) 
 	}
 	digest := sha256.Sum256(payload)
 	return hex.EncodeToString(digest[:]), nil
+}
+
+func mergeFingerprintMetadata(metadata string) string {
+	if strings.TrimSpace(metadata) == "" {
+		return ""
+	}
+	var values map[string]jsontext.Value
+	if err := json.Unmarshal([]byte(metadata), &values); err != nil || values == nil {
+		return metadata
+	}
+	for _, key := range []string{
+		microsoftSentEvidenceKey,
+		microsoftSentEnvelopeObservedKey,
+		providerSentEnvelopeObservedKey,
+	} {
+		delete(values, key)
+	}
+	if len(values) == 0 {
+		return ""
+	}
+	for key, value := range values {
+		if err := value.Canonicalize(jsontext.CanonicalizeRawInts(false)); err != nil {
+			return metadata
+		}
+		values[key] = value
+	}
+	encoded, err := json.Marshal(values, json.Deterministic(true))
+	if err != nil {
+		return metadata
+	}
+	return string(encoded)
 }
 
 func mergeMessageContentMissingFromSurvivor(

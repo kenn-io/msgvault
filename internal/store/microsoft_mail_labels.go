@@ -11,6 +11,59 @@ import (
 
 const microsoftCategoryPrefix = "msmail-category:"
 
+const microsoftSentEvidenceKey = "msmail_sent_items_observed"
+
+// MicrosoftSentItemsObservedBatchContext reports messages whose Sent Items
+// provenance is already recorded. Importers use this before moving a known
+// message into Sent so they can refresh its MIME before capturing the first
+// envelope snapshot.
+func (s *Store) MicrosoftSentItemsObservedBatchContext(ctx context.Context, messageIDs []int64) (map[int64]bool, error) {
+	observed := make(map[int64]bool, len(messageIDs))
+	for _, id := range messageIDs {
+		observed[id] = false
+	}
+	for start := 0; start < len(messageIDs); start += 500 {
+		end := min(start+500, len(messageIDs))
+		batch := messageIDs[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		microsoftSent := `COALESCE(CASE WHEN json_valid(m.metadata)
+			THEN json_extract(m.metadata, '$.msmail_sent_items_observed') END=1, FALSE)`
+		if s.IsPostgreSQL() {
+			microsoftSent = `COALESCE(m.metadata ->> 'msmail_sent_items_observed'='true', FALSE)`
+		}
+		query := `SELECT m.id, CASE WHEN ` + microsoftSent + ` OR EXISTS (
+			SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id
+		) OR EXISTS (
+			SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
+			WHERE ml.message_id=m.id AND l.source_id=m.source_id AND l.system_role=?
+		) THEN 1 ELSE 0 END
+		FROM messages m JOIN sources src ON src.id=m.source_id
+		WHERE src.source_type='msmail' AND m.id IN (` + placeholders + `)`
+		args := make([]any, 0, len(batch)+1)
+		args = append(args, LabelSystemRoleSent)
+		for _, id := range batch {
+			args = append(args, id)
+		}
+		rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(query), args...)
+		if err != nil {
+			return nil, fmt.Errorf("read Microsoft Sent Items provenance: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var hasEvidence int
+			if err := rows.Scan(&id, &hasEvidence); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("scan Microsoft Sent Items provenance: %w", err)
+			}
+			observed[id] = hasEvidence != 0
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return nil, fmt.Errorf("iterate Microsoft Sent Items provenance: %w", err)
+		}
+	}
+	return observed, nil
+}
+
 // EnsureMicrosoftMailFoldersContext updates folder labels. A category label
 // holding a folder's display name moves to a distinct name so the two never merge.
 func (s *Store) EnsureMicrosoftMailFoldersContext(ctx context.Context, sourceID int64, labels map[string]LabelInfo) (map[string]int64, error) {
@@ -98,17 +151,22 @@ func (s *Store) ReconcileMicrosoftMailLabelsContext(ctx context.Context, message
 
 func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx, sourceID, messageID int64, folderID *int64, categories *[]string) (bool, error) {
 	q := boundQuerier{ctx: ctx, q: tx}
+	sentObserved := false
 	if folderID != nil {
 		var source int64
 		var providerID sql.NullString
-		if err := q.QueryRow(`SELECT source_id,source_label_id FROM labels WHERE id=?`, *folderID).Scan(&source, &providerID); err != nil {
+		var systemRole sql.NullString
+		if err := q.QueryRow(`SELECT source_id,source_label_id,system_role FROM labels WHERE id=?`, *folderID).Scan(&source, &providerID, &systemRole); err != nil {
 			return false, fmt.Errorf("resolve Microsoft folder label: %w", err)
 		}
 		if source != sourceID || providerID.String == "" || strings.HasPrefix(providerID.String, microsoftCategoryPrefix) {
 			return false, errors.New("microsoft folder label does not belong to the message source")
 		}
+		if systemRole.String == LabelSystemRoleSent {
+			sentObserved = true
+		}
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT l.id,l.source_id,l.source_label_id
+	rows, err := tx.QueryContext(ctx, `SELECT l.id,l.source_id,l.source_label_id,l.system_role
  FROM message_labels ml JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=?`, messageID)
 	if err != nil {
 		return false, fmt.Errorf("read Microsoft message labels: %w", err)
@@ -119,7 +177,8 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		var id int64
 		var source sql.NullInt64
 		var providerID sql.NullString
-		if err := rows.Scan(&id, &source, &providerID); err != nil {
+		var systemRole sql.NullString
+		if err := rows.Scan(&id, &source, &providerID, &systemRole); err != nil {
 			_ = rows.Close()
 			return false, err
 		}
@@ -127,6 +186,9 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		nativeFolder := source.Valid && source.Int64 == sourceID && providerID.String != "" && !category
 		if nativeFolder {
 			folders = append(folders, id)
+			if systemRole.String == LabelSystemRoleSent {
+				sentObserved = true
+			}
 		}
 		if (category && categories != nil) || (nativeFolder && folderID != nil) {
 			continue
@@ -203,6 +265,11 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 			}
 		}
 	}
+	if sentObserved {
+		if err := persistMicrosoftSentEvidence(q, s.dialect, messageID); err != nil {
+			return false, err
+		}
+	}
 	changed, err := s.reconcileMessageLabelsTxContext(ctx, tx, messageID, desired, true)
 	if err != nil {
 		return false, err
@@ -213,4 +280,117 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 		}
 	}
 	return folderChanged, nil
+}
+
+func persistMicrosoftSentEvidence(q boundQuerier, dialect Dialect, messageID int64) error {
+	if err := persistMicrosoftSentEnvelopeRecipients(q, dialect, messageID, messageID); err != nil {
+		return fmt.Errorf("save Microsoft Sent Items envelope: %w", err)
+	}
+	return persistMicrosoftSentEvidenceMetadata(q, dialect, messageID)
+}
+
+func persistMicrosoftSentEnvelopeRecipients(q boundQuerier, dialect Dialect, targetID, sentMessageID int64) error {
+	var sourceHasSnapshot bool
+	if err := q.QueryRow(`SELECT `+microsoftSentEnvelopeSnapshotExistsSQL(dialect, "m")+
+		` FROM messages m WHERE m.id=?`, sentMessageID).Scan(&sourceHasSnapshot); err != nil {
+		return fmt.Errorf("check Microsoft Sent Items snapshot: %w", err)
+	}
+	if sourceHasSnapshot {
+		insert := dialect.InsertOrIgnore(`INSERT OR IGNORE INTO msmail_sent_envelope_recipients
+			(message_id, email_address)
+			SELECT ?, email_address
+			FROM msmail_sent_envelope_recipients
+			WHERE message_id=?`)
+		if _, err := q.Exec(insert, targetID, sentMessageID); err != nil {
+			return fmt.Errorf("copy Microsoft Sent Items snapshot: %w", err)
+		}
+		return nil
+	}
+	insert := dialect.InsertOrIgnore(`INSERT OR IGNORE INTO msmail_sent_envelope_recipients
+		(message_id, email_address)
+		SELECT ?, LOWER(COALESCE(TRIM(email_address), ''))
+		FROM message_recipients
+		WHERE message_id=? AND recipient_type IN ('to','cc','bcc')
+		  AND LOWER(COALESCE(TRIM(email_address), ''))<>''`)
+	if _, err := q.Exec(insert, targetID, sentMessageID); err != nil {
+		return fmt.Errorf("copy Microsoft Sent Items recipients: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, survivorID, duplicateID int64) error {
+	sentObserved := func(message, source string) string {
+		original := `COALESCE(NULLIF((SELECT p.original_source_message_id
+		FROM source_merge_archive_only_messages p WHERE p.message_id=` + message + `.id), ''), ` + message + `.source_message_id)`
+		email := `COALESCE(NULLIF(` + message + `.message_type,''),'email')='email'`
+		rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
+		nativeSent := `(` + source + `.source_type='msmail' AND (` + metadataFlagSQL(s.dialect, message, microsoftSentEvidenceKey) + ` OR EXISTS (
+			SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
+			WHERE ml.message_id=` + message + `.id AND l.source_id=` + message + `.source_id
+			  AND l.system_role='` + LabelSystemRoleSent + `')) AND NOT ` + rawImported + `)`
+		return `(` + microsoftSentEnvelopeSnapshotExistsSQL(s.dialect, message) + ` OR ` + nativeSent + `)`
+	}
+	var observed, survivorObserved bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM messages duplicate
+		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
+		JOIN messages survivor ON survivor.id=?
+		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
+		WHERE duplicate.id=? AND survivor_source.source_type IN ('gmail','imap','msmail')
+		  AND `+sentObserved("duplicate", "duplicate_source")+`
+	), EXISTS (
+		SELECT 1 FROM messages duplicate
+		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
+		JOIN messages survivor ON survivor.id=?
+		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
+		WHERE duplicate.id=? AND survivor_source.source_type IN ('gmail','imap','msmail')
+		  AND `+sentObserved("survivor", "survivor_source")+`
+	)`, survivorID, duplicateID, survivorID, duplicateID).
+		Scan(&observed, &survivorObserved)
+	if err != nil {
+		return fmt.Errorf("check duplicate Microsoft Sent Items provenance: %w", err)
+	}
+	if !observed && !survivorObserved {
+		return nil
+	}
+	q := boundQuerier{ctx: ctx, q: tx}
+	if survivorObserved {
+		if err := persistMicrosoftSentEnvelopeRecipients(q, s.dialect, survivorID, survivorID); err != nil {
+			return fmt.Errorf("preserve survivor Microsoft Sent Items envelope: %w", err)
+		}
+	}
+	if observed {
+		if err := persistMicrosoftSentEnvelopeRecipients(q, s.dialect, survivorID, duplicateID); err != nil {
+			return fmt.Errorf("preserve duplicate Microsoft Sent Items envelope: %w", err)
+		}
+	}
+	if err := persistMicrosoftSentEvidenceMetadata(q, s.dialect, survivorID); err != nil {
+		return fmt.Errorf("preserve duplicate Microsoft Sent Items provenance: %w", err)
+	}
+	if observed {
+		transferRecipientsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_recipients
+			(message_id, participant_id, recipient_type, display_name, email_address)
+			SELECT ?, mr.participant_id, mr.recipient_type, mr.display_name, mr.email_address
+			FROM message_recipients mr
+			WHERE mr.message_id=? AND mr.recipient_type IN ('to','cc','bcc')
+			  AND LOWER(COALESCE(TRIM(mr.email_address), ''))<>''
+			  AND EXISTS (
+				SELECT 1 FROM msmail_sent_envelope_recipients sent
+				WHERE sent.message_id=?
+				  AND sent.email_address=LOWER(COALESCE(TRIM(mr.email_address), '')))`)
+		if _, err := tx.ExecContext(ctx, transferRecipientsSQL, survivorID, duplicateID, duplicateID); err != nil {
+			return fmt.Errorf("preserve duplicate Microsoft Sent Items recipients: %w", err)
+		}
+	}
+	return nil
+}
+
+func persistMicrosoftSentEvidenceMetadata(q boundQuerier, dialect Dialect, messageID int64) error {
+	if err := persistMessageMetadataFlag(q, dialect, messageID, microsoftSentEvidenceKey); err != nil {
+		return fmt.Errorf("save Microsoft Sent Items provenance: %w", err)
+	}
+	if err := persistMessageMetadataFlag(q, dialect, messageID, microsoftSentEnvelopeObservedKey); err != nil {
+		return fmt.Errorf("save Microsoft Sent Items envelope snapshot marker: %w", err)
+	}
+	return nil
 }

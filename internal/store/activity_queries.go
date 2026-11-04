@@ -111,15 +111,24 @@ const activityCandidateStateCTE = `
 		)
 	)`
 
-// activityUnsentSQL keeps sent copies eligible even when dedup retained draft
-// evidence. Saved IMAP Sent origin survives moves out of Sent.
+// activityUnsentSQL keeps confirmed sent copies eligible even when dedup
+// retained draft evidence, including saved provider sent-envelope evidence.
 func (s *Store) activityUnsentSQL() string {
 	return activityUnsentInSchemaSQL(s.dialect, "")
 }
 
 func activityUnsentInSchemaSQL(dialect Dialect, schema string) string {
+	transferredSent := activityTransferredSentSQL(dialect, "m", "src")
 	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceInSchemaSQL(schema, "m", "src") + `
+		AND NOT ` + transferredSent + `
 		AND NOT ` + sentConfirmedSQL(dialect, schema, "m", "src") + `))`
+}
+
+func activityTransferredSentSQL(dialect Dialect, message, source string) string {
+	microsoftSent := metadataFlagSQL(dialect, message, microsoftSentEvidenceKey)
+	providerSent := metadataFlagSQL(dialect, message, providerSentEnvelopeObservedKey)
+	return `(` + source + `.source_type IN ('gmail','imap','msmail') AND (` +
+		microsoftSent + ` OR ` + providerSent + `))`
 }
 
 // sentConfirmedSQL is true when message m has saved IMAP Sent origin or a Sent
@@ -457,10 +466,19 @@ func (s *Store) attachActivityCounterpartsQueryerContext(
 		byMessageID[candidates[index].MessageID] = &candidates[index]
 		messageIDs = append(messageIDs, candidates[index].MessageID)
 	}
+	hasMicrosoftSentEnvelopes, err := s.tableExistsContext(ctx, "msmail_sent_envelope_recipients")
+	if err != nil {
+		return nil, fmt.Errorf("check Microsoft Sent envelope table: %w", err)
+	}
+	hasProviderSentEnvelopes, err := s.tableExistsContext(ctx, "provider_sent_envelope_recipients")
+	if err != nil {
+		return nil, fmt.Errorf("check provider Sent envelope table: %w", err)
+	}
 	for start := 0; start < len(messageIDs); start += activityCounterpartIDChunk {
 		end := min(start+activityCounterpartIDChunk, len(messageIDs))
 		if err := s.attachActivityCounterpartChunkContext(
 			ctx, queryer, byMessageID, messageIDs[start:end],
+			hasMicrosoftSentEnvelopes, hasProviderSentEnvelopes,
 		); err != nil {
 			return nil, err
 		}
@@ -473,15 +491,76 @@ func (s *Store) attachActivityCounterpartChunkContext(
 	queryer contextRowsQuerier,
 	byMessageID map[int64]*ActivityCandidate,
 	messageIDs []any,
+	hasMicrosoftSentEnvelopes,
+	hasProviderSentEnvelopes bool,
 ) error {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messageIDs)), ",")
+	sentSnapshotExists := activitySentSnapshotExistsSQL(
+		s.dialect, "m", hasMicrosoftSentEnvelopes, hasProviderSentEnvelopes,
+	)
+	var snapshotAddressSources []string
+	if hasMicrosoftSentEnvelopes {
+		snapshotAddressSources = append(snapshotAddressSources, `
+			SELECT sent.message_id, LOWER(TRIM(sent.email_address)) AS envelope_address
+			FROM msmail_sent_envelope_recipients sent
+			JOIN sent_snapshot_messages snapshot ON snapshot.message_id = sent.message_id`)
+	}
+	if hasProviderSentEnvelopes {
+		snapshotAddressSources = append(snapshotAddressSources, `
+			SELECT sent.message_id, LOWER(TRIM(sent.email_address)) AS envelope_address
+			FROM provider_sent_envelope_recipients sent
+			JOIN sent_snapshot_messages snapshot ON snapshot.message_id = sent.message_id`)
+	}
+	snapshotAddressQuery := strings.Join(snapshotAddressSources, "\n\t\t\tUNION\n")
+	if snapshotAddressQuery == "" {
+		snapshotAddressQuery = `SELECT snapshot.message_id, '' AS envelope_address
+			FROM sent_snapshot_messages snapshot WHERE 1 = 0`
+	}
 
 	query := `
-		WITH direct AS (
+		WITH sent_snapshot_messages AS (
+			SELECT m.id AS message_id
+			FROM messages m
+			JOIN sources src ON src.id = m.source_id
+			WHERE m.id IN (` + placeholders + `)
+			  AND src.source_type IN ('gmail', 'imap', 'msmail')
+			  AND ` + draftEvidenceInSchemaSQL("", "m", "src") + `
+			  AND ` + activityTransferredSentSQL(s.dialect, "m", "src") + `
+			  AND ` + sentSnapshotExists + `
+		),
+		sent_snapshot_addresses AS (
+			SELECT saved.message_id, saved.envelope_address
+			FROM (` + snapshotAddressQuery + `) saved
+			WHERE saved.envelope_address <> ''
+		),
+		sent_snapshot_recipients AS (
+			SELECT
+				saved.message_id,
+				COALESCE(
+					(SELECT MIN(pi.participant_id) FROM participant_identifiers pi
+					 WHERE pi.identifier_type = 'email'
+					   AND pi.identifier_value = saved.envelope_address),
+					(SELECT MIN(p.id) FROM participants p
+					 WHERE LOWER(TRIM(p.email_address)) = saved.envelope_address)
+				) AS participant_id,
+				'to' AS recipient_type,
+				saved.envelope_address
+			FROM sent_snapshot_addresses saved
+		),
+		direct AS (
 			SELECT mr.message_id, mr.participant_id, mr.recipient_type,
 			       mr.email_address AS envelope_address
 			FROM message_recipients mr
 			WHERE mr.message_id IN (` + placeholders + `)
+			  AND (mr.recipient_type NOT IN ('to', 'cc', 'bcc') OR NOT EXISTS (
+				SELECT 1 FROM sent_snapshot_messages snapshot
+				WHERE snapshot.message_id = mr.message_id
+			  ))
+			UNION ALL
+			SELECT saved.message_id, saved.participant_id, saved.recipient_type,
+			       saved.envelope_address
+			FROM sent_snapshot_recipients saved
+			WHERE saved.participant_id IS NOT NULL
 		),
 		from_envelopes AS (
 			SELECT message_id
@@ -520,15 +599,14 @@ func (s *Store) attachActivityCounterpartChunkContext(
 				m.source_id,
 				m.source_is_from_me,
 				m.sender_id,
-				mr.email_address AS envelope_address,
+				mr.envelope_address,
 				p.email_address AS participant_email,
 				CASE WHEN fe.message_id IS NULL THEN 0 ELSE 1 END
 					AS from_envelope_present
-			FROM message_recipients mr
+			FROM direct mr
 			JOIN messages m ON m.id = mr.message_id
 			JOIN participants p ON p.id = mr.participant_id
 			LEFT JOIN from_envelopes fe ON fe.message_id = mr.message_id
-			WHERE mr.message_id IN (` + placeholders + `)
 			UNION ALL
 			SELECT
 				m.id AS message_id,
@@ -549,6 +627,10 @@ func (s *Store) attachActivityCounterpartChunkContext(
 				SELECT 1 FROM direct d
 				WHERE d.message_id = m.id
 				  AND d.recipient_type IN ('to', 'cc', 'bcc')
+			  )
+			  AND NOT EXISTS (
+				SELECT 1 FROM sent_snapshot_messages snapshot
+				WHERE snapshot.message_id = m.id
 			  )
 			UNION ALL
 			SELECT
@@ -677,4 +759,23 @@ func (s *Store) attachActivityCounterpartChunkContext(
 		return fmt.Errorf("iterate activity counterparts: %w", err)
 	}
 	return nil
+}
+
+func activitySentSnapshotExistsSQL(
+	dialect Dialect,
+	message string,
+	hasMicrosoftSentEnvelopes,
+	hasProviderSentEnvelopes bool,
+) string {
+	var snapshots []string
+	if hasMicrosoftSentEnvelopes {
+		snapshots = append(snapshots, microsoftSentEnvelopeSnapshotExistsSQL(dialect, message))
+	}
+	if hasProviderSentEnvelopes {
+		snapshots = append(snapshots, providerSentEnvelopeSnapshotExistsSQL(dialect, message))
+	}
+	if len(snapshots) == 0 {
+		return "FALSE"
+	}
+	return "(" + strings.Join(snapshots, " OR ") + ")"
 }

@@ -1451,6 +1451,29 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- constraint dropped first.
 );
 
+-- Microsoft Sent Items envelope snapshots survive later MIME refreshes and
+-- same-source duplicate merges. These exact addresses are independent of the
+-- replaceable live recipient rows above.
+CREATE TABLE IF NOT EXISTS msmail_sent_envelope_recipients (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    email_address TEXT NOT NULL,
+    PRIMARY KEY(message_id, email_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_msmail_sent_envelope_address
+    ON msmail_sent_envelope_recipients(email_address, message_id);
+
+-- Exact Gmail and IMAP Sent-copy envelope evidence survives duplicate and
+-- source merges when a retained message has a different live recipient set.
+CREATE TABLE IF NOT EXISTS provider_sent_envelope_recipients (
+    message_id BIGINT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    email_address TEXT NOT NULL,
+    PRIMARY KEY(message_id, email_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_sent_envelope_address
+    ON provider_sent_envelope_recipients(email_address, message_id);
+
 -- ============================================================================
 -- REACTIONS
 -- ============================================================================
@@ -3898,6 +3921,8 @@ CREATE INDEX IF NOT EXISTS idx_participants_canonical ON participants(canonical_
 -- idx_participants_email_lower is built by Store.buildLargeIndexesConcurrently:
 -- participants can be large on an existing archive, and an inline build here
 -- would run under the pool-wide statement_timeout.
+-- idx_participants_email_normalized is built the same way for trimmed-address
+-- history probes.
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_value ON participant_identifiers(identifier_value);
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_participant ON participant_identifiers(participant_id);
 -- idx_participant_identifiers_value_lower is likewise built by

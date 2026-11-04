@@ -1552,6 +1552,29 @@ CREATE TABLE IF NOT EXISTS message_recipients (
     -- rebuilt away first.
 );
 
+-- Microsoft Sent Items envelope snapshots survive later MIME refreshes and
+-- same-source duplicate merges. These exact addresses are independent of the
+-- replaceable live recipient rows above.
+CREATE TABLE IF NOT EXISTS msmail_sent_envelope_recipients (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    email_address TEXT NOT NULL,
+    PRIMARY KEY(message_id, email_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_msmail_sent_envelope_address
+    ON msmail_sent_envelope_recipients(email_address, message_id);
+
+-- Exact Gmail and IMAP Sent-copy envelope evidence survives duplicate and
+-- source merges when a retained message has a different live recipient set.
+CREATE TABLE IF NOT EXISTS provider_sent_envelope_recipients (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    email_address TEXT NOT NULL,
+    PRIMARY KEY(message_id, email_address)
+);
+
+CREATE INDEX IF NOT EXISTS idx_provider_sent_envelope_address
+    ON provider_sent_envelope_recipients(email_address, message_id);
+
 -- ============================================================================
 -- REACTIONS & INTERACTIONS
 -- ============================================================================
@@ -2301,6 +2324,7 @@ CREATE INDEX IF NOT EXISTS idx_participants_canonical ON participants(canonical_
 -- Serves case-insensitive address lookups (e.g. identity confirmation's
 -- participant resolution) without a full table scan.
 CREATE INDEX IF NOT EXISTS idx_participants_email_lower ON participants(LOWER(email_address));
+CREATE INDEX IF NOT EXISTS idx_participants_email_normalized ON participants(LOWER(TRIM(email_address)));
 
 -- Participant identifiers
 CREATE INDEX IF NOT EXISTS idx_participant_identifiers_value ON participant_identifiers(identifier_value);

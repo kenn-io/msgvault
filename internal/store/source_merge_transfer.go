@@ -10,6 +10,17 @@ import (
 )
 
 func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, into int64, plan sourceMergePlan) error {
+	for _, m := range plan.messages {
+		if m.survivor == 0 {
+			continue
+		}
+		if err := s.mergeProviderSentEnvelopeEvidenceTx(ctx, tx, m.survivor, m.id); err != nil {
+			return fmt.Errorf("preserve provider Sent envelope from merged message %d: %w", m.id, err)
+		}
+		if err := s.mergeMicrosoftSentEvidenceTx(ctx, tx, m.survivor, m.id); err != nil {
+			return fmt.Errorf("preserve Microsoft Sent envelope from merged message %d: %w", m.id, err)
+		}
+	}
 	if err := preserveMergedIMAPDrafts(ctx, tx, from, into); err != nil {
 		return fmt.Errorf("preserve merged IMAP draft evidence: %w", err)
 	}
@@ -159,7 +170,7 @@ func (s *Store) applySourceMergePlan(ctx context.Context, tx *loggedTx, from, in
 		if m.survivor == 0 {
 			continue
 		}
-		if err := copyMergedMessageEvidence(ctx, tx, m.id, m.survivor, from); err != nil {
+		if err := s.copyMergedMessageEvidence(ctx, tx, m.id, m.survivor, from); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE messages SET reply_to_message_id = ? WHERE reply_to_message_id = ?`, m.survivor, m.id); err != nil {
@@ -308,14 +319,38 @@ const missingMergedAttachmentPredicate = `(
  AND COALESCE(h.content_id, '') = COALESCE(a.content_id, '')
 ) OR COALESCE(a.content_hash, '') = ''`
 
-func copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, originalSource int64) error {
+func (s *Store) copyMergedMessageEvidence(ctx context.Context, tx *loggedTx, from, into, originalSource int64) error {
+	untrustedRawSent := s.untrustedRawImportedSentSQL("source_message", "source_owner")
+	sentLabel := `COALESCE((` + sentFolderLabelSQL("source_label_def") + ` OR ` +
+		sentGmailLabelSQL("source_label_def", "source_owner") + `), FALSE)`
+	labelSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_labels(message_id, label_id)
+		SELECT ?, source_label.label_id
+		FROM message_labels source_label
+		JOIN labels source_label_def ON source_label_def.id=source_label.label_id
+		JOIN messages source_message ON source_message.id=source_label.message_id
+		JOIN sources source_owner ON source_owner.id=source_message.source_id
+		WHERE source_label.message_id=?
+		  AND NOT (` + untrustedRawSent + ` AND ` + sentLabel + `)`)
 	for _, statement := range []string{
-		`INSERT INTO message_labels(message_id, label_id) SELECT ?, label_id FROM message_labels WHERE message_id = ? ON CONFLICT (message_id, label_id) DO NOTHING`,
+		labelSQL,
 		`INSERT INTO message_recipients(message_id, participant_id, recipient_type, display_name, email_address) SELECT ?, participant_id, recipient_type, display_name, email_address FROM message_recipients WHERE message_id = ? ON CONFLICT DO NOTHING`,
+		`INSERT INTO msmail_sent_envelope_recipients(message_id, email_address) SELECT ?, email_address FROM msmail_sent_envelope_recipients WHERE message_id = ? ON CONFLICT DO NOTHING`,
 		`INSERT INTO reactions(message_id, participant_id, reaction_type, reaction_value, created_at, removed_at) SELECT ?, participant_id, reaction_type, reaction_value, created_at, removed_at FROM reactions WHERE message_id = ? ON CONFLICT (message_id, participant_id, reaction_type, reaction_value) DO NOTHING`,
 	} {
 		if _, err := tx.ExecContext(ctx, statement, into, from); err != nil {
 			return err
+		}
+	}
+	var hasSentEnvelope bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (
+		SELECT 1 FROM msmail_sent_envelope_recipients WHERE message_id=?
+	)`, into).Scan(&hasSentEnvelope); err != nil {
+		return fmt.Errorf("check merged Microsoft Sent envelope: %w", err)
+	}
+	if hasSentEnvelope {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := persistMicrosoftSentEvidenceMetadata(q, s.dialect, into); err != nil {
+			return fmt.Errorf("preserve merged Microsoft Sent provenance: %w", err)
 		}
 	}
 	const attachmentColumns = `filename, mime_type, size, content_hash, storage_path, media_type, width, height, duration_ms,

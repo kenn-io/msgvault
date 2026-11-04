@@ -19,6 +19,7 @@ var concurrentlyBuiltIndexes = []struct{ index, table string }{
 	{"idx_messages_account", "messages"},
 	{"idx_messages_account_pending", "messages"},
 	{"idx_participants_email_lower", "participants"},
+	{"idx_participants_email_normalized", "participants"},
 	{"idx_participant_identifiers_value_lower", "participant_identifiers"},
 	{"idx_person_match_scoring_contact_lookup", "participant_contact_observations"},
 	{"idx_beeper_media_occurrences_source", "beeper_media_occurrences"},
