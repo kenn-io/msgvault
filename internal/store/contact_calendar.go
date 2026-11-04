@@ -201,14 +201,16 @@ func (s *Store) calendarAttendedIdentityMap(ctx context.Context) ([]calendarAtte
 	defer func() { _ = rows.Close() }()
 	identities := []calendarAttendedIdentity{}
 	more := false
+	fetched := 0
 	for rows.Next() {
+		if fetched == calendarAttendedCandidateBudget {
+			more = true
+			break
+		}
+		fetched++
 		var kind, value string
 		if err := rows.Scan(&kind, &value); err != nil {
 			return nil, false, fmt.Errorf("scan calendar attendance identity: %w", err)
-		}
-		if len(identities) == calendarAttendedCandidateBudget {
-			more = true
-			break
 		}
 		identity := calendarAttendedIdentity{kind: kind, value: value}
 		switch kind {
