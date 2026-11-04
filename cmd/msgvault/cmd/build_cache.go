@@ -1379,7 +1379,22 @@ func buildCacheLockedAttempt(
 		return nil, fmt.Errorf("inspect recipient envelope schema: %w", err)
 	}
 	sourceSnapshot.hasRecipientEnvelope = recipientEnvelopeColumnCount > 0
-	if err := sourceSnapshot.Prepare(maxID); err != nil {
+	publicationPlan := cachePublishPlanForMode(replaceAll)
+	for dataset, changed := range relatedKinds.datasets() {
+		if changed {
+			delete(publicationPlan.Append, dataset)
+			publicationPlan.Replace[dataset] = true
+		}
+	}
+	afterMessageIDs := make(map[string]int64)
+	for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments, tableLabels} {
+		if publicationPlan.Append[dataset] {
+			afterMessageIDs[dataset] = lastMessageID
+		} else {
+			afterMessageIDs[dataset] = 0
+		}
+	}
+	if err := sourceSnapshot.Prepare(maxID, afterMessageIDs); err != nil {
 		return nil, err
 	}
 
@@ -1436,21 +1451,6 @@ func buildCacheLockedAttempt(
 	// Export each table separately - this is MUCH faster than joining during export
 	// because DuckDB can use SQLite indexes efficiently for simple queries
 
-	publicationPlan := cachePublishPlanForMode(replaceAll)
-	for dataset, changed := range relatedKinds.datasets() {
-		if changed {
-			delete(publicationPlan.Append, dataset)
-			publicationPlan.Replace[dataset] = true
-		}
-	}
-	afterMessageIDs := make(map[string]int64)
-	for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments, tableLabels} {
-		if publicationPlan.Append[dataset] {
-			afterMessageIDs[dataset] = lastMessageID
-		} else {
-			afterMessageIDs[dataset] = 0
-		}
-	}
 	if err := exportRelatedDatasets(context.Background(), exportDB, sourceSnapshot,
 		maxID, staging.root, afterMessageIDs); err != nil {
 		return nil, err
@@ -2023,10 +2023,10 @@ func (s *cacheSourceSnapshot) identityPresenceSQL(emailRef, presenceRef string) 
 }
 
 // Prepare materializes the CSV fallback after metadata has pinned the SQLite
-// read transaction. sqlite_scanner needs no preparation because DuckDB's
-// transaction reads the attached database directly.
-func (s *cacheSourceSnapshot) Prepare(through int64) error {
-	return s.prepareTables(s.tables(through))
+// read transaction. Child tables carry only rows the build reads.
+// sqlite_scanner reads the attached database directly.
+func (s *cacheSourceSnapshot) Prepare(through int64, afterMessageIDs map[string]int64) error {
+	return s.prepareTables(s.tables(through, afterMessageIDs))
 }
 
 // PrepareDatasets materializes only the named SQLite tables on the CSV
@@ -2038,7 +2038,7 @@ func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) er
 		wanted[name] = true
 	}
 	var selected []cacheSnapshotTable
-	for _, table := range s.tables(through) {
+	for _, table := range s.tables(through, nil) {
 		if wanted[table.name] {
 			selected = append(selected, table)
 			delete(wanted, table.name)
@@ -2055,7 +2055,14 @@ func (s *cacheSourceSnapshot) PrepareDatasets(through int64, names ...string) er
 	return s.prepareTables(selected)
 }
 
-func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
+func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]int64) []cacheSnapshotTable {
+	childFilter := func(dataset string) string {
+		if afterMessageIDs[dataset] <= 0 {
+			return ""
+		}
+		return fmt.Sprintf(" WHERE message_id IN (SELECT m.id FROM messages m WHERE %s AND m.id > %d AND m.id <= %d)",
+			exportableMessageWhere("m"), afterMessageIDs[dataset], through)
+	}
 	attachmentMIMEColumn := "'' AS mime_type"
 	if s.hasAttachmentMIME {
 		attachmentMIMEColumn = "mime_type"
@@ -2105,12 +2112,12 @@ func (s *cacheSourceSnapshot) tables(through int64) []cacheSnapshotTable {
 		// CSV view that lacks the column and the export fails on Windows.
 		{tableMessages, "SELECT " + messageColumns + " FROM messages WHERE sent_at IS NOT NULL", messageTypes, identityColumns("source_message_id", "rfc822_message_id", "list_id")},
 		{"source_merge_archive_only_messages", "SELECT message_id FROM source_merge_archive_only_messages", "types={'message_id': 'BIGINT'}", nil},
-		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients",
+		{"message_recipients", "SELECT message_id, participant_id, recipient_type, display_name, " + recipientEnvelopeColumn + ", " + recipientEnvelopePresence + " FROM message_recipients" + childFilter("message_recipients"),
 			"types={'message_id': 'BIGINT', 'participant_id': 'BIGINT', 'recipient_type': 'VARCHAR', 'display_name': 'VARCHAR', 'email_address': 'VARCHAR', 'envelope_present': 'BOOLEAN'}",
 			identityColumns("recipient_type", "email_address")},
-		{"message_labels", "SELECT message_id, label_id FROM message_labels",
+		{"message_labels", "SELECT message_id, label_id FROM message_labels" + childFilter("message_labels"),
 			"types={'message_id': 'BIGINT', 'label_id': 'BIGINT'}", nil},
-		{tableAttachments, attachmentQuery,
+		{tableAttachments, attachmentQuery + childFilter(tableAttachments),
 			"types={'id': 'BIGINT', 'message_id': 'BIGINT', 'size': 'BIGINT', 'filename': 'VARCHAR', 'mime_type': 'VARCHAR', 'attachment_metadata': 'VARCHAR'}", nil},
 		{"persons", "SELECT id, display_name FROM persons", "types={'id': 'BIGINT', 'display_name': 'VARCHAR'}", nil},
 		{"person_participants", "SELECT person_id, participant_id FROM person_participants", "types={'person_id': 'BIGINT', 'participant_id': 'BIGINT'}", nil},
