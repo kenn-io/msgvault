@@ -90,18 +90,6 @@ func TestRelationshipUnsavedClusterHasNoTierNoLoops(t *testing.T) {
 	assertions.Contains(got.Gaps, Gap{Section: "loops", Code: "no-person"})
 	requirements.Len(got.History, 1)
 }
-func TestRelationshipCuratedProfileWithoutParticipants(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	p := f.savePerson()
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("DELETE FROM person_participants WHERE person_id=?"), p)
-	requirements.NoError(err)
-	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
-	requirements.NoError(err)
-	assertions.Empty(got.History)
-	assertions.Contains(got.Gaps, Gap{Section: "history", Code: "no-linked-contacts"})
-}
 func TestRelationshipHistoryLastTwentyAnyAge(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

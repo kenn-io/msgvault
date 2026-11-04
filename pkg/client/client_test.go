@@ -1640,3 +1640,26 @@ func TestGeneratedTimelinePreservesNullableNumbers(t *testing.T) {
 		})
 	}
 }
+
+func TestGeneratedTimelineMarkdownKeepsTheRawResponseBody(t *testing.T) {
+	requirements := require.New(t)
+	const body = "# Timeline\n\n- Planning\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/v1/timeline", r.URL.Path)
+		assert.Equal(t, "markdown", r.URL.Query().Get("format"))
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		_, err := w.Write([]byte(body))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	requirements.NoError(err)
+	format := "markdown"
+	response, err := client.GetTimelineWithResponse(t.Context(), &generated.GetTimelineRequestOptions{
+		Query: &generated.GetTimelineQuery{Format: &format},
+	})
+	requirements.NoError(err)
+	requirements.NotNil(response)
+	assert.Nil(t, response.JSON200)
+	assert.Equal(t, body, string(response.Body))
+}

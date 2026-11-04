@@ -70,7 +70,7 @@ func TestListCalendarOccurrences(t *testing.T) {
 func TestCalendarOccurrenceAliasUsesLatestProviderUpdate(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, _ = calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`)
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`)
 	alias := func(updated, start, end string) string {
 		return fmt.Sprintf(`{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q},"updated":%q}`, start, end, updated)
 	}
@@ -86,6 +86,11 @@ func TestCalendarOccurrenceAliasUsesLatestProviderUpdate(t *testing.T) {
 	assertions.Equal(first, page.Occurrences[0].MessageID)
 	assertions.Equal("2027-03-14T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
 	assertions.Equal("2027-03-14T15:00:00Z", page.Occurrences[0].End.Format(time.RFC3339))
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@20270314T100000Z", master))
+	requirements.NoError(err)
+	assertions.Equal(first, detail.MessageID)
+	assertions.Equal("2027-03-14T14:00:00Z", detail.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-14T15:00:00Z", detail.End.Format(time.RFC3339))
 }
 
 func TestCalendarOccurrenceWindowIgnoresStaleAliasWhenLatestMovedOut(t *testing.T) {

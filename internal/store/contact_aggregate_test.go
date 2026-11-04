@@ -107,6 +107,35 @@ func TestAttendedTranscriptIDsByRole(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(got)
 }
+
+func TestAttendedTranscriptIDsFindsICSLinkedMeetingByAttendee(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	q := timelineContactQuery(f)
+	transcript := f.add(t, f.ConvID, f.Source.ID, q.Now.Add(-30*time.Minute), false, "")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id=?`), transcript)
+	requirements.NoError(err)
+
+	source, err := f.Store.GetOrCreateSource("ics", "synthetic-calendar")
+	requirements.NoError(err)
+	const uid = "meeting@example.test"
+	calendar := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\n" +
+		"BEGIN:VEVENT\r\nUID:" + uid + "\r\nDTSTART:20261021T120000Z\r\nDTEND:20261021T130000Z\r\n" +
+		"SUMMARY:Planning\r\nATTENDEE;CN=Alice:mailto:alice@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	imported, err := f.Store.PersistICalendarContext(t.Context(), source.ID, []byte(calendar))
+	requirements.NoError(err)
+	requirements.Len(imported.MessageIDs, 1)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO meeting_link_key(message_id,kind,value,calendar_id) VALUES(?,'ical_uid',?,'')`), transcript, uid)
+	requirements.NoError(err)
+	projectTimelineActivity(t, f, "UTC")
+
+	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+	requirements.NoError(err)
+	assertions.Equal([]int64{transcript}, got)
+	assertions.False(truncated)
+}
+
 func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -21,6 +21,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -38,6 +39,16 @@ type syncFixture struct {
 	forceSnapshot           bool
 	incompleteSnapshot      bool
 	explicitCollectionPort  bool
+}
+
+func TestEventMetadataPreservesCalDAVUID(t *testing.T) {
+	assertions := assert.New(t)
+	item := calevent.CalDAVEvent{
+		Event: calevent.Event{ProviderEventID: "uid:planning@example.test"},
+		UID:   "planning@example.test",
+	}
+	metadata := eventMetadata(item, carddav.Member{}, "owner@example.test")
+	assertions.Equal("planning@example.test", metadata.ICalUID)
 }
 
 func archiveFixture(t *testing.T) (*Client, *syncFixture) {

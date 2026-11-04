@@ -53,6 +53,9 @@ func Markdown(t *Timeline) string {
 		}
 	}
 	for _, warning := range t.Freshness.Warnings {
+		if latestSyncWarningAlreadyShown(t.Freshness.Sources, warning) {
+			continue
+		}
 		fmt.Fprintf(&b, "⚠ %s\n", singleLine(warning, 160))
 	}
 	if p := t.Person; p != nil && t.Mode == ModeRelationship {
@@ -206,6 +209,9 @@ func entryRow(e Entry, loc *time.Location) string {
 		if m.ActionItemCount > 0 {
 			body += fmt.Sprintf(" · %d actions", m.ActionItemCount)
 		}
+		if m.Status == "cancelled" {
+			body += " [cancelled]"
+		}
 		if len(m.PossiblyRelated) > 0 {
 			body += " · possibly related " + strings.Join(m.PossiblyRelated, ", ")
 		}
@@ -214,9 +220,6 @@ func entryRow(e Entry, loc *time.Location) string {
 		body = peopleNames(p.People, p.PeopleCount) + fmt.Sprintf(" · %s ↓%d ↑%d · %s", singleLine(p.Channel, 80), p.Inbound, p.Outbound, clock)
 		if !e.HiddenText && p.Snippet.Text != "" {
 			body += " \"" + textLine(p.Snippet, 80) + "\""
-		}
-		if p.Channel == "email" {
-			body += fmt.Sprintf(" ×%d", p.Inbound+p.Outbound)
 		}
 		copies, groups := 0, 0
 		for _, n := range p.Copies {
@@ -266,6 +269,21 @@ func entryRow(e Entry, loc *time.Location) string {
 		body += " ◀"
 	}
 	return body
+}
+
+func latestSyncWarningAlreadyShown(sources []SourceFreshness, warning string) bool {
+	for _, source := range sources {
+		sourceType, identifier, ok := strings.Cut(source.Source, ":")
+		if !ok || sourceType == "" || identifier == "" {
+			continue
+		}
+		if source.LastRun == "failed" || source.LastRun == "cancelled" || source.LastRun == "paused" {
+			if warning == fmt.Sprintf("The latest sync %s for %s source %s.", source.LastRun, sourceType, identifier) {
+				return true
+			}
+		}
+	}
+	return false
 }
 func singleLine(s string, limit int) string {
 	r := []rune(strings.Join(strings.FieldsFunc(s, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }), " "))

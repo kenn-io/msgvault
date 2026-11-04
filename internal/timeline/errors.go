@@ -3,7 +3,7 @@ package timeline
 import "errors"
 
 var (
-	ErrBudgetTooSmall   = errors.New("timeline budget too small for envelope")
+	ErrBudgetTooSmall   = errors.New("increase the output budget")
 	ErrCursorExpired    = errors.New("cursor_expired")
 	ErrWindowTooLarge   = errors.New("timeline window exceeds 31 days")
 	ErrUnknownReference = errors.New("unknown timeline reference")

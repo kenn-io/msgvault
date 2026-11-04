@@ -136,6 +136,7 @@ func TestFitTooSmall(t *testing.T) {
 	v.Freshness.Warnings = []string{strings.Repeat("warning ", 2000)}
 	_, err := Fit(v, "json", 2048)
 	require.ErrorIs(t, err, ErrBudgetTooSmall)
+	require.Equal(t, "increase the output budget", err.Error())
 	for _, budget := range []int{-1, 0, 2047, 65537} {
 		_, err := Fit(budgetTimeline(0), "json", budget)
 		require.ErrorIs(t, err, ErrInvalidRequest)

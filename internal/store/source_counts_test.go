@@ -21,6 +21,8 @@ func TestCountMessagesBySourceMatchesPerSourceCounts(t *testing.T) {
 	require.NoError(err)
 	empty, err := st.GetOrCreateSource("imap", "empty@example.com")
 	require.NoError(err)
+	calendar, err := st.GetOrCreateSource("caldav", "calendar@example.test")
+	require.NoError(err)
 
 	insert := func(sourceID int64, key string, deleted, sourceDeleted bool) {
 		t.Helper()
@@ -46,10 +48,16 @@ func TestCountMessagesBySourceMatchesPerSourceCounts(t *testing.T) {
 	insert(a.ID, "a-hidden-and-source-deleted", true, true)
 	insert(b.ID, "b-live", false, false)
 	insert(b.ID, "b-source-deleted", false, true)
+	calendarConversation, err := st.EnsureConversationWithType(calendar.ID, "calendar", "calendar", "Calendar")
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO messages (source_id, source_message_id, conversation_id, message_type) VALUES (?, ?, ?, 'calendar_event')`), calendar.ID, "native-event", calendarConversation)
+	require.NoError(err)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO messages (source_id, source_message_id, conversation_id, message_type, deleted_from_source_at) VALUES (?, ?, ?, 'calendar_event', CURRENT_TIMESTAMP)`), calendar.ID, "removed-event", calendarConversation)
+	require.NoError(err)
 
 	counts, err := st.CountMessagesBySourceContext(ctx)
 	require.NoError(err)
-	for _, src := range []int64{a.ID, b.ID, empty.ID} {
+	for _, src := range []int64{a.ID, b.ID, empty.ID, calendar.ID} {
 		live, err := st.CountMessagesForSourceContext(ctx, src)
 		require.NoError(err)
 		sourceDeleted, err := st.CountSourceDeletedMessagesContext(ctx, src)
@@ -59,4 +67,6 @@ func TestCountMessagesBySourceMatchesPerSourceCounts(t *testing.T) {
 	}
 	assert.EqualValues(2, counts[a.ID].Live)
 	assert.EqualValues(1, counts[a.ID].SourceDeleted)
+	assert.EqualValues(1, counts[calendar.ID].Live)
+	assert.EqualValues(1, counts[calendar.ID].SourceDeleted)
 }

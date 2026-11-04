@@ -113,6 +113,9 @@ func normalizeRequest(req Request) (Request, error) {
 	if req.Mode == ModeRelationship && req.With == "" || req.Mode == ModeAnchor && req.Around == "" {
 		return req, ErrInvalidRequest
 	}
+	if req.Mode == ModeDay && req.With != "" {
+		return req, ErrInvalidRequest
+	}
 	if req.Mode != ModeDay && req.Mode != ModeRelationship && req.Mode != ModeAnchor {
 		return req, ErrInvalidRequest
 	}

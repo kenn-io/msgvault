@@ -251,6 +251,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 			g.burst.Channel = m.channel
 		}
 		counted := coldActivityCounted(m, q.Subject)
+		m.Counted = counted
 		// A saved person's recipient aliases inherit the strongest contact
 		// role; noise follows original sender membership, as in the warm SQL.
 		nonNoise := (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender
@@ -307,6 +308,16 @@ func finishColdActivityGroup(g *coldActivityGroup) {
 		if g.burst.Channel == ChannelEmail {
 			g.burst.CopyCounts[m.ID] = m.copies
 		}
+		conversationID := int64(0)
+		if m.candidate.ConversationID != nil {
+			conversationID = *m.candidate.ConversationID
+		}
+		g.burst.Members = append(g.burst.Members, ActivityBurstMember{
+			CopyKey: m.copyKey, MessageID: m.ID, SourceID: m.candidate.SourceID,
+			ConversationID: conversationID, Channel: m.channel, LocalDate: m.dating.LocalDate,
+			OccurredAt: m.dating.OccurredAt, Direction: m.Direction, Counted: m.Counted,
+			CopyCount: m.copies, Counterparts: slices.Clone(m.Counterparts), Cold: true,
+		})
 		for _, cp := range m.Counterparts {
 			old, found := counterparts[cp.ParticipantID]
 			if !found || (!old.Counted && cp.Counted) {

@@ -30,6 +30,11 @@ type MeetingSuggestionPage struct {
 	Unexpandable []CalendarUnexpandable `json:"unexpandable"`
 }
 
+const (
+	maxSuggestionCalendarOccurrences = 2000
+	suggestionCalendarPageSize       = 500
+)
+
 type suggestMember struct {
 	ID         int64
 	Title      string
@@ -89,6 +94,30 @@ func formatMeetingOccurrence(ref OccurrenceRef) string {
 		value += "@" + ref.Key
 	}
 	return value
+}
+
+func (s *Store) suggestionCalendarOccurrences(ctx context.Context, from, to time.Time) (CalendarOccurrencePage, error) {
+	result := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
+	limit := suggestionCalendarPageSize
+	query := CalendarOccurrenceQuery{From: from, To: to, Limit: &limit}
+	for {
+		page, err := s.ListCalendarOccurrencesContext(ctx, query)
+		if err != nil {
+			return CalendarOccurrencePage{}, err
+		}
+		if len(page.Occurrences) > maxSuggestionCalendarOccurrences-len(result.Occurrences) {
+			return CalendarOccurrencePage{}, ErrQueryTooBroad
+		}
+		result.Occurrences = append(result.Occurrences, page.Occurrences...)
+		result.Unexpandable = append(result.Unexpandable, page.Unexpandable...)
+		if page.NextCursor == "" {
+			return result, nil
+		}
+		if len(result.Occurrences) >= maxSuggestionCalendarOccurrences {
+			return CalendarOccurrencePage{}, ErrQueryTooBroad
+		}
+		query.Cursor = page.NextCursor
+	}
 }
 
 func suggestionMembers(ctx context.Context, r SQLReader, ids []int64) (out []suggestMember, err error) {
@@ -170,7 +199,7 @@ func (s *Store) SuggestMeetingLinksContext(ctx context.Context, ref MeetingLinkR
 		}
 		member := members[0]
 		// Include adjacent civil dates; ranking checks the actual instant overlap.
-		page, err := s.ListCalendarOccurrencesContext(ctx, CalendarOccurrenceQuery{From: member.Start.Add(-24 * time.Hour), To: member.End.Add(24 * time.Hour)})
+		page, err := s.suggestionCalendarOccurrences(ctx, member.Start.Add(-24*time.Hour), member.End.Add(24*time.Hour))
 		if err != nil {
 			return pageResult, err
 		}

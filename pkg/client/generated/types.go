@@ -17195,6 +17195,7 @@ type TimelineMeetingEntry struct {
 	PeopleTruncated     *bool                 `json:"people_truncated,omitempty"`
 	PossiblyRelated     []string              `json:"possibly_related,omitempty"`
 	Start               *time.Time            `json:"start,omitempty"`
+	Status              *string               `json:"status,omitzero"`
 	Time                *time.Time            `json:"time,omitempty"`
 	UntrustedText       TimelineUntrustedText `json:"untrusted_text"`
 }

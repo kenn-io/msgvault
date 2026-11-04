@@ -3670,7 +3670,10 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 			SELECT id, source_message_id, message_type
 			FROM messages
 			WHERE source_id = ?
-			  AND COALESCE(message_type, '') <> 'calendar_event'
+			  AND (COALESCE(message_type, '') <> 'calendar_event' OR EXISTS (
+			    SELECT 1 FROM sources calendar_source
+			    WHERE calendar_source.id = messages.source_id AND calendar_source.source_type = 'caldav'
+			  ))
 			  AND deleted_at IS NULL
 			  AND deleted_from_source_at IS NULL
 			  AND NOT EXISTS (

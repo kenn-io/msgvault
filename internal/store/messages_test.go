@@ -2388,6 +2388,15 @@ func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *test
 		ConversationID: conversationID, SentAt: sql.NullTime{Time: time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC), Valid: true},
 	})
 	require.NoError(err)
+	caldavSource, err := st.GetOrCreateSource("caldav", "calendar@example.test")
+	require.NoError(err)
+	caldavConversationID, err := st.EnsureConversationWithType(caldavSource.ID, "calendar", "calendar", "Calendar")
+	require.NoError(err)
+	_, err = st.UpsertMessage(&store.Message{
+		SourceID: caldavSource.ID, SourceMessageID: "native-event", MessageType: "calendar_event",
+		ConversationID: caldavConversationID,
+	})
+	require.NoError(err)
 
 	otherSource, err := st.GetOrCreateSource("gmail", "other@example.com")
 	require.NoError(err)
@@ -2410,6 +2419,15 @@ func TestReconcileSourceMessageSnapshotIsSourceScopedAndGenerationFenced(t *test
 	assertMessageDeletedFromSource(t, st, source.ID, "calendar-invite:generated", false)
 	assertMessageDeletedFromSource(t, st, otherSource.ID, "missing", false)
 	require.NoError(st.CompleteSync(syncID, "initial"))
+
+	caldavSyncID, err := st.StartSync(caldavSource.ID, "full")
+	require.NoError(err)
+	caldavScoped := st.ScopedToSync(caldavSource.ID, caldavSyncID)
+	reconciled, err = caldavScoped.ReconcileSourceMessageSnapshot(t.Context(), caldavSource.ID, map[string]struct{}{})
+	require.NoError(err)
+	assert.Equal(int64(1), reconciled)
+	assertMessageDeletedFromSource(t, st, caldavSource.ID, "native-event", true)
+	require.NoError(st.CompleteSync(caldavSyncID, "initial"))
 
 	staleSyncID, err := st.StartSync(source.ID, "full")
 	require.NoError(err)

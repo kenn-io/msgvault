@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 func calendarWindow(t *testing.T, st *Store, from, to string) ([]CalendarEventRow, error) {
@@ -380,7 +381,7 @@ func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
 	requirements.Len(events, 2)
 	ids := make([]int64, len(events))
 	for i, item := range events {
-		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID})
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID, ICalUID: item.UID})
 		requirements.NoError(err)
 		ids[i], err = st.PersistMessage(&MessagePersistData{
 			Message:      &Message{SourceID: source.ID, SourceMessageID: item.Event.ProviderEventID, MessageType: "calendar_event"},
@@ -389,11 +390,22 @@ func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
 			Metadata: &sql.NullString{String: string(metadata), Valid: true},
 		})
 		requirements.NoError(err)
+		rows := calendarRows(t, st, ids[i])
+		requirements.Len(rows, 1)
+		assertions.Equal(item.UID, rows[0].ICalUID)
 	}
 	requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], []byte(masterRaw), calevent.CalDAVRawFormat))
-	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: events[1].Event.ProviderEventID, OverrideRemoved: true})
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: events[1].Event.ProviderEventID, ICalUID: events[1].UID, OverrideRemoved: true})
 	requirements.NoError(err)
 	requirements.NoError(st.SetMessageMetadata(ids[1], sql.NullString{String: string(metadata), Valid: true}))
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	budget := calrecur.RequestReadBudget
+	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: ids[0]}, &budget)
+	release()
+	requirements.NoError(err)
+	assertions.Equal("2027-03-02T09:00:00Z", resolved.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T10:00:00Z", resolved.End.Format(time.RFC3339))
 
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 2)})
@@ -406,4 +418,54 @@ func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
 	assertions.Equal("confirmed", occurrence.Status)
 	assertions.Equal("2027-03-02T09:00:00Z", occurrence.Start.Format(time.RFC3339))
 	assertions.Equal("2027-03-02T10:00:00Z", occurrence.End.Format(time.RFC3339))
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), occurrence.Ref)
+	requirements.NoError(err)
+	assertions.Equal(occurrence, detail.CalendarOccurrence)
+}
+
+func TestRemovedCalDAVOverrideResolvesGeneratedOccurrence(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, "calendar@example.com")
+	requirements.NoError(err)
+	const resource = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
+		"BEGIN:VEVENT\r\nUID:weekly@example.test\r\nDTSTART:20270302T090000Z\r\nDTEND:20270302T100000Z\r\n" +
+		"RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\n" +
+		"BEGIN:VEVENT\r\nUID:weekly@example.test\r\nRECURRENCE-ID:20270302T090000Z\r\n" +
+		"DTSTART:20270303T090000Z\r\nDTEND:20270303T100000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	events, err := calevent.ParseCalDAVResource(t.Context(), []byte(resource), "UTC")
+	requirements.NoError(err)
+	requirements.Len(events, 2)
+	ids := make([]int64, len(events))
+	for i, event := range events {
+		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: event.Event.ProviderEventID, ICalUID: event.UID})
+		requirements.NoError(err)
+		ids[i], err = st.PersistMessage(&MessagePersistData{
+			Message:      &Message{SourceID: source.ID, SourceMessageID: event.Event.ProviderEventID, MessageType: "calendar_event"},
+			Conversation: &ConversationPersistData{SourceConversationID: events[0].Event.ProviderEventID, ConversationType: "calendar"},
+			RawMIME:      []byte(resource), RawFormat: calevent.CalDAVRawFormat,
+			Metadata: &sql.NullString{String: string(metadata), Valid: true},
+		})
+		requirements.NoError(err)
+	}
+	metadata, err := json.Marshal(calevent.CalDAVMetadata{
+		EventID: events[1].Event.ProviderEventID, ICalUID: events[1].UID, OverrideRemoved: true,
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.SetMessageMetadata(ids[1], sql.NullString{String: string(metadata), Valid: true}))
+
+	key := "20270302T090000Z"
+	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	requirements.NoError(err)
+	budget := calrecur.RequestReadBudget
+	resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: ids[0], Key: key}, &budget)
+	release()
+	requirements.NoError(err)
+	assertions.Equal("2027-03-02T09:00:00Z", resolved.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T10:00:00Z", resolved.End.Format(time.RFC3339))
+
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@%s", ids[0], key))
+	requirements.NoError(err)
+	assertions.Equal("2027-03-02T09:00:00Z", detail.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-02T10:00:00Z", detail.End.Format(time.RFC3339))
 }

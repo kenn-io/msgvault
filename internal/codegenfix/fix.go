@@ -54,6 +54,48 @@ func RewriteRunQueryClient(source []byte) ([]byte, error) {
 	return source, nil
 }
 
+// RewriteTimelineMarkdownClient leaves successful text/markdown responses in
+// the generated response's raw Body field instead of decoding them as JSON.
+func RewriteTimelineMarkdownClient(source []byte) ([]byte, error) {
+	start := bytes.Index(source, []byte("func (c *Client) GetTimelineWithResponse("))
+	if start < 0 {
+		return nil, errors.New("generated GetTimelineWithResponse method shape changed")
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, errors.New("generated GetTimelineWithResponse method boundary changed")
+	}
+	end := start + endOffset
+	method := append([]byte(nil), source[start:end]...)
+	marker := []byte("case 200:\n\t\tout.JSON200 = new(GetTimelineResponse)")
+	guard := []byte("case 200:\n\t\tif strings.EqualFold(strings.TrimSpace(strings.SplitN(resp.Headers.Get(\"Content-Type\"), \";\", 2)[0]), \"text/markdown\") {\n\t\t\treturn out, nil\n\t\t}\n\t\tout.JSON200 = new(GetTimelineResponse)")
+	switch bytes.Count(method, guard) {
+	case 1:
+		if !bytes.Contains(source, []byte("\"strings\"")) {
+			return nil, errors.New("generated GetTimelineWithResponse strings import is missing")
+		}
+		return source, nil
+	case 0:
+	default:
+		return nil, errors.New("generated GetTimelineWithResponse markdown guard is duplicated")
+	}
+	if bytes.Count(method, marker) != 1 {
+		return nil, errors.New("generated GetTimelineWithResponse success response shape changed")
+	}
+	method = bytes.Replace(method, marker, guard, 1)
+	result := append([]byte(nil), source[:start]...)
+	result = append(result, method...)
+	source = append(result, source[end:]...)
+	if !bytes.Contains(source, []byte("\"strings\"")) {
+		importMarker := []byte("\t\"fmt\"\n")
+		if bytes.Count(source, importMarker) != 1 {
+			return nil, errors.New("generated client import block shape changed")
+		}
+		source = bytes.Replace(source, importMarker, []byte("\t\"fmt\"\n\t\"strings\"\n"), 1)
+	}
+	return source, nil
+}
+
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 

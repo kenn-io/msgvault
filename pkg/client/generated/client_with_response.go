@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
@@ -34358,6 +34359,9 @@ func (c *Client) GetTimelineWithResponse(ctx context.Context, options *GetTimeli
 
 	switch resp.StatusCode {
 	case 200:
+		if strings.EqualFold(strings.TrimSpace(strings.SplitN(resp.Headers.Get("Content-Type"), ";", 2)[0]), "text/markdown") {
+			return out, nil
+		}
 		out.JSON200 = new(GetTimelineResponse)
 		bodyBytes := resp.Content
 		if len(bodyBytes) > 0 {

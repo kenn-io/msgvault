@@ -1,7 +1,9 @@
 package calevent
 
 import (
+	"context"
 	"encoding/json/v2"
+	"errors"
 
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
@@ -14,8 +16,35 @@ type Content struct {
 	JoinURL     string `json:"join_url,omitempty"`
 }
 
-func DecodeContent(format string, raw []byte) (Content, error) {
-	if format != gcalmodel.RawFormat {
+func DecodeContent(ctx context.Context, format string, raw, metadata []byte, calendarZone string) (Content, error) {
+	switch format {
+	case "ics":
+		components, _, err := ParseICSWithDiagnostics(ctx, raw, "", calendarZone, NewICSParseBudget())
+		if err != nil {
+			return Content{}, err
+		}
+		if len(components) != 1 {
+			return Content{}, errors.New("stored ICS requires one VEVENT")
+		}
+		component := components[0]
+		return Content{Location: component.Location, Description: component.Description, JoinURL: component.URL}, nil
+	case CalDAVRawFormat:
+		var selector CalDAVMetadata
+		if err := json.Unmarshal(metadata, &selector); err != nil {
+			return Content{}, err
+		}
+		events, err := ParseCalDAVResource(ctx, raw, calendarZone)
+		if err != nil {
+			return Content{}, err
+		}
+		for _, event := range events {
+			if event.Event.ProviderEventID == selector.EventID {
+				return Content{Location: event.Location, Description: event.Description, JoinURL: event.URL}, nil
+			}
+		}
+		return Content{}, errors.New("CalDAV component selector is unavailable")
+	case gcalmodel.RawFormat:
+	default:
 		return Content{}, nil
 	}
 	var event struct {

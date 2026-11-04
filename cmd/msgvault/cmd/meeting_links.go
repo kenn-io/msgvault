@@ -74,7 +74,7 @@ func newMeetingLinkDecisionCommand(decision string, open meetingLinkOpen) *cobra
 
 func newMeetingSuggestCommand(open meetingLinkOpen) *cobra.Command {
 	var jsonOutput bool
-	command := &cobra.Command{Use: "suggest <ref>", Short: "Suggest links for msg:<id> or evt:<id>[@occurrence key]", Args: cobra.ExactArgs(1)}
+	command := &cobra.Command{Use: "suggest <ref>", Short: "Suggest meeting links", Long: "Suggest meeting links for msg:<id> or evt:<id>[@occurrence key].", Args: cobra.ExactArgs(1)}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print suggestions as JSON")
 	command.RunE = func(cmd *cobra.Command, args []string) error {
 		client, cleanup, err := openMeetingLinkClient(cmd.Context(), open)

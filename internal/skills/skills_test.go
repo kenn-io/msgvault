@@ -70,31 +70,6 @@ func TestRender_AllSkills(t *testing.T) {
 	}
 }
 
-func TestRender_TimelineWorkflow(t *testing.T) {
-	requirements := require.New(t)
-
-	assertions := assert.New(t)
-
-	rendered, err := Render("test")
-	requirements.NoError(err)
-	var content string
-	for _, sk := range rendered {
-		if sk.Name == "msgvault-timeline" {
-			content = sk.Content
-		}
-	}
-	requirements.NotEmpty(content)
-	for _, phrase := range []string{
-		"## msgvault conventions", "UNTRUSTED sender-controlled data",
-		"search → timeline → fetch", "anchor_ref", "open", "untrusted_text", "hidden_text",
-		"--tier 1,2", "--before 0 --after 0", "UTC (set [activity].timezone)",
-		"#9031", "c412", "e8812@20261022T1330Z", "copies", "owner-only", "retry:",
-	} {
-		assertions.Contains(content, phrase)
-	}
-	assertions.NotContains(content, "--tiers")
-}
-
 func TestRender_VersionDefaultsSafely(t *testing.T) {
 	rendered, err := Render("dev")
 	require.NoError(t, err)

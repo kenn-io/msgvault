@@ -794,10 +794,15 @@ func TestMeetingLinksRetainICSRecurrenceDiagnostics(t *testing.T) {
 			resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), OccurrenceRef{MessageID: master, Key: tc.key}, &budget)
 			if tc.unsupported {
 				requirements.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
+				_, detailErr := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@%s", master, tc.key))
+				requirements.ErrorIs(detailErr, calrecur.ErrUnsupportedRecurrence)
 				return
 			}
 			requirements.NoError(err)
 			assertions.Equal(tc.end, resolved.End.UTC().Format(time.RFC3339))
+			detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@%s", master, tc.key))
+			requirements.NoError(err)
+			assertions.Equal(tc.end, detail.End.UTC().Format(time.RFC3339))
 		})
 	}
 }

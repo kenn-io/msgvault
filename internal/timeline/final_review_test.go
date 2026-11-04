@@ -33,7 +33,6 @@ func TestCanonicalMeetingCopySuppliesDisplayAndSelectedAlias(t *testing.T) {
 	requirements.NoError(err)
 	requirements.Equal(ref, identity.ByOccurrence[alias].OccurrenceRef)
 	req := dayRequest()
-	req.Mode, req.With = ModeDay, "email:alice@example.com"
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
 	entries := allDayEntries(got)
@@ -61,6 +60,16 @@ func TestCanonicalMeetingCopySuppliesDisplayAndSelectedAlias(t *testing.T) {
 	requirements.Len(allDayEntries(hidden), 1)
 	assertions.True(allDayEntries(hidden)[0].HiddenText)
 	assertions.Empty(allDayEntries(hidden)[0].Meeting.Title.Text)
+}
+
+func TestBuildRejectsPersonFilterInExplicitDayMode(t *testing.T) {
+	f := newTimelineFixture(t)
+	req := dayRequest()
+	req.Mode = ModeDay
+	req.With = "person:7"
+	got, err := Build(t.Context(), f.src, req)
+	require.ErrorIs(t, err, ErrInvalidRequest)
+	require.Nil(t, got)
 }
 
 type personReadFailure struct{ PeopleSource }

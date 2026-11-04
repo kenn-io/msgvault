@@ -220,6 +220,7 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
+	moved = eligibleCalendarExceptionRows(row, moved)
 	if x, ok := calendarExceptionOverrides(moved)[ref.Key]; ok {
 		if x.Event.Start != nil && x.Event.End != nil {
 			o := occurrenceFromRow(row, ref.Key)

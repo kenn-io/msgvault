@@ -51,6 +51,7 @@ type ICSComponent struct {
 	Sequence                                       int64
 	Stamp                                          time.Time
 	Summary, Description, Location, OrganizerEmail string
+	URL                                            string
 	Raw                                            []byte
 }
 
@@ -442,6 +443,9 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		}
 	}
 	c := ICSComponent{OrganizerEmail: icsEmail(p.Get("ORGANIZER"))}
+	if url := p.Get("URL"); url != nil {
+		c.URL = strings.TrimSpace(url.Value)
+	}
 	var status string
 	textFields := map[string]*string{"UID": &c.UID, "SUMMARY": &c.Summary, "DESCRIPTION": &c.Description, "LOCATION": &c.Location, "STATUS": &status}
 	// Validate every TEXT property, including extension properties.

@@ -37,9 +37,19 @@ func TestEmailCalendarSourceCountsExcludeDerivedEvents(t *testing.T) {
 	icsSourceID := icsSource(t, st)
 	_, err = st.PersistICalendarContext(t.Context(), icsSourceID, calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
 	requirements.NoError(err)
+	caldavSource, err := st.GetOrCreateSource("caldav", "calendar@example.test")
+	requirements.NoError(err)
+	caldavConversation, err := st.EnsureConversationWithType(caldavSource.ID, "native-calendar", "calendar", "Calendar")
+	requirements.NoError(err)
+	caldavMessage, err := st.UpsertMessage(&Message{
+		SourceID: caldavSource.ID, SourceMessageID: "native-event", ConversationID: caldavConversation,
+		MessageType: "calendar_event",
+	})
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageRawWithFormat(caldavMessage, calendarDocument("REQUEST", "DTSTART:20270302T120000Z"), "caldav_ics"))
 	counts, err := st.CountMessagesBySourceContext(t.Context())
 	requirements.NoError(err)
-	for _, sourceID := range []int64{source, gcalData.Message.SourceID, icsSourceID} {
+	for _, sourceID := range []int64{source, gcalData.Message.SourceID, icsSourceID, caldavSource.ID} {
 		live, err := st.CountMessagesForSourceContext(t.Context(), sourceID)
 		requirements.NoError(err)
 		assertions.Equal(int64(1), live)

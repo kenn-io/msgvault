@@ -131,6 +131,31 @@ func TestMeetingLinksSuggestionsTimeWindow(t *testing.T) {
 	assertions.Empty(linkedMeetingRefs(t, st, uidless)[uidless])
 }
 
+func TestMeetingLinksMessageSuggestionsReadAllCalendarPages(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, unsupported := calendarFixture(t, st, "unsupported-series", `{"id":"unsupported-series","start":{"dateTime":"2027-03-13T13:00:00Z"},"end":{"dateTime":"2027-03-13T13:30:00Z"},"recurrence":["RRULE:FREQ=HOURLY"]}`)
+	// Put the matching event on the second 500-occurrence page.
+	for i := range 500 {
+		id := fmt.Sprintf("earlier-%03d", i)
+		raw := fmt.Sprintf(`{"id":%q,"start":{"dateTime":"2027-03-13T13:00:00Z"},"end":{"dateTime":"2027-03-13T13:30:00Z"}}`, id)
+		calendarFixture(t, st, id, raw)
+	}
+	_, target := calendarFixture(t, st, "later-target", `{"id":"later-target","start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T12:30:00Z"}}`)
+	data, note := projectionFixture(t, st, "note-after-first-page", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T12:00:00Z"}}`)
+	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 12, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(data.Message)
+	requirements.NoError(err)
+
+	page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+	requirements.NoError(err)
+	requirements.Len(page.Suggestions, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", target), page.Suggestions[0].Ref)
+	assertions.Equal(note, page.Suggestions[0].MemberMessageID)
+	assertions.Equal(30, page.Suggestions[0].OverlapMinutes)
+	assertions.Contains(page.Unexpandable, CalendarUnexpandable{MessageID: unsupported, Reason: "unsupported recurrence"})
+}
+
 func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 	for _, tc := range []struct{ zone, noteStart string }{
 		{"Asia/Tokyo", "2027-03-01T18:00:00Z"},

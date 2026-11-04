@@ -49,12 +49,6 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 	v.Gaps = nil
 	assert.NotContains(t, Markdown(v), "retry:")
 }
-func TestMarkdownUpcomingHasDayAndEmailVolume(t *testing.T) {
-	v := sampleTimeline()
-	got := Markdown(v)
-	assert.Contains(t, got, "- Thu 13:30 Weekly sync")
-	assert.Contains(t, got, "×3")
-}
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline()
 	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}
@@ -66,4 +60,19 @@ func TestMarkdownMultipleCopyGroupsCountExtras(t *testing.T) {
 	v.History = []Entry{v.History[2]}
 	v.History[0].Burst.Copies = map[int64]int{1: 2, 2: 2, 3: 2}
 	assert.Contains(t, Markdown(v), "(3 extra copies)")
+}
+
+func TestMarkdownDoesNotRepeatLatestSyncWarning(t *testing.T) {
+	v := &Timeline{
+		Timezone: "UTC",
+		Freshness: Freshness{
+			Sources:  []SourceFreshness{{Source: "gmail:owner@example.test", Status: "stale", LastRun: "failed", SyncCommand: "msgvault sync"}},
+			Warnings: []string{"The latest sync failed for gmail source owner@example.test.", "The activity projection is reconciling archive changes."},
+		},
+	}
+	got := Markdown(v)
+	assert.Contains(t, got, "gmail:owner@example.test stale failed")
+	assert.NotContains(t, got, "The latest sync failed for gmail source owner@example.test.")
+	assert.Contains(t, got, "The activity projection is reconciling archive changes.")
+	assert.Equal(t, []string{"The latest sync failed for gmail source owner@example.test.", "The activity projection is reconciling archive changes."}, v.Freshness.Warnings)
 }

@@ -43,6 +43,23 @@ type ActivityBurst struct {
 	CopyCounts               map[int64]int
 	Counterparts             []ActivityMessageCounterpart
 	Cold                     bool
+	Members                  []ActivityBurstMember `json:"-"`
+}
+
+// ActivityBurstMember retains the selected message representatives so callers
+// can combine full and cold populations before rebuilding their burst groups.
+type ActivityBurstMember struct {
+	CopyKey                  string
+	MessageID                int64
+	SourceID, ConversationID int64
+	Channel                  ActivityChannel
+	LocalDate                string
+	OccurredAt               time.Time
+	Direction                ActivityDirection
+	Counted                  bool
+	CopyCount                int
+	Counterparts             []ActivityMessageCounterpart
+	Cold                     bool
 }
 type BurstPage struct {
 	Bursts       []ActivityBurst
@@ -56,6 +73,13 @@ type activityReadMessage struct {
 	Meeting, List, Encrypted, LargeInbound bool
 	ContactEligible                        bool
 	ExcludedSender                         bool
+	CopyKey                                string
+	CopyCount                              int
+	SourceID, ConversationID               int64
+	Channel                                ActivityChannel
+	LocalDate                              string
+	OccurredAt                             time.Time
+	Counted                                bool
 	Counterparts                           []ActivityMessageCounterpart
 }
 
@@ -89,7 +113,8 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
  SELECT *,ROW_NUMBER() OVER(ORDER BY first_at ` + order + `,key ` + order + `) AS page_number FROM burst_groups WHERE ` + where + ` ORDER BY first_at ` + order + `,key ` + order + ` LIMIT ?
  ), omitted AS (SELECT COALESCE(SUM(message_count),0) AS n FROM burst_groups WHERE noise=1)
  SELECT omitted.n,b.key,b.source_id,b.conversation_id,b.channel,b.local_date,b.first_at,b.last_at,b.inbound,b.outbound,b.page_number,
- r.message_id,r.direction,r.message_type,r.list_id,r.encrypted,r.large_inbound,r.contact_eligible,r.copy_count
+ r.message_id,r.direction,r.message_type,r.list_id,r.encrypted,r.large_inbound,r.contact_eligible,r.copy_count,r.counted,r.channel,r.occurred_at,
+ ` + s.activityCopyKeySQL("r.channel", "r.rfc822_message_id", "r.message_id") + ` AS copy_key
  FROM omitted LEFT JOIN selected b ON TRUE LEFT JOIN representatives r
  ON b.page_number<=` + strconv.Itoa(q.Limit) + ` AND r.source_id=b.source_id AND COALESCE(r.conversation_id,0)=b.conversation_id AND r.local_date=b.local_date
  ORDER BY b.first_at ` + order + `,b.key ` + order + `,r.occurred_at DESC,r.message_id DESC`
@@ -103,10 +128,10 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	hasMore := false
 	for rows.Next() {
 		var b ActivityBurst
-		var key, channel, date, direction, kind, list sql.NullString
-		var source, conv, in, out, number, id, encrypted, large, eligible, copies sql.NullInt64
-		var first, last nullableTimestamp
-		if err = rows.Scan(&page.NoiseOmitted, &key, &source, &conv, &channel, &date, &first, &last, &in, &out, &number, &id, &direction, &kind, &list, &encrypted, &large, &eligible, &copies); err != nil {
+		var key, channel, date, direction, kind, list, memberChannel, copyKey sql.NullString
+		var source, conv, in, out, number, id, encrypted, large, eligible, copies, counted sql.NullInt64
+		var first, last, memberAt nullableTimestamp
+		if err = rows.Scan(&page.NoiseOmitted, &key, &source, &conv, &channel, &date, &first, &last, &in, &out, &number, &id, &direction, &kind, &list, &encrypted, &large, &eligible, &copies, &counted, &memberChannel, &memberAt, &copyKey); err != nil {
 			_ = rows.Close()
 			return page, fmt.Errorf("scan activity burst: %w", err)
 		}
@@ -118,7 +143,7 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 			continue
 		}
 		if key.String != lastKey {
-			b = ActivityBurst{Key: key.String, SourceID: source.Int64, ConversationID: conv.Int64, Channel: ActivityChannel(channel.String), LocalDate: date.String, FirstAt: first.Time, LastAt: last.Time, Inbound: int(in.Int64), Outbound: int(out.Int64), LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{}, Counterparts: []ActivityMessageCounterpart{}}
+			b = ActivityBurst{Key: key.String, SourceID: source.Int64, ConversationID: conv.Int64, Channel: ActivityChannel(channel.String), LocalDate: date.String, FirstAt: first.Time, LastAt: last.Time, Inbound: int(in.Int64), Outbound: int(out.Int64), LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{}, Counterparts: []ActivityMessageCounterpart{}, Members: []ActivityBurstMember{}}
 			page.Bursts = append(page.Bursts, b)
 			lastKey = key.String
 		}
@@ -136,7 +161,7 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 		if burst.Channel == ChannelEmail {
 			burst.CopyCounts[id.Int64] = int(copies.Int64)
 		}
-		messages = append(messages, activityReadMessage{ID: id.Int64, Direction: ActivityDirection(direction.String), Meeting: IsMeetingMessageType(kind.String), List: list.Valid, Encrypted: encrypted.Int64 != 0, LargeInbound: large.Int64 != 0, ContactEligible: eligible.Int64 != 0})
+		messages = append(messages, activityReadMessage{ID: id.Int64, Direction: ActivityDirection(direction.String), Meeting: IsMeetingMessageType(kind.String), List: list.Valid, Encrypted: encrypted.Int64 != 0, LargeInbound: large.Int64 != 0, ContactEligible: eligible.Int64 != 0, CopyKey: copyKey.String, CopyCount: int(copies.Int64), SourceID: source.Int64, ConversationID: conv.Int64, Channel: ActivityChannel(memberChannel.String), LocalDate: date.String, OccurredAt: memberAt.Time, Counted: counted.Int64 != 0})
 		indices[id.Int64] = index
 	}
 	err = rows.Err()
@@ -155,6 +180,8 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 		distinct[i] = map[int64]ActivityMessageCounterpart{}
 	}
 	for _, m := range messages {
+		burst := &page.Bursts[indices[m.ID]]
+		burst.Members = append(burst.Members, ActivityBurstMember{CopyKey: m.CopyKey, MessageID: m.ID, SourceID: m.SourceID, ConversationID: m.ConversationID, Channel: m.Channel, LocalDate: m.LocalDate, OccurredAt: m.OccurredAt, Direction: m.Direction, Counted: m.Counted, CopyCount: m.CopyCount, Counterparts: slices.Clone(m.Counterparts)})
 		for _, cp := range m.Counterparts {
 			old, found := distinct[indices[m.ID]][cp.ParticipantID]
 			if !found || (!old.Counted && cp.Counted) {

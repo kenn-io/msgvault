@@ -54,6 +54,37 @@ func TestMergeBurstsSelectsCombinedReaderOrder(t *testing.T) {
 	assertions.Equal(want[0], merged[0].Key)
 }
 
+func TestBuildDayMergesFullAndColdEmailCopiesBeforeGrouping(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	warmConversation, err := f.Store.EnsureConversation(f.Source.ID, "warm-copy", "Warm copy")
+	requirements.NoError(err)
+	coldConversation, err := f.Store.EnsureConversation(f.Source.ID, "cold-copy", "Cold copy")
+	requirements.NoError(err)
+	addCopy := func(conversationID int64) int64 {
+		return f.add(f.now, false, func(m *store.Message) {
+			m.SourceID = f.Source.ID
+			m.ConversationID = conversationID
+			m.MessageType = "email"
+			m.RFC822MessageID = sql.NullString{String: "<shared@example.test>", Valid: true}
+		})
+	}
+	warmID := addCopy(warmConversation)
+	addCopy(coldConversation)
+	requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, "cold-copy"))
+	f.project()
+	req := dayRequest()
+	req.IncludeCold = true
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.Len(entries, 1)
+	assertions.Equal([]int64{warmID}, entries[0].Burst.LatestMessageIDs)
+	assertions.Equal(1, entries[0].Burst.Inbound)
+	assertions.Equal(2, entries[0].Burst.Copies[warmID])
+}
+
 type countedTierPeople struct {
 	PeopleSource
 

@@ -17261,6 +17261,8 @@ components:
         start:
           format: date-time
           type: string
+        status:
+          type: string
         time:
           format: date-time
           type: string

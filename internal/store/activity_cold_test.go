@@ -314,6 +314,9 @@ func TestColdAdapterMatchesSpineCopyNoiseAndDateRules(t *testing.T) {
 	requirements.NoError(err)
 	for i := range warm.Bursts {
 		warm.Bursts[i].Cold = true
+		for j := range warm.Bursts[i].Members {
+			warm.Bursts[i].Members[j].Cold = true
+		}
 		warm.Bursts[i].FirstAt = warm.Bursts[i].FirstAt.UTC()
 		warm.Bursts[i].LastAt = warm.Bursts[i].LastAt.UTC()
 	}
@@ -464,6 +467,9 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			requirements.Len(cold.Bursts, 1)
 			assertions.Zero(cold.Bursts[0].Outbound)
 			warm.Bursts[0].Cold = true
+			for i := range warm.Bursts[0].Members {
+				warm.Bursts[0].Members[i].Cold = true
+			}
 			warm.Bursts[0].FirstAt = warm.Bursts[0].FirstAt.UTC()
 			warm.Bursts[0].LastAt = warm.Bursts[0].LastAt.UTC()
 			assertions.Equal(warm, cold)
