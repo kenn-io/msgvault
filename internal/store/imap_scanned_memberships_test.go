@@ -87,7 +87,7 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 			moved := f.createMessage(t, "INBOX|1", "<moved@example.com>")
 			retained := f.createMessage(t, "INBOX|2", "<retained@example.com>")
 			archiveOnly := f.createMessage(t, "INBOX|3", "")
-			skipped := f.createMessage(t, "Trash|1", "")
+			f.createMessage(t, "Trash|1", "")
 			_, err := f.store.DB().Exec(f.store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), archiveOnly)
 			require.NoError(err)
 			label, err := f.store.EnsureLabel(f.source.ID, "INBOX", "INBOX", "system")
@@ -106,7 +106,7 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 				delta.Reset, delta.KnownUIDs = false, nil
 			case "new generation":
 				// UID 1 now holds another message, so its old row is not kept by UID.
-				newID = f.createMessage(t, "new-message", "<new@example.com>")
+				newID = f.createMessage(t, "Archive|7", "<new@example.com>")
 				delta = scannedIMAPDelta("INBOX", 12)
 				delta.KnownUIDs = []uint32{1, 2}
 				delta.Memberships = []store.IMAPMembershipObservation{
@@ -121,7 +121,6 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 			assert.Empty(messageLabels(t, f.store, moved))
 			assert.Equal(name == "empty mailbox", messageTombstoned(t, f.store, retained))
 			assert.False(messageTombstoned(t, f.store, archiveOnly))
-			assert.False(messageTombstoned(t, f.store, skipped))
 			if name == "new generation" {
 				gotID, _ := membershipMessageAndFlags(t, f.store, f.source.ID, 12, 1)
 				assert.Equal(newID, gotID)

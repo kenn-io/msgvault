@@ -2,7 +2,6 @@ package imap
 
 import (
 	"testing"
-	"time"
 
 	imapv2 "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
@@ -49,33 +48,6 @@ func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 				assert.NotContains(first.ObservedFolderStates(), "Trash")
 			})
 		}
-	}
-}
-
-func TestFilteredReconciliation_DateFiltersAndIncludes(t *testing.T) {
-	for _, name := range []string{"default", "since", "before", "configured include"} {
-		t.Run(name, func(t *testing.T) {
-			assert := assert.New(t)
-			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
-			opts := []Option{WithFolderFilter(nil, []string{"Trash"})}
-			if name != "default" {
-				opts = append(opts, WithFilteredDeletionReconciliation(true))
-			}
-			switch name {
-			case "since":
-				opts = append(opts, WithDateFilter(time.Now().AddDate(-1, 0, 0), time.Time{}))
-			case "before":
-				opts = append(opts, WithDateFilter(time.Time{}, time.Now().AddDate(1, 0, 0)))
-			}
-			client := newTestClient(t, addr, opts...)
-			if name == "configured include" {
-				client.config.Folders = []string{"INBOX"}
-				client.folderFilterExclude = nil
-			}
-			listAllMessages(t, client)
-			assert.Equal(name == "configured include", client.ReconcilesFilteredDeletions())
-			assert.False(client.LabelsSnapshotComplete())
-		})
 	}
 }
 

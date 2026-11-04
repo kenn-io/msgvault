@@ -546,11 +546,12 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 	after := time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2026, time.February, 3, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
-		name         string
-		cfg          *Config
-		opts         []Option
-		wantComplete bool
-		wantFiltered bool
+		name           string
+		cfg            *Config
+		opts           []Option
+		wantComplete   bool
+		wantFiltered   bool
+		wantReconciles bool
 	}{
 		{
 			name:         "unfiltered",
@@ -558,9 +559,11 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 			wantComplete: true,
 		},
 		{
-			name:         "config include",
-			cfg:          &Config{Folders: []string{"INBOX"}},
-			wantFiltered: true,
+			name:           "config include",
+			cfg:            &Config{Folders: []string{"INBOX"}},
+			opts:           []Option{WithFilteredDeletionReconciliation(true)},
+			wantFiltered:   true,
+			wantReconciles: true,
 		},
 		{
 			name:         "runtime include",
@@ -577,13 +580,13 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 		{
 			name:         "after filter",
 			cfg:          &Config{},
-			opts:         []Option{WithDateFilter(after, time.Time{})},
+			opts:         []Option{WithDateFilter(after, time.Time{}), WithFilteredDeletionReconciliation(true)},
 			wantFiltered: true,
 		},
 		{
 			name:         "before filter",
 			cfg:          &Config{},
-			opts:         []Option{WithDateFilter(time.Time{}, before)},
+			opts:         []Option{WithDateFilter(time.Time{}, before), WithFilteredDeletionReconciliation(true)},
 			wantFiltered: true,
 		},
 	}
@@ -593,6 +596,7 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			client := NewClient(tt.cfg, "", tt.opts...)
+			assert.Equal(tt.wantReconciles, client.ReconcilesFilteredDeletions())
 			completeness, ok := any(client).(interface {
 				LabelsSnapshotComplete() bool
 			})
