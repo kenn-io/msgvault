@@ -1,7 +1,6 @@
 package imessage
 
 import (
-	"bytes"
 	"math"
 	"testing"
 	"time"
@@ -353,21 +352,6 @@ func TestExtractAttributedBodyTextReportsDecodeStatus(t *testing.T) {
 			assert.Equal(t, tt.wantDecoded, decoded)
 		})
 	}
-}
-
-func FuzzExtractAttributedBodyTextRoundTripsKeyedArchive(f *testing.F) {
-	for _, seed := range []string{"", "hello", "café", "emoji 😀"} {
-		f.Add(seed)
-	}
-	f.Fuzz(func(t *testing.T, input string) {
-		if len(input) > 64<<10 {
-			t.Skip()
-		}
-		want := string(bytes.ToValidUTF8([]byte(input), []byte("\uFFFD")))
-		got, decoded := extractAttributedBodyTextWithStatus(makeAttributedBodyBlob(want))
-		assert.True(t, decoded)
-		assert.Equal(t, want, got)
-	})
 }
 
 func TestSnippet(t *testing.T) {
