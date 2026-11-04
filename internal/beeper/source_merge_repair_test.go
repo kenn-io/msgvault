@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"fmt"
 	"testing"
 	"time"
 
@@ -62,14 +61,7 @@ func TestMergeSourcesRestartsBeeperRepairForMovedHistory(t *testing.T) {
 				require.True(ran)
 				require.Zero(sum.MessagesScanned)
 			case "partial destination":
-				for i := range repairBatchSize + 1 {
-					providerID := fmt.Sprintf("live-%d", i)
-					id, err := st.UpsertMessage(&store.Message{SourceID: live.ID, ConversationID: liveConv, SourceMessageID: providerID, MessageType: "beeper"})
-					require.NoError(err)
-					raw, err := json.Marshal(Message{ID: providerID, Text: "current body", SenderName: "Example Sender", Timestamp: timestamp})
-					require.NoError(err)
-					require.NoError(st.UpsertMessageRawWithFormat(id, raw, rawArchiveFormat))
-				}
+				seedArchivedBeeperMessages(t, st, live.ID, liveConv, repairBatchSize+1)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				sum, ran, err := rederive.RunIfStale(ctx, st, "beeper", live.Identifier, live.ID, func(string) { cancel() })
