@@ -163,7 +163,7 @@ try {
     [System.IO.File]::WriteAllText($suiteJson, '')
     $failed = $false
     $runs = @(for ($i = 0; $i -lt $activeShards; $i++) {
-        [pscustomobject]@{ Batch = 0; Process = $null; StartedAt = $null; StandardOut = $null; StandardErr = $null }
+        [pscustomobject]@{ Batch = 0; Process = $null; Timer = $null; StandardOut = $null; StandardErr = $null }
     })
     try {
         do {
@@ -175,7 +175,8 @@ try {
                         $active = $true
                         continue
                     }
-                    $elapsed = $run.Process.ExitTime - $run.StartedAt
+                    $run.Timer.Stop()
+                    $elapsed = $run.Timer.Elapsed
                     $spent[$i] += $elapsed.TotalSeconds
                     $stdout = $run.StandardOut.GetAwaiter().GetResult()
                     $stderr = $run.StandardErr.GetAwaiter().GetResult()
@@ -234,7 +235,7 @@ try {
 
                 $process = [System.Diagnostics.Process]::new()
                 $process.StartInfo = $startInfo
-                $run.StartedAt = [DateTime]::Now
+                $run.Timer = [System.Diagnostics.Stopwatch]::StartNew()
                 if (-not $process.Start()) { throw "Failed to start test shard $i" }
                 $run.Process = $process
                 $run.StandardOut = $process.StandardOutput.ReadToEndAsync()
