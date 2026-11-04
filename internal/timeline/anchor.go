@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -46,7 +47,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	switch ref.Kind {
 	case "date", "datetime":
 		return target, nil
-	case "meeting":
+	case entryKindMeeting:
 		if c.src.Calendar == nil {
 			c.unavailable("anchor")
 			return target, nil
@@ -76,7 +77,11 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		target.occurrence = &o
 		target.at = o.Start
 		if o.AllDay {
-			target.at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+			var exists bool
+			target.at, exists, err = calrecur.CivilDateBoundary(o.StartDate, c.loc)
+			if err != nil || !exists {
+				return target, ErrUnknownReference
+			}
 		}
 		return target, nil
 	case "conversation":
@@ -274,6 +279,55 @@ func (c *composer) anchorFallback(target anchorTarget) Entry {
 	snippet := displaySnippet(d)
 	return Entry{Kind: entryKindMessage, Key: ref, Ref: ref, AnchorRef: ref, Time: target.at, Open: c.messageOpen(target.messageID), Anchor: true, Filtered: true, HiddenText: d.HiddenText, Message: &MessageEntry{Snippet: UntrustedText{Text: snippet}, People: []Person{}}}
 }
+func (c *composer) anchorOccurrenceFallback(target anchorTarget) Entry {
+	if target.occurrence == nil {
+		return Entry{}
+	}
+	o := *target.occurrence
+	at, end := o.Start, o.End
+	date := at.In(c.loc).Format(time.DateOnly)
+	if o.AllDay {
+		var exists bool
+		var err error
+		at, exists, err = calrecur.CivilDateBoundary(o.StartDate, c.loc)
+		if err != nil || !exists {
+			return Entry{}
+		}
+		end, _, err = calrecur.CivilDateBoundary(o.EndDate, c.loc)
+		if err != nil {
+			return Entry{}
+		}
+		date = o.StartDate
+	}
+	if at.IsZero() {
+		return Entry{}
+	}
+	hidden := true
+	if o.MessageID > 0 {
+		displays := c.displays([]int64{o.MessageID})
+		if d, ok := displays[o.MessageID]; ok {
+			hidden = d.HiddenText
+		}
+	}
+	title := o.Subject
+	if hidden {
+		title = ""
+	}
+	key := "occ:" + o.Ref
+	if c.entryDates != nil {
+		c.entryDates[key] = date
+	}
+	return Entry{
+		Kind: entryKindMeeting, Key: key, Ref: o.Ref, AnchorRef: target.ref.Ref,
+		Time: at, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}),
+		Anchor: true, Filtered: true, HiddenText: hidden,
+		Meeting: &MeetingEntry{
+			Title: UntrustedText{Text: title}, Start: at, End: end, Status: o.Status,
+			DeletedFromSource: o.DeletedFromSource, AllDay: o.AllDay,
+			Attendees: []Person{}, People: []Person{}, LinkedTranscriptIDs: []int64{},
+		},
+	}
+}
 func (c *composer) buildAnchor(target anchorTarget) {
 	c.loadFreshness()
 	if c.src.Activity == nil {
@@ -321,9 +375,17 @@ func (c *composer) buildAnchor(target anchorTarget) {
 			found = true
 		}
 	}
-	if !found && target.messageID > 0 && c.hasResolvedSubject() {
-		c.t.Anchor.Filtered = true
-		entries = append(entries, c.anchorFallback(target))
+	if !found && c.hasResolvedSubject() {
+		if target.occurrence != nil {
+			fallback := c.anchorOccurrenceFallback(target)
+			if fallback.Kind != "" {
+				c.t.Anchor.Filtered = true
+				entries = append(entries, fallback)
+			}
+		} else if target.messageID > 0 {
+			c.t.Anchor.Filtered = true
+			entries = append(entries, c.anchorFallback(target))
+		}
 	}
 	c.sortAndContinue("history", entries, false)
 	pivot := slices.IndexFunc(entries, func(e Entry) bool { return e.Anchor })

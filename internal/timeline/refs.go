@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 var fullRefPattern = regexp.MustCompile(`^(msg|conv|evt):([1-9][0-9]*)(?:@([0-9TZ]+))?$`)
@@ -89,12 +91,17 @@ func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 				return a, ErrUnknownReference
 			}
 		}
-		a.Kind = map[string]string{"msg": "message", "conv": "conversation", "evt": "meeting"}[m[1]]
+		a.Kind = map[string]string{"msg": "message", "conv": "conversation", "evt": entryKindMeeting}[m[1]]
 		return a, nil
 	}
-	if at, err := time.ParseInLocation(time.DateOnly, s, loc); err == nil {
+	if _, err := time.Parse(time.DateOnly, s); err == nil {
+		at, exists, err := calrecur.CivilDateBoundary(s, loc)
+		if err != nil || !exists {
+			return a, fmt.Errorf("%w: invalid local date", ErrUnknownReference)
+		}
 		a.Kind = "date"
 		a.Time = at
+		a.LocalDate = s
 		return a, nil
 	}
 	for _, layout := range []string{time.RFC3339Nano, "2006-01-02T15:04:05.999999999", "2006-01-02T15:04"} {

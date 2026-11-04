@@ -198,7 +198,7 @@ func entryStub(e Entry) Entry {
 	e.Loop = nil
 	e.Note = nil
 	switch e.Kind {
-	case "meeting", "transcript":
+	case entryKindMeeting, "transcript":
 		e.Meeting = &MeetingEntry{}
 	case "burst":
 		e.Burst = &BurstEntry{}

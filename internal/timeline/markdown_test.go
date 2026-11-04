@@ -10,6 +10,45 @@ import (
 )
 
 func TestMarkdownDayGolden(t *testing.T) { golden(t, "day.md", []byte(Markdown(sampleTimeline()))) }
+
+func TestMarkdownSingleDayMovesDateIntoHeading(t *testing.T) {
+	entry := Entry{Kind: entryKindMeeting, Key: "occ:evt:1", Ref: "evt:1", Time: time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC), Meeting: &MeetingEntry{Title: UntrustedText{Text: "Planning"}, Start: time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC)}}
+	v := &Timeline{Mode: ModeDay, Timezone: "UTC", Window: Window{From: "2026-10-22", To: "2026-10-22"}, Days: []Day{{Date: "2026-10-22", Meetings: []Entry{entry}}}}
+	got := Markdown(v)
+	assert.Contains(t, got, "# Thu Oct 22 · UTC\n")
+	assert.NotContains(t, got, "\nThu Oct 22\n")
+	assert.Contains(t, got, "Planning")
+	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{Meetings: 1, PeopleCount: 1, People: []Person{{Name: "Alice"}}}}}
+	got = Markdown(v)
+	assert.Contains(t, got, "# Thu Oct 22 · UTC\n")
+	assert.Equal(t, 1, strings.Count(got, "Thu Oct 22"))
+	assert.Contains(t, got, "\n1 meetings · 1 people")
+
+	v.Window = Window{From: "2026-10-22", To: "2026-10-23"}
+	v.Days = []Day{{Date: "2026-10-22"}, {Date: "2026-10-23"}}
+	got = Markdown(v)
+	assert.Contains(t, got, "# 2026-10-22 – 2026-10-23 · UTC\n")
+	assert.Contains(t, got, "\nThu Oct 22\n")
+	assert.Contains(t, got, "\nFri Oct 23\n")
+}
+
+func TestMarkdownUpcomingOmitsCompleteMeetingAlreadyInDay(t *testing.T) {
+	meeting := Entry{Kind: entryKindMeeting, Key: "occ:evt:1", Ref: "evt:1", Time: time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC), Meeting: &MeetingEntry{Title: UntrustedText{Text: "Planning"}, Start: time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC)}}
+	other := Entry{Kind: entryKindMeeting, Key: "occ:evt:2", Ref: "evt:2", Time: time.Date(2026, 10, 22, 14, 30, 0, 0, time.UTC), Meeting: &MeetingEntry{Title: UntrustedText{Text: "Review"}, Start: time.Date(2026, 10, 22, 14, 30, 0, 0, time.UTC)}}
+	v := &Timeline{Mode: ModeDay, Timezone: "UTC", Window: Window{From: "2026-10-22", To: "2026-10-22"}, Days: []Day{{Date: "2026-10-22", Meetings: []Entry{meeting}}}, Upcoming: []Entry{meeting, other}}
+	got := Markdown(v)
+	assert.Equal(t, 1, strings.Count(got, "Planning"))
+	assert.Contains(t, got, "Upcoming\n- Thu 14:30 Review")
+
+	v.Upcoming = []Entry{meeting}
+	got = Markdown(v)
+	assert.NotContains(t, got, "\nUpcoming\n")
+
+	v.Days[0].Meetings[0].Meeting = &MeetingEntry{}
+	got = Markdown(v)
+	assert.Contains(t, got, "Upcoming\n- Thu 13:30")
+}
+
 func TestMarkdownRelationshipGolden(t *testing.T) {
 	v := sampleTimeline()
 	v.Mode = ModeRelationship
@@ -70,7 +109,7 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 func TestMarkdownMarksSourceDeletedMeeting(t *testing.T) {
 	v := sampleTimeline()
 	v.Days = []Day{{Date: "2026-10-22", Meetings: []Entry{{
-		Kind: "meeting", Key: "occ:evt:42", Ref: "evt:42", AnchorRef: "evt:42",
+		Kind: entryKindMeeting, Key: "occ:evt:42", Ref: "evt:42", AnchorRef: "evt:42",
 		Time:    v.Now,
 		Meeting: &MeetingEntry{Title: UntrustedText{Text: "Planning"}, DeletedFromSource: true},
 	}}}}

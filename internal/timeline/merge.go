@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	entryKindMeeting = "meeting"
 	entryKindBurst   = "burst"
 	entryKindMessage = "message"
 )
@@ -391,7 +392,18 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if at.IsZero() {
 			continue
 		}
-		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, Status: o.Status, DeletedFromSource: o.DeletedFromSource, AllDay: o.AllDay, Attendees: attendees, AttendeeCount: len(attendees), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
+		displayAt := at
+		inDayWindow := true
+		dayWindowStart := time.Time{}
+		if c.req.Mode == ModeDay {
+			var dayWindowEnd time.Time
+			dayWindowStart, dayWindowEnd = c.bounds()
+			inDayWindow = at.Before(dayWindowEnd) && end.After(dayWindowStart)
+			if inDayWindow && at.Before(dayWindowStart) {
+				displayAt = dayWindowStart
+			}
+		}
+		e := Entry{Kind: entryKindMeeting, Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: displayAt, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, Status: o.Status, DeletedFromSource: o.DeletedFromSource, AllDay: o.AllDay, Attendees: attendees, AttendeeCount: len(attendees), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
 		if len(linked) > 0 {
 			e.Open = append(e.Open, c.open("get_meeting_context", map[string]any{"message_ids": linked})...)
 		}
@@ -415,8 +427,11 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if o.AllDay {
 			date = o.StartDate
 		}
+		if c.req.Mode == ModeDay && inDayWindow && at.Before(dayWindowStart) {
+			date = c.t.Window.From
+		}
 		c.entryDates[e.Key] = date
-		if c.req.Mode != ModeDay || date >= c.t.Window.From && date <= c.t.Window.To {
+		if c.req.Mode != ModeDay || inDayWindow {
 			entries = append(entries, e)
 		}
 		until := c.t.Now.Add(48 * time.Hour)
@@ -427,7 +442,9 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			until = c.t.Now.Add(24 * time.Hour)
 		}
 		if !strings.EqualFold(o.Status, "cancelled") && !o.DeletedFromSource && !at.Before(c.t.Now) && at.Before(until) {
-			upcoming = append(upcoming, e)
+			futureEntry := e
+			futureEntry.Time = at
+			upcoming = append(upcoming, futureEntry)
 		}
 	}
 	for _, m := range messages {
@@ -725,7 +742,7 @@ func (c *composer) groupDays(entries []Entry) {
 			items = c.afterPosition("days", items)
 			for _, e := range items {
 				switch e.Kind {
-				case "meeting", "transcript":
+				case entryKindMeeting, "transcript":
 					day.Meetings = append(day.Meetings, e)
 				case entryKindBurst, entryKindMessage:
 					day.Bursts = append(day.Bursts, e)

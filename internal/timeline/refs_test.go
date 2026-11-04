@@ -18,7 +18,7 @@ func TestParseAnchorForms(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	loc := time.FixedZone("archive", -4*3600)
-	for _, tc := range []struct{ s, kind, ref string }{{"#9031", "message", "msg:9031"}, {"conv:412", "conversation", "conv:412"}, {"c412", "conversation", "conv:412"}, {"burst:1:412:2026-10-22", "burst", "burst:1:412:2026-10-22"}, {"e8812@20261022T1330Z", "meeting", "evt:8812@20261022T133000Z"}, {"evt:8812@20261022", "meeting", "evt:8812@20261022"}, {"evt:8812", "meeting", "evt:8812"}, {"2026-10-22", "date", "2026-10-22"}, {"2026-10-22T09:30:00", "datetime", "2026-10-22T09:30:00"}, {"2026-10-22T13:30:00Z", "datetime", "2026-10-22T13:30:00Z"}} {
+	for _, tc := range []struct{ s, kind, ref string }{{"#9031", "message", "msg:9031"}, {"conv:412", "conversation", "conv:412"}, {"c412", "conversation", "conv:412"}, {"burst:1:412:2026-10-22", "burst", "burst:1:412:2026-10-22"}, {"e8812@20261022T1330Z", entryKindMeeting, "evt:8812@20261022T133000Z"}, {"evt:8812@20261022", entryKindMeeting, "evt:8812@20261022"}, {"evt:8812", entryKindMeeting, "evt:8812"}, {"2026-10-22", "date", "2026-10-22"}, {"2026-10-22T09:30:00", "datetime", "2026-10-22T09:30:00"}, {"2026-10-22T13:30:00Z", "datetime", "2026-10-22T13:30:00Z"}} {
 		a, err := ParseAnchor(tc.s, loc)
 		requirements.NoError(err, tc.s)
 		assertions.Equal(tc.kind, a.Kind)

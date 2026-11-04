@@ -31,6 +31,44 @@ func TestMergeEntriesAllDayUsesActivityZoneForBothBounds(t *testing.T) {
 	assertions.True(entries[0].Meeting.End.After(entries[0].Meeting.Start))
 }
 
+func TestMergeEntriesDayIncludesOverlappingMeetingsAtWindowStart(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	windowStart := time.Date(2026, 10, 22, 0, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		occurrence store.CalendarOccurrence
+		start, end time.Time
+	}{
+		{
+			name: "multiday all day",
+			occurrence: store.CalendarOccurrence{
+				Ref: "evt:24", MessageID: 24, AllDay: true, StartDate: "2026-10-20", EndDate: "2026-10-23",
+			},
+			start: time.Date(2026, 10, 20, 0, 0, 0, 0, time.UTC),
+			end:   time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "timed event",
+			occurrence: store.CalendarOccurrence{
+				Ref: "evt:25", MessageID: 25,
+				Start: time.Date(2026, 10, 21, 23, 0, 0, 0, time.UTC),
+				End:   time.Date(2026, 10, 22, 1, 0, 0, 0, time.UTC),
+			},
+			start: time.Date(2026, 10, 21, 23, 0, 0, 0, time.UTC),
+			end:   time.Date(2026, 10, 22, 1, 0, 0, 0, time.UTC),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			entries, _ := composeCalendarEntries(t, time.UTC, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), []store.CalendarOccurrence{tc.occurrence})
+			requirements.Len(entries, 1)
+			assertions.Equal(windowStart, entries[0].Time)
+			assertions.Equal(tc.start, entries[0].Meeting.Start)
+			assertions.Equal(tc.end, entries[0].Meeting.End)
+		})
+	}
+}
+
 func TestMergeEntriesOmitsCancelledMeetingFromUpcomingAndRendersStatus(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)

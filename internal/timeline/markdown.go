@@ -29,6 +29,12 @@ func Markdown(t *Timeline) string {
 	if t.Window.From != t.Window.To {
 		heading = t.Window.From + " – " + t.Window.To
 	}
+	singleDate := t.Mode == ModeDay && t.Window.From != "" && t.Window.From == t.Window.To
+	if singleDate {
+		if date, err := time.Parse(time.DateOnly, t.Window.To); err == nil {
+			heading = date.Format("Mon Jan 02")
+		}
+	}
 	if t.Mode == ModeRelationship && t.Person != nil {
 		heading = personName(t.Person.Person)
 	}
@@ -102,11 +108,19 @@ func Markdown(t *Timeline) string {
 		date, _ := time.Parse(time.DateOnly, d.Date)
 		label := date.Format("Mon Jan 02")
 		if d.Summary != nil {
-			fmt.Fprintf(&b, "\n%s · %d meetings · %d people (%s)\n", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			if singleDate {
+				fmt.Fprintf(&b, "\n%d meetings · %d people (%s)\n", d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			} else {
+				fmt.Fprintf(&b, "\n%s · %d meetings · %d people (%s)\n", label, d.Summary.Meetings, max(d.Summary.PeopleCount, len(d.Summary.People)), peopleNames(d.Summary.People, d.Summary.PeopleCount))
+			}
 			count++
 			continue
 		}
-		fmt.Fprintf(&b, "\n%s\n", label)
+		if singleDate {
+			b.WriteByte('\n')
+		} else {
+			fmt.Fprintf(&b, "\n%s\n", label)
+		}
 		rows(d.Meetings)
 		rows(d.Bursts)
 		var other []string
@@ -127,9 +141,34 @@ func Markdown(t *Timeline) string {
 		b.WriteString("\nHistory\n")
 		rows(t.History)
 	}
-	if len(t.Upcoming) > 0 {
+	upcoming := t.Upcoming
+	if t.Mode == ModeDay {
+		displayed := map[string]struct{}{}
+		for _, day := range t.Days {
+			if day.Summary != nil {
+				continue
+			}
+			for _, e := range day.Meetings {
+				if e.Key != "" && e.Meeting != nil && !isEntryStub(e) {
+					displayed[e.Key] = struct{}{}
+				}
+			}
+		}
+		if len(displayed) > 0 {
+			upcoming = make([]Entry, 0, len(t.Upcoming))
+			for _, e := range t.Upcoming {
+				if e.Key != "" && e.Meeting != nil {
+					if _, ok := displayed[e.Key]; ok {
+						continue
+					}
+				}
+				upcoming = append(upcoming, e)
+			}
+		}
+	}
+	if len(upcoming) > 0 {
 		b.WriteString("\nUpcoming\n")
-		for _, e := range t.Upcoming {
+		for _, e := range upcoming {
 			fmt.Fprintf(&b, "- %s %s\n", e.Time.In(loc).Format("Mon"), entryRow(e, loc, headingRef))
 			count++
 		}

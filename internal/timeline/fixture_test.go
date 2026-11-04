@@ -18,6 +18,8 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
+const meetingConversationType = "meeting"
+
 type timelineFixture struct {
 	*storetest.Fixture
 
@@ -96,7 +98,7 @@ func (f *timelineFixture) transcript(key, uid string, at time.Time) int64 {
 	raw := fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":%q},"participants":[{"displayName":"Alice","handle":"alice@example.com"}]}`, uid, at.Format(time.RFC3339))
 	id, err := f.Store.PersistMessage(&store.MessagePersistData{
 		Message:      &store.Message{SourceID: src.ID, SourceMessageID: key, MessageType: "meeting_transcript", IsFromMe: true, Subject: sql.NullString{String: "Synthetic meeting", Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}},
-		Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: "meeting", Title: "Synthetic meeting"},
+		Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: meetingConversationType, Title: "Synthetic meeting"},
 		BodyText:     sql.NullString{String: "Synthetic notes", Valid: true}, RawMIME: []byte(raw), RawFormat: "twenty_json",
 	})
 	require.NoError(f.T, err)

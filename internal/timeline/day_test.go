@@ -31,7 +31,7 @@ func TestBuildDayMergesLinkedTranscriptIntoMeeting(t *testing.T) {
 	requirements.NoError(err)
 	entries := allDayEntries(got)
 	requirements.Len(entries, 1)
-	assertions.Equal("meeting", entries[0].Kind)
+	assertions.Equal(entryKindMeeting, entries[0].Kind)
 	assertions.Equal(fmt.Sprintf("evt:%d", event), entries[0].AnchorRef)
 	assertions.True(entries[0].Meeting.Attended)
 	assertions.Equal([]int64{note}, entries[0].Meeting.LinkedTranscriptIDs)

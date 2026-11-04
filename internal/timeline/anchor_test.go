@@ -151,6 +151,51 @@ func TestAnchorFilteredAnchorStillShown(t *testing.T) {
 	assertions.True(got.History[0].Filtered)
 	assertions.True(got.History[0].Anchor)
 }
+func TestCalendarAnchorSurvivesPersonAndTierFilters(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		set  func(*timelineFixture, *Request)
+	}{
+		{
+			name: "person",
+			set: func(f *timelineFixture, req *Request) {
+				f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+				req.With = "email:bob@example.com"
+			},
+		},
+		{
+			name: "tier",
+			set: func(f *timelineFixture, req *Request) {
+				person := f.savePerson()
+				f.tier(person, 1)
+				req.Tiers = []int{2}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			event := f.calendar("filtered-anchor", singleDayEvent)
+			req := anchorRequest(fmt.Sprintf("evt:%d", event))
+			tc.set(f, &req)
+			f.project()
+
+			got, err := Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			requirements.NotNil(got.Anchor)
+			assertions.True(got.Anchor.Filtered)
+			requirements.Len(got.History, 1)
+			entry := got.History[0]
+			assertions.Equal(entryKindMeeting, entry.Kind)
+			assertions.Equal(fmt.Sprintf("evt:%d", event), entry.Ref)
+			assertions.True(entry.Anchor)
+			assertions.True(entry.Filtered)
+			assertions.Empty(entry.Meeting.Attendees)
+			assertions.Empty(entry.Meeting.People)
+			requirements.NoError(entry.Validate())
+		})
+	}
+}
 func TestAnchorUndatedRefused(t *testing.T) {
 	f := newTimelineFixture(t)
 	id := f.add(f.now, false, func(m *store.Message) {
@@ -169,6 +214,36 @@ func TestAnchorDateOnlyStartsAtMidnight(t *testing.T) {
 	got, err := Build(t.Context(), f.src, anchorRequest("2026-10-22"))
 	require.NoError(t, err)
 	assert.Equal(t, time.Date(2026, 10, 22, 0, 0, 0, 0, loc), got.Anchor.Time)
+}
+func TestDateOnlyAnchorUsesCivilDateBoundary(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	anchor, err := ParseAnchor("2018-11-04", loc)
+	requirements.NoError(err)
+	assertions.Equal(time.Date(2018, 11, 4, 1, 0, 0, 0, loc), anchor.Time)
+
+	apia, err := time.LoadLocation("Pacific/Apia")
+	requirements.NoError(err)
+	_, err = ParseAnchor("2011-12-30", apia)
+	assertions.ErrorIs(err, ErrUnknownReference)
+}
+func TestAllDayAnchorUsesCivilDateBoundary(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	f := newTimelineFixture(t)
+	f.src.Location = loc
+	f.now = time.Date(2018, 11, 5, 12, 0, 0, 0, loc)
+	f.src.Clock = func() time.Time { return f.now }
+	event := f.calendar("skipped-midnight", "{\"id\":\"holiday\",\"iCalUID\":\"holiday@example.com\",\"summary\":\"Holiday\",\"start\":{\"date\":\"2018-11-04\"},\"end\":{\"date\":\"2018-11-05\"}}")
+	f.project()
+
+	got, err := Build(t.Context(), f.src, anchorRequest(fmt.Sprintf("evt:%d", event)))
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	assertions.Equal(time.Date(2018, 11, 4, 1, 0, 0, 0, loc), got.Anchor.Time)
+	assertions.Equal("2018-11-04", got.Anchor.Time.In(loc).Format(time.DateOnly))
 }
 func TestAnchorBareConversationUsesLatestEligible(t *testing.T) {
 	f := newTimelineFixture(t)

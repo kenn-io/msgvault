@@ -111,7 +111,15 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 					if loc == nil {
 						loc = time.UTC
 					}
-					at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, loc)
+					resolvedAt, exists, boundaryErr := calrecur.CivilDateBoundary(o.StartDate, loc)
+					if boundaryErr != nil {
+						return nil, more, fmt.Errorf("resolve attended all-day event boundary: %w", boundaryErr)
+					}
+					if !exists {
+						occurrences[ref] = false
+						continue
+					}
+					at = resolvedAt
 				}
 				if !at.IsZero() && !at.After(q.Now) {
 					for _, a := range o.Attendees {

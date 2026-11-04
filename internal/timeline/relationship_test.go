@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func relationshipRequest(ref string) Request {
@@ -45,9 +46,43 @@ func TestRelationshipMeetingOnlyContactDeduplicatesNotes(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NotNil(got.Person)
 	assertions.Equal(1, got.Person.InteractionCount)
-	assertions.Equal([]string{"meeting"}, got.Person.Channels)
+	assertions.Equal([]string{string(store.ChannelMeeting)}, got.Person.Channels)
 	assertions.Equal(10, got.Person.FirstAt.Hour())
 }
+
+func TestRelationshipManualLinksCountDistinctOccurrencesOnce(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	p := f.savePerson()
+	firstAt := f.now.Add(-3 * time.Hour)
+	secondAt := f.now.Add(-2 * time.Hour)
+	event := func(key, uid, title string, at time.Time) int64 {
+		raw := fmt.Sprintf(`{"id":%q,"iCalUID":%q,"summary":%q,"start":{"dateTime":%q},"end":{"dateTime":%q}}`, key, uid, title, at.Format(time.RFC3339), at.Add(time.Hour).Format(time.RFC3339))
+		return f.calendar(key, raw)
+	}
+	one := event("one", "one@example.test", "First meeting", firstAt)
+	two := event("two", "two@example.test", "Second meeting", secondAt)
+	firstNote := f.transcript("first-note", "", f.now.Add(-4*time.Hour))
+	secondNote := f.transcript("second-note", "", f.now.Add(-time.Hour))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), firstNote, store.OccurrenceRef{MessageID: one}))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), firstNote, store.OccurrenceRef{MessageID: two}))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), secondNote, store.OccurrenceRef{MessageID: one}))
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
+	requirements.NoError(err)
+	requirements.NotNil(got.Person)
+	assertions.Equal(2, got.Person.InteractionCount)
+	assertions.Equal(2, got.Person.Monthly[11])
+	requirements.NotNil(got.Person.FirstAt)
+	requirements.NotNil(got.Person.LastAt)
+	assertions.WithinDuration(firstAt, *got.Person.FirstAt, time.Second)
+	assertions.WithinDuration(secondAt, *got.Person.LastAt, time.Second)
+	requirements.Len(got.History, 2)
+	assertions.ElementsMatch([]string{"First meeting", "Second meeting"}, []string{got.History[0].Meeting.Title.Text, got.History[1].Meeting.Title.Text})
+}
+
 func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

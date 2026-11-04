@@ -87,7 +87,7 @@ func TestRelationshipLinkedTranscriptParticipantKeepsMeetingInHistory(t *testing
 	assertions.Equal(1, got.Person.InteractionCount)
 	requirements.Len(got.History, 1)
 	meeting := got.History[0]
-	assertions.Equal("meeting", meeting.Kind)
+	assertions.Equal(entryKindMeeting, meeting.Kind)
 	assertions.Equal(fmt.Sprintf("evt:%d", event), meeting.Ref)
 	assertions.Len(meeting.Meeting.Attendees, 1)
 	assertions.Equal(f.peer, meeting.Meeting.Attendees[0].ParticipantID)
@@ -204,7 +204,7 @@ func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T
 	entries := allDayEntries(got)
 	requirements.Len(entries, 3)
 	for _, entry := range entries {
-		if entry.Kind == "meeting" {
+		if entry.Kind == entryKindMeeting {
 			assertions.False(entry.Meeting.Attended)
 			assertions.Empty(entry.Meeting.LinkedTranscriptIDs)
 			assertions.Equal([]string{messageRef(note)}, entry.Meeting.PossiblyRelated)
@@ -276,7 +276,7 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements.NoError(err)
 				requirements.NotNil(got.Person)
 				assertions.Equal(1, got.Person.InteractionCount)
-				assertions.Equal([]string{"meeting"}, got.Person.Channels)
+				assertions.Equal([]string{string(store.ChannelMeeting)}, got.Person.Channels)
 				requirements.NotNil(got.Person.LastAt)
 				assertions.Equal(10, got.Person.LastAt.Hour())
 				assertions.Equal(1, got.Person.Monthly[11])
@@ -308,6 +308,93 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 			})
 		}
 	}
+}
+
+func persistUnaddressedTimelineTranscript(t *testing.T, f *timelineFixture, key string, at time.Time) int64 {
+	t.Helper()
+	source, err := f.Store.GetOrCreateSource("meeting_import", "notes@example.com")
+	require.NoError(t, err)
+	raw := fmt.Sprintf("{\"schema_version\":1,\"recording\":{},\"calendar_event\":{\"iCalUid\":\"\",\"startsAt\":%q},\"participants\":[]}", at.Format(time.RFC3339))
+	id, err := f.Store.PersistMessage(&store.MessagePersistData{
+		Message: &store.Message{
+			SourceID: source.ID, SourceMessageID: key, MessageType: "meeting_transcript", IsFromMe: true,
+			Subject: sql.NullString{String: "Synthetic meeting", Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true},
+		},
+		Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: meetingConversationType, Title: "Synthetic meeting"},
+		BodyText:     sql.NullString{String: "Synthetic notes", Valid: true}, RawMIME: []byte(raw), RawFormat: "twenty_json",
+	})
+	require.NoError(t, err)
+	return id
+}
+
+func TestRelationshipCountsOnlyLinkedOccurrencesAttendedBySubject(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+	event := func(key, uid, title, attendee string, at time.Time) int64 {
+		raw := fmt.Sprintf("{\"id\":%q,\"iCalUID\":%q,\"summary\":%q,\"start\":{\"dateTime\":%q},\"end\":{\"dateTime\":%q},\"attendees\":[{\"email\":%q}]}",
+			key, uid, title, at.Format(time.RFC3339), at.Add(time.Hour).Format(time.RFC3339), attendee)
+		return f.calendar(key, raw)
+	}
+	attendedAt := f.now.Add(-3 * time.Hour)
+	unrelatedAt := f.now.Add(-time.Hour)
+	attended := event("attended", "attended@example.test", "Attended", "alice@example.com", attendedAt)
+	unrelated := event("unrelated", "unrelated@example.test", "Unrelated", "bob@example.com", unrelatedAt)
+	note := persistUnaddressedTimelineTranscript(t, f, "multi-linked", f.now.Add(-4*time.Hour))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: attended}))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: unrelated}))
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	assertions.Equal(1, got.Person.InteractionCount)
+	requirements.NotNil(got.Person.FirstAt)
+	requirements.NotNil(got.Person.LastAt)
+	assertions.WithinDuration(attendedAt, *got.Person.FirstAt, time.Second)
+	assertions.WithinDuration(attendedAt, *got.Person.LastAt, time.Second)
+	assertions.Equal(1, got.Person.Monthly[11])
+}
+
+func TestRelationshipTranscriptEnvelopeCountsLinkedOccurrenceWithoutCalendarAttendance(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	bob := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+	firstAt := f.now.Add(-3 * time.Hour)
+	first := f.calendar("first", fmt.Sprintf("{\"id\":\"first\",\"iCalUID\":\"first@example.test\",\"summary\":\"First\",\"start\":{\"dateTime\":%q},\"end\":{\"dateTime\":%q},\"attendees\":[{\"email\":\"alice@example.com\"}]}",
+		firstAt.Format(time.RFC3339), firstAt.Add(time.Hour).Format(time.RFC3339)))
+	noteAt := f.now.Add(-time.Hour)
+	note := f.transcript("envelope-linked", "", noteAt)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", []int64{bob}, nil))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: first}))
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:bob@example.com"))
+	requirements.NoError(err)
+	assertions.Equal(1, got.Person.InteractionCount)
+	requirements.NotNil(got.Person.FirstAt)
+	requirements.NotNil(got.Person.LastAt)
+	assertions.WithinDuration(firstAt, *got.Person.FirstAt, time.Second)
+	assertions.WithinDuration(firstAt, *got.Person.LastAt, time.Second)
+}
+
+func TestRelationshipAllDayAttendanceUsesCivilDateBoundary(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	loc, err := time.LoadLocation("America/Sao_Paulo")
+	requirements.NoError(err)
+	f := newTimelineFixture(t)
+	f.src.Location = loc
+	f.now = time.Date(2018, 11, 4, 2, 30, 0, 0, time.UTC)
+	f.src.Clock = func() time.Time { return f.now }
+	event := f.calendar("future-all-day", "{\"id\":\"future\",\"iCalUID\":\"future@example.com\",\"summary\":\"Future\",\"start\":{\"date\":\"2018-11-04\"},\"end\":{\"date\":\"2018-11-05\"},\"attendees\":[{\"email\":\"alice@example.com\"}]}")
+	note := persistUnaddressedTimelineTranscript(t, f, "future-note", f.now.Add(-time.Hour))
+	requirements.NoError(f.Store.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+	f.project()
+
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	assertions.Zero(got.Person.InteractionCount)
+	assertions.Nil(got.Person.LastAt)
+	assertions.Empty(got.History)
 }
 
 func TestRelationshipTranscriptOnlyFallback(t *testing.T) {

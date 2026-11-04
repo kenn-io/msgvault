@@ -19,7 +19,7 @@ func sampleTimeline() *Timeline {
 	now := time.Date(2026, 10, 22, 13, 30, 0, 0, time.UTC)
 	person := Person{PersonID: 7, ParticipantID: 8, Name: "Alice", Tier: 1, TierSource: "applied"}
 	entries := []Entry{
-		{Kind: "meeting", Key: "occ:evt:12", Ref: "evt:12", AnchorRef: "evt:12", Time: now, Meeting: &MeetingEntry{Title: UntrustedText{Text: "Weekly sync"}, Start: now, End: now.Add(time.Hour), AttendeeCount: 1, Attendees: []Person{person}, Attended: true, LinkedTranscriptIDs: []int64{21}, PossiblyRelated: []string{"msg:22"}, ActionItemCount: 2}},
+		{Kind: entryKindMeeting, Key: "occ:evt:12", Ref: "evt:12", AnchorRef: "evt:12", Time: now, Meeting: &MeetingEntry{Title: UntrustedText{Text: "Weekly sync"}, Start: now, End: now.Add(time.Hour), AttendeeCount: 1, Attendees: []Person{person}, Attended: true, LinkedTranscriptIDs: []int64{21}, PossiblyRelated: []string{"msg:22"}, ActionItemCount: 2}},
 		{Kind: "transcript", Key: "msg:21", Ref: "msg:21", AnchorRef: "msg:21", Time: now, Meeting: &MeetingEntry{Title: UntrustedText{Text: "Notes"}, Time: now, PeopleCount: 1, People: []Person{person}, ActionItemCount: 2}},
 		{Kind: "burst", Key: "burst:1:2:2026-10-22", Ref: "conv:2", AnchorRef: "burst:1:2:2026-10-22", Time: now, Burst: &BurstEntry{Channel: "email", PeopleCount: 1, People: []Person{person}, Inbound: 2, Outbound: 1, FirstAt: now, LastAt: now, Snippet: UntrustedText{Text: "Hello"}, LatestMessageIDs: []int64{31}, Copies: map[int64]int{31: 2}}},
 		{Kind: "message", Key: "msg:31", Ref: "msg:31", AnchorRef: "msg:31", Time: now, Message: &MessageEntry{Direction: "inbound", PeopleCount: 1, People: []Person{person}, Snippet: UntrustedText{Text: "Hello"}}},
@@ -80,7 +80,7 @@ func TestEntryAnchorRefPerKind(t *testing.T) {
 	}
 }
 func TestEntryValidateRejectsMalformedAnchor(t *testing.T) {
-	for _, e := range []Entry{{Kind: "meeting", Ref: "evt:garbage", AnchorRef: "evt:garbage", Meeting: &MeetingEntry{}}, {Kind: "message", Ref: "msg:0", AnchorRef: "msg:0", Message: &MessageEntry{}}, {Kind: "burst", Key: "burst:1:2:bad", AnchorRef: "burst:1:2:bad", Burst: &BurstEntry{}}} {
+	for _, e := range []Entry{{Kind: entryKindMeeting, Ref: "evt:garbage", AnchorRef: "evt:garbage", Meeting: &MeetingEntry{}}, {Kind: "message", Ref: "msg:0", AnchorRef: "msg:0", Message: &MessageEntry{}}, {Kind: "burst", Key: "burst:1:2:bad", AnchorRef: "burst:1:2:bad", Burst: &BurstEntry{}}} {
 		require.ErrorIs(t, e.Validate(), ErrInvalidRequest)
 	}
 }

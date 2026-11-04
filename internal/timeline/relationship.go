@@ -9,9 +9,26 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func (c *composer) transcriptEnvelopeMatchesSubject(messages []store.ActivityMessage) map[int64]bool {
+	matches := make(map[int64]bool, len(messages))
+	for _, message := range messages {
+		people := counterpartPeople(message.Counterparts)
+		if c.matchesSubject(Entry{Meeting: &MeetingEntry{People: people}}) {
+			matches[message.MessageID] = true
+		}
+	}
+	return matches
+}
+
+func (c *composer) occurrenceMatchesSubject(occurrence store.CalendarOccurrence) bool {
+	people := c.occurrencePeople(occurrence)
+	return c.matchesSubject(Entry{Meeting: &MeetingEntry{People: people}})
+}
 
 func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 	if c.src.People == nil {
@@ -200,37 +217,74 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		})
 		c.gap("meetings", r.err, false)
 		displays := c.displays(transcripts.value)
-		seen := map[string]bool{}
+		seenOccurrences := make(map[string]bool, len(occurrences))
+		countedOccurrences := map[string]bool{}
+		subjectOccurrenceKeys := map[string]bool{}
+		envelopeMatches := c.transcriptEnvelopeMatchesSubject(history.value.meetings)
+		fallbackAt := map[string]time.Time{}
+		for _, occurrence := range occurrences {
+			if occurrence.Ref != "" {
+				seenOccurrences[occurrence.Ref] = true
+			}
+		}
 		for _, id := range transcripts.value {
 			info := r.value.ByTranscript[id]
 			key := info.Key
 			if key == "" {
 				key = messageRef(id)
 			}
-			if seen[key] {
-				continue
-			}
-			seen[key] = true
-			at := displays[id].OccurredAt
 			for _, ref := range info.ExactOccurrenceRefs {
 				if c.src.Calendar != nil {
 					d, e := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
 					if e == nil {
 						o := d.CalendarOccurrence
-						occurrences = append(occurrences, o)
+						canonicalRef := o.Ref
+						if canonicalRef == "" {
+							canonicalRef = ref
+						}
+						if !seenOccurrences[canonicalRef] {
+							occurrences = append(occurrences, o)
+							seenOccurrences[canonicalRef] = true
+						}
+						if !c.occurrenceMatchesSubject(o) && !envelopeMatches[id] {
+							continue
+						}
 						stamp := o.Start
 						if o.AllDay {
-							stamp, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+							var exists bool
+							var err error
+							stamp, exists, err = calrecur.CivilDateBoundary(o.StartDate, c.loc)
+							if err != nil || !exists {
+								continue
+							}
 						}
-						at = &stamp
-						break
+						if stamp.IsZero() || stamp.After(c.t.Now) {
+							continue
+						}
+						subjectOccurrenceKeys[key] = true
+						if countedOccurrences[canonicalRef] {
+							continue
+						}
+						countedOccurrences[canonicalRef] = true
+						c.mergeContact(store.ContactAggregate{FirstAt: &stamp, LastAt: &stamp, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(stamp, c.t.Now, c.loc)}, false)
+						continue
 					}
 					c.gap("meetings", e, false)
 				}
 			}
-			if at != nil && !at.After(c.t.Now) {
-				c.mergeContact(store.ContactAggregate{FirstAt: at, LastAt: at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(*at, c.t.Now, c.loc)}, false)
+			if len(info.ExactOccurrenceRefs) == 0 || envelopeMatches[id] {
+				if at := displays[id].OccurredAt; at != nil {
+					if current, ok := fallbackAt[key]; !ok || at.After(current) {
+						fallbackAt[key] = *at
+					}
+				}
 			}
+		}
+		for key, at := range fallbackAt {
+			if subjectOccurrenceKeys[key] || at.After(c.t.Now) {
+				continue
+			}
+			c.mergeContact(store.ContactAggregate{FirstAt: &at, LastAt: &at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(at, c.t.Now, c.loc)}, false)
 		}
 	}
 	c.calendarGaps(upcoming, "upcoming")
