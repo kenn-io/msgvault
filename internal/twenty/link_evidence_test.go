@@ -170,11 +170,7 @@ func TestTwentyFallbackOnlyOnFieldRejection(t *testing.T) {
 					})
 					client, err := NewClient("https://fallback.twenty.example", "example-key")
 					require.NoError(err)
-					client.http.Transport = twentyTransport(func(r *http.Request) (*http.Response, error) {
-						recorder := httptest.NewRecorder()
-						handler.ServeHTTP(recorder, r)
-						return recorder.Result(), nil
-					})
+					client.http.Transport = httptest.NewTestServer(t, handler).Client().Transport
 					client.limiter = rate.NewLimiter(rate.Inf, 1)
 					if probe {
 						err = client.Probe(t.Context())
