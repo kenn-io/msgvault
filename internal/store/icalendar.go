@@ -83,7 +83,7 @@ func (s *Store) prepareICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		out = append(out, preparedICS{component: c, raw: c.Raw, fromEmail: fromEmail, meta: calevent.ICSMetadata{Version: 1, Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, InviteOrganizer: c.OrganizerEmail}})
+		out = append(out, preparedICS{component: c, raw: c.Raw, fromEmail: fromEmail, meta: calevent.ICSMetadata{Version: 1, ICalUID: c.UID, Sequence: c.Sequence, Stamp: c.Stamp, Status: c.Event.Status, AllDay: c.Event.AllDay, InviteOrganizer: c.OrganizerEmail}})
 	}
 	return out, diagnostics, nil
 }
@@ -171,6 +171,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			return fmt.Errorf("read prior ICS identity: %w", err)
 		}
 		var old calevent.ICSMetadata
+		metadataMissingUID := false
 		if exists {
 			if format != rawFormatICS {
 				return errors.New("calendar invitation identity conflicts with another raw format")
@@ -182,6 +183,10 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 				}
 				return err
 			}
+			metadataMissingUID = old.ICalUID == ""
+			if metadataMissingUID {
+				old.ICalUID = c.UID
+			}
 		}
 		item, apply, err := s.resolveICSRevisionWith(ctx, tx, sourceID, id, exists, item, old, items)
 		if err != nil {
@@ -191,6 +196,11 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			return err
 		}
 		if !apply {
+			if metadataMissingUID {
+				if err := s.setICSMetadataWith(ctx, tx, id, old); err != nil {
+					return fmt.Errorf("backfill retained ICS UID: %w", err)
+				}
+			}
 			if !item.fromEmail && old.Status != SyncStatusCancelled && e.Status != SyncStatusCancelled {
 				if err := s.refreshRetainedICSMessageTimeWith(ctx, tx, id); err != nil {
 					return err

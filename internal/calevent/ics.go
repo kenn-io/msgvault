@@ -25,6 +25,7 @@ const maxICSEvents = 10000
 // ICSMetadata records the accepted revision independently of the retained raw.
 type ICSMetadata struct {
 	Version         int       `json:"ics_version"`
+	ICalUID         string    `json:"ical_uid,omitempty"`
 	Superseded      bool      `json:"ics_superseded,omitempty"`
 	Status          string    `json:"status,omitempty"`
 	AllDay          bool      `json:"all_day"`

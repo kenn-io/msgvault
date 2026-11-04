@@ -995,3 +995,30 @@ func TestICalendarRecurrenceEvidenceBatched(t *testing.T) {
 	assertions.Empty(events[1].Event.RecurrenceError)
 	assertions.NotEmpty(events[2].Event.RecurrenceError)
 }
+
+func TestICalendarPersistenceRecordsAndBackfillsUID(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:First")
+	first, err := st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	requirements.Len(first.MessageIDs, 1)
+	id := first.MessageIDs[0]
+	metadata := func() string {
+		var value string
+		requirements.NoError(st.db.QueryRow(st.Rebind(`SELECT COALESCE(metadata, '') FROM messages WHERE id = ?`), id).Scan(&value))
+		return value
+	}
+	assertions.Contains(metadata(), `"ical_uid":"family@example.com"`)
+
+	// Metadata written before the UID was recorded is repaired by a replay of
+	// the retained revision.
+	legacy := strings.Replace(metadata(), `"ical_uid":"family@example.com",`, "", 1)
+	requirements.NotContains(legacy, "ical_uid")
+	_, err = st.db.Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), legacy, id)
+	requirements.NoError(err)
+	_, err = st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	assertions.Contains(metadata(), `"ical_uid":"family@example.com"`)
+}
