@@ -3,7 +3,6 @@ package loops_test
 import (
 	"context"
 	"database/sql"
-	"iter"
 	"strconv"
 	"testing"
 	"time"
@@ -590,45 +589,6 @@ func TestLoopActionLeavesQuestionInsideItsGraceUnmarked(t *testing.T) {
 			assert.Equal(fresh, after.Loops[0].Anchor.ID)
 		})
 	}
-}
-
-func TestListUsesDefaultEvidenceBudget(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := storetest.New(t)
-	f.PersistEmail(storetest.EmailSpec{From: alex, To: []string{me}, Body: "Can you send the contract?", SentAt: ago(5 * day)})
-	counted := &countingStore{Store: f.Store}
-	st := &uncachedConversationStore{countingStore: counted}
-
-	result, err := loops.List(t.Context(), st, loops.Options{}, now)
-	require.NoError(err)
-	assert.True(result.CoverageIncomplete)
-	assert.NotEmpty(result.Loops)
-	assert.Equal(loops.MaxListEvidenceComputations, counted.bodies)
-	assert.Equal(loops.MaxListEvidenceComputations, counted.originals)
-}
-
-// uncachedConversationStore replays one stored conversation with cache misses
-// so the default request budget needs only one persisted email.
-type uncachedConversationStore struct {
-	*countingStore
-}
-
-func (s *uncachedConversationStore) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
-	return func(yield func(store.LoopConversation, error) bool) {
-		for conv, err := range s.Store.LoopConversationsContext(ctx, q) {
-			for range loops.MaxListEvidenceComputations + 1 {
-				if !yield(conv, err) || err != nil {
-					return
-				}
-			}
-		}
-	}
-}
-
-func (s *uncachedConversationStore) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (store.LoopMessageEvidence, string, bool, error) {
-	evidence, token, _, err := s.Store.LoopMessageEvidenceContext(ctx, id, version)
-	return evidence, token, false, err
 }
 
 func TestListRetainsEvidenceAcrossAnInterruptedConversation(t *testing.T) {

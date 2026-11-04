@@ -11,6 +11,7 @@ import (
 )
 
 func TestListProgressesPastNewerEvidence(t *testing.T) {
+	// serial: changes the package global listEvidenceBudget.
 	assert := assert.New(t)
 	require := require.New(t)
 	SetListEvidenceBudgetForTest(t, 2)
