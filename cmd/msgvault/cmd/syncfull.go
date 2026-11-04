@@ -427,10 +427,7 @@ func imapFolderStateOptions(
 		return nil
 	}
 
-	opts := []imaplib.Option{imaplib.WithFilteredDeletionReconciliation(
-		cfg != nil && cfg.Sync.IMAPReconcileFilteredDeletions[src.Identifier] &&
-			len(parseFolderFilter(syncFolders)) == 0 && len(parseFolderFilter(syncSkipFolders)) == 0,
-	)}
+	var opts []imaplib.Option
 	states, err := loadIMAPFolderStates(s, src.ID)
 	if err != nil {
 		repairLogger(logger).Warn("failed to load IMAP folder states", "source", src.Identifier, "error", err)
@@ -744,7 +741,9 @@ func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, 
 	folders = parseFolderFilter(folders)
 	skipFolders = parseFolderFilter(skipFolders)
 	cfg := state.cfg
+	reconcileFilteredDeletions := false
 	if len(folders) == 0 && len(skipFolders) == 0 {
+		reconcileFilteredDeletions = cfg.Sync.IMAPReconcileFilteredDeletions[identifier]
 		if len(cfg.Sync.IMAPSkipFolders) > 0 {
 			state.imapFolderAccounts.Do(func() {
 				sources, err := s.ListSources(sourceTypeIMAP)
@@ -761,7 +760,10 @@ func imapSyncFolderFilter(s *store.Store, identifier string, state *invocation, 
 		}
 		skipFolders = parseFolderFilter(cfg.Sync.IMAPSkipFolders[identifier])
 	}
-	return imaplib.WithFolderFilter(folders, skipFolders)
+	return func(c *imaplib.Client) {
+		imaplib.WithFolderFilter(folders, skipFolders)(c)
+		imaplib.WithFilteredDeletionReconciliation(reconcileFilteredDeletions)(c)
+	}
 }
 
 // parseFolderFilter trims whitespace from folder names and removes empty

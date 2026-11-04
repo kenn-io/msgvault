@@ -362,7 +362,7 @@ func WithFilteredDeletionReconciliation(enabled bool) Option {
 func (c *Client) ReconcilesFilteredDeletions() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.scopedMailboxSnapshot
+	return c.scannedMailboxSnapshotLocked()
 }
 
 func (c *Client) scannedMailboxSnapshotLocked() bool {
