@@ -1951,12 +1951,12 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 	if cacheSnapshotGOOS != "windows" && cacheSnapshotGOOS != "darwin" &&
 		os.Getenv("MSGVAULT_FORCE_CSV_SNAPSHOT") == "" {
 		// Try sqlite_scanner; fall back to CSV when the extension is unavailable
-		// (for example in an air-gapped installation). Parallel scanner workers
-		// open independent SQLite connections, so disable only that parallelism
-		// to keep every scan inside the attached database's read transaction.
+		// (for example in an air-gapped installation). Keep every scan on the
+		// attached read transaction. sqlite_query converts unprotected SQLite
+		// values to text, so separate DuckDB pipelines must also run serially.
 		if _, err := duckDB.Exec("INSTALL sqlite; LOAD sqlite;"); err != nil {
 			fmt.Fprintf(os.Stderr, "  sqlite_scanner unavailable, using CSV fallback: %v\n", err)
-		} else if _, err := duckDB.Exec("SET sqlite_disable_multithreaded_scans = true"); err != nil {
+		} else if _, err := duckDB.Exec("SET sqlite_disable_multithreaded_scans = true; SET threads = 1"); err != nil {
 			fmt.Fprintf(os.Stderr, "  sqlite snapshot scans unavailable, using CSV fallback: %v\n", err)
 		} else {
 			escapedPath := strings.ReplaceAll(dbPath, "'", "''")
