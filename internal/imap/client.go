@@ -1244,7 +1244,7 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 		}
 
 		if c.scopedMailboxSnapshot {
-			c.listedMailboxes = append([]string{}, mailboxes...)
+			c.listedMailboxes = c.retainedMailboxesLocked(mailboxes)
 		}
 		allMailboxes = filterMailboxes(
 			mailboxes,

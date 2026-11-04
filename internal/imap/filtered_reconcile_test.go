@@ -1,12 +1,14 @@
 package imap
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
 	imapv2 "github.com/emersion/go-imap/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -140,6 +142,54 @@ func TestFilteredReconciliation_IncompleteMailboxSuppressesSnapshot(t *testing.T
 			listAllMessages(t, client)
 			assert.Nil(t, client.ObservedMailboxDeltas())
 			assert.Nil(t, client.ObservedFolderStates())
+		})
+	}
+}
+
+func TestFilteredReconciliation_AbsentSkippedMailboxKeepsMembership(t *testing.T) {
+	for _, mode := range []string{"renamed exclusion", "outside saved allow list"} {
+		t.Run(mode, func(t *testing.T) {
+			addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 1})
+			first := newTestClient(t, addr)
+			listAllMessages(t, first)
+			saved := first.ObservedFolderStates()
+			require.NoError(t, first.Close())
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("imap", "imap://user@example.com:143")
+			require.NoError(t, err)
+			conversation, err := st.EnsureConversation(source.ID, "thread", "Thread")
+			require.NoError(t, err)
+			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "Trash|1", MessageType: "email"})
+			require.NoError(t, err)
+			require.NoError(t, st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{{
+				Mailbox: "Trash", Reset: true,
+				State:       store.IMAPFolderState{Mailbox: "Trash", UIDValidity: saved["Trash"].UIDValidity, UIDNext: 2},
+				Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "Trash|1"}},
+			}}))
+			require.NoError(t, user.Rename("Trash", "Renamed", nil))
+			client := newTestClient(t, addr, WithFolderStates(saved), WithFolderFilter(nil, []string{"Trash", "Renamed"}), WithFilteredDeletionReconciliation(true))
+			if mode == "outside saved allow list" {
+				client.config.Folders = []string{"INBOX"}
+				client.folderFilterExclude = nil
+			}
+			listAllMessages(t, client)
+			var deltas []store.IMAPMailboxDelta
+			for _, delta := range client.ObservedMailboxDeltas() {
+				deltas = append(deltas, store.IMAPMailboxDelta{Mailbox: delta.Mailbox, Reset: delta.Reset,
+					State: store.IMAPFolderState{Mailbox: delta.Mailbox, UIDValidity: delta.State.UIDValidity, UIDNext: delta.State.UIDNext}})
+			}
+			run, err := st.StartSync(source.ID, "full")
+			require.NoError(t, err)
+			require.NoError(t, st.CompleteSync(run, "0"))
+			require.NoError(t, st.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), source.ID, run, deltas, client.ListedMailboxes()))
+			var deleted sql.NullTime
+			var key string
+			require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT source_message_id, deleted_from_source_at FROM messages WHERE id = ?`), id).Scan(&key, &deleted))
+			assert.False(t, deleted.Valid)
+			assert.Equal(t, "Trash|1", key)
+			var count int
+			require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM imap_message_memberships WHERE message_id = ?`), id).Scan(&count))
+			assert.Equal(t, 1, count)
 		})
 	}
 }

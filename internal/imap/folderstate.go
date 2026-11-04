@@ -370,9 +370,24 @@ func (c *Client) scannedMailboxSnapshotLocked() bool {
 		c.labelsSnapshotFilteredLocked()
 }
 
-// ListedMailboxes returns the unfiltered server topology for a scoped scan.
+// ListedMailboxes returns the mailboxes a scoped scan must keep: the unfiltered
+// server topology plus saved mailboxes the run's folder filter did not cover.
 func (c *Client) ListedMailboxes() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.listedMailboxes...)
+}
+
+// retainedMailboxesLocked adds to listed every saved mailbox absent from it
+// that the current folder filter would not scan. Only an absent mailbox the
+// run would have scanned is proven gone. Caller must hold mu.
+func (c *Client) retainedMailboxesLocked(listed []string) []string {
+	retained := append([]string{}, listed...)
+	for mailbox := range c.priorFolderStates {
+		if !slices.Contains(listed, mailbox) && !c.mailboxIncludedLocked(mailbox) {
+			retained = append(retained, mailbox)
+		}
+	}
+	slices.Sort(retained)
+	return retained
 }

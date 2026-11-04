@@ -219,3 +219,32 @@ func TestApplyIMAPScannedMailboxDeltas_RetiresDeletedMailbox(t *testing.T) {
 		assert.NotEqual(t, "Old", state.Mailbox)
 	}
 }
+
+func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedScannedRows(t *testing.T) {
+	for _, reset := range []bool{false, true} {
+		name := "incremental"
+		if reset {
+			name = "reset"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newIMAPIdentityFixture(t)
+			// Earlier filtered syncs saved cursors and content without memberships.
+			require.NoError(t, f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{
+				{Mailbox: "INBOX", UIDValidity: 11, UIDNext: 2},
+				{Mailbox: "Trash", UIDValidity: 22, UIDNext: 2},
+			}))
+			moved := f.createMessage(t, "INBOX|1", "")
+			skipped := f.createMessage(t, "Trash|1", "")
+			delta := scannedIMAPDelta("INBOX", 11)
+			delta.Reset = reset
+			if !reset {
+				delta.VanishedUIDs = []uint32{1}
+			}
+			for range 2 {
+				require.NoError(t, f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), f.source.ID, completedScannedIMAPSync(t, f), []store.IMAPMailboxDelta{delta}, []string{"INBOX", "Trash"}))
+			}
+			assert.True(t, messageTombstoned(t, f.store, moved))
+			assert.False(t, messageTombstoned(t, f.store, skipped))
+		})
+	}
+}

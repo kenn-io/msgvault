@@ -176,7 +176,8 @@ func (s *Store) ApplyIMAPMailboxDeltasForSyncContext(
 
 // ApplyIMAPScannedMailboxDeltasForSyncContext reconciles only the mailboxes
 // named by deltas and retires mailboxes absent from listedMailboxes.
-// Listed but unscanned mailboxes retain their saved topology.
+// Listed but unscanned mailboxes retain their saved topology, and rows without
+// memberships are reconciled only when their source key names a scanned mailbox.
 // Callers must supply complete observations for each scanned mailbox and the
 // latest source generation, whose status must be completed.
 func (s *Store) ApplyIMAPScannedMailboxDeltasForSyncContext(
@@ -235,12 +236,8 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		affected := make(map[int64]struct{})
-		// Only a complete account scan can infer absence for legacy rows
-		// without stored memberships.
-		if fullTopology {
-			if err := s.captureUntrackedIMAPMessageIDs(tx, sourceID, len(generations) != 0, affected); err != nil {
-				return err
-			}
+		if err := resolver.captureUntracked(s, len(generations) != 0, normalizedDeltas, fullTopology, affected); err != nil {
+			return err
 		}
 		if err := retireAbsentIMAPMailboxes(
 			tx, sourceID, currentMailboxes, generations, affected,
@@ -858,17 +855,8 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		observation.Mailbox, observation.UIDValidity = mailbox, delta.uidValidity
 		observations[observation.UID] = observation
 	}
-	// Validate the final UID separator below to exclude nested mailboxes.
-	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(mailbox+"|") + "%"
-	predicate := `source_message_id LIKE ? ESCAPE '\'`
-	args := []any{mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID, pattern}
-	if r.sqlite {
-		// SQLite's default LIKE cannot use the binary source-key index. The
-		// byte after '|' is '}', so these bounds cover exactly this prefix.
-		predicate = `source_message_id >= ? AND source_message_id < ?`
-		args[len(args)-1] = mailbox + "|"
-		args = append(args, mailbox+"}")
-	}
+	predicate, keyArgs := r.sourceKeyPrefix(mailbox)
+	args := append([]any{mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID}, keyArgs...)
 	rows, err := r.tx.Query(`
 		SELECT messages.id, messages.source_message_id, messages.deleted_from_source_at IS NOT NULL,
 		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id = messages.id),
@@ -894,15 +882,10 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 			_ = rows.Close()
 			return err
 		}
-		separator := strings.LastIndexByte(c.key, '|')
-		if separator < 0 || c.key[:separator] != mailbox {
+		var valid bool
+		if c.uid, valid = imapSourceKeyUID(c.key, mailbox); !valid {
 			continue
 		}
-		uid, err := strconv.ParseUint(c.key[separator+1:], 10, 32)
-		if err != nil || uid == 0 || c.key[separator+1:] != strconv.FormatUint(uid, 10) {
-			continue
-		}
-		c.uid = uint32(uid)
 		_, observed := observations[c.uid]
 		if protected {
 			continue
@@ -941,6 +924,93 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		}
 	}
 	return nil
+}
+
+// sourceKeyPrefix returns a predicate and its arguments matching source keys
+// that start with mailbox and '|'. Callers must validate matches with
+// imapSourceKeyUID to exclude nested mailboxes.
+func (r *imapMembershipResolver) sourceKeyPrefix(mailbox string) (string, []any) {
+	if r.sqlite {
+		// SQLite's default LIKE cannot use the binary source-key index. The
+		// byte after '|' is '}', so these bounds cover exactly this prefix.
+		return `source_message_id >= ? AND source_message_id < ?`, []any{mailbox + "|", mailbox + "}"}
+	}
+	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(mailbox+"|") + "%"
+	return `source_message_id LIKE ? ESCAPE '\'`, []any{pattern}
+}
+
+// imapSourceKeyUID returns the UID of a mailbox|uid source key in mailbox.
+func imapSourceKeyUID(key, mailbox string) (uint32, bool) {
+	separator := strings.LastIndexByte(key, '|')
+	if separator < 0 || key[:separator] != mailbox {
+		return 0, false
+	}
+	uid, err := strconv.ParseUint(key[separator+1:], 10, 32)
+	if err != nil || uid == 0 || key[separator+1:] != strconv.FormatUint(uid, 10) {
+		return 0, false
+	}
+	return uint32(uid), true
+}
+
+// captureUntracked marks live rows without stored memberships for
+// reconciliation. A complete account scan judges every such row; a scoped scan
+// judges only rows whose source key names a scanned mailbox.
+func (r *imapMembershipResolver) captureUntracked(
+	s *Store, hasMembership bool,
+	deltas []normalizedIMAPMailboxDelta, fullTopology bool, affected map[int64]struct{},
+) error {
+	if fullTopology {
+		return s.captureUntrackedIMAPMessageIDs(r.tx, r.sourceID, hasMembership, affected)
+	}
+	for _, delta := range deltas {
+		if err := r.captureScannedUntracked(delta, affected); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// captureScannedUntracked marks rows without memberships whose source key
+// names delta's mailbox at its saved UIDVALIDITY and a UID the scan proves
+// absent: unobserved by a Reset delta, or vanished from an incremental one.
+func (r *imapMembershipResolver) captureScannedUntracked(
+	delta normalizedIMAPMailboxDelta, affected map[int64]struct{},
+) error {
+	absent := func(uid uint32) bool { return slices.Contains(delta.delta.VanishedUIDs, uid) }
+	if delta.delta.Reset {
+		observed := make(map[uint32]struct{}, len(delta.delta.Memberships))
+		for _, observation := range delta.delta.Memberships {
+			observed[observation.UID] = struct{}{}
+		}
+		absent = func(uid uint32) bool { _, ok := observed[uid]; return !ok }
+	}
+	predicate, keyArgs := r.sourceKeyPrefix(delta.mailbox)
+	args := append(append([]any{r.sourceID}, keyArgs...), r.sourceID, delta.mailbox, delta.uidValidity)
+	rows, err := r.tx.Query(`
+		SELECT id, source_message_id FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NULL AND `+predicate+`
+		  AND EXISTS (SELECT 1 FROM imap_folder_state state
+			WHERE state.source_id = ? AND state.mailbox = ? AND state.uidvalidity = ?)
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages marker
+			WHERE marker.message_id = messages.id)
+		  AND NOT EXISTS (SELECT 1 FROM imap_message_memberships m
+			WHERE m.source_id = messages.source_id AND m.message_id = messages.id)
+	`, args...)
+	if err != nil {
+		return fmt.Errorf("read untracked IMAP messages for %q: %w", delta.mailbox, err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var id int64
+		var key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return fmt.Errorf("scan untracked IMAP message for %q: %w", delta.mailbox, err)
+		}
+		if uid, valid := imapSourceKeyUID(key, delta.mailbox); valid && absent(uid) {
+			affected[id] = struct{}{}
+		}
+	}
+	return rows.Err()
 }
 
 // Snapshot identity evidence before key retirement and membership changes can invalidate it.
