@@ -67,7 +67,7 @@ func TestRunVerifyLocalRawSamples(t *testing.T) {
 			cfg := invocation.cfg
 			var st *store.Store
 			testDB := os.Getenv("MSGVAULT_TEST_DB")
-			if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
+			if store.IsPostgresURL(testDB) {
 				st = testutil.NewTestStore(t)
 				// Point the command at this fixture's clone or private schema,
 				// never the shared test database itself.
