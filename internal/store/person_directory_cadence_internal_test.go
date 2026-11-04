@@ -53,11 +53,15 @@ func FuzzContactFrequencyColumnIsolation(f *testing.F) {
 	f.Add(uint16(1), int64(21), true)
 	f.Add(uint16(0), int64(21), true)
 	f.Add(uint16(1), int64(21), false)
+	f.Add(uint16(4), int64(21), true)
 	f.Add(uint16(7), int64(21), true)
 	f.Fuzz(func(t *testing.T, shape uint16, days int64, integerKind bool) {
 		var fields [9]sql.NullString
 		storedValue := strconv.FormatInt(days, 10)
 		shape %= 8
+		if shape == 4 {
+			storedValue = "2026-01-01"
+		}
 		if shape == 7 {
 			fields[7] = sql.NullString{Valid: true, String: "person"}
 			fields[8] = sql.NullString{Valid: true, String: storedValue}
