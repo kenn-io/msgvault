@@ -19,7 +19,7 @@ func openMCPHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo,
 	// Discovery refreshes credentials. Keep those mutations private to the
 	// serialized resolver rather than changing the shared invocation config.
 	cfg := *invocation.cfg
-	err = client.EnableLocalDaemonRecovery(func(ctx context.Context) (daemonclient.LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(ctx context.Context) (daemonclient.LocalDaemonEndpoint, error) {
 		// MCP tool contexts carry request cancellation but not command metadata.
 		// Reattach the original invocation so a replacement daemon honors flags
 		// such as --config while retaining the request's cancellation chain.
@@ -33,12 +33,7 @@ func openMCPHTTPStore(ctx context.Context) (*daemonclient.Client, HTTPStoreInfo,
 		}
 		return daemonclient.LocalDaemonEndpoint{
 			URL: urlFromDaemonRuntime(runtime), APIKey: cfg.Server.AuthenticationKey(),
-			LocalDaemonToken: runtime.Record.Metadata[runtimeShutdownToken],
 		}, nil
 	})
-	if err != nil {
-		_ = client.Close()
-		return nil, HTTPStoreInfo{}, err
-	}
 	return client, info, nil
 }

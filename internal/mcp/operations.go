@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/daemonclient"
 )
 
 // OperationBackend executes only the registered operation name. Each owning
@@ -123,9 +124,6 @@ func (d operationalDefinition) bind(backend OperationBackend) func(context.Conte
 }
 
 func operationalToolResponse(name string, result *OperationResult, err error) (*toolResult, error) {
-	if translated := translateLocalDaemonError(err); translated != nil {
-		return translated, nil
-	}
 	if err != nil {
 		if result == nil || !result.IsError {
 			return nil, newInternalError(name, err)
@@ -135,10 +133,13 @@ func operationalToolResponse(name string, result *OperationResult, err error) (*
 	if result == nil || result.Output == nil {
 		return nil, newInternalError(name, errors.New("missing operation result"))
 	}
-	response, err := jsonResult(result.Output)
-	if err != nil {
-		return nil, err
+	response, jsonErr := jsonResult(result.Output)
+	if jsonErr != nil {
+		return nil, jsonErr
 	}
 	response.isError = result.IsError
+	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+		response.text = local.Error()
+	}
 	return response, nil
 }

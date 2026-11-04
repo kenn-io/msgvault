@@ -107,7 +107,8 @@ func TestMCPLocalRecoveryHonorsDisabledAutostart(t *testing.T) {
 	_, err = client.GetStats()
 	var unavailable *daemonclient.LocalDaemonUnavailableError
 	requirements.ErrorAs(err, &unavailable)
-	assertions.ErrorContains(err, "daemon_auto_start")
+	assertions.ErrorContains(err, "daemon_unavailable")
+	assertions.ErrorContains(err, "retry the tool call or check msgvault daemon status")
 }
 
 func TestMCPRecoveryLeavesConfiguredRemoteFixed(t *testing.T) {

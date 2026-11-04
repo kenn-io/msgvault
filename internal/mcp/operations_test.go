@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http/httptest"
 	"sync/atomic"
@@ -60,19 +59,19 @@ func TestOperationalReadRetainsTypedStructuredOutput(t *testing.T) {
 func TestOperationalWriteRecoveryFailureDoesNotExposeUncertainOutcome(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	local := &daemonclient.LocalDaemonUnavailableError{Err: errors.New("private archive path")}
+	local := &daemonclient.LocalDaemonUnavailableError{}
 	result, err := operationalToolResponse("sync_source", &OperationResult{
 		IsError: true,
 		Output: map[string]any{
-			"error":                        "operation_failed",
-			"operation_may_have_completed": true,
+			"error":                        "daemon_unavailable",
+			"operation_may_have_completed": false,
 		},
 	}, local)
 	requirements.NoError(err)
 	requirements.NotNil(result)
 	assertions.True(result.isError)
 	assertions.Equal("daemon_unavailable: "+daemonclient.LocalDaemonUnavailableMessage, result.text)
-	assertions.Empty(result.structuredContent)
+	assertions.JSONEq(`{"error":"daemon_unavailable","operation_may_have_completed":false}`, string(result.structuredContent))
 }
 
 type countingOperationalBackend struct {

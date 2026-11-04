@@ -64,9 +64,6 @@ func (h *handlers) searchMedia(ctx context.Context, req toolRequest) (*toolResul
 	}
 	response, err := h.mediaSearcher.SearchMedia(ctx, request)
 	if err != nil {
-		if result := translateLocalDaemonError(err); result != nil {
-			return result, nil
-		}
 		return toolErrorResult(err.Error()), nil
 	}
 	return jsonResult(response)

@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
-	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 )
@@ -110,9 +109,6 @@ func (s attachmentService) read(ctx context.Context, contentHash string, maxByte
 	if s.reader != nil {
 		data, err := s.reader.ReadAttachment(ctx, contentHash)
 		if err != nil {
-			if _, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
-				return nil, newInternalError("read attachment", err)
-			}
 			if errors.Is(err, os.ErrNotExist) {
 				return nil, &attachmentUnavailableError{message: "attachment file not available"}
 			}

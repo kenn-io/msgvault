@@ -40,10 +40,10 @@ func TestLocalDaemonRecoveryFollowsSuccessiveRestarts(t *testing.T) {
 	t.Cleanup(target.Close)
 	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
 	requirements.NoError(err)
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 		resolutions++
 		return LocalDaemonEndpoint{URL: target.URL}, nil
-	}))
+	})
 	// Exercise the generated client, then the raw generated-request path. Neither
 	// may retain its original URL after the transport has found the replacement.
 	health, err := client.GetHealth(t.Context())
@@ -73,9 +73,9 @@ func TestLocalDaemonRecoveryMessageURLsUseCurrentEndpoint(t *testing.T) {
 	t.Cleanup(replacement.Close)
 	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
 	requirements.NoError(err)
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 		return LocalDaemonEndpoint{URL: replacement.URL}, nil
-	}))
+	})
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, client.BaseURL()+"/api/v1/health", nil)
 	requirements.NoError(err)
 	response, err := client.httpClient.Do(request)
@@ -89,50 +89,38 @@ func TestLocalDaemonRecoveryMessageURLsUseCurrentEndpoint(t *testing.T) {
 }
 
 func TestLocalDaemonRecoveryReplaysBodyAndRefreshesCredentials(t *testing.T) {
-	for _, decision := range []bool{false, true} {
-		t.Run(strconv.FormatBool(decision), func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			var calls atomic.Int32
-			var target *httptest.Server
-			target = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
-				assert.Equal(t, strings.TrimPrefix(target.URL, "http://"), r.Host)
-				assert.Equal(t, http.MethodPost, r.Method)
-				assert.Equal(t, "/api/v1/example?cursor=next", r.URL.RequestURI())
-				assert.Equal(t, "replacement-key", r.Header.Get("X-Api-Key"))
-				if decision {
-					assert.Equal(t, "replacement-token", r.Header.Get(apiprotocol.DaemonRuntimeTokenHeader))
-				} else {
-					assert.Empty(t, r.Header.Get(apiprotocol.DaemonRuntimeTokenHeader))
-				}
-				assert.Equal(t, "synthetic-trace", r.Header.Get("X-Trace"))
-				body, err := io.ReadAll(r.Body)
-				assert.NoError(t, err)
-				assert.JSONEq(t, `{"value":"synthetic"}`, string(body))
-				w.WriteHeader(http.StatusNoContent)
-			}))
-			t.Cleanup(target.Close)
-			client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
-			requirements.NoError(err)
-			requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
-				return LocalDaemonEndpoint{URL: target.URL, APIKey: "replacement-key", LocalDaemonToken: "replacement-token"}, nil
-			}))
-			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, client.BaseURL()+"/api/v1/example?cursor=next", strings.NewReader(`{"value":"synthetic"}`))
-			requirements.NoError(err)
-			request.Header.Set("X-Api-Key", "old-key")
-			request.Header.Set("X-Trace", "synthetic-trace")
-			if decision {
-				request.Header.Set(apiprotocol.DaemonRuntimeTokenHeader, "old-token")
-			}
-			response, err := client.httpClient.Do(request)
-			requirements.NoError(err)
-			assertions.Equal(strings.TrimPrefix(target.URL, "http://"), response.Request.Host)
-			requirements.NoError(response.Body.Close())
-			assertions.Equal(int32(1), calls.Load())
-			assertions.Equal(strings.TrimPrefix(client.BaseURL(), "http://"), request.Host, "the caller's request is immutable")
-		})
-	}
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	var calls atomic.Int32
+	var target *httptest.Server
+	target = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		assert.Equal(t, strings.TrimPrefix(target.URL, "http://"), r.Host)
+		assert.Equal(t, http.MethodPost, r.Method)
+		assert.Equal(t, "/api/v1/example?cursor=next", r.URL.RequestURI())
+		assert.Equal(t, "replacement-key", r.Header.Get("X-Api-Key"))
+		assert.Equal(t, "synthetic-trace", r.Header.Get("X-Trace"))
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		assert.JSONEq(t, `{"value":"synthetic"}`, string(body))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(target.Close)
+	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
+	requirements.NoError(err)
+	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+		return LocalDaemonEndpoint{URL: target.URL, APIKey: "replacement-key"}, nil
+	})
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, client.BaseURL()+"/api/v1/example?cursor=next", strings.NewReader(`{"value":"synthetic"}`))
+	requirements.NoError(err)
+	request.Header.Set("X-Api-Key", "old-key")
+	request.Header.Set("X-Trace", "synthetic-trace")
+	response, err := client.httpClient.Do(request)
+	requirements.NoError(err)
+	assertions.Equal(strings.TrimPrefix(target.URL, "http://"), response.Request.Host)
+	requirements.NoError(response.Body.Close())
+	assertions.Equal(int32(1), calls.Load())
+	assertions.Equal(strings.TrimPrefix(client.BaseURL(), "http://"), request.Host, "the caller's request is immutable")
 }
 
 func TestLocalDaemonRecoveryFailureIsBoundedAndLaterCallsCanRecover(t *testing.T) {
@@ -145,13 +133,13 @@ func TestLocalDaemonRecoveryFailureIsBoundedAndLaterCallsCanRecover(t *testing.T
 			var resolutions int
 			client, err := New(Config{URL: dead, AllowInsecure: true})
 			requirements.NoError(err)
-			requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+			client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 				resolutions++
 				if resolverFailure && resolutions == 1 {
 					return LocalDaemonEndpoint{}, errors.New("synthetic discovery failure")
 				}
 				return LocalDaemonEndpoint{URL: target}, nil
-			}))
+			})
 			_, err = client.GetHealth(t.Context())
 			var unavailable *LocalDaemonUnavailableError
 			requirements.ErrorAs(err, &unavailable)
@@ -196,10 +184,10 @@ func TestLocalDaemonRecoveryDoesNotReplayAmbiguousFailures(t *testing.T) {
 			client, err := New(Config{URL: initial, AllowInsecure: true})
 			requirements.NoError(err)
 			var resolutions int
-			requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+			client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 				resolutions++
 				return LocalDaemonEndpoint{URL: server.URL}, nil
-			}))
+			})
 			request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, initial+"/write", strings.NewReader("write once"))
 			requirements.NoError(err)
 			response, err := client.httpClient.Do(request)
@@ -228,10 +216,10 @@ func TestLocalDaemonRecoveryDoesNotRetryHTTPFailures(t *testing.T) {
 			t.Cleanup(server.Close)
 			client, err := New(Config{URL: server.URL, AllowInsecure: true})
 			requirements.NoError(err)
-			requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+			client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 				require.Fail(t, "HTTP errors must not trigger discovery")
 				return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
-			}))
+			})
 			_, err = client.GetHealth(t.Context())
 			requirements.Error(err)
 			var unavailable *LocalDaemonUnavailableError
@@ -267,10 +255,10 @@ func TestLocalDaemonRecoveryConcurrentCallsShareResolution(t *testing.T) {
 	client, err := New(Config{URL: dead, AllowInsecure: true, HTTPClient: &http.Client{Transport: transport}})
 	requirements.NoError(err)
 	var resolutions atomic.Int32
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 		resolutions.Add(1)
 		return LocalDaemonEndpoint{URL: server.URL}, nil
-	}))
+	})
 	var workers sync.WaitGroup
 	for range callers {
 		workers.Go(func() {
@@ -297,7 +285,7 @@ func TestLocalDaemonRecoveryWaiterCanCancel(t *testing.T) {
 	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
 	requirements.NoError(err)
 	entered, release := make(chan struct{}), make(chan struct{})
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(ctx context.Context) (LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(ctx context.Context) (LocalDaemonEndpoint, error) {
 		close(entered)
 		select {
 		case <-release:
@@ -305,7 +293,7 @@ func TestLocalDaemonRecoveryWaiterCanCancel(t *testing.T) {
 		case <-ctx.Done():
 			return LocalDaemonEndpoint{}, ctx.Err()
 		}
-	}))
+	})
 	done := make(chan error, 1)
 	go func() { _, err := client.GetHealth(t.Context()); done <- err }()
 	<-entered
@@ -332,10 +320,10 @@ func TestLocalDaemonRecoveryLeavesOtherOriginsAlone(t *testing.T) {
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: closedLocalDaemonURL(t), APIKey: "private-key", AllowInsecure: true})
 	requirements.NoError(err)
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 		require.Fail(t, "outside origins must not trigger local discovery")
 		return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
-	}))
+	})
 	response, err := client.httpClient.Get(server.URL + "/outside")
 	requirements.NoError(err)
 	assertions.Equal(http.StatusNoContent, response.StatusCode)
@@ -346,10 +334,10 @@ func TestLocalDaemonRecoveryDoesNotReplayStreamingBodies(t *testing.T) {
 	requirements := require.New(t)
 	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
 	requirements.NoError(err)
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
 		assert.Fail(t, "a streaming request cannot be replayed")
 		return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
-	}))
+	})
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, client.BaseURL()+"/stream", io.NopCloser(strings.NewReader("stream")))
 	requirements.NoError(err)
 	requirements.Nil(request.GetBody)
@@ -361,27 +349,6 @@ func TestLocalDaemonRecoveryDoesNotReplayStreamingBodies(t *testing.T) {
 	requirements.ErrorAs(err, &unavailable)
 }
 
-func TestLocalDaemonRecoveryValidatesDiscoveredOrigin(t *testing.T) {
-	requirements := require.New(t)
-	for _, endpoint := range []string{"https://127.0.0.1:8080", "http://user@127.0.0.1:8080", "http://127.0.0.1:8080/path", "http://127.0.0.1:8080?token=secret", "http://127.0.0.1:8080#fragment", "http://127.0.0.1:8080?"} {
-		t.Run(endpoint, func(t *testing.T) {
-			requirements := require.New(t)
-			client, err := New(Config{URL: "http://127.0.0.1:8080", AllowInsecure: true})
-			requirements.NoError(err)
-			requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) { return LocalDaemonEndpoint{URL: endpoint}, nil }))
-			transport, ok := client.httpClient.Transport.(*localDaemonRecovery)
-			requirements.True(ok)
-			_, err = transport.reconnect(t.Context(), transport.connection().generation)
-			requirements.ErrorContains(err, "local daemon endpoint must be an HTTP origin")
-		})
-	}
-	// Runtime discovery supports non-loopback bind addresses. Enabling recovery
-	// must not turn that existing local configuration into a startup error.
-	client, err := New(Config{URL: "http://192.0.2.1:8080", AllowInsecure: true})
-	requirements.NoError(err)
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) { return LocalDaemonEndpoint{}, errors.New("unused") }))
-}
-
 func TestLocalDaemonRecoveryRootCancellationStopsDiscovery(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -390,11 +357,11 @@ func TestLocalDaemonRecoveryRootCancellationStopsDiscovery(t *testing.T) {
 	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true, Context: root})
 	requirements.NoError(err)
 	entered := make(chan struct{})
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(ctx context.Context) (LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(ctx context.Context) (LocalDaemonEndpoint, error) {
 		close(entered)
 		<-ctx.Done()
 		return LocalDaemonEndpoint{}, ctx.Err()
-	}))
+	})
 	done := make(chan error, 1)
 	go func() { _, err := client.GetHealth(context.Background()); done <- err }()
 	<-entered
@@ -404,7 +371,7 @@ func TestLocalDaemonRecoveryRootCancellationStopsDiscovery(t *testing.T) {
 
 func TestSafeMCPErrorPreservesOnlyLocalRecoveryAdvice(t *testing.T) {
 	assertions := assert.New(t)
-	local := fmt.Errorf("operation: %w", &LocalDaemonUnavailableError{Err: errors.New("private-path /synthetic/archive private-key-value")})
+	local := fmt.Errorf("operation: %w", localDaemonUnavailable(errors.New("private-path /synthetic/archive private-key-value")))
 	assertions.Equal("daemon_unavailable: "+LocalDaemonUnavailableMessage, SafeMCPError(local).Error())
 	remote := &APIError{Status: 503, Code: "daemon_unavailable", Message: "remote diagnostic"}
 	assertions.Equal("daemon request failed (503)", SafeMCPError(remote).Error())

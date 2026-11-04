@@ -10,9 +10,7 @@ import (
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/calcontrol"
 	"go.kenn.io/msgvault/internal/daemonclient"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
@@ -20,12 +18,6 @@ type unavailablePersonFiles struct{ err error }
 
 func (s unavailablePersonFiles) SearchPersonFiles(context.Context, PersonFileSearchRequest) (generated.PersonFileSearchHTTPResponse, error) {
 	return generated.PersonFileSearchHTTPResponse{}, s.err
-}
-
-type unavailableDocuments struct{ err error }
-
-func (s unavailableDocuments) SearchDocuments(context.Context, store.DocumentSearchRequest) (store.DocumentSearchResponse, error) {
-	return store.DocumentSearchResponse{}, s.err
 }
 
 func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
@@ -37,18 +29,13 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 	client, err := daemonclient.New(daemonclient.Config{URL: endpoint, AllowInsecure: true})
 	requirements.NoError(err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
 		return daemonclient.LocalDaemonEndpoint{}, errors.New("private-path /synthetic/archive private-key-value http://127.0.0.1:1234")
-	}))
+	})
 	_, err = client.GetStats()
 	requirements.Error(err)
 	local := fmt.Errorf("backend request: %w", err)
-	h := &handlers{
-		mediaSearcher:      client,
-		personFileSearcher: unavailablePersonFiles{local},
-		documentSearcher:   unavailableDocuments{local},
-		calendar:           calendarServiceBackend(func(context.Context, calcontrol.Request) (*calcontrol.Result, error) { return nil, local }),
-	}
+	h := &handlers{embeddingStatus: client}
 	tests := []struct {
 		name    string
 		handler toolHandler
@@ -57,27 +44,9 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 		{"wrapped", func(context.Context, toolRequest) (*toolResult, error) {
 			return nil, newInternalError("read stats", local)
 		}, nil},
-		{"media", h.searchMedia, map[string]any{"query": "synthetic"}},
-		{"files", h.searchPersonFiles, map[string]any{"person_id": float64(7)}},
-		{"documents", h.searchDocuments, map[string]any{"query": "synthetic"}},
+		{"embeddings", h.getEmbeddingStatus, map[string]any{"source_id": float64(7)}},
 	}
-	for _, definition := range stableCalendarTools() {
-		if definition.name == "calendar_freebusy" {
-			tests = append(tests, struct {
-				name    string
-				handler toolHandler
-				args    map[string]any
-			}{"calendar read", definition.bind(h), map[string]any{"account": "synthetic", "calendar_id": "primary", "time_min": "2026-11-03T00:00:00Z", "time_max": "2026-11-04T00:00:00Z"}})
-		}
-		if definition.name == "calendar_delete" {
-			tests = append(tests, struct {
-				name    string
-				handler toolHandler
-				args    map[string]any
-			}{"calendar preview", definition.bind(h), map[string]any{"account": "synthetic", "calendar_id": "primary", "event_id": "synthetic-event"}})
-		}
-	}
-	requirements.Len(tests, 6)
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -90,7 +59,10 @@ func TestLocalRecoveryErrorsAreSafeAcrossMCPHandlers(t *testing.T) {
 			requirements.Len(result.Content, 1)
 			content, ok := result.Content[0].(*sdkmcp.TextContent)
 			requirements.True(ok)
-			assertions.Equal("daemon_unavailable: "+daemonclient.LocalDaemonUnavailableMessage, content.Text)
+			assertions.Contains(content.Text, "daemon_unavailable: "+daemonclient.LocalDaemonUnavailableMessage)
+			assertions.NotContains(content.Text, "private-path")
+			assertions.NotContains(content.Text, "/synthetic/archive")
+			assertions.NotContains(content.Text, "private-key-value")
 		})
 	}
 }

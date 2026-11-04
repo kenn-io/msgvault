@@ -4,21 +4,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"sync"
-
-	"go.kenn.io/msgvault/internal/apiprotocol"
 )
 
 // LocalDaemonEndpoint is an identity-checked local runtime and its credentials.
 // The resolver must discover the daemon that owns the same archive, starting it
 // if permitted by the caller's local daemon policy.
 type LocalDaemonEndpoint struct {
-	URL              string
-	APIKey           string
-	LocalDaemonToken string
+	URL    string
+	APIKey string
 }
 
 // LocalDaemonUnavailableMessage is safe to show to an MCP client. Detailed
@@ -28,13 +26,17 @@ const LocalDaemonUnavailableMessage = "local archive daemon is unavailable; retr
 // LocalDaemonUnavailableError means a local request could not connect, and
 // recovery failed before the request could be sent. Post-connect failures are
 // deliberately excluded: replaying a write could duplicate its effects.
-type LocalDaemonUnavailableError struct{ Err error }
+type LocalDaemonUnavailableError struct{}
 
 func (e *LocalDaemonUnavailableError) Error() string {
-	return fmt.Sprintf("local daemon unavailable: %v", e.Err)
+	return "daemon_unavailable: " + LocalDaemonUnavailableMessage
 }
-func (e *LocalDaemonUnavailableError) Unwrap() error        { return e.Err }
 func (e *LocalDaemonUnavailableError) APIErrorCode() string { return "daemon_unavailable" }
+
+func localDaemonUnavailable(err error) error {
+	slog.Error("local daemon recovery failed", "error", err)
+	return &LocalDaemonUnavailableError{}
+}
 
 type localDaemonConnection struct {
 	endpoint   LocalDaemonEndpoint
@@ -56,42 +58,16 @@ type localDaemonRecovery struct {
 // delegated clients must keep their fixed endpoint behavior. The original
 // BaseURL stays unchanged; the shared transport routes even previously created
 // generated clients to the latest runtime.
-func (c *Client) EnableLocalDaemonRecovery(resolve func(context.Context) (LocalDaemonEndpoint, error)) error {
-	if resolve == nil {
-		return errors.New("local daemon resolver is required")
-	}
-	if c.agentToken != "" {
-		return errors.New("delegated daemon clients cannot enable local recovery")
-	}
-	origin, err := parseLocalDaemonEndpoint(c.baseURL)
-	if err != nil {
-		return err
-	}
+func (c *Client) EnableLocalDaemonRecovery(resolve func(context.Context) (LocalDaemonEndpoint, error)) {
+	origin, _ := url.Parse(c.baseURL)
 	transport := c.httpClient.Transport
 	if transport == nil {
 		transport = http.DefaultTransport
 	}
-	if _, enabled := transport.(*localDaemonRecovery); enabled {
-		return errors.New("local daemon recovery is already enabled")
-	}
 	c.httpClient.Transport = &localDaemonRecovery{
 		transport: transport, origin: origin, resolve: resolve, refresh: make(chan struct{}, 1),
-		current: localDaemonConnection{url: origin, endpoint: LocalDaemonEndpoint{URL: c.baseURL, APIKey: c.apiKey, LocalDaemonToken: c.localDaemonToken}},
+		current: localDaemonConnection{url: origin, endpoint: LocalDaemonEndpoint{URL: c.baseURL, APIKey: c.apiKey}},
 	}
-	return nil
-}
-
-func parseLocalDaemonEndpoint(endpoint string) (*url.URL, error) {
-	parsed, err := url.Parse(endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("invalid local daemon endpoint: %w", err)
-	}
-	// Runtime discovery already proves local ownership. Do not require loopback:
-	// a local daemon may have an explicit non-loopback bind address.
-	if parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
-		return nil, errors.New("local daemon endpoint must be an HTTP origin")
-	}
-	return parsed, nil
 }
 
 func (t *localDaemonRecovery) connection() localDaemonConnection {
@@ -111,25 +87,25 @@ func (t *localDaemonRecovery) RoundTrip(request *http.Request) (*http.Response, 
 		return response, err
 	}
 	if request.Body != nil && request.Body != http.NoBody && request.GetBody == nil {
-		return nil, &LocalDaemonUnavailableError{Err: err}
+		return nil, localDaemonUnavailable(err)
 	}
 	next, resolveErr := t.reconnect(request.Context(), current.generation)
 	if resolveErr != nil {
 		if request.Context().Err() != nil {
 			return nil, request.Context().Err()
 		}
-		return nil, &LocalDaemonUnavailableError{Err: fmt.Errorf("rediscover daemon: %w", resolveErr)}
+		return nil, localDaemonUnavailable(fmt.Errorf("rediscover daemon: %w", resolveErr))
 	}
 	retry := t.rewrite(request, next)
 	if request.Body != nil && request.Body != http.NoBody {
 		retry.Body, err = request.GetBody()
 		if err != nil {
-			return nil, &LocalDaemonUnavailableError{Err: fmt.Errorf("recreate daemon request: %w", err)}
+			return nil, localDaemonUnavailable(fmt.Errorf("recreate daemon request: %w", err))
 		}
 	}
 	response, err = t.transport.RoundTrip(retry)
 	if localDaemonDialFailure(request.Context(), err) {
-		return nil, &LocalDaemonUnavailableError{Err: err}
+		return nil, localDaemonUnavailable(err)
 	}
 	return response, err
 }
@@ -152,11 +128,6 @@ func (t *localDaemonRecovery) rewrite(request *http.Request, connection localDae
 	} else {
 		clone.Header.Set("X-Api-Key", connection.endpoint.APIKey)
 	}
-	// The runtime token authorizes an already-confirmed decision. Refresh its
-	// value only if the original request carried that decision marker.
-	if _, decided := request.Header[http.CanonicalHeaderKey(apiprotocol.DaemonRuntimeTokenHeader)]; decided {
-		clone.Header.Set(apiprotocol.DaemonRuntimeTokenHeader, connection.endpoint.LocalDaemonToken)
-	}
 	return clone
 }
 
@@ -178,10 +149,7 @@ func (t *localDaemonRecovery) reconnect(ctx context.Context, failedGeneration ui
 	if err != nil {
 		return localDaemonConnection{}, err
 	}
-	parsed, err := parseLocalDaemonEndpoint(endpoint.URL)
-	if err != nil {
-		return localDaemonConnection{}, err
-	}
+	parsed, _ := url.Parse(endpoint.URL)
 	next := localDaemonConnection{endpoint: endpoint, url: parsed, generation: current.generation + 1}
 	t.mu.Lock()
 	t.current = next

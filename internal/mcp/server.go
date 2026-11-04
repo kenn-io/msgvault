@@ -309,10 +309,10 @@ func officialToolHandler(
 }
 
 func mapInternalError(err error) error {
-	if _, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
 		return &jsonrpc.Error{
 			Code:    jsonrpc.CodeInternalError,
-			Message: "daemon_unavailable: " + daemonclient.LocalDaemonUnavailableMessage,
+			Message: local.Error(),
 		}
 	}
 	if privateErr, ok := errors.AsType[*internalError](err); ok {

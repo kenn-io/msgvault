@@ -138,8 +138,8 @@ func SafeMCPErrorForPerson(err error, personID int64) error {
 // failure details can include private contact data. The stable code and HTTP
 // status still identify conflicts and blockers.
 func SafeMCPError(err error) error {
-	if _, ok := errors.AsType[*LocalDaemonUnavailableError](err); ok {
-		return errors.New("daemon_unavailable: " + LocalDaemonUnavailableMessage)
+	if local, ok := errors.AsType[*LocalDaemonUnavailableError](err); ok {
+		return local
 	}
 	if apiErr, ok := errors.AsType[*APIError](err); ok {
 		switch apiErr.Code {

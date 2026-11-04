@@ -2000,9 +2000,19 @@ func TestSearchMessageBodies_UnknownMode(t *testing.T) {
 
 func TestGetMessageRecoveryFailureWrappingNotExistIsDaemonUnavailable(t *testing.T) {
 	assertions := assert.New(t)
+	server := httptest.NewServer(http.NotFoundHandler())
+	server.Close()
+	client, err := daemonclient.New(daemonclient.Config{URL: server.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+	client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
+		return daemonclient.LocalDaemonEndpoint{}, os.ErrNotExist
+	})
+	_, recoveryErr := client.GetStats()
+	require.Error(t, recoveryErr)
 	h := newTestHandlers(&querytest.MockEngine{
 		GetMessageFunc: func(context.Context, int64) (*query.MessageDetail, error) {
-			return nil, &daemonclient.LocalDaemonUnavailableError{Err: os.ErrNotExist}
+			return nil, recoveryErr
 		},
 	})
 	result := runToolExpectError(t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42)})

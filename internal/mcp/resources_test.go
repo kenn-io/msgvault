@@ -279,9 +279,9 @@ func TestAttachmentResourceRecoveryFailureWrappingNotExistPreservesGuidance(t *t
 	must.NoError(listener.Close())
 	client, err := daemonclient.New(daemonclient.Config{URL: endpoint, AllowInsecure: true})
 	must.NoError(err)
-	must.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
+	client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
 		return daemonclient.LocalDaemonEndpoint{}, os.ErrNotExist
-	}))
+	})
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
 
 	opts := task4ResourceOptions([]byte("unused"))
