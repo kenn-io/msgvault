@@ -24,11 +24,18 @@ var _ TextSnapshotReader = (*SQLiteEngine)(nil)
 
 // TextSnapshotRevision tracks chat message changes, including body edits, and
 // displayed sender details and conversation titles. Conversation-list revisions
-// hash the ordered metadata. Pagination is excluded from both revisions.
+// hash the ordered metadata. Search- and label-filtered timelines hash their
+// full filtered result. Pagination is excluded from all revisions.
 func (e *SQLiteEngine) TextSnapshotRevision(
 	ctx context.Context, scope TextSnapshotScope,
 ) (string, error) {
 	if scope.ConversationID != nil {
+		if scope.Filter.SearchQuery != "" || scope.Filter.Label != "" {
+			_, revision, err := readSQLiteTextSnapshot(
+				ctx, e, scope, 500, false, scanTextMessageSnapshotRow,
+			)
+			return revision, err
+		}
 		_, revision, err := readSQLiteTimelineSnapshot(ctx, e, scope, false)
 		return revision, err
 	}
@@ -51,16 +58,16 @@ func (e *SQLiteEngine) ListConversationsSnapshot(
 
 // ListConversationMessagesSnapshot returns one timeline page and a revision
 // that tracks message and body edits, sender details, and the conversation title
-// from the same read transaction.
+// from the same read transaction. Search- and label-filtered timelines hash
+// their full filtered result.
 func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 	ctx context.Context, conversationID int64, filter TextFilter,
 ) ([]MessageSummary, string, error) {
-	return readSQLiteTimelineSnapshot(
-		ctx, e, TextSnapshotScope{
-			ConversationID: &conversationID,
-			Filter:         filter,
-		}, true,
-	)
+	scope := TextSnapshotScope{ConversationID: &conversationID, Filter: filter}
+	if filter.SearchQuery != "" || filter.Label != "" {
+		return readSQLiteTextSnapshot(ctx, e, scope, 500, true, scanTextMessageSnapshotRow)
+	}
+	return readSQLiteTimelineSnapshot(ctx, e, scope, true)
 }
 
 const sqliteTimelineSnapshotProbe = `SELECT
@@ -257,6 +264,58 @@ func scanTextConversationSnapshotRow(rows *sql.Rows) (ConversationRow, []any, er
 	}, nil
 }
 
+func scanTextMessageSnapshotRow(rows *sql.Rows) (MessageSummary, []any, error) {
+	var row MessageSummary
+	var sentAt sql.NullTime
+	var deletedAt sql.NullTime
+	if err := rows.Scan(
+		&row.ID,
+		&row.SourceMessageID,
+		&row.ConversationID,
+		&row.SourceConversationID,
+		&row.Subject,
+		&row.Snippet,
+		&row.FromEmail,
+		&row.FromName,
+		&row.FromPhone,
+		&sentAt,
+		&row.SizeEstimate,
+		&row.HasAttachments,
+		&row.HiddenTextPresent,
+		&row.AttachmentCount,
+		&deletedAt,
+		&row.MessageType,
+		&row.ConversationTitle,
+	); err != nil {
+		return MessageSummary{}, nil, err
+	}
+	if sentAt.Valid {
+		row.SentAt = sentAt.Time
+	}
+	if deletedAt.Valid {
+		row.DeletedAt = &deletedAt.Time
+	}
+	return row, []any{
+		row.ID,
+		row.SourceMessageID,
+		row.ConversationID,
+		row.SourceConversationID,
+		row.Subject,
+		row.Snippet,
+		row.FromEmail,
+		row.FromName,
+		row.FromPhone,
+		row.SentAt,
+		row.SizeEstimate,
+		row.HasAttachments,
+		row.HiddenTextPresent,
+		row.AttachmentCount,
+		deletedAt.Time,
+		row.MessageType,
+		row.ConversationTitle,
+	}, nil
+}
+
 func textSnapshotFilterIdentity(scope TextSnapshotScope) ([]byte, error) {
 	filter := scope.Filter
 	filter.Pagination = Pagination{}
@@ -288,6 +347,37 @@ func writeSnapshotField(hasher hash.Hash, value []byte) {
 
 func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string, []any) {
 	where, args := buildSQLiteTextFilterConditions(e.dialect, scope.Filter)
+
+	if scope.ConversationID != nil {
+		where += " AND m.conversation_id = ?"
+		args = append(args, *scope.ConversationID)
+		direction := sqliteDirection(scope.Filter.SortDirection)
+		return fmt.Sprintf(`
+			SELECT
+				m.id,
+				COALESCE(m.source_message_id, ''),
+				COALESCE(m.conversation_id, 0),
+				COALESCE(c.source_conversation_id, ''),
+				COALESCE(m.subject, ''),
+				COALESCE(m.snippet, ''),
+				COALESCE(p_sender.email_address, ''),
+				COALESCE(p_sender.display_name, ''),
+				COALESCE(p_sender.phone_number, ''),
+				m.sent_at,
+				COALESCE(m.size_estimate, 0),
+				COALESCE(m.has_attachments, 0),
+				m.hidden_text_present,
+				COALESCE(m.attachment_count, 0),
+				m.deleted_from_source_at,
+				COALESCE(m.message_type, ''),
+				COALESCE(c.title, '')
+			FROM messages m
+			LEFT JOIN participants p_sender ON p_sender.id = m.sender_id
+			LEFT JOIN conversations c ON c.id = m.conversation_id
+			WHERE %s
+			ORDER BY m.sent_at %s, m.id %s
+		`, where, direction, direction), args
+	}
 
 	var orderBy string
 	switch scope.Filter.SortField {

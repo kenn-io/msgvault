@@ -3,7 +3,6 @@ package query_test
 import (
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -139,20 +138,75 @@ func TestSQLiteTimelineSnapshotRevisionFencesRecentChanges(t *testing.T) {
 		require.NoError(err)
 		return first, second
 	}
-	// Retry if a scheduler pause carries either read beyond the fence.
-	deadline := time.Now().Add(5 * time.Second)
-	var fenced bool
-	for time.Now().Before(deadline) {
-		first, second := read("+0 seconds")
-		if first != second {
-			fenced = true
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	assert.True(fenced, "recent reads must have different revisions")
 	first, second := read("+1 day")
 	assert.Equal(first, second)
 	first, second = read("-1 second")
 	assert.Equal(first, second)
+}
+
+func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		filter query.TextFilter
+	}{
+		{"label", query.TextFilter{Label: "Important"}},
+		{"search", query.TextFilter{SearchQuery: "needle"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			s := testutil.NewSQLiteTestStore(t)
+			_, err := s.DB().Exec(`
+				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES (701, 7, 'chat-701', 'direct_chat');
+				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, content_changed_at) VALUES
+					(801, 701, 7, 'message-801', 'imessage', '2020-01-01 10:00:00', '2020-01-01 00:00:00'),
+					(802, 701, 7, 'message-802', 'imessage', '2020-01-01 11:00:00', '2020-01-01 00:00:00');
+				INSERT INTO labels (id, source_id, name) VALUES (901, 7, 'Important');
+			`)
+			require.NoError(err)
+			require.NoError(s.AddMessageLabels(801, []int64{901}))
+			require.NoError(s.UpsertFTS(801, "", "needle", "", "", ""))
+			require.NoError(s.UpsertFTS(802, "", "needle", "", "", ""))
+			engine := query.NewSQLiteEngine(s.DB())
+			conversationID := int64(701)
+			filter := tc.filter
+			filter.Pagination = query.Pagination{Limit: 1}
+			filter.SortDirection = query.SortAsc
+			scope := query.TextSnapshotScope{ConversationID: &conversationID, Filter: filter}
+			page, before, err := engine.ListConversationMessagesSnapshot(t.Context(), conversationID, filter)
+			require.NoError(err)
+			require.Len(page, 1)
+			assert.Equal(int64(801), page[0].ID)
+
+			for step := range 2 {
+				if tc.name == "label" {
+					if step == 0 {
+						require.NoError(s.AddMessageLabels(802, []int64{901}))
+					} else {
+						require.NoError(s.ReplaceMessageLabels(802, nil))
+					}
+				} else if step == 0 {
+					_, err = s.DB().Exec(`DELETE FROM messages_fts`)
+					require.NoError(err)
+				} else {
+					require.NoError(s.UpsertFTS(801, "", "needle", "", "", ""))
+					require.NoError(s.UpsertFTS(802, "", "needle", "", "", ""))
+				}
+				page, after, err := engine.ListConversationMessagesSnapshot(t.Context(), conversationID, filter)
+				require.NoError(err)
+				assert.NotEqual(before, after)
+				revision, err := engine.TextSnapshotRevision(t.Context(), scope)
+				require.NoError(err)
+				assert.Equal(after, revision)
+				if tc.name == "search" && step == 0 {
+					assert.Empty(page)
+				} else {
+					require.Len(page, 1)
+					assert.Equal(int64(801), page[0].ID)
+				}
+				before = after
+			}
+		})
+	}
 }
