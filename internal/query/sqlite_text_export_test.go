@@ -1,3 +1,0 @@
-package query
-
-const SQLiteTimelineSnapshotProbeForTest = sqliteTimelineSnapshotProbe

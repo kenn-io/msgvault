@@ -30,7 +30,6 @@ func BenchmarkSQLiteConversationMessagesSnapshot(b *testing.B) {
 				(id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
 				VALUES (?, 1, 1, ?, 'imessage', datetime('2020-01-01', '+' || ? || ' seconds'), 'benchmark message', 1)`)
 			require.NoError(b, err)
-			defer func() { _ = stmt.Close() }()
 			for id := 1; id <= size; id++ {
 				_, err = stmt.Exec(id, strconv.Itoa(id), id)
 				require.NoError(b, err)
@@ -52,11 +51,10 @@ func BenchmarkSQLiteConversationMessagesSnapshot(b *testing.B) {
 					}
 					b.ReportAllocs()
 					for b.Loop() {
-						page, revision, err := engine.ListConversationMessagesSnapshot(b.Context(), 1, filter)
+						page, _, err := engine.ListConversationMessagesSnapshot(b.Context(), 1, filter)
 						require.NoError(b, err)
 						require.Len(b, page, 100)
 						require.Equal(b, int64(size-tc.offset), page[0].ID)
-						require.NotEmpty(b, revision)
 					}
 				})
 			}
@@ -65,9 +63,8 @@ func BenchmarkSQLiteConversationMessagesSnapshot(b *testing.B) {
 				scope := TextSnapshotScope{ConversationID: &id, Filter: TextFilter{ParticipantIDs: []int64{1}, SortDirection: SortDesc}}
 				b.ReportAllocs()
 				for b.Loop() {
-					revision, err := engine.TextSnapshotRevision(b.Context(), scope)
+					_, err := engine.TextSnapshotRevision(b.Context(), scope)
 					require.NoError(b, err)
-					require.NotEmpty(b, revision)
 				}
 			})
 		})

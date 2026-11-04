@@ -9,6 +9,237 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
+func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := tdb.DB.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES
+			(7, 'imessage', 'owner@chat.test'),
+			(8, 'imessage', 'owner@other.test');
+		INSERT INTO participants (id, phone_number, display_name) VALUES
+			(11, '+15550000011', 'Alice'),
+			(12, '+15550000012', 'Bob');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
+			(701, 7, 'chat-701', 'direct_chat', 'Alpha'),
+			(702, 8, 'chat-702', 'direct_chat', 'Outside');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id) VALUES
+			(801, 701, 7, 'message-801', 'imessage', '2026-08-20 10:00:00', 'first', 11),
+			(802, 702, 8, 'message-802', 'imessage', '2026-08-20 11:00:00', 'outside', 12);
+		INSERT INTO conversation_participants (conversation_id, participant_id) VALUES
+			(701, 11), (702, 12);
+	`)
+	require.NoError(err)
+
+	engine := NewSQLiteEngine(tdb.DB)
+	sourceID := int64(7)
+	filter := TextFilter{
+		SourceID:       &sourceID,
+		ParticipantIDs: []int64{11},
+		Pagination:     Pagination{Limit: 1, Offset: 1},
+		SortField:      TextSortByName,
+		SortDirection:  SortAsc,
+	}
+	first, err := engine.TextSnapshotRevision(t.Context(), TextSnapshotScope{Filter: filter})
+	require.NoError(err)
+	assert.NotEmpty(first)
+
+	filter.Pagination = Pagination{Limit: 500, Offset: 0}
+	samePageSet, err := engine.TextSnapshotRevision(t.Context(), TextSnapshotScope{Filter: filter})
+	require.NoError(err)
+	assert.Equal(first, samePageSet)
+
+	_, err = tdb.DB.Exec(`
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (703, 8, 'chat-703', 'direct_chat', 'Unrelated');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
+			VALUES (803, 703, 8, 'message-803', 'imessage', '2026-08-20 12:00:00', 'unrelated', 12);
+		INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (703, 12);
+	`)
+	require.NoError(err)
+	outOfScope, err := engine.TextSnapshotRevision(t.Context(), TextSnapshotScope{Filter: filter})
+	require.NoError(err)
+	assert.Equal(first, outOfScope)
+
+	_, err = tdb.DB.Exec(`
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES (704, 7, 'chat-704', 'direct_chat', 'Zulu');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
+			VALUES (804, 704, 7, 'message-804', 'imessage', '2026-08-20 13:00:00', 'matching', 11);
+		INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (704, 11);
+	`)
+	require.NoError(err)
+	added, err := engine.TextSnapshotRevision(t.Context(), TextSnapshotScope{Filter: filter})
+	require.NoError(err)
+	assert.NotEqual(first, added)
+
+	_, err = tdb.DB.Exec(`UPDATE conversations SET title = 'Aardvark' WHERE id = 704`)
+	require.NoError(err)
+	reordered, err := engine.TextSnapshotRevision(t.Context(), TextSnapshotScope{Filter: filter})
+	require.NoError(err)
+	assert.NotEqual(added, reordered)
+
+	filter.SortDirection = SortDesc
+	differentSort, err := engine.TextSnapshotRevision(t.Context(), TextSnapshotScope{Filter: filter})
+	require.NoError(err)
+	assert.NotEqual(reordered, differentSort)
+}
+
+func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := tdb.DB.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'whatsapp', 'owner@chat.test');
+		INSERT INTO participants (id, phone_number, display_name) VALUES (11, '+15550000011', 'Alice');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES
+			(701, 7, 'chat-701', 'direct_chat', 'Alpha'),
+			(702, 7, 'chat-702', 'direct_chat', 'Beta');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id) VALUES
+			(801, 701, 7, 'message-801', 'whatsapp', '2026-08-20 10:00:00', 'first', 11);
+		INSERT INTO message_bodies (message_id, body_text) VALUES (801, 'full first body');
+	`)
+	require.NoError(err)
+	// Pin new stamps in the past so the recent-change fence stays out of the way.
+	pin := func(stamp string) {
+		_, err := tdb.DB.Exec(`UPDATE messages SET content_changed_at = ? WHERE content_changed_at > '2025-01-01'`, stamp)
+		require.NoError(err)
+	}
+	pin("2020-01-01 00:00:00")
+
+	engine := NewSQLiteEngine(tdb.DB)
+	conversationID := int64(701)
+	filter := TextFilter{
+		Pagination:    Pagination{Limit: 1, Offset: 1},
+		SortDirection: SortAsc,
+	}
+	scope := TextSnapshotScope{ConversationID: &conversationID, Filter: filter}
+	first, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.NotEmpty(first)
+
+	scope.Filter.Pagination = Pagination{Limit: 500, Offset: 0}
+	samePageSet, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.Equal(first, samePageSet)
+
+	_, err = tdb.DB.Exec(`UPDATE message_bodies SET body_text = 'changed full body' WHERE message_id = 801`)
+	require.NoError(err)
+	// This raw-schema fixture has no EnsureTriggers body trigger; stamp as it would.
+	_, err = tdb.DB.Exec(`UPDATE messages SET content_changed_at = '2021-01-01 00:00:00' WHERE id = 801`)
+	require.NoError(err)
+	bodyEdit, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.NotEqual(first, bodyEdit)
+
+	_, err = tdb.DB.Exec(`
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
+			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
+	`)
+	require.NoError(err)
+	pin("2022-01-01 00:00:00")
+	added, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.NotEqual(bodyEdit, added)
+
+	_, err = tdb.DB.Exec(`DELETE FROM messages WHERE id = 802`)
+	require.NoError(err)
+	deleted, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.Equal(bodyEdit, deleted)
+
+	_, err = tdb.DB.Exec(`
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
+			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
+	`)
+	require.NoError(err)
+	pin("2022-01-01 00:00:00")
+	reinserted, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.Equal(added, reinserted)
+
+	_, err = tdb.DB.Exec(`UPDATE messages SET conversation_id = 702 WHERE id = 802`)
+	require.NoError(err)
+	moved, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.Equal(bodyEdit, moved)
+
+	scope.Filter.ContactName = "different logical request"
+	differentFilter, err := engine.TextSnapshotRevision(t.Context(), scope)
+	require.NoError(err)
+	assert.NotEqual(moved, differentFilter)
+}
+
+func TestSQLiteTextSnapshotReadsReturnPageAndFullRevisionTogether(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := tdb.DB.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@chat.test');
+		INSERT INTO participants (id, phone_number, display_name) VALUES (11, '+15550000011', 'Alice');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+			VALUES
+				(701, 7, 'chat-701', 'direct_chat', 'Alpha'),
+				(702, 7, 'chat-702', 'direct_chat', 'Beta');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, sender_id)
+			VALUES
+				(801, 701, 7, 'message-801', 'imessage', '2026-08-20 10:00:00', 'First', 'first', 11),
+				(802, 701, 7, 'message-802', 'imessage', '2026-08-20 11:00:00', 'Second', 'second', 11),
+				(803, 701, 7, 'message-803', 'imessage', '2026-08-20 12:00:00', 'Third', 'third', 11),
+				(804, 702, 7, 'message-804', 'imessage', '2026-08-20 13:00:00', 'Fourth', 'fourth', 11);
+		UPDATE messages SET content_changed_at = '2020-01-01 00:00:00';
+	`)
+	require.NoError(err)
+
+	engine := NewSQLiteEngine(tdb.DB)
+	conversationFilter := TextFilter{
+		Pagination:    Pagination{Limit: 1, Offset: 1},
+		SortField:     TextSortByName,
+		SortDirection: SortAsc,
+	}
+	conversations, conversationRevision, err := engine.ListConversationsSnapshot(
+		t.Context(), conversationFilter,
+	)
+	require.NoError(err)
+	require.Len(conversations, 1)
+	assert.Equal(int64(702), conversations[0].ConversationID)
+	assert.NotEmpty(conversationRevision)
+
+	conversationFilter.Pagination = Pagination{Limit: 500}
+	fullConversationRevision, err := engine.TextSnapshotRevision(
+		t.Context(), TextSnapshotScope{Filter: conversationFilter},
+	)
+	require.NoError(err)
+	assert.Equal(conversationRevision, fullConversationRevision)
+
+	messageFilter := TextFilter{
+		Pagination:    Pagination{Limit: 2, Offset: 1},
+		SortDirection: SortAsc,
+	}
+	messages, messageRevision, err := engine.ListConversationMessagesSnapshot(
+		t.Context(), 701, messageFilter,
+	)
+	require.NoError(err)
+	require.Len(messages, 2)
+	assert.Equal([]int64{802, 803}, []int64{messages[0].ID, messages[1].ID})
+	assert.NotEmpty(messageRevision)
+
+	messageFilter.Pagination = Pagination{Limit: 500}
+	conversationID := int64(701)
+	fullMessageRevision, err := engine.TextSnapshotRevision(t.Context(), TextSnapshotScope{
+		ConversationID: &conversationID,
+		Filter:         messageFilter,
+	})
+	require.NoError(err)
+	assert.Equal(messageRevision, fullMessageRevision)
+}
+
 // TestSQLiteListConversationsParticipantMembership ensures the participant
 // filter uses the conversation roster rather than the latest message sender.
 // In particular, an owner-authored latest message must not hide a conversation
