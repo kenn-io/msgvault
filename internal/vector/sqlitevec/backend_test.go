@@ -5,7 +5,9 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1552,22 +1554,49 @@ func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
 	require.Len(hits, 2, "only 2 live messages exist")
 }
 
+func TestBackend_Delete_UsesPointLookup(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+	rows, err := b.db.QueryContext(ctx,
+		"EXPLAIN QUERY PLAN "+fmt.Sprintf(deleteVectorSQL, VectorTableName(768)), 1, 1)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	var details []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+		details = append(details, detail)
+	}
+	require.NoError(t, rows.Err())
+	plan := strings.Join(details, "\n")
+	// sqlite-vec v0.1.6 uses idxStr "2" for a primary-key lookup and "1"
+	// for a full scan. An IN subquery silently selects the full scan.
+	assert.Regexp(t, `VIRTUAL TABLE INDEX \d+:2`, plan)
+}
+
 func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
+	require.NoError(b.ActivateGeneration(ctx, gid, true))
+	otherGen := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 1)})
 
 	require.NoError(b.Delete(ctx, gid, []int64{1}), "Delete")
 	var n int
 	err := b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM embeddings WHERE message_id = 1`).Scan(&n)
+		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 1`, gid).Scan(&n)
 	require.NoError(err, "count embeddings")
 	assert.Equal(0, n, "embeddings remaining")
 	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM vectors_vec_d768`).Scan(&n)
+		`SELECT COUNT(*) FROM vectors_vec_d768 WHERE generation_id = ?`, gid).Scan(&n)
 	require.NoError(err, "count vectors")
 	assert.Equal(0, n, "vectors remaining")
+	err = b.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings e
+		JOIN vectors_vec_d768 v ON v.embedding_id = e.embedding_id
+		WHERE e.generation_id = ? AND e.message_id = 1`, otherGen).Scan(&n)
+	require.NoError(err)
+	assert.Equal(1, n, "another generation's metadata and vector survive")
 }
 
 func TestBackend_Delete_EmptyIDsIsNoop(t *testing.T) {
