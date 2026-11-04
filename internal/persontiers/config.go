@@ -57,7 +57,7 @@ func DefaultConfig() Config {
 			"notification", "notifications", "mailer-daemon", "postmaster",
 			"bounce", "bounces", "newsletter", "digest", "alerts", "calendar-notification",
 		},
-		ExcludeDomainPatterns: []string{"resource.calendar.google.com"},
+		ExcludeDomainPatterns: []string{"resource.calendar.google.com", "*.resource.calendar.google.com"},
 		MinCallSeconds:        120,
 		Tier1:                 Tier1Thresholds{2, 2, 6, 3, 2, 2},
 		Tier2:                 Tier2Thresholds{1, 1, 3, 2},
@@ -103,10 +103,14 @@ func (c Config) validate() error {
 	if c.Tier1.BreadthMinMeetingDaysLong < 0 || c.Tier2.MinMeetingDaysLong < 0 {
 		return errors.New("people.tiers meeting thresholds must be 0 (disabled) or at least 1")
 	}
-	for _, patterns := range [][]string{c.ExcludeAddressPatterns, c.ExcludeDomainPatterns} {
+	for i, patterns := range [][]string{c.ExcludeAddressPatterns, c.ExcludeDomainPatterns} {
 		for _, p := range patterns {
-			if p == "" || p != strings.ToLower(p) || strings.ContainsAny(p, "@ \t\r\n") || strings.Contains(strings.TrimSuffix(p, "*"), "*") {
-				return fmt.Errorf("people.tiers exclusion pattern %q must be nonempty lower-case with at most one trailing * and no @", p)
+			plain := strings.TrimSuffix(p, "*")
+			if i == 1 && strings.HasPrefix(p, "*.") {
+				plain = strings.TrimPrefix(p, "*.")
+			}
+			if p == "" || p == "*." || p != strings.ToLower(p) || strings.ContainsAny(p, "@ \t\r\n") || strings.Contains(plain, "*") {
+				return fmt.Errorf("people.tiers exclusion pattern %q must be nonempty lower-case with no @ and at most one trailing * (or leading *. for domains)", p)
 			}
 		}
 	}
@@ -121,4 +125,39 @@ func matches(value string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+func matchesDomain(domain string, patterns []string) bool {
+	for _, p := range patterns {
+		if strings.HasPrefix(p, "*.") && strings.HasSuffix(domain, strings.TrimPrefix(p, "*")) {
+			return true
+		}
+	}
+	return matches(domain, patterns)
+}
+
+// ExcludesAddress returns "calendar_room" or "automated_address" for an
+// excluded email address, or an empty string. Patterns match case-insensitively
+// against the domain and local part, respectively. Owner and phone/chat
+// exemptions are person-level rules applied by the evaluator.
+func (c Config) ExcludesAddress(address string) string {
+	local, domain, ok := splitEmailAddress(address)
+	if !ok {
+		return ""
+	}
+	if matchesDomain(domain, c.ExcludeDomainPatterns) {
+		return "calendar_room"
+	}
+	if matches(local, c.ExcludeAddressPatterns) {
+		return "automated_address"
+	}
+	return ""
+}
+
+func splitEmailAddress(address string) (local, domain string, ok bool) {
+	local, domain, ok = strings.Cut(strings.ToLower(address), "@")
+	if !ok || local == "" || domain == "" || strings.ContainsAny(address, " \t\r\n") {
+		return "", "", false
+	}
+	return local, domain, true
 }

@@ -15,6 +15,48 @@ import (
 
 var tierAsOf = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
 
+func TestPersonTiersExcludeGoogleResourceSubdomains(t *testing.T) {
+	for _, tc := range []struct {
+		domain        string
+		wantTier      int
+		wantExclusion string
+	}{
+		{"resource.calendar.google.com", 3, "calendar_room"},
+		{"c.resource.calendar.google.com", 3, "calendar_room"},
+		{"floor.c.resource.calendar.google.com", 3, "calendar_room"},
+		{"notresource.calendar.google.com", 2, ""},
+		{"resource.calendar.google.com.example.test", 2, ""},
+	} {
+		t.Run(tc.domain, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f, _ := newActivityQueryFixture(t)
+			owner := f.EnsureParticipant("owner@example.com", "Owner", "example.com")
+			participant := f.EnsureParticipant("room@"+tc.domain, "Synthetic room", tc.domain)
+			person, _, err := f.Store.CreatePersonFromParticipant(participant)
+			require.NoError(err)
+			seedTierMail(t, f, participant, owner, alternating(-3, -2, -1))
+			projectTierSignals(t, f, "UTC", 25)
+			explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
+			require.NoError(err)
+			assert.Equal(tc.wantTier, explanation.Tier)
+			if tc.wantExclusion == "" {
+				assert.Nil(explanation.Exclusion)
+			} else {
+				require.NotNil(explanation.Exclusion)
+				assert.Equal(tc.wantExclusion, *explanation.Exclusion)
+			}
+			assert.Equal(3, explanation.Signals.ActiveDaysLong)
+			options := tierOptions()
+			options.Config.ExcludeDomainPatterns = nil
+			explanation, err = f.Store.ExplainPersonTierContext(t.Context(), person.ID, options)
+			require.NoError(err)
+			assert.Equal(2, explanation.Tier)
+			assert.Nil(explanation.Exclusion)
+		})
+	}
+}
+
 func tierOptions() store.PersonTierOptions {
 	return store.TierOptionsAsOf(store.PersonTierOptions{
 		Config: persontiers.DefaultConfig(), ActivityTimezone: "UTC", ActivityMaxDirect: 25,

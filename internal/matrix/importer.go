@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/archivemarker"
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
@@ -22,7 +23,7 @@ import (
 const (
 	SourceType           = "matrix"
 	rawFormat            = "matrix_json"
-	encryptedPlaceholder = "[encrypted message — keys unavailable]"
+	encryptedPlaceholder = archivemarker.EncryptedMessagePlaceholder
 	pageSize             = 100
 )
 
