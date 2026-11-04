@@ -150,7 +150,7 @@ func TestListMailboxesUsesBasicListWithoutSpecialUseCapability(t *testing.T) {
 	var mailboxes []string
 	err = client.withConn(t.Context(), func(*imapclient.Client) error {
 		var listErr error
-		mailboxes, listErr = client.listMailboxesLocked()
+		mailboxes, listErr = client.listMailboxesLocked(t.Context())
 		return listErr
 	})
 	require.NoError(err, "legacy mailbox listing")
