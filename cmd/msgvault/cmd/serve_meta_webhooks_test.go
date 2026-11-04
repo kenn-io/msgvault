@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -187,6 +188,35 @@ func TestMetaWebhooksEndToEnd(t *testing.T) {
 	assert.Equal(want[0].ConversationID, got[0].ConversationID)
 	assert.Equal(want[0].FromEmail, got[0].FromEmail)
 	assert.Equal(want[0].Snippet, got[0].Snippet)
+}
+
+func TestMetaWebhookStateKeepsReceiptTimeForActionOrdering(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	cfg := webhookTestConfig(t)
+	st, src := webhookArchive(t, true)
+	receivedAt := time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+	now := receivedAt
+	spool, err := metawebhook.OpenSpool(filepath.Join(cfg.Data.DataDir, "meta-webhooks"), 1<<20, func() time.Time { return now })
+	require.NoError(err)
+	body := `{"object":"page","entry":[{"id":"100","time":1793620800,"changes":[{"field":"feed","value":{"item":"comment","verb":"unhide","post_id":"100_200","parent_id":"100_200","comment_id":"100_201","message":"searchable webhook example"}}]}]}`
+	_, _, err = spool.Accept("9", []byte(body))
+	require.NoError(err)
+	now = now.Add(time.Minute)
+	worker := metawebhook.NewWorker(metawebhook.WorkerOptions{Spool: spool, Registry: webhookRegistry(cfg, st)})
+	summary, err := worker.DrainOnce(t.Context())
+	require.NoError(err)
+	assert.Equal(1, summary.Applied)
+	ids, err := st.MessageExistsBatch(src.ID, []string{"100_201"})
+	require.NoError(err)
+	messageID := ids["100_201"]
+	require.NotZero(messageID)
+	saved, err := st.GetMessageMetadataContext(t.Context(), messageID)
+	require.NoError(err)
+	var ordering struct {
+		StateObservedAt int64 `json:"state_observed_at"`
+	}
+	require.NoError(json.Unmarshal([]byte(saved.String), &ordering))
+	assert.Equal(receivedAt.UnixNano(), ordering.StateObservedAt)
 }
 func TestMetaWebhooksCrashBetweenAcceptAndApply(t *testing.T) {
 	assert := assert.New(t)

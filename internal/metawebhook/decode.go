@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"errors"
+	"time"
 )
 
 const maxDeliveryItems = 5000
@@ -12,6 +13,7 @@ type Item struct {
 	ReceiptOrder                              uint64
 	Index                                     int
 	DeliveryID, AppID, Object, EntryID, Field string
+	ReceivedAt                                time.Time
 	Time                                      int64
 	Value                                     jsontext.Value
 }

@@ -167,6 +167,7 @@ func (w *Worker) DrainOnce(ctx context.Context) (sum DrainSummary, err error) {
 		order := meta.ReceiptOrder
 		for i := range items {
 			items[i].DeliveryID = meta.ID
+			items[i].ReceivedAt = meta.ReceivedAt
 			if order != 0 {
 				items[i].ReceiptOrder = order
 				order++

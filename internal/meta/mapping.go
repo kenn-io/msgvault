@@ -27,6 +27,7 @@ type objectMetadata struct {
 	BodyTime           int64                  `json:"body_time,omitempty"`
 	BodySyncID         int64                  `json:"body_sync_id,omitempty"`
 	StateTime          int64                  `json:"state_time,omitempty"`
+	StateObservedAt    int64                  `json:"state_observed_at,omitempty"`
 	Version            int                    `json:"version"`
 	AppID              string                 `json:"app_id"`
 	PageID             string                 `json:"page_id"`

@@ -493,11 +493,15 @@ func (a *Actions) setHiddenMetadata(ctx context.Context, messageID int64, hidden
 	}
 	// Recovery does not observe the provider again. Its evidence is no newer
 	// than the original dispatch, even if resolution happens much later.
-	effectTime := row.CreatedAt.Unix()
+	effectAt := row.CreatedAt
 	if row.DispatchedAt != nil {
-		effectTime = row.DispatchedAt.Unix()
+		effectAt = *row.DispatchedAt
 	}
+	effectTime := effectAt.Unix()
 	if metadata.StateTime > effectTime {
+		return nil
+	}
+	if metadata.StateTime == effectTime && metadata.StateObservedAt > effectAt.UnixNano() {
 		return nil
 	}
 	// Provider event times are seconds; receipt dispatch times retain the
@@ -516,6 +520,8 @@ func (a *Actions) setHiddenMetadata(ctx context.Context, messageID int64, hidden
 	}
 	metadata.Hidden = &hidden
 	metadata.StateTime = effectTime
+	metadata.StateOrder = 0
+	metadata.StateObservedAt = effectAt.UnixNano()
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return err

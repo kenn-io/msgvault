@@ -261,7 +261,7 @@ func feedHandler(cfg *config.Config, st *store.Store, newReader func(string) (me
 					out[i] = metawebhook.ItemOutcome{Class: metawebhook.Invalid, ErrorClass: "invalid_feed"}
 					continue
 				}
-				ev.Time, ev.ReceiptOrder = items[i].Time, items[i].ReceiptOrder
+				ev.Time, ev.ReceiptOrder, ev.ObservedAt = items[i].Time, items[i].ReceiptOrder, items[i].ReceivedAt
 				events, valid = append(events, ev), append(valid, i)
 			}
 			results, _ := meta.NewEventImporter(st, reader).ApplyFeedEvents(ctx, app, page, events, meta.EventOptions{})

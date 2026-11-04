@@ -520,3 +520,41 @@ func TestActionsRecoveredHidePreservesLaterSameSecondUnhide(t *testing.T) {
 	assert.False(*got.Hidden)
 	assert.Equal(2, g.count())
 }
+
+func TestActionsRecoveredHidePreservesLaterSameSecondWebhookUnhide(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st, src, id, a, g := actionFixture(t)
+	g.status = 500
+	unknown, err := a.Run(t.Context(), ActionRequest{MessageID: id, Action: ActionHide})
+	_ = actionCode(t, err, "outcome_unknown")
+	require.NotNil(unknown.Receipt)
+	rows, err := st.ListMetaCommentActionsContext(t.Context(), src.ID, "100_200_300")
+	require.NoError(err)
+	require.Len(rows, 1)
+	require.NotNil(rows[0].DispatchedAt)
+	dispatchedAt := *rows[0].DispatchedAt
+
+	event := FeedEvent{
+		Time: dispatchedAt.Unix(), ObservedAt: dispatchedAt.Add(time.Millisecond), ReceiptOrder: 100,
+		Item: "comment", Verb: "unhide", PostID: "100_200", CommentID: "100_200_300", ParentID: "100_200",
+		Message: "Example comment", CreatedTime: "2026-10-01T12:00:00Z", From: &Actor{ID: "300", Name: "Example Customer"},
+	}
+	outcomes, err := NewEventImporter(st, nil).ApplyFeedEvents(t.Context(), "9", "100", []FeedEvent{event}, EventOptions{})
+	require.NoError(err)
+	require.Len(outcomes, 1)
+	assert.Equal("applied", outcomes[0].Class)
+
+	result, err := a.Run(t.Context(), ActionRequest{MessageID: id, Action: ActionHide, ResolveUnknown: "sent"})
+	require.NoError(err)
+	require.NotNil(result.Receipt)
+	assert.Equal("succeeded", result.Receipt.State)
+	saved, err := st.GetMessageMetadataContext(t.Context(), id)
+	require.NoError(err)
+	var metadata objectMetadata
+	require.NoError(json.Unmarshal([]byte(saved.String), &metadata))
+	require.NotNil(metadata.Hidden)
+	assert.False(*metadata.Hidden)
+	assert.Equal(event.ObservedAt.UnixNano(), metadata.StateObservedAt)
+	assert.Equal(event.ReceiptOrder, metadata.StateOrder)
+	assert.Equal(1, g.count())
+}

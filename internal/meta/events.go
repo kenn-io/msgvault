@@ -15,16 +15,17 @@ import (
 // FeedEvent carries provider evidence from one Page feed change. Time comes
 // from entry.time and orders updates; it never supplies the message sent time.
 type FeedEvent struct {
-	ReceiptOrder uint64 `json:"-"`
-	Time         int64  `json:"-"`
-	PostID       string `json:"post_id"`
-	CommentID    string `json:"comment_id"`
-	ParentID     string `json:"parent_id"`
-	Item         string `json:"item"`
-	Verb         string `json:"verb"`
-	Message      string `json:"message"`
-	CreatedTime  string `json:"created_time"`
-	From         *Actor `json:"from,omitempty"`
+	ReceiptOrder uint64    `json:"-"`
+	ObservedAt   time.Time `json:"-"`
+	Time         int64     `json:"-"`
+	PostID       string    `json:"post_id"`
+	CommentID    string    `json:"comment_id"`
+	ParentID     string    `json:"parent_id"`
+	Item         string    `json:"item"`
+	Verb         string    `json:"verb"`
+	Message      string    `json:"message"`
+	CreatedTime  string    `json:"created_time"`
+	From         *Actor    `json:"from,omitempty"`
 }
 
 func (e *FeedEvent) UnmarshalJSON(data []byte) error {
@@ -175,6 +176,10 @@ func (b *feedBatch) stored(ctx context.Context, id string) (store.StoredMessage,
 }
 
 func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
+	observedAt := ev.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
 	state := ev.Verb == "hide" || ev.Verb == "unhide" || ev.Verb == "remove" || ev.Verb == "delete"
 	body := ev.Verb == "add" || ev.Verb == "edited" || ev.Verb == "edit"
 	post := ev.Item == "status" || ev.Item == "post" || ev.Item == "photo" || ev.Item == "video" || ev.Item == "share" || ev.Item == "link"
@@ -201,7 +206,7 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 	if body && olderEvent(metadata.BodyTime, metadata.BodyOrder, ev) {
 		return b.fillMissingEvidence(ctx, ev, row, id, parent)
 	}
-	if state && olderEvent(metadata.StateTime, metadata.StateOrder, ev) {
+	if state && olderStateEvent(metadata.StateTime, metadata.StateOrder, metadata.StateObservedAt, ev.Time, ev.ReceiptOrder, observedAt.UnixNano()) {
 		return EventOutcome{Class: "ignored"}
 	}
 	if post && !exists {
@@ -258,6 +263,7 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 			return feedRetry(err)
 		}
 		metadata.StateTime, metadata.StateOrder = ev.Time, ev.ReceiptOrder
+		metadata.StateObservedAt = observedAt.UnixNano()
 		if ev.Verb == "hide" || ev.Verb == "unhide" {
 			hidden := ev.Verb == "hide"
 			metadata.Hidden = &hidden
@@ -279,10 +285,21 @@ func (b *feedBatch) apply(ctx context.Context, ev FeedEvent) EventOutcome {
 	return EventOutcome{Class: "applied"}
 }
 
-// Provider seconds order different timestamps; durable local receipt order
-// breaks ties for automatic retries. Zero preserves legacy event behavior.
+// Provider seconds order different timestamps; durable receipt order breaks ties.
 func olderEvent(stamp int64, order uint64, ev FeedEvent) bool {
 	return stamp > ev.Time || (stamp == ev.Time && order != 0 && ev.ReceiptOrder != 0 && order > ev.ReceiptOrder)
+}
+
+// Receipt order breaks webhook ties; observation time orders webhook events
+// against local action dispatches when provider timestamps share a second.
+func olderStateEvent(stamp int64, order uint64, observedAt, eventStamp int64, eventOrder uint64, eventObservedAt int64) bool {
+	if stamp != eventStamp {
+		return stamp > eventStamp
+	}
+	if order != 0 && eventOrder != 0 {
+		return order > eventOrder
+	}
+	return observedAt != 0 && eventObservedAt != 0 && observedAt > eventObservedAt
 }
 
 // Older bodies remain ignored, but an add can supply evidence omitted by an edit.
