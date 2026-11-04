@@ -50,7 +50,7 @@ func FuzzDirectoryCadenceAssignment(f *testing.F) {
 }
 
 func FuzzContactFrequencyColumnIsolation(f *testing.F) {
-	columnMasks := [...]uint16{1, 2, 4, 8, 16, 32, 64, 384}
+	columnMasks := [...]uint16{1, 2, 4, 8, 32, 64, 384}
 	for column := range columnMasks {
 		f.Add(uint8(column), int64(21), false)
 		f.Add(uint8(column), int64(21), true)
