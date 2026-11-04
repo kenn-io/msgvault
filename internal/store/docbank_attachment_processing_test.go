@@ -31,11 +31,10 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 		}
 		require.NoError(f.Store.RecordDocbankAttachmentProcessing(ctx, "attachments", d, next))
 	}
-	var cursor store.DocbankAttachmentProcessingCursor
 	seen := make(map[string]bool)
 	unasked, requested := 0, 0
 	for {
-		files, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", &cursor, 20)
+		files, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", 20)
 		require.NoError(err)
 		if len(files) == 0 {
 			break
@@ -75,7 +74,7 @@ func TestDocbankAttachmentProcessingLargeBacklog(t *testing.T) {
 			ContentHash: hash, Fingerprint: "fp", Outcome: "requested", JobID: hash,
 		}, time.Now().Add(-time.Minute)))
 	}
-	files, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", &cursor, 20)
+	files, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", 20)
 	require.NoError(err)
 	assert.Len(files, 20, "polls use the whole batch after unasked files are exhausted")
 }
@@ -112,7 +111,7 @@ func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 			ContentHash: hashes[row.hash], VersionID: "v-" + row.hash, Fingerprint: "fp", Outcome: row.outcome, JobID: jobID,
 		}, row.next))
 	}
-	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
+	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", 20)
 	require.NoError(err)
 	require.Len(due, 2)
 	assert.Equal(hashes["a"], due[0].ContentHash)
@@ -124,11 +123,10 @@ func TestDocbankAttachmentProcessingSelectionAndCounts(t *testing.T) {
 	counts, err = f.Store.DocbankAttachmentProcessingCounts(ctx, "attachments", "documents")
 	require.NoError(err)
 	assert.Equal(int64(6), counts.Waiting)
-	var cursor store.DocbankAttachmentProcessingCursor
-	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "new-fp", &cursor, 20)
+	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "new-fp", 20)
 	require.NoError(err)
 	assert.Len(due, 5)
-	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "elsewhere", "new-fp", new(store.DocbankAttachmentProcessingCursor), 20)
+	due, err = f.Store.DocbankAttachmentsToProcess(ctx, "elsewhere", "new-fp", 20)
 	require.NoError(err)
 	assert.Empty(due)
 }
@@ -159,7 +157,7 @@ func TestDocbankAttachmentProcessingBackfillRetriesRecoverableOutcomes(t *testin
 		ContentHash: noJobHash, Fingerprint: "fp", Outcome: "",
 	}, time.Now().Add(time.Hour)))
 	require.NoError(f.Store.RetryDocbankAttachments(ctx, "attachments"))
-	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", new(store.DocbankAttachmentProcessingCursor), 20)
+	due, err := f.Store.DocbankAttachmentsToProcess(ctx, "attachments", "fp", 20)
 	require.NoError(err)
 	require.Len(due, 5)
 	assert.ElementsMatch([]string{"consent", "stale_authority", "pdf_password_required", "rendition_operator_required", "operator_required"}, []string{due[0].VersionID, due[1].VersionID, due[2].VersionID, due[3].VersionID, due[4].VersionID})

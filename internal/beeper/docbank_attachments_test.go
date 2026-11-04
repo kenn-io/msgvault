@@ -1321,7 +1321,7 @@ func TestAttachmentMirrorProcessingDestinationFaults(t *testing.T) {
 			require.Error(err)
 			assert.Equal([]string{"c", "b"}, r.processing.Plans)
 			assert.Empty(r.processing.Jobs)
-			due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", r.processing.Fingerprint, new(store.DocbankAttachmentProcessingCursor), 20)
+			due, err := r.f.Store.DocbankAttachmentsToProcess(t.Context(), "dest", r.processing.Fingerprint, 20)
 			require.NoError(err)
 			require.Len(due, 1)
 			assert.Equal(hashes[2], due[0].ContentHash)

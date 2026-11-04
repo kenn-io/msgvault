@@ -551,14 +551,13 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 		return false, endMediaPass(err)
 	}
 	var failures attachmentRetryStreak
-	var cursor store.DocbankAttachmentProcessingCursor
 	for {
 		if !time.Now().Before(deadline) {
 			return true, errors.Join(failures.reported, failures.streak)
 		}
 		var files []store.DocbankAttachmentProcessing
 		err := w.gated(ctx, func() (err error) {
-			files, err = w.store.DocbankAttachmentsToProcess(ctx, w.destination, profile.Fingerprint, &cursor, 20)
+			files, err = w.store.DocbankAttachmentsToProcess(ctx, w.destination, profile.Fingerprint, 20)
 			return err
 		})
 		if err != nil {
