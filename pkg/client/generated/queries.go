@@ -597,6 +597,38 @@ type ListPersonMatchJudgmentsQuery struct {
 	BeforeID *int64 `json:"before_id,omitempty"`
 }
 
+type ImportHexRecordingQuery struct {
+	Track        ImportHexRecordingQueryTrack `json:"track" validate:"required"`
+	Identifier   string                       `json:"identifier" validate:"required"`
+	AccountEmail string                       `json:"account_email" validate:"required"`
+	MessageID    int                          `json:"message_id"`
+	Sha256       string                       `json:"sha256" validate:"required"`
+	Size         int                          `json:"size"`
+	NoBuildCache *bool                        `json:"no_build_cache,omitempty"`
+}
+
+func (i ImportHexRecordingQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(i.Track).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Track", err)
+		}
+	}
+	if err := typesValidator.Var(i.Identifier, "required"); err != nil {
+		errors = errors.Append("Identifier", err)
+	}
+	if err := typesValidator.Var(i.AccountEmail, "required"); err != nil {
+		errors = errors.Append("AccountEmail", err)
+	}
+	if err := typesValidator.Var(i.Sha256, "required"); err != nil {
+		errors = errors.Append("Sha256", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ImportMuesliRecordingQuery struct {
 	Identifier   string `json:"identifier" validate:"required"`
 	AccountEmail string `json:"account_email" validate:"required"`

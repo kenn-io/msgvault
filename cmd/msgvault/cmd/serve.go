@@ -32,6 +32,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/granola"
+	"go.kenn.io/msgvault/internal/hex"
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/kataevidence"
@@ -856,6 +857,32 @@ func runServe(cmd *cobra.Command, args []string) error {
 			logger.Error("failed to schedule muesli source", "source", source.Identifier, "error", err)
 		} else {
 			logger.Info("scheduled muesli source", "source", source.Identifier, "schedule", source.Schedule)
+		}
+	}
+	for _, src := range cfg.Hex {
+		if src.Enabled && src.Schedule == "" {
+			logger.Warn("hex source is enabled but has no schedule — the daemon will not sync it; its freshness will eventually go stale",
+				"source", src.Identifier,
+				"hint", `set a cron schedule (e.g. "*/30 * * * *") on the [[hex]] entry`)
+		}
+	}
+	for _, src := range cfg.ScheduledHexSources() {
+		source := src
+		jobName, ok := api.SchedulerJobNameForSource(hex.SourceType, source.Identifier)
+		if !ok {
+			logger.Error("no scheduler job mapping for hex source", "source", source.Identifier)
+			continue
+		}
+		if err := sched.AddJob(scheduler.Job{
+			Name:     jobName,
+			Schedule: source.Schedule,
+			Run: invocationBoundJobRun(state, func(ctx context.Context) error {
+				return runConfiguredHexSync(ctx, s, source, cfg.AttachmentsDir())
+			}),
+		}); err != nil {
+			logger.Error("failed to schedule hex source", "source", source.Identifier, "error", err)
+		} else {
+			logger.Info("scheduled hex source", "source", source.Identifier, "schedule", source.Schedule)
 		}
 	}
 
@@ -2189,6 +2216,40 @@ func (a *storeAPIAdapter) ImportMuesli(ctx context.Context, req muesli.RemoteReq
 		// A committed write still needs a refresh when checkpoint/link work fails.
 		if refreshErr := rebuildMuesliCacheAfterScheduledSync(refreshCtx, "muesli"); refreshErr != nil && a.logger != nil {
 			a.logger.Warn("Muesli cache refresh deferred", "error_class", "internal")
+		}
+	}
+	return result, err
+}
+
+// ImportHexRecording uses the shared attachment writer; Docbank discovers it
+// through ordinary stored audio classification and attachment journal changes.
+func (a *storeAPIAdapter) ImportHexRecording(ctx context.Context, upload hex.RecordingUpload, input io.Reader, maxBytes int64) (bool, error) {
+	if a == nil || a.store == nil || a.config == nil {
+		return false, errors.New("hex recording import unavailable")
+	}
+	changed, err := hex.NewImporter(a.store).ImportRecording(ctx, upload, a.config.AttachmentsDir(), input, maxBytes)
+	if changed && !upload.NoBuildCache {
+		refreshCtx := context.WithoutCancel(a.invocationContext(ctx))
+		if refreshErr := rebuildHexCacheAfterScheduledSync(refreshCtx, "hex"); refreshErr != nil && a.logger != nil {
+			a.logger.Warn("Hex cache refresh deferred", "error_class", "internal")
+		}
+	}
+	return changed, err
+}
+
+// ImportHex receives bounded recorder-local evidence under the API gate.
+func (a *storeAPIAdapter) ImportHex(ctx context.Context, req hex.RemoteRequest) (hex.RemoteResult, error) {
+	if a == nil || a.store == nil {
+		return hex.RemoteResult{}, errors.New("hex import unavailable")
+	}
+	result, err := hex.NewImporter(a.store).ImportRemote(ctx, req)
+	refreshCtx := context.WithoutCancel(a.invocationContext(ctx))
+	if req.Action == "refresh" && err == nil && req.BuildCache {
+		err = a.queueCacheRefreshAfterManualSync(true, req.NoBuildCache)
+	} else if result.Changed && !req.NoBuildCache {
+		// A committed write still needs a refresh when checkpoint/link work fails.
+		if refreshErr := rebuildHexCacheAfterScheduledSync(refreshCtx, "hex"); refreshErr != nil && a.logger != nil {
+			a.logger.Warn("Hex cache refresh deferred", "error_class", "internal")
 		}
 	}
 	return result, err

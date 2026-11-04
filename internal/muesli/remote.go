@@ -11,7 +11,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
@@ -167,16 +166,11 @@ func (r RemoteRequest) Normalize() (RemoteRequest, error) {
 	if r.BuildCache && r.Action != "refresh" {
 		return r, remoteInvalid("build_cache", "requires the refresh action")
 	}
-	// Reuse the provider-neutral source/email contract without importing content.
-	probe := meetingimport.Request{Source: r.Source, Meeting: meetingimport.Meeting{ExternalID: "validation", StartedAt: "2000-01-01T00:00:00Z", Transcript: "validation"}}
-	normal, err := probe.Normalize()
+	normal, err := meetingimport.NormalizeRecorderSource(r.Source)
 	if err != nil {
 		return r, remoteInvalid("source", "requires a bounded identifier and valid account email")
 	}
-	r.Source = normal.Source
-	if strings.IndexFunc(r.Source.Identifier, unicode.IsControl) >= 0 {
-		return r, remoteInvalid("source.identifier", "must not contain control characters")
-	}
+	r.Source = normal
 	switch r.Action {
 	case "register", "refresh":
 		if r.Meeting != nil || r.Full {
@@ -283,6 +277,7 @@ func (r RemoteRequest) Normalize() (RemoteRequest, error) {
 				return r, remoteInvalid("participant exclusions", "must reference an included identity")
 			}
 		}
+		probe := meetingimport.Request{Source: r.Source, Meeting: meetingimport.Meeting{ExternalID: "validation", StartedAt: "2000-01-01T00:00:00Z", Transcript: "validation"}}
 		probe.Meeting.Attendees = identities
 		if _, err := probe.Normalize(); err != nil {
 			return r, remoteInvalid("participant identities", "must be valid emails or E.164 phones")

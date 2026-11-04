@@ -460,6 +460,7 @@ func (s *Server) registerHumaRoutes(api huma.API, apiV1 huma.API) {
 	registerAPIV1RawHumaJSONRoute[MessageRecordingsResponse](apiV1, "listMessageRecordings", http.MethodGet, "/messages/{id}/recordings", "List a message's recordings with transcript state", s.handleListMessageRecordings)
 	s.registerMeetingImportRoute(apiV1)
 	s.registerMuesliImportRoute(apiV1)
+	s.registerHexImportRoute(apiV1)
 	s.registerMeetingRoutes(apiV1)
 	s.registerCalendarControlRoute(apiV1)
 	registerAPIV1RawHumaJSONRoute[store.ChatDiscoveryPage](apiV1, "searchChats", http.MethodGet, "/conversations/search", "Find archived chats by ranked name tokens", s.handleSearchChats)

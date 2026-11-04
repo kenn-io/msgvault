@@ -246,7 +246,8 @@ func (a *AnalyticsConfig) Validate() error {
 
 // ServerConfig holds HTTP API server configuration.
 type ServerConfig struct {
-	// MuesliRecordingMaxBytes bounds authenticated recording streams; 0 = 4 GiB.
+	// Recording stream caps default to 4 GiB per file.
+	HexRecordingMaxBytes    int64         `toml:"hex_recording_max_bytes"`
 	MuesliRecordingMaxBytes int64         `toml:"muesli_recording_max_bytes"`
 	APIPort                 int           `toml:"api_port"`  // HTTP server port; 0 (the default) auto-selects an open port at daemon startup and clients discover it via the daemon runtime record. Set api_port explicitly for a stable port (e.g. remote/NAS deployments).
 	BindAddr                string        `toml:"bind_addr"` // Bind address (default: 127.0.0.1)
@@ -595,6 +596,7 @@ type Config struct {
 	Pocket             []PocketSource                  `toml:"pocket"`
 	NotionMeetings     []NotionMeetingsSource          `toml:"notion_meetings"`
 	Twilio             []TwilioSource                  `toml:"twilio"`
+	Hex                []HexSource                     `toml:"hex"`
 	Muesli             []MuesliSource                  `toml:"muesli"`
 	Twenty             []TwentySource                  `toml:"twenty"`
 	Backup             BackupConfig                    `toml:"backup"`
@@ -1167,6 +1169,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.Vector.DBPath = expandPath(cfg.Vector.DBPath)
 	cfg.Vector.Multimodal.CapabilitiesFile = expandPath(cfg.Vector.Multimodal.CapabilitiesFile)
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
+	for i := range cfg.Hex {
+		cfg.Hex[i].MeetingsDir = expandPath(cfg.Hex[i].MeetingsDir)
+	}
 	for i := range cfg.Muesli {
 		cfg.Muesli[i].DBPath = expandPath(cfg.Muesli[i].DBPath)
 		cfg.Muesli[i].ContactsPath = expandPath(cfg.Muesli[i].ContactsPath)
@@ -1188,6 +1193,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 		cfg.Vector.DBPath = resolveRelative(cfg.Vector.DBPath, cfg.HomeDir)
 		cfg.Vector.Multimodal.CapabilitiesFile = resolveRelative(cfg.Vector.Multimodal.CapabilitiesFile, cfg.HomeDir)
 		cfg.Backup.Repo = resolveRelative(cfg.Backup.Repo, cfg.HomeDir)
+		for i := range cfg.Hex {
+			cfg.Hex[i].MeetingsDir = resolveRelative(cfg.Hex[i].MeetingsDir, cfg.HomeDir)
+		}
 		for i := range cfg.Muesli {
 			cfg.Muesli[i].DBPath = resolveRelative(cfg.Muesli[i].DBPath, cfg.HomeDir)
 			cfg.Muesli[i].ContactsPath = resolveRelative(cfg.Muesli[i].ContactsPath, cfg.HomeDir)
@@ -2161,8 +2169,9 @@ type MuesliSource struct {
 	PhoneCountryCode string `toml:"phone_country_code"`
 }
 
-// DefaultMuesliRecordingMaxBytes permits long WAV recordings without buffering them.
-const DefaultMuesliRecordingMaxBytes int64 = 4 << 30
+// DefaultMeetingRecordingMaxBytes permits long WAV recordings without buffering them.
+const DefaultMeetingRecordingMaxBytes int64 = 4 << 30
+const DefaultMuesliRecordingMaxBytes = DefaultMeetingRecordingMaxBytes
 
 func (s MuesliSource) EffectiveRecordingMaxBytes() int64 {
 	if s.RecordingMaxBytes > 0 {
@@ -2274,6 +2283,9 @@ func (c *Config) applyMeetingSourceDefaults() {
 	}
 	if len(c.NotionMeetings) == 1 && c.NotionMeetings[0].Identifier == "" {
 		c.NotionMeetings[0].Identifier = defaultMeetingSourceIdentifier
+	}
+	if len(c.Hex) == 1 && c.Hex[0].Identifier == "" {
+		c.Hex[0].Identifier = defaultMeetingSourceIdentifier
 	}
 	if len(c.Muesli) == 1 && c.Muesli[0].Identifier == "" {
 		c.Muesli[0].Identifier = defaultMeetingSourceIdentifier
@@ -2431,6 +2443,26 @@ func (c *Config) validateMeetingSources() error {
 		if strings.TrimSpace(c.NotionMeetings[i].AccountEmail) != "" {
 			c.NotionMeetings[i].AccountEmail = email
 		}
+	}
+	hexIDs := make([]string, len(c.Hex))
+	for i, src := range c.Hex {
+		hexIDs[i] = src.Identifier
+	}
+	if err := check("hex", hexIDs); err != nil {
+		return err
+	}
+	if c.Server.HexRecordingMaxBytes < 0 || c.Server.HexRecordingMaxBytes == int64(^uint64(0)>>1) {
+		return errors.New("server.hex_recording_max_bytes must be nonnegative and below MaxInt64")
+	}
+	for i := range c.Hex {
+		if c.Hex[i].RecordingMaxBytes < 0 || c.Hex[i].RecordingMaxBytes == int64(^uint64(0)>>1) {
+			return errors.New("hex recording_max_bytes must be nonnegative and below MaxInt64")
+		}
+		email, err := c.Hex[i].EffectiveAccountEmail()
+		if err != nil {
+			return err
+		}
+		c.Hex[i].AccountEmail = email
 	}
 	muesliIDs := make([]string, len(c.Muesli))
 	for i, s := range c.Muesli {

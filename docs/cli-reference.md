@@ -1346,6 +1346,42 @@ stored evidence, duration fallbacks, and retained source deletions.
 
 ---
 
+### add-hex
+
+Check a configured Hex meeting folder and register its recorder identity.
+
+```bash
+msgvault add-hex [identifier]
+```
+
+Uses `[[hex]]` and its required `account_email`. With one entry, the identifier
+can be omitted. Remote mode reads on the recorder; same-host mode reads on the
+daemon's host. Re-registration resets remote upload receipts.
+
+### sync-hex
+
+Archive stopped Hex meetings, including partial and metadata-only records.
+
+```bash
+msgvault sync-hex [identifier] [--limit N] [--after YYYY-MM-DD] [--full]
+msgvault sync-hex [identifier] --watch
+```
+
+| Flag | Meaning |
+|---|---|
+| `--limit` | Maximum eligible meetings processed; `0` means all |
+| `--after` | Include meetings starting on or after this UTC date |
+| `--full` | Rewrite unchanged evidence and reoffer optional audio |
+| `--watch` | Remote recorder only: initial scan, then enabled source cron schedules |
+| `--build-cache` | Request a cache build even when no meeting changed |
+| `--no-build-cache` | Skip cache builds for this invocation |
+
+With no identifier, sync all configured sources. `--watch` requires an enabled
+source with a schedule and cannot combine with `--limit`, `--after`, `--full`
+or `--build-cache`. Edits update archived meetings; source expiry never deletes
+the archive. See [Hex meetings](usage/meetings.md#hex) for the 24-hour retention
+window, source paths, incomplete transcripts and audio opt-in.
+
 ## add-muesli
 
 Check a configured local Muesli database and register it as a meeting source.

@@ -1066,6 +1066,7 @@ Settings for the Web UI and API server started by `msgvault serve`. The same HTT
 | `trusted_proxies` | `[]` | IP addresses or CIDRs allowed to supply forwarded HTTPS/host headers |
 | `daemon_idle_timeout` | `20m` | Idle timeout for lifecycle-managed background daemons; set to `"0s"` to disable |
 | `daemon_auto_restart` | `newer` | Local daemon restart policy when the CLI finds a different daemon binary version: `newer`, `never`, or `always` |
+| `hex_recording_max_bytes` | `4294967296` (4 GiB) | Server limit per streamed Hex WAV track; `0` uses the default. Independent of the recorder cap |
 | `muesli_recording_max_bytes` | `4294967296` (4 GiB) | Server limit for streamed Muesli audio uploads; `0` uses the default. Independent of the recorder's `recording_max_bytes` |
 | `daemon_auto_start` | `true` | Let CLI, TUI, and MCP commands start a local background daemon when none is running; set `false` when a supervisor runs `msgvault serve` |
 | `remote_clients` | `[]` | Read-only API keys for remote CLIs; requires an effective server API key. See below. |
@@ -2099,6 +2100,40 @@ schedule = "15 */6 * * *"
 | `schedule` | — | Five-field cron expression |
 | `media` | `true` | Download recordings; `false` archives calls and transcripts only. After turning it back on, run `sync-twilio --full` to fetch the skipped recordings |
 | `max_media_mb` | `1024` (1 GiB) | Per-recording size cap in MiB; `0` uses the default. Oversized recordings are skipped; raise the cap and run `sync-twilio --full` to retry |
+
+### Hex Sources
+
+Configure `[[hex]]` on the computer where Hex records. Remote clients read the
+folders locally and send selected meeting evidence to the daemon. Same-host
+sync reads on the daemon's computer.
+
+```toml
+[[hex]]
+identifier = "recorder"
+account_email = "you@example.com"
+enabled = true
+schedule = "*/30 * * * *"
+# meetings_dir = "/path/to/hex/meetings"
+# recordings = true
+# recording_max_bytes = 4294967296
+```
+
+| Field | Default | Meaning |
+|---|---|---|
+| `identifier` | `default` for one entry | Stable source label; required with multiple entries |
+| `account_email` | Required | Recorder identity, used as the meeting organizer |
+| `meetings_dir` | OS-specific Hex store | Folder containing schema-1 meeting folders; `~` expands and relative paths resolve against the config directory |
+| `enabled` | `false` | Enables scheduled scans |
+| `schedule` | Empty | Five-field cron; daemon schedule or recorder-side `sync-hex --watch` |
+| `recordings` | `false` | Retain system and microphone WAV tracks separately |
+| `recording_max_bytes` | `4294967296` | Per-track recorder cap; `0` uses 4 GiB |
+
+The default folder is `~/Library/Application Support/hex/meetings` on macOS,
+`%APPDATA%\hex\meetings` on Windows, and
+`${XDG_DATA_HOME:-~/.local/share}/hex/meetings` on Linux.
+`HEX_APPLICATION_SUPPORT_DIR` overrides the support root; its `meetings`
+subfolder is used. See [Hex meetings](usage/meetings.md#hex) for retention and
+partial-evidence behavior.
 
 ### Muesli Sources
 

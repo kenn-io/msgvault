@@ -2,13 +2,9 @@ package muesli
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"slices"
 	"time"
 
@@ -211,36 +207,9 @@ func hasContactReview(m *RemoteMeeting) bool {
 
 // remoteSyncPaths resolves the database to one canonical path, so every alias
 // of the same file shares a lock and upload record.
-func remoteSyncPaths(dbPath, lockDir string) (canonical, dir string, err error) {
-	canonical, err = filepath.Abs(dbPath)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve Muesli database: %w", err)
-	}
-	canonical, err = filepath.EvalSymlinks(canonical)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve Muesli database: %w", err)
-	}
-	if lockDir == "" {
-		return "", "", errors.New("muesli remote sync requires a lock directory")
-	}
-	if err := os.MkdirAll(lockDir, 0o700); err != nil {
-		return "", "", fmt.Errorf("create Muesli sync lock directory: %w", err)
-	}
-	return canonical, lockDir, nil
+func remoteSyncPaths(dbPath, lockDir string) (string, string, error) {
+	return meetingimport.RecorderSyncPaths(dbPath, lockDir)
 }
-
 func lockRemoteSource(ctx context.Context, canonical, lockDir string) (*flock.Flock, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	hash := sha256.Sum256([]byte(canonical))
-	lock := flock.New(filepath.Join(lockDir, hex.EncodeToString(hash[:])+".lock"), flock.SetPermissions(0o600))
-	ok, err := lock.TryLockContext(ctx, 100*time.Millisecond)
-	if err != nil {
-		return nil, fmt.Errorf("acquire Muesli source lock: %w", err)
-	}
-	if !ok {
-		return nil, errors.New("muesli source lock unavailable")
-	}
-	return lock, nil
+	return meetingimport.LockRecorderSource(ctx, canonical, lockDir)
 }

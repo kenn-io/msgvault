@@ -397,7 +397,8 @@ import (
 // 3.41.0 adds body_text for a single message's stored plain-text body, which can be generated from HTML and is empty when no plain text is stored; conversation windows leave it unset.
 // Older servers omit body_text; body keeps its HTML fallback.
 // 3.42.0 adds iMessage participant and attachment-size limits to settings.
-const APISchemaVersion = "3.42.0"
+// 3.43.0 adds Hex meeting and two-track recording imports.
+const APISchemaVersion = "3.43.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1406,6 +1407,23 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 			"MeetingActionsRequestStatusUnknown",
 		})
 	}
+	// New provider enums must not claim the Muesli client's existing bare constants.
+	if request := schemas["HexRemoteRequest"]; request != nil {
+		setEnumNames(request.Properties["action"], qualifiedEnumNames("HexRemoteRequestAction", []string{"register", "upsert", "refresh"}))
+	}
+	if result := schemas["HexRemoteResult"]; result != nil {
+		setEnumNames(result.Properties["status"], qualifiedEnumNames("HexRemoteResultStatus", []string{"registered", "created", "updated", "unchanged", "refreshed"}))
+	}
+	for _, operation := range documentOperations(doc) {
+		if operation.OperationID == "importHexRecording" {
+			for _, parameter := range operation.Parameters {
+				if parameter.Name == "track" {
+					setEnumNames(parameter.Schema, qualifiedEnumNames("ImportHexRecordingQueryTrack", []string{"system", "microphone"}))
+				}
+			}
+		}
+	}
+
 	for schemaName, properties := range map[string]map[string][]any{
 		"AppendPersonNoteRequest": {
 			exploreFilterSource: {

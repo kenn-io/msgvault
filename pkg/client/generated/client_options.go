@@ -5247,6 +5247,103 @@ func (o *UnlinkIdentityParticipantsRequestOptions) GetHeader() (map[string]strin
 	return nil, nil
 }
 
+// ImportHexRequestOptions is the options needed to make a request to ImportHex.
+type ImportHexRequestOptions struct {
+	Body *ImportHexBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ImportHexRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ImportHexRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ImportHexRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ImportHexRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ImportHexRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// ImportHexRecordingRequestOptions is the options needed to make a request to ImportHexRecording.
+type ImportHexRecordingRequestOptions struct {
+	Query *ImportHexRecordingQuery
+	Body  *ImportHexRecordingBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ImportHexRecordingRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ImportHexRecordingRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ImportHexRecordingRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ImportHexRecordingRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *ImportHexRecordingRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // ImportMeetingRequestOptions is the options needed to make a request to ImportMeeting.
 type ImportMeetingRequestOptions struct {
 	Body *ImportMeetingBody

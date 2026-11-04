@@ -1057,6 +1057,44 @@ func (f FileSuggestionRowMimeFamily) Validate() error {
 	}
 }
 
+type HexRemoteRequestAction string
+
+const (
+	HexRemoteRequestActionRefresh  HexRemoteRequestAction = "refresh"
+	HexRemoteRequestActionRegister HexRemoteRequestAction = "register"
+	HexRemoteRequestActionUpsert   HexRemoteRequestAction = "upsert"
+)
+
+// Validate checks if the HexRemoteRequestAction value is valid
+func (h HexRemoteRequestAction) Validate() error {
+	switch h {
+	case HexRemoteRequestActionRefresh, HexRemoteRequestActionRegister, HexRemoteRequestActionUpsert:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid HexRemoteRequestAction value, got: %v", h))
+	}
+}
+
+type HexRemoteResultStatus string
+
+const (
+	HexRemoteResultStatusCreated    HexRemoteResultStatus = "created"
+	HexRemoteResultStatusRefreshed  HexRemoteResultStatus = "refreshed"
+	HexRemoteResultStatusRegistered HexRemoteResultStatus = "registered"
+	HexRemoteResultStatusUnchanged  HexRemoteResultStatus = "unchanged"
+	HexRemoteResultStatusUpdated    HexRemoteResultStatus = "updated"
+)
+
+// Validate checks if the HexRemoteResultStatus value is valid
+func (h HexRemoteResultStatus) Validate() error {
+	switch h {
+	case HexRemoteResultStatusCreated, HexRemoteResultStatusRefreshed, HexRemoteResultStatusRegistered, HexRemoteResultStatusUnchanged, HexRemoteResultStatusUpdated:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid HexRemoteResultStatus value, got: %v", h))
+	}
+}
+
 type IdentityLinkResponseCacheState string
 
 const (
@@ -2957,6 +2995,23 @@ func (t TelemetryEventResponseStatus) Validate() error {
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid TelemetryEventResponseStatus value, got: %v", t))
+	}
+}
+
+type ImportHexRecordingQueryTrack string
+
+const (
+	ImportHexRecordingQueryTrackMicrophone ImportHexRecordingQueryTrack = "microphone"
+	ImportHexRecordingQueryTrackSystem     ImportHexRecordingQueryTrack = "system"
+)
+
+// Validate checks if the ImportHexRecordingQueryTrack value is valid
+func (i ImportHexRecordingQueryTrack) Validate() error {
+	switch i {
+	case ImportHexRecordingQueryTrackMicrophone, ImportHexRecordingQueryTrackSystem:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ImportHexRecordingQueryTrack value, got: %v", i))
 	}
 }
 

@@ -811,3 +811,9 @@ func (s *Store) ListDiscordAttachmentMessages(sourceID int64) ([]DiscordAttachme
 	}
 	return messages, rows.Err()
 }
+
+// MessageAttachmentsByPartKeyContext returns current occurrences for a stable
+// importer part key, excluding attachments preserved from a merged source.
+func (s *Store) MessageAttachmentsByPartKeyContext(ctx context.Context, messageID int64, partKey string) ([]AttachmentRef, error) {
+	return s.messageAttachmentsWhere(ctx, messageID, `source_part_key = ? AND NOT EXISTS (SELECT 1 FROM source_merge_preserved_attachments spa WHERE spa.attachment_id = attachments.id)`, partKey)
+}

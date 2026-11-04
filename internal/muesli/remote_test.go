@@ -288,7 +288,7 @@ func TestLoadRemoteUploadsInvalidatesIDOnlyRecordingAcknowledgements(t *testing.
 
 	uploads, err := loadRemoteUploads(path)
 	require.NoError(err)
-	assert.True(uploads.dirty)
+	assert.True(uploads.Dirty)
 	assert.Equal("meeting-digest:recording-hash", uploads.Meetings[1], "meeting acknowledgements remain usable")
 	assert.False(uploads.recordingAcknowledged("meeting:1:20260901T140003Z", "recording-hash"), "row-ID-only recording acknowledgements are ambiguous")
 	require.NoError(uploads.save())
