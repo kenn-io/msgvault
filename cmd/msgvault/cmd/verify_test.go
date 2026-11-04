@@ -1,72 +1,47 @@
 package cmd
 
 import (
-	"crypto/rand"
-	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json/v2"
-	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
 // serial: verify flags, stdout and http.DefaultTransport are process globals.
 func TestRunVerifyLocalRawSamples(t *testing.T) {
-	setupRequire := require.New(t)
 	resetVerifyFlagsForTest(t)
 	verifySampleSize = 1
 
-	// Only OAuth and Gmail profile responses are simulated. Store reopening,
+	// Only Gmail profile responses are simulated. Store reopening,
 	// sampling, decompression, MIME parsing and result reporting are real.
 	savedTransport := http.DefaultTransport
 	t.Cleanup(func() { http.DefaultTransport = savedTransport })
 	http.DefaultTransport = testTransport(func(req *http.Request) (*http.Response, error) {
-		var body string
-		switch req.Method + " " + req.URL.String() {
-		case "POST https://token.example.test/oauth2":
-			body = `{"access_token":"synthetic-token","token_type":"Bearer","expires_in":3600}`
-		case "GET https://gmail.googleapis.com/gmail/v1/users/me/profile":
-			body = `{"emailAddress":"verify@example.test","messagesTotal":1,"historyId":"100"}`
-		default:
+		if req.Method != http.MethodGet || req.URL.String() != "https://gmail.googleapis.com/gmail/v1/users/me/profile" {
 			return nil, fmt.Errorf("unexpected request: %s %s", req.Method, req.URL)
 		}
+		body := `{"emailAddress":"verify@example.test","messagesTotal":1,"historyId":"100"}`
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
 			Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
 	})
 
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	setupRequire.NoError(err)
-	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
-	setupRequire.NoError(err)
-	keyJSON, err := json.Marshal(map[string]string{
-		"type":         "service_account",
-		"client_email": "service@example.test",
-		"private_key":  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})),
-		"token_uri":    "https://token.example.test/oauth2",
-	})
-	setupRequire.NoError(err)
-	keyPath := filepath.Join(t.TempDir(), "service-account.json")
-	setupRequire.NoError(os.WriteFile(keyPath, keyJSON, 0o600))
-
 	for _, state := range []string{"valid_empty_body", "empty_zlib", "empty_uncompressed", "missing", "truncated_zlib", "malformed_mime"} {
 		t.Run(state, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			dir := t.TempDir()
-			cfg := &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir},
-				OAuth: config.OAuthConfig{ServiceAccountKey: keyPath}}
+			_, invocation := setupCommandOAuth(t)
+			putCommandToken(t, invocation, "verify@example.test", oauth.Scopes)
+			cfg := invocation.cfg
 			var st *store.Store
 			testDB := os.Getenv("MSGVAULT_TEST_DB")
 			if strings.HasPrefix(testDB, "postgres://") || strings.HasPrefix(testDB, "postgresql://") {
@@ -139,13 +114,17 @@ func TestRunVerifyLocalRawSamples(t *testing.T) {
 				assert.Equal(int64(1), result.RawMIMEMessages, "coverage counts stored rows, not valid originals")
 			}
 			assert.False(result.SampleInterrupted)
-			if state == "empty_zlib" {
+			if state == "empty_zlib" || state == "truncated_zlib" {
 				verifyJSON = false
 				capture = captureStdout(t)
 				err = runVerifyLocal(command, []string{"verify@example.test"})
 				output = capture()
 				require.NoError(err)
-				assert.Contains(output, fmt.Sprintf("msg %d: empty raw MIME", id))
+				if state == "empty_zlib" {
+					assert.Contains(output, fmt.Sprintf("msg %d: empty raw MIME", id))
+				} else {
+					assert.Contains(output, fmt.Sprintf("msg %d: db error (invalid message raw data: read zlib data: unexpected EOF)", id))
+				}
 				assert.Contains(output, "Sample errors:")
 				assert.NotContains(output, "(all OK)")
 			}

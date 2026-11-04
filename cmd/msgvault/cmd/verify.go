@@ -87,7 +87,7 @@ This command:
    pg_amcheck out-of-band to validate the cluster.
 2. Compares local message count with Gmail's reported total
 3. Checks how many messages have raw MIME data stored
-4. Samples random messages and verifies their MIME can be decompressed
+4. Samples random messages and verifies their raw MIME is nonempty and parses as MIME
 
 Examples:
   msgvault verify you@gmail.com
