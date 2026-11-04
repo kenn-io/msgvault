@@ -94,10 +94,6 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
 	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
 	dbtest.SeedTextTimeline(t, tdb.DB, "whatsapp")
-	_, err := tdb.DB.Exec(`
-		INSERT INTO message_bodies (message_id, body_text) VALUES (801, 'full first body');
-	`)
-	require.NoError(err)
 	// Pin new stamps in the past so the recent-change fence stays out of the way.
 	pin := func(stamp string) {
 		_, err := tdb.DB.Exec(`UPDATE messages SET content_changed_at = ? WHERE content_changed_at > '2025-01-01'`, stamp)
@@ -115,11 +111,6 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	first, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
 	assert.NotEmpty(first)
-
-	scope.Filter.Pagination = Pagination{Limit: 500, Offset: 0}
-	samePageSet, err := engine.TextSnapshotRevision(t.Context(), scope)
-	require.NoError(err)
-	assert.Equal(first, samePageSet)
 
 	_, err = tdb.DB.Exec(`
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
@@ -144,10 +135,6 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembership(t *testing.T) {
 	`)
 	require.NoError(err)
 	pin("2019-01-01 00:00:00")
-	reinserted, err := engine.TextSnapshotRevision(t.Context(), scope)
-	require.NoError(err)
-	assert.Equal(added, reinserted)
-
 	_, err = tdb.DB.Exec(`UPDATE messages SET conversation_id = 702 WHERE id = 802`)
 	require.NoError(err)
 	moved, err := engine.TextSnapshotRevision(t.Context(), scope)

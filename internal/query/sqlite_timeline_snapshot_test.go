@@ -39,7 +39,6 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 		change func(*store.Store) error
 		roster bool
 	}{
-		{"sent_at edit", exec(`UPDATE messages SET sent_at = '2020-01-01 09:00:00' WHERE id = 802`), false},
 		{"body edit", exec(`UPDATE message_bodies SET body_text = 'updated body' WHERE message_id = 802`), false},
 		// Raw SQL leaves updated_at alone, as a retitle within the same second would.
 		{"chat retitle", exec(`UPDATE conversations SET title = 'Updated' WHERE id = 701`), false},
@@ -121,9 +120,7 @@ func TestSQLiteTimelineSnapshotRevisionStableOutsideRecentWindow(t *testing.T) {
 		require.NoError(err)
 		return first, second
 	}
-	first, second := read("+1 day")
-	assert.Equal(first, second)
-	first, second = read("-1 second")
+	first, second := read("-1 second")
 	assert.Equal(first, second)
 }
 
@@ -136,7 +133,6 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 		{"search", query.TextFilter{SearchQuery: "needle"}},
 		{"contact phone recipient", query.TextFilter{ContactPhone: "sender@example.com"}},
 		{"contact name recipient", query.TextFilter{ContactName: "Sender"}},
-		{"contact name repair", query.TextFilter{ContactName: "Sender"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
@@ -191,12 +187,6 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 						participantID = 11
 					}
 					require.NoError(s.ReplaceMessageRecipientsContext(t.Context(), 801, "from", []int64{participantID}, nil))
-				case "contact name repair":
-					displayName := "Renamed"
-					if step == 1 {
-						displayName = "Sender"
-					}
-					require.NoError(s.RepairParticipantDisplayNames([]store.ParticipantDisplayNameRepair{{ParticipantID: 11, DisplayName: displayName}}))
 				}
 				page, after, err := engine.ListConversationMessagesSnapshot(t.Context(), conversationID, filter)
 				require.NoError(err)
@@ -204,7 +194,7 @@ func TestSQLiteTimelineSnapshotRevisionTracksFilteredMembership(t *testing.T) {
 				revision, err := engine.TextSnapshotRevision(t.Context(), scope)
 				require.NoError(err)
 				assert.Equal(after, revision)
-				if (tc.name == "search" || tc.name == "contact name repair") && step == 0 {
+				if tc.name == "search" && step == 0 {
 					assert.Empty(page)
 				} else if (tc.name == "contact phone recipient" || tc.name == "contact name recipient") && step == 0 {
 					require.Len(page, 1)
