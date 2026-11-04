@@ -261,21 +261,12 @@ func (c *composer) addLoops(r readResult[loops.Result]) {
 		return
 	}
 	c.t.OpenLoops = &OpenLoops{Items: []Entry{}, Truncated: r.value.Truncated, CoverageIncomplete: r.value.CoverageIncomplete, SkippedUnparseable: r.value.SkippedUnparseable}
-	ids := []int64{}
-	for _, loop := range r.value.Loops {
-		ids = append(ids, loop.Anchor.ID)
-	}
-	display := c.displays(ids)
 	personIDs := make([]int64, 0, len(r.value.Loops))
 	for _, loop := range r.value.Loops {
 		personIDs = append(personIDs, loop.Counterparty.PersonID)
 	}
 	c.loadTiers(personIDs)
 	for _, loop := range r.value.Loops {
-		d, ok := display[loop.Anchor.ID]
-		if !ok {
-			continue
-		}
 		p := c.tierPeople([]Person{{PersonID: loop.Counterparty.PersonID, ParticipantID: loop.Counterparty.ParticipantID, Name: loop.Counterparty.DisplayName}})[0]
 		if p.Name == "" {
 			p.Name = loop.Counterparty.Address
@@ -285,6 +276,6 @@ func (c *composer) addLoops(r readResult[loops.Result]) {
 		}
 		age := max(0, int(c.t.Now.Sub(loop.OwedSince).Hours()/24))
 		ref := messageRef(loop.Anchor.ID)
-		c.t.OpenLoops.Items = append(c.t.OpenLoops.Items, Entry{Kind: "loop", Key: ref, Ref: ref, AnchorRef: ref, Time: loop.Anchor.OccurredAt, HiddenText: d.HiddenText, Open: c.messageOpen(loop.Anchor.ID), Loop: &LoopEntry{Kind: loop.Kind, Age: strconv.Itoa(age) + "d", Person: p}})
+		c.t.OpenLoops.Items = append(c.t.OpenLoops.Items, Entry{Kind: "loop", Key: ref, Ref: ref, AnchorRef: ref, Time: loop.Anchor.OccurredAt, HiddenText: loop.Anchor.HiddenText, Open: c.messageOpen(loop.Anchor.ID), Loop: &LoopEntry{Kind: loop.Kind, Age: strconv.Itoa(age) + "d", Person: p}})
 	}
 }

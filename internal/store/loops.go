@@ -69,6 +69,7 @@ type LoopMessage struct {
 	ListID      string
 	Subject     string
 	Snippet     string
+	HiddenText  bool
 	// HasFileAttachment is true only when the archive confirms a non-inline file.
 	HasFileAttachment bool
 }
@@ -550,7 +551,7 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 	// Match the archived From address to the resolved sender first. If that
 	// identity is missing, use an address only when the envelope is unambiguous.
 	err := queryInChunksContext(ctx, s.db, messageIDs, nil,
-		`SELECT m.id, COALESCE(m.sender_id, 0), COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(m.list_id, ''),
+		`SELECT m.id, COALESCE(m.sender_id, 0), COALESCE(m.subject, ''), COALESCE(m.snippet, ''), COALESCE(m.hidden_text_present, FALSE), COALESCE(m.list_id, ''),
 			COALESCE(
 				(SELECT NULLIF(TRIM(mr.email_address), '')
 				 FROM message_recipients mr
@@ -577,7 +578,7 @@ func (s *Store) loopMessageDetails(ctx context.Context, messageIDs []int64) (map
 		func(rows *loggedRows) error {
 			var id int64
 			var m LoopMessage
-			if err := rows.Scan(&id, &m.Sender.ParticipantID, &m.Subject, &m.Snippet, &m.ListID,
+			if err := rows.Scan(&id, &m.Sender.ParticipantID, &m.Subject, &m.Snippet, &m.HiddenText, &m.ListID,
 				&m.FromAddress, &m.HasFileAttachment); err != nil {
 				return err
 			}

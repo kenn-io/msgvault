@@ -541,3 +541,23 @@ func TestBuildLoopsRetainsSettlementFromSourceDeletedReply(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildOpenLoopsRetainsSourceDeletedAnchor(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	question := f.PersistEmail(storetest.EmailSpec{Thread: "source-deleted-question", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Subject: "Schedule", Body: "Can you send the schedule?", SentAt: f.now.Add(-48 * time.Hour)})
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id=?`), question)
+	requirements.NoError(err)
+	message, err := f.Store.GetMessage(question)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.MarkMessageDeleted(message.SourceID, message.SourceMessageID))
+	f.project()
+
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	requirements.NotNil(got.OpenLoops)
+	requirements.Len(got.OpenLoops.Items, 1)
+	assertions.Equal(messageRef(question), got.OpenLoops.Items[0].Ref)
+	assertions.True(got.OpenLoops.Items[0].HiddenText)
+}
