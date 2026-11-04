@@ -1,11 +1,12 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-04"
 title: CLI Reference
 description: Complete command reference for all msgvault commands.
 ---
 
-Find a command by task below, or use `msgvault COMMAND --help` for the flags
-in your installed binary. This reference follows current `main`; see
+Find a command with `msgvault cli search "<what you want to do>"`, then use
+`msgvault COMMAND --help` for its flags and examples. This reference follows
+current `main`; see
 [the 0.21.0 changelog](changelog.md#0210) for features and upgrade notes.
 
 `msgvault --help` groups commands by task and lists start-here commands for
@@ -28,6 +29,32 @@ appear in full under Inherited Flags.
 | Back up and manage attachment storage | [backup](#backup), [pack-attachments](#pack-attachments), [purge-excluded-media](#purge-excluded-media) |
 | Repair older records | [repair-identity](#repair-identity), [repair-senders](#repair-senders), [repair-message](#repair-message), [repair-derived](#repair-derived), [repair-labels](#repair-labels), [repair-list-ids](#repair-list-ids), [repair-dates](#repair-dates) |
 | Operate or integrate | [setup](#setup), [credentials](#credentials), [daemon](#daemon), [serve](#serve), [activity](#activity), [mcp](#mcp), [query](#query), [openapi](#openapi), [agent-token](#agent-token) |
+
+## cli search
+
+Describe a task to find relevant commands. Quoting the task is optional.
+
+```bash
+msgvault cli search "search extracted document attachments"
+msgvault cli search read a conversation thread --limit 3 --json
+```
+
+Discovery uses the installed command tree locally. It needs no configuration,
+archive, daemon, credentials, or network, including with delegated connection
+flags. It prints command paths and summaries, followed by a help hint. It
+does not run any suggested command.
+
+| Flag | Contract |
+|---|---|
+| `--limit` | Maximum results, default 5; range 1–20 |
+| `--json` | An object with `query` and `results`; each result has `command`, `summary`, and `usage` |
+
+Hidden, deprecated, help-only, interactive setup, and browser/device login
+commands are excluded. Noninteractive children of excluded groups remain
+searchable. A recommendation may need a running daemon or configured source.
+No matches succeeds with an empty `results` array in JSON or a root-help hint
+in text. A blank task or invalid limit is a usage error (exit 1).
+`msgvault cli` alone prints group help.
 
 ## meetings
 

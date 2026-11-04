@@ -29,10 +29,13 @@ func newRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   daemonService,
 		Short: "Offline email, chat, and meeting archive tool",
-		Long: `Archive email, chats, and meetings offline. Use the daemon
+		Long: `Agents: find the right command with: msgvault cli search "<what you want to do>"
+
+Archive email, chats, and meetings offline. Use the daemon
 or config.toml's [remote].url; --local forces local.
 
 Start here:
+  msgvault cli search "<what you want to do>"
   msgvault list-accounts --json
   msgvault search 'from:alice@example.com newer_than:30d' --json
   msgvault show-message <id> --json
@@ -70,9 +73,9 @@ Output:
 			// invocation-contract violations.
 			cmd.SilenceUsage = true
 
-			// A help-only group prints help and reads nothing, so it needs
-			// neither config nor the agent-delegated capability gate.
-			if isHelpOnlyGroup(cmd) {
+			// Help-only groups and command discovery read no runtime state,
+			// so they need neither config nor the delegated capability gate.
+			if isHelpOnlyGroup(cmd) || isCLIDiscoveryCommand(cmd) {
 				cmd.SilenceUsage = false
 				return nil
 			}
