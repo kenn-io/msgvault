@@ -49,13 +49,16 @@ func sentIdentityConditions(conditions string) string {
 // sentIdentityConditions rejects contact reads until the committed exclusion
 // set loads successfully. Base-message lookups can keep using their Parquet.
 func (e *DuckDBEngine) sentIdentityConditions(conditions string) (string, error) {
-	e.optColsMu.RLock()
-	err := e.unsentRefreshErr
-	e.optColsMu.RUnlock()
-	if err != nil {
+	if err := e.relationshipQuerySetsError(); err != nil {
 		return "", err
 	}
 	return sentIdentityConditions(conditions), nil
+}
+
+func (e *DuckDBEngine) relationshipQuerySetsError() error {
+	e.optColsMu.RLock()
+	defer e.optColsMu.RUnlock()
+	return e.unsentRefreshErr
 }
 
 // buildIdentityLogicalSQL renders the context-filtered logical-entry

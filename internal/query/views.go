@@ -435,14 +435,22 @@ func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCo
 	return nil
 }
 
+func hasNormalizedRelationshipActivity(analyticsDir string) (bool, error) {
+	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	if err != nil {
+		return false, fmt.Errorf("find relationship activity: %w", err)
+	}
+	return len(activityFiles) > 0, nil
+}
+
 // The normalized relationship view is used by internal query paths even when
 // legacy analytical views are disabled.
 func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDir string) error {
-	activityFiles, err := filepath.Glob(filepath.Join(analyticsDir, identityindex.DatasetActivity, "*", "*.parquet"))
+	hasActivity, err := hasNormalizedRelationshipActivity(analyticsDir)
 	if err != nil {
-		return fmt.Errorf("find relationship activity: %w", err)
+		return err
 	}
-	if len(activityFiles) > 0 {
+	if hasActivity {
 		parquet := func(dataset string, hive bool) string {
 			glob := filepath.Join(analyticsDir, dataset, "*.parquet")
 			options := ""
@@ -466,25 +474,48 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 	return nil
 }
 
-// refreshUnsentMessageIDs loads the entry-level exclusion set once per
-// committed cache publication. Querying sparse facts avoids roster expansion;
-// retaining only unsent IDs avoids a Parquet scan on every people search.
-func refreshUnsentMessageIDs(ctx context.Context, db *sql.DB, analyticsDir string) error {
+// refreshRelationshipQuerySets loads unsent message IDs and owner canonicals once
+// per committed cache publication, avoiding sparse-fact scans on each request.
+func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir string) error {
 	if analyticsDir == "" {
 		return nil
+	}
+	hasActivity, err := hasNormalizedRelationshipActivity(analyticsDir)
+	if err != nil {
+		return err
 	}
 	path := filepath.Join(analyticsDir, identityindex.DatasetActivity, "**", "*.parquet")
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("begin unsent message ID refresh: %w", err)
+		return fmt.Errorf("begin relationship query set refresh: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_unsent_messages AS SELECT message_id FROM read_parquet('"+quoteIdentitySQLPath(path)+"', hive_partitioning=true, union_by_name=true) WHERE canonical_id IS NULL AND unsent")
 	if err != nil {
 		return errors.Join(fmt.Errorf("load unsent message IDs: %w", err), tx.Rollback())
 	}
+	ownerSQL := "SELECT NULL::BIGINT AS canonical_id WHERE false"
+	// Match the expanded view: unpartitioned caches have no normalized activity.
+	if hasActivity {
+		canon := "(" + identityindex.CanonicalParticipantsSQL(
+			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipants, "*.parquet"))),
+			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet"))),
+		) + ")"
+		owners := fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")))
+		// Source-native is_from_me messages can identify an owner absent from owner_participants.
+		ownerSQL = fmt.Sprintf(`
+  %s
+  UNION
+  SELECT canonical_id FROM read_parquet('%s', hive_partitioning=true, union_by_name=true)
+  WHERE canonical_id IS NOT NULL AND is_owner`,
+			identityindex.OwnerCanonicalsSQL(owners, canon), quoteIdentitySQLPath(path))
+	}
+	_, err = tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_canonicals AS "+ownerSQL)
+	if err != nil {
+		return errors.Join(fmt.Errorf("load relationship owner canonicals: %w", err), tx.Rollback())
+	}
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit unsent message ID refresh: %w", err)
+		return fmt.Errorf("commit relationship query set refresh: %w", err)
 	}
 	return nil
 }

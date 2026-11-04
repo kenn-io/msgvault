@@ -375,6 +375,10 @@ func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t 
 				require.ErrorContains(err, "load unsent message IDs", "surface the refresh failure instead of querying a missing exclusion table")
 				_, err = engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{Explore: ExploreRequest{SentOnly: true}})
 				require.ErrorContains(err, "load unsent message IDs", "SentOnly analysis must reject the prior exclusion set")
+				_, err = engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: 2, Year: 2024})
+				require.ErrorContains(err, "load unsent message IDs", "calendar must reject stale owners")
+				_, err = engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: 2})
+				require.ErrorContains(err, "load unsent message IDs", "timeline must reject stale owners")
 				require.NoError(os.WriteFile(activity, original, 0o600))
 				// Restore the bytes without a new marker or shard-stat change. A failed
 				// contact refresh must retry even when the committed signature is unchanged.
