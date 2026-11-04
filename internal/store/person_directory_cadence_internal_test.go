@@ -61,7 +61,9 @@ func FuzzContactFrequencyColumnIsolation(f *testing.F) {
 		mask := columnMasks[int(column)%len(columnMasks)]
 		var fields [9]sql.NullString
 		for i := range fields {
-			fields[i] = sql.NullString{Valid: mask&(1<<i) != 0, String: strconv.FormatInt(days, 10)}
+			if mask&(1<<i) != 0 {
+				fields[i] = sql.NullString{Valid: true, String: strconv.FormatInt(days, 10)}
+			}
 		}
 		kind := "text"
 		if integerKind {
