@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -945,9 +946,56 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 	return results, nil
 }
 
+// senderIDBound caps candidate sorting while leaving large senders on the existing query.
+const senderIDBound = 5000
+
+func senderCandidateSQL(filter MessageFilter) (string, []any) {
+	participants := `SELECT id FROM participants WHERE email_address = ? OR phone_number = ?`
+	from := `SELECT mr.message_id FROM message_recipients mr
+		WHERE mr.recipient_type = 'from' AND mr.participant_id IN (` + participants + `)`
+	directParticipants := participants
+	args := []any{filter.Sender, filter.Sender}
+	if filter.SenderName != "" {
+		from += ` AND EXISTS (SELECT 1 FROM participants p WHERE p.id = mr.participant_id AND ` + recipientNameExpr("mr", "p") + ` = ?)`
+		args = append(args, filter.SenderName)
+		directParticipants = `SELECT id FROM participants p WHERE (email_address = ? OR phone_number = ?) AND ` + participantNameExpr("p") + ` = ?`
+	}
+	args = append(args, filter.Sender, filter.Sender)
+	if filter.SenderName != "" {
+		args = append(args, filter.SenderName)
+	}
+	return from + ` UNION ALL SELECT id FROM messages WHERE sender_id IN (` + directParticipants + `)`, args
+}
+
 // ListMessages retrieves messages matching the filter.
 func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
+	return e.listMessages(ctx, filter, senderIDBound)
+}
+
+func (e *SQLiteEngine) listMessages(ctx context.Context, filter MessageFilter, senderBound int) ([]MessageSummary, error) {
+	var senderSQL string
+	var senderArgs []any
+	if filter.Sender != "" {
+		candidateSQL, candidateArgs := senderCandidateSQL(filter)
+		var count int
+		if err := e.queryRowContext(ctx, `SELECT COUNT(*) FROM (`+candidateSQL+` LIMIT ?) AS sender_candidates`, append(candidateArgs, senderBound+1)...).Scan(&count); err != nil {
+			return nil, fmt.Errorf("probe sender candidates: %w", err)
+		}
+		if count <= senderBound {
+			senderSQL, senderArgs = candidateSQL, candidateArgs
+			filter.EmptyValueTargets = maps.Clone(filter.EmptyValueTargets)
+			delete(filter.EmptyValueTargets, ViewSenders)
+			if filter.SenderName != "" {
+				delete(filter.EmptyValueTargets, ViewSenderNames)
+			}
+			filter.Sender, filter.SenderName = "", ""
+		}
+	}
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
+	if senderSQL != "" {
+		conditions = append(conditions, "m.id IN ("+senderSQL+")")
+		args = append(args, senderArgs...)
+	}
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 
 	// Build ORDER BY with validation. Every structured filter in

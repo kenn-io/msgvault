@@ -77,6 +77,17 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	ctx := context.Background()
 
+	t.Run("sender_candidates", func(t *testing.T) {
+		msgs, err := eng.ListMessages(ctx, query.MessageFilter{
+			Sender: "alice@example.com", SenderName: "Alice", Label: "Important",
+			Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
+			Pagination: query.Pagination{Limit: 2, Offset: 1},
+		})
+		require.NoError(t, err)
+		require.Len(t, msgs, 2)
+		assert.Equal(t, []string{gmailSourceID(2), gmailSourceID(1)}, []string{msgs[0].SourceMessageID, msgs[1].SourceMessageID})
+	})
+
 	t.Run("pipe_or", func(t *testing.T) {
 		require := require.New(t)
 		rows, err := eng.Search(ctx, search.ParseOR("from:alice@example.com | subject:missing"), 50, 0)
