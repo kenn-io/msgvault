@@ -385,3 +385,43 @@ func TestAddCardDAVMicrosoftFlagsAreCheckedBeforeSignIn(t *testing.T) {
 		require.ErrorContains(t, command.Execute(), tc.want)
 	}
 }
+
+func TestCardDAVParticipantBindingCLIUsesDaemonAndPrintsCounts(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	var seen bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = true
+		assert.Equal(http.MethodPost, r.Method)
+		assert.Equal("/api/v1/carddav/participant-bindings", r.URL.Path)
+		var body map[string]bool
+		assert.NoError(json.NewDecoder(r.Body).Decode(&body))
+		assert.True(body["dry_run"])
+		assert.True(body["undo"])
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"cards_scanned":2,"participants_bound":0,"participants_unbound":3,"conflicts":3,"conflict_details":[{"participant_id":7,"person_ids":[1,2],"reason":"shared_address"},{"participant_id":8,"person_ids":[2],"reason":"existing_person"},{"participant_id":9,"person_ids":[3],"reason":"active_merge"}]}`))
+	}))
+	t.Cleanup(server.Close)
+	home := t.TempDir()
+	testCtx := withStoreResolverConfig(t, &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
+	var out bytes.Buffer
+	command := newCardDAVCmd()
+	command.SetContext(testCtx)
+	command.SetOut(&out)
+	command.SetArgs([]string{"bind-participants", "--dry-run", "--undo"})
+	bindingsCommand, _, err := command.Find([]string{"bind-participants"})
+	require.NoError(err)
+	require.NotNil(bindingsCommand.Flags().Lookup("dry-run"))
+	assert.Equal("Preview counts without changing the archive", bindingsCommand.Flags().Lookup("dry-run").Usage)
+	assert.Contains(bindingsCommand.Long, "Promoting a person or explicitly linking identities prevents automatic removal.")
+	assert.Contains(bindingsCommand.Long, "Correct the source card to keep undone memberships from returning on sync.")
+	require.NoError(command.Execute())
+	assert.True(seen)
+	assert.Contains(out.String(), "2 cards scanned, 0 participants bound, 3 participants unbound, 3 conflicts")
+	assert.Contains(out.String(), "participant 7, people [1 2]: address shared by multiple people")
+	assert.Contains(out.String(), "participant 8, people [2]: participant already belongs to another person")
+	assert.Contains(out.String(), "participant 9, people [3]: person has an active merge")
+	assert.NotContains(out.String(), "shared_address")
+	assert.NotContains(out.String(), "existing_person")
+	assert.NotContains(out.String(), "active_merge")
+}

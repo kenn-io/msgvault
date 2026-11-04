@@ -35,7 +35,7 @@ func (s *Store) personHasUserOwnedStateTx(
 			OR EXISTS (SELECT 1 FROM carddav_publications
 				WHERE person_id = persons.id)
 			OR EXISTS (SELECT 1 FROM person_participants
-				WHERE person_id = persons.id)
+				WHERE person_id = persons.id AND carddav_owned = FALSE)
 			OR EXISTS (SELECT 1 FROM person_names
 				WHERE person_id = persons.id AND source = 'user')
 			OR EXISTS (SELECT 1 FROM person_contact_points

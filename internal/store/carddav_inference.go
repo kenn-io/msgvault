@@ -681,6 +681,10 @@ func (s *Store) lockCardDAVPublicationOperationTx(ctx context.Context, tx *logge
 	if err := s.lockCardDAVPublicationTargetTx(ctx, tx, bookID); err != nil {
 		return nil, err
 	}
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return nil, err
+	}
+
 	if s.cardDAVReviewPersonLockHook != nil {
 		s.cardDAVReviewPersonLockHook()
 	}

@@ -74,6 +74,7 @@ func (s *Store) ScopedToSync(sourceID, syncRunID int64) *Store {
 		backfillFTSBatchErrHook:               base.backfillFTSBatchErrHook,
 		attachmentRoleRepairPreparedHook:      base.attachmentRoleRepairPreparedHook,
 		cardDAVConflictResolveSnapshotHook:    base.cardDAVConflictResolveSnapshotHook,
+		cardDAVConflictResolveBookLockHook:    base.cardDAVConflictResolveBookLockHook,
 		cardDAVTombstonePrepareSnapshotHook:   base.cardDAVTombstonePrepareSnapshotHook,
 		identityMatchAcceptBeforeDecisionHook: base.identityMatchAcceptBeforeDecisionHook,
 		identityMatchReviewAfterDecisionHook:  base.identityMatchReviewAfterDecisionHook,

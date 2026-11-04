@@ -147,14 +147,20 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 			return nil, nil, err
 		}
 	}
+	// Lock existing books before identity state. Conflict resolution uses the
+	// same book-then-identity order, so rediscovery cannot hold identity while
+	// waiting for a book lock.
+	if err := s.lockCardDAVAccountBooksTx(ctx, logged, accountID); err != nil {
+		return nil, nil, err
+	}
 	existing, err := listCardDAVBooksFrom(ctx, tx, s.Rebind, accountID)
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := s.lockIdentityMutationTxContext(ctx, logged); err != nil {
+		return nil, nil, err
+	}
 	if identityChanged {
-		if err := s.lockIdentityMutationTxContext(ctx, logged); err != nil {
-			return nil, nil, err
-		}
 		for _, oldBook := range existing {
 			if err := s.dropCardDAVBookResourcesForIdentityChangeTx(ctx, logged, oldBook.ID); err != nil {
 				return nil, nil, fmt.Errorf("clean prior CardDAV connection book: %w", err)
@@ -348,6 +354,9 @@ func (s *Store) ReplaceCardDAVDiscoveryContext(
 	}
 	books, err := listCardDAVBooksFrom(ctx, tx, s.Rebind, accountID)
 	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.cleanupCardDAVParticipantBindingsTx(ctx, logged); err != nil {
 		return nil, nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -661,7 +670,7 @@ func (s *Store) SetCardDAVBookRolesContext(
 		} else if affected != 1 {
 			return ErrCardDAVAddressBookNotFound
 		}
-		return nil
+		return s.cleanupCardDAVParticipantBindingsTx(ctx, tx)
 	})
 }
 
@@ -766,6 +775,25 @@ func listCardDAVBooksFrom(
 		return nil, fmt.Errorf("iterate CardDAV address books: %w", err)
 	}
 	return books, nil
+}
+
+func (s *Store) lockCardDAVAccountBooksTx(ctx context.Context, tx *loggedTx, accountID int64) error {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM carddav_address_books
+		WHERE account_id = ? ORDER BY id`+s.dialect.SelectForUpdate(), accountID)
+	if err != nil {
+		return fmt.Errorf("lock CardDAV account books: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var bookID int64
+		if err := rows.Scan(&bookID); err != nil {
+			return fmt.Errorf("scan CardDAV book lock: %w", err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate CardDAV book locks: %w", err)
+	}
+	return nil
 }
 
 func validateCardDAVDiscoveryInput(input CardDAVDiscoveryInput) error {
