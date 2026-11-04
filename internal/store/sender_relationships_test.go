@@ -249,8 +249,8 @@ func TestSenderRelationshipsUsesSavedSentAudienceForBroadcastDraftSurvivor(t *te
 	candidates, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{survivorID})
 	requirements.NoError(err)
 	requirements.Len(candidates, 1)
-	assertions.True(store.ClassifyActivityCandidate(candidates[0], store.DefaultMaxDirectActivityCounterparts).Broadcast,
-		"the retained draft recipient rows exceed the direct-message limit")
+	assertions.False(store.ClassifyActivityCandidate(candidates[0], store.DefaultMaxDirectActivityCounterparts).Broadcast,
+		"activity broadcast classification must use the saved direct Sent audience")
 
 	addresses := append([]string{"sent-recipient@example.test"}, draftRecipients...)
 	got, err := f.Store.SenderRelationships(t.Context(), addresses, nil)

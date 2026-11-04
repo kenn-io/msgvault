@@ -483,6 +483,126 @@ func TestMergeDuplicatesPreservesSentEnvelopeAcrossProviderTypes(t *testing.T) {
 	}
 }
 
+func TestActivityProjectionUsesTransferredSentEnvelopeAudience(t *testing.T) {
+	tests := []struct {
+		name           string
+		sentRecipients []string
+		wantRecipients []string
+	}{
+		{
+			name:           "sent recipients replace the draft audience",
+			sentRecipients: []string{"sent-only@example.test"},
+			wantRecipients: []string{"sent-only@example.test"},
+		},
+		{
+			name: "empty sent snapshot suppresses draft recipients",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			ctx := t.Context()
+			from, err := st.GetOrCreateSource("imap", "history@example.test")
+			require.NoError(err)
+			into, err := st.GetOrCreateSource("gmail", "live@example.test")
+			require.NoError(err)
+
+			draftRecipients := []string{
+				"draft-one@example.test",
+				"draft-two@example.test",
+				"draft-three@example.test",
+			}
+			draftIDs := make(map[string]int64, len(draftRecipients))
+			draftPersonIDs := make(map[int64]struct{}, len(draftRecipients))
+			for _, address := range draftRecipients {
+				participant, err := st.EnsureParticipant(address, "Draft Recipient", "example.test")
+				require.NoError(err)
+				draftIDs[address] = participant
+				person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+				require.NoError(err)
+				draftPersonIDs[person.ID] = struct{}{}
+			}
+			wantIDs := make(map[int64]struct{}, len(test.wantRecipients))
+			wantPersonIDs := make(map[int64]struct{}, len(test.wantRecipients))
+			for _, address := range test.wantRecipients {
+				participant, err := st.EnsureParticipant(address, "Sent Recipient", "example.test")
+				require.NoError(err)
+				wantIDs[participant] = struct{}{}
+				person, _, err := st.CreatePersonFromParticipantContext(ctx, participant)
+				require.NoError(err)
+				wantPersonIDs[person.ID] = struct{}{}
+			}
+
+			survivor := emailMergeFixtureMessage(
+				t, st, into.ID, "live-draft", draftRecipients, true)
+			sentCopy := emailMergeFixtureMessage(
+				t, st, from.ID, "history-sent", test.sentRecipients, true)
+			var conversationID int64
+			require.NoError(st.DB().QueryRow(st.Rebind(
+				`SELECT conversation_id FROM messages WHERE id=?`), survivor).Scan(&conversationID))
+			for _, participantID := range draftIDs {
+				_, err = st.DB().Exec(st.Rebind(`
+					INSERT INTO conversation_participants(conversation_id, participant_id)
+					VALUES (?, ?)
+				`), conversationID, participantID)
+				require.NoError(err)
+			}
+			_, err = st.DB().Exec(st.Rebind(`
+				UPDATE messages SET draft_authored=TRUE, source_is_from_me=TRUE WHERE id=?
+			`), survivor)
+			require.NoError(err)
+			draftLabels, err := st.EnsureLabelsBatch(into.ID, map[string]store.LabelInfo{
+				"DRAFT": {Name: "Drafts", Type: "system", SystemRole: store.LabelSystemRoleDrafts},
+			})
+			require.NoError(err)
+			require.NoError(st.AddMessageLabels(survivor, []int64{draftLabels["DRAFT"]}))
+			sentLabels, err := st.EnsureLabelsBatch(from.ID, map[string]store.LabelInfo{
+				"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+			})
+			require.NoError(err)
+			require.NoError(st.AddMessageLabels(sentCopy, []int64{sentLabels["SENT"]}))
+
+			_, err = st.MergeDuplicates(survivor, []int64{sentCopy}, "cross-source-sent-envelope")
+			require.NoError(err)
+
+			candidates, err := st.LoadActivityCandidatesByIDContext(ctx, []int64{survivor})
+			require.NoError(err)
+			require.Len(candidates, 1)
+			candidate := candidates[0]
+			assert.True(candidate.Eligible, "transferred Sent provenance overrides draft evidence")
+
+			gotIDs := make(map[int64]struct{})
+			for _, counterpart := range candidate.Counterparts {
+				if counterpart.RecipientType == "to" || counterpart.RecipientType == "cc" ||
+					counterpart.RecipientType == "bcc" {
+					gotIDs[counterpart.ParticipantID] = struct{}{}
+				}
+			}
+			assert.Equal(wantIDs, gotIDs, "activity counterparts must match the saved Sent envelope")
+			for _, participantID := range draftIDs {
+				assert.NotContains(gotIDs, participantID, "draft-only recipients are not activity counterparts")
+			}
+
+			classification := store.ClassifyActivityCandidate(candidate, 2)
+			assert.Equal(store.DirectionOutbound, classification.Direction)
+			gotPersonIDs := make(map[int64]struct{}, len(classification.Persons))
+			for _, person := range classification.Persons {
+				gotPersonIDs[person.PersonID] = struct{}{}
+			}
+			assert.Equal(wantPersonIDs, gotPersonIDs,
+				"activity counterparts must not create contact history for draft-only people")
+			for personID := range draftPersonIDs {
+				assert.NotContains(gotPersonIDs, personID,
+					"draft-only people must not receive projected contact history")
+			}
+			assert.False(classification.Broadcast,
+				"broadcast classification must use the saved Sent audience, not the larger draft audience")
+		})
+	}
+}
+
 func TestMergeSourcesCanonicalizesSentProvenanceFingerprintMetadata(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
