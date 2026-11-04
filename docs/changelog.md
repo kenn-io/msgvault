@@ -6,6 +6,10 @@ description: Release history for msgvault
 
 All notable changes to msgvault, grouped by release.
 
+## Unreleased
+
+- MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
+
 ## 0.23.0
 <small>2026-11-04</small>
 
