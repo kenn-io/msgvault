@@ -42,9 +42,8 @@ type TextSnapshotter interface {
 	TextSnapshotRevision(ctx context.Context, scope TextSnapshotScope) (string, error)
 }
 
-// TextSnapshotReader returns a page and the identity of its complete logical
-// result from one consistent read. Implementations exclude pagination from the
-// identity.
+// TextSnapshotReader returns a page and a revision from one consistent read.
+// The revision changes when the result may have changed and excludes pagination.
 type TextSnapshotReader interface {
 	ListConversationsSnapshot(ctx context.Context,
 		filter TextFilter) ([]ConversationRow, string, error)

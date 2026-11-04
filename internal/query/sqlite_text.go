@@ -21,16 +21,14 @@ var _ TextEngine = (*SQLiteEngine)(nil)
 var _ TextSnapshotter = (*SQLiteEngine)(nil)
 var _ TextSnapshotReader = (*SQLiteEngine)(nil)
 
-// TextSnapshotRevision hashes the complete ordered metadata result behind a
-// text page in one read transaction. Pagination and message bodies are not
-// part of the logical list identity.
+// TextSnapshotRevision tracks changes to a chat's messages for timelines, or
+// hashes the complete ordered metadata for conversation lists. Pagination is
+// excluded from the revision.
 func (e *SQLiteEngine) TextSnapshotRevision(
 	ctx context.Context, scope TextSnapshotScope,
 ) (string, error) {
 	if scope.ConversationID != nil {
-		_, revision, err := readSQLiteTextSnapshot(
-			ctx, e, scope, 500, false, scanTextMessageSnapshotRow,
-		)
+		_, revision, err := readSQLiteTimelineSnapshot(ctx, e, scope, false)
 		return revision, err
 	}
 	_, revision, err := readSQLiteTextSnapshot(
@@ -50,17 +48,107 @@ func (e *SQLiteEngine) ListConversationsSnapshot(
 	)
 }
 
-// ListConversationMessagesSnapshot returns one timeline page and the revision
-// of its complete logical result from the same ordered query.
+// ListConversationMessagesSnapshot returns one timeline page and a revision
+// that tracks changes to the chat's messages from the same read transaction.
 func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 	ctx context.Context, conversationID int64, filter TextFilter,
 ) ([]MessageSummary, string, error) {
-	return readSQLiteTextSnapshot(
+	return readSQLiteTimelineSnapshot(
 		ctx, e, TextSnapshotScope{
 			ConversationID: &conversationID,
 			Filter:         filter,
-		}, 500, true, scanTextMessageSnapshotRow,
+		}, true,
 	)
+}
+
+const sqliteTimelineSnapshotProbe = `SELECT
+	(SELECT COUNT(*) FROM messages WHERE conversation_id = ?),
+	(SELECT MAX(content_changed_at) FROM messages WHERE conversation_id = ?)`
+
+func readSQLiteTimelineSnapshot(
+	ctx context.Context, e *SQLiteEngine, scope TextSnapshotScope, collectPage bool,
+) (page []MessageSummary, revision string, err error) {
+	tx, err := e.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, "", fmt.Errorf("begin text timeline snapshot: %w", err)
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(); err == nil && rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			err = fmt.Errorf("finish text timeline snapshot: %w", rollbackErr)
+		}
+	}()
+
+	conversationID := *scope.ConversationID
+	var count int64
+	var changedAt sql.NullString
+	if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID).Scan(&count, &changedAt); err != nil {
+		return nil, "", fmt.Errorf("probe text timeline snapshot: %w", err)
+	}
+	identity, err := textSnapshotFilterIdentity(scope)
+	if err != nil {
+		return nil, "", err
+	}
+	hasher := sha256.New()
+	writeSnapshotField(hasher, identity)
+	for _, field := range []any{conversationID, count, changedAt.String} {
+		writeSnapshotField(hasher, snapshotFieldBytes(field))
+	}
+	revision = "text-" + hex.EncodeToString(hasher.Sum(nil))
+
+	if collectPage {
+		where, args := buildSQLiteTextFilterConditions(e.dialect, scope.Filter)
+		where += " AND m.conversation_id = ?"
+		args = append(args, conversationID)
+		limit := scope.Filter.Pagination.Limit
+		if limit == 0 {
+			limit = 500
+		}
+		direction := sqliteDirection(scope.Filter.SortDirection)
+		query := fmt.Sprintf(`
+			SELECT
+				m.id,
+				COALESCE(m.source_message_id, ''),
+				COALESCE(m.conversation_id, 0),
+				COALESCE(c.source_conversation_id, ''),
+				COALESCE(m.subject, ''),
+				COALESCE(m.snippet, ''),
+				COALESCE(p_sender.email_address, ''),
+				COALESCE(p_sender.display_name, ''),
+				COALESCE(p_sender.phone_number, ''),
+				m.sent_at,
+				COALESCE(m.size_estimate, 0),
+				COALESCE(m.has_attachments, 0),
+				m.hidden_text_present,
+				COALESCE(m.attachment_count, 0),
+				m.deleted_from_source_at,
+				COALESCE(m.message_type, ''),
+				COALESCE(c.title, '')
+			FROM messages m
+			LEFT JOIN participants p_sender ON p_sender.id = m.sender_id
+			LEFT JOIN conversations c ON c.id = m.conversation_id
+			WHERE %s
+			ORDER BY m.sent_at %s, m.id %s
+			LIMIT ? OFFSET ?
+		`, where, direction, direction)
+		args = append(args, limit, scope.Filter.Pagination.Offset)
+		rows, err := tx.QueryContext(ctx, e.dialect.Rebind(query), args...)
+		if err != nil {
+			return nil, "", fmt.Errorf("query text timeline snapshot: %w", err)
+		}
+		defer func() { _ = rows.Close() }()
+		page, err = scanMessageSummaries(rows)
+		closeErr := rows.Close()
+		if err != nil {
+			return nil, "", fmt.Errorf("scan text timeline snapshot: %w", err)
+		}
+		if closeErr != nil {
+			return nil, "", fmt.Errorf("close text timeline snapshot rows: %w", closeErr)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, "", fmt.Errorf("commit text timeline snapshot: %w", err)
+	}
+	return page, revision, nil
 }
 
 type textSnapshotRowScanner[T any] func(*sql.Rows) (T, []any, error)
@@ -177,58 +265,6 @@ func scanTextConversationSnapshotRow(rows *sql.Rows) (ConversationRow, []any, er
 	}, nil
 }
 
-func scanTextMessageSnapshotRow(rows *sql.Rows) (MessageSummary, []any, error) {
-	var row MessageSummary
-	var sentAt sql.NullTime
-	var deletedAt sql.NullTime
-	if err := rows.Scan(
-		&row.ID,
-		&row.SourceMessageID,
-		&row.ConversationID,
-		&row.SourceConversationID,
-		&row.Subject,
-		&row.Snippet,
-		&row.FromEmail,
-		&row.FromName,
-		&row.FromPhone,
-		&sentAt,
-		&row.SizeEstimate,
-		&row.HasAttachments,
-		&row.HiddenTextPresent,
-		&row.AttachmentCount,
-		&deletedAt,
-		&row.MessageType,
-		&row.ConversationTitle,
-	); err != nil {
-		return MessageSummary{}, nil, err
-	}
-	if sentAt.Valid {
-		row.SentAt = sentAt.Time
-	}
-	if deletedAt.Valid {
-		row.DeletedAt = &deletedAt.Time
-	}
-	return row, []any{
-		row.ID,
-		row.SourceMessageID,
-		row.ConversationID,
-		row.SourceConversationID,
-		row.Subject,
-		row.Snippet,
-		row.FromEmail,
-		row.FromName,
-		row.FromPhone,
-		row.SentAt,
-		row.SizeEstimate,
-		row.HasAttachments,
-		row.HiddenTextPresent,
-		row.AttachmentCount,
-		deletedAt.Time,
-		row.MessageType,
-		row.ConversationTitle,
-	}, nil
-}
-
 func textSnapshotFilterIdentity(scope TextSnapshotScope) ([]byte, error) {
 	filter := scope.Filter
 	filter.Pagination = Pagination{}
@@ -260,36 +296,6 @@ func writeSnapshotField(hasher hash.Hash, value []byte) {
 
 func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string, []any) {
 	where, args := buildSQLiteTextFilterConditions(e.dialect, scope.Filter)
-	if scope.ConversationID != nil {
-		where += " AND m.conversation_id = ?"
-		args = append(args, *scope.ConversationID)
-		direction := sqliteDirection(scope.Filter.SortDirection)
-		return fmt.Sprintf(`
-			SELECT
-				m.id,
-				COALESCE(m.source_message_id, ''),
-				COALESCE(m.conversation_id, 0),
-				COALESCE(c.source_conversation_id, ''),
-				COALESCE(m.subject, ''),
-				COALESCE(m.snippet, ''),
-				COALESCE(p_sender.email_address, ''),
-				COALESCE(p_sender.display_name, ''),
-				COALESCE(p_sender.phone_number, ''),
-				m.sent_at,
-				COALESCE(m.size_estimate, 0),
-				COALESCE(m.has_attachments, 0),
-				m.hidden_text_present,
-				COALESCE(m.attachment_count, 0),
-				m.deleted_from_source_at,
-				COALESCE(m.message_type, ''),
-				COALESCE(c.title, '')
-			FROM messages m
-			LEFT JOIN participants p_sender ON p_sender.id = m.sender_id
-			LEFT JOIN conversations c ON c.id = m.conversation_id
-			WHERE %s
-			ORDER BY m.sent_at %s, m.id %s
-		`, where, direction, direction), args
-	}
 
 	var orderBy string
 	switch scope.Filter.SortField {

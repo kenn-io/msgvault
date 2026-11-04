@@ -2,12 +2,106 @@ package query
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
+
+func TestSQLiteTimelineSnapshotProbeUsesCoveringIndex(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	s, err := store.OpenForTest(filepath.Join(t.TempDir(), "timeline.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(s.Close()) })
+	require.NoError(s.InitSchema())
+	rows, err := s.DB().Query("EXPLAIN QUERY PLAN "+sqliteTimelineSnapshotProbe, 1, 1)
+	require.NoError(err)
+	defer func() { require.NoError(rows.Close()) }()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		plan.WriteString(detail + "\n")
+	}
+	require.NoError(rows.Err())
+	assert.Contains(plan.String(), "COVERING INDEX idx_messages_conversation_content_changed")
+	assert.NotContains(plan.String(), "SCAN m")
+}
+
+func TestSQLiteTimelineSnapshotRevisionTracksMessageChanges(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sql  string
+		want []int64
+	}{
+		{"insert", `INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at)
+			VALUES (803, 701, 7, 'message-803', 'imessage', '2020-01-01 12:00:00')`, []int64{801, 802, 803}},
+		{"hard delete", `DELETE FROM messages WHERE id = 802`, []int64{801}},
+		{"sent_at edit", `UPDATE messages SET sent_at = '2020-01-01 09:00:00' WHERE id = 802`, []int64{802, 801}},
+		{"snippet edit", `UPDATE messages SET snippet = 'edited' WHERE id = 802`, []int64{801, 802}},
+		{"move out", `UPDATE messages SET conversation_id = 702 WHERE id = 802`, []int64{801}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			s, err := store.OpenForTest(filepath.Join(t.TempDir(), "timeline.db"))
+			require.NoError(err)
+			t.Cleanup(func() { require.NoError(s.Close()) })
+			require.NoError(s.InitSchema())
+			_, err = s.DB().Exec(`
+				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'imessage', 'owner@example.com');
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type) VALUES
+					(701, 7, 'chat-701', 'direct_chat'), (702, 7, 'chat-702', 'direct_chat');
+				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, content_changed_at) VALUES
+					(801, 701, 7, 'message-801', 'imessage', '2020-01-01 10:00:00', 'first', '2020-01-01 00:00:00'),
+					(802, 701, 7, 'message-802', 'imessage', '2020-01-01 11:00:00', 'second', '2020-01-01 00:00:00');
+			`)
+			require.NoError(err)
+			engine := NewSQLiteEngine(s.DB())
+			conversationID := int64(701)
+			filter := TextFilter{Pagination: Pagination{Limit: 1}, SortDirection: SortAsc}
+			page, before, err := engine.ListConversationMessagesSnapshot(t.Context(), conversationID, filter)
+			require.NoError(err)
+			require.Len(page, 1)
+			assert.Equal(int64(801), page[0].ID)
+			filter.Pagination.Offset = 1
+			page, next, err := engine.ListConversationMessagesSnapshot(t.Context(), conversationID, filter)
+			require.NoError(err)
+			require.Len(page, 1)
+			assert.Equal(int64(802), page[0].ID)
+			assert.Equal(before, next)
+
+			_, err = s.DB().Exec(tc.sql)
+			require.NoError(err)
+			filter.Pagination = Pagination{}
+			page, after, err := engine.ListConversationMessagesSnapshot(t.Context(), conversationID, filter)
+			require.NoError(err)
+			assert.NotEqual(before, after)
+			var ids []int64
+			for _, message := range page {
+				ids = append(ids, message.ID)
+			}
+			assert.Equal(tc.want, ids)
+			if tc.name == "snippet edit" {
+				assert.Equal("edited", page[1].Snippet)
+			}
+			scope := TextSnapshotScope{ConversationID: &conversationID, Filter: filter}
+			revision, err := engine.TextSnapshotRevision(t.Context(), scope)
+			require.NoError(err)
+			assert.Equal(after, revision)
+			scope.Filter.ContactName = "different request"
+			differentFilter, err := engine.TextSnapshotRevision(t.Context(), scope)
+			require.NoError(err)
+			assert.NotEqual(after, differentFilter)
+		})
+	}
+}
 
 func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
 	t.Parallel()
@@ -121,12 +215,6 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *test
 	require.NoError(err)
 	assert.Equal(first, samePageSet)
 
-	_, err = tdb.DB.Exec(`UPDATE message_bodies SET body_text = 'changed full body' WHERE message_id = 801`)
-	require.NoError(err)
-	bodyOnly, err := engine.TextSnapshotRevision(t.Context(), scope)
-	require.NoError(err)
-	assert.Equal(first, bodyOnly)
-
 	_, err = tdb.DB.Exec(`
 		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
 			VALUES (802, 701, 7, 'message-802', 'whatsapp', '2026-08-20 11:00:00', 'second', 11)
@@ -149,7 +237,7 @@ func TestSQLiteTextSnapshotRevisionMessagesTracksMembershipWithoutBodies(t *test
 	require.NoError(err)
 	reinserted, err := engine.TextSnapshotRevision(t.Context(), scope)
 	require.NoError(err)
-	assert.Equal(added, reinserted)
+	assert.NotEqual(deleted, reinserted)
 
 	_, err = tdb.DB.Exec(`UPDATE messages SET conversation_id = 702 WHERE id = 802`)
 	require.NoError(err)
