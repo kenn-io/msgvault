@@ -57,13 +57,13 @@ func (s *Server) registerDocbankAttachmentRoutes(api huma.API) {
 			return nil, huma.Error500InternalServerError("read attachment mirror status")
 		}
 		result := DocbankAttachmentStatus{State: "running", UploadConsent: true, Folder: reader.Folder, Counts: &counts}
-		for _, job := range s.scheduler.JobStatus() {
-			if job.Name == DocbankAttachmentMirrorJob {
-				result.LastError = job.LastError
-				break
-			}
-		}
 		if s.cfg != nil && s.cfg.Integrations.Docbank.DocumentProfile != "" {
+			for _, job := range s.scheduler.JobStatus() {
+				if job.Name == DocbankAttachmentMirrorJob {
+					result.LastError = job.LastError
+					break
+				}
+			}
 			processing, err := reader.Store.DocbankAttachmentProcessingCounts(ctx, reader.Destination, s.cfg.Integrations.Docbank.DocumentProfile)
 			if err != nil {
 				return nil, huma.Error500InternalServerError("read attachment processing status")

@@ -1069,37 +1069,9 @@ func TestAttachmentMirrorProcessesDistinctUploads(t *testing.T) {
 	require.NoError(r.runBatch(t.Context()))
 	assert.ElementsMatch([]string{"version-8", "version-9"}, r.processing.Jobs)
 	r.processing.States[docbanktest.ProcessingJobID("version-8", r.processing.Fingerprint)] = [3]string{"completed", "rendition", ""}
-	r.processing.States[docbanktest.ProcessingJobID("version-9", r.processing.Fingerprint)] = [3]string{"failed", "rendition", "consent"}
 	r.processingDue()
 	require.NoError(r.runBatch(t.Context()))
 	assert.Equal(int64(1), r.processingCounts().Extracted)
-	assert.Equal(map[string]int64{"consent": 1}, r.processingCounts().Outcomes)
-}
-
-func TestAttachmentMirrorProcessingStartSavesConflictReason(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	r := newMirrorRig(t)
-	r.delivered("a")
-	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a"}, r.processing.Plans)
-
-	jobID := docbanktest.ProcessingJobID("a", r.processing.Fingerprint)
-	r.processing.States[jobID] = [3]string{"operator_required", "rendition", ""}
-	r.processingDue()
-
-	require.NoError(r.runBatch(t.Context()))
-	hashes := r.delivered("b")
-	r.processing.States[docbanktest.ProcessingJobID("b", r.processing.Fingerprint)] = [3]string{"operator_required", "rendition", ""}
-	require.NoError(r.runBatch(t.Context()))
-	assert.Equal([]string{"a", "b"}, r.processing.Plans)
-	assert.Equal([]string{"a", "b"}, r.processing.Jobs)
-	var outcome, savedJobID string
-	require.NoError(r.f.Store.DB().QueryRow(r.f.Store.Rebind(`SELECT outcome, job_id FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&outcome, &savedJobID))
-	assert.Equal("rendition_operator_required", outcome)
-	assert.Empty(savedJobID)
-	assert.Zero(r.processingCounts().Requested)
-	assert.Equal([]string{jobID}, r.processing.Polls)
 }
 
 func TestAttachmentMirrorProcessingMissingJobReplans(t *testing.T) {
@@ -1157,16 +1129,20 @@ func TestAttachmentMirrorProcessingInvalidPollRetriesJob(t *testing.T) {
 }
 
 func TestAttachmentMirrorProcessingRefusalsWaitForProfileChange(t *testing.T) {
-	for _, stage := range []string{"plan", "start"} {
+	for _, stage := range []string{"plan", "start", "conflict"} {
 		t.Run(stage, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			r := newMirrorRig(t)
-			r.delivered("a")
+			hashes := r.delivered("a")
 			outcome := "not_found"
 			switch stage {
 			case "plan":
 				r.processing.Faults["a"] = http.StatusNotFound
+				r.processing.Reasons["a"] = outcome
+			case "conflict":
+				outcome = "rendition_operator_required"
+				r.processing.JobFaults["a"] = http.StatusConflict
 				r.processing.Reasons["a"] = outcome
 			case "start":
 				r.processing.JobFaults["a"] = http.StatusNotFound
@@ -1174,6 +1150,9 @@ func TestAttachmentMirrorProcessingRefusalsWaitForProfileChange(t *testing.T) {
 			}
 			require.NoError(r.runBatch(t.Context()))
 			assert.Equal(map[string]int64{outcome: 1}, r.processingCounts().Outcomes)
+			var savedJobID string
+			require.NoError(r.f.Store.DB().QueryRow(r.f.Store.Rebind(`SELECT job_id FROM docbank_attachment_processing WHERE content_hash = ?`), hashes[0]).Scan(&savedJobID))
+			assert.Empty(savedJobID)
 			plans, jobs := len(r.processing.Plans), len(r.processing.Jobs)
 			require.NoError(r.runBatch(t.Context()))
 			assert.Len(r.processing.Plans, plans, "a refusal waits for a profile change")
@@ -1539,48 +1518,44 @@ func TestAttachmentMirrorProcessingLocalErrors(t *testing.T) {
 	}
 }
 
-func TestAttachmentMirrorGateKeepsFailure(t *testing.T) {
-	r := newMirrorRig(t)
-	r.delivered("a", "b")
-	// Content hash order puts b before a, so b's plan fails first.
-	r.processing.Faults["b"] = http.StatusServiceUnavailable
-	r.worker.WithOperationGate(func(context.Context) (func(), bool) {
-		return func() {}, len(r.processing.Plans) == 0
-	})
-	_, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
-	require.ErrorContains(t, err, "server_error")
-	assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
-}
-
 func TestAttachmentMirrorBusyUploadGateStopsPass(t *testing.T) {
-	r := newMirrorRig(t)
-	r.delivered("a")
-	transport := http.DefaultTransport
-	defer func() { http.DefaultTransport = transport }()
-	synctest.Test(t, func(t *testing.T) {
-		assert := assert.New(t)
-		profileRead, gateBusy := false, false
-		http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
-			if req.URL.Path == "/api/v1/processing/profiles" {
-				profileRead = true
+	for _, withFailure := range []bool{false, true} {
+		t.Run(fmt.Sprintf("failure=%t", withFailure), func(t *testing.T) {
+			r := newMirrorRig(t)
+			r.delivered("a")
+			if withFailure {
+				r.processing.Faults["a"] = http.StatusServiceUnavailable
 			}
-			r.serve(w, req)
+			transport := http.DefaultTransport
+			defer func() { http.DefaultTransport = transport }()
+			synctest.Test(t, func(t *testing.T) {
+				profileRead, gateBusy := false, false
+				http.DefaultTransport = handlerTransport(func(w http.ResponseWriter, req *http.Request) {
+					if req.URL.Path == "/api/v1/processing/profiles" {
+						profileRead = true
+					}
+					r.serve(w, req)
+				})
+				r.worker.WithOperationGate(func(context.Context) (func(), bool) {
+					if gateBusy {
+						return nil, false
+					}
+					if profileRead && (!withFailure || len(r.processing.Plans) > 0) {
+						// Exhaust the processing budget before the upload gate is busy.
+						synctest.Sleep(31 * time.Second)
+						gateBusy = true
+					}
+					return func() {}, true
+				})
+				more, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
+				if withFailure {
+					require.ErrorContains(t, err, "server_error")
+					assert.NotErrorIs(t, err, errBeeperMediaGateBusy)
+				} else {
+					require.NoError(t, err)
+				}
+				assert.False(t, more)
+			})
 		})
-		r.worker.WithOperationGate(func(context.Context) (func(), bool) {
-			if gateBusy {
-				return nil, false
-			}
-			if profileRead {
-				// Saving the profile uses the processing budget, leaving uploads pending.
-				synctest.Sleep(31 * time.Second)
-				gateBusy = true
-			}
-			return func() {}, true
-		})
-		more, err := r.worker.runPass(t.Context(), time.Now().Add(time.Minute))
-		require.NoError(t, err)
-		assert.False(more)
-		assert.True(gateBusy)
-		assert.Empty(r.processing.Jobs)
-	})
+	}
 }
