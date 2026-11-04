@@ -1259,18 +1259,20 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 		full := filepath.ToSlash(filepath.Join(fullDir, dataset, pattern))
 		var schemas [][]string
 		for _, path := range []string{full, inc} {
-			rows, err := duck.Query(`DESCRIBE SELECT * FROM read_parquet(?)`, path)
-			require.NoError(err)
-			var schema []string
-			for rows.Next() {
-				var name, typ string
-				var nullable, key, def, extra sql.NullString
-				require.NoError(rows.Scan(&name, &typ, &nullable, &key, &def, &extra))
-				schema = append(schema, name+":"+typ)
-			}
-			require.NoError(rows.Err())
-			require.NoError(rows.Close())
-			schemas = append(schemas, schema)
+			func() {
+				rows, err := duck.Query(`DESCRIBE SELECT * FROM read_parquet(?)`, path)
+				require.NoError(err)
+				defer func() { require.NoError(rows.Close()) }()
+				var schema []string
+				for rows.Next() {
+					var name, typ string
+					var nullable, key, def, extra sql.NullString
+					require.NoError(rows.Scan(&name, &typ, &nullable, &key, &def, &extra))
+					schema = append(schema, name+":"+typ)
+				}
+				require.NoError(rows.Err())
+				schemas = append(schemas, schema)
+			}()
 		}
 		assert.Equal(schemas[0], schemas[1], dataset)
 		requireCacheExportParity(t, duck, dataset, full, inc)
