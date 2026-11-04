@@ -62,6 +62,7 @@ func TestMetadataSearchIndexedPlan(t *testing.T) {
 	e := NewSQLiteEngine(metadataSearchDB(t))
 	for _, q := range []*search.Query{{TextTerms: []string{"eedle"}}, {TextTerms: []string{"ÉCOLE"}, AccountIDs: []int64{1}}} {
 		plan := metadataPlan(t, e, q)
+		assert.NotRegexp(`(?m)^SCAN m(?: |$)`, plan)
 		assert.Contains(plan, "messages_metadata_fts VIRTUAL TABLE INDEX")
 		assert.Contains(plan, "participants_metadata_fts VIRTUAL TABLE INDEX")
 		assert.Contains(plan, "recipients_metadata_fts VIRTUAL TABLE INDEX")
