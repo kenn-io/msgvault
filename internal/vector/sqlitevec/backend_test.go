@@ -5,7 +5,6 @@ package sqlitevec
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -15,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
 	"go.kenn.io/msgvault/internal/testutil/vectorcheckpoints"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -1556,22 +1556,40 @@ func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
 
 func TestBackend_Delete_UsesPointLookup(t *testing.T) {
 	b, ctx := newBackendForTest(t)
-	rows, err := b.db.QueryContext(ctx,
-		"EXPLAIN QUERY PLAN "+fmt.Sprintf(deleteVectorSQL, VectorTableName(768)), 1, 1)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
+	db, observer := sqlobserve.Open(t, nil)
+	require.NoError(t, Migrate(ctx, db, 768))
+	require.NoError(t, b.db.Close())
+	b.db = db
+	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
+	observer.Reset()
+	require.NoError(t, b.Delete(ctx, gid, []int64{1}))
+
+	vecPlan := func(statement string) string {
+		rows, err := db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+statement, 1, 1, "[1]")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, rows.Close()) }()
+		var vecDetail string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+			if strings.Contains(detail, "vectors_vec_d768") {
+				vecDetail = detail
+			}
+		}
+		require.NoError(t, rows.Err())
+		require.NotEmpty(t, vecDetail)
+		return vecDetail
 	}
-	require.NoError(t, rows.Err())
-	plan := strings.Join(details, "\n")
-	// sqlite-vec v0.1.6 uses idxStr "2" for a primary-key lookup and "1"
-	// for a full scan. An IN subquery silently selects the full scan.
-	assert.Regexp(t, `VIRTUAL TABLE INDEX \d+:2`, plan)
+	fullScan := vecPlan(`DELETE FROM vectors_vec_d768 WHERE generation_id = ?`)
+	var deletes int
+	for _, statement := range observer.Statements() {
+		if strings.HasPrefix(strings.TrimSpace(statement), "DELETE FROM vectors_vec_d768") {
+			deletes++
+			assert.NotEqual(t, fullScan, vecPlan(statement), statement)
+		}
+	}
+	require.Positive(t, deletes, "Delete must execute a vector delete")
 }
 
 func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
