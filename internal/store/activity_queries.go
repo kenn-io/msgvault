@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -176,7 +177,7 @@ func (s *Store) ExpandActivityConversationQueueContext(ctx context.Context, chec
 			err := tx.QueryRowContext(ctx, s.dialect.Rebind(`
 				SELECT conversation_id, after_message_id FROM activity_projection_conversation_queue
 				ORDER BY conversation_id LIMIT ?`+skipLocked), 1).Scan(&conversationID, &afterID)
-			if err == sql.ErrNoRows {
+			if errors.Is(err, sql.ErrNoRows) {
 				return nil
 			}
 			if err != nil {

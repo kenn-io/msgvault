@@ -43,7 +43,7 @@ func BenchmarkGrowingChatImport(b *testing.B) {
 					require.NoError(b, err)
 				}
 				b.StartTimer()
-				for batch := 0; batch < size/100; batch++ {
+				for batch := range size / 100 {
 					start := time.Now()
 					for i := batch * 100; i < (batch+1)*100; i++ {
 						_, err := s.UpsertMessageContext(b.Context(), &Message{
