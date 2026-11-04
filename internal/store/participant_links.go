@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/peoplesweep"
 )
@@ -1120,14 +1119,14 @@ func participantLinkSpanningTree(
 }
 
 func clusterEdgeFilter(ids []int64) (string, []any) {
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	marks := placeholders(len(ids))
 	args := make([]any, 0, 2*len(ids))
 	for range 2 {
 		for _, id := range ids {
 			args = append(args, id)
 		}
 	}
-	return fmt.Sprintf(`participant_a IN (%s) OR participant_b IN (%s)`, placeholders, placeholders), args
+	return fmt.Sprintf(`participant_a IN (%s) OR participant_b IN (%s)`, marks, marks), args
 }
 
 // deleteClusterEdges removes every link edge with an endpoint in ids. Any

@@ -768,12 +768,10 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 		}
 		slices.Sort(ids)
 		linkScope, acceptedScopeArgs = clusterEdgeFilter(ids)
-		left, right, _ := strings.Cut(linkScope, " OR ")
-		left = strings.Replace(left, "participant_a", "left_id", 1)
-		right = strings.Replace(right, "participant_b", "right_id", 1)
+		marks := placeholders(len(ids))
 		acceptedScope = ` AND id IN (
-			SELECT id FROM identity_match_candidates WHERE left_kind = 'participant' AND ` + left + `
-			UNION SELECT id FROM identity_match_candidates WHERE right_kind = 'participant' AND ` + right + `
+			SELECT id FROM identity_match_candidates WHERE left_kind = 'participant' AND left_id IN (` + marks + `)
+			UNION SELECT id FROM identity_match_candidates WHERE right_kind = 'participant' AND right_id IN (` + marks + `)
 		)`
 	}
 

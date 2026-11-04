@@ -501,6 +501,7 @@ func (s *Store) reconcileCurrentObservationIdentityMatchesTxContext(
 func (s *Store) reconcileObservationIdentityMatchesForParticipantTxContext(
 	ctx context.Context, tx *loggedTx, participantID int64,
 ) error {
+	// Conflict cleanup remains archive-wide for participant-scoped reconciliation.
 	if err := s.deleteUnsupportedObservationIdentityConflictsContext(ctx, tx); err != nil {
 		return err
 	}
