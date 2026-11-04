@@ -1,15 +1,12 @@
 package store
 
 import (
-	"database/sql"
 	"fmt"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -88,25 +85,15 @@ func seedDisjointOwnedParticipantLinks(tb testing.TB, st *Store, unlinked, edges
 func BenchmarkMergeParticipantsUnrelatedEdges(b *testing.B) {
 	for _, edges := range []int{1000, 10000, 100000} {
 		b.Run(strconv.Itoa(edges), func(b *testing.B) {
-			path := filepath.Join(b.TempDir(), "merge.db")
+			var st *Store
 			if testDB := os.Getenv("MSGVAULT_TEST_DB"); IsPostgresURL(testDB) {
-				setup, err := sql.Open("pgx", testDB)
+				st = newUninitializedPGStoreInternal(b, testDB)
+			} else {
+				var err error
+				st, err = OpenForTest(filepath.Join(b.TempDir(), "merge.db"))
 				require.NoError(b, err)
-				b.Cleanup(func() { require.NoError(b, setup.Close()) })
-				schema := fmt.Sprintf("merge_bench_%d", time.Now().UnixNano())
-				_, err = setup.Exec("CREATE SCHEMA " + schema)
-				require.NoError(b, err)
-				b.Cleanup(func() { _, err := setup.Exec("DROP SCHEMA " + schema + " CASCADE"); require.NoError(b, err) })
-				u, err := url.Parse(testDB)
-				require.NoError(b, err)
-				q := u.Query()
-				q.Set("search_path", schema)
-				u.RawQuery = q.Encode()
-				path = u.String()
+				b.Cleanup(func() { require.NoError(b, st.Close()) })
 			}
-			st, err := OpenForTest(path)
-			require.NoError(b, err)
-			b.Cleanup(func() { require.NoError(b, st.Close()) })
 			require.NoError(b, st.InitSchema())
 			seedDisjointOwnedParticipantLinks(b, st, 0, edges)
 			override := ""

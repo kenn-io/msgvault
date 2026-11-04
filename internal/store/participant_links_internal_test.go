@@ -1,7 +1,6 @@
 package store
 
 import (
-	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -289,11 +288,8 @@ func TestInitSchemaAddsCandidateRightIndexBeforeLegacyMerge(t *testing.T) {
 func TestMergeParticipantsReappliesAcceptedMatchAfterScopedCleanup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	st := openTestStore(t)
-	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
-		st = newPGStoreInternal(t)
-	}
-	seedDisjointOwnedParticipantLinks(t, st, 4, 1000)
+	st, observer := filenameObservedStore(t)
+	seedDisjointOwnedParticipantLinks(t, st, 6, 1000)
 	source, err := st.GetOrCreateSource("slack", "merge-support@example.test")
 	require.NoError(err)
 	for participant, provider := range map[int64]string{1: "previous-provider", 2: "survivor-provider", 3: "previous-provider"} {
@@ -314,8 +310,10 @@ func TestMergeParticipantsReappliesAcceptedMatchAfterScopedCleanup(t *testing.T)
 	require.NoError(err)
 	_, err = st.LinkParticipants(3, 4)
 	require.NoError(err)
+	_, err = st.LinkParticipants(2, 5)
+	require.NoError(err)
 	redundant, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
-		LeftKind: IdentityMatchParticipant, LeftID: 2, RightKind: IdentityMatchParticipant, RightID: 4,
+		LeftKind: IdentityMatchParticipant, LeftID: 4, RightKind: IdentityMatchParticipant, RightID: 5,
 		Basis: IdentityMatchStableProviderID, NormalizedValue: new("retained-provider"), State: IdentityMatchStateCandidate, Source: ProvenanceSystem,
 	})
 	require.NoError(err)
@@ -323,16 +321,84 @@ func TestMergeParticipantsReappliesAcceptedMatchAfterScopedCleanup(t *testing.T)
 	require.NoError(err)
 	before, err := st.IdentityRevisionContext(t.Context())
 	require.NoError(err)
+	originalBuildAdjacency := buildAdjacency
+	t.Cleanup(func() { buildAdjacency = originalBuildAdjacency })
+	var traversals int
+	buildAdjacency = func(edges []linkEdge) map[int64][]int64 {
+		traversals++
+		return originalBuildAdjacency(edges)
+	}
+	observer.all = true
 	require.NoError(st.MergeParticipants(1, 2))
+	assert.LessOrEqual(traversals, 20, "cleanup must not traverse unrelated accepted matches")
+	var acceptedQueries int
+	for _, query := range observer.queries {
+		if strings.Contains(query.sql, "SELECT id, left_id, right_id") && strings.Contains(query.sql, "FROM identity_match_candidates") {
+			acceptedQueries++
+			assert.LessOrEqual(query.rows, 3, "cleanup must not load unrelated accepted matches")
+			if !st.IsPostgreSQL() {
+				rows, err := st.db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+query.sql, query.args...)
+				require.NoError(err)
+				for rows.Next() {
+					var id, parent, unused int
+					var detail string
+					require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+					assert.NotContains(detail, "SCAN identity_match_candidates")
+				}
+				require.NoError(rows.Err())
+				require.NoError(rows.Close())
+			}
+		}
+	}
+	assert.Equal(2, acceptedQueries)
 	_, err = st.GetIdentityMatchCandidateContext(t.Context(), lost.ID)
 	require.ErrorIs(err, ErrIdentityMatchNotFound)
 	var owner int64
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT identity_match_candidate_id FROM participant_links WHERE participant_a = 2 AND participant_b = 4`).Scan(&owner))
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT identity_match_candidate_id FROM participant_links WHERE participant_a = 4 AND participant_b = 5`).Scan(&owner))
 	assert.Equal(redundant.ID, owner)
 	var unrelated int
-	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM participant_links WHERE participant_a > 4 AND identity_match_candidate_id IS NOT NULL`).Scan(&unrelated))
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT count(*) FROM participant_links WHERE participant_a > 6 AND identity_match_candidate_id IS NOT NULL`).Scan(&unrelated))
 	assert.Equal(1000, unrelated)
 	after, err := st.IdentityRevisionContext(t.Context())
 	require.NoError(err)
 	assert.Equal(before+2, after, "cleanup and the participant merge each bump the identity revision")
+}
+
+func TestMergeParticipantsTransfersOwnerDuringScopedCleanup(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st, _ := filenameObservedStore(t)
+	seedDisjointOwnedParticipantLinks(t, st, 4, 1000)
+	source, err := st.GetOrCreateSource("slack", "transfer-support@example.test")
+	require.NoError(err)
+	for participant, provider := range map[int64]string{1: "previous-provider", 2: "survivor-provider", 3: "previous-provider"} {
+		_, err := st.RecordContactObservationContext(t.Context(), participant, ParticipantContactObservationInput{
+			SourceID: &source.ID, AddressKind: ContactAddressEmail,
+			OriginalValue: "shared@example.test", ProviderUserID: new(provider),
+			Envelope: ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+		})
+		require.NoError(err)
+	}
+	lost, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
+		LeftKind: IdentityMatchParticipant, LeftID: 1, RightKind: IdentityMatchParticipant, RightID: 3,
+		Basis: IdentityMatchStableProviderID, NormalizedValue: new("previous-provider"),
+		State: IdentityMatchStateCandidate, Source: ProvenanceArchiveObservation, SourceID: &source.ID,
+	})
+	require.NoError(err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), lost.ID, "system", nil)
+	require.NoError(err)
+	replacement, _, err := st.UpsertIdentityMatchCandidateContext(t.Context(), IdentityMatchCandidateInput{
+		LeftKind: IdentityMatchParticipant, LeftID: 1, RightKind: IdentityMatchParticipant, RightID: 3,
+		Basis: IdentityMatchStableProviderID, NormalizedValue: new("independent-provider"),
+		State: IdentityMatchStateCandidate, Source: ProvenanceSystem,
+	})
+	require.NoError(err)
+	_, _, err = st.AcceptIdentityMatchCandidateContext(t.Context(), replacement.ID, "system", nil)
+	require.NoError(err)
+	require.NoError(st.MergeParticipants(1, 2))
+	_, err = st.GetIdentityMatchCandidateContext(t.Context(), lost.ID)
+	require.ErrorIs(err, ErrIdentityMatchNotFound)
+	var owner int64
+	require.NoError(st.db.QueryRowContext(t.Context(), `SELECT identity_match_candidate_id FROM participant_links WHERE participant_a = 2 AND participant_b = 3`).Scan(&owner))
+	assert.Equal(replacement.ID, owner)
 }

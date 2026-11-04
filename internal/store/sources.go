@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -753,6 +754,32 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	if err != nil {
 		return fmt.Errorf("list participant links before source cleanup: %w", err)
 	}
+	var acceptedScope string
+	var acceptedScopeArgs []any
+	if participantID != 0 {
+		// Use the component before withdrawing edges so accepted matches can
+		// reconnect participants on either side of a resulting split.
+		members := map[int64]struct{}{participantID: {}}
+		for _, edge := range originalEdges {
+			members[edge.a] = struct{}{}
+			members[edge.b] = struct{}{}
+		}
+		ids := make([]int64, 0, len(members))
+		for id := range members {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		acceptedScope = fmt.Sprintf(` AND id IN (
+			SELECT id FROM identity_match_candidates WHERE left_kind = 'participant' AND left_id IN (%s)
+			UNION SELECT id FROM identity_match_candidates WHERE right_kind = 'participant' AND right_id IN (%s)
+		)`, placeholders, placeholders)
+		for range 2 {
+			for _, id := range ids {
+				acceptedScopeArgs = append(acceptedScopeArgs, id)
+			}
+		}
+	}
 	deletedEdges := make(map[linkEdge]struct{})
 
 	type replacementOwner struct {
@@ -762,9 +789,9 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 	replacements := make(map[linkEdge]replacementOwner)
 	rows, err = query(ctx, `SELECT id, left_id, right_id, decided_by
 		FROM identity_match_candidates
-		WHERE left_kind = ? AND right_kind = ? AND state = ?
-		ORDER BY id`, IdentityMatchParticipant, IdentityMatchParticipant,
-		IdentityMatchStateAccepted)
+		WHERE left_kind = ? AND right_kind = ? AND state = ?`+acceptedScope+`
+		ORDER BY id`, append([]any{IdentityMatchParticipant, IdentityMatchParticipant,
+		IdentityMatchStateAccepted}, acceptedScopeArgs...)...)
 	if err != nil {
 		return fmt.Errorf("list supported accepted identity matches: %w", err)
 	}
@@ -843,7 +870,7 @@ func (s *Store) recomputeUnsupportedGeneratedIdentityMatchesContext(
 		}
 	}
 	reapplied, err := reapplyAcceptedIdentityMatchesAfterSourceCleanupContext(
-		ctx, query, exec, originalEdges, currentEdges,
+		ctx, query, exec, originalEdges, currentEdges, acceptedScope, acceptedScopeArgs,
 	)
 	if err != nil {
 		return err
@@ -874,12 +901,13 @@ func reapplyAcceptedIdentityMatchesAfterSourceCleanupContext(
 	query sourceIdentityQuery,
 	exec sourceIdentityExec,
 	originalEdges, currentEdges []linkEdge,
+	acceptedScope string, acceptedScopeArgs []any,
 ) (bool, error) {
 	rows, err := query(ctx, `SELECT id, left_id, right_id
 		FROM identity_match_candidates
-		WHERE state = ? AND left_kind = ? AND right_kind = ?
-		ORDER BY id`, IdentityMatchStateAccepted,
-		IdentityMatchParticipant, IdentityMatchParticipant)
+		WHERE state = ? AND left_kind = ? AND right_kind = ?`+acceptedScope+`
+		ORDER BY id`, append([]any{IdentityMatchStateAccepted,
+		IdentityMatchParticipant, IdentityMatchParticipant}, acceptedScopeArgs...)...)
 	if err != nil {
 		return false, fmt.Errorf("list accepted identity matches after source cleanup: %w", err)
 	}
