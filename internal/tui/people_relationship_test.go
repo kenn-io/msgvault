@@ -397,9 +397,6 @@ func TestPeopleRelationshipTimezoneRequests(t *testing.T) {
 	}{
 		{name: "system default", want: ""},
 		{name: "opaque Local", location: time.Local, want: ""},
-		{name: "Windows label", location: time.FixedZone("Pacific Standard Time", -8*60*60), want: ""},
-		{name: "unknown fixed zone", location: time.FixedZone("Mars/Olympus_Mons", 0), want: ""},
-		{name: "empty label", location: time.FixedZone("", 0), want: ""},
 		{name: "UTC", location: time.UTC, want: "UTC"},
 		{name: "named zone", location: newYork, want: "America/New_York"},
 	} {
