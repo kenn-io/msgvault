@@ -63,6 +63,9 @@ __pycache__/
 # Testify migration coverage baseline
 .testify-coverage/
 
+# Hegel property-test examples
+.hegel/
+
 # Docs build, tool state, and hydrated assets
 docs/.venv/
 docs/.vercel/

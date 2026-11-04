@@ -196,9 +196,35 @@ func TestRootHelpGolden(t *testing.T) {
 	actual := strings.ReplaceAll(output.String(), "\r\n", "\n")
 	assertions.Equal(expected, actual)
 	assertions.LessOrEqual(output.Len(), 12500, "shorten start-here comments if root exceeds its help budget")
+	first, _, _ := strings.Cut(output.String(), "\n")
+	assertions.Equal(`Agents: find the right command with: msgvault cli search "<what you want to do>"`, first)
+	command, rest, err := rootCmd.Find([]string{"cli", "search"})
+	requirements.NoError(err)
+	assertions.Empty(rest)
+	assertions.Equal("msgvault cli search", command.CommandPath())
+	assertions.True(command.Runnable())
 	assertions.Contains(output.String(), "Start here:")
 	assertions.NotContains(output.String(), "/home/")
 	assertions.NotContains(output.String(), "/Users/")
+}
+
+func TestRootHelpStartsHereWithCommandDiscovery(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+
+	if helpTestSubprocess(t) {
+		return
+	}
+	ensureHelpLayout(rootCmd)
+	var output bytes.Buffer
+	rootCmd.SetOut(&output)
+	rootCmd.SetErr(&output)
+	rootCmd.SetArgs([]string{"--help"})
+	requirements.NoError(executeRootContext(t.Context(), rootCmd))
+	_, startHere, found := strings.Cut(output.String(), "Start here:\n")
+	requirements.True(found)
+	first, _, _ := strings.Cut(startHere, "\n")
+	assertions.Equal(`  msgvault cli search "<what you want to do>"`, first)
 }
 
 func TestSubcommandHelpHasCompactGlobalFlags(t *testing.T) {
