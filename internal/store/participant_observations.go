@@ -920,6 +920,9 @@ func (s *Store) supersedeParticipantObservationTxContext(
 	if err := s.reconcileCurrentObservationIdentityMatchesTxContext(ctx, tx); err != nil {
 		return err
 	}
+	if err := s.invalidateContextualParticipantMessagesTx(ctx, tx, []int64{participantID}); err != nil {
+		return fmt.Errorf("invalidate contextual messages for superseded participant observation: %w", err)
+	}
 	return s.bumpParticipantIdentifierRevision(ctx, tx)
 }
 

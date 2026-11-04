@@ -2,11 +2,13 @@ package store_test
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -1109,4 +1111,63 @@ func TestSupersedeParticipantObservationKeepsConflictsBetweenOtherParticipants(t
 		[]int64{participants[1], participants[2]},
 		[]int64{candidates[0].LeftID, candidates[0].RightID},
 	)
+}
+
+func TestSupersedingLastFullObservationInvalidatesContextualMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+	source, err := f.Store.GetOrCreateSource("beeper", "superseded-observation-context")
+	require.NoError(err)
+	roomID, err := f.Store.EnsureConversation(source.ID, "full-room", "Full room")
+	require.NoError(err)
+	require.NoError(f.Store.SetConversationPolicyOverride(ctx, source.ID, "full-room", conversationpolicy.Full))
+	participantID, err := f.Store.EnsureParticipantByIdentifier(
+		"beeper", "synthetic-superseded-observation", "Synthetic Superseded Observation",
+	)
+	require.NoError(err)
+	messageID, err := f.Store.UpsertMessageContext(ctx, &store.Message{
+		SourceID: source.ID, ConversationID: roomID,
+		SourceMessageID: "superseded-observation-context", MessageType: "beeper",
+		SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+	})
+	require.NoError(err)
+
+	observation, err := f.Store.RecordContactObservationContext(ctx, participantID,
+		store.ParticipantContactObservationInput{
+			SourceID:       &source.ID,
+			ConversationID: &roomID,
+			AddressKind:    store.ContactAddressDisplayName,
+			OriginalValue:  "Synthetic Superseded Observation",
+			Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+		},
+	)
+	require.NoError(err)
+
+	var eligible bool
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT `+
+		store.FullParticipantNameWhere("p.id", "p.display_name")+
+		` FROM participants p WHERE p.id=?`), participantID).Scan(&eligible))
+	assert.True(eligible, "the Full observation is the sole supported display name")
+	require.NoError(f.Store.SetEmbedGen(ctx, []int64{messageID}, 73))
+
+	var beforeRevision int64
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
+		`SELECT embedding_revision FROM messages WHERE id=?`), messageID).Scan(&beforeRevision))
+	require.NoError(f.Store.SupersedeParticipantObservationContext(
+		ctx, participantID, observation.Observation.Envelope.ID, nil,
+	))
+
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT `+
+		store.FullParticipantNameWhere("p.id", "p.display_name")+
+		` FROM participants p WHERE p.id=?`), participantID).Scan(&eligible))
+	assert.False(eligible, "superseding the sole Full observation withdraws its display-name support")
+	var generation sql.NullInt64
+	var afterRevision int64
+	require.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(
+		`SELECT embed_gen,embedding_revision FROM messages WHERE id=?`), messageID).Scan(&generation, &afterRevision))
+	assert.False(generation.Valid, "cached contextual embeddings must be withdrawn with the name")
+	assert.Greater(afterRevision, beforeRevision,
+		"superseding the observation must invalidate in-flight contextual publication")
 }
