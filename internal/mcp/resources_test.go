@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -267,6 +268,34 @@ func TestAttachmentResourceDaemonNotFoundIsInvalidParams(t *testing.T) {
 
 	checks.InDelta(float64(jsonrpc.CodeInvalidParams), response.Error["code"], 0, "response: %s", raw)
 	checks.NotContains(raw, "attachment bytes unavailable")
+}
+
+func TestAttachmentResourceRecoveryFailurePreservesGuidance(t *testing.T) {
+	checks := assert.New(t)
+	must := require.New(t)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	must.NoError(err)
+	endpoint := "http://" + listener.Addr().String()
+	must.NoError(listener.Close())
+	client, err := daemonclient.New(daemonclient.Config{URL: endpoint, AllowInsecure: true})
+	must.NoError(err)
+	client.EnableLocalDaemonRecovery(func(context.Context) (daemonclient.LocalDaemonEndpoint, error) {
+		return daemonclient.LocalDaemonEndpoint{}, errors.New("synthetic discovery failure")
+	})
+	t.Cleanup(func() { assert.NoError(t, client.Close()) })
+
+	opts := task4ResourceOptions([]byte("unused"))
+	opts.AttachmentReader = client
+	response, raw := task4RawRequest(
+		t,
+		newMCPHTTPServer(opts, HTTPOptions{}).Handler,
+		"resources/read",
+		map[string]any{"uri": "msgvault://attachment/7"},
+		nil,
+	)
+	must.NotEmpty(response.Error, "response: %s", raw)
+	checks.InDelta(float64(jsonrpc.CodeInternalError), response.Error["code"], 0)
+	checks.Equal("daemon_unavailable: "+daemonclient.LocalDaemonUnavailableMessage, response.Error["message"])
 }
 
 func TestMCPCachePolicyOverwritesSDKDefaultsByMethod(t *testing.T) {

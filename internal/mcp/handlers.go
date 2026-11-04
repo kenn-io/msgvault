@@ -522,6 +522,9 @@ type daemonAPIErrorCoder interface {
 }
 
 func translateDaemonRequestError(err error) *toolResult {
+	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+		return toolErrorResult(local.Error())
+	}
 	var coded daemonAPIErrorCoder
 	if !errors.As(err, &coded) {
 		return nil

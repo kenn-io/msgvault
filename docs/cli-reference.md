@@ -1619,7 +1619,8 @@ dedicated device named `msgvault (read-only)`. See
 msgvault add-matrix \
   --homeserver https://matrix.example.org \
   --user-id @archive:example.org \
-  --password-file /path/to/password
+  --password-file /path/to/password \
+  --recovery-file /path/to/recovery-key
 ```
 
 | Flag | Default | Description |
@@ -1628,10 +1629,12 @@ msgvault add-matrix \
 | `--user-id` | required | Full Matrix user ID |
 | `--password-file` | prompt or stdin | Read the account password from a file |
 | `--login-token-file` | — | Read a single-use `m.login.token` obtained from an SSO/login flow; mutually exclusive with `--password-file` |
+| `--recovery-file` | prompt | Read the secret-storage recovery key or passphrase from a file |
+| `--recovery-passphrase` | `false` | Treat the recovery secret as a passphrase |
+| `--skip-key-backup` | `false` | Clear the saved backup key and keep encrypted placeholders; mutually exclusive with recovery flags |
 | `--no-default-identity` | `false` | Do not auto-confirm the Matrix user ID as this source's "me" identity |
 
-The access token is written to an owner-only file under `tokens/`. Running it
-again for a registered user renews the login in place and keeps its history.
+The access token and unlocked backup key are written to an owner-only file under `tokens/`. The recovery secret is never saved. First setup requires a recovery secret or `--skip-key-backup`; renewal without either keeps the saved backup key. Running it again for a registered user renews the login in place and keeps its history. See the [Matrix guide](usage/matrix.md) for credential access, backup retention, and decryption limits.
 
 ---
 
@@ -1652,8 +1655,7 @@ msgvault sync-matrix --full
 | `--account` | all registered | Sync only this exact Matrix user ID |
 | `--full` | `false` | Ignore stored cursors and re-fetch complete joined-room history |
 
-Room selection and scheduled sync are controlled by `[matrix]`. Encrypted
-events are kept as raw placeholders.
+Room selection and scheduled sync are controlled by `[matrix]`. The account's key backup decrypts encrypted history and retries earlier placeholders after a backup change, with the retry rules described in the [Matrix guide](usage/matrix.md). The recovered count includes messages replaced with decrypted content, excluding edits and reactions.
 
 ---
 
@@ -5131,6 +5133,10 @@ msgvault repair-identity --type imap
 The optional identifier narrows the repair. `--type` selects a source type and
 defaults to `gmail`. Only plain, valid email addresses are confirmed. For
 reviewing other aliases, use [identity discovery](#identity).
+Other email account types with an unconfirmed account address are listed with
+a `--type` repair hint. If you supplied an identifier, reuse it.
+Activity and contacts update at the daemon's next refresh, or now with
+`msgvault activity build`.
 
 ## repair-senders
 
@@ -5175,12 +5181,12 @@ physical MIME occurrence, so separate parts with identical bytes still count
 separately. Older rows without part keys cannot prove how many times identical
 content occurred.
 
-An `inconclusive` raw MIME result means the stored MIME is missing, cannot be
-decoded or parsed, or exceeds the audit's 64 MiB decompression limit. Repair
-fetches fresh MIME from Gmail and requires it to parse successfully. If fetching,
-parsing, publishing attachment bytes, or replacing the snapshot fails, the stored
-snapshot stays unchanged. A later cache-refresh error can occur after the
-snapshot has been committed; re-audit to check that snapshot. If a message
+An `inconclusive` raw MIME result means the stored MIME is missing, empty,
+cannot be decoded or parsed, or exceeds the audit's 64 MiB decompression limit.
+Repair fetches fresh MIME from Gmail and requires it to parse successfully. If
+fetching, parsing, publishing attachment bytes, or replacing the snapshot fails,
+the stored snapshot stays unchanged. A later cache-refresh error can occur after
+the snapshot has been committed; re-audit to check that snapshot. If a message
 remains flagged after a successful repair, retain the new audit result and the
 repair's error output for diagnosis.
 

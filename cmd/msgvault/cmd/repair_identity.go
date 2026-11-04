@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/mail"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -35,6 +37,9 @@ is_from_me = 1.
 It is idempotent and safe: a source is skipped when its account address is
 already confirmed, and only plain, valid email addresses are touched. Other
 confirmed aliases do not suppress repair of the account address.
+Other email account types with an unconfirmed account address are listed with
+a --type repair hint. If you supplied an identifier, reuse it.
+Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.
 
 Examples:
   msgvault repair-identity                       # all Gmail accounts missing an identity
@@ -80,11 +85,12 @@ Examples:
 // Cancellation stops before the next source and reaches each database call.
 // Returns the number of sources repaired and any failures encountered.
 func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdentifier string, out io.Writer) (int, error) {
-	sources, err := s.ListSourcesContext(ctx, sourceType)
+	sources, err := s.ListSourcesContext(ctx, "")
 	if err != nil {
-		return 0, fmt.Errorf("list %s sources: %w", sourceType, err)
+		return 0, fmt.Errorf("list sources: %w", err)
 	}
 	repaired := 0
+	skipped := make(map[string]int)
 	var failures []error
 	for _, src := range sources {
 		if err := ctx.Err(); err != nil {
@@ -98,12 +104,19 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 			!store.EqualIdentifier(address, onlyIdentifier) {
 			continue
 		}
+		selected := src.SourceType == sourceType
+		if !selected && !store.SourceTypeUsesEmailIdentity(src.SourceType) {
+			continue
+		}
 		parsed, parseErr := mail.ParseAddress(address)
 		if parseErr != nil || parsed.Name != "" || !strings.EqualFold(parsed.Address, address) {
 			continue // not one plain email address; nothing to attribute against
 		}
 		existing, lerr := s.ListAccountIdentitiesContext(ctx, src.ID)
 		if lerr != nil {
+			if !selected {
+				continue
+			}
 			failures = append(failures,
 				fmt.Errorf("list identities for %s: %w", sourceIdentifier, lerr))
 			break
@@ -118,6 +131,10 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 		if alreadyConfirmed {
 			continue // this account address is already confirmed
 		}
+		if !selected {
+			skipped[src.SourceType]++
+			continue
+		}
 		before := countFromMe(ctx, s, src.ID)
 		// AddAccountIdentityContext's insert hook retro-attributes matching
 		// messages in the same transaction (see store.addAccountIdentityContext).
@@ -130,6 +147,16 @@ func repairIdentities(ctx context.Context, s *store.Store, sourceType, onlyIdent
 		_, _ = fmt.Fprintf(out, "  %s: confirmed identity %s; is_from_me %d -> %d\n",
 			sourceIdentifier, address, before, after)
 		repaired++
+	}
+	for _, skippedType := range slices.Sorted(maps.Keys(skipped)) {
+		hint := "--type " + skippedType
+		if onlyIdentifier != "" {
+			hint += " and the same identifier"
+		}
+		_, _ = fmt.Fprintf(out, "Skipped %d %s source(s) with an unconfirmed account address; re-run with %s.\n", skipped[skippedType], skippedType, hint)
+	}
+	if repaired > 0 {
+		_, _ = fmt.Fprintln(out, "Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.")
 	}
 	return repaired, errors.Join(failures...)
 }

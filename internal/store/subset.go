@@ -235,6 +235,14 @@ func CopySubsetWithOptions(
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
 
+	// A source that predates matrix_encrypted_events copies placeholders the
+	// empty destination never registered.
+	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationMatrixEncryptedEventsV1); err != nil {
+		_ = tx.Rollback()
+		closeAndCleanup()
+		return nil, fmt.Errorf("reset copied Matrix placeholder migration: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		_, _ = db.Exec("DETACH DATABASE src")
 		closeAndCleanup()
@@ -917,6 +925,20 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 		if _, err := copyByName(tx, "reaction_source_events",
 			`reaction_id IN (SELECT id FROM reactions)`); err != nil {
 			return nil, fmt.Errorf("copy reaction_source_events: %w", err)
+		}
+	}
+	// Matrix recovery state, so the subset can still decrypt its placeholders.
+	for _, matrix := range []struct{ table, where string }{
+		{"matrix_encrypted_events", `message_id IN (SELECT id FROM selected_messages)`},
+		{"matrix_pending_edits", `target_message_id IN (SELECT id FROM selected_messages)`},
+		{"matrix_megolm_claims", `conversation_id IN (SELECT id FROM conversations)`},
+	} {
+		if present, err := sourceTableExists(tx, matrix.table); err != nil {
+			return nil, fmt.Errorf("check %s: %w", matrix.table, err)
+		} else if present {
+			if _, err := copyByName(tx, matrix.table, matrix.where); err != nil {
+				return nil, fmt.Errorf("copy %s: %w", matrix.table, err)
+			}
 		}
 	}
 

@@ -68,7 +68,11 @@ func relationshipHeatmapLines(
 		}
 	}
 
-	lines := []string{relationshipAlignedLine("● Relationship", strconv.Itoa(calendar.Year), width)}
+	yearLabel := strconv.Itoa(calendar.Year)
+	if calendar.Timezone == "UTC" {
+		yearLabel += " · UTC"
+	}
+	lines := []string{relationshipAlignedLine("● Relationship", yearLabel, width)}
 	for _, panel := range panels {
 		lines = append(lines, relationshipHeatPanelLines(calendar, panel, styles, noColor)...)
 	}

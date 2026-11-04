@@ -149,6 +149,9 @@ func readMCPOperationJSON[T any](ctx context.Context, client *daemonclient.Clien
 	writes := method != http.MethodGet
 	response, err := client.DoGeneratedRequestWithContext(ctx, method, path, options)
 	if err != nil {
+		if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+			return operationFailure(local.APIErrorCode(), false), err
+		}
 		return operationFailure("operation_failed", writes), err
 	}
 	defer func() { _ = response.Body.Close() }()

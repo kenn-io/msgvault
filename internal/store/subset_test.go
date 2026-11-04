@@ -5715,3 +5715,118 @@ func TestSubsetCopiesLoopDecisions(t *testing.T) {
 	require.NoError(destination.DB().QueryRowContext(ctx, `SELECT snoozed_until FROM loop_decisions WHERE message_id = 1`).Scan(&until))
 	require.Equal(time.Date(2026, time.October, 25, 12, 0, 0, 0, time.UTC), until.UTC())
 }
+
+func TestSubsetCopiesMatrixRecoveryStateForSelectedMessages(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	sourceDir := t.TempDir()
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	sourcePath := createTestSourceDB(t, sourceDir, 2)
+	db, err := sql.Open(sqliteutil.DriverName(), sourcePath+"?_foreign_keys=OFF")
+	require.NoError(err)
+	for _, messageID := range []int64{1, 2} {
+		_, err = db.Exec(`INSERT INTO matrix_encrypted_events (message_id, conversation_id, session_id, ciphertext) VALUES (?, ?, 'session', '{}')`, messageID, messageID)
+		require.NoError(err)
+		_, err = db.Exec(`INSERT INTO matrix_pending_edits (target_message_id, event_id, origin_ts, event) VALUES (?, ?, 1, '{}')`, messageID, fmt.Sprintf("$edit-%d", messageID))
+		require.NoError(err)
+		_, err = db.Exec(`INSERT INTO matrix_megolm_claims (conversation_id, session_id, message_index, event_id) VALUES (?, 'session', 0, ?)`, messageID, fmt.Sprintf("$event-%d", messageID))
+		require.NoError(err)
+	}
+	require.NoError(db.Close())
+
+	// The newest message is message 2, in conversation 2.
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+
+	destination, err := sql.Open(sqliteutil.DriverName(), filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	for table, column := range map[string]string{
+		"matrix_encrypted_events": "message_id",
+		"matrix_pending_edits":    "target_message_id",
+		"matrix_megolm_claims":    "conversation_id",
+	} {
+		ids := func() []int64 {
+			rows, err := destination.Query(`SELECT ` + column + ` FROM ` + table)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			var ids []int64
+			for rows.Next() {
+				var id int64
+				require.NoError(rows.Scan(&id))
+				ids = append(ids, id)
+			}
+			require.NoError(rows.Err())
+			return ids
+		}()
+		assert.Equal([]int64{2}, ids, table)
+	}
+}
+
+func TestSubsetRegistersPlaceholdersFromSourceWithoutMatrixTables(t *testing.T) {
+	require := require.New(t)
+	sourceDir := t.TempDir()
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	sourcePath := createTestSourceDB(t, sourceDir, 2)
+	db, err := sql.Open(sqliteutil.DriverName(), sourcePath+"?_foreign_keys=OFF")
+	require.NoError(err)
+	// Message 2 is the newest, so the one-row subset selects it.
+	_, err = db.Exec(`UPDATE messages SET message_type = 'matrix', snippet = ? WHERE id = 2`, MatrixEncryptedPlaceholder)
+	require.NoError(err)
+	_, err = db.Exec(`INSERT INTO message_raw (message_id, raw_data, raw_format, compression) VALUES (2, ?, 'matrix_json', NULL)`,
+		[]byte(`{"type":"m.room.encrypted","content":{"session_id":"session","ciphertext":"opaque"}}`))
+	require.NoError(err)
+	for _, table := range []string{"matrix_encrypted_events", "matrix_megolm_claims", "matrix_pending_edits"} {
+		_, err = db.Exec(`DROP TABLE ` + table)
+		require.NoError(err)
+	}
+	require.NoError(db.Close())
+
+	_, err = CopySubset(sourcePath, destinationDir, 1, false)
+	require.NoError(err)
+
+	destination, err := sql.Open(sqliteutil.DriverName(), filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+	var registered int64
+	require.NoError(destination.QueryRow(`SELECT message_id FROM matrix_encrypted_events`).Scan(&registered))
+	assert.Equal(t, int64(2), registered)
+}
+
+func TestSubsetKeepsMergedMatrixRoomsOutOfSync(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := context.Background()
+	sourcePath := filepath.Join(t.TempDir(), "msgvault.db")
+	st, err := Open(sourcePath)
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	into, err := st.GetOrCreateSource("matrix", "@archive:example.org")
+	require.NoError(err)
+	old, err := st.GetOrCreateSource("matrix", "@old:example.org")
+	require.NoError(err)
+	room, err := st.EnsureConversationWithType(old.ID, "!dm:example.org", "direct_chat", "Old DM")
+	require.NoError(err)
+	_, err = st.PersistMatrixMessageContext(ctx, &MessagePersistData{
+		Message: &Message{SourceID: old.ID, ConversationID: room, SourceMessageID: "$old", MessageType: "matrix", Snippet: sql.NullString{String: MatrixEncryptedPlaceholder, Valid: true}},
+		RawMIME: []byte(`{"type":"m.room.encrypted","content":{"session_id":"session","ciphertext":"opaque"}}`), RawFormat: "matrix_json",
+	}, MatrixPersist{SessionID: "session"})
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(ctx, MergeSourcesRequest{FromSourceID: old.ID, IntoSourceID: into.ID})
+	require.NoError(err)
+	require.NoError(st.Close())
+
+	destinationDir := filepath.Join(t.TempDir(), "subset")
+	_, err = CopySubset(sourcePath, destinationDir, 10, false)
+	require.NoError(err)
+	destination, err := Open(filepath.Join(destinationDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	rooms, err := destination.ListMatrixRoomIDsContext(ctx, into.ID)
+	require.NoError(err)
+	assert.Empty(rooms, "the merged room keeps its stored type")
+	pending, err := destination.CountMatrixPending(ctx, into.ID, nil, nil)
+	require.NoError(err)
+	assert.Zero(pending, "the merged room's placeholder is not retried")
+}
