@@ -508,6 +508,114 @@ func TestMergeSourcesCanonicalizesSentProvenanceFingerprintMetadata(t *testing.T
 		"provider provenance must not change fingerprints when JSON formatting differs")
 }
 
+func TestMergeSourcesDoesNotTransferRawImportSentLabelToNativeSurvivor(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := testutil.NewTestStore(t)
+	from, err := st.GetOrCreateSource("gmail", "import@example.test")
+	require.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "live@example.test")
+	require.NoError(err)
+	recipient := "recipient@example.test"
+	survivor := emailMergeFixtureMessage(t, st, into.ID, "gmail-native-incoming", []string{recipient}, true)
+	duplicate := emailMergeFixtureMessage(t, st, from.ID, "eml-"+strings.Repeat("d", 64), []string{recipient}, true)
+
+	for _, sourceID := range []int64{from.ID, into.ID} {
+		labels, err := st.EnsureLabelsBatch(sourceID, map[string]store.LabelInfo{
+			"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+		})
+		require.NoError(err)
+		if sourceID == from.ID {
+			require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+		}
+	}
+
+	result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+		FromSourceID: from.ID, IntoSourceID: into.ID,
+	})
+	require.NoError(err)
+	assert.Equal(int64(1), result.DuplicatesHidden)
+	got, err := st.SenderRelationships(t.Context(), []string{recipient}, nil)
+	require.NoError(err)
+	assert.Equal("none", got[recipient].Relationship,
+		"a raw import's Sent label must not establish ownership on a native incoming survivor")
+	var sentLabels int
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM message_labels ml
+		JOIN labels l ON l.id=ml.label_id WHERE ml.message_id=? AND l.system_role=?`),
+		survivor, store.LabelSystemRoleSent).Scan(&sentLabels))
+	assert.Zero(sentLabels, "the raw import's Sent label must not be copied to the native survivor")
+}
+
+func FuzzRawImporterSentLabelsDoNotEstablishSenderOwnership(f *testing.F) {
+	for format := uint8(1); format < 6; format++ {
+		f.Add(format, uint64(format), false)
+		f.Add(format, uint64(format), true)
+	}
+	f.Fuzz(func(t *testing.T, format uint8, token uint64, mergeSource bool) {
+		st := testutil.NewTestStore(t)
+		rawID := rawImporterMessageID(format, token)
+		recipient := "recipient@example.test"
+		var survivor, duplicate int64
+		if mergeSource {
+			from, err := st.GetOrCreateSource("gmail", "import@example.test")
+			require.NoError(t, err)
+			into, err := st.GetOrCreateSource("gmail", "live@example.test")
+			require.NoError(t, err)
+			emailMergeFixtureMessage(t, st, into.ID, "gmail-native-incoming", []string{recipient}, true)
+			duplicate = emailMergeFixtureMessage(t, st, from.ID, rawID, []string{recipient}, true)
+			for _, sourceID := range []int64{from.ID, into.ID} {
+				labels, err := st.EnsureLabelsBatch(sourceID, map[string]store.LabelInfo{
+					"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+				})
+				require.NoError(t, err)
+				if sourceID == from.ID {
+					require.NoError(t, st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+				}
+			}
+			result, err := st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+				FromSourceID: from.ID, IntoSourceID: into.ID,
+			})
+			require.NoError(t, err)
+			require.Equal(t, int64(1), result.DuplicatesHidden)
+		} else {
+			source, err := st.GetOrCreateSource("gmail", "live@example.test")
+			require.NoError(t, err)
+			survivor = emailMergeFixtureMessage(t, st, source.ID, "gmail-native-incoming", []string{recipient}, true)
+			duplicate = emailMergeFixtureMessage(t, st, source.ID, rawID, []string{recipient}, true)
+			labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+				"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+			})
+			require.NoError(t, err)
+			require.NoError(t, st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+			_, err = st.MergeDuplicates(survivor, []int64{duplicate}, "raw-import-sent-label-fuzz")
+			require.NoError(t, err)
+		}
+
+		got, err := st.SenderRelationships(t.Context(), []string{recipient}, nil)
+		require.NoError(t, err)
+		assert.Equal(t, "none", got[recipient].Relationship)
+	})
+}
+
+func rawImporterMessageID(format uint8, token uint64) string {
+	hash := fmt.Sprintf("%064x", token)
+	digits := strconv.FormatUint(token, 10)
+	switch format % 6 {
+	case 0:
+		return "eml-" + hash
+	case 1:
+		return "maildir-" + hash
+	case 2:
+		return "emlx-" + hash
+	case 3:
+		return "mbox-" + hash + "-" + digits
+	case 4:
+		return "pst-" + hash[:12] + "-" + digits
+	default:
+		return "pst-" + digits
+	}
+}
+
 func TestMergeDuplicatesDoesNotTrustRawImportSentLabels(t *testing.T) {
 	for _, test := range []struct {
 		name             string
@@ -564,6 +672,59 @@ func TestMergeDuplicatesDoesNotTrustRawImportSentLabels(t *testing.T) {
 			require.NoError(err)
 			assert.Equal("none", got["imported-recipient@example.test"].Relationship,
 				"an importer-generated ID must not become trusted provider evidence from a Sent label")
+		})
+	}
+}
+
+func TestMergeDuplicatesDoesNotTransferRawImportSentLabelToNativeSurvivor(t *testing.T) {
+	for _, preserveOriginal := range []bool{false, true} {
+		name := "current importer ID"
+		if preserveOriginal {
+			name = "source-merged original importer ID"
+		}
+		t.Run(name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("gmail", "import-live@example.test")
+			require.NoError(err)
+			duplicateSourceID := source.ID
+			var from *store.Source
+			if preserveOriginal {
+				from, err = st.GetOrCreateSource("gmail", "import-history@example.test")
+				require.NoError(err)
+				duplicateSourceID = from.ID
+			}
+
+			survivor := emailMergeFixtureMessage(t, st, source.ID, "gmail-native-incoming",
+				[]string{"native-recipient@example.test"}, true)
+			duplicate := emailMergeFixtureMessage(t, st, duplicateSourceID,
+				"eml-"+strings.Repeat("c", 64), []string{"imported-recipient@example.test"}, true)
+			if preserveOriginal {
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{
+					FromSourceID: from.ID, IntoSourceID: source.ID,
+				})
+				require.NoError(err)
+				var originalID string
+				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT original_source_message_id
+					FROM source_merge_archive_only_messages WHERE message_id=?`), duplicate).Scan(&originalID))
+				assert.Equal("eml-"+strings.Repeat("c", 64), originalID)
+			}
+
+			labels, err := st.EnsureLabelsBatch(source.ID, map[string]store.LabelInfo{
+				"SENT": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
+			})
+			require.NoError(err)
+			require.NoError(st.AddMessageLabels(duplicate, []int64{labels["SENT"]}))
+			_, err = st.MergeDuplicates(survivor, []int64{duplicate}, "native-survivor-raw-sent-label")
+			require.NoError(err)
+
+			got, err := st.SenderRelationships(t.Context(), []string{
+				"native-recipient@example.test", "imported-recipient@example.test",
+			}, nil)
+			require.NoError(err)
+			assert.Equal("none", got["imported-recipient@example.test"].Relationship,
+				"a raw import's Sent label must not establish ownership on a native incoming survivor")
 		})
 	}
 }

@@ -367,13 +367,20 @@ func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, 
 	if err := persistMicrosoftSentEvidenceMetadata(q, s.dialect, survivorID); err != nil {
 		return fmt.Errorf("preserve duplicate Microsoft Sent Items provenance: %w", err)
 	}
-	transferRecipientsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_recipients
-		(message_id, participant_id, recipient_type, display_name, email_address)
-		SELECT ?, participant_id, recipient_type, display_name, email_address
-		FROM message_recipients
-		WHERE message_id=? AND recipient_type IN ('to','cc','bcc')`)
-	if _, err := tx.ExecContext(ctx, transferRecipientsSQL, survivorID, duplicateID); err != nil {
-		return fmt.Errorf("preserve duplicate Microsoft Sent Items recipients: %w", err)
+	if observed {
+		transferRecipientsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_recipients
+			(message_id, participant_id, recipient_type, display_name, email_address)
+			SELECT ?, mr.participant_id, mr.recipient_type, mr.display_name, mr.email_address
+			FROM message_recipients mr
+			WHERE mr.message_id=? AND mr.recipient_type IN ('to','cc','bcc')
+			  AND LOWER(COALESCE(TRIM(mr.email_address), ''))<>''
+			  AND EXISTS (
+				SELECT 1 FROM msmail_sent_envelope_recipients sent
+				WHERE sent.message_id=?
+				  AND sent.email_address=LOWER(COALESCE(TRIM(mr.email_address), '')))`)
+		if _, err := tx.ExecContext(ctx, transferRecipientsSQL, survivorID, duplicateID, duplicateID); err != nil {
+			return fmt.Errorf("preserve duplicate Microsoft Sent Items recipients: %w", err)
+		}
 	}
 	return nil
 }

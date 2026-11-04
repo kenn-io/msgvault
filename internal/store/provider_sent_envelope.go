@@ -38,6 +38,21 @@ func senderSentEnvelopeSnapshotExistsSQL(dialect Dialect, message string) string
 		providerSentEnvelopeSnapshotExistsSQL(dialect, message) + `)`
 }
 
+// untrustedRawImportedSentSQL excludes label-derived Sent evidence from raw
+// email imports unless the archive already carries provider-observed Sent
+// provenance. Source merges retain the original importer ID separately.
+func (s *Store) untrustedRawImportedSentSQL(message, source string) string {
+	original := `COALESCE(NULLIF((SELECT p.original_source_message_id
+		FROM source_merge_archive_only_messages p WHERE p.message_id=` + message + `.id), ''), ` + message + `.source_message_id)`
+	email := `COALESCE(NULLIF(` + message + `.message_type,''),'email')='email'`
+	rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
+	microsoftSent := metadataFlagSQL(s.dialect, message, microsoftSentEvidenceKey)
+	providerObserved := `((` + source + `.source_type='msmail' AND ` + microsoftSent + `) OR ` +
+		microsoftSentEnvelopeSnapshotExistsSQL(s.dialect, message) + ` OR ` +
+		providerSentEnvelopeSnapshotExistsSQL(s.dialect, message) + `)`
+	return `(` + rawImported + ` AND NOT ` + providerObserved + `)`
+}
+
 func (s *Store) mergeProviderSentEnvelopeEvidenceTx(
 	ctx context.Context, tx *loggedTx, survivorID, duplicateID int64,
 ) error {

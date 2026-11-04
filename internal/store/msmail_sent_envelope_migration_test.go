@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -46,11 +47,21 @@ func TestInitSchemaBackfillsMicrosoftSentEnvelopeRecipients(t *testing.T) {
 	requirements.NoError(err)
 
 	labelMessageID := newMessage("currently-sent-label")
+	rawLabelMessageID := newMessage("source-merged-import")
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`INSERT INTO source_merge_archive_only_messages
+		(message_id, original_source_message_id) VALUES (?, ?)`), rawLabelMessageID, "eml-"+strings.Repeat("a", 64))
+	requirements.NoError(err)
 	folders, err := st.EnsureMicrosoftMailFoldersContext(ctx, source.ID, map[string]store.LabelInfo{
 		"sent": {Name: "Sent", Type: "system", SystemRole: store.LabelSystemRoleSent},
 	})
 	requirements.NoError(err)
 	requirements.NoError(st.AddMessageLabels(labelMessageID, []int64{folders["sent"]}))
+	requirements.NoError(st.AddMessageLabels(rawLabelMessageID, []int64{folders["sent"]}))
+
+	rawObservedMessageID := newMessage("eml-" + strings.Repeat("b", 64))
+	_, err = st.DB().ExecContext(ctx, st.Rebind(`UPDATE messages SET metadata=? WHERE id=?`),
+		`{"msmail_sent_items_observed":true}`, rawObservedMessageID)
+	requirements.NoError(err)
 
 	ordinaryMessageID := newMessage("not-sent")
 	_, err = st.DB().ExecContext(ctx, `DELETE FROM msmail_sent_envelope_recipients`)
@@ -89,6 +100,10 @@ func TestInitSchemaBackfillsMicrosoftSentEnvelopeRecipients(t *testing.T) {
 		{messageID: metadataMessageID, address: "to@example.test"},
 		{messageID: labelMessageID, address: "bcc@example.test"},
 		{messageID: labelMessageID, address: "to@example.test"},
+		{messageID: rawObservedMessageID, address: "bcc@example.test"},
+		{messageID: rawObservedMessageID, address: "to@example.test"},
 	}, got)
 	assertions.NotContains(got, envelope{messageID: ordinaryMessageID, address: "to@example.test"})
+	assertions.NotContains(got, envelope{messageID: rawLabelMessageID, address: "to@example.test"},
+		"the migration must not infer provider Sent provenance from a raw import's Sent label")
 }

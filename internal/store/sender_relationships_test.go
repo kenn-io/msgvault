@@ -712,6 +712,48 @@ func runSenderSentEnvelopeCarrierScenario(t *testing.T, scenario uint8, emptySna
 	}
 }
 
+func TestSenderRelationshipsSentSnapshotDoesNotAbsorbDraftRecipientsFromMerge(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := storetest.New(t)
+	ctx := t.Context()
+
+	survivorID, survivorSourceID := senderRelationshipMessageForSource(
+		t, f, "msmail", "to", "sent-recipient@example.test",
+	)
+	addSenderRelationshipSystemLabel(t, f, survivorSourceID, "msmail", store.LabelSystemRoleSent, survivorID)
+	addSenderSentEnvelopeSnapshot(t, f, survivorID, true, "sent-recipient@example.test")
+
+	draftRecipients := make([]string, 30)
+	for i := range draftRecipients {
+		draftRecipients[i] = fmt.Sprintf("draft-recipient-%02d@example.test", i)
+	}
+	duplicateID, duplicateSourceID := senderRelationshipMessageForSource(
+		t, f, "gmail", "to", draftRecipients...,
+	)
+	addSenderRelationshipSystemLabel(t, f, duplicateSourceID, "gmail", store.LabelSystemRoleDrafts, duplicateID)
+	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE messages SET is_sent=FALSE WHERE id=?`), duplicateID)
+	requirements.NoError(err)
+
+	_, err = f.Store.MergeDuplicates(survivorID, []int64{duplicateID}, "sent-survivor-draft-duplicate")
+	requirements.NoError(err)
+
+	addresses := append([]string{"sent-recipient@example.test"}, draftRecipients...)
+	got, err := f.Store.SenderRelationships(ctx, addresses, nil)
+	requirements.NoError(err)
+	assertions.Equal("known", got["sent-recipient@example.test"].Relationship,
+		"non-Sent duplicate recipients must not turn a saved direct Sent message into a broadcast")
+	for _, address := range draftRecipients {
+		assertions.Equal("none", got[address].Relationship,
+			"draft-only recipients must remain outside the authoritative Sent snapshot")
+	}
+
+	var liveRecipients int
+	requirements.NoError(f.Store.DB().QueryRowContext(ctx, f.Store.Rebind(`SELECT COUNT(*)
+		FROM message_recipients WHERE message_id=? AND recipient_type IN ('to','cc','bcc')`), survivorID).Scan(&liveRecipients))
+	assertions.Equal(1, liveRecipients, "replaceable draft recipients must not be copied to the Sent survivor")
+}
+
 func senderRelationshipMessageForSource(
 	t *testing.T, f *storetest.Fixture, sourceType, role string, recipients ...string,
 ) (int64, int64) {
