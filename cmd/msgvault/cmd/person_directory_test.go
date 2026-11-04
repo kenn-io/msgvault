@@ -174,7 +174,7 @@ func TestPersonDirectoryCadenceRequiresCurrentDaemonSchema(t *testing.T) {
 	require := require.New(t)
 	requests, ctx := personDirectoryTestResponse(t, http.StatusOK, `{"people":[]}`)
 	output, err := runPersonDirectoryCommand(ctx, t, "--cadence", "due", "--json")
-	require.ErrorContains(err, "Upgrade the daemon to use contact-list filters or sorting.")
+	require.ErrorContains(err, "upgrade the daemon to use contact-list filters or sorting")
 	assert.Empty(output)
 	assert.Empty(requests)
 }
