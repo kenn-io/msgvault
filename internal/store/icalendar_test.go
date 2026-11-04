@@ -34,6 +34,48 @@ func icsSource(t *testing.T, st *Store) int64 {
 	return source.ID
 }
 
+func TestICalendarProjectionUsesConfirmedSourceIdentityForSelfAttendees(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	requirements.NoError(st.AddAccountIdentity(source, "OWNER@example.test", "manual"))
+
+	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Owner invitation\r\n"+
+		"ORGANIZER;CN=Owner:mailto:OWNER@example.test\r\n"+
+		"ATTENDEE;CN=Owner:mailto:OWNER@example.test\r\n"+
+		"ATTENDEE;CN=Guest:mailto:guest@example.test")
+	imported, err := st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	requirements.Len(imported.MessageIDs, 1)
+	id := imported.MessageIDs[0]
+
+	readSelfFlags := func() (owner, guest bool) {
+		requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT is_copy_self FROM calendar_event_attendees WHERE message_id = ? AND lower(email) = 'owner@example.test'`, id).Scan(&owner))
+		requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT is_copy_self FROM calendar_event_attendees WHERE message_id = ? AND lower(email) = 'guest@example.test'`, id).Scan(&guest))
+		return owner, guest
+	}
+	ownerSelf, guestSelf := readSelfFlags()
+	assertions.True(ownerSelf)
+	assertions.False(guestSelf)
+
+	// Simulate the prior projection generation and ledger so InitSchema runs
+	// the production backfill against an existing ICS invitation.
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`UPDATE calendar_event_attendees SET is_copy_self = FALSE WHERE message_id = ?`), id)
+	requirements.NoError(err)
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`UPDATE calendar_events SET projection_version = 2 WHERE message_id = ?`), id)
+	requirements.NoError(err)
+	_, err = st.db.ExecContext(t.Context(), st.Rebind(`UPDATE applied_migrations SET version = 2 WHERE name = ?`), migrationCalendarEventProjectionV2)
+	requirements.NoError(err)
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+
+	ownerSelf, guestSelf = readSelfFlags()
+	assertions.True(ownerSelf, "projection rebuild restores self from the event source's confirmed account identity")
+	assertions.False(guestSelf)
+	var projectionVersion int
+	requirements.NoError(st.db.QueryRowContext(t.Context(), `SELECT projection_version FROM calendar_events WHERE message_id = ?`, id).Scan(&projectionVersion))
+	assertions.Equal(calendarEventProjectionVersion, projectionVersion)
+}
+
 func TestICalendarSeriesCancellationActivityEligibility(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

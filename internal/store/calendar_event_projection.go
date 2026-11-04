@@ -16,7 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
-const calendarEventProjectionVersion = 2
+const calendarEventProjectionVersion = 3
 
 // Decode failures have no provider status. Keep a marker while retaining the
 // single kind so unknown bounds remain candidates for the occurrence reader.
@@ -44,6 +44,9 @@ func (s *Store) persistCalendarEventProjectionWith(ctx context.Context, tx *logg
 	event := invite.component.Event
 	if invite.meta.Status != "" {
 		event.Status = invite.meta.Status
+	}
+	if err := s.markICSAccountIdentitiesSelfWith(ctx, tx, sourceID, &event); err != nil {
+		return fmt.Errorf("mark confirmed ICS attendees: %w", err)
 	}
 	return s.writeCalendarEventProjectionWith(ctx, tx, messageID, sourceID, event)
 }
@@ -140,6 +143,11 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if format.String == rawFormatICS {
+		if err := s.markICSAccountIdentitiesSelfWith(ctx, tx, sourceID, &event); err != nil {
+			return fmt.Errorf("mark confirmed ICS attendees: %w", err)
+		}
+	}
 	if !ok {
 		return s.clearCalendarEventProjectionWith(ctx, tx, messageID)
 	}
@@ -170,6 +178,41 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		}
 	}
 	return s.writeCalendarEventProjectionWith(ctx, tx, messageID, sourceID, event)
+}
+
+func (s *Store) markICSAccountIdentitiesSelfWith(ctx context.Context, tx *loggedTx, sourceID int64, event *calevent.Event) error {
+	if len(event.Attendees) == 0 {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT address FROM account_identities WHERE source_id = ?`, sourceID)
+	if err != nil {
+		return fmt.Errorf("read source account identities: %w", err)
+	}
+	confirmed := make(map[string]struct{})
+	for rows.Next() {
+		var address string
+		if err := rows.Scan(&address); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scan source account identity: %w", err)
+		}
+		if email := gcalmodel.NormalizeParticipantEmail(address); email != "" {
+			confirmed[email] = struct{}{}
+		}
+	}
+	iterationErr, closeErr := rows.Err(), rows.Close()
+	if iterationErr != nil {
+		return fmt.Errorf("iterate source account identities: %w", iterationErr)
+	}
+	if closeErr != nil {
+		return fmt.Errorf("close source account identities: %w", closeErr)
+	}
+	for i := range event.Attendees {
+		email := gcalmodel.NormalizeParticipantEmail(event.Attendees[i].Email)
+		if _, ok := confirmed[email]; email != "" && ok {
+			event.Attendees[i].IsCopySelf = true
+		}
+	}
+	return nil
 }
 
 func (s *Store) writeCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID, sourceID int64, event calevent.Event) error {
