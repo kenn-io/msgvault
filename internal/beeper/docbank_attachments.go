@@ -537,7 +537,7 @@ func (w *AttachmentMirror) processDocuments(ctx context.Context, deadline time.T
 		return true, nil
 	}
 	if err == nil && !profile.Rendition {
-		err = errors.New("profile has no rendition stage")
+		err = errors.New("profile cannot extract text")
 	}
 	if err != nil {
 		if processingAnswer(docbankmedia.JobStatus{}, err).blocked {
