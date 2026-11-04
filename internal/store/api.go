@@ -873,8 +873,8 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	}
 }
 
-// Keep lookup lists small relative to the archive. Broad operators and
-// searches with other filters retain correlated checks.
+// Broad operators pay a capped probe so operators matching up to an eighth
+// of the archive run in time that follows their matches.
 const searchOperatorShare = 8
 
 func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQL) {
