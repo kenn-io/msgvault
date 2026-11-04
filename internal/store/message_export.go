@@ -324,6 +324,7 @@ func (s *Store) exportMessageRows(
 	predicate, args := messageExportPredicate("m", filter, true)
 	// The window makes SQLite sort metadata before evaluating the body subquery.
 	// Match the final order so both backends emit that order without another sort.
+	// The open cursor holds a SQLite read snapshot while a slow sink blocks.
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
 		SELECT metadata.*,
 		       ROW_NUMBER() OVER (
