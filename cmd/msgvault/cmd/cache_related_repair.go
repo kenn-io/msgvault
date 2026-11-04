@@ -142,8 +142,7 @@ func exportRelatedDatasets(
 			return err
 		}
 		parents[dataset] = fmt.Sprintf(`SELECT CAST(m.id AS BIGINT) FROM %s m
-			WHERE %s AND TRY_CAST(m.id AS BIGINT) <= %d AND TRY_CAST(m.id AS BIGINT) > %d`,
-			parent, exportableMessageWhere("m"), lastMessageID, after)
+			WHERE %s`, parent, exportableMessageWhere("m"))
 	}
 	// Missing envelopes fall back to the participant address. A damaged but
 	// present envelope stays unknown and must still suppress that fallback.
@@ -171,19 +170,19 @@ func exportRelatedDatasets(
 		{tableLabels, `SELECT id, COALESCE(` + snapshot.textSQL("name") + `, '') AS name
 			FROM sqlite_db.labels`},
 		{"message_recipients", fmt.Sprintf(`SELECT mr.message_id, mr.participant_id,
-			%[4]s AS recipient_type,
-			COALESCE(%[5]s, '') AS display_name,
-			CASE WHEN %[6]s THEN %[1]s ELSE %[7]s END AS email_address,
+			%[3]s AS recipient_type,
+			COALESCE(%[4]s, '') AS display_name,
+			CASE WHEN %[5]s THEN %[1]s ELSE %[6]s END AS email_address,
 			%[1]s AS envelope_address
-			FROM %[8]s mr
+			FROM %[7]s mr
 			LEFT JOIN sqlite_db.participants p ON p.id = mr.participant_id
-			WHERE mr.message_id > %[3]d AND TRY_CAST(mr.message_id AS BIGINT) IN (%[2]s)`, envelope, parents["message_recipients"], afterMessageIDs["message_recipients"], snapshot.identityExportSQL("mr.recipient_type"), snapshot.textSQL("mr.display_name"), presence, participant, children["message_recipients"])},
+			WHERE TRY_CAST(mr.message_id AS BIGINT) IN (%[2]s)`, envelope, parents["message_recipients"], snapshot.identityExportSQL("mr.recipient_type"), snapshot.textSQL("mr.display_name"), presence, participant, children["message_recipients"])},
 		{"message_labels", fmt.Sprintf(`SELECT message_id, label_id
-			FROM %s WHERE message_id > %d AND TRY_CAST(message_id AS BIGINT) IN (%s)`, children["message_labels"], afterMessageIDs["message_labels"], parents["message_labels"])},
+			FROM %s WHERE TRY_CAST(message_id AS BIGINT) IN (%s)`, children["message_labels"], parents["message_labels"])},
 		{tableAttachments, fmt.Sprintf(`SELECT id AS attachment_id, message_id, size,
 			COALESCE(%s, '') AS filename,
 			%s, %s FROM %s
-			WHERE message_id > %d AND TRY_CAST(message_id AS BIGINT) IN (%s)`, snapshot.textSQL("filename"), mimeType, metadata, children[tableAttachments], afterMessageIDs[tableAttachments], parents[tableAttachments])},
+			WHERE TRY_CAST(message_id AS BIGINT) IN (%s)`, snapshot.textSQL("filename"), mimeType, metadata, children[tableAttachments], parents[tableAttachments])},
 	}
 	for _, item := range exports {
 		if _, ok := afterMessageIDs[item.dataset]; !ok {

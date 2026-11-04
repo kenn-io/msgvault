@@ -1235,13 +1235,22 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 		UPDATE message_labels SET label_id = 'unreadable' WHERE message_id = 1 AND label_id = 1;
 		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1`)
 	require.NoError(err)
+	// sqlite_query transports every selected column before DuckDB can filter
+	// rows. This expression makes reading an old message fail inside SQLite.
+	_, err = db.Exec(`ALTER TABLE messages RENAME TO stored_messages;
+		CREATE VIEW messages AS SELECT *,
+			CASE WHEN id = 1 THEN abs(-9223372036854775808) ELSE 0 END AS scan_guard
+		FROM stored_messages`)
+	require.NoError(err)
 	_, err = buildCache(dbPath, fullDir, true)
 	require.Error(err, "a full scan must trip over the old rows")
 	result, err := buildCache(dbPath, incDir, false)
 	require.NoError(err, "incremental exports must read only the new slice")
 	assert.False(result.Skipped)
 	assert.Equal(int64(7), result.ExportedCount)
-	_, err = db.Exec(`UPDATE messages SET size_estimate = 1000 WHERE id = 1;
+	_, err = db.Exec(`DROP VIEW messages;
+		ALTER TABLE stored_messages RENAME TO messages;
+		UPDATE messages SET size_estimate = 1000 WHERE id = 1;
 		UPDATE message_recipients SET participant_id = 1 WHERE message_id = 1 AND participant_id = 'unreadable';
 		UPDATE message_labels SET label_id = 1 WHERE message_id = 1 AND label_id = 'unreadable';
 		UPDATE attachments SET size = 42 WHERE message_id = 1`)
