@@ -10,10 +10,11 @@ import (
 )
 
 // FullObservationWhere admits exact full-room support or independent evidence.
-// Legacy chat observations with no support edges cannot borrow another room.
+// Conversation-scoped observations cannot bypass an explicit room override
+// just because their provider is not managed by automatic policy.
 // The alias is a trusted SQL identifier, never caller-provided data.
 func FullObservationWhere(alias string) string {
-	return `(` + alias + `.source IN ('user','carddav_import','vcard_import') OR NOT EXISTS (SELECT 1 FROM sources observation_source WHERE observation_source.id=` + alias + `.source_id AND observation_source.source_type IN ('beeper','slack','slackdump','discord','teams')) OR EXISTS (SELECT 1 FROM participant_contact_observation_conversations observation_room JOIN conversations observation_conversation ON observation_conversation.id=observation_room.conversation_id WHERE observation_room.observation_id=` + alias + `.id AND observation_conversation.source_id=` + alias + `.source_id AND ` + FullConversationWhere("observation_conversation") + `))`
+	return `(` + alias + `.source IN ('user','carddav_import','vcard_import') OR EXISTS (SELECT 1 FROM participant_contact_observation_conversations observation_room JOIN conversations observation_conversation ON observation_conversation.id=observation_room.conversation_id WHERE observation_room.observation_id=` + alias + `.id AND observation_conversation.source_id=` + alias + `.source_id AND ` + FullConversationWhere("observation_conversation") + `) OR (NOT EXISTS (SELECT 1 FROM participant_contact_observation_conversations observation_room WHERE observation_room.observation_id=` + alias + `.id) AND NOT EXISTS (SELECT 1 FROM sources observation_source WHERE observation_source.id=` + alias + `.source_id AND observation_source.source_type IN ('beeper','slack','slackdump','discord','teams'))))`
 }
 
 func fullObservationTx(ctx context.Context, tx *loggedTx, id int64) (bool, error) {
@@ -334,11 +335,12 @@ func (s *Store) reconcilePromotedConversationConflictsTx(ctx context.Context, tx
 }
 
 // A raw participant row can combine several providers after archival merges.
-// Eligibility therefore belongs to the observed value, not to that whole row.
+// Restrict raw fields when any current value comes from an ineligible
+// conversation; the exact-value predicates below preserve independent support.
 func participantChatProvenanceWhere(id string) string {
 	// Keep sender and recipient checks separate so SQLite can use each index.
 	const chatSources = `'beeper','slack','slackdump','discord','teams'`
-	return `(EXISTS(SELECT 1 FROM conversation_participants policy_member JOIN conversations policy_room ON policy_room.id=policy_member.conversation_id JOIN sources policy_source ON policy_source.id=policy_room.source_id WHERE policy_member.participant_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM participant_identifiers policy_identifier WHERE policy_identifier.participant_id=` + id + ` AND policy_identifier.identifier_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM participant_contact_observations policy_observation JOIN sources policy_source ON policy_source.id=policy_observation.source_id WHERE policy_observation.participant_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM messages policy_message JOIN sources policy_source ON policy_source.id=policy_message.source_id WHERE policy_message.sender_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM message_recipients policy_recipient JOIN messages policy_message ON policy_message.id=policy_recipient.message_id JOIN sources policy_source ON policy_source.id=policy_message.source_id WHERE policy_recipient.participant_id=` + id + ` AND policy_source.source_type IN (` + chatSources + `)))`
+	return `(EXISTS(SELECT 1 FROM conversation_participants policy_member JOIN conversations policy_room ON policy_room.id=policy_member.conversation_id WHERE policy_member.participant_id=` + id + ` AND NOT ` + FullConversationWhere("policy_room") + `) OR EXISTS(SELECT 1 FROM participant_identifiers policy_identifier WHERE policy_identifier.participant_id=` + id + ` AND policy_identifier.identifier_type IN (` + chatSources + `)) OR EXISTS(SELECT 1 FROM participant_contact_observations policy_observation WHERE policy_observation.participant_id=` + id + ` AND policy_observation.active_until IS NULL AND policy_observation.superseded_at IS NULL AND NOT ` + FullObservationWhere("policy_observation") + `) OR EXISTS(SELECT 1 FROM messages policy_message WHERE policy_message.sender_id=` + id + ` AND NOT ` + FullMessageWhere("policy_message") + `) OR EXISTS(SELECT 1 FROM message_recipients policy_recipient JOIN messages policy_message ON policy_message.id=policy_recipient.message_id WHERE policy_recipient.participant_id=` + id + ` AND NOT ` + FullMessageWhere("policy_message") + `))`
 }
 
 // FullParticipantValueWhere returns the SQL predicate for using one exact

@@ -212,6 +212,84 @@ func TestImporterBackfillsJoinedRoomAndPersistsCheckpoint(t *testing.T) {
 	assert.False(coldEligible, "the Cold Beeper identity must remain ineligible after the merge")
 }
 
+func TestImporterBackfillsSenderIdentityFromArchivedMatrixEvents(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	const (
+		roomID  = "!room:example.org"
+		userID  = "@history:example.org"
+		archive = "@archive:example.org"
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /_matrix/client/v3/sync", func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("previous", r.URL.Query().Get("since"))
+		_, _ = w.Write([]byte(`{"next_batch":"next","rooms":{"join":{"!room:example.org":{"state":{"events":[]},"timeline":{"events":[]}}}}}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/user/@archive:example.org/account_data/m.direct", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	})
+	mux.HandleFunc("GET /_matrix/client/v3/rooms/!room:example.org/joined_members", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"joined":{"@archive:example.org":{"display_name":"Archive"}}}`))
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	client, err := mautrix.NewClient(server.URL, id.UserID(archive), "token")
+	require.NoError(err)
+
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource(SourceType, archive)
+	require.NoError(err)
+	conversationID, err := st.EnsureConversation(source.ID, roomID, "Synthetic Matrix room")
+	require.NoError(err)
+	require.NoError(st.SetConversationPolicyOverride(t.Context(), source.ID, roomID, conversationpolicy.Full))
+	raw := []byte(`{"type":"m.room.message","event_id":"$archived","room_id":"!room:example.org","sender":"@history:example.org","origin_server_ts":1000,"content":{"msgtype":"m.text","body":"archived"}}`)
+	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+		Message: &store.Message{
+			ConversationID: conversationID, SourceID: source.ID,
+			SourceMessageID: "$archived", MessageType: event.EventMessage.Type,
+		},
+		BodyText:  sql.NullString{String: "archived", Valid: true},
+		RawMIME:   raw,
+		RawFormat: rawFormat,
+		FTS:       &store.FTSDoc{Body: "archived"},
+	})
+	require.NoError(err)
+	state := newSyncState()
+	state.NextBatch = "previous"
+	state.Rooms[roomID] = &RoomState{Backfilled: true, SyncedTo: "previous"}
+	cursor, err := state.marshal()
+	require.NoError(err)
+	syncID, err := st.StartSync(source.ID, SourceType)
+	require.NoError(err)
+	require.NoError(st.CompleteSync(syncID, cursor))
+
+	_, err = NewImporter(st, &Runtime{Client: client}).Import(t.Context(), ImportOptions{UserID: archive})
+	require.NoError(err)
+	participantID, err := st.EnsureParticipantByIdentifier(SourceType, userID, "")
+	require.NoError(err)
+	observations, err := st.ListParticipantObservationsContext(t.Context(), participantID, true)
+	require.NoError(err)
+	require.Len(observations, 1, "existing Matrix archives gain one sender identity observation without replaying history")
+	observation := observations[0]
+	assert.Equal(store.ContactAddressProviderIdentity, observation.AddressKind)
+	assert.Equal(userID, observation.OriginalValue)
+	require.NotNil(observation.ServiceSlug)
+	require.NotNil(observation.ScopeKind)
+	require.NotNil(observation.ScopeValue)
+	assert.Equal(SourceType, *observation.ServiceSlug)
+	assert.Equal("server", *observation.ScopeKind)
+	assert.Equal("example.org", *observation.ScopeValue)
+	eligible, err := st.ObservationFullEligibleContext(t.Context(), observation.Envelope.ID)
+	require.NoError(err)
+	assert.True(eligible, "the archived Matrix event supplies independently scoped Full identity evidence")
+
+	run, err := st.GetLastSuccessfulSync(source.ID)
+	require.NoError(err)
+	state, err = loadSyncState(run.CursorAfter.String)
+	require.NoError(err)
+	assert.True(state.Rooms[roomID].SenderIdentitiesBackfilled)
+}
+
 func TestImporterRepairsHistoricalSenderObservationOnReplay(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

@@ -118,7 +118,8 @@ func (e *Engine) SearchSemanticMessages(
 
 	parsedQuery := search.Parse(transportQuery)
 	if parsedQuery.IncludeCold {
-		return nil, errors.New("include:cold is available only for lexical search; use keyword/FTS mode")
+		//nolint:revive,staticcheck // Required user-facing search-mode wording is a named instruction.
+		return nil, errors.New("include:cold requires Fast or Deep search.")
 	}
 	parseErr := parsedQuery.Err()
 	queryMessageTypes := parsedQuery.MessageTypes

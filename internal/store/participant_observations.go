@@ -123,6 +123,34 @@ func (s *Store) rewriteObservationsForMergeTx(
         ON CONFLICT(observation_id,conversation_id) DO NOTHING`, absorbedID, survivorID); err != nil {
 		return fmt.Errorf("merge observation room support: %w", err)
 	}
+	// Native observations keep the historical address-based merge identity.
+	// If both rows represent the same value and only the absorbed copy carries
+	// a stable provider ID, retain that lookup anchor on the survivor before
+	// closing the duplicate.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE participant_contact_observations AS survivor
+		SET provider_user_id = (
+			SELECT absorbed.provider_user_id
+			FROM participant_contact_observations absorbed
+			WHERE absorbed.participant_id = ?
+			  AND `+absorbedCurrent+` AND `+survivorCurrent+`
+			  AND `+matchingIdentity+`
+			  AND absorbed.provider_user_id IS NOT NULL
+			ORDER BY absorbed.id
+			LIMIT 1
+		), updated_at = `+s.dialect.Now()+`
+		WHERE survivor.participant_id = ?
+		  AND `+survivorCurrent+`
+		  AND survivor.provider_user_id IS NULL
+		  AND EXISTS (
+			SELECT 1 FROM participant_contact_observations absorbed
+			WHERE absorbed.participant_id = ?
+			  AND `+absorbedCurrent+` AND `+survivorCurrent+`
+			  AND `+matchingIdentity+`
+			  AND absorbed.provider_user_id IS NOT NULL
+		)`, absorbedID, survivorID, absorbedID); err != nil {
+		return fmt.Errorf("preserve merged observation provider ID: %w", err)
+	}
 
 	now := s.dialect.Now()
 	if _, err := tx.ExecContext(ctx, `

@@ -34,6 +34,6 @@ func TestConversationPolicyIncludeColdNeverReranksCold(t *testing.T) {
 	s := newGeneratedClientAdapterStore(t, func(w http.ResponseWriter, r *http.Request) { calls++; w.WriteHeader(http.StatusInternalServerError) })
 	e := NewEngineAdapter(s)
 	_, err := e.SearchSemanticMessages(context.Background(), query.SemanticMessageSearchRequest{Query: "needle include:cold"})
-	require.ErrorContains(t, err, "lexical")
+	require.EqualError(t, err, "include:cold requires Fast or Deep search.")
 	assert.Zero(t, calls)
 }

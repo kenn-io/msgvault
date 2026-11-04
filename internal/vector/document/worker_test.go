@@ -937,7 +937,6 @@ type fakeDocumentVectorLedger struct {
 	claims             []*store.DocumentVectorChunkClaim
 	claimCalls         int
 	committed          []string
-	released           []string
 	failures           []fakeDocumentVectorFailure
 	commitErr          map[string]error
 	commit             func(context.Context, string) error
@@ -1019,9 +1018,6 @@ func (l *fakeDocumentVectorLedger) RenewDocumentVectorChunkClaim(_ context.Conte
 }
 
 func (l *fakeDocumentVectorLedger) ReleaseDocumentVectorChunkClaim(_ context.Context, _ int64, token, _ string, _ int64, _ time.Time) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.released = append(l.released, token)
 	return nil
 }
 

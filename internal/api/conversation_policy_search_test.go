@@ -45,7 +45,7 @@ func TestConversationPolicyIncludeColdExploreDefinition(t *testing.T) {
 	for _, mode := range []string{"semantic", "hybrid"} {
 		_, failure := validateExploreSearchDefinition(ExploreHTTPRequest{Query: "needle include:cold", SearchMode: mode}, query.Context{})
 		require.NotNil(t, failure)
-		assert.Contains(t, failure.message, "lexical")
+		assert.Equal(t, "include:cold requires Full text search.", failure.message)
 	}
 	assert.NotEqual(t, exploreCanonicalQueryHash("needle", "full_text"), exploreCanonicalQueryHash("needle include:cold", "full_text"))
 }
@@ -67,7 +67,7 @@ func TestConversationPolicyIncludeColdDeletionSelectionRefused(t *testing.T) {
 		w := httptest.NewRecorder()
 		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/messages/gmail-ids?q=needle%20include:cold&search_mode="+mode+"&view_type=senders&aggregate_key=sender@example.test", nil))
 		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "lexical")
+		assert.Contains(t, w.Body.String(), "remove it before selecting provider deletion targets")
 	}
 	assert.Zero(t, calls)
 }

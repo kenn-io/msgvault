@@ -119,7 +119,8 @@ Examples:
 			return usageErr(cmd, fmt.Errorf("invalid --mode: %q (want fts|vector|hybrid)", searchMode))
 		}
 		if searchMode != searchModeFTS && search.Parse(queryStr).IncludeCold {
-			return usageErr(cmd, errors.New("include:cold is available only for lexical search; use --mode=fts"))
+			//nolint:revive,staticcheck // Required user-facing CLI wording is a punctuation-terminated instruction.
+			return usageErr(cmd, errors.New("include:cold requires --mode=fts."))
 		}
 		if searchSort == "date" && searchMode == searchModeFTS {
 			return usageErr(cmd, errors.New("--sort date requires --mode vector or hybrid"))
@@ -421,7 +422,7 @@ func init() {
 		"Limit results to all member accounts of one collection")
 	searchCmd.MarkFlagsMutuallyExclusive("account", "collection")
 	searchCmd.Flags().StringVar(&searchMode, "mode", searchModeFTS, "Search mode: fts|vector|hybrid")
-	searchCmd.Flags().BoolVar(&searchIncludeCold, "include-cold", false, "Include retained cold conversations in lexical search (FTS mode only)")
+	searchCmd.Flags().BoolVar(&searchIncludeCold, "include-cold", false, "Include retained cold conversations (FTS mode only)")
 	searchCmd.Flags().BoolVar(&searchExplain, "explain", false, "Include per-signal scores in output (hybrid/vector modes)")
 	searchCmd.Flags().StringVar(&searchDeletionScope, "deletion-scope", "active",
 		"Source deletion scope: active|deleted|any (FTS mode only)")

@@ -1170,7 +1170,7 @@ func validateExploreSearchDefinition(
 		return parsed, nil
 	}
 	if parsed.IncludeCold {
-		return nil, &exploreSearchDefinitionError{code: "include_cold_lexical_only", message: "include:cold is available only for lexical search; use search_mode=full_text"}
+		return nil, &exploreSearchDefinitionError{code: "include_cold_lexical_only", message: "include:cold requires Full text search."}
 	}
 	if context.Deletion == query.DeletionDeleted {
 		return nil, &exploreSearchDefinitionError{
@@ -1371,7 +1371,7 @@ func (s *Server) resolveExploreSearch(ctx context.Context, w http.ResponseWriter
 	}
 	if request.SearchMode == exploreSearchModeSemantic || request.SearchMode == exploreSearchModeHybrid {
 		if search.Parse(request.Query).IncludeCold {
-			writeError(w, http.StatusBadRequest, "include_cold_lexical_only", "include:cold is available only for lexical search; use search_mode=full_text")
+			writeError(w, http.StatusBadRequest, "include_cold_lexical_only", "include:cold requires Full text search.")
 			return query.SearchSpec{}, "", false
 		}
 		return s.resolveExploreVectorSearch(ctx, w, request)

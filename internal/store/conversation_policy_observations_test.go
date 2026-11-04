@@ -693,6 +693,82 @@ func TestImportedNativePhoneIdentifiersRemainEligibleAfterColdChatRoom(t *testin
 	}
 }
 
+func TestExplicitColdOverrideFiltersUnmanagedProviderObservations(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	s := testutil.NewTestStore(t)
+	source, err := s.GetOrCreateSource("matrix", "synthetic-matrix-account")
+	require.NoError(err)
+	roomID, err := s.EnsureConversation(source.ID, "!cold:example.org", "Synthetic cold room")
+	require.NoError(err)
+	require.NoError(s.SetConversationPolicyOverride(ctx, source.ID, "!cold:example.org", conversationpolicy.Cold))
+	participantID, err := s.EnsureParticipantByIdentifier("matrix", "@member:example.org", "Synthetic Matrix Member")
+	require.NoError(err)
+	require.NoError(s.EnsureConversationParticipantContext(ctx, roomID, participantID, "member"))
+
+	identity, err := s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+		ConversationID: &roomID,
+		SourceID:       &source.ID,
+		AddressKind:    store.ContactAddressProviderIdentity,
+		ServiceSlug:    new("matrix"),
+		ScopeKind:      new("server"),
+		ScopeValue:     new("example.org"),
+		ProviderUserID: new("@member:example.org"),
+		OriginalValue:  "@member:example.org",
+		Envelope:       store.ValueEnvelopeInput{Source: store.ProvenanceArchiveObservation},
+	})
+	require.NoError(err)
+	require.NotNil(identity.Observation)
+	eligible, err := s.ObservationFullEligibleContext(ctx, identity.Observation.Envelope.ID)
+	require.NoError(err)
+	assert.False(eligible, "an explicit Cold override applies even when Matrix is not auto-managed")
+
+	fullObservations, err := s.ListFullParticipantObservationsContext(ctx, participantID)
+	require.NoError(err)
+	assert.Empty(fullObservations)
+	var count int64
+	nameWhere := store.FullParticipantNameWhere("p.id", "p.display_name")
+	err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+nameWhere), participantID).Scan(&count)
+	require.NoError(err)
+	assert.Zero(count, "the raw Matrix roster name is room-derived")
+	identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+	err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participant_identifiers pi
+		WHERE pi.participant_id=? AND pi.identifier_type='matrix' AND pi.identifier_value='@member:example.org' AND `+identifierWhere), participantID).Scan(&count)
+	require.NoError(err)
+	assert.Zero(count, "the raw Matrix identifier is room-derived")
+	valueWhere := store.FullParticipantValueWhere("p.id", "'email'", "'hidden@example.org'")
+	err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+valueWhere), participantID).Scan(&count)
+	require.NoError(err)
+	assert.Zero(count, "a cold room does not support an unrelated raw email value")
+
+	independentEmail, err := s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+		AddressKind:   store.ContactAddressEmail,
+		OriginalValue: "independent@example.org",
+		Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceCardDAVImport},
+	})
+	require.NoError(err)
+	independentName, err := s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
+		AddressKind:   store.ContactAddressDisplayName,
+		OriginalValue: "Independent Contact Name",
+		Envelope:      store.ValueEnvelopeInput{Source: store.ProvenanceVCardImport},
+	})
+	require.NoError(err)
+	eligible, err = s.ObservationFullEligibleContext(ctx, independentName.Observation.Envelope.ID)
+	require.NoError(err)
+	assert.True(eligible, "independent vCard names remain eligible")
+	eligible, err = s.ObservationFullEligibleContext(ctx, independentEmail.Observation.Envelope.ID)
+	require.NoError(err)
+	assert.True(eligible, "independent CardDAV contacts remain eligible")
+	valueWhere = store.FullParticipantValueWhere("p.id", "'email'", "'independent@example.org'")
+	err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+valueWhere), participantID).Scan(&count)
+	require.NoError(err)
+	assert.Equal(int64(1), count, "the exact independent email survives the Cold room")
+	err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+store.FullParticipantNameWhere("p.id", "'Independent Contact Name'")), participantID).Scan(&count)
+	require.NoError(err)
+	assert.Equal(int64(1), count, "the exact independent name survives the Cold room")
+}
+
 func policyObservationSupport(t *testing.T, s *store.Store, id int64) []int64 {
 	t.Helper()
 	rows, err := s.DB().Query(s.Rebind(`SELECT conversation_id FROM participant_contact_observation_conversations WHERE observation_id=? ORDER BY conversation_id`), id)

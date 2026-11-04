@@ -6892,7 +6892,17 @@ func (s *Store) ScanArchivedRawMessagesContext(ctx context.Context, sourceID int
 func (s *Store) ScanArchivedRawMessagesForConversation(
 	sourceID int64, sourceConversationID, format string, afterID int64, limit int,
 ) ([]ArchivedRawMessage, error) {
-	rows, err := s.db.Query(s.Rebind(`
+	return s.ScanArchivedRawMessagesForConversationContext(
+		context.Background(), sourceID, sourceConversationID, format, afterID, limit,
+	)
+}
+
+// ScanArchivedRawMessagesForConversationContext honors cancellation during a
+// conversation-scoped raw archive scan.
+func (s *Store) ScanArchivedRawMessagesForConversationContext(
+	ctx context.Context, sourceID int64, sourceConversationID, format string, afterID int64, limit int,
+) ([]ArchivedRawMessage, error) {
+	rows, err := s.db.QueryContext(ctx, s.Rebind(`
 		SELECT m.id, m.conversation_id, r.raw_data, r.compression
 		FROM messages m
 		JOIN conversations c ON c.id = m.conversation_id

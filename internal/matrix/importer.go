@@ -29,8 +29,9 @@ const (
 var errRelationTargetMissing = errors.New("matrix relation target is not archived yet")
 
 type RoomState struct {
-	Backfilled bool   `json:"backfilled,omitzero"`
-	PrevBatch  string `json:"prev_batch,omitempty"`
+	Backfilled                 bool   `json:"backfilled,omitzero"`
+	SenderIdentitiesBackfilled bool   `json:"sender_identities_backfilled,omitzero"`
+	PrevBatch                  string `json:"prev_batch,omitempty"`
 	// SyncedTo is the /sync next_batch through which this room's timeline is
 	// archived; it stops the next gap walk.
 	SyncedTo string `json:"synced_to,omitempty"`
@@ -161,7 +162,7 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err != nil {
 		return sum, err
 	}
-	if err = imp.reclassifyArchivedRooms(source.ID, state, directRooms); err != nil {
+	if err = imp.reclassifyArchivedRooms(ctx, source.ID, state, directRooms, opts); err != nil {
 		return sum, err
 	}
 	roomIDs := make([]id.RoomID, 0, len(resp.Rooms.Join))
@@ -192,17 +193,71 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	return sum, nil
 }
 
-func (imp *Importer) reclassifyArchivedRooms(sourceID int64, state *SyncState, directRooms map[id.RoomID]bool) error {
+func (imp *Importer) reclassifyArchivedRooms(
+	ctx context.Context, sourceID int64, state *SyncState, directRooms map[id.RoomID]bool, opts ImportOptions,
+) error {
 	for roomID := range state.Rooms {
 		roomType := "group_chat"
 		if directRooms[id.RoomID(roomID)] {
 			roomType = "direct_chat"
 		}
-		if _, err := imp.store.EnsureConversationWithType(sourceID, roomID, roomType, ""); err != nil {
+		conversationID, err := imp.store.EnsureConversationWithType(sourceID, roomID, roomType, "")
+		if err != nil {
 			return fmt.Errorf("reclassify Matrix room %s: %w", roomID, err)
 		}
+		roomState := state.Rooms[roomID]
+		if roomState == nil || roomState.SenderIdentitiesBackfilled || !roomIncluded(roomID, opts.Rooms, opts.ExcludeRooms) {
+			continue
+		}
+		if err := imp.backfillArchivedSenderIdentities(ctx, sourceID, conversationID, id.RoomID(roomID)); err != nil {
+			return fmt.Errorf("backfill Matrix sender identities in room %s: %w", roomID, err)
+		}
+		roomState.SenderIdentitiesBackfilled = true
 	}
 	return nil
+}
+
+func (imp *Importer) backfillArchivedSenderIdentities(
+	ctx context.Context, sourceID, conversationID int64, roomID id.RoomID,
+) error {
+	var afterID int64
+	for {
+		batch, err := imp.store.ScanArchivedRawMessagesForConversationContext(
+			ctx, sourceID, roomID.String(), rawFormat, afterID, pageSize,
+		)
+		if err != nil {
+			return fmt.Errorf("scan archived Matrix messages: %w", err)
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		for _, row := range batch {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			afterID = row.MessageID
+			var evt event.Event
+			if err := json.Unmarshal(row.RawData, &evt); err != nil {
+				return fmt.Errorf("decode archived Matrix event for message %d: %w", row.MessageID, err)
+			}
+			if evt.Type != event.EventMessage && evt.Type != event.EventSticker && evt.Type != event.EventEncrypted {
+				continue
+			}
+			if evt.Sender == "" || evt.Sender == imp.runtime.Client.UserID {
+				continue
+			}
+			participantID, err := imp.participant(evt.Sender, "")
+			if err != nil {
+				return err
+			}
+			if err := imp.recordMemberObservations(ctx, sourceID, conversationID, participantID, evt.Sender, ""); err != nil {
+				return fmt.Errorf("record archived Matrix sender %s: %w", evt.Sender, err)
+			}
+		}
+		if len(batch) < pageSize {
+			return nil
+		}
+	}
 }
 
 func roomIncluded(roomID string, include, exclude []string) bool {
@@ -232,11 +287,16 @@ func (imp *Importer) directRooms(ctx context.Context) (map[id.RoomID]bool, error
 func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roomID id.RoomID, room *mautrix.SyncJoinedRoom, nextBatch string, direct bool, state *SyncState, opts ImportOptions, sum *ImportSummary) error {
 	rs := state.Rooms[roomID.String()]
 	hadRoomState := rs != nil
+	senderIdentitiesBackfilled := rs != nil && rs.SenderIdentitiesBackfilled
 	gapTo := ""
 	if rs == nil || opts.Full {
 		// SyncedTo is set before the first checkpoint so an interruption still
 		// bounds the next run's gap walk.
-		rs = &RoomState{PrevBatch: room.Timeline.PrevBatch, SyncedTo: nextBatch}
+		rs = &RoomState{
+			PrevBatch:                  room.Timeline.PrevBatch,
+			SyncedTo:                   nextBatch,
+			SenderIdentitiesBackfilled: senderIdentitiesBackfilled,
+		}
 		state.Rooms[roomID.String()] = rs
 	} else {
 		gapTo = rs.SyncedTo
@@ -263,6 +323,12 @@ func (imp *Importer) importRoom(ctx context.Context, sourceID, syncID int64, roo
 	convID, err := imp.store.EnsureConversationWithType(sourceID, roomID.String(), roomType, title)
 	if err != nil {
 		return fmt.Errorf("ensure Matrix room %s: %w", roomID, err)
+	}
+	if !rs.SenderIdentitiesBackfilled {
+		if err := imp.backfillArchivedSenderIdentities(ctx, sourceID, convID, roomID); err != nil {
+			return fmt.Errorf("backfill Matrix sender identities in room %s: %w", roomID, err)
+		}
+		rs.SenderIdentitiesBackfilled = true
 	}
 	for _, observation := range memberObservations {
 		if err := imp.recordMemberObservations(ctx, sourceID, convID, observation.participantID, observation.userID, observation.displayName); err != nil {
