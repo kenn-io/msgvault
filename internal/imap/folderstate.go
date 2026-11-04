@@ -362,10 +362,17 @@ func WithFilteredDeletionReconciliation(enabled bool) Option {
 func (c *Client) ReconcilesFilteredDeletions() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.scannedMailboxSnapshotLocked()
+	return c.scopedMailboxSnapshot
 }
 
 func (c *Client) scannedMailboxSnapshotLocked() bool {
 	return c.reconcileFilteredDeletions && c.since.IsZero() && c.before.IsZero() &&
 		c.labelsSnapshotFilteredLocked()
+}
+
+// ListedMailboxes returns the unfiltered server topology for a scoped scan.
+func (c *Client) ListedMailboxes() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.listedMailboxes...)
 }

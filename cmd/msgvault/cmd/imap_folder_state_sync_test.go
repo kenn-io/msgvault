@@ -58,25 +58,8 @@ func TestIMAPSyncFolderFilter(t *testing.T) {
 func TestRunScheduledIMAPSync_SavedFolderExclusions(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1})
-	host, portText, err := net.SplitHostPort(addr)
-	require.NoError(err)
-	port, err := strconv.Atoi(portText)
-	require.NoError(err)
-	imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
-	require.NoError(err)
-	configJSON, err := imapCfg.ToJSON()
-	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
-	src, err = st.GetSourceByID(src.ID)
-	require.NoError(err)
-	home := t.TempDir()
-	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Sync: config.SyncConfig{
-		IMAPSkipFolders: map[string][]string{src.Identifier: {"Trash", "Junk"}, "user@example.com": {"Trash"}},
-	}}
-	require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
-	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	st, src, cfg, ctx := scheduledIMAPSyncFixture(t, addr)
+	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash", "Junk"}, "user@example.com": {"Trash"}}
 	var logs bytes.Buffer
 	invocationFromContext(ctx).logger = slog.New(slog.NewTextHandler(&logs, nil))
 	summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
@@ -599,7 +582,7 @@ func TestApplyIMAPMailboxDeltas_ConvertsObservationsAndVanishedUIDs(t *testing.T
 		Mailbox: "INBOX", UIDValidity: 17, UID: 3,
 		SourceMessageID: "INBOX|3", RFC822MessageID: "added@example.com",
 		Flags: []string{"\\Flagged"},
-	}}, false)
+	}}, false, nil)
 	require.NoError(err)
 
 	known, err := st.GetIMAPKnownUIDs(src.ID)
@@ -786,7 +769,7 @@ func TestSaveIMAPFolderStates_RepublishGoneUIDRecoversByMessageCount(t *testing.
 }
 
 func TestSaveIMAPFolderStates_FilteredReconciliation(t *testing.T) {
-	for _, name := range []string{"enabled", "default", "other account", "folder flag", "skip-folder flag", "date", "errors", "interrupted", "resumed", "limited"} {
+	for _, name := range []string{"enabled", "blank folder flag", "blank skip-folder flag", "default", "other account", "folder flag", "skip-folder flag", "date", "errors", "interrupted", "resumed", "limited"} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			savedFolders, savedSkipFolders := syncFolders, syncSkipFolders
@@ -795,6 +778,10 @@ func TestSaveIMAPFolderStates_FilteredReconciliation(t *testing.T) {
 			})
 			syncFolders, syncSkipFolders = nil, nil
 			switch name {
+			case "blank folder flag":
+				syncFolders = []string{" \t "}
+			case "blank skip-folder flag":
+				syncSkipFolders = []string{" \t "}
 			case "folder flag":
 				syncFolders = []string{"INBOX"}
 			case "skip-folder flag":
@@ -849,7 +836,7 @@ func TestSaveIMAPFolderStates_FilteredReconciliation(t *testing.T) {
 			after, err := loadIMAPFolderStates(st, src.ID)
 			require.NoError(err)
 			assert.Equal(before["Trash"], after["Trash"])
-			if name == "enabled" {
+			if name == "enabled" || strings.HasPrefix(name, "blank ") {
 				assert.Equal(2, imapTombstonedMessageCount(t, st, src.ID))
 				assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
 				assert.Empty(after["INBOX"].KnownUIDs)
@@ -867,26 +854,9 @@ func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
 		t.Run(map[bool]string{true: "enabled", false: "default"}[enabled], func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 0})
-			host, portText, err := net.SplitHostPort(addr)
-			require.NoError(err)
-			port, err := strconv.Atoi(portText)
-			require.NoError(err)
-			imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
-			st := testutil.NewTestStore(t)
-			src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
-			require.NoError(err)
-			configJSON, err := imapCfg.ToJSON()
-			require.NoError(err)
-			require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
-			src, err = st.GetSourceByID(src.ID)
-			require.NoError(err)
-			home := t.TempDir()
-			cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}, Sync: config.SyncConfig{
-				IMAPSkipFolders:                map[string][]string{src.Identifier: {"Trash"}},
-				IMAPReconcileFilteredDeletions: map[string]bool{src.Identifier: enabled},
-			}}
-			require.NoError(imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
-			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			st, src, cfg, ctx := scheduledIMAPSyncFixture(t, addr)
+			cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
+			cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{src.Identifier: enabled}
 			summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
 			require.NoError(err)
 			require.Zero(summary.Errors)
@@ -949,4 +919,25 @@ func TestSaveIMAPFolderStates_FilteredReconciliationLegacyLabels(t *testing.T) {
 	assert.Equal([]string{"INBOX"}, message.Labels, "legacy labels alone cannot prove skipped membership")
 	assert.Zero(imapTombstonedMessageCount(t, st, src.ID), "unseen legacy rows have no authoritative absence evidence")
 	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
+}
+
+func scheduledIMAPSyncFixture(t *testing.T, addr string) (*store.Store, *store.Source, *config.Config, context.Context) {
+	t.Helper()
+	host, portText, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portText)
+	require.NoError(t, err)
+	imapCfg := &imaplib.Config{Host: host, Port: port, Username: testutil.IMAPTestUsername}
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource(sourceTypeIMAP, imapCfg.Identifier())
+	require.NoError(t, err)
+	configJSON, err := imapCfg.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(src.ID, configJSON))
+	src, err = st.GetSourceByID(src.ID)
+	require.NoError(t, err)
+	home := t.TempDir()
+	cfg := &config.Config{HomeDir: home, Data: config.DataConfig{DataDir: home}}
+	require.NoError(t, imaplib.SaveCredentials(cfg.TokensDir(), src.Identifier, testutil.IMAPTestPassword))
+	return st, src, cfg, testInvocationContext(t.Context(), cfg, invocationOptions{})
 }

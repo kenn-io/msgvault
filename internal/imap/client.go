@@ -148,6 +148,8 @@ type Client struct {
 	folderFilterInclude, folderFilterExclude []string
 
 	reconcileFilteredDeletions bool
+	scopedMailboxSnapshot      bool
+	listedMailboxes            []string
 
 	forceFullEnumeration  bool
 	priorFolderStates     map[string]FolderState // saved states from the last completed sync
@@ -1218,6 +1220,8 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 	// enumeration finish. Any recoverable mailbox failure makes labels from
 	// this listing additive rather than authoritative.
 	c.labelMapComplete = false
+	c.scopedMailboxSnapshot = c.scannedMailboxSnapshotLocked()
+	c.listedMailboxes = nil
 	c.seenRFC822IDs = nil
 	c.seenTrustedRFC822IDs = nil
 	c.relocationTargets = nil
@@ -1239,6 +1243,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			}
 		}
 
+		if c.scopedMailboxSnapshot {
+			c.listedMailboxes = append([]string{}, mailboxes...)
+		}
 		allMailboxes = filterMailboxes(
 			mailboxes,
 			c.effectiveFolderIncludeLocked(),
@@ -1336,12 +1343,12 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 			return c.finalizeMessageListLocked(ctx, allMailboxes, qresyncMessages)
 		}
 	}
-	scopedSnapshot := c.scannedMailboxSnapshotLocked()
+	scopedSnapshot := c.scopedMailboxSnapshot
 	authoritativeSnapshot := trackFolders && (!c.labelsSnapshotFilteredLocked() || scopedSnapshot)
 	if authoritativeSnapshot {
 		// Publish every selected mailbox, including a non-nil empty set. The
-		// caller distinguishes full topology from scoped reconciliation; only
-		// the full-topology store path retires absent mailboxes.
+		// caller uses the unfiltered LIST to distinguish skipped mailboxes
+		// from mailboxes that no longer exist.
 		c.observedMailboxDeltas = make([]MailboxDelta, 0, len(allMailboxes))
 	}
 

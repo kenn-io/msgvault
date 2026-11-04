@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/gmail"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func TestRelocationPlanUsesCurrentMembershipEpochAndExactTarget(t *testing.T) {
@@ -139,6 +140,44 @@ func TestRelocationRawFetchRejectsEpochChangeAndBypassesDedup(t *testing.T) {
 				assert.Equal(raw, results[0].Message.Raw)
 				require.Len(c.ObservedMemberships(), 1)
 				assert.Equal("Sent|1", c.ObservedMemberships()[0].CanonicalSourceMessageID)
+			}
+		})
+	}
+}
+
+func TestRelocationFilteredScanRecoversCanonicalCopy(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
+			addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Archive": 0, "Trash": 1})
+			testutil.AppendIMAPMessageWithMessageID(t, user, "INBOX", "same@example.com")
+			testutil.AppendIMAPMessageWithMessageID(t, user, "Archive", "same@example.com")
+			first := newTestClient(t, addr)
+			listAllMessages(t, first)
+			saved := first.ObservedFolderStates()
+			require.NoError(t, first.Close())
+			testutil.ExpungeIMAPMessage(t, addr, "INBOX", 1)
+			// Trash remains on the server but is absent from this scan.
+			client := newTestClient(t, addr, WithFolderStates(saved), WithFolderFilter(nil, []string{"Trash"}),
+				WithFilteredDeletionReconciliation(enabled),
+				WithRelocationCandidateLoader(func(_ context.Context, lost []string) ([]RelocationCandidate, error) {
+					assert.Equal(t, []string{"INBOX|1"}, lost)
+					return []RelocationCandidate{{
+						Target:  gmail.MessageRelocationTarget{InternalID: 12, SourceID: 3, SourceMessageID: "INBOX|1", RFC822MessageID: "same@example.com"},
+						Mailbox: "Archive", UIDValidity: saved["Archive"].UIDValidity, UID: 1,
+					}}, nil
+				}))
+			ids := listAllMessages(t, client)
+			if enabled {
+				assert.ElementsMatch(t, []string{"INBOX", "Archive", "Trash"}, client.ListedMailboxes())
+				assert.Equal(t, []string{"Archive|1"}, ids)
+				target, ok := client.MessageRelocationTarget("Archive|1")
+				require.True(t, ok)
+				assert.Equal(t, "INBOX|1", target.SourceMessageID)
+				assert.Equal(t, "Archive|1", target.NewSourceMessageID)
+			} else {
+				assert.Empty(t, ids)
+				_, ok := client.MessageRelocationTarget("Archive|1")
+				assert.False(t, ok)
 			}
 		})
 	}

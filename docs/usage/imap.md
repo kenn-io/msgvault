@@ -206,7 +206,8 @@ A message is marked deleted from its source only when no stored folder membershi
 remains. Moving it into any unscanned folder can therefore make it eligible for
 `gc`, even if it still exists on the server. Stored memberships in skipped folders
 remain unchanged and can keep messages live indefinitely, until those folders are
-scanned again. Skipped-only messages keep their labels and deletion markers.
+scanned again. A message already recorded in Trash by an earlier unfiltered sync
+stays live after Trash is skipped. Skipped-only messages keep their labels and deletion markers.
 
 Older imports without stored memberships remain unreconciled if absent from the
 first opted-in scan. Once observed in a scanned folder, their folder labels are
