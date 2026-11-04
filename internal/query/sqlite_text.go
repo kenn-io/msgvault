@@ -31,12 +31,6 @@ func (e *SQLiteEngine) TextSnapshotRevision(
 	ctx context.Context, scope TextSnapshotScope,
 ) (string, error) {
 	if scope.ConversationID != nil {
-		if scope.Filter.SearchQuery != "" || scope.Filter.Label != "" || scope.Filter.ContactName != "" || scope.Filter.ContactPhone != "" {
-			_, revision, err := readSQLiteTextSnapshot(
-				ctx, e, scope, 500, false, scanTextMessageSnapshotRow,
-			)
-			return revision, err
-		}
 		_, revision, err := readSQLiteTimelineSnapshot(ctx, e, scope, false)
 		return revision, err
 	}
@@ -65,9 +59,6 @@ func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 	ctx context.Context, conversationID int64, filter TextFilter,
 ) ([]MessageSummary, string, error) {
 	scope := TextSnapshotScope{ConversationID: &conversationID, Filter: filter}
-	if filter.SearchQuery != "" || filter.Label != "" || filter.ContactName != "" || filter.ContactPhone != "" {
-		return readSQLiteTextSnapshot(ctx, e, scope, 500, true, scanTextMessageSnapshotRow)
-	}
 	return readSQLiteTimelineSnapshot(ctx, e, scope, true)
 }
 
@@ -82,6 +73,9 @@ FROM messages WHERE conversation_id = ?`
 func readSQLiteTimelineSnapshot(
 	ctx context.Context, e *SQLiteEngine, scope TextSnapshotScope, collectPage bool,
 ) ([]MessageSummary, string, error) {
+	if scope.Filter.SearchQuery != "" || scope.Filter.Label != "" || scope.Filter.ContactName != "" || scope.Filter.ContactPhone != "" {
+		return readSQLiteTextSnapshot(ctx, e, scope, 500, collectPage, scanTextMessageSnapshotRow)
+	}
 	return withSQLiteTextSnapshot(ctx, e, scope, func(tx *sql.Tx, hasher hash.Hash) ([]MessageSummary, error) {
 		conversationID := *scope.ConversationID
 		var count int64
