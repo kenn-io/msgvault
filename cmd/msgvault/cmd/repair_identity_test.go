@@ -27,8 +27,6 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	require.NoError(st.AddAccountIdentity(b.ID, "alice@example.com", "preexisting"))
 	c, err := st.GetOrCreateSource("gmail", "notanemail") // non-email identifier -> skipped
 	require.NoError(err)
-	d, err := st.GetOrCreateSource("imap", "bob@example.com") // wrong type -> skipped
-	require.NoError(err)
 	e, err := st.GetOrCreateSource("gmail", "https://user@example.com/mail") // URL, not an email -> skipped
 	require.NoError(err)
 
@@ -36,6 +34,7 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	n, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
 	assert.Equal(1, n, "only the valid gmail address without an identity is repaired")
+	assert.Contains(buf.String(), "Activity and contacts update at the daemon's next refresh, or now with msgvault activity build.")
 
 	ai, err := st.ListAccountIdentities(a.ID)
 	require.NoError(err)
@@ -44,10 +43,6 @@ func TestRepairIdentities_Selection(t *testing.T) {
 	ci, err := st.ListAccountIdentities(c.ID)
 	require.NoError(err)
 	assert.Empty(ci, "non-email identifier is left alone")
-
-	di, err := st.ListAccountIdentities(d.ID)
-	require.NoError(err)
-	assert.Empty(di, "imap source untouched when repairing gmail")
 
 	ei, err := st.ListAccountIdentities(e.ID)
 	require.NoError(err)
@@ -84,42 +79,43 @@ func TestRepairIdentities_SingleTarget(t *testing.T) {
 	assert.Len(ai, 1, "only the targeted account is confirmed")
 }
 
-func TestRepairIdentities_IMAPUsesConfiguredUsername(t *testing.T) {
+func TestRepairIdentities_ReportsSkippedEmailSources(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	imapCfg := &imapclient.Config{
-		Host: "mail.example.com", Port: 993, TLS: true, Username: "owner@example.com",
-	}
-	source, err := st.GetOrCreateSource("imap", imapCfg.Identifier())
+	imapSource := newRepairIdentityIMAPSource(t, st)
+	_, err := st.GetOrCreateSource("mbox", "boss@example.com")
 	require.NoError(err)
-	configJSON, err := imapCfg.ToJSON()
+	confirmed, err := st.GetOrCreateSource("imap", "confirmed@example.com")
 	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(source.ID, configJSON))
+	require.NoError(st.UpdateSourceDisplayName(confirmed.ID, "confirmed@example.com"))
+	require.NoError(st.AddAccountIdentity(confirmed.ID, "confirmed@example.com", "preexisting"))
+	granolaSource, err := st.GetOrCreateSource("granola", "meeting@example.com")
+	require.NoError(err)
 
 	var buf bytes.Buffer
-	repaired, err := repairIdentities(t.Context(), st, "imap", "", &buf)
+	repaired, err := repairIdentities(t.Context(), st, "gmail", "", &buf)
 	require.NoError(err)
-	assert.Equal(1, repaired)
+	assert.Zero(repaired)
+	assert.Equal("Skipped 1 imap source(s) with an unconfirmed account address; re-run with --type imap.\nSkipped 1 mbox source(s) with an unconfirmed account address; re-run with --type mbox.\n", buf.String())
+	for _, source := range []*store.Source{imapSource, granolaSource} {
+		identities, err := st.ListAccountIdentities(source.ID)
+		require.NoError(err)
+		assert.Empty(identities)
+	}
 
-	identities, err := st.ListAccountIdentities(source.ID)
+	buf.Reset()
+	repaired, err = repairIdentities(t.Context(), st, "gmail", "owner@example.com", &buf)
 	require.NoError(err)
-	require.Len(identities, 1)
-	assert.Equal("owner@example.com", identities[0].Address)
+	assert.Zero(repaired)
+	assert.Equal("Skipped 1 imap source(s) with an unconfirmed account address; re-run with --type imap and the same identifier.\n", buf.String())
 }
 
 func TestRepairIdentities_IMAPTargetMatchesConfiguredUsername(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
-	imapCfg := &imapclient.Config{
-		Host: "mail.example.com", Port: 993, TLS: true, Username: "owner@example.com",
-	}
-	source, err := st.GetOrCreateSource("imap", imapCfg.Identifier())
-	require.NoError(err)
-	configJSON, err := imapCfg.ToJSON()
-	require.NoError(err)
-	require.NoError(st.UpdateSourceSyncConfig(source.ID, configJSON))
+	source := newRepairIdentityIMAPSource(t, st)
 
 	var buf bytes.Buffer
 	repaired, err := repairIdentities(t.Context(), st, "imap", "OWNER@example.com", &buf)
@@ -248,4 +244,18 @@ func installFailingRepairIdentityTrigger(t *testing.T, st *store.Store) {
 			END`)
 	}
 	require.NoError(t, err)
+}
+
+func newRepairIdentityIMAPSource(t *testing.T, st *store.Store) *store.Source {
+	t.Helper()
+
+	imapCfg := &imapclient.Config{
+		Host: "mail.example.com", Port: 993, TLS: true, Username: "owner@example.com",
+	}
+	source, err := st.GetOrCreateSource("imap", imapCfg.Identifier())
+	require.NoError(t, err)
+	configJSON, err := imapCfg.ToJSON()
+	require.NoError(t, err)
+	require.NoError(t, st.UpdateSourceSyncConfig(source.ID, configJSON))
+	return source
 }
