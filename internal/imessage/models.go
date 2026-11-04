@@ -22,7 +22,18 @@ type messageRow struct {
 
 // ImportSummary holds statistics from a completed import run.
 type ImportSummary struct {
-	MessagesImported      int
+	// MessagesImported counts messages written, new and already archived.
+	MessagesImported int
+	// MessagesAdded counts messages newly committed to the archive, including
+	// ones whose import failed after the message row was written.
+	MessagesAdded int
+	// MessagesUpdated counts messages that were already archived and whose
+	// archived content changed, including ones whose import failed after the
+	// change was written.
+	MessagesUpdated int
+	// MessagesUnchanged counts the written messages that were already archived
+	// and came out identical.
+	MessagesUnchanged     int
 	ConversationsImported int
 	ParticipantsResolved  int
 	// DatesCleared counts existing archived dates removed for invalid source timestamps.

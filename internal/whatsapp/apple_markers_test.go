@@ -56,7 +56,8 @@ func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 	full.Full = true
 	forced, err := importer.Import(context.Background(), chatDBPath, full)
 	require.NoError(err)
-	assert.Equal(int64(1), forced.MessagesAdded)
+	assert.Equal(int64(1), forced.MessagesUpdated)
+	assert.Equal(int64(0), forced.MessagesAdded)
 	assert.Equal([]string{"direct-in"}, rewrittenAppleMessages(t, st))
 	assert.Equal("unseen edit", appleBodyText(t, st, "direct-in"))
 
@@ -89,7 +90,8 @@ func TestImportAppleRerunReadsChangedChats(t *testing.T) {
 	`)
 	second, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(3), second.MessagesAdded)
+	assert.Equal(int64(1), second.MessagesAdded)
+	assert.Equal(int64(2), second.MessagesUpdated)
 	assert.Equal([]string{"direct-in", "group-in", "lid-new"}, rewrittenAppleMessages(t, st))
 	assert.Equal("edited direct text", appleBodyText(t, st, "direct-in"))
 	assert.Equal("new lid text", appleBodyText(t, st, "lid-new"))
@@ -120,7 +122,8 @@ func TestImportAppleRerunReadsChatsWithGroupMemberChange(t *testing.T) {
 	`)
 	summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 	require.NoError(err)
-	assert.Equal(int64(1), summary.MessagesAdded)
+	assert.Equal(int64(1), summary.MessagesUpdated)
+	assert.Equal(int64(0), summary.MessagesAdded)
 	assert.Equal([]string{"group-in"}, rewrittenAppleMessages(t, st))
 }
 
@@ -401,7 +404,8 @@ func TestImportAppleRerunReadsChatsWithoutMarkers(t *testing.T) {
 			execAppleFixture(t, chatDBPath, `UPDATE ZWAMESSAGE SET ZTEXT = 'edit without marker' WHERE Z_PK = 1`)
 			summary, err := importer.Import(context.Background(), chatDBPath, appleTestOptions())
 			require.NoError(err)
-			assert.Equal(int64(1), summary.MessagesAdded)
+			assert.Equal(int64(1), summary.MessagesUpdated)
+			assert.Equal(int64(0), summary.MessagesAdded)
 			assert.Equal([]string{"direct-in"}, rewrittenAppleMessages(t, st))
 		})
 	}

@@ -69,6 +69,8 @@ const STATE_CHIPS: Readonly<Record<string, { label: string; tone: ChipTone }>> =
   running: { label: 'Running', tone: 'info' },
   succeeded: { label: 'Succeeded', tone: 'success' },
   partial: { label: 'Partial', tone: 'warning' },
+  // A source sync run that could not show it read its source.
+  unmeasured: { label: 'Not measured', tone: 'warning' },
   failed: { label: 'Failed', tone: 'danger' },
   cancelled: { label: 'Cancelled', tone: 'muted' }
 };
