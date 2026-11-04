@@ -131,7 +131,7 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // WriteJobStatus writes the shared Docbank processing job response.
 func WriteJobStatus(w http.ResponseWriter, id, state, phase, code string) {
 	if err := json.MarshalWrite(w, map[string]any{"job_id": id, "state": state, "phase": phase,
-		"failure_code": code, "embedding_job_ids": []string{}, "completed_bindings": 1}); err != nil {
+		"failure_code": code, "embedding_job_ids": []string{}, "completed_bindings": 0}); err != nil {
 		http.Error(w, "encode job status", http.StatusInternalServerError)
 	}
 }
