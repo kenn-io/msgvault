@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
@@ -140,6 +141,33 @@ func TestAuditGmailMessagesReportsCrossedFieldsAndInconclusiveRaw(t *testing.T) 
 	assert.Equal(AuditInconclusive, byID[missingID].Fields[AuditFieldRawMIME])
 	assert.Equal(AuditInconclusive, byID[badID].Status)
 	assert.Equal(AuditInconclusive, byID[badID].Fields[AuditFieldRawMIME])
+}
+
+func TestAuditGmailMessagesMarksEmptyRawInconclusive(t *testing.T) {
+	for _, compression := range []string{"zlib", "uncompressed"} {
+		t.Run(compression, func(t *testing.T) {
+			t.Parallel()
+			assert := assert.New(t)
+			require := require.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("gmail", "audit@example.com")
+			require.NoError(err)
+			id := seedRepairRow(t, st, source.ID, "empty-raw", "thread-empty", "original")
+			require.NoError(st.UpsertMessageRaw(id, []byte{}))
+			if compression == "uncompressed" {
+				_, err = st.DB().Exec(st.Rebind(`
+					UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?
+				`), []byte{}, id)
+				require.NoError(err)
+			}
+
+			results := collectAudit(t, New(nil, st, nil), source.ID)
+			require.Len(results, 1)
+			assert.Equal(AuditInconclusive, results[0].Status)
+			assert.Equal(AuditInconclusive, results[0].Fields[AuditFieldRawMIME])
+			assert.Equal("stored raw MIME is empty", results[0].Error)
+		})
+	}
 }
 
 func TestAuditGmailMessagesTreatsParsedEmptyFieldsAsAuthoritative(t *testing.T) {
