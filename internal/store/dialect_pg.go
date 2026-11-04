@@ -2172,7 +2172,7 @@ func (d *PostgreSQLDialect) EnsureActivityProjectionTriggers(q querier) error {
 		 BEGIN
 		     INSERT INTO activity_projection_conversation_queue (conversation_id)
 		     VALUES (p_conversation_id)
-		     ON CONFLICT (conversation_id) DO UPDATE SET conversation_id = excluded.conversation_id;
+		     ON CONFLICT (conversation_id) DO UPDATE SET after_message_id = 0;
 		 END;
 		 $$ LANGUAGE plpgsql`,
 		`CREATE OR REPLACE FUNCTION queue_activity_conversation_people_insert() RETURNS trigger AS $$

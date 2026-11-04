@@ -3885,7 +3885,8 @@ CREATE TABLE IF NOT EXISTS activity_projection_queue (
 -- Membership writes mark one conversation; the activity drain expands its messages.
 -- No foreign key: a cascading conversation delete can leave a harmless marker.
 CREATE TABLE IF NOT EXISTS activity_projection_conversation_queue (
-    conversation_id BIGINT PRIMARY KEY
+    conversation_id BIGINT PRIMARY KEY,
+    after_message_id BIGINT NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_activity_projection_queue_pending

@@ -1561,3 +1561,38 @@ func (s *recordActivityScanAllStore) ScanAllActivityCandidatesContext(ctx contex
 	s.afterIDs = append(s.afterIDs, afterID)
 	return s.Store.ScanAllActivityCandidatesContext(ctx, afterID, limit)
 }
+
+func TestConversationExpansionHonorsPreemptionAndBatchBudget(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f, _ := projectorManyFixture(t, 3)
+	initial, err := NewProjector(f.Store, Options{Timezone: "UTC"})
+	require.NoError(err)
+	_, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	member := f.EnsureParticipant("new-member@example.com", "New Member", "example.com")
+	require.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
+	var before, after int64
+	require.NoError(f.Store.DB().QueryRow(`SELECT SUM(revision) FROM activity_projection_queue`).Scan(&before))
+	ctx, preempt := jobctx.WithPreemption(t.Context())
+	preempt()
+	result, err := initial.RunOnce(ctx)
+	require.ErrorIs(err, ErrWorkRemaining)
+	assert.Zero(result.Batches)
+	require.NoError(f.Store.DB().QueryRow(`SELECT SUM(revision) FROM activity_projection_queue`).Scan(&after))
+	assert.Equal(before, after, "preemption leaves membership expansion untouched")
+	var pending int
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
+	assert.Equal(1, pending)
+
+	limited, err := NewProjector(f.Store, Options{Timezone: "UTC", MaxBatches: 1})
+	require.NoError(err)
+	result, err = limited.RunOnce(t.Context())
+	require.ErrorIs(err, ErrWorkRemaining)
+	assert.Zero(result.Processed, "expansion consumes the only batch before projection")
+	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
+	assert.Zero(pending)
+	result, err = initial.RunOnce(t.Context())
+	require.NoError(err)
+	assert.Equal(3, result.Processed, "resume projects the expanded messages")
+}

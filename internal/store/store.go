@@ -1141,6 +1141,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 	// belongs here rather than inline in schema_pg.sql, where it would build
 	// under the pool-wide statement_timeout and could fail InitSchema outright.
 	concurrentIndexes := []struct{ name, definition string }{
+		{"idx_messages_conversation_id", "ON messages(conversation_id, id)"},
 		{"idx_messages_conversation_timeline", "ON messages(conversation_id, COALESCE(sent_at, received_at, internal_date), id) WHERE deleted_at IS NULL"},
 		{"idx_messages_source_id", "ON messages(source_id, id)"},
 		{"idx_messages_reply_to_message_id", "ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL"},
@@ -2037,6 +2038,9 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	// 30s statement_timeout (finding S1). IF NOT EXISTS is idempotent per start.
 	if !s.IsPostgreSQL() {
 		if err := s.runMaintenance(ctx, func(ctx context.Context, tx *loggedTx) error {
+			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)`); err != nil {
+				return err
+			}
 			// Conversation windows retain source-deleted messages and seek by timestamp and ID.
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_conversation_timeline
