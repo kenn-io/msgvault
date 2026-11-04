@@ -77,7 +77,7 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 	eng := query.NewEngine(st.DB(), st.IsPostgreSQL())
 	ctx := context.Background()
 
-	t.Run("sender_candidates", func(t *testing.T) {
+	t.Run("sender_name_label_page", func(t *testing.T) {
 		msgs, err := eng.ListMessages(ctx, query.MessageFilter{
 			Sender: "alice@example.com", SenderName: "Alice", Label: "Important",
 			Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
