@@ -455,10 +455,13 @@ func (c *Client) importMessage(
 
 	// Extract body text
 	body := ""
+	bodyDecodeFailed := false
 	if msg.Text != nil {
 		body = *msg.Text
 	} else if len(msg.AttributedBody) > 0 {
-		body = extractAttributedBodyText(msg.AttributedBody)
+		var decoded bool
+		body, decoded = extractAttributedBodyTextWithStatus(msg.AttributedBody)
+		bodyDecodeFailed = !decoded
 	}
 
 	msgDate := appleTimestampToTime(msg.Date)
@@ -467,6 +470,22 @@ func (c *Client) importMessage(
 		sentAt = sql.NullTime{Time: msgDate, Valid: true}
 	}
 	sourceMessageID := strconv.FormatInt(msg.ROWID, 10)
+	if bodyDecodeFailed {
+		var existingMessageID int64
+		err := s.DB().QueryRowContext(ctx, s.Rebind(`
+			SELECT id FROM messages
+			WHERE source_id = ? AND source_message_id = ?
+		`), sourceID, sourceMessageID).Scan(&existingMessageID)
+		if err == nil {
+			body, err = s.GetMessageBodyText(existingMessageID)
+			if err != nil {
+				return fmt.Errorf("read archived body after attributed body decode failure: %w", err)
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("find existing message after attributed body decode failure: %w", err)
+		}
+		c.logger.Warn("failed to decode attributed body; preserving archived text")
+	}
 	clearsExistingDate := false
 	if msgDate.IsZero() {
 		err := s.DB().QueryRow(s.Rebind(`
@@ -505,15 +524,14 @@ func (c *Client) importMessage(
 		summary.DatesCleared++
 	}
 
-	// Store body text directly (no MIME)
-	if body != "" {
-		if err := s.UpsertMessageBody(
-			msgID,
-			sql.NullString{String: body, Valid: true},
-			sql.NullString{},
-		); err != nil {
-			return fmt.Errorf("upsert body: %w", err)
-		}
+	// Store body text directly (no MIME), including an empty body so reimports
+	// clear text removed from the source.
+	if err := s.UpsertMessageBody(
+		msgID,
+		sql.NullString{String: body, Valid: true},
+		sql.NullString{},
+	); err != nil {
+		return fmt.Errorf("upsert body: %w", err)
 	}
 
 	// Write message_recipients rows
@@ -522,6 +540,10 @@ func (c *Client) importMessage(
 		phoneCache, emailCache, summary,
 	); err != nil {
 		return fmt.Errorf("write message recipients: %w", err)
+	}
+
+	if err := s.IndexStoredMessageContext(ctx, msgID); err != nil {
+		c.logger.Warn("failed to index message for search", "message_id", msgID, "error", err)
 	}
 
 	// Store raw data as JSON for completeness

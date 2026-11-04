@@ -1,6 +1,7 @@
 package imessage
 
 import (
+	"bytes"
 	"math"
 	"testing"
 	"time"
@@ -331,6 +332,42 @@ func TestExtractAttributedBodyText(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestExtractAttributedBodyTextReportsDecodeStatus(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       []byte
+		want        string
+		wantDecoded bool
+	}{
+		{name: "unsupported blob", input: []byte("not an attributed body")},
+		{name: "empty keyed archive", input: makeAttributedBodyBlob(""), wantDecoded: true},
+		{name: "empty streamtyped archive", input: makeStreamtypedBlob(""), wantDecoded: true},
+		{name: "decoded text", input: makeAttributedBodyBlob("Synthetic text"), want: "Synthetic text", wantDecoded: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, decoded := extractAttributedBodyTextWithStatus(tt.input)
+			assert.Equal(t, tt.want, got)
+			assert.Equal(t, tt.wantDecoded, decoded)
+		})
+	}
+}
+
+func FuzzExtractAttributedBodyTextRoundTripsKeyedArchive(f *testing.F) {
+	for _, seed := range []string{"", "hello", "café", "emoji 😀"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, input string) {
+		if len(input) > 64<<10 {
+			t.Skip()
+		}
+		want := string(bytes.ToValidUTF8([]byte(input), []byte("\uFFFD")))
+		got, decoded := extractAttributedBodyTextWithStatus(makeAttributedBodyBlob(want))
+		assert.True(t, decoded)
+		assert.Equal(t, want, got)
+	})
 }
 
 func TestSnippet(t *testing.T) {
