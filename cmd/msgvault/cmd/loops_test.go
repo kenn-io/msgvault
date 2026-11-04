@@ -136,7 +136,7 @@ func TestLoopsRequireDaemonSchema(t *testing.T) {
 	t.Cleanup(server.Close)
 	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
 	_, err := runLoops(ctx, t, "list")
-	require.ErrorContains(err, "require daemon API schema 3.38.0")
+	require.ErrorContains(err, "require daemon API schema 3.42.0")
 	require.ErrorContains(err, `daemon reports "3.23.0"`)
 	assert.Zero(loopRequests)
 }
