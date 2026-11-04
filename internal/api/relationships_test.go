@@ -38,7 +38,7 @@ type recordingRelationshipEngine struct {
 	*query.DuckDBEngine
 
 	relationshipsCalls    int
-	relationshipsFn       func(context.Context, query.RelationshipsRequest) (*query.RelationshipsResponse, error)
+	relationshipRequests  []query.RelationshipsRequest
 	timelineCalls         int
 	resolveCanonicalCalls int
 }
@@ -48,9 +48,7 @@ func (e *recordingRelationshipEngine) Relationships(
 	request query.RelationshipsRequest,
 ) (*query.RelationshipsResponse, error) {
 	e.relationshipsCalls++
-	if e.relationshipsFn != nil {
-		return e.relationshipsFn(ctx, request)
-	}
+	e.relationshipRequests = append(e.relationshipRequests, request)
 	return e.DuckDBEngine.Relationships(ctx, request)
 }
 
@@ -116,13 +114,29 @@ func newRelationshipsDuckDBFixture(t *testing.T, now time.Time) *query.DuckDBEng
 // state file directly (e.g. simulating a real identity-revision bump).
 func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.DuckDBEngine, string) {
 	t.Helper()
+	return newRelationshipsDuckDBFixtureForParticipantCount(t, now, 4)
+}
+
+func newRelationshipsDuckDBFixtureForParticipantCount(
+	t *testing.T,
+	now time.Time,
+	participantCount int64,
+) (*query.DuckDBEngine, string) {
+	t.Helper()
 	requirementsForTest := require.New(t)
+	requirementsForTest.GreaterOrEqual(participantCount, int64(4))
 	analyticsDir := t.TempDir()
 	db, err := sql.Open("duckdb", "")
 	requirementsForTest.NoError(err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 
 	var messageRows, recipientRows []string
+	participantRows := []string{
+		`(1::BIGINT, 'owner@example.com', 'example.com', 'Owner', '')`,
+		`(2::BIGINT, 'alice@example.com', 'example.com', 'Alice', '')`,
+		`(3::BIGINT, 'alice@chat.example', 'chat.example', 'Alice Chat', '')`,
+		`(4::BIGINT, 'newsletter@example.com', 'example.com', 'Newsletter', '')`,
+	}
 	nextID := int64(1)
 	addMessage := func(fromID, toID int64, isFromMe bool, messageType string, sentAt time.Time) {
 		id := nextID
@@ -142,6 +156,13 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 	for i := range 50 {
 		addMessage(relNewsletterID, relOwnerID, false, "email", now.AddDate(0, 0, -(10+i)))
 	}
+	for participantID := int64(5); participantID <= participantCount; participantID++ {
+		participantRows = append(participantRows, fmt.Sprintf(
+			"(%d::BIGINT, 'person-%d@example.test', 'example.test', 'Person %d', '')",
+			participantID, participantID, participantID,
+		))
+		addMessage(relOwnerID, participantID, true, "email", now.AddDate(0, 0, -2))
+	}
 
 	tables := []struct {
 		dir, file, columns, values string
@@ -155,10 +176,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		{dir: "sources", file: "sources.parquet", columns: "id, account_email, source_type", values: `(1::BIGINT, 'owner@example.com', 'gmail')`},
 		{
 			dir: "participants", file: "participants.parquet", columns: "id, email_address, domain, display_name, phone_number",
-			values: `(1::BIGINT, 'owner@example.com', 'example.com', 'Owner', ''),
-				(2::BIGINT, 'alice@example.com', 'example.com', 'Alice', ''),
-				(3::BIGINT, 'alice@chat.example', 'chat.example', 'Alice Chat', ''),
-				(4::BIGINT, 'newsletter@example.com', 'example.com', 'Newsletter', '')`,
+			values: strings.Join(participantRows, ",\n"),
 		},
 		{dir: "participant_identifiers", file: "participant_identifiers.parquet", columns: "participant_id, identifier_type, identifier_value, display_value, is_primary", values: `(0::BIGINT, '', '', '', false)`, empty: true},
 		{dir: "message_recipients", file: "message_recipients.parquet", columns: "message_id, participant_id, recipient_type, display_name", values: strings.Join(recipientRows, ",\n")},
@@ -466,30 +484,42 @@ func TestRelationshipsCadenceCursorRejectsChangedDirectoryCadence(t *testing.T) 
 }
 
 func TestRelationshipsCadenceFilterRanksAllRowsInOneAnalyzerCall(t *testing.T) {
-	engine := newRelationshipsDuckDBFixture(t, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC))
-	srv, _, analyzer := newRelationshipIdentityAPIServer(t, engine, []string{
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	const participantCount = 103
+	engine, _ := newRelationshipsDuckDBFixtureForParticipantCount(
+		t, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC), participantCount,
+	)
+	addresses := []string{
 		relationshipIdentityIdentifier,
 		"alice@example.test",
 		"alice-chat@example.test",
 		"newsletter@example.test",
+	}
+	for participantID := int64(5); participantID <= participantCount; participantID++ {
+		addresses = append(addresses, fmt.Sprintf("person-%d@example.test", participantID))
+	}
+	srv, identityStore, analyzer := newRelationshipIdentityAPIServer(t, engine, addresses)
+	person, _, err := identityStore.CreatePersonFromParticipantContext(t.Context(), relAliceID)
+	requirements.NoError(err)
+	days := int64(21)
+	_, err = identityStore.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+		PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency,
+		Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser,
 	})
-	rows := make([]query.RelationshipRow, 501)
-	for index := range rows {
-		participantID := int64(index + 2)
-		rows[index] = query.RelationshipRow{CanonicalID: participantID, MemberIDs: []int64{participantID}}
-	}
-	analyzer.relationshipsFn = func(_ context.Context, request query.RelationshipsRequest) (*query.RelationshipsResponse, error) {
-		page := rows
-		if request.Limit != 0 {
-			end := min(request.Offset+request.Limit, len(rows))
-			page = rows[request.Offset:end]
-		}
-		return &query.RelationshipsResponse{Rows: page, TotalCount: int64(len(rows)), CacheRevision: "fixture", IdentityRevision: 1}, nil
-	}
+	requirements.NoError(err)
 
 	response := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"unknown","limit":1}`)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	assert.Equal(t, 1, analyzer.relationshipsCalls)
+	requirements.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Equal(1, analyzer.relationshipsCalls)
+	requirements.Len(analyzer.relationshipRequests, 1)
+	assertions.True(analyzer.relationshipRequests[0].AllRows)
+	var page RelationshipsHTTPResponse
+	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &page))
+	requirements.Len(page.Rows, 1)
+	requirements.NotNil(page.Rows[0].PersonID)
+	assertions.Equal(person.ID, *page.Rows[0].PersonID)
+	assertions.Equal(int64(1), page.TotalCount)
 }
 
 type recordingRelationshipDirectoryClockStore struct {

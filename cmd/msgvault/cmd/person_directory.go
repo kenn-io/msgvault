@@ -65,7 +65,7 @@ Filters combine to narrow the existing Directory page.`,
 					return err
 				}
 				if !supported {
-					return errors.New("Upgrade the daemon to use contact-list filters or sorting.")
+					return errors.New("upgrade the daemon to use contact-list filters or sorting")
 				}
 			}
 			response, err := daemonclient.APIResponse(client,

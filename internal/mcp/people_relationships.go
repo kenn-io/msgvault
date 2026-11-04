@@ -59,6 +59,9 @@ func (h *handlers) listRelationships(ctx context.Context, req toolRequest) (*too
 		Limit: limit, ShowAll: showAll,
 	})
 	if err != nil {
+		if result := relationshipPaginationDaemonError(err); result != nil {
+			return result, nil
+		}
 		if result := directoryDaemonError(err); result != nil {
 			return result, nil
 		}
@@ -68,6 +71,20 @@ func (h *handlers) listRelationships(ctx context.Context, req toolRequest) (*too
 		return nil, newInternalError("list relationships", errors.New("empty response"))
 	}
 	return jsonResult(page)
+}
+
+func relationshipPaginationDaemonError(err error) *toolResult {
+	var coded daemonAPIErrorCoder
+	if !errors.As(err, &coded) {
+		return nil
+	}
+	code := coded.APIErrorCode()
+	switch code {
+	case "archive_revision_changed", "identity_revision_changed", "cadence_revision_changed":
+		return toolErrorResult(code + ": relationship results changed; restart without a cursor")
+	default:
+		return nil
+	}
 }
 
 func relationshipDueWithinDays(args map[string]any, cadence string) (int, bool, error) {
