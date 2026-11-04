@@ -35,6 +35,11 @@ func recoverLegacyCSV(raw []byte) *Message {
 	fixed := make([]byte, 0, len(raw)+4)
 	fixed = append(fixed, raw[:m[3]]...)
 	fixed = append(fixed, raw[m[4]:]...)
+	if recovered, err := parse(fixed, nil); err == nil {
+		if accepted := acceptLegacyCSVRecovery(recovered); accepted != nil {
+			return accepted
+		}
+	}
 	parts := bytes.Split(fixed, delimiter)
 	csvIndex := -1
 	var csvPayload []byte
@@ -53,6 +58,13 @@ func recoverLegacyCSV(raw []byte) *Message {
 		bodyStart := headerEnd + lineEnd + 1
 		payload := part[bodyStart:]
 		if !bytes.HasPrefix(payload, []byte("\r\n")) && !bytes.HasPrefix(payload, []byte("\n")) {
+			// Extra headers and folded lines make this boundary ambiguous.
+			// Do not turn unfamiliar header layouts into attachment content.
+			firstLine, _, _ := bytes.Cut(payload, []byte{'\n'})
+			name, _, hasColon := bytes.Cut(firstLine, []byte{':'})
+			if (hasColon && validHeaderName(name)) || bytes.HasPrefix(firstLine, []byte{' '}) || bytes.HasPrefix(firstLine, []byte{'\t'}) {
+				return nil
+			}
 			parts[i] = append(append(bytes.Clone(part[:bodyStart]), '\r', '\n'), payload...)
 		}
 		csvIndex, csvPayload = i, bytes.Trim(payload, "\r\n")
@@ -80,14 +92,21 @@ func recoverLegacyCSV(raw []byte) *Message {
 		parts[i] = append(append(bytes.Clone(part[:bodyStart]), '\r', '\n'), payload...)
 	}
 	recovered, err := parse(bytes.Join(parts, delimiter), nil)
-	if err != nil || recovered.BodyHTML == "" || recovered.GetBodyText() == "" {
+	if err != nil {
+		return nil
+	}
+	return acceptLegacyCSVRecovery(recovered)
+}
+
+func acceptLegacyCSVRecovery(recovered *Message) *Message {
+	if recovered.BodyHTML == "" || recovered.GetBodyText() == "" {
 		return nil
 	}
 	nonempty, csvCount := 0, 0
 	for _, attachment := range recovered.Attachments {
 		if len(attachment.Content) > 0 {
 			nonempty++
-			if attachment.ContentType == "text/csv" {
+			if attachment.ContentType == "text/csv" && len(bytes.TrimSpace(attachment.Content)) > 0 {
 				csvCount++
 			}
 		}
@@ -102,7 +121,7 @@ func recoverLegacyCSV(raw []byte) *Message {
 func declaresMultipartBoundary(raw []byte, boundary string) bool {
 	// Require a declared multipart parent, and refuse removal of an actual
 	// declared delimiter. Folded or otherwise unfamiliar headers fail closed.
-	for _, line := range bytes.Split(raw, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(raw, []byte{'\n'}) {
 		value, ok := strings.CutPrefix(string(bytes.TrimRight(line, "\r")), "Content-Type: ")
 		if !ok {
 			continue
