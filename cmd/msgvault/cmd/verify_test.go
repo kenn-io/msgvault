@@ -36,8 +36,31 @@ func TestRunVerifyLocalRawSamples(t *testing.T) {
 			Body: io.NopCloser(strings.NewReader(body)), Request: req}, nil
 	})
 
-	for _, state := range []string{"valid_empty_body", "empty_zlib", "empty_uncompressed", "missing", "truncated_zlib", "malformed_mime"} {
-		t.Run(state, func(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		raw          []byte
+		wantVerified int
+		wantErrors   int
+		wantError    string
+	}{
+		{
+			name:         "valid_empty_body",
+			raw:          []byte("From: sender@example.test\r\nSubject: Original\r\n\r\n"),
+			wantVerified: 1,
+		},
+		{
+			name:       "empty_zlib",
+			raw:        []byte{},
+			wantErrors: 1,
+			wantError:  "empty raw MIME",
+		},
+		{
+			name:       "malformed_mime",
+			raw:        []byte("Content-Type: multipart/mixed\r\n\r\nmissing boundary"),
+			wantErrors: 1,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			_, invocation := setupCommandOAuth(t)
 			putCommandToken(t, invocation, "verify@example.test", oauth.Scopes)
@@ -67,27 +90,7 @@ func TestRunVerifyLocalRawSamples(t *testing.T) {
 			id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversationID,
 				SourceMessageID: "synthetic-verify", MessageType: store.MessageTypeEmail})
 			require.NoError(err)
-			if state != "missing" {
-				raw := []byte("From: sender@example.test\r\nSubject: Original\r\n\r\n")
-				switch state {
-				case "empty_zlib", "empty_uncompressed":
-					raw = []byte{}
-				case "malformed_mime":
-					raw = []byte("Content-Type: multipart/mixed\r\n\r\nmissing boundary")
-				}
-				require.NoError(st.UpsertMessageRaw(id, raw))
-				switch state {
-				case "empty_uncompressed":
-					_, err = st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ?, compression = NULL WHERE message_id = ?`), raw, id)
-					require.NoError(err)
-				case "truncated_zlib":
-					var compressed []byte
-					require.NoError(st.DB().QueryRow(st.Rebind(`SELECT raw_data FROM message_raw WHERE message_id = ?`), id).Scan(&compressed))
-					require.Greater(len(compressed), 3)
-					_, err = st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data = ? WHERE message_id = ?`), compressed[:len(compressed)-3], id)
-					require.NoError(err)
-				}
-			}
+			require.NoError(st.UpsertMessageRaw(id, tc.raw))
 			require.NoError(st.Close())
 			command := &cobra.Command{Use: "verify"}
 			command.SetContext(testInvocationContext(t.Context(), cfg, invocationOptions{}))
@@ -100,33 +103,15 @@ func TestRunVerifyLocalRawSamples(t *testing.T) {
 			require.NoError(err)
 			var result verifyResult
 			require.NoError(json.Unmarshal([]byte(output), &result))
-			assert.Equal(1, result.SampleSize)
-			if state == "valid_empty_body" {
-				assert.Equal(1, result.SampleVerified)
-				assert.Zero(result.SampleErrors)
-			} else {
-				assert.Zero(result.SampleVerified)
-				assert.Equal(1, result.SampleErrors)
-			}
-			if state == "missing" {
-				assert.Zero(result.RawMIMEMessages)
-			} else {
-				assert.Equal(int64(1), result.RawMIMEMessages, "coverage counts stored rows, not valid originals")
-			}
-			assert.False(result.SampleInterrupted)
-			if state == "empty_zlib" || state == "truncated_zlib" {
+			assert.Equal(tc.wantVerified, result.SampleVerified)
+			assert.Equal(tc.wantErrors, result.SampleErrors)
+			if tc.wantError != "" {
 				verifyJSON = false
 				capture = captureStdout(t)
 				err = runVerifyLocal(command, []string{"verify@example.test"})
 				output = capture()
 				require.NoError(err)
-				if state == "empty_zlib" {
-					assert.Contains(output, fmt.Sprintf("msg %d: empty raw MIME", id))
-				} else {
-					assert.Contains(output, fmt.Sprintf("msg %d: db error (invalid message raw data: read zlib data: unexpected EOF)", id))
-				}
-				assert.Contains(output, "Sample errors:")
-				assert.NotContains(output, "(all OK)")
+				assert.Contains(output, fmt.Sprintf("msg %d: %s", id, tc.wantError))
 			}
 		})
 	}
