@@ -95,6 +95,25 @@ and `body_html` hold the parsed bodies. Keeping these large values separate
 allows metadata scans without reading message content. Search uses the full-text
 index; detail readers fetch bodies by message ID.
 
+Email parsing replaces NUL (`U+0000`) with the visible replacement character
+`�` (`U+FFFD`) in display and search text, including subjects, bodies, display
+names, and attachment filenames. Provider snippets follow the same rule.
+This policy applies to SQLite and PostgreSQL; PostgreSQL cannot store NUL in
+text columns. It keeps the surrounding text searchable without silently joining
+words across a removed character. These projections are not lossless originals.
+
+MIME identity values containing NUL are unusable: message, reply, reference,
+list, and content IDs are omitted from new projections, and invalid address
+tokens are skipped. Historical SQLite identity keys retain their exact comparison
+form, including NUL, so existing duplicate groups can still be processed.
+Replacing characters in these keys could falsely match a different identity.
+The original MIME and decoded attachment bytes remain unchanged, as do raw-part
+fingerprints. Ingestion, replay, message repair, and text re-derivation use this
+same parser policy. Existing email bodies and body-derived snippets are rebuilt
+from retained MIME on the next sync or with `repair-derived`; that pass does not
+rewrite subjects, participants, or attachment metadata. Those fields require
+message repair or re-import when their old projections contain NUL.
+
 **message_raw** -- Raw provider payload storage, compressed with zlib.
 
 | Column | Type | Description |
