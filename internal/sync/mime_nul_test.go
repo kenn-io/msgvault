@@ -131,16 +131,7 @@ func TestMIMENULRetryAfterWriteFailure(t *testing.T) {
 	e.Mock.AddMessage("nul", raw, []string{"INBOX"})
 	// Fail after body insertion, at the binary RAW write. Normalizing text must
 	// not weaken rollback or consume the retry before the whole snapshot commits.
-	trigger := `CREATE TRIGGER fail_nul_raw BEFORE INSERT ON message_raw BEGIN SELECT RAISE(ABORT, 'synthetic RAW failure'); END`
-	drop := `DROP TRIGGER fail_nul_raw`
-	if e.Store.IsPostgreSQL() {
-		_, err = e.Store.DB().Exec(`CREATE FUNCTION fail_nul_raw() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'synthetic RAW failure'; END $$`)
-		require.NoError(err)
-		trigger = `CREATE TRIGGER fail_nul_raw BEFORE INSERT ON message_raw FOR EACH ROW EXECUTE FUNCTION fail_nul_raw()`
-		drop = `DROP TRIGGER fail_nul_raw ON message_raw`
-	}
-	_, err = e.Store.DB().Exec(trigger)
-	require.NoError(err)
+	allowRaw := acquisitionWriteFault(t, e, "message_raw", "INSERT", "1 = 1")
 	summary := runFullSync(t, e)
 	require.Equal(int64(1), summary.Errors)
 	ids, err := e.Store.MessageExistsBatch(source.ID, []string{"nul"})
@@ -152,15 +143,14 @@ func TestMIMENULRetryAfterWriteFailure(t *testing.T) {
 	debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
 	require.NoError(err)
 	require.Len(debt, 1)
-	assert.Contains(debt[0].ErrorMessage, "synthetic RAW failure")
+	assert.Contains(debt[0].ErrorMessage, "synthetic acquisition write failure")
 	// Advancing the cursor is safe here because the failure is durably replayable.
 	source, err = e.Store.GetSourceByID(source.ID)
 	require.NoError(err)
 	assert.Equal("1001", source.SyncCursor.String)
 	summary = runIncrementalSync(t, e)
 	assert.Equal(int64(1), summary.Errors)
-	_, err = e.Store.DB().Exec(drop)
-	require.NoError(err)
+	allowRaw()
 	summary = runIncrementalSync(t, e)
 	require.Zero(summary.Errors)
 	ids, err = e.Store.MessageExistsBatch(source.ID, []string{"nul"})
