@@ -203,7 +203,7 @@ func readAddBeeperToken(cmd *cobra.Command) (string, error) {
 	)
 	switch method {
 	case passwordInteractive:
-		return readPasswordInteractive(prompt, promptOut)
+		return readPasswordInteractive(prompt, promptOut, false)
 	case passwordNoPrompt:
 		return "", errors.New("cannot read token: no terminal available for prompt (try --token-file, piping the token via stdin, or setting MSGVAULT_BEEPER_TOKEN)")
 	case passwordPipe:

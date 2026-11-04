@@ -1538,6 +1538,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	); err != nil {
 		return fmt.Errorf("migrate person sweep attempt brief failure class: %w", err)
 	}
+	if err := s.runOnceMigration(
+		ctx, migrationMatrixEncryptedEventsV1, 1, false,
+		s.registerLegacyMatrixPlaceholders,
+	); err != nil {
+		return fmt.Errorf("register Matrix placeholders: %w", err)
+	}
 	if err := s.ensureDirectoryProjectionInfrastructure(ctx); err != nil {
 		return err
 	}
