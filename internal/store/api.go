@@ -879,7 +879,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 const searchOperatorShare = 8
 
 func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQL) {
-	if len(plan.operators) == 0 || plan.operators[0].condition != 0 || sourcescope.IDs(ctx) != nil {
+	if s.IsPostgreSQL() || len(plan.operators) == 0 || plan.operators[0].condition != 0 || sourcescope.IDs(ctx) != nil {
 		return
 	}
 	var maxID int64
