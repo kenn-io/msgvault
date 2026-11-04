@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-10-19"
+last_edited: "2026-11-04"
 title: Text Messages
 description: Import chats and texts from common exports, and browse synchronized Teams and Discord conversations in msgvault.
 ---
@@ -170,6 +170,13 @@ the same database without `--after`, `--before`, or `--limit`. The import update
 existing messages without creating duplicates. When it clears a previously
 stored date, msgvault rebuilds analytics so the old date is removed there too.
 Keep the original `--db-path` and `--me` options if you supplied them.
+
+Each run reads all of `chat.db` again and updates archived messages to match
+it. Edited text replaces the archived text. When a message no longer has text in
+`chat.db`, the next import clears its archived text and its snippet, and keyword
+search no longer matches that text. Unsending a message on iOS 16, macOS 13, or
+later removes its text this way. The message stays in the archive with its date
+and participants. Messages deleted from `chat.db` also stay in the archive.
 
 ### Flags
 
