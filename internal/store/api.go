@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
@@ -541,7 +542,13 @@ func (s *Store) SearchMessagesQueryContext(
 	return s.searchMessagesQueryImpl(ctx, q, offset, limit, s.fts5Available)
 }
 
+type searchOperator struct {
+	condition int
+	matching  string
+}
+
 type messageSearchSQL struct {
+	operators  []searchOperator
 	conditions []string
 	join       string
 	where      string
@@ -572,15 +579,16 @@ func (s *Store) buildMessageSearchSQL(ctx context.Context, q *search.Query, ftsA
 		visibility = LiveMessagesWhere("m", true)
 	}
 
-	plan := s.buildMessageSearchSQLWithVisibility(q, ftsAvailable, visibility)
+	plan := s.buildMessageSearchSQLWithVisibility(ctx, q, ftsAvailable, visibility)
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	plan.where += scope
 	plan.args = append(plan.args, scopeArgs...)
 	return plan
 }
 
-func (s *Store) buildMessageSearchSQLWithVisibility(q *search.Query, ftsAvailable bool, visibility string) messageSearchSQL {
+func (s *Store) buildMessageSearchSQLWithVisibility(ctx context.Context, q *search.Query, ftsAvailable bool, visibility string) messageSearchSQL {
 	plan := s.buildMessageSearchCriteria(q, ftsAvailable, false)
+	s.preferOperatorLookups(ctx, &plan)
 	plan.conditions = append([]string{visibility}, plan.conditions...)
 	plan.where = strings.Join(plan.conditions, " AND ")
 	return plan
@@ -650,70 +658,6 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 			// fallback returns zero rows, matching the FTS path.
 			conditions = append(conditions, "FALSE")
 		}
-	}
-
-	// from: filter
-	for _, addr := range q.FromAddrs {
-		conditions = append(conditions, `EXISTS (
-			SELECT 1 FROM message_recipients mr2
-			JOIN participants p2 ON p2.id = mr2.participant_id
-			WHERE mr2.message_id = m.id
-			AND mr2.recipient_type = 'from'
-			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
-		)`)
-		args = append(args,
-			"%"+escapeLike(strings.ToLower(addr))+"%")
-	}
-
-	// to: filter
-	for _, addr := range q.ToAddrs {
-		conditions = append(conditions, `EXISTS (
-			SELECT 1 FROM message_recipients mr2
-			JOIN participants p2 ON p2.id = mr2.participant_id
-			WHERE mr2.message_id = m.id
-			AND mr2.recipient_type = 'to'
-			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
-		)`)
-		args = append(args,
-			"%"+escapeLike(strings.ToLower(addr))+"%")
-	}
-
-	// cc: filter
-	for _, addr := range q.CcAddrs {
-		conditions = append(conditions, `EXISTS (
-			SELECT 1 FROM message_recipients mr2
-			JOIN participants p2 ON p2.id = mr2.participant_id
-			WHERE mr2.message_id = m.id
-			AND mr2.recipient_type = 'cc'
-			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
-		)`)
-		args = append(args,
-			"%"+escapeLike(strings.ToLower(addr))+"%")
-	}
-
-	// bcc: filter
-	for _, addr := range q.BccAddrs {
-		conditions = append(conditions, `EXISTS (
-			SELECT 1 FROM message_recipients mr2
-			JOIN participants p2 ON p2.id = mr2.participant_id
-			WHERE mr2.message_id = m.id
-			AND mr2.recipient_type = 'bcc'
-			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
-		)`)
-		args = append(args,
-			"%"+escapeLike(strings.ToLower(addr))+"%")
-	}
-
-	// label: filter
-	for _, lbl := range q.Labels {
-		conditions = append(conditions, `EXISTS (
-			SELECT 1 FROM message_labels ml2
-			JOIN labels l2 ON l2.id = ml2.label_id
-			WHERE ml2.message_id = m.id
-			AND LOWER(l2.name) LIKE ? ESCAPE '\'
-		)`)
-		args = append(args,
-			"%"+escapeLike(strings.ToLower(lbl))+"%")
 	}
 
 	// subject: filter — LOWER on both sides for PG portability.
@@ -875,6 +819,47 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		args = append(args, q.BeforeDate.UTC())
 	}
 
+	// Operators come last so a condition before them identifies a search
+	// already narrowed by another filter.
+	var operators []searchOperator
+	recipientsTable := "message_recipients mr2"
+	if !s.IsPostgreSQL() {
+		recipientsTable += " INDEXED BY idx_message_recipients_participant"
+	}
+	for _, group := range []struct {
+		role  string
+		addrs []string
+	}{{"from", q.FromAddrs}, {"to", q.ToAddrs}, {"cc", q.CcAddrs}, {"bcc", q.BccAddrs}} { //nolint:goconst // Search recipient roles are independent of meeting senders.
+		for _, addr := range group.addrs {
+			if !rowIDs {
+				operators = append(operators, searchOperator{len(conditions), fmt.Sprintf(`SELECT mr2.message_id FROM %s
+					WHERE mr2.recipient_type = '%s' AND mr2.participant_id IN
+					(SELECT p2.id FROM participants p2 WHERE LOWER(p2.email_address) LIKE ? ESCAPE '\')`, recipientsTable, group.role)})
+			}
+			conditions = append(conditions, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM message_recipients mr2
+			JOIN participants p2 ON p2.id = mr2.participant_id
+			WHERE mr2.message_id = m.id
+			AND mr2.recipient_type = '%s'
+			AND LOWER(p2.email_address) LIKE ? ESCAPE '\'
+		)`, group.role))
+			args = append(args, "%"+escapeLike(strings.ToLower(addr))+"%")
+		}
+	}
+	for _, lbl := range q.Labels {
+		if !rowIDs {
+			operators = append(operators, searchOperator{len(conditions), `SELECT ml2.message_id FROM message_labels ml2
+				WHERE ml2.label_id IN (SELECT l2.id FROM labels l2 WHERE LOWER(l2.name) LIKE ? ESCAPE '\')`})
+		}
+		conditions = append(conditions, `EXISTS (
+			SELECT 1 FROM message_labels ml2
+			JOIN labels l2 ON l2.id = ml2.label_id
+			WHERE ml2.message_id = m.id
+			AND LOWER(l2.name) LIKE ? ESCAPE '\'
+		)`)
+		args = append(args, "%"+escapeLike(strings.ToLower(lbl))+"%")
+	}
+
 	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
 	var orderArgs []any
 	if ftsEnabled {
@@ -884,8 +869,39 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 		}
 	}
 	return messageSearchSQL{
-		conditions: conditions, join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
+		operators: operators, conditions: conditions, join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
 		args: args, orderArgs: orderArgs, fts: ftsEnabled,
+	}
+}
+
+// Keep lookup lists small relative to the archive. Broad operators and
+// searches with other filters retain correlated checks.
+const searchOperatorShare = 8
+
+func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQL) {
+	if len(plan.operators) == 0 || plan.operators[0].condition != 0 || sourcescope.IDs(ctx) != nil {
+		return
+	}
+	var maxID int64
+	if err := s.db.QueryRowContext(ctx, "SELECT COALESCE(MAX(id), 0) FROM messages").Scan(&maxID); err != nil {
+		return
+	}
+	limit := maxID / searchOperatorShare
+	best := -1
+	for i, operator := range plan.operators {
+		var count int64
+		if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM ("+operator.matching+" LIMIT ?) AS matches",
+			plan.args[operator.condition], limit+1).Scan(&count); err != nil {
+			return
+		}
+		if count <= limit {
+			limit = count
+			best = i
+		}
+	}
+	if best >= 0 {
+		operator := plan.operators[best]
+		plan.conditions[operator.condition] = "m.id IN (" + operator.matching + ")"
 	}
 }
 
