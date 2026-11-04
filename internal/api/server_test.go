@@ -1890,7 +1890,8 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 				// in-memory network so runner scheduling cannot consume the budget.
 				server := httptest.NewTestServer(t, handler)
 				server.Config.ReadTimeout = ordinaryReadTimeout
-				transport := server.Client().Transport.(*http.Transport)
+				transport, ok := server.Client().Transport.(*http.Transport)
+				require.True(t, ok, "test server uses an HTTP transport")
 				conn, err := transport.DialContext(t.Context(), "tcp", "example.com:80")
 				require.NoError(t, err, "dial server")
 				defer func() { _ = conn.Close() }()
