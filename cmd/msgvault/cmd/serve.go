@@ -1877,6 +1877,29 @@ func (a *storeAPIAdapter) ListIdentityMatchJudgmentsContext(ctx context.Context,
 	return a.store.ListIdentityMatchJudgmentsContext(ctx, candidateID, limit, beforeID...)
 }
 
+func (a *storeAPIAdapter) DirectoryPeopleForParticipantsContext(
+	ctx context.Context, participantIDs []int64,
+) (map[int64]store.DirectoryPersonSummary, error) {
+	return a.store.DirectoryPeopleForParticipantsContext(ctx, participantIDs)
+}
+
+func (a *storeAPIAdapter) DirectoryPeopleForParticipantsAtContext(
+	ctx context.Context, participantIDs []int64, evaluatedAt time.Time,
+) (map[int64]store.DirectoryPersonSummary, error) {
+	return a.store.DirectoryPeopleForParticipantsAtContext(ctx, participantIDs, evaluatedAt)
+}
+
+type relationshipDirectoryLookupAdapter interface {
+	DirectoryPeopleForParticipantsContext(
+		ctx context.Context, participantIDs []int64,
+	) (map[int64]store.DirectoryPersonSummary, error)
+	DirectoryPeopleForParticipantsAtContext(
+		ctx context.Context, participantIDs []int64, evaluatedAt time.Time,
+	) (map[int64]store.DirectoryPersonSummary, error)
+}
+
+var _ relationshipDirectoryLookupAdapter = (*storeAPIAdapter)(nil)
+
 var _ api.MessageStore = (*storeAPIAdapter)(nil)
 var _ api.CtxMessageStore = (*storeAPIAdapter)(nil)
 var _ api.MessageIdentityStore = (*storeAPIAdapter)(nil)

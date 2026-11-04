@@ -230,6 +230,11 @@ type exploreCursor struct {
 	// duplicate or skip rows without any cursor revision changing.
 	DecayDate string `json:"decay_date,omitempty"`
 
+	// CadenceEvaluatedAt pins Directory cadence hydration to the first
+	// relationship page so status and due filters remain stable across pages.
+	CadenceEvaluatedAt string `json:"cadence_evaluated_at,omitempty"`
+	CadenceFingerprint string `json:"cadence_fingerprint,omitempty"`
+
 	// Timezone and CanonicalID pin a relationship timeline cursor (see
 	// handleRelationshipTimeline) to the request that produced it. Unlike
 	// every other explore-style cursor, a mismatch on any field here —

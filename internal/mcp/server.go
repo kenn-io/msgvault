@@ -30,6 +30,7 @@ import (
 
 // Tool name constants.
 const (
+	ToolSetPersonContactList      = "set_person_contact_list"
 	ToolDraftReply                = "draft_reply"
 	ToolDraftCompose              = "draft_compose"
 	ToolDraftForward              = "draft_forward"
@@ -61,6 +62,7 @@ const (
 	ToolSearchPeople              = "search_people"
 	ToolListDirectoryPeople       = "list_directory_people"
 	ToolFindChat                  = "find_chat"
+	ToolListRelationships         = "list_relationships"
 	ToolGetPersonNotes            = "get_person_notes"
 	ToolGetPersonProfile          = "get_person_profile"
 	ToolGetPersonRelationship     = "get_person_relationship"

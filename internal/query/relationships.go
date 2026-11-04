@@ -65,12 +65,28 @@ func RelationshipScore(s RelationshipSignals) float64 {
 // RelationshipRow is one ranked counterpart: a canonical identity cluster
 // scored against the archive owner's interactions with it.
 type RelationshipRow struct {
-	CanonicalID  int64               `json:"canonical_id"`
-	DisplayLabel string              `json:"display_label"`
-	MemberIDs    []int64             `json:"member_ids"`
-	Score        float64             `json:"score"`
-	Signals      RelationshipSignals `json:"signals"`
-	LastAt       time.Time           `json:"last_at"`
+	CanonicalID        int64                `json:"canonical_id"`
+	DisplayLabel       string               `json:"display_label"`
+	MemberIDs          []int64              `json:"member_ids"`
+	Score              float64              `json:"score"`
+	Signals            RelationshipSignals  `json:"signals"`
+	LastAt             time.Time            `json:"last_at"`
+	PersonID           *int64               `json:"person_id,omitempty"`
+	Cadence            *RelationshipCadence `json:"cadence,omitempty"`
+	LastContactChannel string               `json:"last_contact_channel,omitempty"`
+}
+
+// RelationshipCadence is the additive, non-sensitive keep-in-touch context
+// attached by the API Store join. It deliberately mirrors the keeper
+// DirectoryCadence wire shape without making the analytical query engine
+// depend on the durable-person Store package.
+type RelationshipCadence struct {
+	FrequencyDays *int64     `json:"frequency_days,omitempty"`
+	List          string     `json:"list,omitempty"`
+	DueAt         *time.Time `json:"due_at,omitempty"`
+	Status        string     `json:"status"`
+	DaysOverdue   *int       `json:"days_overdue,omitempty"`
+	Stale         bool       `json:"stale"`
 }
 
 // RelationshipsRequest scopes and pages a relationship ranking query. Now is
@@ -80,6 +96,9 @@ type RelationshipRow struct {
 type RelationshipsRequest struct {
 	Context Context
 	ShowAll bool
+	// AllRows returns the complete ordered ranking for callers that must join
+	// local metadata before applying their own filter and page boundary.
+	AllRows bool
 	Limit   int
 	Offset  int
 	Now     time.Time
@@ -162,6 +181,7 @@ func (e *DuckDBEngine) Relationships(ctx context.Context, request RelationshipsR
 		now.UTC(),
 		request.Offset,
 		limit,
+		request.AllRows,
 	)
 	if err != nil {
 		return nil, err
@@ -185,6 +205,7 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 	showAll bool,
 	now time.Time,
 	offset, limit int,
+	allRows bool,
 ) ([]RelationshipRow, int64, error) {
 	var queryText string
 	var queryArgs []any
@@ -236,6 +257,9 @@ func (e *DuckDBEngine) queryRelationshipCandidates(
 		return relationshipRowBefore(candidates[i], candidates[j])
 	})
 	totalCount := int64(len(candidates))
+	if allRows {
+		return candidates, totalCount, nil
+	}
 	if offset >= len(candidates) {
 		return []RelationshipRow{}, totalCount, nil
 	}

@@ -100,6 +100,18 @@ func TestRelationshipsRanksByReciprocityAndGatesNewsletters(t *testing.T) {
 		assert.Positive(newsletter.Signals.ReceivedFromThem)
 	})
 
+	t.Run("all rows returns the complete ranking in one query", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+
+		result, err := engine.Relationships(ctx, RelationshipsRequest{
+			Now: now, Limit: 1, ShowAll: true, AllRows: true,
+		})
+		require.NoError(err)
+		require.Len(result.Rows, 2)
+		assert.Equal(int64(2), result.TotalCount)
+	})
+
 	t.Run("deterministic given an injected Now", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)

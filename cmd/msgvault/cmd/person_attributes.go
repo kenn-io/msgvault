@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/msgvault/internal/contactcadence"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -20,6 +21,7 @@ var (
 	personAttributesJSONOutput   bool
 	personAttributesHistory      bool
 	personAttributesSlug         string
+	personAttributeList          string
 	personAttributeValue         string
 	personAttributeValueJSON     string
 	personAttributeOrdinal       int64
@@ -108,11 +110,20 @@ var personAttributesSetCmd = &cobra.Command{
 		}
 		hasScalar := cmd.Flags().Changed("value")
 		hasJSON := cmd.Flags().Changed("value-json")
+		hasList := cmd.Flags().Changed("list")
+		var listDays int64
+		if hasList {
+			var valid bool
+			listDays, valid = contactcadence.DaysForList(personAttributeList)
+			if slug != "contact_frequency" || !valid || hasScalar || hasJSON {
+				return usageErr(cmd, errors.New("--list requires contact_frequency, A/B/C/D, and no --value or --value-json"))
+			}
+		}
 		expectedValueIDSet := cmd.Flags().Changed("expected-value-id")
 		switch {
 		case hasScalar && hasJSON:
 			return usageErr(cmd, errors.New("--value and --value-json are mutually exclusive"))
-		case !hasScalar && !hasJSON:
+		case !hasScalar && !hasJSON && !hasList:
 			return usageErr(cmd, errors.New("--value or --value-json is required"))
 		}
 		if expectedValueIDSet && personAttributeExpectedID < 1 {
@@ -126,7 +137,9 @@ var personAttributesSetCmd = &cobra.Command{
 		defer func() { _ = client.Close() }()
 
 		body := generated.SetPersonAttributeBody{}
-		if hasJSON {
+		if hasList {
+			body.Value = generated.AttributeValue{Type: "integer", Integer: &listDays}
+		} else if hasJSON {
 			document, readErr := readCLIDocument(cmd, personAttributeValueJSON)
 			if readErr != nil {
 				return readErr
@@ -402,6 +415,7 @@ func init() {
 		"history", false, "Include superseded values")
 	personAttributesListCmd.Flags().StringVar(&personAttributesSlug,
 		"slug", "", "Restrict the listing to one definition slug")
+	personAttributesSetCmd.Flags().StringVar(&personAttributeList, "list", "", "Sivers-style contact_frequency preset: A, B, C, or D")
 	personAttributesSetCmd.Flags().StringVar(&personAttributeValue,
 		"value", "", "Scalar value coerced to the definition's storage type")
 	personAttributesSetCmd.Flags().StringVar(&personAttributeValueJSON,
@@ -424,5 +438,5 @@ func init() {
 		command.Flags().BoolVar(&personAttributeDryRun, "dry-run", false,
 			"Validate and preview without writing")
 	}
-	personAttributesSetCmd.MarkFlagsMutuallyExclusive("value", "value-json")
+	personAttributesSetCmd.MarkFlagsMutuallyExclusive("value", "value-json", "list")
 }
