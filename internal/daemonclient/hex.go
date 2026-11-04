@@ -2,7 +2,6 @@ package daemonclient
 
 import (
 	"context"
-	"net/http"
 
 	"go.kenn.io/msgvault/internal/hex"
 )
@@ -16,7 +15,4 @@ func (c *Client) ImportHex(ctx context.Context, req hex.RemoteRequest) (hex.Remo
 		return hex.RemoteResult{}, err
 	}
 	return sendRecorder[hex.RemoteResult](ctx, c, "/api/v1/import/hex", normalized, hexRecorderErrors)
-}
-func decodeHexResponse(resp *http.Response) (hex.RemoteResult, error) {
-	return decodeRecorderResponse[hex.RemoteResult](resp, hexRecorderErrors)
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"os"
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
@@ -14,24 +13,7 @@ import (
 type RemoteSender func(context.Context, RemoteRequest) (RemoteResult, error)
 
 func ForgetRemoteUploads(ctx context.Context, opts ImportOptions) error {
-	canonical, dir, err := meetingimport.RecorderSyncPaths(opts.MeetingsDir, opts.LockDir)
-	if err != nil {
-		return err
-	}
-	lock, err := meetingimport.LockRecorderSource(ctx, canonical, dir)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Unlock() }()
-	path := meetingimport.RecorderUploadsPath(dir, canonical, opts.Identifier, opts.RemoteTarget)
-	if _, err := meetingimport.LoadRecorderUploads[string](path); err != nil {
-		return err
-	}
-	err = os.Remove(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	return err
+	return meetingimport.ForgetRecorderUploads[string](ctx, opts.MeetingsDir, opts.LockDir, opts.Identifier, opts.RemoteTarget)
 }
 
 // ScanRemote serializes a complete scan through its final acknowledgement.

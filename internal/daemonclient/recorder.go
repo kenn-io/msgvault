@@ -137,3 +137,15 @@ func decodeRecorderResponse[T any](resp *http.Response, e recorderErrors) (T, er
 	}
 	return result, nil
 }
+
+type recorderUploadOptions struct {
+	query     map[string]any
+	mediaType string
+}
+
+func (o recorderUploadOptions) GetPathParams() (map[string]any, error) { return map[string]any{}, nil }
+func (o recorderUploadOptions) GetQuery() (map[string]any, error)      { return o.query, nil }
+func (o recorderUploadOptions) GetBody() any                           { return nil }
+func (o recorderUploadOptions) GetHeader() (map[string]string, error) {
+	return map[string]string{"Content-Type": o.mediaType}, nil
+}

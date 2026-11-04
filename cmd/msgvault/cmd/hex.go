@@ -142,76 +142,20 @@ Examples:
 			}
 			return runDaemonCLICommandHTTPFromCobra(cmd, args)
 		}
-		sources, err := hexSources(cfg).selected(args)
-		if err != nil {
-			return err
-		}
-		var after time.Time
-		if syncHexAfter != "" {
-			parsed, err := time.Parse(time.DateOnly, syncHexAfter)
-			if err != nil {
-				return usageErr(cmd, fmt.Errorf("invalid --after %q (expected YYYY-MM-DD): %w", syncHexAfter, err))
-			}
-			after = parsed.UTC()
-		}
-		for _, source := range sources {
-			if _, err := source.EffectiveAccountEmail(); err != nil {
-				return err
-			}
-		}
-
-		st, cleanup, err := openWritableStoreAndInitForIngestInvocation(state)
-		if err != nil {
-			return err
-		}
-		defer cleanup()
-		dbPath := cfg.DatabaseDSN()
-
-		ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Finishing current meeting...")
-		defer stop()
-
-		var pendingWrites int64
-		for _, source := range sources {
-			accountEmail, _ := source.EffectiveAccountEmail()
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "Syncing Hex for %s\n\n", source.Identifier)
-			options := hexImportOptions(source)
-			options.AttachmentsDir = cfg.AttachmentsDir()
-			options.AccountEmail = accountEmail
-			options.Full, options.Limit, options.StartedAfter = syncHexFull, syncHexLimit, after
-			options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
-			summary, importErr := hex.NewImporter(st).Import(ctx, options)
-			if summary != nil {
-				pendingWrites += summary.MeetingsAdded + summary.MeetingsUpdated
-			}
-			run := meetingSyncRun{
-				provider: "hex", identifier: source.Identifier,
-				writes: pendingWrites, err: importErr,
-			}
-			refresh := func() error { return rebuildHexCacheAfterWrite(dbPath, state) }
-			if err := run.finish(refresh); err != nil {
-				return err
-			}
-			writeHexSummary(cmd.OutOrStdout(), summary)
-		}
-		if pendingWrites > 0 {
-			return rebuildHexCacheAfterWrite(dbPath, state)
-		}
-		return nil
+		return syncRecorderSources(cmd, args, hexSources(cfg), "Hex", "hex", syncHexAfter, func(s config.HexSource) string { return s.Identifier },
+			func(ctx context.Context, st *store.Store, source config.HexSource, after time.Time) (*hex.ImportSummary, error) {
+				options := hexImportOptions(source)
+				options.AttachmentsDir = cfg.AttachmentsDir()
+				options.AccountEmail, _ = source.EffectiveAccountEmail()
+				options.Full, options.Limit, options.StartedAfter = syncHexFull, syncHexLimit, after
+				options.Progress = func(line string) { _, _ = fmt.Fprintln(cmd.OutOrStdout(), "  "+line) }
+				return hex.NewImporter(st).Import(ctx, options)
+			}, func(s *hex.ImportSummary) int64 { return s.MeetingsAdded + s.MeetingsUpdated }, writeHexSummary, rebuildHexCacheAfterWrite)
 	},
 }
 
 func writeHexSummary(out io.Writer, summary *hex.ImportSummary) {
-	_, _ = fmt.Fprintln(out, "\nHex sync complete!")
-	_, _ = fmt.Fprintf(out, "  Duration:           %s\n", summary.Duration.Round(time.Second))
-	_, _ = fmt.Fprintf(out, "  Meetings processed: %d\n", summary.MeetingsProcessed)
-	_, _ = fmt.Fprintf(out, "  Meetings added:     %d\n", summary.MeetingsAdded)
-	_, _ = fmt.Fprintf(out, "  Meetings updated:   %d\n", summary.MeetingsUpdated)
-	if summary.RecordingsStored > 0 || summary.RecordingsSkipped > 0 {
-		_, _ = fmt.Fprintf(out, "  Recordings stored:  %d (deferred: %d)\n", summary.RecordingsStored, summary.RecordingsSkipped)
-	}
-	if summary.SkippedInProgress > 0 {
-		_, _ = fmt.Fprintf(out, "  Still in progress:  %d (archived by a later sync)\n", summary.SkippedInProgress)
-	}
+	writeRecorderSummary(out, "Hex", summary.Duration, summary.MeetingsProcessed, summary.MeetingsAdded, summary.MeetingsUpdated, summary.RecordingsStored, summary.RecordingsSkipped, summary.SkippedInProgress)
 	if summary.Warnings > 0 {
 		_, _ = fmt.Fprintf(out, "  Source warnings: %d\n", summary.Warnings)
 	}
@@ -231,37 +175,12 @@ func hexImportOptions(source config.HexSource) hex.ImportOptions {
 // runConfiguredHexSync is the daemon-scheduler entry point for one
 // [[hex]] source.
 func runConfiguredHexSync(ctx context.Context, st *store.Store, source config.HexSource, attachmentsDir string) error {
-	notRegistered := fmt.Errorf(
-		"hex source %q is not registered; run msgvault add-hex %s first",
-		source.Identifier, source.Identifier)
-	registered, err := requireRegisteredMeetingSource(st, hex.SourceType, source.Identifier, notRegistered)
-	if err != nil {
-		return recordSyncAttempt(ctx, hex.SourceType, source.Identifier, err)
-	}
-	if registered.MergedIntoSourceID != 0 {
-		return nil
-	}
-	accountEmail, err := source.EffectiveAccountEmail()
-	if err != nil {
-		return recordSyncAttempt(ctx, hex.SourceType, source.Identifier, err)
-	}
-	options := hexImportOptions(source)
-	options.AttachmentsDir = attachmentsDir
-	options.AccountEmail = accountEmail
-	summary, importErr := hex.NewImporter(st).Import(ctx, options)
-	var writes int64
-	if summary != nil {
-		writes = summary.MeetingsAdded + summary.MeetingsUpdated
-	}
-	run := meetingSyncRun{
-		provider: "hex", identifier: source.Identifier, writes: writes, err: importErr,
-	}
-	// Check the cache even when this scan wrote nothing: a hook or manual
-	// import may have been throttled by min_rebuild_interval, and the
-	// background refresher schedules the retry that import did not.
-	_ = recordSyncAttempt(ctx, hex.SourceType, source.Identifier, importErr)
-	return run.finishScheduled(ctx, "hex:"+source.Identifier,
-		rebuildHexCacheAfterScheduledSync)
+	return syncConfiguredRecorder(ctx, st, source, "hex", source.Identifier, func() (*hex.ImportSummary, error) {
+		options := hexImportOptions(source)
+		options.AttachmentsDir = attachmentsDir
+		options.AccountEmail, _ = source.EffectiveAccountEmail()
+		return hex.NewImporter(st).Import(ctx, options)
+	}, func(s *hex.ImportSummary) int64 { return s.MeetingsAdded + s.MeetingsUpdated }, rebuildHexCacheAfterScheduledSync)
 }
 
 func init() {

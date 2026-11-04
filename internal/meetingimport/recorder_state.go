@@ -1,6 +1,7 @@
 package meetingimport
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -126,5 +127,26 @@ func (u *RecorderUploads[K]) Save() error {
 		return fmt.Errorf("save meeting upload record: %w", err)
 	}
 	u.Dirty = false
+	return nil
+}
+
+// ForgetRecorderUploads clears only a supported receipt after acquiring its source lock.
+func ForgetRecorderUploads[K comparable](ctx context.Context, root, dir, identifier, target string) error {
+	canonical, dir, err := RecorderSyncPaths(root, dir)
+	if err != nil {
+		return err
+	}
+	lock, err := LockRecorderSource(ctx, canonical, dir)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Unlock() }()
+	path := RecorderUploadsPath(dir, canonical, identifier, target)
+	if _, err := LoadRecorderUploads[K](path); err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	return nil
 }
