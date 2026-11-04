@@ -140,7 +140,7 @@ func TestMCPLocalRecoveryStartsReplacementDaemon(t *testing.T) {
 	requirements.NoError(os.WriteFile(path, []byte(contents), 0o600))
 	cfg, err := config.Load(path, home)
 	requirements.NoError(err)
-	assertions.Equal(dataDir, cfg.Data.DataDir)
+	assertions.Equal(filepath.Clean(dataDir), filepath.Clean(cfg.Data.DataDir))
 	initial := publishMCPRecoveryDaemon(t, cfg, 1)
 	ctx := withStoreResolverConfig(t, cfg)
 	invocationFromContext(ctx).options = invocationOptions{cfgFile: path, cfgFileChanged: true}
@@ -172,7 +172,7 @@ func TestMCPLocalRecoveryStartsReplacementDaemon(t *testing.T) {
 		if err != nil {
 			return nil, err
 		}
-		if owner.Data.DataDir != dataDir {
+		if filepath.Clean(owner.Data.DataDir) != filepath.Clean(dataDir) {
 			return nil, errors.New("recovery selected a different archive directory")
 		}
 		command := &cobra.Command{Use: "serve"}
