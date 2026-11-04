@@ -258,6 +258,10 @@ func (s *Store) lockCardDAVConflictReviewTx(ctx context.Context, tx *loggedTx, c
 	if _, err := s.lockCardDAVConflictResolutionBookTx(ctx, tx, identity.AddressBookID); err != nil {
 		return nil, err
 	}
+	if err := s.lockIdentityMutationTxContext(ctx, tx); err != nil {
+		return nil, err
+	}
+
 	// The mapping probe only determines which person must be locked; its identity
 	// is checked again after acquiring the resource lock.
 	var personID sql.NullInt64

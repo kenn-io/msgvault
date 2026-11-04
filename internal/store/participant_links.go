@@ -362,7 +362,7 @@ func (s *Store) linkParticipantsContextGuarded(
 	a, b int64,
 	guard func(context.Context, *loggedTx) error,
 ) (revision int64, linked bool, err error) {
-	return s.linkParticipantsContextGuardedOwned(ctx, a, b, 0, guard, nil)
+	return s.linkParticipantsContextGuardedOwned(ctx, a, b, 0, true, guard, nil)
 }
 
 // linkParticipantsContextGuardedOwned is the guarded link transaction with an
@@ -373,6 +373,7 @@ func (s *Store) linkParticipantsContextGuarded(
 func (s *Store) linkParticipantsContextGuardedOwned(
 	ctx context.Context,
 	a, b, ownerCandidateID int64,
+	confirmMembership bool,
 	guard func(context.Context, *loggedTx) error,
 	afterLink func(context.Context, *loggedTx) error,
 ) (revision int64, linked bool, err error) {
@@ -403,6 +404,11 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 		)
 		if err != nil {
 			return err
+		}
+		if confirmMembership && personID != 0 {
+			if err := confirmCardDAVParticipantBindingsTx(ctx, tx, personID, unionMembers); err != nil {
+				return err
+			}
 		}
 		for _, e := range edges {
 			if e.a == lo && e.b == hi {
@@ -482,6 +488,12 @@ func (s *Store) linkParticipantsContextGuardedOwned(
 				return err
 			}
 			if changed {
+				if !confirmMembership {
+					if err := s.advanceCardDAVAutomaticBindingBaselineTx(ctx, tx, personID); err != nil {
+						return err
+					}
+				}
+
 				if err := s.bumpPersonRevisionsTx(ctx, tx, personID); err != nil {
 					return err
 				}
