@@ -2488,6 +2488,25 @@ func (r RelationshipCalendarDayLevel) Validate() error {
 	}
 }
 
+type RelationshipsHTTPRequestCadence string
+
+const (
+	Due     RelationshipsHTTPRequestCadence = "due"
+	NoList  RelationshipsHTTPRequestCadence = "no_list"
+	Overdue RelationshipsHTTPRequestCadence = "overdue"
+	Unknown RelationshipsHTTPRequestCadence = "unknown"
+)
+
+// Validate checks if the RelationshipsHTTPRequestCadence value is valid
+func (r RelationshipsHTTPRequestCadence) Validate() error {
+	switch r {
+	case Due, NoList, Overdue, Unknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid RelationshipsHTTPRequestCadence value, got: %v", r))
+	}
+}
+
 type RemoveResultCacheState string
 
 const (

@@ -8,6 +8,10 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+### API schema 3.44.0
+
+- Ranked relationships carry the saved person ID, contact-list cadence, and last-contact channel. `POST /api/v1/relationships` and the new MCP `list_relationships` tool filter the ranking by `cadence` and `due_within_days`.
+
 ### API schema 3.43.0
 
 - Contact lists turn `contact_frequency` into a reach-out queue. `msgvault person attributes set <id> contact_frequency --list A` sets the 21/60/180/365-day A/B/C/D presets, and `person directory --cadence overdue|due|no_list|unknown` with `--sort most_overdue|next_due` lists who is due. MCP `list_directory_people` takes the same filters, and `set_person_contact_list` sets a list after confirmation. See [contact lists](usage/people.md#keep-in-touch-with-contact-lists).

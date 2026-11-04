@@ -398,7 +398,8 @@ import (
 // Older servers omit body_text; body keeps its HTML fallback.
 // 3.42.0 adds iMessage participant and attachment-size limits to settings.
 // 3.43.0 adds Directory cadence filters, ordering, presets and coverage.
-const APISchemaVersion = "3.43.0"
+// 3.44.0 adds person_id, cadence and last_contact_channel to relationship rows, and cadence filters to POST /api/v1/relationships.
+const APISchemaVersion = "3.44.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.

@@ -12,6 +12,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
 	"go.kenn.io/msgvault/internal/daemonclient"
+	"go.kenn.io/msgvault/internal/peoplebrowser"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector/visual"
@@ -40,28 +41,29 @@ const (
 )
 
 type catalogCapabilities struct {
-	sqlQuery        bool
-	semanticSearch  bool
-	vectorInMessage bool
-	similarMessages bool
-	documentSearch  bool
-	mediaSearch     bool
-	people          bool
-	directoryPeople bool
-	chatDiscovery   bool
-	visualSearch    bool
-	embeddingStatus bool
-	savedViews      bool
-	meetings        bool
-	personAgenda    bool
-	personTier      bool
-	kata            bool
-	kataLookup      bool
-	kataDocbank     bool
-	contactRoutes   bool
-	identityReview  bool
-	personCardDAV   bool
-	messageTags     bool
+	sqlQuery           bool
+	semanticSearch     bool
+	vectorInMessage    bool
+	similarMessages    bool
+	documentSearch     bool
+	mediaSearch        bool
+	people             bool
+	directoryPeople    bool
+	relationshipPeople bool
+	chatDiscovery      bool
+	visualSearch       bool
+	embeddingStatus    bool
+	savedViews         bool
+	meetings           bool
+	personAgenda       bool
+	personTier         bool
+	kata               bool
+	kataLookup         bool
+	kataDocbank        bool
+	contactRoutes      bool
+	identityReview     bool
+	personCardDAV      bool
+	messageTags        bool
 }
 
 func visualSearchAvailable(capabilities catalogCapabilities) bool {
@@ -140,6 +142,10 @@ func capabilitiesFor(opts ServeOptions) catalogCapabilities {
 		people:          opts.PeopleBackend != nil,
 		directoryPeople: opts.DirectoryBackend != nil,
 		chatDiscovery:   opts.ChatDiscoveryBackend != nil,
+		relationshipPeople: func() bool {
+			_, ok := opts.PeopleBackend.(peoplebrowser.RelationshipLister)
+			return ok
+		}(),
 		visualSearch:    opts.VisualSearcher != nil,
 		embeddingStatus: opts.EmbeddingStatus != nil,
 		savedViews:      opts.SavedViews != nil,
@@ -251,6 +257,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 		listMeetingActionItemsDefinition(nil),
 		listDirectoryPeopleDefinition(nil),
 		findChatDefinition(),
+		listRelationshipsDefinition(nil),
 		listSavedViewsDefinition(nil),
 		querySQLDefinition(),
 		runSavedViewDefinition(nil),
@@ -385,6 +392,8 @@ func documentSearchAvailable(c catalogCapabilities) bool { return c.documentSear
 func peopleAvailable(c catalogCapabilities) bool { return c.people }
 
 func directoryPeopleAvailable(c catalogCapabilities) bool { return c.directoryPeople }
+
+func relationshipPeopleAvailable(c catalogCapabilities) bool { return c.relationshipPeople }
 
 func savedViewsAvailable(c catalogCapabilities) bool { return c.savedViews }
 

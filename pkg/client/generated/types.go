@@ -14050,6 +14050,19 @@ func (r RejectedCandidate) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
+type RelationshipCadence struct {
+	DaysOverdue   *int64     `json:"days_overdue,omitempty"`
+	DueAt         *time.Time `json:"due_at,omitempty"`
+	FrequencyDays *int64     `json:"frequency_days,omitempty"`
+	List          *string    `json:"list,omitzero"`
+	Stale         bool       `json:"stale"`
+	Status        string     `json:"status" validate:"required"`
+}
+
+func (r RelationshipCadence) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
 type RelationshipCalendarDay struct {
 	Chat         int64                        `json:"chat"`
 	Date         string                       `json:"date" validate:"required"`
@@ -14232,16 +14245,26 @@ func (r RelationshipReviewsResponse) Validate() error {
 }
 
 type RelationshipRow struct {
-	CanonicalID  int64               `json:"canonical_id"`
-	DisplayLabel string              `json:"display_label" validate:"required"`
-	LastAt       time.Time           `json:"last_at" validate:"required"`
-	MemberIds    []int64             `json:"member_ids" validate:"required"`
-	Score        float64             `json:"score"`
-	Signals      RelationshipSignals `json:"signals"`
+	Cadence            *RelationshipCadence `json:"cadence,omitempty"`
+	CanonicalID        int64                `json:"canonical_id"`
+	DisplayLabel       string               `json:"display_label" validate:"required"`
+	LastAt             time.Time            `json:"last_at" validate:"required"`
+	LastContactChannel *string              `json:"last_contact_channel,omitzero"`
+	MemberIds          []int64              `json:"member_ids" validate:"required"`
+	PersonID           *int64               `json:"person_id,omitempty"`
+	Score              float64              `json:"score"`
+	Signals            RelationshipSignals  `json:"signals"`
 }
 
 func (r RelationshipRow) Validate() error {
 	var errors runtime.ValidationErrors
+	if r.Cadence != nil {
+		if v, ok := any(r.Cadence).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cadence", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(r.DisplayLabel, "required"); err != nil {
 		errors = errors.Append("DisplayLabel", err)
 	}
@@ -14380,14 +14403,28 @@ func (r RelationshipTypesResponse) Validate() error {
 }
 
 type RelationshipsHTTPRequest struct {
-	Cursor  *string         `json:"cursor,omitzero"`
-	Filters []ExploreFilter `json:"filters,omitempty"`
-	Limit   *int64          `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
-	ShowAll *bool           `json:"show_all,omitempty"`
+	Cadence       *RelationshipsHTTPRequestCadence `json:"cadence,omitempty"`
+	Cursor        *string                          `json:"cursor,omitzero"`
+	DueWithinDays *int64                           `json:"due_within_days,omitempty" validate:"omitempty,gte=0,lte=3660"`
+	Filters       []ExploreFilter                  `json:"filters,omitempty"`
+	Limit         *int64                           `json:"limit,omitempty" validate:"omitempty,gte=0,lte=500"`
+	ShowAll       *bool                            `json:"show_all,omitempty"`
 }
 
 func (r RelationshipsHTTPRequest) Validate() error {
 	var errors runtime.ValidationErrors
+	if r.Cadence != nil {
+		if v, ok := any(r.Cadence).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cadence", err)
+			}
+		}
+	}
+	if r.DueWithinDays != nil {
+		if err := typesValidator.Var(r.DueWithinDays, "omitempty,gte=0,lte=3660"); err != nil {
+			errors = errors.Append("DueWithinDays", err)
+		}
+	}
 	for i, item := range r.Filters {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

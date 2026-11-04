@@ -73,16 +73,19 @@ func TestMCPMemoryChild(t *testing.T) {
 // a backend, so empty implementations suffice.
 func daemonProxyMemoryOptions() ServeOptions {
 	return ServeOptions{
-		EmbeddingStatus:      struct{ EmbeddingStatusReader }{},
-		Engine:               &querytest.MockEngine{},
-		AttachmentReader:     struct{ AttachmentReader }{},
-		ManifestSaver:        struct{ DeletionManifestSaver }{},
-		HybridSearcher:       struct{ HybridSearcher }{},
-		SimilarSearcher:      struct{ SimilarSearcher }{},
-		DocumentSearcher:     struct{ DocumentSearcher }{},
-		MediaSearcher:        struct{ MediaSearcher }{},
-		PersonFileSearcher:   struct{ PersonFileSearcher }{},
-		PeopleBackend:        struct{ peoplebrowser.Backend }{},
+		EmbeddingStatus:    struct{ EmbeddingStatusReader }{},
+		Engine:             &querytest.MockEngine{},
+		AttachmentReader:   struct{ AttachmentReader }{},
+		ManifestSaver:      struct{ DeletionManifestSaver }{},
+		HybridSearcher:     struct{ HybridSearcher }{},
+		SimilarSearcher:    struct{ SimilarSearcher }{},
+		DocumentSearcher:   struct{ DocumentSearcher }{},
+		MediaSearcher:      struct{ MediaSearcher }{},
+		PersonFileSearcher: struct{ PersonFileSearcher }{},
+		PeopleBackend: struct {
+			peoplebrowser.Backend
+			peoplebrowser.RelationshipLister
+		}{},
 		DirectoryBackend:     struct{ peoplebrowser.DirectoryLister }{},
 		PersonAgendaBackend:  struct{ PersonAgendaBackend }{},
 		PersonTierBackend:    struct{ PersonTierBackend }{},

@@ -14213,6 +14213,28 @@ components:
         - identifier
         - reason
       type: object
+    RelationshipCadence:
+      additionalProperties: true
+      properties:
+        days_overdue:
+          format: int64
+          type: integer
+        due_at:
+          format: date-time
+          type: string
+        frequency_days:
+          format: int64
+          type: integer
+        list:
+          type: string
+        stale:
+          type: boolean
+        status:
+          type: string
+      required:
+        - status
+        - stale
+      type: object
     RelationshipCalendarDay:
       additionalProperties: true
       properties:
@@ -14400,6 +14422,8 @@ components:
     RelationshipRow:
       additionalProperties: true
       properties:
+        cadence:
+          $ref: "#/components/schemas/RelationshipCadence"
         canonical_id:
           format: int64
           type: integer
@@ -14408,11 +14432,16 @@ components:
         last_at:
           format: date-time
           type: string
+        last_contact_channel:
+          type: string
         member_ids:
           items:
             format: int64
             type: integer
           type: array
+        person_id:
+          format: int64
+          type: integer
         score:
           format: double
           type: number
@@ -14572,8 +14601,20 @@ components:
     RelationshipsHTTPRequest:
       additionalProperties: false
       properties:
+        cadence:
+          enum:
+            - overdue
+            - due
+            - no_list
+            - unknown
+          type: string
         cursor:
           type: string
+        due_within_days:
+          format: int64
+          maximum: 3660
+          minimum: 0
+          type: integer
         filters:
           items:
             $ref: "#/components/schemas/ExploreFilter"
@@ -17160,7 +17201,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.43.0
+  version: 3.44.0
 openapi: 3.1.0
 paths:
   /api/ping:

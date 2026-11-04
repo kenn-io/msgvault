@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -274,6 +276,99 @@ func TestRelationshipsRanksAndGatesOverHTTP(t *testing.T) {
 	assert.Len(allPage.Rows, 2, "show_all must include the gated newsletter")
 	ids := []int64{allPage.Rows[0].CanonicalID, allPage.Rows[1].CanonicalID}
 	assert.ElementsMatch([]int64{relAliceID, relNewsletterID}, ids)
+}
+
+func TestRelationshipsJoinsDirectoryCadenceAndFiltersBeforePaging(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	engine := newRelationshipsDuckDBFixture(t, now)
+	srv, identityStore, _ := newRelationshipIdentityAPIServer(t, engine, []string{
+		relationshipIdentityIdentifier,
+		"alice@example.test",
+		"alice-chat@example.test",
+		"newsletter@example.test",
+	})
+	person, _, err := identityStore.CreatePersonFromParticipantContext(t.Context(), relAliceID)
+	require.NoError(t, err)
+	days := int64(21)
+	_, err = identityStore.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{
+		PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency,
+		Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser,
+	})
+	require.NoError(t, err)
+
+	all := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true}`)
+	require.Equal(t, http.StatusOK, all.Code, all.Body.String())
+	var allPage RelationshipsHTTPResponse
+	require.NoError(t, json.Unmarshal(all.Body.Bytes(), &allPage))
+	alice := relationshipRowOf(t, allPage, relAliceID)
+	require.NotNil(t, alice.PersonID)
+	assert.Equal(t, person.ID, *alice.PersonID)
+	require.NotNil(t, alice.Cadence)
+	assert.Equal(t, "A", alice.Cadence.List)
+	assert.Equal(t, store.CadenceUnknown, alice.Cadence.Status)
+
+	unknown := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"unknown"}`)
+	require.Equal(t, http.StatusOK, unknown.Code, unknown.Body.String())
+	var unknownPage RelationshipsHTTPResponse
+	require.NoError(t, json.Unmarshal(unknown.Body.Bytes(), &unknownPage))
+	require.Len(t, unknownPage.Rows, 1)
+	assert.Equal(t, relAliceID, unknownPage.Rows[0].CanonicalID)
+	assert.Equal(t, int64(1), unknownPage.TotalCount)
+
+	noList := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"no_list"}`)
+	require.Equal(t, http.StatusOK, noList.Code, noList.Body.String())
+	var noListPage RelationshipsHTTPResponse
+	require.NoError(t, json.Unmarshal(noList.Body.Bytes(), &noListPage))
+	assert.Empty(t, noListPage.Rows)
+	assert.Zero(t, noListPage.TotalCount)
+
+	_, _, err = identityStore.CreatePersonFromParticipantContext(t.Context(), relNewsletterID)
+	require.NoError(t, err)
+	noListAfterPromotion := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true,"cadence":"no_list","limit":1}`)
+	require.Equal(t, http.StatusOK, noListAfterPromotion.Code, noListAfterPromotion.Body.String())
+	var noListAfterPromotionPage RelationshipsHTTPResponse
+	require.NoError(t, json.Unmarshal(noListAfterPromotion.Body.Bytes(), &noListAfterPromotionPage))
+	require.Len(t, noListAfterPromotionPage.Rows, 1)
+	assert.Equal(t, relNewsletterID, noListAfterPromotionPage.Rows[0].CanonicalID)
+	assert.Equal(t, int64(1), noListAfterPromotionPage.TotalCount)
+
+	invalid := postExploreJSON(t, srv, "/api/v1/relationships", `{"cadence":"overdue","due_within_days":7}`)
+	assert.Equal(t, http.StatusBadRequest, invalid.Code)
+}
+
+type relationshipDirectoryErrorStore struct {
+	*store.Store
+	err error
+}
+
+func (s *relationshipDirectoryErrorStore) DirectoryPeopleForParticipantsContext(
+	context.Context, []int64,
+) (map[int64]store.DirectoryPersonSummary, error) {
+	return nil, s.err
+}
+
+func TestRelationshipsDirectoryJoinSurfacesUnavailableProjection(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		code string
+	}{
+		{name: "stale", err: store.ErrDirectoryProjectionStale, code: "directory_projection_stale"},
+		{name: "unavailable", err: errors.New("synthetic directory failure"), code: "directory_unavailable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			srv, identityStore, _ := newRelationshipIdentityAPIServer(
+				t, newRelationshipsDuckDBFixture(t, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)),
+				[]string{relationshipIdentityIdentifier, "alice@example.test", "alice-chat@example.test", "newsletter@example.test"},
+			)
+			srv.store = &relationshipDirectoryErrorStore{Store: identityStore.Store, err: test.err}
+			response := postExploreJSON(t, srv, "/api/v1/relationships", `{"show_all":true}`)
+			require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+			var apiErr ErrorResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &apiErr))
+			assert.Equal(t, test.code, apiErr.Error)
+		})
+	}
 }
 
 func TestRelationshipsResolvesSourceScopedIdentityBeforeRanking(t *testing.T) {

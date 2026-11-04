@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.43.0**.
+it is separate from the binary release version. The current schema is **3.44.0**.
+
+Schema 3.44.0 adds `person_id`, `cadence`, and `last_contact_channel` to `POST /api/v1/relationships` rows whose counterpart is a saved person, plus the `cadence` and `due_within_days` request fields. A cadence filter keeps only saved people and runs over the full ranking before paging, so `total_count` counts matching rows. MCP `list_relationships` cadence filters require a daemon supporting this schema.
 
 Schema 3.43.0 adds Directory cadence to `GET /api/v1/people/directory`: the `cadence` filter (`overdue`, `due`, `no_list`, `unknown`), `due_within_days`, the `most_overdue` and `next_due` sorts, a `cadence` object and `last_contact_channel` on each person, and page-level `cadence_presets` and `cadence_coverage`. `expected_value_id` 0 on attribute writes requires that no current value exists. CLI and MCP cadence lookups require a daemon supporting this schema.
 
