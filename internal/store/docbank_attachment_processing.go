@@ -30,14 +30,7 @@ func (s *Store) SaveDocbankAttachmentProcessingFingerprint(ctx context.Context, 
 	return s.SetArchiveMarker(ctx, "docbank-processing:"+dest+":"+profile, fingerprint)
 }
 
-// DocbankAttachmentProcessingCursor visits unasked files once, before polling due jobs.
-// Use a fresh cursor for each pass and each profile fingerprint.
-type DocbankAttachmentProcessingCursor struct {
-	afterHash   string
-	unaskedDone bool
-}
-
-func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, cursor *DocbankAttachmentProcessingCursor, n int) ([]DocbankAttachmentProcessing, error) {
+func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerprint string, n int) ([]DocbankAttachmentProcessing, error) {
 	visible, visibleArgs := s.documentSearchVisible(nil)
 	processable := documentSearchDelivered + " AND " + visible
 	var result []DocbankAttachmentProcessing
@@ -45,15 +38,12 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 		if len(result) >= n {
 			break
 		}
-		if unasked && cursor.unaskedDone {
-			continue
-		}
 		limit := n - len(result)
 		query := `SELECT d.content_hash, d.node_id, d.version_id, '', '', ''
  FROM docbank_attachment_deliveries d
  LEFT JOIN docbank_attachment_processing p
  ON p.destination_key = d.destination_key AND p.content_hash = d.content_hash
- WHERE d.destination_key = ? AND ` + processable + ` AND d.content_hash > ?
+ WHERE d.destination_key = ? AND ` + processable + `
  AND (p.destination_key IS NULL OR p.fingerprint <> ?)
  ORDER BY d.content_hash LIMIT ?`
 		args := []any{dest}
@@ -70,7 +60,7 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 		} else {
 			limit = max(1, n/4)
 			args = append(args, visibleArgs...)
-			args = append(args, cursor.afterHash, fingerprint, limit)
+			args = append(args, fingerprint, limit)
 		}
 		rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 		if err != nil {
@@ -83,16 +73,10 @@ func (s *Store) DocbankAttachmentsToProcess(ctx context.Context, dest, fingerpri
 				return nil, err
 			}
 			result = append(result, d)
-			if unasked {
-				cursor.afterHash = d.ContentHash
-			}
 		}
 		err = errors.Join(rows.Err(), rows.Close())
 		if err != nil {
 			return nil, err
-		}
-		if unasked {
-			cursor.unaskedDone = len(result) < limit
 		}
 	}
 	return result, nil
