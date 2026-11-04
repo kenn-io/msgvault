@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -155,38 +156,44 @@ func TestTwentyFallbackOnlyOnFieldRejection(t *testing.T) {
 		}
 		for _, probe := range paths {
 			t.Run(fmt.Sprintf("%s/probe=%t", tt.name, probe), func(t *testing.T) {
-				assert := assert.New(t)
-				require := require.New(t)
-				attempts, fallbacks := 0, 0
-				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-					attempts++
-					var request struct {
-						Query string `json:"query"`
+				synctest.Test(t, func(t *testing.T) {
+					assert := assert.New(t)
+					require := require.New(t)
+					attempts, fallbacks := 0, 0
+					handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						attempts++
+						var request struct {
+							Query string `json:"query"`
+						}
+						if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
+							return
+						}
+						if !strings.Contains(request.Query, "iCalUid") {
+							fallbacks++
+							_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}},"calendarEvents":{"edges":[]},"calendarEventParticipants":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
+							return
+						}
+						w.Header().Set("Retry-After", "0")
+						w.WriteHeader(tt.status)
+						_, _ = fmt.Fprint(w, tt.body)
+					})
+					client, err := NewClient("https://fallback.twenty.example", "example-key")
+					require.NoError(err)
+					client.http.Transport = twentyTransport(func(r *http.Request) (*http.Response, error) {
+						recorder := httptest.NewRecorder()
+						handler.ServeHTTP(recorder, r)
+						return recorder.Result(), nil
+					})
+					client.limiter = rate.NewLimiter(rate.Inf, 1)
+					if probe {
+						err = client.Probe(t.Context())
+					} else {
+						_, err = client.ListRecordings(t.Context(), epoch, "", 1)
 					}
-					if !assert.NoError(json.UnmarshalRead(r.Body, &request)) {
-						return
-					}
-					if !strings.Contains(request.Query, "iCalUid") {
-						fallbacks++
-						_, _ = fmt.Fprint(w, `{"data":{"callRecordings":{"edges":[],"pageInfo":{"hasNextPage":false}},"calendarEvents":{"edges":[]},"calendarEventParticipants":{"edges":[],"pageInfo":{"hasNextPage":false}}}}`)
-						return
-					}
-					w.Header().Set("Retry-After", "0")
-					w.WriteHeader(tt.status)
-					_, _ = fmt.Fprint(w, tt.body)
-				}))
-				defer srv.Close()
-				client, err := NewClient(srv.URL, "example-key")
-				require.NoError(err)
-				client.limiter = rate.NewLimiter(rate.Inf, 1)
-				if probe {
-					err = client.Probe(t.Context())
-				} else {
-					_, err = client.ListRecordings(t.Context(), epoch, "", 1)
-				}
-				require.ErrorContains(err, tt.wantError)
-				assert.Equal(tt.wantAttempts, attempts)
-				assert.Zero(fallbacks)
+					require.ErrorContains(err, tt.wantError)
+					assert.Equal(tt.wantAttempts, attempts)
+					assert.Zero(fallbacks)
+				})
 			})
 		}
 	}
