@@ -87,7 +87,7 @@ This command:
    pg_amcheck out-of-band to validate the cluster.
 2. Compares local message count with Gmail's reported total
 3. Checks how many messages have raw MIME data stored
-4. Samples random messages and verifies their MIME can be decompressed
+4. Samples random messages and verifies their raw MIME is nonempty and parses as MIME
 
 Examples:
   msgvault verify you@gmail.com
@@ -363,6 +363,10 @@ func runVerifyLocal(cmd *cobra.Command, args []string) error {
 				} else {
 					sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: db error (%v)", msgID, err))
 				}
+				continue
+			}
+			if len(rawData) == 0 {
+				sampleErrs = append(sampleErrs, fmt.Sprintf("msg %d: empty raw MIME", msgID))
 				continue
 			}
 

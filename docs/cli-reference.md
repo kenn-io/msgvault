@@ -3080,6 +3080,12 @@ msgvault verify <email> [flags]
 | `--skip-db-check` | Skip SQLite integrity check |
 | `--json` | Emit machine-readable JSON summary |
 
+Sample verification requires nonempty raw MIME that can be decoded and parsed.
+Empty, missing, unreadable, or unparseable samples count toward `sample_errors`,
+not `sample_verified`. Raw MIME coverage counts stored rows; it does not certify
+their contents. Sample errors appear in the summary and do not by themselves
+cause a nonzero exit status.
+
 ---
 
 ## stats
