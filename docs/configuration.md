@@ -1031,16 +1031,15 @@ remain unchanged and can keep messages live indefinitely, until those folders ar
 scanned again. A message already recorded in Trash by an earlier unfiltered sync
 stays live after Trash is skipped. Skipped-only messages keep their labels and deletion markers.
 
-Older imports without stored memberships are checked against the folder they
-were imported from. If the sync scanned that folder, its UIDVALIDITY is
-unchanged, and the message's UID is gone, msgvault marks the message deleted
-from its source. Imports from skipped folders stay unchanged. A folder missing
-from the server counts as deleted only when the current folder selection would
-have scanned it, so a renamed skipped folder keeps its memberships.
-Once observed in a scanned folder, older imports' folder labels are
-rebuilt from stored memberships; a legacy label for a skipped folder alone does
-not prove membership and may disappear. A later sync without folder filters
-reconciles the full account again.
+Tracking starts with the first clean opted-in sync. Messages that left the
+scanned folders before then, or that were never seen in a scanned folder by a
+committed sync, keep their current status.
+
+Stored memberships in skipped folders are never changed. A deleted or renamed
+folder keeps its messages live until a sync without folder exclusions.
+
+A later sync without folder filters reconciles the whole account, including
+older imports.
 
 Remote image archiving is **off by default**. Enabling it contacts
 sender-controlled servers and can activate tracking pixels or disclose the

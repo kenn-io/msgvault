@@ -53,7 +53,7 @@ func (c *Client) finalizeMessageListLocked(ctx context.Context, mailboxes []stri
 
 func (c *Client) addRelocationMessagesLocked(ctx context.Context, mailboxes []string, messages *[]gmail.MessageID) error {
 	if c.relocationCandidateLoader == nil || !c.labelMapComplete ||
-		!c.since.IsZero() || !c.before.IsZero() || (c.labelsSnapshotFilteredLocked() && !c.scopedMailboxSnapshot) ||
+		!c.since.IsZero() || !c.before.IsZero() || c.labelsSnapshotFilteredLocked() ||
 		c.observedMailboxDeltas == nil || !deltasCoverMailboxes(mailboxes, c.observedMailboxDeltas) {
 		return nil
 	}
@@ -70,9 +70,6 @@ func (c *Client) addRelocationMessagesLocked(ctx context.Context, mailboxes []st
 	var lost []string
 	for mailbox, prior := range c.priorFolderStates {
 		state, exists := current[mailbox]
-		if c.scopedMailboxSnapshot && !exists && slices.Contains(c.listedMailboxes, mailbox) {
-			continue
-		}
 		for _, uid := range prior.KnownUIDs {
 			if !exists || state.UIDValidity != prior.UIDValidity || !present[mailbox][uid] {
 				lost = append(lost, compositeID(mailbox, imap.UID(uid)))

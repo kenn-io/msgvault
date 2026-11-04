@@ -143,25 +143,3 @@ func TestFilteredReconciliation_IncompleteMailboxSuppressesSnapshot(t *testing.T
 		})
 	}
 }
-
-func TestFilteredReconciliation_AbsentSkippedMailboxKeepsMembership(t *testing.T) {
-	for _, mode := range []string{"renamed exclusion", "outside saved allow list"} {
-		t.Run(mode, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			addr, user := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 0, "Trash": 1})
-			first := newTestClient(t, addr)
-			listAllMessages(t, first)
-			saved := first.ObservedFolderStates()
-			require.NoError(first.Close())
-			require.NoError(user.Rename("Trash", "Renamed", nil))
-			client := newTestClient(t, addr, WithFolderStates(saved), WithFolderFilter(nil, []string{"Trash", "Renamed"}), WithFilteredDeletionReconciliation(true))
-			if mode == "outside saved allow list" {
-				client.config.Folders = []string{"INBOX"}
-				client.folderFilterExclude = nil
-			}
-			listAllMessages(t, client)
-			assert.Contains(client.ListedMailboxes(), "Trash")
-			assert.Contains(client.ListedMailboxes(), "Renamed")
-		})
-	}
-}

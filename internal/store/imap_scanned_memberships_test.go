@@ -87,7 +87,7 @@ func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedMailboxes(t *testing.T) {
 
 	require.NoError(f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(
 		t.Context(), f.source.ID, completedScannedIMAPSync(t, f),
-		[]store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)}, []string{"INBOX", "Trash"},
+		[]store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)},
 	))
 
 	assert.Equal(before, skippedIMAPSnapshot(t, f))
@@ -114,7 +114,7 @@ func TestApplyIMAPScannedMailboxDeltas_UIDValidityChange(t *testing.T) {
 	}}
 	delta.State.UIDNext = 2
 	require.NoError(f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(
-		t.Context(), f.source.ID, completedScannedIMAPSync(t, f), []store.IMAPMailboxDelta{delta}, []string{"INBOX", "Trash"},
+		t.Context(), f.source.ID, completedScannedIMAPSync(t, f), []store.IMAPMailboxDelta{delta},
 	))
 	assert.True(messageTombstoned(t, f.store, old))
 	assert.False(messageTombstoned(t, f.store, skipped))
@@ -151,7 +151,7 @@ func TestApplyIMAPScannedMailboxDeltas_EmptyAndFailedApplyPreserveState(t *testi
 				deltas = []store.IMAPMailboxDelta{scannedIMAPDelta("Trash", 22)}
 				wantErr = true
 			}
-			err := f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), f.source.ID, run, deltas, []string{"Trash"})
+			err := f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), f.source.ID, run, deltas)
 			if wantErr {
 				require.Error(err)
 			} else {
@@ -163,73 +163,36 @@ func TestApplyIMAPScannedMailboxDeltas_EmptyAndFailedApplyPreserveState(t *testi
 	}
 }
 
-func TestApplyIMAPScannedMailboxDeltas_RetiresDeletedMailbox(t *testing.T) {
+func TestFilteredReconciliation_AbsentSkippedMailboxKeepsMembership(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	f := newIMAPIdentityFixture(t)
-	deleted := f.createMessage(t, "Old|1", "")
+	absent := f.createMessage(t, "Old|1", "")
 	skipped := f.createMessage(t, "Trash|1", "")
 	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{
 		scannedIMAPDelta("INBOX", 11), scannedIMAPDelta("Old", 33, "Old|1"), scannedIMAPDelta("Trash", 22, "Trash|1"),
 	}))
-	untracked := f.createMessage(t, "Old|2", "")
-	untrackedSkipped := f.createMessage(t, "Trash|2", "")
-	archiveOnly := f.createMessage(t, "Old|3", "")
-	_, err := f.store.DB().Exec(f.store.Rebind(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`), archiveOnly)
-	require.NoError(err)
-	label, err := f.store.EnsureLabel(f.source.ID, "Old", "Old", "user")
-	require.NoError(err)
-	require.NoError(f.store.ReplaceMessageLabels(untracked, []int64{label}))
-	require.NoError(f.store.ReplaceMessageLabels(archiveOnly, []int64{label}))
-	require.NoError(f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(
-		t.Context(), f.source.ID, completedScannedIMAPSync(t, f),
-		[]store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)}, []string{"INBOX", "Trash"},
-	))
-	assert.True(messageTombstoned(t, f.store, untracked))
-	assert.Empty(messageLabels(t, f.store, untracked))
-	assert.False(messageTombstoned(t, f.store, untrackedSkipped))
-	assert.False(messageTombstoned(t, f.store, archiveOnly))
-	assert.Equal([]string{"Old"}, messageLabels(t, f.store, archiveOnly))
-	assert.True(messageTombstoned(t, f.store, deleted))
-	assert.False(messageTombstoned(t, f.store, skipped))
 	states, err := f.store.GetIMAPFolderStates(f.source.ID)
 	require.NoError(err)
-	for _, state := range states {
-		assert.NotEqual("Old", state.Mailbox)
-	}
-}
+	known, err := f.store.GetIMAPKnownUIDs(f.source.ID)
+	require.NoError(err)
+	before := skippedIMAPSnapshot(t, f)
 
-func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedScannedRows(t *testing.T) {
-	for _, reset := range []bool{false, true} {
-		name := "incremental"
-		if reset {
-			name = "reset"
-		}
-		t.Run(name, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			f := newIMAPIdentityFixture(t)
-			// Earlier filtered syncs saved cursors and content without memberships.
-			require.NoError(f.store.UpsertIMAPFolderStates(f.source.ID, []store.IMAPFolderState{
-				{Mailbox: "INBOX", UIDValidity: 11, UIDNext: 2},
-				{Mailbox: "Trash", UIDValidity: 22, UIDNext: 2},
-			}))
-			moved := f.createMessage(t, "INBOX|1", "")
-			skipped := f.createMessage(t, "Trash|1", "")
-			retained := f.createMessage(t, "INBOX|2", "")
-			label, err := f.store.EnsureLabel(f.source.ID, "INBOX", "INBOX", "system")
-			require.NoError(err)
-			require.NoError(f.store.ReplaceMessageLabels(moved, []int64{label}))
-			delta := scannedIMAPDelta("INBOX", 11)
-			delta.Reset = reset
-			delta.KnownUIDs = []uint32{2}
-			delta.State.UIDNext = 3
-			if reset {
-				delta.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "INBOX|2"}}
-			}
-			require.NoError(f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(t.Context(), f.source.ID, completedScannedIMAPSync(t, f), []store.IMAPMailboxDelta{delta}, []string{"INBOX", "Trash"}))
-			assert.True(messageTombstoned(t, f.store, moved))
-			assert.Empty(messageLabels(t, f.store, moved))
-			assert.False(messageTombstoned(t, f.store, skipped))
-			assert.False(messageTombstoned(t, f.store, retained))
-		})
-	}
+	require.NoError(f.store.ApplyIMAPScannedMailboxDeltasForSyncContext(
+		t.Context(), f.source.ID, completedScannedIMAPSync(t, f),
+		[]store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)},
+	))
+
+	gotStates, err := f.store.GetIMAPFolderStates(f.source.ID)
+	require.NoError(err)
+	gotKnown, err := f.store.GetIMAPKnownUIDs(f.source.ID)
+	require.NoError(err)
+	assert.Equal(states, gotStates)
+	assert.Equal(known, gotKnown)
+	assert.Equal(before, skippedIMAPSnapshot(t, f))
+	assert.False(messageTombstoned(t, f.store, absent))
+	assert.False(messageTombstoned(t, f.store, skipped))
+	assert.Equal([]string{"Old"}, messageLabels(t, f.store, absent))
+	var key string
+	require.NoError(f.store.DB().QueryRow(f.store.Rebind(`SELECT source_message_id FROM messages WHERE id = ?`), absent).Scan(&key))
+	assert.Equal("Old|1", key)
 }
