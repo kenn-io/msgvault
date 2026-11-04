@@ -3,8 +3,6 @@ package store
 import (
 	"context"
 	"database/sql"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"slices"
@@ -285,20 +283,16 @@ func (s *Store) reconcileMicrosoftMailLabelsTx(ctx context.Context, tx *loggedTx
 }
 
 func persistMicrosoftSentEvidence(q boundQuerier, dialect Dialect, messageID int64) error {
-	if err := persistMicrosoftSentEvidenceMetadata(q, dialect, messageID); err != nil {
-		return err
-	}
 	if err := persistMicrosoftSentEnvelopeRecipients(q, dialect, messageID, messageID); err != nil {
 		return fmt.Errorf("save Microsoft Sent Items envelope: %w", err)
 	}
-	return nil
+	return persistMicrosoftSentEvidenceMetadata(q, dialect, messageID)
 }
 
 func persistMicrosoftSentEnvelopeRecipients(q boundQuerier, dialect Dialect, targetID, sentMessageID int64) error {
 	var sourceHasSnapshot bool
-	if err := q.QueryRow(`SELECT EXISTS (
-		SELECT 1 FROM msmail_sent_envelope_recipients WHERE message_id=?
-	)`, sentMessageID).Scan(&sourceHasSnapshot); err != nil {
+	if err := q.QueryRow(`SELECT `+microsoftSentEnvelopeSnapshotExistsSQL(dialect, "m")+
+		` FROM messages m WHERE m.id=?`, sentMessageID).Scan(&sourceHasSnapshot); err != nil {
 		return fmt.Errorf("check Microsoft Sent Items snapshot: %w", err)
 	}
 	if sourceHasSnapshot {
@@ -326,30 +320,27 @@ func persistMicrosoftSentEnvelopeRecipients(q boundQuerier, dialect Dialect, tar
 
 func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, survivorID, duplicateID int64) error {
 	sentObserved := func(message string) string {
-		metadata := `CASE WHEN json_valid(` + message + `.metadata) THEN json_extract(` + message + `.metadata, '$.` + microsoftSentEvidenceKey + `') END=1`
-		if s.IsPostgreSQL() {
-			metadata = message + `.metadata ->> '` + microsoftSentEvidenceKey + `'='true'`
-		}
-		return `(` + metadata + ` OR EXISTS (
+		return `(` + metadataFlagSQL(s.dialect, message, microsoftSentEvidenceKey) + ` OR ` +
+			microsoftSentEnvelopeSnapshotExistsSQL(s.dialect, message) + ` OR EXISTS (
 			SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 			WHERE ml.message_id=` + message + `.id AND l.source_id=` + message + `.source_id
-			  AND l.system_role='` + LabelSystemRoleSent + `') OR EXISTS (
-			SELECT 1 FROM msmail_sent_envelope_recipients sent
-			WHERE sent.message_id=` + message + `.id))`
+			  AND l.system_role='` + LabelSystemRoleSent + `'))`
 	}
 	var observed, survivorObserved bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS (
 		SELECT 1 FROM messages duplicate
+		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
 		JOIN messages survivor ON survivor.id=?
-		JOIN sources src ON src.id=duplicate.source_id
-		WHERE duplicate.id=? AND duplicate.source_id=survivor.source_id
-		  AND src.source_type='msmail' AND `+sentObserved("duplicate")+`
+		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
+		WHERE duplicate.id=? AND duplicate_source.source_type='msmail'
+		  AND survivor_source.source_type='msmail' AND `+sentObserved("duplicate")+`
 	), EXISTS (
 		SELECT 1 FROM messages duplicate
+		JOIN sources duplicate_source ON duplicate_source.id=duplicate.source_id
 		JOIN messages survivor ON survivor.id=?
-		JOIN sources src ON src.id=survivor.source_id
-		WHERE duplicate.id=? AND duplicate.source_id=survivor.source_id
-		  AND src.source_type='msmail' AND `+sentObserved("survivor")+`
+		JOIN sources survivor_source ON survivor_source.id=survivor.source_id
+		WHERE duplicate.id=? AND duplicate_source.source_type='msmail'
+		  AND survivor_source.source_type='msmail' AND `+sentObserved("survivor")+`
 	)`, survivorID, duplicateID, survivorID, duplicateID).
 		Scan(&observed, &survivorObserved)
 	if err != nil {
@@ -359,9 +350,6 @@ func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, 
 		return nil
 	}
 	q := boundQuerier{ctx: ctx, q: tx}
-	if err := persistMicrosoftSentEvidenceMetadata(q, s.dialect, survivorID); err != nil {
-		return fmt.Errorf("preserve duplicate Microsoft Sent Items provenance: %w", err)
-	}
 	if survivorObserved {
 		if err := persistMicrosoftSentEnvelopeRecipients(q, s.dialect, survivorID, survivorID); err != nil {
 			return fmt.Errorf("preserve survivor Microsoft Sent Items envelope: %w", err)
@@ -369,6 +357,9 @@ func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, 
 	}
 	if err := persistMicrosoftSentEnvelopeRecipients(q, s.dialect, survivorID, duplicateID); err != nil {
 		return fmt.Errorf("preserve duplicate Microsoft Sent Items envelope: %w", err)
+	}
+	if err := persistMicrosoftSentEvidenceMetadata(q, s.dialect, survivorID); err != nil {
+		return fmt.Errorf("preserve duplicate Microsoft Sent Items provenance: %w", err)
 	}
 	transferRecipientsSQL := s.dialect.InsertOrIgnore(`INSERT OR IGNORE INTO message_recipients
 		(message_id, participant_id, recipient_type, display_name, email_address)
@@ -382,29 +373,11 @@ func (s *Store) mergeMicrosoftSentEvidenceTx(ctx context.Context, tx *loggedTx, 
 }
 
 func persistMicrosoftSentEvidenceMetadata(q boundQuerier, dialect Dialect, messageID int64) error {
-	var metadata sql.NullString
-	if err := q.QueryRow(`SELECT metadata FROM messages WHERE id=?`, messageID).Scan(&metadata); err != nil {
-		return fmt.Errorf("read Microsoft message metadata: %w", err)
-	}
-	values := map[string]jsontext.Value{}
-	if metadata.Valid && metadata.String != "" {
-		if err := json.Unmarshal([]byte(metadata.String), &values); err != nil {
-			return fmt.Errorf("decode Microsoft message metadata: %w", err)
-		}
-	}
-	if values == nil {
-		values = make(map[string]jsontext.Value)
-	}
-	if observed, ok := values[microsoftSentEvidenceKey]; ok && string(observed) == "true" {
-		return nil
-	}
-	values[microsoftSentEvidenceKey] = jsontext.Value("true")
-	encoded, err := json.Marshal(values)
-	if err != nil {
-		return fmt.Errorf("encode Microsoft message metadata: %w", err)
-	}
-	if err := setMessageMetadataWith(q, dialect, messageID, sql.NullString{String: string(encoded), Valid: true}); err != nil {
+	if err := persistMessageMetadataFlag(q, dialect, messageID, microsoftSentEvidenceKey); err != nil {
 		return fmt.Errorf("save Microsoft Sent Items provenance: %w", err)
+	}
+	if err := persistMessageMetadataFlag(q, dialect, messageID, microsoftSentEnvelopeObservedKey); err != nil {
+		return fmt.Errorf("save Microsoft Sent Items envelope snapshot marker: %w", err)
 	}
 	return nil
 }

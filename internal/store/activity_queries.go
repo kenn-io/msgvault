@@ -124,9 +124,11 @@ func activityUnsentInSchemaSQL(dialect Dialect, schema string) string {
 		origin = `CASE WHEN json_valid(m.metadata) THEN m.metadata ->> 'imap_content_origin' END`
 		microsoftSent = `COALESCE(CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.msmail_sent_items_observed') END=1, FALSE)`
 	}
+	providerSent := metadataFlagSQL(dialect, "m", providerSentEnvelopeObservedKey)
 	return `(NOT COALESCE(m.is_sent, TRUE) OR (` + draftEvidenceInSchemaSQL(schema, "m", "src") + `
 		AND COALESCE(` + origin + `, '') <> 'sent'
 		AND NOT (src.source_type='msmail' AND ` + microsoftSent + `)
+		AND NOT (src.source_type IN ('gmail','imap') AND ` + providerSent + `)
 		AND NOT EXISTS (SELECT 1 FROM ` + schema + `message_labels ml JOIN ` + schema + `labels l ON l.id = ml.label_id
 		WHERE ml.message_id = m.id AND l.source_id = m.source_id
 		  AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))))`

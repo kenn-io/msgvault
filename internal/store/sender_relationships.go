@@ -23,10 +23,8 @@ func (s *Store) senderNativeOwnershipSQL() string {
 	if s.dialect.DriverName() != postgresDriverName {
 		microsoftSent = `CASE WHEN json_valid(m.metadata) THEN json_extract(m.metadata, '$.msmail_sent_items_observed') END=1`
 	}
-	msmailSentEnvelope := `EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent
-	   WHERE sent.message_id=m.id)`
-	providerSentEnvelope := `EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent
-	   WHERE sent.message_id=m.id)`
+	msmailSentEnvelope := microsoftSentEnvelopeSnapshotExistsSQL(s.dialect, "m")
+	providerSentEnvelope := providerSentEnvelopeSnapshotExistsSQL(s.dialect, "m")
 	sentLabel := `EXISTS (SELECT 1 FROM message_labels ml JOIN labels l ON l.id=ml.label_id
 	   WHERE ml.message_id=m.id AND l.source_id=m.source_id AND (` + sentFolderLabelSQL("l") + ` OR ` + sentGmailLabelSQL("l", "src") + `))`
 	providerSent := `((src.source_type IN ('gmail','imap','msmail') AND ` + sentLabel + `) OR
@@ -38,7 +36,7 @@ func (s *Store) senderNativeOwnershipSQL() string {
 	// Only provider-observed Sent envelope evidence can exempt a raw-import ID.
 	nativeFlag := `(COALESCE(m.source_is_from_me,FALSE) AND NOT (` + email + ` AND src.source_type='msmail'))`
 	rawImported := `(` + email + ` AND ` + s.senderRawImportedIDSQL(original) + `)`
-	allowRawProviderSent := `((src.source_type='msmail' AND ` + msmailSentEnvelope + `) OR
+	allowRawProviderSent := `((src.source_type='msmail' AND (` + microsoftSent + ` OR ` + msmailSentEnvelope + `)) OR
 	  (src.source_type IN ('gmail','` + sourceTypeIMAP + `') AND ` + providerSentEnvelope + `))`
 	return `(` + nativeFlag + ` OR ` + providerSent + `) AND NOT (` + rawImported + ` AND NOT ` + allowRawProviderSent + `)`
 }
@@ -222,6 +220,7 @@ func (s *Store) senderContactRelationshipHistory(ctx context.Context, tx *logged
 func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, scoped bool, excluded int64) (string, []any) {
 	values := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
 	args := make([]any, 0, len(keys)+(len(sources)+1)*9)
+	sentSnapshot := senderSentEnvelopeSnapshotExistsSQL(s.dialect, "m")
 	for _, key := range keys {
 		args = append(args, key)
 	}
@@ -240,8 +239,7 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		JOIN sources src ON src.id=m.source_id
 		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address
 		AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
-		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
-		AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+		AND (mr.recipient_type='from' OR NOT ` + sentSnapshot + `)
 		AND NOT ` + s.activityUnsentSQL() + scope + `) OR EXISTS (
 		SELECT 1 FROM msmail_sent_envelope_recipients sent
 		JOIN messages m ON m.id=sent.message_id JOIN sources src ON src.id=m.source_id
@@ -255,8 +253,7 @@ func (s *Store) senderContactRelationshipsQuery(keys []string, sources []int64, 
 		AND NOT ` + s.activityUnsentSQL() + scope + `))`
 	archiveRecipientHistory := `(EXISTS (SELECT 1 FROM message_recipients mr ` + recipientJoin + `
 		WHERE ` + recipientLink + senderRecipientAddress + `=requested.address
-		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
-		AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)` + scope + `) OR EXISTS (
+		AND (mr.recipient_type='from' OR NOT ` + sentSnapshot + `)` + scope + `) OR EXISTS (
 		SELECT 1 FROM msmail_sent_envelope_recipients sent JOIN messages m ON m.id=sent.message_id
 		WHERE sent.email_address=requested.address` + scope + `) OR EXISTS (
 		SELECT 1 FROM provider_sent_envelope_recipients sent JOIN messages m ON m.id=sent.message_id
@@ -540,6 +537,7 @@ func (s *Store) senderOutboundEligibleIDs(ctx context.Context, tx *loggedTx, key
 func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, excluded int64, ids []int64) (string, []any) {
 	messageValues := strings.TrimSuffix(strings.Repeat("(?),", len(ids)), ",")
 	addressValues := strings.TrimSuffix(strings.Repeat("(?),", len(keys)), ",")
+	sentSnapshot := senderSentEnvelopeSnapshotExistsSQL(s.dialect, "m")
 	args := make([]any, 0, len(ids)+3*len(keys)+len(sources)+1)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	scope, sourceArgs := senderSourceScope(sources, excluded)
@@ -565,8 +563,7 @@ func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, e
 				WHERE sent.message_id=m.id AND sent.email_address IN (` + addressValues + `))
 			OR EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent
 				WHERE sent.message_id=m.id AND sent.email_address IN (` + addressValues + `))
-			OR (NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
-			AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+			OR (NOT ` + sentSnapshot + `
 			AND EXISTS (SELECT 1 FROM message_recipients mr
 				WHERE mr.message_id=m.id AND mr.recipient_type IN ('to','cc','bcc')
 				AND ` + senderRecipientAddress + ` IN (` + addressValues + `)))
@@ -578,6 +575,7 @@ func (s *Store) senderOutboundEligibleIDsQuery(keys []string, sources []int64, e
 
 func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids []int64) (map[int64][]string, map[int64]bool, error) {
 	marks := int64Placeholders(len(ids))
+	sentSnapshot := senderSentEnvelopeSnapshotExistsSQL(s.dialect, "m")
 	args := personMergeSnapshotIDArgs(ids)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
 	args = append(args, personMergeSnapshotIDArgs(ids)...)
@@ -589,8 +587,7 @@ func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids [
 		CASE WHEN mr.recipient_type IN ('to','cc','bcc') THEN 1 ELSE 0 END, 0 FROM messages m
 		JOIN message_recipients mr ON mr.message_id=m.id
 		WHERE m.id IN (` + marks + `)
-		AND NOT EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
-		AND NOT EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id)
+		AND NOT ` + sentSnapshot + `
 		UNION ALL SELECT sent.message_id, sent.email_address, 1, 1
 		FROM msmail_sent_envelope_recipients sent
 		WHERE sent.message_id IN (` + marks + `)
@@ -600,8 +597,7 @@ func (s *Store) senderOutboundAddresses(ctx context.Context, tx *loggedTx, ids [
 		UNION ALL SELECT m.id, '', 0, 0 FROM messages m
 		JOIN message_recipients mr ON mr.message_id=m.id
 		WHERE m.id IN (` + marks + `)
-		AND (EXISTS (SELECT 1 FROM msmail_sent_envelope_recipients sent WHERE sent.message_id=m.id)
-			OR EXISTS (SELECT 1 FROM provider_sent_envelope_recipients sent WHERE sent.message_id=m.id))
+		AND ` + sentSnapshot + `
 		UNION ALL SELECT m.id, '', 0, 0 FROM messages m
 		JOIN conversation_participants cp ON cp.conversation_id=m.conversation_id
 		WHERE m.id IN (` + marks + `)

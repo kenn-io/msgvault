@@ -149,10 +149,20 @@ func mergeFingerprintMetadata(metadata string) string {
 	if err := json.Unmarshal([]byte(metadata), &values); err != nil || values == nil {
 		return metadata
 	}
-	if _, ok := values[microsoftSentEvidenceKey]; !ok {
+	changed := false
+	for _, key := range []string{
+		microsoftSentEvidenceKey,
+		microsoftSentEnvelopeObservedKey,
+		providerSentEnvelopeObservedKey,
+	} {
+		if _, ok := values[key]; ok {
+			delete(values, key)
+			changed = true
+		}
+	}
+	if !changed {
 		return metadata
 	}
-	delete(values, microsoftSentEvidenceKey)
 	if len(values) == 0 {
 		return ""
 	}
