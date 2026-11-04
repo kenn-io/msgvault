@@ -36,10 +36,11 @@ connection problem.
 ## Handle server command limits
 
 Sync retries a read command when the server replies with `NO [LIMIT]` or a
-`NO` containing a `retry in N seconds` hint. It waits for the hinted delay,
-capped at 60 seconds, or one second when `LIMIT` has no usable hint. Each
-command gets at most three retries. Cancellation interrupts the wait. An
-existing transport reconnect can start one fresh command budget; a FETCH
+`NO` containing a `retry in N seconds` hint. It waits for the full hinted delay,
+or one second when `LIMIT` has no usable hint. A hint too large to represent as
+a duration returns the command error immediately. Each command gets at most
+three retries. Cancellation interrupts the wait. An existing transport
+reconnect can start one fresh command budget; a FETCH
 can therefore make up to eight attempts across both connections. Persistent
 limits still surface as errors.
 

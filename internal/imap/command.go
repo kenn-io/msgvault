@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/cenkalti/backoff/v7"
 	imap "github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
 	"golang.org/x/time/rate"
@@ -16,7 +19,7 @@ import (
 var retryHint = regexp.MustCompile(`(?i)\bretry\s+in\s+([0-9]+)\s+seconds?\b`)
 
 // commandRetryDelay accepts server-directed throttling only on a typed NO.
-// A bare LIMIT has no usable delay, so use a short, bounded fallback.
+// A bare LIMIT has no delay, so use a one-second fallback.
 func commandRetryDelay(err error) (time.Duration, bool) {
 	var response *imap.Error
 	if !errors.As(err, &response) || response.Type != imap.StatusResponseTypeNo {
@@ -24,12 +27,12 @@ func commandRetryDelay(err error) (time.Duration, bool) {
 	}
 	if match := retryHint.FindStringSubmatch(response.Text); match != nil {
 		seconds, parseErr := strconv.ParseUint(match[1], 10, 64)
-		if parseErr != nil || seconds > 60 {
-			return time.Minute, true
+		if parseErr != nil || seconds > math.MaxInt64/uint64(time.Second) {
+			return 0, false
 		}
 		return time.Duration(seconds) * time.Second, true
 	}
-	if response.Code == imap.ResponseCodeLimit {
+	if strings.EqualFold(string(response.Code), string(imap.ResponseCodeLimit)) {
 		return time.Second, true
 	}
 	return 0, false
@@ -41,30 +44,29 @@ func commandRetryDelay(err error) (time.Duration, bool) {
 // one new invocation on the replacement connection.
 func runCommand[T any](ctx context.Context, c *Client, command func() (T, error)) (T, error) {
 	var zero T
-	for attempt := 0; ; attempt++ {
+	result, err := backoff.Retry(ctx, func() (T, error) {
 		if err := c.waitCommand(ctx); err != nil {
-			return zero, err
+			return zero, backoff.Permanent(err)
 		}
 		result, err := command()
 		if err == nil {
 			return result, nil
 		}
+		delay, retry := commandRetryDelay(err)
+		if !retry {
+			return zero, backoff.Permanent(err)
+		}
+		return zero, backoff.RetryAfter(delay, err)
+	}, backoff.WithMaxTries(4), backoff.WithMaxElapsedTime(0), backoff.WithNotify(func(_ error, delay time.Duration) {
+		c.logger.Debug("IMAP command limited; waiting to retry", "delay", delay)
+	}))
+	if err != nil {
 		if ctx.Err() != nil {
 			return zero, ctx.Err()
 		}
-		delay, retry := commandRetryDelay(err)
-		if !retry || attempt == 3 {
-			return zero, err
-		}
-		c.logger.Debug("IMAP command limited; waiting to retry", "delay", delay, "retry", attempt+1)
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return zero, ctx.Err()
-		case <-timer.C:
-		}
+		return zero, backoff.AsRetryError(err).LastErr
 	}
+	return result, nil
 }
 
 // WithMaxCommandsPerMinute spaces this client's sync read commands evenly.

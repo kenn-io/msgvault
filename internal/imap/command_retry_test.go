@@ -86,6 +86,7 @@ func TestLimitedCommandExhaustion(t *testing.T) {
 		attempts       int32
 	}{
 		{"limit", "NO [LIMIT] retry in 0 seconds", 4},
+		{"lowercase limit without hint", "NO [limit] Too many requests", 4},
 		{"hint only", "NO retry in 0 seconds", 4},
 		{"ordinary no", "NO permission denied", 1},
 		{"bad limit", "BAD [LIMIT] retry in 0 seconds", 1},
