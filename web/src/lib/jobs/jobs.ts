@@ -1,6 +1,6 @@
 import type { OperationLaneStatus, SourceStatus } from '../api/generated/models';
 import { operationStateChip, OPERATION_KIND_LABELS, OPERATION_SETUP, type OperationSettingsTarget, type RelatedStatus } from '../operations/labels';
-import { syncRunning, syncStatusChip } from '../sources/labels';
+import { syncRunning, sourceRunState } from '../sources/labels';
 
 export type JobState = 'queued' | 'running' | 'failed';
 export type JobsHealth = 'ok' | 'queued' | 'running' | 'failed' | 'unavailable';
@@ -23,13 +23,13 @@ export function collectJobs(sources: readonly SourceStatus[], lanes: readonly Op
   const items: JobItem[] = [];
   for (const source of sources) {
     const base = { id: `source:${source.id}`, name: source.display_name || source.identifier, target: { kind: 'source' as const } };
-    if (syncRunning(source) || source.scheduler_started_at) {
+    if (syncRunning(source)) {
       const processed = source.active_sync?.messages_processed;
       items.push({ ...base, state: 'running', detail: processed ? `${processed.toLocaleString()} messages so far` : '', at: source.active_sync?.started_at ?? source.scheduler_started_at });
     } else {
       const run = source.latest_sync;
       const failedAt = run?.completed_at ?? run?.started_at;
-      const runFailed = syncStatusChip(source).tone === 'danger';
+      const runFailed = sourceRunState(source) === 'failed';
       if (runFailed || source.scheduler_last_error) {
         const diagnostics = runFailed
           ? [run?.error_message, ...(run?.item_errors ?? []).map(item => item.error_message)].map(message => firstLine(message, '')).find(Boolean)

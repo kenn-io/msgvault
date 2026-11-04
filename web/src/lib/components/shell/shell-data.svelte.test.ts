@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { SavedView } from '../../api/generated/models';
-import { view } from './fixtures.test-support';
+import { pair, view } from './fixtures.test-support';
 import { ShellData } from './shell-data.svelte';
 
 interface Answers {
   views?: SavedView[];
   failing?: string[];
+  deletions?: Promise<Response>;
+  waiting?: boolean;
 }
 
 function setup(answers: Answers = {}) {
@@ -17,6 +19,8 @@ function setup(answers: Answers = {}) {
     requests.push(request);
     const path = new URL(request.url).pathname;
     if (answers.failing?.includes(path)) return Response.json({ error: 'boom' }, { status: 500 });
+    if (path.endsWith('/identity/match-candidates')) return Response.json({ candidates: answers.waiting ? [pair] : [] });
+    if (path === '/api/v1/deletions') return answers.deletions ?? Response.json({ manifests: [] });
     if (path === '/api/v1/saved-views' && request.method === 'GET') return Response.json({ saved_views: answers.views ?? [] });
     if (path.startsWith('/api/v1/saved-views/') && request.method === 'DELETE') {
       answers.views = answers.views?.filter(view => !path.endsWith(`/${view.id}`));
@@ -41,16 +45,29 @@ describe('ShellData', () => {
     it.each([
       { field: 'name', input: '  Q3 budget ', update: { name: 'Q3 budget' }, order: ['Invoices', 'Q3 budget'] },
       { field: 'description', input: '  Quarterly review  ', update: { description: 'Quarterly review' }, order: ['Budget', 'Invoices'] },
-    ])('edits $field with the current revision and replaces the row', async ({ field, input, update, order }) => {
-      const views = [view(1, 'Budget'), view(2, 'Invoices')];
-      const { data, requests } = setup({ views });
-      await data.refresh();
+    ])('edits $field with the current revision while the deletions refresh is stalled', async ({ field, input, update, order }) => {
+      const answers: Answers = { views: [view(1, 'Budget'), view(2, 'Invoices')] };
+      const { data, requests } = setup(answers);
+      let finish!: (response: Response) => void;
+      const pending = new Promise<Response>(resolve => { finish = resolve; });
+      const resolved = vi.fn();
+      let editing: Promise<void> | undefined;
+      try {
+        await data.refresh();
+        answers.deletions = pending;
+        editing = (field === 'name' ? data.renameView(data.views[0]!, input) : data.describeView(data.views[0]!, input)).then(resolved);
 
-      expect(await (field === 'name' ? data.renameView(data.views[0]!, input) : data.describeView(data.views[0]!, input))).toBeUndefined();
-      const patch = requests.find((request) => request.method === 'PATCH')!;
-      expect(patch.headers.get('If-Match')).toBe('"saved-view-1-r1"');
-      expect(data.views.map(view => view.name)).toEqual(order);
-      expect(data.views.find(view => view.id === 1)).toMatchObject({ id: 1, revision: 2, ...update });
+        await vi.waitFor(() => expect(resolved).toHaveBeenCalledWith(undefined));
+        const patch = requests.find((request) => request.method === 'PATCH')!;
+        expect(patch.headers.get('If-Match')).toBe('"saved-view-1-r1"');
+        expect(await patch.clone().json()).toEqual(update);
+        expect(data.views.map(view => view.name)).toEqual(order);
+        expect(data.views.find(view => view.id === 1)).toMatchObject({ id: 1, revision: 2, ...update });
+      } finally {
+        data.stop();
+        finish(Response.json({ manifests: [] }));
+        await editing;
+      }
     });
 
     it('does not call the server for an unchanged or empty name', async () => {
@@ -204,4 +221,49 @@ it('restores the visible view and reports a failed delete', async () => {
   finish(Response.json({}, { status: 500 }));
   expect(await deleting).toBe("Couldn't delete Équipe.");
   expect(data.views).toContainEqual(saved);
+});
+
+it('polls jobs and duplicate counts and refreshes deletions explicitly', async () => {
+  vi.useFakeTimers();
+  const answers = { waiting: false };
+  const { data, requests } = setup(answers);
+  try {
+    await data.refresh();
+    data.start();
+    answers.waiting = true;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(data.duplicateCount).toBe(1);
+    const queries = requests.filter(request => new URL(request.url).pathname.endsWith('/identity/match-candidates')).map(request => new URL(request.url).search);
+    expect(queries).toEqual(Array(2).fill('?state=candidate%2Cconflict&limit=500&offset=0'));
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(1);
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/sources/status')).toHaveLength(1);
+    await data.refresh();
+    expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/deletions')).toHaveLength(2);
+  } finally { data.stop(); vi.useRealTimers(); }
+});
+
+it.each(['failed refresh', 'late earlier read'])('keeps the current duplicate count after a %s', async outcome => {
+  let finish!: (response: Response) => void;
+  let reads = 0;
+  const data = new ShellData(createAPIClient(async () => {
+    reads += 1;
+    if (outcome === 'failed refresh') return reads === 1 ? Response.json({ candidates: [pair] }) : Response.json({ error: 'unavailable' }, { status: 503 });
+    return reads === 1 ? new Promise<Response>(resolve => { finish = resolve; }) : Response.json({ candidates: [] });
+  }));
+  try {
+    if (outcome === 'failed refresh') {
+      await data.refreshDuplicates();
+      expect(data.duplicateCount).toBe(1);
+      await data.refreshDuplicates();
+      expect(data.duplicateCount).toBe(1);
+      return;
+    }
+    const initial = data.refreshDuplicates();
+    await vi.waitFor(() => expect(reads).toBe(1));
+    await data.refreshDuplicates();
+    expect(data.duplicateCount).toBe(0);
+    finish(Response.json({ candidates: [pair] }));
+    await initial;
+    expect(data.duplicateCount).toBe(0);
+  } finally { data.stop(); }
 });

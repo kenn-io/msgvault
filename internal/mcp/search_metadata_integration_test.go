@@ -176,21 +176,17 @@ func TestSearchByDomainsPagesThroughDaemon(t *testing.T) {
 }
 
 func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchRequest(t *testing.T) {
+	req := require.New(t)
 	f := storetest.New(t)
 	st := f.Store
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	req.NoError(err)
+	t.Cleanup(func() { _ = tx.Rollback() })
 	persist := func(key, subject, body string) {
-		conversation, err := st.EnsureConversation(f.Source.ID, key, "Synthetic selection")
-		require.NoError(t, err)
-		_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-			Message: &store.Message{
-				SourceID: f.Source.ID, ConversationID: conversation, SourceMessageID: key,
-				MessageType: "email", Subject: sql.NullString{String: subject, Valid: true},
-			},
-			BodyText: sql.NullString{String: body, Valid: true},
-			FTS:      &store.FTSDoc{Subject: subject, Body: body},
-			RawMIME:  []byte("Subject: " + subject + "\r\n\r\n" + body),
-		})
-		require.NoError(t, err)
+		var id int64
+		req.NoError(tx.QueryRow(st.Rebind(`INSERT INTO messages (conversation_id, source_id, source_message_id, message_type, subject) VALUES (?, ?, ?, 'email', ?) RETURNING id`), f.ConvID, f.Source.ID, key, subject).Scan(&id))
+		_, err = tx.Exec(st.Rebind(`INSERT INTO message_bodies (message_id, body_text) VALUES (?, ?)`), id, body)
+		req.NoError(err)
 	}
 	var metadataIDs, bodyIDs []string
 	for i := range 600 {
@@ -203,6 +199,10 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		persist(id, "plain", "bodyneedle")
 		bodyIDs = append(bodyIDs, id)
 	}
+	req.NoError(tx.Commit())
+	indexed, err := st.BackfillFTS(nil)
+	req.NoError(err)
+	req.Equal(int64(750), indexed)
 	var requests atomic.Int32
 	var boundedRequests atomic.Int32
 	daemon := metadataDaemonWithPeer(t, query.NewEngine(st.DB(), st.IsPostgreSQL()), &requests,
@@ -217,7 +217,7 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		return saver, result
 	}
 
-	t.Run("metadata matches beyond the 500 page cap", func(t *testing.T) {
+	t.Run("metadata matches stage with one bounded request", func(t *testing.T) {
 		assert := assert.New(t)
 		before := boundedRequests.Load()
 		saver, result := stage(t, map[string]any{"query": "subject:selectionmarker"})
@@ -226,7 +226,7 @@ func TestStageDeletionThroughRemoteDaemonStagesEveryMatchWithOneBoundedSearchReq
 		assert.Equal(before+1, boundedRequests.Load())
 		assert.Zero(requests.Load(), "bounded staging must not call paginated fast search")
 	})
-	t.Run("full-text fallback beyond the 100 page cap", func(t *testing.T) {
+	t.Run("full-text fallback stages with a second bounded request", func(t *testing.T) {
 		assert := assert.New(t)
 		before := boundedRequests.Load()
 		saver, result := stage(t, map[string]any{"query": "bodyneedle"})

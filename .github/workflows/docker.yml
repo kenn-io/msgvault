@@ -29,7 +29,7 @@ jobs:
         with:
           bun-version: 1.4.4
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Build browser application
         run: make web-assets-check

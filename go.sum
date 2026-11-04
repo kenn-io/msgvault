@@ -172,8 +172,8 @@ github.com/dunglas/httpsfv v1.1.2 h1:432E+FKy2DLMbVcZeAnOuM7nhyJ4vTiH7b9iXJ/Dkmc
 github.com/dunglas/httpsfv v1.1.2/go.mod h1:zID2mqw9mFsnt7YC3vYQ9/cjq30q41W+1AnDwH8TiMg=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
 github.com/dustin/go-humanize v1.1.0/go.mod h1:hc1CvRkJMsgxqjmjMQF3QNRAZBwY8AXBAzKYoSX9sFI=
-github.com/ebitengine/purego v0.11.2 h1:WWiTx8rD8zYdOwSj8O/NiNbsOvSAgJMTlyV1XlbUSeU=
-github.com/ebitengine/purego v0.11.2/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
+github.com/ebitengine/purego v0.12.0-alpha.1.0.20261015130536-d456b1bb95e8 h1:l5iZODQBpef/JRTKyr32A+0uzYmtNhglAg42fFgK3+0=
+github.com/ebitengine/purego v0.12.0-alpha.1.0.20261015130536-d456b1bb95e8/go.mod h1:DCHPP08djqhNSoTfImcnHYQRZmd0qhakvrozqaEYhGQ=
 github.com/emersion/go-message v0.18.2 h1:rl55SQdjd9oJcIoQNhubD2Acs1E6IzlZISRTK7x/Lpg=
 github.com/emersion/go-message v0.18.2/go.mod h1:XpJyL70LwRvq2a8rVbHXikPgKj8+aI0kGdHlg16ibYA=
 github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 h1:oP4q0fw+fOSWn3DfFi4EXdT+B+gTtzx8GC9xsc26Znk=
@@ -490,8 +490,8 @@ go.duckdb.org/libduckdb/linux-arm64 v0.20000.0 h1:5pTT+NoMvS0RNy1dtK1Zr4I27BDZrZ
 go.duckdb.org/libduckdb/linux-arm64 v0.20000.0/go.mod h1:ViHlRMYp8+C2Bcf671Tn2eGihEc3/fn4H0OEf38HfQw=
 go.duckdb.org/libduckdb/windows-amd64 v0.20000.0 h1:/aGtHSsXGmd3orkky7vmX/rMpky4wnDDaU1leVFYpVQ=
 go.duckdb.org/libduckdb/windows-amd64 v0.20000.0/go.mod h1:eBhoLryMd4QH8f0EX013x32MHnXEXab0eB4oLnMEBhs=
-go.kenn.io/docbank v0.16.1-0.20261030132435-c87f7a8b7983 h1:h2xr5LXplnWyIZEf4Op5ZPR5WNxbRspKjvyUUvk+4Zw=
-go.kenn.io/docbank v0.16.1-0.20261030132435-c87f7a8b7983/go.mod h1:s8lJMLMyXEzoxkZGO5DB3YReigkYM51wHsYRLuZBX3g=
+go.kenn.io/docbank v0.16.1-0.20261103172823-754412df3483 h1:mTqns7mKDEVn9WZz03LLsNfntxUebduj3X/HUEWqvws=
+go.kenn.io/docbank v0.16.1-0.20261103172823-754412df3483/go.mod h1:vhm6aHbvS3A8YtKbxbZJeXJF5qjOYDaXg635OV7KkoA=
 go.kenn.io/kata v0.20.0 h1:2jUPzlO6EA++Uw3CQFvPSOgjzfcRGPNxJXaakbOFtAA=
 go.kenn.io/kata v0.20.0/go.mod h1:GXpEbnQsOWDlafqSZQm5zE96hpm3B27jumGDCmxYOv4=
 go.kenn.io/kit v0.47.5 h1:CSzivpLrVRo0dPPvXLhHbUPMU0l/sNWe6WoVZ8UET80=

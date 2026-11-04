@@ -30,6 +30,11 @@ function renderSidebar(overrides: Record<string, unknown> = {}) {
 const primary = () => within(screen.getByRole('navigation', { name: 'Primary' }));
 
 describe('AppSidebar', () => {
+  it.each([4, 500])('shows a waiting badge of %s', duplicateCount => {
+    renderSidebar({ duplicateCount });
+    expect(primary().getByRole('button', { name: duplicateCount === 500 ? 'People 500+' : 'People 4' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');
+  });
+
   it('lists four places with the active one current', () => {
     renderSidebar();
     expect(
@@ -39,11 +44,6 @@ describe('AppSidebar', () => {
     ).toEqual(['Messages', 'People', 'Files', 'Sources']);
     expect(primary().getByRole('button', { name: 'Messages' }).getAttribute('aria-current')).toBe('page');
     expect(primary().getByRole('button', { name: 'Files' }).hasAttribute('aria-current')).toBe(false);
-  });
-
-  it.each(['directory', 'directory_review'])('keeps People current when opening an old %s link', (workspace) => {
-    renderSidebar({ active: workspace });
-    expect(primary().getByRole('button', { name: 'People' }).getAttribute('aria-current')).toBe('page');
   });
 
   it('nests saved views under the place they open', async () => {

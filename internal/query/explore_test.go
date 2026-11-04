@@ -14,6 +14,48 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestExploreDayGroupsHeatLevelsRequireCompletePage(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	for day := 1; day <= 4; day++ {
+		for range day {
+			b.AddMessage(MessageOpt{SourceID: source, SentAt: time.Date(2026, 7, day, 12, 0, 0, 0, time.UTC)})
+		}
+	}
+	engine := b.BuildEngine()
+
+	for _, tc := range []struct {
+		name     string
+		page     PageSpec
+		groupKey string
+		rows     int
+		total    int64
+		levelled bool
+	}{
+		{"limited", PageSpec{Limit: 1}, "", 1, 4, false},
+		{"unpaged", PageSpec{}, "", 4, 4, true},
+		{"keyed", PageSpec{}, "2026-07-04", 1, 1, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			result, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Dimension: "day", Page: tc.page, GroupKey: tc.groupKey})
+			require.NoError(err)
+			require.Len(result.Rows, tc.rows)
+			assert.Equal(tc.total, result.TotalCount)
+			for _, row := range result.Rows {
+				if !tc.levelled {
+					assert.Empty(row.Level)
+				} else if row.Key == "2026-07-04" {
+					assert.Equal(identityindex.HeatFourthQuartile, row.Level)
+				} else {
+					assert.NotEmpty(row.Level)
+				}
+			}
+		})
+	}
+}
+
 func TestExploreSentOnlyExcludesDraftsBeforePagination(t *testing.T) {
 	t.Parallel()
 	b := NewTestDataBuilder(t)
@@ -178,6 +220,50 @@ func TestExploreTenThousandFragmentConversationKeepsConstantMatchState(t *testin
 	requirements.Len(result.Rows, 1)
 	requirements.Equal(int64(10_000), result.Rows[0].MessageCount)
 	assertExploreBoundedStrongestMatch(t, result.Rows[0], nil)
+}
+
+func TestExploreKindFilterUsesConversationFallback(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	email := b.AddMessage(MessageOpt{Subject: "Legacy email", LegacyEmptyMessageType: true})
+	chat := b.AddMessage(MessageOpt{
+		Snippet: "Legacy group chat", LegacyEmptyMessageType: true,
+		ConversationID: 700, ConversationType: "group_chat",
+	})
+	engine := b.BuildEngine()
+
+	groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{
+		Dimension: "kind", Page: PageSpec{Limit: 10},
+	})
+	require.NoError(t, err)
+	keys := make([]string, len(groups.Rows))
+	for i, row := range groups.Rows {
+		keys[i] = row.Key
+	}
+	assert.ElementsMatch(t, []string{"email", "conversation"}, keys)
+
+	for _, tc := range []struct {
+		name  string
+		kinds []EntryKind
+		ids   []int64
+	}{
+		{"email", []EntryKind{EntryEmail}, []int64{email}},
+		{"conversation", []EntryKind{EntryConversation}, []int64{chat}},
+		{"both", []EntryKind{EntryEmail, EntryConversation}, []int64{email, chat}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fast, singlePass := runExploreBothPaths(t, engine, ExploreRequest{
+				Context: Context{Kinds: tc.kinds}, Page: PageSpec{Limit: 10},
+			})
+			assert.Equal(t, singlePass, fast)
+			ids := make([]int64, len(fast.Rows))
+			for i, row := range fast.Rows {
+				require.NotNil(t, row.AnchorMessageID)
+				ids[i] = *row.AnchorMessageID
+			}
+			assert.ElementsMatch(t, tc.ids, ids)
+		})
+	}
 }
 
 // TestExploreMessageTypeEmailIncludesLegacyRows pins the legacy-row rule for

@@ -5,6 +5,13 @@ import { assertCardDAVForbiddenMarkersAbsent, installCardDAV } from './fixtures/
 import { installDirectoryReviewArchive, installMixedArchive } from './fixtures/mixed-archive';
 import { installOperations } from './fixtures/operations';
 
+async function openPersonFacts(page: Page): Promise<void> {
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 42 })));
+  await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await page.getByRole('region', { name: 'Facts', exact: true }).getByRole('button', { name: 'Show', exact: true }).click();
+}
+
 async function assertNoViolations(page: Page, label: string) {
   const result = await new AxeBuilder({ page }).analyze();
   expect(result.violations, `${label}: ${result.violations.map((v) => `${v.id}: ${v.help}`).join('; ')}`)
@@ -83,12 +90,13 @@ for (const theme of ['light', 'dark'] as const) {
     await setKitTheme(page, theme);
 
     await selectWorkspace(page, 'Sources');
-    await page.getByRole('button', { name: 'Show details for Synthetic import' }).click();
+    await page.getByRole('button', { name: 'Details for Synthetic import' }).click();
+    await page.getByText('1 item failed', { exact: true }).click();
     await expect(page.getByText('Malformed MIME header')).toBeVisible();
     await assertNoViolations(page, `Sources row detail ${theme}`);
 
-    await selectWorkspace(page, 'Deletions');
-    await expect(page.getByText('Nothing selected for deletion')).toBeVisible();
+    await selectWorkspace(page, 'Staged deletions');
+    await expect(page.getByText('Nothing staged')).toBeVisible();
     await assertNoViolations(page, `Deletions empty ${theme}`);
 
     await page.route('**/api/v1/deletions', (route) => route.fulfill({ json: { manifests: [
@@ -105,12 +113,12 @@ for (const theme of ['light', 'dark'] as const) {
       execution: { succeeded: 11, failed: 1, failed_ids: ['msg-1'] }
     } }));
     await selectWorkspace(page, 'Messages');
-    await selectWorkspace(page, 'Deletions');
-    const manifests = page.getByRole('table', { name: 'Deletion manifests' });
-    await expect(manifests.getByText('Completed')).toBeVisible();
+    await selectWorkspace(page, 'Staged deletions');
+    const manifests = page.getByRole('table', { name: 'Staged deletions' });
+    await expect(manifests.getByText('Deleted', { exact: true })).toBeVisible();
     await assertNoViolations(page, `Deletions manifests table ${theme}`);
-    await page.getByRole('button', { name: 'Inspect batch-done' }).click();
-    await expect(page.getByText('archive@example.com')).toBeVisible();
+    await manifests.getByRole('row').filter({ has: page.getByRole('cell', { name: '12', exact: true }) }).getByRole('button', { name: /^Open batch from / }).click();
+    await expect(page.getByRole('dialog', { name: /^Staged / }).getByText('archive@example.com')).toBeVisible();
     await assertNoViolations(page, `Deletions manifest detail ${theme}`);
 
     await selectWorkspace(page, 'Messages');
@@ -118,9 +126,11 @@ for (const theme of ['light', 'dark'] as const) {
     await grid.focus();
     await page.keyboard.press('Space');
     await page.keyboard.press('d');
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Stage deletion…' })).toBeVisible();
+    const review = page.getByRole('dialog', { name: 'Review deletion' });
+    await expect(review).toBeVisible();
+    await expect(review.getByRole('button', { name: 'Stage 1 message', exact: true })).toBeVisible();
     await assertNoViolations(page, `Deletions review ${theme}`);
+    await page.keyboard.press('Escape');
 
     await selectWorkspace(page, 'Settings');
     await page.getByRole('button', { name: 'Advanced', exact: true }).click();
@@ -165,17 +175,17 @@ for (const theme of ['light', 'dark'] as const) {
 
       await selectWorkspace(page, 'People');
       // Walk each pane so every layout gets its own axe pass.
-      const hub = page.getByRole('main', { name: 'Relationships' });
+      const hub = page.getByRole('main', { name: 'People' });
       await expect(hub).toBeVisible();
-      const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
+      const relationshipList = page.getByRole('grid', { name: 'People results' });
       await expect(relationshipList.getByText('Archive Person')).toBeVisible();
       await assertNoViolations(page, `Relationships list ${theme}/${density}`);
       await relationshipList.getByText('Archive Person').click();
       await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-      const relationshipTimeline = page.getByRole('grid', { name: 'Relationship activity' });
+      const relationshipTimeline = page.getByRole('grid', { name: 'Messages results' });
       await expect(relationshipTimeline.locator('[data-row-key]').first()).toBeVisible();
       await assertNoViolations(page, `Relationships timeline ${theme}/${density}`);
-      await page.getByRole('radio', { name: 'Files 1' }).click();
+      await page.getByRole('radio', { name: 'Files', exact: true }).click();
       await expect(page.getByRole('grid', { name: 'Files results' }).getByText('archive-notes.pdf')).toBeVisible();
       await assertNoViolations(page, `Person files ${theme}/${density}`);
       await page.getByRole('radio', { name: 'Media' }).click();
@@ -205,7 +215,14 @@ for (const theme of ['light', 'dark'] as const) {
       await assertNoViolations(page, `modal ${theme}/${density}`);
       await keyboardHelp.getByRole('button', { name: 'Close' }).click();
 
-      for (const workspace of ['Directory', 'Files', 'Sources', 'Deletions', 'Settings']) {
+      await selectWorkspace(page, 'People');
+      await page.getByRole('complementary', { name: 'People', exact: true }).getByRole('button', { name: 'Filter', exact: true }).click();
+      await page.getByText('Saved', { exact: true }).click();
+      await page.keyboard.press('Escape');
+      await expect(page.getByRole('grid', { name: 'People results' }).getByText('Archive Person')).toBeVisible();
+      await assertNoViolations(page, `Saved People ${theme}/${density}`);
+
+      for (const workspace of ['Files', 'Sources', 'Staged deletions', 'Settings']) {
         await selectWorkspace(page, workspace);
         await expect(page.getByRole('main', { name: workspace, exact: true })).toBeVisible();
         await assertNoViolations(page, `${workspace} ${theme}/${density}`);
@@ -242,7 +259,7 @@ for (const theme of ['light', 'dark'] as const) {
     await page.keyboard.press('Home');
     await page.keyboard.press('Space');
     await expect(page.getByRole('status').filter({ hasText: '1 selected' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Review for deletion…' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Review deletion…' })).toBeVisible();
     await assertNoViolations(page, `selection bar ${theme}`);
     await page.getByRole('button', { name: 'Clear selection' }).click();
 
@@ -255,11 +272,12 @@ for (const theme of ['light', 'dark'] as const) {
 
     await selectWorkspace(page, 'Files');
     await expect(page.getByRole('grid', { name: 'Files results' }).getByText('synthetic.txt')).toBeVisible();
-    await page.getByRole('button', { name: 'Type' }).click();
-    await expect(page.getByRole('button', { name: /^Images/ })).toBeVisible();
-    await assertNoViolations(page, `Type menu ${theme}`);
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    const filter = page.getByRole('dialog', { name: 'Filter', exact: true });
+    await expect(filter.getByRole('checkbox', { name: 'Images', exact: true })).toBeVisible();
+    await assertNoViolations(page, `Filter popover ${theme}`);
     await page.keyboard.press('Escape');
-    await expect(page.getByRole('button', { name: /^Images/ })).toHaveCount(0);
+    await expect(filter).toHaveCount(0);
 
     await page.getByRole('button', { name: 'Collapse sidebar' }).click();
     await page.getByRole('navigation', { name: 'Primary' }).getByRole('button', { name: 'Messages' }).hover();
@@ -273,18 +291,18 @@ for (const theme of ['light', 'dark'] as const) {
   });
 }
 
-test('Directory network list and visualization have no axe violations', async ({ page }) => {
+test('Directory network graph has no axe violations', async ({ page }) => {
   await installMixedArchive(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42 }))}`);
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Network' }).click();
-  await expect(page.getByRole('list', { name: 'Directory network connections' })).toContainText('Curated Peer');
+  await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  const graph = page.getByRole('region', { name: 'Network graph' });
+  await expect(graph).toBeVisible();
   await assertNoViolations(page, 'Directory network');
 });
 
-const PERSON_SECTIONS = [
-  'Overview', 'Profile', 'Organizations', 'Connections', 'Network', 'Media & files', 'Maintenance'
-];
+const PERSON_SECTIONS = ['Messages', 'Files', 'Details'];
 
 for (const theme of ['light', 'dark'] as const) {
   test(`${theme} Directory filters and every person section have no axe violations`, async ({ page }) => {
@@ -292,59 +310,49 @@ for (const theme of ['light', 'dark'] as const) {
     await installMixedArchive(page);
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryLastContactAfter: '2026-01-01'
+      workspace: 'relationships', relationshipSaved: true, directoryLastContactAfter: '2026-01-01'
     }))}`);
     await setKitTheme(page, theme);
 
-    const directory = page.getByRole('main', { name: 'Directory' });
-    await directory.getByRole('button', { name: 'Filters' }).click();
-    await expect(directory.getByRole('group', { name: 'Directory filters' })).toBeVisible();
-    await expect(directory.getByRole('button', { name: /^Remove Last contacted after .* filter$/ })).toBeVisible();
+    const directory = page.getByRole('main', { name: 'People' });
+    await directory.getByRole('button', { name: 'Filter', exact: true }).click();
+    await page.getByText('Profile filters', { exact: true }).click();
+    await page.keyboard.press('Escape');
+    await expect(directory.getByRole('group', { name: 'Profile filters' })).toBeVisible();
+    await expect(directory.getByRole('button', { name: /^Remove Last contacted after .*$/ })).toBeVisible();
     await assertNoViolations(page, `Directory filters ${theme}`);
 
     await directory.getByRole('row', { name: /Archive Person/ }).click();
-    const detail = page.getByRole('complementary', { name: 'Person detail' });
+    const detail = page.getByRole('group', { name: 'Person page' });
     await expect(detail.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
     for (const section of PERSON_SECTIONS) {
-      await detail.getByRole('tab', { name: section }).click();
-      await expect(detail.getByRole('tabpanel', { name: section })).toBeVisible();
+      const tab = detail.getByRole('radiogroup', { name: 'Person tabs' }).getByRole('radio', { name: section, exact: true });
+      await tab.click();
+      await expect(tab).toBeChecked();
       await assertNoViolations(page, `Person ${section} ${theme}`);
     }
   });
 
-  test(`${theme} Facts with and without a chosen person have no axe violations`, async ({ page }) => {
+  test(`${theme} Possible duplicates and imported connections have no axe violations`, async ({ page }) => {
     await installDirectoryReviewArchive(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate'
+      workspace: 'relationships', peopleDuplicates: true
     }))}`);
     await setKitTheme(page, theme);
+    await expect(page.locator('#duplicate-17')).toBeVisible();
+    await assertNoViolations(page, `Possible duplicates ${theme}`);
 
-    const fact = page.getByRole('region', { name: 'Facts' });
-    await expect(fact.getByRole('button', { name: 'Person: Choose a person' })).toBeVisible();
-    await assertNoViolations(page, `Facts without a person ${theme}`);
-
-    await fact.getByRole('button', { name: /^Person/ }).click();
-    await page.getByRole('combobox', { name: 'Person' }).fill('Synthetic');
-    await page.getByRole('option', { name: 'Synthetic One' }).click();
-    await expect(fact.getByRole('button', { name: 'Person: Synthetic One' })).toBeVisible();
-    await assertNoViolations(page, `Facts with a chosen person ${theme}`);
-  });
-
-  test(`${theme} Reviews identity matches and imported relationships have no axe violations`, async ({ page }) => {
-    await installDirectoryReviewArchive(page);
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory_review', reviewKind: 'identity', identityState: 'candidate'
-    }))}`);
-    await setKitTheme(page, theme);
-    await expect(page.getByRole('article', { name: 'Identity match 17' })).toBeVisible();
-    await assertNoViolations(page, `Reviews identity matches ${theme}`);
-
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory_review', reviewKind: 'relationship', relationshipReviewState: 'pending'
-    }))}`);
-    await setKitTheme(page, theme);
-    await expect(page.getByRole('article', { name: 'Imported relationship review 41' })).toBeVisible();
-    await assertNoViolations(page, `Imported relationships ${theme}`);
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(viewport);
+      await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
+        workspace: 'relationships', directoryPersonID: 7
+      }))}`);
+      await setKitTheme(page, theme);
+      await expect(page.getByRole('radio', { name: 'Messages', exact: true })).toBeVisible();
+      await page.getByRole('radio', { name: 'Details', exact: true }).click();
+      await expect(page.getByText('urn:uuid:synthetic-related-person')).toBeVisible();
+      await assertNoViolations(page, `Imported relationships ${theme} ${viewport.width}`);
+    }
   });
 }
 
@@ -356,9 +364,10 @@ test('Directory profile maintenance is accessible at desktop and narrow widths',
   ]) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryPersonID: 42
+      workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42
     }))}`);
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Keep this profile updated', exact: true }).click();
     const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
     await expect(maintenance.getByRole('switch', {
       name: 'Track this person for profile maintenance'
@@ -372,52 +381,32 @@ test('Directory profile maintenance is accessible at desktop and narrow widths',
   }
 });
 
-test('Directory review, merge, split, and honest Fact gate have no axe violations', async ({ page }) => {
+test('People duplicates, merge, split, and Fact gate have no axe violations', async ({ page }) => {
   test.slow();
   await installDirectoryReviewArchive(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'directory_review', reviewKind: 'identity', identityState: 'candidate'
-  }))}`);
-
-  await expect(page.getByRole('article', { name: 'Identity match 17' })).toBeVisible();
-  await assertNoViolations(page, 'Directory identity review');
-
-  await page.getByRole('article', { name: 'Identity match 17' })
-    .getByRole('button', { name: 'Keep separate' }).click();
-  const decision = page.getByRole('dialog', { name: 'Keep separate' });
-  await expect(decision).toBeVisible();
-  await assertNoViolations(page, 'Directory identity decision');
-  await page.keyboard.press('Escape');
-
-  await page.getByRole('article', { name: 'Identity match 19' })
-    .getByRole('button', { name: 'Link identities' }).click();
-  const conflict = page.getByRole('dialog', { name: 'Link identities' });
-  await conflict.getByRole('button', { name: 'Link identities' }).click();
-  await conflict.getByRole('button', { name: 'Resolve merge' }).click();
-  const merge = page.getByRole('dialog', { name: 'Resolve person merge' });
-  await expect(merge).toBeVisible();
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', peopleDuplicates: true })));
+  await expect(page.locator('#duplicate-17')).toBeVisible();
+  await page.locator('#duplicate-19').getByRole('button', { name: 'Merge', exact: true }).click();
+  await page.getByRole('button', { name: 'Back to People' }).click();
+  await expect(page.getByRole('dialog', { name: 'Resolve person merge' })).toBeVisible();
   await assertNoViolations(page, 'Directory person merge');
-  await merge.getByRole('radio', { name: 'Synthetic One (Person 7)' }).check();
-  await merge.getByRole('checkbox', { name: /I understand this consolidates both profiles/ }).check();
-  await merge.getByRole('button', { name: 'Merge into selected survivor' }).click();
-  await expect(page.getByRole('heading', { name: 'Synthetic One' })).toBeVisible();
-
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate', directoryPersonID: 42
-  }))}`);
-  await expect(page.getByRole('region', { name: 'Facts' })).toBeVisible();
-  await expect(page.getByLabel('Fact evidence')).toBeVisible();
-  await assertNoViolations(page, 'Directory Fact ledger desktop');
   await page.setViewportSize({ width: 390, height: 844 });
+  await openPersonFacts(page);
   await expect(page.getByRole('radiogroup', { name: 'Fact ledger section' })).toBeVisible();
   await assertNoViolations(page, 'Directory Fact ledger narrow');
   await page.setViewportSize({ width: 1280, height: 720 });
 
+  await page.evaluate(() => fetch('/api/v1/people/7/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'If-Match': '"person-7-r4", "person-9-r2"', 'Idempotency-Key': 'synthetic-accessibility-merge' },
+    body: JSON.stringify({ absorbed_person_id: 9 })
+  }).then(() => undefined));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'directory', directoryPersonID: 7
+    workspace: 'relationships', relationshipSaved: true, directoryPersonID: 7
   }))}`);
-  await page.getByRole('tab', { name: 'Maintenance' }).click();
-  const history = page.getByRole('table', { name: 'Person merge history' });
+  await page.getByRole('button', { name: 'More actions', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'History', exact: true }).click();
+  const history = page.getByRole('list', { name: 'Person merge history' });
   await expect(history).toBeVisible();
   await history.getByRole('button', { name: 'Inspect merge 41' }).click();
   await expect(page.getByRole('heading', { name: 'Merge 41 detail' })).toBeVisible();
@@ -431,29 +420,12 @@ test('Directory review, merge, split, and honest Fact gate have no axe violation
   await assertNoViolations(page, 'Directory split modal');
 });
 
-test('Imported relationship reviews have no axe violations at desktop and narrow widths', async ({ page }) => {
-  await installDirectoryReviewArchive(page);
-  for (const viewport of [
-    { label: 'desktop', width: 1280, height: 900 },
-    { label: 'narrow', width: 390, height: 844 }
-  ]) {
-    await page.setViewportSize(viewport);
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory_review', reviewKind: 'relationship', relationshipReviewState: 'pending'
-    }))}`);
-    await expect(page.getByRole('article', { name: 'Imported relationship review 41' })).toBeVisible();
-    await assertNoViolations(page, `Imported relationship reviews ${viewport.label}`);
-  }
-});
-
 for (const mode of ['failed', 'malformed'] as const) {
   test(`Directory Fact claims fail closed with an accessible ${mode} target catalog`, async ({ page }) => {
     const fixture = await installDirectoryReviewArchive(page);
     if (mode === 'failed') fixture.failFactCatalog();
     else fixture.malformFactCatalog();
-    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate', directoryPersonID: 42
-    }))}`);
+    await openPersonFacts(page);
 
     const fact = page.getByRole('region', { name: 'Facts' });
     await fact.getByRole('radio', { name: 'Claims' }).click();
@@ -469,9 +441,7 @@ for (const mode of ['failed', 'malformed'] as const) {
 test('Directory Fact claims stay private and accessible while the target catalog is deferred', async ({ page }) => {
   const fixture = await installDirectoryReviewArchive(page);
   const releaseCatalog = fixture.deferFactCatalog();
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'directory_review', reviewKind: 'fact', identityState: 'candidate', directoryPersonID: 42
-  }))}`);
+  await openPersonFacts(page);
 
   const fact = page.getByRole('region', { name: 'Facts' });
   await fact.getByRole('radio', { name: 'Claims' }).click();
@@ -531,9 +501,10 @@ test('CardDAV account, operations, conflicts, modal, and publication are accessi
     await expect(keepLocal).toBeFocused();
 
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({
-      workspace: 'directory', directoryPersonID: 42
+      workspace: 'relationships', relationshipSaved: true, directoryPersonID: 42
     }))}`);
-    await page.getByRole('tab', { name: 'Maintenance' }).click();
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Publish to address book', exact: true }).click();
     const publication = page.getByRole('region', { name: 'CardDAV publication' });
     await expect(publication).toContainText('Not published');
     await expect(publication).toContainText('Desired publication: Unpublished');

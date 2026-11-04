@@ -780,7 +780,8 @@ func exportAttachmentDefinition(_ *handlers) toolDefinition {
 
 func searchInMessageDefinition(_ *handlers, vectorAvailable bool) toolDefinition {
 	description := "Find matches within one message body. Default mode=keyword finds literal term occurrences. " +
-		"Each match includes char_offset (byte offset into body_text), snippet, and line. " +
+		"Each match includes char_offset (byte offset into the plain-text body, or the raw HTML body for HTML-only mail), snippet, and line. " +
+		"This is the same body get_message returns with the automatic body format. " +
 		"Use char_offset with get_message center_at to read a larger window around any match."
 	properties := map[string]*jsonschema.Schema{
 		"id":          safeIDSchema("Message ID"),

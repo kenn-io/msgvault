@@ -61,7 +61,7 @@ describe('ExploreAPI routing', () => {
     });
   });
 
-  it('passes cursors and cancellation through the session-aware entry request', async () => {
+  it.each([{ scope: undefined, path: '/api/v1/explore' }, { scope: { kind: 'person', id: 42 }, path: '/api/v1/participants/42/timeline' }, { scope: { kind: 'domain', domain: 'example.net' }, path: '/api/v1/domains/example.net/timeline' }] as const)('passes cursors and cancellation through $path requests', async ({ scope, path }) => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -75,12 +75,12 @@ describe('ExploreAPI routing', () => {
       });
     });
     const controller = new AbortController();
-    const api = createExploreAPI(createAPIClient(fetchFn));
+    const api = createExploreAPI(createAPIClient(fetchFn), scope);
 
     await api.explore({ filters: [], presentation: 'table', limit: 500, cursor: 'page-1' }, controller.signal);
 
     expect(requests).toHaveLength(1);
-    expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/explore');
+    expect(new URL(requests[0]!.url).pathname).toBe(path);
     controller.abort();
     expect(requests[0]!.signal.aborted).toBe(true);
     await expect(requests[0]!.json()).resolves.toMatchObject({ cursor: 'page-1', limit: 500 });

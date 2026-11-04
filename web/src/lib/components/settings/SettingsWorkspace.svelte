@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PeopleCatalogSettings from './PeopleCatalogSettings.svelte';
   import {
     getEmbeddingStatus as generatedGetEmbeddingStatus,
     getSettings as generatedGetSettings,
@@ -28,6 +29,7 @@
     isChange,
     isIncompleteNumber,
     persistedValue,
+    readOnlyValue,
     typedValue,
     valueText,
     type SettingState,
@@ -72,6 +74,7 @@
     onCardDAVRequestConsumed = () => undefined,
     onAppearanceSaved = () => undefined,
     onStatusChange = () => undefined,
+    onDirectoryChange,
   }: {
     client: APIClient;
     operationsController: OperationsController;
@@ -85,6 +88,7 @@
     onCardDAVRequestConsumed?: (key: number) => void;
     onAppearanceSaved?: (saved: SavedAppearance) => void;
     onStatusChange?: () => void;
+    onDirectoryChange?: () => void | Promise<void>;
   } = $props();
 
   let settings = $state<SettingState[]>([]);
@@ -245,7 +249,7 @@
     const request = cardDAVRequest;
     if (!request || request.key === consumedCategoryRequestKey) return;
     activeCategory = 'carddav';
-    if (request.conflictID === undefined) {
+    if (request.conflictID === undefined && request.connection === undefined) {
       consumedCategoryRequestKey = request.key;
       onCardDAVRequestConsumed(request.key);
     }
@@ -416,13 +420,6 @@
   function humanizeKey(key: string): string {
     const words = (key.split('.').at(-1) ?? key).replaceAll('_', ' ');
     return words.charAt(0).toUpperCase() + words.slice(1);
-  }
-  function readOnlyValue(setting: SettingState): string {
-    if (setting.kind === 'secret') return setting.secret?.configured ? setting.secret.hint || 'Set' : 'None';
-    const value = valueText(persistedValue(setting));
-    const off = setting.validation?.off;
-    if (off && value === (off.value ?? '')) return off.label;
-    return value || 'Not set';
   }
   // Rows that only matter once something else is on stay out of the way until then.
   function visible(setting: SettingState): boolean {
@@ -602,6 +599,8 @@
           {:else}
             <SettingsOverview onDetails={onOpenStatus} {onSources} rows={features} working={building} onSetUp={(action) => void setUp(action)} onStart={startFeature} />
           {/if}
+        {:else if activeId === 'people_catalog'}
+          <PeopleCatalogSettings {client} {onDirectoryChange} />
         {:else if activeId === 'carddav'}
           <CardDAVSettingsWorkspace
             {onStatusChange}

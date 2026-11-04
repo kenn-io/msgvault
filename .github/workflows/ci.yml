@@ -64,7 +64,7 @@ jobs:
     container:
       image: ubuntu:26.04
     steps:
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install build tools
         env:
@@ -152,7 +152,7 @@ jobs:
           group: linux-checks
           extra-path: .git/golangci-lint-cache
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -210,7 +210,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -292,7 +292,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -367,7 +367,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -478,7 +478,7 @@ jobs:
         with:
           bun-version-file: web/package.json
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install frontend dependencies
         run: DOWNLOAD_RETRY='kit-retry 3 5' make web-install
@@ -576,7 +576,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       # sqlite-vec's CGo bindings #include <sqlite3.h>, which isn't on
       # the default include path. Install it from MSYS2 and point
@@ -627,13 +627,22 @@ jobs:
             --packages "$packages" -- -timeout 20m -tags "fts5 sqlite_vec"
 
       - name: Upload test events
-        if: failure() || github.run_attempt > 1 || hashFiles('gotestsum/*-reruns.txt') != ''
+        if: always()
         uses: actions/upload-artifact@v7.0.2
         with:
           name: gotestsum-windows-attempt-${{ github.run_attempt }}
           path: gotestsum/*.json
           retention-days: 14
           if-no-files-found: ignore
+
+      - name: Print slowest tests
+        if: always()
+        shell: bash
+        run: |
+          for f in gotestsum/*.json; do
+            [ -f "$f" ] || continue
+            go tool gotestsum tool slowest --jsonfile "$f" --num 10 || true
+          done
 
       - uses: actions/upload-artifact@v7.0.2
         with:
@@ -664,7 +673,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -713,7 +722,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -780,7 +789,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -835,7 +844,7 @@ jobs:
         with:
           group: windows
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         shell: bash
@@ -901,7 +910,7 @@ jobs:
         with:
           group: linux-test
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap
@@ -981,7 +990,7 @@ jobs:
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install SQLite development headers
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev
@@ -1072,7 +1081,7 @@ jobs:
         with:
           group: linux-postgres
 
-      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.3
+      - uses: kenn-io/kit/.github/actions/kit-retry@v0.47.5
 
       - name: Install test dependencies
         run: kit-retry 3 5 sudo apt-get -o APT::Update::Error-Mode=any update && kit-retry 3 5 sudo apt-get install -y libsqlite3-dev bubblewrap

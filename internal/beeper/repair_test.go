@@ -2,6 +2,7 @@ package beeper
 
 import (
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
@@ -597,25 +598,48 @@ func beeperSourceID(t *testing.T, st *store.Store) int64 {
 	return id
 }
 
+func seedArchivedBeeperMessages(t *testing.T, st *store.Store, sourceID, conversationID int64, count int) {
+	t.Helper()
+	tx, err := st.DB().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer func() { _ = tx.Rollback() }()
+	timestamp := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for i := range count {
+		providerID := fmt.Sprintf("archived-%d", i)
+		var id int64
+		require.NoError(t, tx.QueryRowContext(t.Context(), st.Rebind(`
+			INSERT INTO messages (conversation_id, source_id, source_message_id, message_type)
+			VALUES (?, ?, ?, 'beeper') RETURNING id`), conversationID, sourceID, providerID).Scan(&id))
+		raw, err := json.Marshal(Message{ID: providerID, Text: "current body", SenderName: "Example Sender", Timestamp: timestamp})
+		require.NoError(t, err)
+		_, err = tx.ExecContext(t.Context(), st.Rebind(`
+			INSERT INTO message_raw (message_id, raw_data, raw_format, compression)
+			VALUES (?, ?, ?, 'none')`), id, raw, rawArchiveFormat)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+}
+
 func TestRepairSourceResumesAfterCanceledBatch(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)
-	f := newFakeBeeper(t)
-	f.addChat(budgetTestChat("!repair:beeper.local", repairBatchSize+1, time.Now().Add(-72*time.Hour)))
-	imp, st, done := newTestImporter(t, f)
-	defer done()
-	_, err := imp.Import(t.Context(), ImportOptions{AccountID: "signal"})
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("beeper", "signal")
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE message_bodies SET body_text = 'stale'`)
+	conversationID, err := st.EnsureConversation(source.ID, "!repair:beeper.local", "Repair")
 	require.NoError(err)
-	sourceID := beeperSourceID(t, st)
+	seedArchivedBeeperMessages(t, st, source.ID, conversationID, repairBatchSize+1)
+	_, err = st.DB().Exec(st.Rebind(`INSERT INTO message_bodies (message_id, body_text)
+		SELECT id, 'stale' FROM messages WHERE source_id = ?`), source.ID)
+	require.NoError(err)
+	imp := NewImporter(st, nil)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	sum, err := imp.RepairSource(ctx, sourceID, func(string) { cancel() })
+	sum, err := imp.RepairSource(ctx, source.ID, func(string) { cancel() })
 	require.ErrorIs(err, context.Canceled)
 	assert.EqualValues(repairBatchSize, sum.BodiesRewritten)
-	sum, err = imp.RepairSource(t.Context(), sourceID, nil)
+	sum, err = imp.RepairSource(t.Context(), source.ID, nil)
 	require.NoError(err)
 	assert.EqualValues(1, sum.MessagesScanned, "resume starts after the committed batch")
 	assert.EqualValues(1, sum.BodiesRewritten, "the final row gets repaired")

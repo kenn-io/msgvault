@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math/rand"
 	"regexp"
 	"slices"
 	"sort"
@@ -1214,6 +1213,9 @@ func (s *Store) MigrateSourceMessageID(sourceID, conversationID int64, legacySou
 				); err != nil {
 					return fmt.Errorf("repoint legacy replies: %w", err)
 				}
+				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
+					return fmt.Errorf("transfer legacy loop decision: %w", err)
+				}
 			}
 
 			_, err = tx.Exec(
@@ -1856,8 +1858,13 @@ func (s *Store) GetMessageBodyAndRawContext(ctx context.Context, messageID int64
 // GetMessageBodyText returns the archived plain-text body for one message.
 // A message without a body returns an empty string.
 func (s *Store) GetMessageBodyText(messageID int64) (string, error) {
+	return s.GetMessageBodyTextContext(context.Background(), messageID)
+}
+
+// GetMessageBodyTextContext is GetMessageBodyText with a context.
+func (s *Store) GetMessageBodyTextContext(ctx context.Context, messageID int64) (string, error) {
 	var body sql.NullString
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 		SELECT body_text FROM message_bodies WHERE message_id = ?
 	`, messageID).Scan(&body)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -3830,84 +3837,28 @@ func (s *Store) CountMessagesPerMailbox(sourceID int64) (map[string]int64, error
 }
 
 // GetRandomMessageIDs returns a random sample of message IDs for a source.
-// Uses reservoir sampling with random offsets for O(limit) performance on large tables,
-// falling back to ORDER BY RANDOM() for small tables where the overhead isn't significant.
 func (s *Store) GetRandomMessageIDs(sourceID int64, limit int) ([]int64, error) {
 	live := LiveMessagesWhere("", true)
-	// Get total count first
-	var total int64
-	err := s.db.QueryRow(fmt.Sprintf(`
-		SELECT COUNT(*) FROM messages
+	rows, err := s.db.Query(fmt.Sprintf(`
+		SELECT id FROM messages
 		WHERE source_id = ? AND %s
-	`, live), sourceID).Scan(&total)
+		ORDER BY RANDOM()
+		LIMIT ?
+	`, live), sourceID, limit)
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = rows.Close() }()
 
-	if total == 0 {
-		return nil, nil
-	}
-
-	// For small tables or when limit >= total, use simple ORDER BY RANDOM()
-	// The threshold of 10000 balances query overhead vs. scan cost
-	if total < 10000 || int64(limit) >= total {
-		rows, err := s.db.Query(fmt.Sprintf(`
-			SELECT id FROM messages
-			WHERE source_id = ? AND %s
-			ORDER BY RANDOM()
-			LIMIT ?
-		`, live), sourceID, limit)
-		if err != nil {
-			return nil, err
-		}
-		defer func() { _ = rows.Close() }()
-
-		var ids []int64
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				return nil, err
-			}
-			ids = append(ids, id)
-		}
-		return ids, rows.Err()
-	}
-
-	// For large tables, use random offset sampling
-	// This is O(limit) instead of O(n) for ORDER BY RANDOM()
-	// Generate random offsets in Go for dialect portability (SQLite vs Postgres)
-	// Use explicitly seeded RNG for true randomness across process runs.
-	// math/rand is fine — this picks rows for sampling, not authentication.
-	rng := rand.New(rand.NewSource(time.Now().UnixNano())) //nolint:gosec // sampling RNG, not security
-
-	ids := make([]int64, 0, limit)
-	seen := make(map[int64]bool)
-
-	for len(ids) < limit {
-		// Generate random offset in Go (portable across SQLite/Postgres)
-		offset := rng.Int63n(total)
-
+	var ids []int64
+	for rows.Next() {
 		var id int64
-		err := s.db.QueryRow(fmt.Sprintf(`
-			SELECT id FROM messages
-			WHERE source_id = ? AND %s
-			ORDER BY id
-			LIMIT 1 OFFSET ?
-		`, live), sourceID, offset).Scan(&id)
-		if err != nil {
-			if err == sql.ErrNoRows {
-				continue // Race condition with deletions, retry
-			}
+		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-
-		if !seen[id] {
-			seen[id] = true
-			ids = append(ids, id)
-		}
+		ids = append(ids, id)
 	}
-
-	return ids, nil
+	return ids, rows.Err()
 }
 
 // UpsertFTS inserts or updates the FTS index for a message.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import XIcon from '@lucide/svelte/icons/x';
   import { Button, Chip, IconButton, SelectDropdown } from '@kenn-io/kit-ui';
 
@@ -8,6 +9,7 @@
   import { groupingOptions, isGroupingDimension } from '../../grouping/catalog';
   import AccountFilter from './AccountFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
+  import FilterMenu from './FilterMenu.svelte';
 
   interface ExtraChip {
     key: string;
@@ -25,6 +27,10 @@
 
   let {
     client,
+    messages = false,
+    lockedFilter = undefined,
+    filterExtra = undefined,
+    extraControls = undefined,
     query,
     searchMode,
     filters,
@@ -42,6 +48,10 @@
     onPresentationChange = undefined
   }: {
     client: APIClient;
+    messages?: boolean;
+    lockedFilter?: ExploreFilter;
+    filterExtra?: Snippet;
+    extraControls?: Snippet;
     query: string;
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
@@ -92,6 +102,9 @@
 
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
+    {#if messages}
+      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={filterExtra} />
+    {:else}
     <Button
       size="sm"
       surface={filtersOpen || filters.length > 0 ? 'soft' : 'outline'}
@@ -100,6 +113,8 @@
       ariaExpanded={filtersOpen}
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
+    {/if}
+    {#if !lockedFilter}
     <SelectDropdown
       value={presentation}
       options={presentationOptions}
@@ -113,6 +128,7 @@
         onchange={selectGrouping}
       />
     </div>
+    {/if}
     {#if sort}
       <div data-sort-menu>
         <SelectDropdown
@@ -122,6 +138,7 @@
         />
       </div>
     {/if}
+    {@render extraControls?.()}
     <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>
 
@@ -172,7 +189,7 @@
     </div>
   {/if}
 
-  {#if filtersOpen}
+  {#if filtersOpen && !messages}
     <div class="filter-panel">
       <div class="filter-summary">
         {#if filters.length === 0}

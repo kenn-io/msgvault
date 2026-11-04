@@ -15,9 +15,10 @@ import (
 )
 
 type domainPopulationProfile struct {
-	Type      string                    `json:"type"`
-	ExtraInfo map[string]any            `json:"extra_info"`
-	Children  []domainPopulationProfile `json:"children"`
+	Type             string                    `json:"type"`
+	ExtraInfo        map[string]any            `json:"extra_info"`
+	Children         []domainPopulationProfile `json:"children"`
+	IntermediateRows int64                     `json:"intermediate_rows"`
 }
 
 // Profile the public entry point so the regression also exercises dispatch

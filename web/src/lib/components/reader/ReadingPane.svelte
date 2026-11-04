@@ -32,7 +32,7 @@
   import { onDestroy, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
-  import type { MeetingActionsRequest, MeetingContextRequest, MeetingRef } from '../../api/generated/models';
+  import type { MeetingRef } from '../../api/generated/models';
   import { createExploreAPI } from '../../explore/api';
   import { entryKindPresentation } from '../../explore/labels';
   import { filtersForGroup } from '../../explore/group-context';
@@ -40,10 +40,7 @@
   import { isEmailMessageType } from '../../explore/models';
   import { formatBytes } from '../../util/format';
   import IdentityBadge from '../explore/IdentityBadge.svelte';
-  import TaskLinks from '../tasks/TaskLinks.svelte';
   import MeetingPanel from '../meetings/MeetingPanel.svelte';
-  import MeetingActions from '../meetings/MeetingActions.svelte';
-  import MeetingContextExport from '../meetings/MeetingContextExport.svelte';
   import AttachmentRail from './AttachmentRail.svelte';
   import ConversationView from './ConversationView.svelte';
 
@@ -61,12 +58,13 @@
     conversationStart = undefined,
     conversationEnd = undefined,
     onConversationAnchorChange = undefined,
+    onOpenPerson = undefined,
     onOpenSettings = undefined,
-    onOpenRelationship = undefined,
     onOpenMeeting = undefined,
     onReloadMeetings = undefined
   }: {
     client: APIClient;
+    onOpenPerson?: (participantID: number) => void;
     selection?: ReadingPaneSelection;
     targetKey?: string;
     status?: ReadingPaneStatus;
@@ -85,12 +83,6 @@
     conversationEnd?: string;
     onConversationAnchorChange?: (anchorId: number) => void;
     onOpenSettings?: () => void;
-    /** Header action for entry selections that carry a participant, jumping
-     * to that participant's cluster in the Relationships hub. Omitted (and
-     * the button hidden) where the caller has no such destination — e.g. the
-     * Relationships hub's own reading pane, whose timeline rows don't carry
-     * participant IDs. */
-    onOpenRelationship?: (participantID: number) => void;
     /** Opens the exact generated archive reference carried by meeting action evidence. */
     onOpenMeeting?: (meeting: MeetingRef) => void;
     onReloadMeetings?: () => void;
@@ -101,7 +93,6 @@
   let totalFiles = $state(0);
   let filesLoading = $state(false);
   let filesError = $state('');
-  let tasksOpen = $state(false);
   let requestGeneration = 0;
   let requestController: AbortController | undefined;
   const title = $derived(selection
@@ -111,44 +102,19 @@
     (selection.dimension === 'participant' || selection.dimension === 'domain'));
   const conversationRow = $derived(selection?.kind === 'entry' && selection.row.conversation_id &&
     selection.row.anchor_message_id ? selection.row : undefined);
+  const counterpartParticipantId = $derived(selection?.kind === 'entry' ? selection.row.counterpart_participant_id : undefined);
   const archiveMessage = $derived(selection?.kind === 'archive' ? selection.message : undefined);
   const conversationID = $derived(archiveMessage?.conversation_id ?? conversationRow?.conversation_id);
   // The thread opens immediately at the entry's own anchor; an explicit
   // anchor (in-thread navigation restored from the URL) overrides it.
   const threadAnchorId = $derived(conversationAnchorId ?? archiveMessage?.id ?? conversationRow?.anchor_message_id);
-  // counterpart_participant_id is server-computed (see EntryRow): the
-  // smallest non-owner participant on the entry, or absent when the owner
-  // set is unknown or every participant is the owner. Unlike
-  // participant_ids[0], it never resolves to the archive owner.
-  const counterpartParticipantId = $derived(
-    selection?.kind === 'entry' ? selection.row.counterpart_participant_id : undefined
-  );
-  const showTasks = $derived(selection?.kind === 'entry' &&
-    isEmailMessageType(selection.row.message_type) && selection.row.anchor_message_id !== undefined);
-  const meetingAnchorId = $derived(
-    archiveMessage?.message_type === 'meeting_transcript' ? archiveMessage.id : selection?.kind === 'entry' &&
-      selection.row.message_type === 'meeting_transcript' &&
-      selection.row.anchor_message_id !== undefined
-      ? selection.row.anchor_message_id
-      : undefined,
-  );
-  const meetingContextRequest = $derived<MeetingContextRequest | undefined>(
-    meetingAnchorId === undefined ? undefined : { message_ids: [meetingAnchorId] },
-  );
-  const meetingActionsRequest = $derived<MeetingActionsRequest | undefined>(
-    meetingAnchorId === undefined ? undefined : { scope: { message_ids: [meetingAnchorId] }, limit: 200 },
-  );
-
   const metaStrip = $derived.by((): string => {
     if (!selection) return '';
     if (selection.kind === 'archive') return `${entryKindPresentation('', selection.message.message_type).name} · ${formatDate(selection.message.sent_at)}`;
     if (selection.kind === 'entry') {
-      const row = selection.row;
-      const parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatDate(row.occurred_at)];
+      const { row } = selection, parts = [entryKindPresentation(row.kind, row.message_type).name, row.source_identifier, formatDate(row.occurred_at)];
       if (row.message_count > 1) parts.push(`${row.message_count.toLocaleString()} items`);
-      if (row.attachment_count > 0) {
-        parts.push(`${row.attachment_count.toLocaleString()} ${row.attachment_count === 1 ? 'file' : 'files'}`);
-      }
+      if (row.attachment_count > 0) parts.push(`${row.attachment_count.toLocaleString()} ${row.attachment_count === 1 ? 'file' : 'files'}`);
       return parts.filter(Boolean).join(' · ');
     }
     const parts = [`Grouped by ${selection.dimension}`];
@@ -212,21 +178,7 @@
       });
   });
 
-  // A new selection collapses the previous entry's Tasks disclosure.
-  $effect(() => {
-    void targetKey;
-    void selection;
-    tasksOpen = false;
-  });
-
-  onDestroy(() => {
-    requestGeneration += 1;
-    requestController?.abort();
-  });
-
-  function handleOpenRelationship(): void {
-    if (counterpartParticipantId !== undefined) onOpenRelationship?.(counterpartParticipantId);
-  }
+  onDestroy(() => { requestGeneration += 1; requestController?.abort(); });
 
   function formatDate(value: string): string {
     const parsed = new Date(value);
@@ -250,24 +202,8 @@
       {/if}
     </div>
     <div class="pane-actions">
-      {#if showTasks}
-        <Button
-          size="sm"
-          surface="outline"
-          label="Tasks"
-          ariaLabel="Tasks for this message"
-          ariaExpanded={tasksOpen}
-          onclick={() => (tasksOpen = !tasksOpen)}
-        />
-      {/if}
-      {#if onOpenRelationship && counterpartParticipantId !== undefined}
-        <Button
-          size="sm"
-          surface="outline"
-          label="Open relationship"
-          ariaLabel="Open relationship"
-          onclick={handleOpenRelationship}
-        />
+      {#if onOpenPerson && counterpartParticipantId !== undefined}
+        <Button size="sm" surface="outline" label="Open person" onclick={() => { if (counterpartParticipantId !== undefined) onOpenPerson?.(counterpartParticipantId); }} />
       {/if}
       <IconButton size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
         <X size={14} />
@@ -275,33 +211,12 @@
     </div>
   </header>
 
-  {#if showTasks && tasksOpen && selection?.kind === 'entry'}
-    <div class="tasks-sheet">
-      <TaskLinks
-        {client}
-        messageId={selection.row.anchor_message_id!}
-        title={selection.row.title || '(untitled)'}
-        sourceType={selection.row.source_type}
-        sourceIdentifier={selection.row.source_identifier}
-        onsettings={onOpenSettings}
-      />
-    </div>
-  {/if}
-
-  {#if meetingContextRequest && meetingActionsRequest}
-    <div class="meeting-context-sheet">
-      <MeetingContextExport {client} request={meetingContextRequest} />
-    </div>
-  {/if}
-
   <div class="pane-body">
-    {#if meetingActionsRequest}
-      <div class="meeting-actions-sheet">
-        <MeetingActions {client} request={meetingActionsRequest} {onOpenMeeting} />
-      </div>
-    {/if}
     {#if conversationID !== undefined && threadAnchorId !== undefined}
       <ConversationView
+        {onOpenPerson}
+        {onOpenSettings}
+        {onOpenMeeting}
         {client}
         conversationId={conversationID}
         anchorId={threadAnchorId}
@@ -423,27 +338,6 @@
     flex: none;
     align-items: center;
     gap: var(--control-gap);
-  }
-
-  .tasks-sheet {
-    flex: none;
-    max-height: 40%;
-    overflow: auto;
-    padding: 0 var(--pane-pad-x);
-    border-bottom: 1px solid var(--border-muted);
-  }
-
-  .meeting-actions-sheet {
-    flex: none;
-    min-height: 0;
-    max-height: 50%;
-    overflow: auto;
-  }
-
-  .meeting-context-sheet {
-    flex: none;
-    padding: var(--space-3) var(--pane-pad-x);
-    border-bottom: 1px solid var(--border-muted);
   }
 
   .pane-body {

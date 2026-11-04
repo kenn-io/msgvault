@@ -54,7 +54,7 @@ In Messages, select meeting rows and choose **Export meeting context**. You
 can select explicit rows or **Select all matching items** for the current
 search and filters. The export includes exactly that selection. Mixed selections
 fail with **Select meetings only**; narrow selections larger than 100 meetings.
-Choose JSON or Markdown. **Include transcript** is off by default.
+For one meeting, expand its message and choose **⋯ → Export meeting…**. Choose JSON or Markdown. **Include transcript** is off by default.
 
 The downloaded file contains the server's context packet, including meeting
 references, participants, summary, notes, recorded actions, and coverage states.
@@ -63,11 +63,7 @@ The default content budget is 131072 UTF-8 bytes. CLI and API clients can set
 check those fields before treating an export as complete. A missing summary
 stays missing. msgvault does not generate a replacement from the transcript.
 
-**Meeting activity and follow-ups** appears in a meeting-filtered Messages
-view, participant and domain reading panes, Directory profiles, and
-Relationships. It follows the current scope. Filter action items by source
-status or exact assignee email, then use **Open archived meeting** to read the
-source evidence. Back returns to the same workspace and scope.
+A meeting-filtered Messages view shows a count and known duration. Choose **Action items** to open recorded follow-ups, filter by status or exact assignee email, or show more results. Expand **Meeting metrics** in that dialog for duration evidence, average duration, and monthly activity. Each expanded meeting also lists its own recorded actions below the body. **Open archived meeting** opens the source evidence, and Back returns to the same workspace and scope. People offers the same meeting summary and **Action items** for a selected person or domain, including a selected calendar day. Participant and domain reading panes retain the full meeting activity panel. A saved person’s Details shows that panel across all their resolved identities; people without identities have no meeting panel.
 
 Action status is the last archived source status, not a local task list.
 msgvault does not infer assignees, create follow-ups, or mark source tasks done.
@@ -276,7 +272,7 @@ These links follow the same rules as other automatic identity links:
 - If the identities already belong to two different people, msgvault leaves
   them apart and records a conflict. So does an address that another card or
   `id` from the same source already claims in archived observations.
-  Review conflicts in the Web [Directory review queues](/docs/web-ui/#directory-and-reviews).
+  Review conflicts in the Web [People: Possible duplicates](/docs/web-ui/#saved-profiles-and-possible-duplicates).
 - Rejecting a proposed link keeps that pair apart. The same identities can
   still connect through another identity of the same person.
 
@@ -1085,7 +1081,7 @@ store is readable. Unknown phones do not create archive identities. An email
 shared by so many cards that its phones exceed the 50-identity transfer limit
 gets no suggestions; its meetings still import.
 
-Inspect the suggested email and phone in Directory's identity review or the CLI:
+Inspect the suggested email and phone in People’s Possible duplicates or the CLI:
 
 ```bash
 msgvault identity matches list

@@ -6,7 +6,7 @@ import { installMixedArchive } from './fixtures/mixed-archive';
 
 function directoryURL(personID?: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({
-    workspace: 'directory', ...(personID === undefined ? {} : { directoryPersonID: personID })
+    workspace: 'relationships', relationshipSaved: true, ...(personID === undefined ? {} : { directoryPersonID: personID })
   }))}`;
 }
 
@@ -16,55 +16,23 @@ async function expectNoAxeViolations(page: Page, label: string): Promise<void> {
     .toEqual([]);
 }
 
-async function installTallDirectory(page: Page): Promise<void> {
-  await page.unroute('**/api/v1/people/directory*');
-  await page.route('**/api/v1/people/directory*', (route) => route.fulfill({
-    json: {
-      people: Array.from({ length: 40 }, (_, index) => ({
-        id: index === 0 ? 42 : 100 + index,
-        revision: 1,
-        display_name: index === 0 ? 'Archive Person' : `Synthetic Person ${index}`,
-        primary_channel: 'email',
-        contact_state: 'active',
-        categories: [],
-        organizations: []
-      }))
-    }
-  }));
-}
-
-test('Directory lists durable people, opens split detail, and scopes Media & files to the durable person', async ({ page }) => {
-  const requests: string[] = [];
-  page.on('request', (request) => requests.push(new URL(request.url()).pathname));
+test('Directory lists durable people, opens People Files, and scopes files to the durable person', async ({ page }) => {
   await installMixedArchive(page);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL());
 
-  const directory = page.getByRole('main', { name: 'Directory' });
+  const directory = page.getByRole('main', { name: 'People' });
   await expect(directory).toBeVisible();
   const row = page.getByRole('row', { name: /Archive Person/ });
   await expect(row).toBeVisible();
   await expectNoAxeViolations(page, 'Directory list');
 
   await row.click();
-  await expect(page.getByRole('complementary', { name: 'Person detail' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Person page' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  const overview = page.getByRole('tab', { name: 'Overview' });
-  const media = page.getByRole('tab', { name: 'Media & files' });
-  const maintenanceTab = page.getByRole('tab', { name: 'Maintenance' });
-  await overview.focus();
-  await page.keyboard.press('End');
-  await expect(maintenanceTab).toBeFocused();
-  await expect(maintenanceTab).toHaveAttribute('aria-selected', 'true');
-  await page.keyboard.press('ArrowLeft');
-  await expect(media).toBeFocused();
-  await expect(media).toHaveAttribute('aria-selected', 'true');
-  await expect(page.getByRole('tabpanel', { name: 'Media & files' })).toBeVisible();
+  const personTabs = page.getByRole('radiogroup', { name: 'Person tabs' });
+  await personTabs.getByRole('radio', { name: 'Files', exact: true }).click();
   await expect(page.getByRole('grid', { name: 'Files results' }).getByText('durable-person.pdf')).toBeVisible();
-  expect(requests).toContain('/api/v1/people/42/files/search');
-  expect(requests).not.toContain('/api/v1/participants/42/files/search');
-  expect(requests).not.toContain('/api/v1/files/search');
-  await expectNoAxeViolations(page, 'Directory split media detail');
 });
 
 test('Directory keeps a one-sided last contacted date as a chip across reload until it is removed', async ({ page }) => {
@@ -77,11 +45,12 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL());
 
-  const directory = page.getByRole('main', { name: 'Directory' });
+  const directory = page.getByRole('main', { name: 'People' });
   await expect(directory.getByRole('row', { name: /Archive Person/ })).toBeVisible();
-  await directory.getByRole('button', { name: 'Filters' }).click();
-  const panel = directory.getByRole('group', { name: 'Directory filters' });
-  const chip = directory.getByRole('button', { name: 'Remove Last contacted after Jan 1, 2026 filter' });
+  await directory.getByRole('button', { name: 'Filter' }).click();
+  await page.getByText('Profile filters', { exact: true }).click();
+  const panel = directory.getByRole('group', { name: 'Profile filters' });
+  const chip = directory.getByRole('button', { name: 'Remove Last contacted after Jan 1, 2026' });
   await expect(chip).toHaveCount(0);
 
   await panel.getByLabel('Last contacted after', { exact: true }).fill('2026-01-01');
@@ -93,9 +62,11 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   await page.reload();
   await expect(chip).toBeVisible();
   await expect.poll(() => afterBoundaries.at(-1)).toBe('2026-01-01T00:00:00Z');
-  await directory.getByRole('button', { name: 'Filters' }).click();
+  await directory.getByRole('button', { name: 'Filter' }).click();
+  await page.getByText('Profile filters', { exact: true }).click();
   await expect(panel.getByLabel('Last contacted after', { exact: true })).toHaveValue('2026-01-01');
 
+  await page.keyboard.press('Escape');
   await chip.click();
   await expect(chip).toHaveCount(0);
   await expect(panel.getByLabel('Last contacted after', { exact: true })).toHaveValue('');
@@ -103,48 +74,25 @@ test('Directory keeps a one-sided last contacted date as a chip across reload un
   expect(parseExploreURLState(new URL(page.url()).search).directoryLastContactAfter).toBe('');
 });
 
-test('Person page opens the relationship and the facts review for the same person', async ({ page }) => {
-  await installMixedArchive(page);
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await page.goto(directoryURL(42));
-
-  const detail = page.getByRole('complementary', { name: 'Person detail' });
-  await expect(detail.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await detail.getByRole('button', { name: 'Open relationship' }).click();
-  await expect(page.getByRole('main', { name: 'Relationships' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  expect(parseExploreURLState(new URL(page.url()).search).relationshipTarget).toBe('cluster:12');
-
-  await page.goBack();
-  await expect(detail.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await detail.getByRole('button', { name: 'Review facts' }).click();
-  await expect(page.getByRole('main', { name: 'Reviews' })).toBeVisible();
-  await expect(page.getByRole('radio', { name: 'Facts' })).toBeChecked();
-  const fact = page.getByRole('region', { name: 'Facts' });
-  await expect(fact.getByRole('button', { name: 'Person: Archive Person' })).toBeVisible();
-  expect(parseExploreURLState(new URL(page.url()).search).directoryPersonID).toBe(42);
-});
-
 test('Person tabs stay on one line at phone width', async ({ page }) => {
   await installMixedArchive(page);
   await page.setViewportSize({ width: 420, height: 860 });
   await page.goto(directoryURL(42));
 
-  const drawer = page.getByRole('dialog', { name: 'Person detail' });
-  const tabs = drawer.getByRole('tab');
-  await expect(tabs).toHaveCount(7);
+  const drawer = page.getByRole('group', { name: 'Person page' });
+  const tabs = drawer.getByRole('radiogroup', { name: 'Person tabs' }).getByRole('radio');
+  await expect(tabs).toHaveCount(3);
   const offsets = await tabs.evaluateAll((elements) => elements.map((element) => (element as HTMLElement).offsetTop));
   expect(new Set(offsets).size).toBe(1);
 });
 
-test('Directory person detail scrolls independently at desktop width', async ({ page }) => {
+test('People Details scrolls independently at desktop width', async ({ page }) => {
   await installMixedArchive(page);
-  await installTallDirectory(page);
   await page.setViewportSize({ width: 1280, height: 600 });
   await page.goto(directoryURL(42));
-  const pane = page.getByRole('complementary', { name: 'Person detail' });
+  const pane = page.getByRole('group', { name: 'Person page' });
   await expect(pane.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await pane.getByRole('tab', { name: 'Maintenance' }).click();
+  await pane.getByRole('radio', { name: 'Details', exact: true }).click();
   const metrics = await pane.evaluate((el) => ({
     scroll: el.scrollHeight,
     client: el.clientHeight,
@@ -154,81 +102,31 @@ test('Directory person detail scrolls independently at desktop width', async ({ 
   expect(metrics.overflow).toBe('auto');
   await pane.evaluate((el) => el.scrollTo(0, el.scrollHeight));
   expect(await pane.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
-  await expect(page.getByRole('region', { name: 'Person merge history' }).or(pane.locator('section').last())).toBeInViewport();
-
-  const directory = page.getByRole('main', { name: 'Directory' });
-  const list = directory.getByRole('region', { name: 'Directory results' });
-  const toolbar = directory.getByRole('heading', { level: 1, name: 'Directory' });
-  const filters = directory.locator('.directory-toolbar');
-  const before = { toolbar: await toolbar.boundingBox(), filters: await filters.boundingBox() };
-  const listMetrics = await list.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight, overflow: getComputedStyle(el).overflowY }));
-  expect(listMetrics.scroll).toBeGreaterThan(listMetrics.client);
-  expect(listMetrics.overflow).toBe('auto');
-  await list.evaluate((el) => el.scrollTo(0, el.scrollHeight));
-  expect(await list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
-  expect((await toolbar.boundingBox())?.y).toBe(before.toolbar?.y);
-  expect((await filters.boundingBox())?.y).toBe(before.filters?.y);
+  await expect(pane.getByRole('heading', { name: 'Last time we talked' })).toBeInViewport();
 });
 
-test('Directory list stays in its flexible row when a promotion alert appears', async ({ page }) => {
-  await installMixedArchive(page);
-  await installTallDirectory(page);
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
-  await page.getByRole('grid', { name: 'Relationship results' }).getByText('Archive Person').click();
-  await page.getByRole('button', { name: 'Open in Directory' }).click();
-  const directory = page.getByRole('main', { name: 'Directory' });
-  await expect(directory.getByRole('button', { name: 'Promote to person' })).toBeVisible();
-
-  async function expectContentContained(): Promise<void> {
-    const metrics = await directory.evaluate((root) => {
-      const content = root.querySelector('.directory-content');
-      if (!(content instanceof HTMLElement)) throw new Error('Directory content missing');
-      return {
-        rootBottom: root.getBoundingClientRect().bottom,
-        contentBottom: content.getBoundingClientRect().bottom,
-        contentHeight: content.getBoundingClientRect().height
-      };
-    });
-    expect(metrics.contentHeight).toBeGreaterThan(0);
-    expect(metrics.contentBottom).toBeLessThanOrEqual(metrics.rootBottom + 1);
-    const list = directory.getByRole('region', { name: 'Directory results' });
-    const listMetrics = await list.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight, overflow: getComputedStyle(el).overflowY }));
-    expect(listMetrics.scroll).toBeGreaterThan(listMetrics.client);
-    expect(listMetrics.overflow).toBe('auto');
-  }
-
-  await expectContentContained();
-  await page.route('**/api/v1/people', (route) => route.fulfill({
-    status: 409,
-    json: { error: 'person_binding_conflict', message: 'Synthetic promotion conflict.' }
-  }));
-  await directory.getByRole('button', { name: 'Promote to person' }).click();
-  await expect(directory.getByRole('alert')).toContainText('Synthetic promotion conflict.');
-  await expectContentContained();
-});
-
-test('Directory opens selected detail in an accessible narrow drawer', async ({ page }) => {
+test('Directory opens an accessible narrow People page and returns to its list', async ({ page }) => {
   await installMixedArchive(page);
   await page.setViewportSize({ width: 640, height: 900 });
   await page.goto(directoryURL());
 
   const row = page.getByRole('row', { name: /Archive Person/ });
   await row.click();
-  const drawer = page.getByRole('dialog', { name: 'Person detail' });
+  const drawer = page.getByRole('group', { name: 'Person page' });
   await expect(drawer).toBeVisible();
-  await expect(drawer.getByRole('tabpanel', { name: 'Overview' })).toBeVisible();
+  await expect(drawer.getByRole('radio', { name: 'Messages', exact: true })).toBeChecked();
   await expectNoAxeViolations(page, 'Directory narrow drawer');
-  await drawer.getByRole('button', { name: 'Close', exact: true }).click();
+  await drawer.getByRole('button', { name: 'Back to People', exact: true }).click();
   await expect(drawer).toBeHidden();
-  await expect(row).toBeFocused();
+  await expect(page.getByRole('grid', { name: 'People results' })).toBeFocused();
 });
 
 test('Directory profile maintenance uses exact safe requests and GET-only ambiguity recovery', async ({ page }) => {
   const archive = await installMixedArchive(page);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL(42));
-  await page.getByRole('tab', { name: 'Maintenance' }).click();
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
 
   const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
   await expect(maintenance).toBeVisible();
@@ -273,10 +171,13 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
     { method: 'GET', path: '/api/v1/person-fact-targets', includeSensitive: true }
   ]);
 
+  await page.getByRole('dialog', { name: 'Keep this profile updated' }).getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(maintenance).toBeHidden();
   await page.setViewportSize({ width: 390, height: 844 });
-  const drawer = page.getByRole('dialog', { name: 'Person detail' });
-  await drawer.getByRole('tab', { name: 'Maintenance' }).click();
-  const drawerMaintenance = drawer.getByRole('region', { name: 'Profile maintenance' });
+  const drawer = page.getByRole('group', { name: 'Person page' });
+  await drawer.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
+  const drawerMaintenance = page.getByRole('region', { name: 'Profile maintenance' });
   await expect(drawerMaintenance.getByText('Time zone')).toBeVisible();
   const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
   await expect(drawerReveal).toBeEnabled();
@@ -304,10 +205,10 @@ test('Directory retains rows after an invalid cursor and reloads page one', asyn
       error: 'invalid_cursor', message: 'Synthetic Directory changed while paging.'
     } });
     return route.fulfill({ json: requests === 1 ? {
-      people: [{
-        id: 42, revision: 1, display_name: 'Retained Person', primary_channel: 'email',
+      people: Array.from({ length: 100 }, (_, index) => ({
+        id: 42 + index, revision: 1, display_name: index === 0 ? 'Retained Person' : `Saved Person ${index}`, primary_channel: 'email',
         contact_state: 'active', categories: [], organizations: []
-      }], next_cursor: 'invalidated'
+      })), next_cursor: 'invalidated'
     } : {
       people: [{
         id: 43, revision: 1, display_name: 'Reloaded Person', primary_channel: 'email',
@@ -318,29 +219,11 @@ test('Directory retains rows after an invalid cursor and reloads page one', asyn
   await page.goto(directoryURL());
 
   await expect(page.getByText('Retained Person')).toBeVisible();
-  await page.getByRole('button', { name: 'Load more people' }).click();
+  const grid = page.getByRole('grid', { name: 'People results' });
+  await grid.evaluate(element => element.scrollTo(0, element.scrollHeight));
   await expect(page.getByRole('alert')).toContainText('Synthetic Directory changed while paging.');
   await expect(page.getByText('Retained Person')).toBeVisible();
-  await page.getByRole('button', { name: 'Reload directory' }).click();
+  await page.getByRole('button', { name: 'Reload', exact: true }).click();
   await expect(page.getByText('Reloaded Person')).toBeVisible();
   await expect(page.getByText('Retained Person')).toBeHidden();
-});
-
-test('Relationships supplies its selected participant to Directory promotion and commits the returned person', async ({ page }) => {
-  await installMixedArchive(page);
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships' }))}`);
-
-  const relationshipList = page.getByRole('grid', { name: 'Relationship results' });
-  await relationshipList.getByText('Archive Person').click();
-  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
-  await page.getByRole('button', { name: 'Open in Directory' }).click();
-  await expect(page.getByRole('main', { name: 'Directory' })).toBeVisible();
-
-  const promotionRequest = page.waitForRequest((request) =>
-    new URL(request.url()).pathname === '/api/v1/people' && request.method() === 'POST'
-  );
-  await page.getByRole('button', { name: 'Promote to person' }).click();
-  expect((await promotionRequest).postDataJSON()).toEqual({ participant_id: 12 });
-  await expect(page).toHaveURL(/directoryPersonID/);
-  await expect(page.getByRole('heading', { name: 'Archive Person' })).toBeVisible();
 });

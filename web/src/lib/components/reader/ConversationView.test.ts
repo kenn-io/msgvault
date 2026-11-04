@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { disabledTaskLookup } from '../tasks/fixtures.test-support';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,7 +10,13 @@ const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
 beforeEach(() => { telemetryEvents.length = 0; telemetryRequests.length = 0; });
 afterEach(() => { vi.useRealTimers(); });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
+const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+  const path = new URL((input as Request).url).pathname;
+  if (path === '/api/v1/integrations/tasks/status') return Response.json({ state: 'disabled', message: 'Task integration is disabled.' });
+  const lookup = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
+  if (lookup) return Response.json(disabledTaskLookup(Number(lookup[1])));
+  return fetchFn(input, init);
+}, telemetryEvents, telemetryRequests);
 function message(id: number, type = 'email') {
   return {
     id,
@@ -61,27 +68,28 @@ describe('ConversationView', () => {
     expect(url.searchParams.get('anchor')).toBe('2');
   });
 
-  it('labels an outgoing chat message with no sender identity as You', async () => {
+  it('shows owner messages as plain You and participant affordances from API identities', async () => {
+    const onOpenPerson = vi.fn();
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      id: 7,
-      anchor_id: 2,
-      messages: [message(2, 'whatsapp')].map((entry) => ({
-        ...entry,
-        from: '',
-        is_from_me: true
-      })),
-      has_before: false,
-      has_after: false,
-      total: 1
+      id: 7, anchor_id: 2,
+      messages: [
+        { ...message(2, 'whatsapp'), from: '', from_participant_id: 11, is_from_me: true },
+        { ...message(3, 'whatsapp'), from: 'Chat sender', from_participant_id: 22, to: ['Chat recipient'], to_participants: [{ display: 'Chat recipient', participant_id: 33 }] }
+      ],
+      has_before: false, has_after: false, total: 2
     }));
-
-    render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2 }
-    });
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onOpenPerson });
 
     const anchorCard = await screen.findByRole('article', { name: 'Message 2' });
     expect(anchorCard.textContent).toContain('You');
+    expect(within(anchorCard).queryByRole('button', { name: 'You' })).toBeNull();
     expect(anchorCard.textContent).not.toContain('Unknown sender');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 3/ }));
+    const incomingCard = screen.getByRole('article', { name: 'Message 3' });
+    await fireEvent.click(within(incomingCard).getByRole('button', { name: 'Chat sender' }));
+    expect(onOpenPerson).toHaveBeenNthCalledWith(1, 22);
+    await fireEvent.click(within(incomingCard).getByRole('button', { name: 'Chat recipient' }));
+    expect(onOpenPerson).toHaveBeenNthCalledWith(2, 33);
   });
 
   it('sends optional start/end bounds when scoping to a chat burst day', async () => {
@@ -116,29 +124,96 @@ describe('ConversationView', () => {
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
-    await fireEvent.click(screen.getByText('⋯'));
-    await fireEvent.click(screen.getByRole('button', { name: 'Show plain text' }));
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for alice@example.com on Jan 2, 2026/ }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Show plain text' }));
     expect(screen.getByText('Body 2')).toBeDefined();
   });
 
   it('expands additional messages inline without refetching and reports the anchor change', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({
-      id: 7, anchor_id: 2, messages: [message(1, 'imessage'), message(2, 'imessage')],
-      has_before: false, has_after: false, total: 2
-    }));
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ id: 7, anchor_id: 2, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 }));
     const onAnchorChange = vi.fn();
-    render(ConversationView, {
-      props: { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange }
+    render(ConversationView, { client: createAPIClient(fetchFn), conversationId: 7, anchorId: 2, onAnchorChange });
+    await screen.findByRole('article', { name: 'Message 2' });
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
+    expect(screen.getByRole('article', { name: 'Message 2' })).toBeTruthy();
+    expect(onAnchorChange).toHaveBeenCalledWith(1);
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.includes('/conversations/'))).toHaveLength(1);
+  });
+
+  it.each([
+    { state: 'disabled', cached: true },
+    { state: 'unreachable', cached: true },
+    { state: 'unreachable', cached: false },
+  ])('shares pending Tasks probes and one $state notice with cached=$cached', async ({ state, cached }) => {
+    const lookedUp: number[] = [];
+    let releaseStatus!: () => void;
+    const statusPending = new Promise<void>(resolve => { releaseStatus = resolve; });
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) {
+        await statusPending;
+        return Response.json({ state, message: state === 'disabled' ? 'Task integration is disabled.' : 'Task service is unreachable.' });
+      }
+      const taskMessage = /^\/api\/v1\/messages\/(\d+)\/tasks$/.exec(path);
+      if (taskMessage) { lookedUp.push(Number(taskMessage[1])); return Response.json({ state: state === 'unreachable' ? 'unavailable' : state, complete: false, tasks: cached ? [{ id: `task-${taskMessage[1]}`, title: `Linked task ${taskMessage[1]}` }] : [], outbound_metadata: {} }); }
+      return Response.json({
+        id: 7, anchor_id: 2, messages: [message(1), message(2)],
+        has_before: false, has_after: false, total: 2
+      });
+    });
+    const client = createCaptureClient(fetchFn, telemetryEvents, telemetryRequests);
+    const view = render(ConversationView, {
+      props: { client, conversationId: 7, anchorId: 2 }
     });
 
     await screen.findByRole('article', { name: 'Message 2' });
     await fireEvent.click(screen.getByRole('button', { name: /Expand message 1/ }));
+    releaseStatus();
 
-    // Both stay expanded — a real thread, not a single-open stack.
-    expect(await screen.findByRole('article', { name: 'Message 1' })).toBeTruthy();
-    expect(screen.getByRole('article', { name: 'Message 2' })).toBeTruthy();
-    expect(onAnchorChange).toHaveBeenCalledWith(1);
-    expect(fetchFn).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(lookedUp.sort()).toEqual([1, 2]));
+    await waitFor(() => expect(screen.queryByText('Loading linked tasks…')).toBeNull());
+    if (state === 'disabled') await waitFor(() => expect(screen.getAllByRole('button', { name: 'Set up' })).toHaveLength(1));
+    else expect(screen.getAllByText('Task integration unreachable: Task service is unreachable.')).toHaveLength(1);
+    expect(fetchFn.mock.calls.filter(([input]) => (input as Request).url.endsWith('/tasks/status'))).toHaveLength(1);
+    view.unmount();
+  });
+
+  it.each(['ready', 'HTTP 500', 'rejected fetch', 'unreachable'])('updates every card after the latest Tasks status probe returns %s', async (latest) => {
+    const recovered = latest === 'ready';
+    let statusCalls = 0;
+    const client = createCaptureClient(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/tasks/status')) {
+        if (++statusCalls === 1) return Response.json({ state: recovered ? 'unreachable' : 'ready', project: 'example', message: 'Task service is unreachable.' });
+        if (latest === 'ready') return Response.json({ state: 'ready', project: 'example' });
+        if (statusCalls > 2) return Response.json({ state: 'ready', project: 'example' });
+        if (latest === 'unreachable') return Response.json({ state: 'unreachable', message: 'Task service is unreachable.' });
+        if (latest === 'rejected fetch') throw new Error('Tasks status could not be read.');
+        return Response.json({ message: 'Tasks status could not be read.' }, { status: 500 });
+      }
+      const lookup = /messages\/(\d+)\/tasks$/.exec(path);
+      if (lookup) return Response.json({ state: recovered && lookup[1] === '1' ? 'unavailable' : 'ready', complete: !recovered, tasks: [{ id: `task-${lookup[1]}`, title: `Cached task ${lookup[1]}` }], outbound_metadata: {} });
+      return Response.json({ id: 7, anchor_id: 1, messages: [message(1), message(2)], has_before: false, has_after: false, total: 2 });
+    }, telemetryEvents, telemetryRequests);
+    render(ConversationView, { client, conversationId: 7, anchorId: 1 });
+    await screen.findByText('Cached task 1');
+    await fireEvent.click(screen.getByRole('button', { name: /Expand message 2/ }));
+    expect(await screen.findByText('Cached task 2')).toBeDefined();
+    expect(screen.getByText('Cached task 1')).toBeDefined();
+    expect(statusCalls).toBe(2);
+    const owner = within(screen.getByRole('article', { name: 'Message 1' }));
+    if (recovered) {
+      expect(owner.getByRole('alert')).toBeDefined();
+    } else {
+      expect(owner.getByRole('alert').textContent).toContain(latest === 'unreachable'
+        ? 'Task integration unreachable: Task service is unreachable.'
+        : 'Task integration unreachable: Tasks status could not be read.');
+    }
+    await fireEvent.click(screen.getByRole('button', { name: /^More actions for alice@example.com on Jan 2, 2026/ }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
+    expect(await screen.findByRole('dialog', { name: 'Add to task' })).toBeDefined();
+    await waitFor(() => expect(statusCalls).toBe(3));
   });
 
   it('collapses an expanded message back to its one-line card', async () => {

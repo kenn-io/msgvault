@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { relationshipDestination, tasksSettingsDestination } from './lib/components/shell/navigation';
+  import { defaultExploreURLState, serializeExploreURLState } from './lib/explore/state.svelte';
   import { getSettings as generatedGetSettings } from './lib/api/generated/api/api';
   import { Button } from '@kenn-io/kit-ui';
   import { startTelemetryReporting, stopTelemetryReporting } from './lib/telemetry/actions';
@@ -6,6 +8,7 @@
   import { receiveGoogleContactsCallback } from './lib/settings/google-authorization';
   import { createSessionController, type SessionController } from './lib/api/session.svelte';
   import { provideKataReadiness } from './lib/kata/kata-ready.svelte';
+  import { provideVisualReadiness } from './lib/search/visual-ready.svelte';
   import { provideMediaReadiness } from './lib/search/media-ready.svelte';
   import Login from './lib/components/auth/Login.svelte';
   import SettingsWorkspace from './lib/components/settings/SettingsWorkspace.svelte';
@@ -31,6 +34,8 @@
   provideKataReadiness(session.client);
   // svelte-ignore state_referenced_locally
   provideMediaReadiness(session.client);
+  // svelte-ignore state_referenced_locally
+  provideVisualReadiness(session.client);
   let oauthCallback = $state(false);
   let pathname = $state(window.location.pathname);
   const messageID = $derived(Number(/^\/messages\/([1-9]\d*)\/?$/.exec(pathname)?.[1]) || undefined);
@@ -144,10 +149,10 @@
   <Login {session} />
 {:else if shellMounted}
   {#if messageID !== undefined}
-    <MessagePage client={session.client} {messageID} />
+    <MessagePage client={session.client} {messageID} onOpenPerson={(participantID) => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, ...relationshipDestination(participantID) })}`)} onOpenSettings={() => window.location.assign(`/${serializeExploreURLState({ ...defaultExploreURLState, ...tasksSettingsDestination() })}`)} />
   {:else}
   <AppShell client={session.client} {appearanceDefaults} {searchModeDefault}>
-    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController)}
+    {#snippet settings(cardDAVRequest, onCardDAVRequestConsumed, navigationTarget, category, onCategoryChange, onSources, onOpenStatus, onStatusChange, operationsController, onDirectoryChange)}
       <SettingsWorkspace
         client={session.client}
         plainHTTPWarning={session.status?.plain_http_warning ?? false}
@@ -160,6 +165,7 @@
         {onOpenStatus}
         {onStatusChange}
         {operationsController}
+        {onDirectoryChange}
         onAppearanceSaved={appearanceSaved}
       />
     {/snippet}

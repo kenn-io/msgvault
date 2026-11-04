@@ -160,7 +160,13 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.37.0**.
+it is separate from the binary release version. The current schema is **3.40.0**.
+
+Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
+
+Schema 3.39.0 adds the optional `account` to staged deletion list summaries.
+
+Schema 3.38.0 adds exact sender and To participant identities to conversation windows and `kind` filters for canonical Email, Conversation, Event, Meeting, and Item entries. Conversation classification includes older chat messages whose stored message type is empty.
 
 Schema 3.35.0 adds `GET /api/v1/calendar/events`, which lists archived calendar occurrences in a window with repeating events expanded. `msgvault calendar events` requires a daemon supporting this schema.
 
@@ -1751,6 +1757,7 @@ Full message details including body and attachment metadata.
   "has_attachments": true,
   "size_bytes": 52480,
   "body": "<plain text body, or HTML when no plain text body exists>",
+  "body_text": "<stored plain-text body, or an empty string when no plain text is stored>",
   "body_html": "<html><body><p>Full HTML body</p></body></html>",
   "attachments": [
     {
@@ -1764,7 +1771,9 @@ Full message details including body and attachment metadata.
 }
 ```
 
-The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the plain-text body when one exists; for HTML-only messages, it falls back to the HTML body so callers still receive message content.
+The `cc`, `bcc`, and `body_html` fields are included only when present. `body` is the stored plain-text body when one exists; otherwise, it falls back to the HTML body so callers still receive message content.
+
+API schema 3.41.0 adds `body_text` for a single message's stored plain-text body, which can be generated from the HTML part and is empty when no plain text is stored; conversation windows leave it unset. Older servers omit `body_text`, and `body` keeps its HTML fallback.
 
 ---
 
@@ -2610,6 +2619,24 @@ the job holding the gate, such as `activity-projection` or `attachment-pack`.
 
 ---
 
+### Participant and domain timelines
+
+`POST /api/v1/participants/{id}/timeline` and `POST /api/v1/domains/{domain}/timeline` omit drafts and unsent items. Participant timelines include events and meetings only when the archive owner participated. These rules apply to every caller, including CLI and MCP clients.
+
+### Group analytical results
+
+**Endpoint:** `POST /api/v1/explore/groups`
+
+`grouping` takes one dimension: `source`, `participant`, `domain`,
+`message_type`, `mailing_list`, `kind`, `year`, `month`, or `day`.
+`day` returns `YYYY-MM-DD` keys and counts individual messages; other
+dimensions count entries, with chats collapsed into conversations.
+`timezone` sets the IANA time zone for day grouping and defaults to `UTC`.
+Day rows include `level` for calendar shading only when the page contains every day row. It ranks each count across that complete day set; partial pages and keyed lookups omit `level`.
+`sent_only: true` excludes drafts and unsent items from the counts.
+Day grouping is request-only and cannot be stored in a saved view.
+Files grouping (`POST /api/v1/files/groups`) uses UTC days and has no `timezone` parameter.
+
 ### Preflight an analytical selection {#post-apiv1explorepreflight}
 
 **Endpoint:** `POST /api/v1/explore/preflight`
@@ -2645,7 +2672,7 @@ explore contract is in the generated OpenAPI document (`/openapi.json`).
 | Field | Description |
 |---|---|
 | `mode` | `all_matching` selects everything the predicate matches; `explicit` selects only the listed `row_keys` |
-| `predicate` | The explore request being acted on: `filters` (dimensions `source`, `participant`, `domain`, `message_type`, `after`, `before`, `deletion`), plus `query` / `search_mode` for search-backed selections. Cursors are rejected |
+| `predicate` | The explore request being acted on: `filters` (dimensions `source`, `participant`, `domain`, `message_type`, `kind`, `after`, `before`, `deletion`), plus `query` / `search_mode` for search-backed selections. Cursors are rejected |
 | `row_keys` | Explore row keys (the `key` field of explore rows) to include; required when `mode` is `explicit` |
 | `exclusions` | Row keys to exclude from an `all_matching` selection |
 | `cache_revision` | Required. The `cache_revision` from the explore response being reviewed |
@@ -2724,7 +2751,7 @@ Web UI and run by the API:
 |-------|-----------------|
 | `query` | Free text. Empty means no text search. |
 | `search_mode` | `full_text`, `semantic`, `hybrid`. Defaults to `full_text` when a query is present. |
-| `filters[].field` | An Explore filter dimension: `source`, `identity`, `participant`, `domain`, `mailing_list`, `message_type`, `after`, `before`, `deletion`. The legacy aliases `source_id` and `participant_id` are accepted and executed as `source` and `participant`. |
+| `filters[].field` | An Explore filter dimension: `source`, `identity`, `participant`, `domain`, `mailing_list`, `message_type`, `kind`, `after`, `before`, `deletion`. The legacy aliases `source_id` and `participant_id` are accepted and executed as `source` and `participant`. |
 | `filters[].operator` | `eq` or `in`. |
 | `filters[].values` | One or more non-empty strings. Numeric identifiers are decimal strings so they survive JavaScript clients unchanged. |
 | `grouping` | A drill-down chain of Explore grouping dimensions: `source`, `participant`, `domain`, `message_type`, `mailing_list`, `kind`, `year`, `month`. |
@@ -3022,6 +3049,7 @@ filters by one of `pending`, `in_progress`, `completed`, `failed`, or
       "created_at": "2026-07-06T15:30:00Z",
       "created_by": "api",
       "description": "old newsletters",
+      "account": "user@example.com",
       "message_count": 1234
     }
   ]

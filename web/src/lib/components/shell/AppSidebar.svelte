@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { KbdBadge, Tooltip } from '@kenn-io/kit-ui';
+  import { Chip, KbdBadge, Tooltip } from '@kenn-io/kit-ui';
   import CircleHelp from '@lucide/svelte/icons/circle-help';
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close';
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open';
@@ -11,7 +11,7 @@
   import type { JobTarget } from '../../jobs/jobs';
   import { supportsSavedViewSchema, type CanonicalState } from '../../saved-views/canonical';
   import SyncStatusMenu from './SyncStatusMenu.svelte';
-  import { NAVIGATION_ITEMS, SETTINGS_ITEM, type NavigationItem } from './navigation';
+  import { DELETIONS_ITEM, NAVIGATION_ITEMS, SETTINGS_ITEM, type NavigationItem } from './navigation';
 
   interface Props {
     onPastRuns: () => void;
@@ -21,6 +21,8 @@
     jobs: JobsStore;
     onOpenJob: (target: JobTarget) => void;
     views?: SavedView[];
+    deletionsStaged?: boolean;
+    duplicateCount?: number;
     viewsError?: string;
     onRetryViews?: () => void;
     onNavigate: (id: ExploreWorkspace) => void;
@@ -40,6 +42,8 @@
     jobs,
     onOpenJob,
     views = [],
+    deletionsStaged = false,
+    duplicateCount = 0,
     viewsError = undefined,
     onRetryViews = undefined,
     onNavigate,
@@ -52,7 +56,7 @@
   }: Props = $props();
 
   const SettingsIcon = SETTINGS_ITEM.icon;
-  const items = NAVIGATION_ITEMS;
+  const items = $derived(deletionsStaged ? [...NAVIGATION_ITEMS, DELETIONS_ITEM] : NAVIGATION_ITEMS);
   const groupedViews = $derived.by(() => {
     const messages: SavedView[] = [];
     const files: SavedView[] = [];
@@ -83,12 +87,13 @@
             <button
               type="button"
               class="sidebar__item"
-              aria-label={item.label}
-              aria-current={(item.id === active || item.id === 'relationships' && (active === 'directory' || active === 'directory_review')) ? 'page' : undefined}
+              aria-label={item.id === 'relationships' && duplicateCount > 0 ? `${item.label} ${duplicateCount >= 500 ? '500+' : duplicateCount}` : item.label}
+              aria-current={(item.id === active) ? 'page' : undefined}
               onclick={() => onNavigate(item.id)}
             >
               <Icon size={18} aria-hidden="true" />
               {#if !collapsed}<span class="sidebar__label">{item.label}</span>{/if}
+              {#if item.id === 'relationships' && duplicateCount > 0}<Chip size="sm">{duplicateCount >= 500 ? '500+' : duplicateCount}</Chip>{/if}
             </button>
           </Tooltip>
           {#if item.id === 'everything' && !collapsed && viewsError}

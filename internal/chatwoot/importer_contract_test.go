@@ -735,15 +735,13 @@ func TestImportContractRelatedMessageSubset(t *testing.T) {
 	t.Parallel()
 	must, checks := require.New(t), assert.New(t)
 	sourcePath := filepath.Join(t.TempDir(), "source.db")
-	st, err := store.Open(sourcePath)
-	must.NoError(err)
-	must.NoError(st.InitSchema())
+	st := testutil.NewSQLiteTestStoreAt(t, sourcePath)
 	message := chatwootapi.Message(201, 1767225600, nil)
 	message["content_type"] = "voice_call"
 	message["call"] = map[string]any{"id": 601, "direction": "incoming", "status": "completed", "transcript": "Synthetic transcript"}
 	api := newContractAPI(t, 3, []map[string]any{message})
 	importer, _ := contractRegister(t, st, api)
-	_, err = importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
+	_, err := importer.Import(t.Context(), ImportOptions{InboxID: 7, IncludePrivate: true})
 	must.NoError(err)
 	must.NoError(st.Close())
 	destination := t.TempDir()

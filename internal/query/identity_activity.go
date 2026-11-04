@@ -20,6 +20,7 @@ func identityRequestIsUnfiltered(request ExploreRequest) bool {
 		len(context.AdditionalParticipantGroups) == 0 &&
 		len(context.AdditionalDomainGroups) == 0 &&
 		len(context.MessageTypes) == 0 &&
+		len(context.Kinds) == 0 &&
 		context.After == nil &&
 		context.Before == nil &&
 		context.Deletion == DeletionAny &&
@@ -378,6 +379,14 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, condition)
 		args = append(args, conditionArgs...)
 	}
+	if len(request.Context.Kinds) > 0 {
+		placeholders := make([]string, len(request.Context.Kinds))
+		for i, kind := range request.Context.Kinds {
+			placeholders[i] = "?"
+			args = append(args, string(kind))
+		}
+		conditions = append(conditions, "(CASE WHEN f.is_chat THEN 'conversation' ELSE f.entry_kind END) IN ("+strings.Join(placeholders, ",")+")")
+	}
 	if request.Context.After != nil {
 		conditions = append(conditions, "f.occurred_at >= CAST(? AS TIMESTAMP)")
 		args = append(args, duckDBDateParam(*request.Context.After))
@@ -430,7 +439,7 @@ func (e *DuckDBEngine) searchPeople(
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(request.Query) != "" && request.Explore.Search.Mode == SearchNone {
+	if strings.TrimSpace(request.Query) != "" && request.Explore.Search.Mode == SearchNone && (request.Sort.Field == "" || request.Sort.Field == "activity_count") {
 		order = "match_rank ASC, current_temperature DESC, last_at DESC, person_id ASC"
 	}
 	release, err := e.acquireQuerySlot(ctx)

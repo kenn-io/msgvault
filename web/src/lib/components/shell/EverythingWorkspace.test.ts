@@ -5,7 +5,7 @@ import { appShortcuts } from '@kenn-io/kit-ui';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { meetingFixtureResponse } from '../../meetings/fixtures.test-support';
+import { meetingAction, meetingActions, meetingFixtureResponse } from '../../meetings/fixtures.test-support';
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
@@ -19,9 +19,11 @@ const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = 
 beforeEach(() => { telemetryEvents.length = 0; });
 const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+  if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
   if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
+  if (path === '/api/v1/identity/match-candidates') return Response.json({ candidates: [] });
   return fetchFn(input, init);
 }, telemetryEvents);
 
@@ -42,6 +44,47 @@ function exploreResponse(overrides: Record<string, unknown> = {}) {
 }
 
 describe('EverythingWorkspace', () => {
+  it('opens scoped Action items after choosing the canonical Meeting kind', async () => {
+    window.history.replaceState(null, '', '/');
+    const meetingRequests: Array<{ path: string; body: unknown }> = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input as Request;
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/explore/groups')) return Response.json({ rows: [{ key: 'meeting', count: 4 }] });
+      if (path.endsWith('/accounts')) return Response.json({ accounts: [] });
+      if (path.endsWith('/identities')) return Response.json({ identities: [] });
+      if (path.startsWith('/api/v1/meetings/')) {
+        meetingRequests.push({ path, body: await request.clone().json() });
+        if (path.endsWith('/actions')) return Response.json(meetingActions({ rows: [meetingAction()], total_count: 1 }));
+        return meetingFixtureResponse(path)!;
+      }
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      await screen.findByText('0 items');
+      expect(screen.queryByRole('region', { name: 'Meeting summary' })).toBeNull();
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'Meeting' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+      const summary = await screen.findByRole('region', { name: 'Meeting summary' });
+      expect(await within(summary).findByText(/4 meetings/)).toBeTruthy();
+      await fireEvent.click(await within(summary).findByRole('button', { name: 'Action items · 1' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Action items' });
+      expect(await within(dialog).findByText('Prepare review')).toBeTruthy();
+      for (const path of ['/api/v1/meetings/metrics', '/api/v1/meetings/actions']) {
+        expect(meetingRequests).toContainEqual({ path, body: expect.objectContaining({ explore: expect.objectContaining({
+          predicate: expect.objectContaining({ filters: [{ dimension: 'kind', values: ['meeting'] }] }),
+          cache_revision: 'cache-1',
+        }) }) });
+      }
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it('hides unconfigured recording search and preserves the layout across navigation', async () => {
     window.history.replaceState(null, '', '/');
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json(exploreResponse()));
@@ -740,6 +783,43 @@ describe('EverythingWorkspace', () => {
     expect(body).toMatchObject({ format: 'json', include_transcript: false });
     rendered.unmount();
     state.destroy();
+  });
+
+  it('withholds context export when all canonical meetings include a transcript and a note', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/explore/preflight')) return Response.json({
+        count: 2, deletable_count: 2, estimated_bytes: 40, cache_revision: 'cache-1',
+        search_provenance: {}, unavailable_actions: [], action_targets: [],
+        operation_token: 'operation-1', expires_at: '2026-09-12T17:00:00Z',
+      });
+      const meetingResponse = meetingFixtureResponse(path);
+      if (meetingResponse) return meetingResponse;
+      return Response.json(exploreResponse({
+        rows: [
+          { ...entry(7), message_type: 'meeting_transcript', anchor_message_id: 107 },
+          { ...entry(8), message_type: 'meeting_note', anchor_message_id: 108 },
+        ],
+        total_count: 2,
+      }));
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ filters: [{ dimension: 'kind', values: ['meeting'] }] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Messages results' });
+      await screen.findByText('Synthetic subject 8');
+      grid.focus();
+      await fireEvent.keyDown(grid, { key: ' ' });
+      expect(screen.getByRole('button', { name: 'Meeting context…' })).toBeTruthy();
+      await fireEvent.click(screen.getByRole('button', { name: 'Select all 2 matching items' }));
+      await waitFor(() => expect(selectionStatus().textContent).toBe('All 2 matching items selected'));
+      expect(screen.queryByRole('button', { name: 'Meeting context…' })).toBeNull();
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
   });
 
   it('passes all-matching exclusions and full search authority to meeting context unchanged', async () => {

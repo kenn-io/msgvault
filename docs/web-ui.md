@@ -16,14 +16,14 @@ you do not need a separate web application process.
 | Where is that message, conversation, or meeting? | Messages |
 | Who have I been in contact with? | People |
 | Where is an attachment, image, or video? | Files |
-| What do I know about this person? | Directory |
-| Which identity matches or profile facts need my decision? | Reviews |
+| What do I know about this person? | People → Details |
+| Which identity matches or profile facts need my decision? | People: Possible duplicates or Facts |
 | Can I return to this search later? | Saved views under Messages and Files |
 | Did sync, enrichment, or indexing finish? | Status dot, Past runs, and Sources |
-| What is staged for deletion? | Deletions |
+| What is staged for deletion? | Staged deletions |
 | How do I change the daemon's configuration? | Settings |
 
-The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. Directory, Reviews, and Deletions remain available through the command palette. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
+The sidebar lists **Messages**, **People**, **Files**, and **Sources**. Saved views nest under Messages or Files. The footer holds **Settings**, **Help**, and a status dot. **Staged deletions** appears while a listed batch is pending, running, or failed. Use **Go to Staged deletions** in the command palette to open its history when the sidebar entry is hidden. Choose **Collapse sidebar** to shrink it to an icon rail; the browser remembers the choice. Below 900 pixels wide, **Open navigation** opens a drawer.
 
 The top bar holds global search and **Display**. Display sets theme and density for this tab. On the ungrouped Messages table, it also shows **Columns**. **Reader position** appears when the results are at least 960 pixels wide. **Use Settings defaults** clears temporary theme and density choices. [Settings](#settings-and-restart-behavior) holds the saved defaults.
 
@@ -101,7 +101,7 @@ contains email only; it does not illustrate chat, calendar, or attachment conten
 Messages opens as a compact table of logical entries, newest first: one row
 per email, calendar event, meeting note, other durable item, or chat
 conversation. Raw chat fragments appear only after drilling into a
-conversation. Search, Filters, Show as, and Group by form a shareable view.
+conversation. Search, Filter, Group by, and Show as form a shareable view.
 Ordinary tabs use short URLs such as `?workspace=everything&mode=full_text`.
 Filters, layout changes, and the selected item appear in the link only when
 they differ from the defaults. Keyboard focus, scroll position, and choices
@@ -110,11 +110,10 @@ and Forward restore them.
 
 One toolbar sits above the results:
 
-- **Filters** opens the filter panel.
-- **Show as** switches between Table, Timeline, and Files. Choosing Files opens
-  the Files workspace.
+- **Filter** holds Kind, Account, Identity, and optional From and To dates. Dates include the selected UTC calendar days. From must be on or before To.
 - **Group by** adds a grouping level. Add more levels to group within groups.
-- **Sort** offers Newest first, the only order Messages has today.
+- **Show as** switches between Table, Timeline, and Files.
+- **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
 
 Each active search, filter, and grouping appears as a removable chip below the
@@ -122,8 +121,8 @@ toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
 context; see [Saved views](#saved-views).
 
-Selecting rows opens a selection bar. **Review for deletion…** opens the
-[Deletions](#deletions) workspace. The button is disabled when the daemon
+Selecting rows opens a selection bar. **Review deletion…** opens a review dialog over Messages; see
+[Deletions](#deletions). The button is disabled when the daemon
 reports that staging is unavailable for the selection, and the bar states the
 reason beside it, for example "None of the selected items can be deleted from
 their source." Export and **Open selection in source** explain their
@@ -199,12 +198,13 @@ background, and border colors. Images keep their original colors. Choose
 background, or **Use app colors** to return to dark reading. This override
 applies to the open message. Light mode preserves designed email colors.
 
+Each expanded message lists its files, recordings, linked tasks, and Kata issues below the body. Click a linked sender or recipient to open that exact person; Back returns to the message. The **⋯** menu offers **Add to task…**, **Download original** for email, **Export meeting…** for a meeting transcript, and plain text or HTML when available. **Add to task…** keeps task creation, existing-task search, priority, labels, and the outbound metadata disclosure together. Disabled Tasks connections offer **Set up**; other service or index failures offer **Open Settings**.
+
 ## Meeting context and follow-ups
 
-Filter Messages to meetings to see **Meeting activity and follow-ups**.
+Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
 Select meeting rows to export their context as JSON or Markdown, with transcripts
-included only when requested. Participant/domain reading panes, Directory, and
-Relationships show meeting metrics and recorded actions for their current scope.
+included only when requested. People and domain views show meeting metrics and recorded actions for their current scope.
 **Open archived meeting** opens the source evidence; Back restores the originating
 view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
 for selection limits, source coverage, unknown duration, and action filters.
@@ -220,7 +220,7 @@ true` for daemon startup to build a stale cache. With `analytics.engine =
 ## Files and containing context
 
 Files is the single file view. It is a searchable table of attachment date,
-filename, type, size, person or domain, source, containing item, and content
+filename, type, size, person or domain, source, Message, and content
 availability. Archived images and PDFs open in application-controlled viewers.
 Metadata-only, missing, unsupported, and previewable content remain distinct.
 From a file, navigate to its containing item and then its email or chat
@@ -229,14 +229,14 @@ conversation.
 Files uses the same toolbar as Messages, with **Show as** set to Files. Choose Table
 or Timeline there to return to Messages. **Sort** offers Newest first, Oldest
 first, Filename A–Z, Filename Z–A, Largest first, and Smallest first. The
-Filename field and the **Type** menu (Images, PDFs, Audio, Video, Text,
-Documents, Archives, Other) narrow the table. Grouping replaces the table with
-groups and hides Sort, Filename, Type, and Visual search; active Filename and
-Type filters stay visible as chips.
+**Filter** menu includes Filename and Type (Images, PDFs, Audio, Video, Text,
+Documents, Archives, Other). Grouping replaces the table with groups and hides
+Sort and Visual search; Filename and Type remain editable in Filter, and active
+filters stay visible as chips.
 **Save view…** saves the search, filters, and grouping, but not the Filename
 filter, Type filter, or file sort.
 
-In a person's Media & files section, choose a media gallery or file table and
+In a person's Files tab, choose a media gallery or file table and
 narrow the relationship to **From them**, **To them**, or **Group
 conversations**. These directions describe the containing messages; they do not
 identify people pictured in an image.
@@ -261,75 +261,45 @@ separate choices.
 ## People and domains
 
 <figure class="screenshot" data-lightbox>
-  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="Relationships workspace showing a selected person's activity calendar and email timeline in dark theme" loading="lazy">
+  <img src="/docs/assets/static/relationships-dark-comfortable-darwin.png" alt="People workspace showing a selected person's activity calendar and email timeline in dark theme" loading="lazy">
   <figcaption>Select a person to explore their activity and messages.</figcaption>
 </figure>
 
 People combines identifiers backed by explicit archive identity evidence; it
 does not merge records merely because their display names match. Select a
 person to inspect contextual activity across email, chat, calendar events, and
-meeting notes, plus the files associated with that person. The active search
-and filters continue to scope both the timeline and file table.
+meeting notes, plus the files associated with that person. Message filters continue to scope both Messages and Files.
 
-Relationships lists People or Domains; switch with the facet control, and use
-the filter field to narrow the list. For a selected person, **Messages** and
-**Files** switch the view. **Open in Directory** opens the person's durable
-profile, or starts promotion when none exists. **Same person…** links
-identities that belong together.
+People lists **People** or **Domains**. The one-way sender filter applies to Closest; saved profiles offer Name and Most recent. Use the global **Search people** field, **Filter**, and sort to narrow the list. **Saved** and profile filters show saved profiles, including people with no archived messages. Select **Merge** after checking multiple observed people to link their identities. Select saved profiles to delete them in bulk.
 
-Select a day in a person's relationship calendar to show that day's activity
-in the message timeline. Dates use your browser's local time zone. Select the
-same day again or **Clear date** to restore the previous date range. Other
-filters stay active; switching people, calendar years, or to **Files** clears
-the day selection.
+A selected person or domain opens with **Messages**, **Files**, and **Details**. Messages uses the same table and reader as the Messages workspace. A person’s events and meetings appear when an account owner attended; email and chat keep their participant scope. Details holds contact fields, custom attributes, Work, Connections, Network, Tasks, Facts, and Briefs. Choose **Save** in the header to save an observed person. The name and avatar also open Details. Choose **Merge with…** beside the person’s menu to find another saved profile or observed person.
+For a saved profile, Files includes all bound identities; Messages and the calendar open its first observed identity cluster. Profiles without archived activity open Details.
+
+The Activity calendar opens on the latest active year, with the first month of contact beside its title. Select a day to narrow Messages and its conversation reader. Details keeps that day selected; select it again or choose **Clear date** to restore the shared date filters. Editing a message filter also clears the day without copying its bounds to Files. People and domains use your browser's local time zone. Domain days count individual sent messages, including chats that span several days. Calendars summarize the whole person or domain; message filters narrow the table and Files. Switching people, years, or to Files clears the day selection. Messages groups chats by conversation; a selected day limits the opened conversation to that day.
 
 People in this workspace are observed identity clusters. Source identities
 that mean “me,” explicit durable profile promotion, display-name overrides, and
 typed profile attributes are separate curated operations; see [People,
 Profiles, and Source Identities](/docs/usage/people/).
 
-### Directory and Reviews
+### Saved profiles and possible duplicates
 
-Directory holds durable people: the profiles you explicitly curate and keep
-across sources. Search by name, email, or organization. **Filters** opens a
-panel with Contact state, Category, Organization, Primary channel, and two date
+Choose **Filter → Saved** for the profiles you curate across sources. Search by name, email, or organization. **Filter → Profile filters** opens a panel with Contact state, Category, Organization, Primary channel, and two date
 fields, **Last contacted after** and **Last contacted before**. Each active
 filter also appears as a chip; select its remove button to drop it. The order
 menu sorts by Name, Most recently contacted, or Least recently contacted.
 
-Its person detail has seven sections: Overview, Profile, Organizations,
-Connections, Network, Media & files, and Maintenance. The header offers **Open
-relationship** (when the person has a linked source identity), **Review facts**
-(opens Reviews on that person's facts), and **More actions** (Rename person,
-View profile history, and Delete person). Maintenance holds
-profile-maintenance tracking, CardDAV publication, and merge history. Edit
-structured profile information, attributes, employment, and typed
-relationships here. Curated display names also appear in message views,
-analytics, and exports while source identifiers remain available.
+Selecting a saved profile opens **Messages** and the calendar when the person has archived activity, or **Details** otherwise. Each field value has its own row. Use **Add phone**, **Add email**, **Add address**, **Add birthday**, or **More fields**. Edit a row in place; removing a value asks for confirmation and keeps the row until the save succeeds. **More actions** in the person header holds Rename, Keep this profile updated, Publish to address book, History, and Delete. History includes replaced fields, service observations, attribute history, and merge history. Sensitive attributes stay concealed until revealed.
 
-The Overview tab's **Last time we talked** card summarizes the person's recent
-chat and text messages. Enroll the person, generate a brief, and expand a
-sentence to check its sources. You can reject a brief or inspect the dates and status of earlier
-versions. Generation requires a consented provider and uses its budget; see
-[person briefs](/docs/usage/people-briefs/)
-for setup and supported sources.
+Below the fields, Work and Connections keep employment and typed relationships editable. Network offers one, two, or three steps and can include ended connections. Person and organization nodes open their records. Connections come from curated relationships and employment, including shared organizations. The graph shows at most 250 nodes and 500 connections. An always-present list groups the same connections by hop for keyboard and screen reader use.
 
-The Network tab can request one, two, or three hops and optionally include
-ended records. It visualizes at most 250 nodes and 500 connections, while an
-always-present list groups the same connections by hop for keyboard and screen
-reader use. Person and organization names in this view come from durable
-profiles. Edges come only from curated typed relationships and employments
-(including shared organizations), never messages, participant co-occurrence,
-or inferred communication activity.
+Tasks keeps linked tasks and custom lists. Facts opens the fact ledger. **Last time we talked** holds brief enrollment, generation, rejection, sentence sources, and earlier versions. Generation requires a consented provider and uses its budget; see [person briefs](/docs/usage/people-briefs/).
 
-Reviews brings together identity matches, facts, and imported
-relationships; the **Review type** control switches between them. Inspect the
-evidence before accepting or rejecting a candidate. Conflicts between existing
-profiles require an explicit merge decision. Facts starts with a person: search
-by name in the **Person** field to see that person's evidence, claims,
-decisions, and pins. **Open person profile** returns to their Directory entry.
-Merge history and reversal follow the boundaries documented in
-[People](/docs/usage/people/).
+Manage organizations, connection types, and custom field definitions under **Settings → People**. Catalog edits save immediately.
+
+Choose **Filter → Possible duplicates** to compare names, addresses, activity, and evidence. The People badge counts waiting pairs, showing **500+** at 500. **Merge** and **Keep separate** offer Undo before recording the decision; **History** lists earlier decisions. Two saved profiles require a survivor choice, followed by confirmation of the refreshed pair. **Evidence and notes** keeps the reviewed details and decision note beside the pair.
+
+Facts lives in the person's Details. Choose **Show** to inspect evidence, claims, decisions, and pins. Imported address-book connections appear beneath Connections with their status and source, including unmatched values. Addresses lists joined identities with **Unlink**. To separate saved profiles after a merge, open **More actions → History**, inspect the merge, and choose **Split merged profile**. Merge history and reversal follow the boundaries documented in [People](/docs/usage/people/).
 
 Domains provides the same activity-and-files analysis for an exact domain
 fact. A domain is not treated as an inferred organization identity. Selecting
@@ -359,27 +329,16 @@ All three read the same records and see the same revisions.
 
 ## Sources and sync status
 
-Sources is a status workspace. Each row shows a source's name, readable type and
-identifier, schedule, status, last successful sync, and an action. The schedule
-reads as a sentence, with the cron expression in its tooltip.
+Sources lists Source, Status, Last good sync, and Sync now. Status shows Running, Succeeded, Partial, Failed, Paused, Queued, Cancelled, or Never synced. Contacts accounts appear in their own group. Sources stays available while contacts status loads, and contacts-only runs continue polling.
 
-The **Status** chip is **Syncing**, **Completed**, **Completed with errors**,
-**Failed**, or **Never synced**. A running sync also shows its processed, added,
-and error counts. Otherwise the time of the latest result appears under the
-chip, and the last successful sync has its own column. A latest result older
-than 24 hours adds "This result may be out of date." A failed status request
-remains an error rather than becoming an empty source list.
+Select a source to open its panel. Schedule, Next sync, and attachment rules show the current values. **Edit in Settings › Sources** opens the existing editor for settings shared by that source type. The panel also shows Runs, item errors, and **Sync now**. A latest run's error appears before a scheduler error. **Sync history** opens Past runs filtered to source sync.
 
-A source with a sync error message, item errors, or a scheduler error has
-**Show details for {name}**, which opens the run-level errors, item-level
-errors, and scheduler error. **Sync history** in the page header opens
-**Past runs** filtered to source sync.
+A contacts panel shows its repair reason and **Open Settings › Contacts** for sign-in recovery. That editor retains the selected OAuth app and provides commands for both shells. Mail sync instructions in the source panel give `msgvault sync --source-id N`.
 
 **Sync now** is available only when that source reports the capability. When it
-is not, the Action column says why in words: "Imported file — nothing to sync",
+is not, the Sync now column says why in words: "Imported file — nothing to sync",
 "Sync in progress", "Scheduler unavailable", "Sync not set up", or "Sync
-unavailable". The daemon's reason code stays in the text's tooltip.
-Meeting-import sources show "On-demand API source" instead, because meetings
+unavailable". Meeting-import sources show "On demand" instead, because meetings
 arrive through the API rather than a sync. A `202
 Accepted` response means the daemon accepted the request, not that work has
 finished. While the page is visible, the UI polls source status with bounded
@@ -420,33 +379,11 @@ Old Operations links with a run, status, or history filter open Past runs over S
 
 ## Deletions
 
-Messages supports explicit row selection and select-all-matching for the
-current query and filters. **Review for deletion…** in the selection bar, or `d`
-and `D`, opens the Deletions workspace. The daemon first preflights the
-selection and reports any unavailable action before the UI offers a separate
-staging confirmation. The workspace lists, inspects, and cancels manifests; it
-cannot execute deletion against a provider. Use the explicit
-`msgvault delete-staged` CLI workflow for that final operation.
+Messages supports individual row selection and select-all-matching for the current query and filters. **Review deletion…** in the selection bar, or `d` and `D`, opens a review dialog over Messages. The daemon preflights the selection before enabling staging.
 
-Without a selection, the workspace says "Nothing selected for deletion" and
-points back to Messages. With one, the **Review selection** panel shows the
-item count and estimated size, how many items can be staged and how many will be
-skipped, and when the review expires, as a relative time such as "in 8 minutes"
-with the exact time in a tooltip. When the daemon reports that staging is
-unavailable, the panel gives the reason as a sentence and disables **Stage
-deletion…**. **Dry run** reports matched, staged, and skipped counts without
-staging anything. **Stage deletion…** opens a confirmation, and only its red
-**Confirm stage deletion** button creates the manifest. Staging covers Gmail and
-Microsoft Graph mail only and does not execute deletion. Arriving from
-Messages runs the review at once and, when staging is available, opens the
-confirmation.
+The dialog shows the selected count and estimated size, eligible and skipped counts, exclusions, and review expiration. Semantic search reviews warn that they cover active messages only. **Dry run** reports matched, staged, and skipped counts without creating a batch. **Stage N messages** creates the batch and leaves a success summary with its ID. **Done** returns to Messages. Staging supports Gmail and Microsoft Graph mail; use `msgvault delete-staged` to execute deletion.
 
-The manifests table lists ID, Description, Items, Status, and Created. Status is
-Pending, In progress, Completed, Failed, or Cancelled. **Inspect** opens a
-manifest's detail beside the table, or below it at 900 pixels wide or narrower;
-**Close manifest detail** closes it. **Cancel** appears for Pending and In
-progress manifests and asks for **Confirm cancel manifest**. With no manifests,
-the workspace says "No staged deletions".
+The Staged deletions workspace lists batches by creation date, message count, and status. Select a row to see its account and inspect its description, summary, execution counts, and failed message IDs. If the account can't be read, the panel shows "Account unavailable". **Cancel batch** appears for staged or running batches and asks for confirmation before cancelling. **Show cancelled** includes cancelled batches in page history. With no batches, the workspace says "Nothing staged". The sidebar entry appears while a listed batch is pending, running, or failed. **Go to Staged deletions** in the command palette always opens the history.
 
 ## Keyboard controls
 
@@ -484,7 +421,7 @@ Settings opens on Overview, with status and setup or build actions for
 background features. Use **Refresh feature status** to update Overview after
 background work changes. **Build index** appears when offered by the daemon and
 asks for confirmation before a full rebuild. Its categories are Overview,
-Server, Search & AI, People lookups, Tasks, Contacts, Sources, and Advanced.
+Server, Search & AI, People lookups, People, Tasks, Contacts, Sources, and Advanced.
 Sources includes source and attachment settings. Advanced includes archive
 settings and Appearance. People lookups includes named enrichment providers and
 People sweep profiles.

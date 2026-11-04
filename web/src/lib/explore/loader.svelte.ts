@@ -3,6 +3,7 @@ import { tick, untrack } from 'svelte';
 import type { APIClient } from '../api/client';
 import type {
   EntryRow,
+  ExplorePredicate,
   ExploreCacheUnavailable,
   ExploreGroupDimension,
   ExploreGroupResult,
@@ -11,7 +12,7 @@ import type {
   ExploreSearchMode,
   FileMIMEFamily
 } from './models';
-import { createExploreAPI, type ExploreAPI } from './api';
+import { createExploreAPI, ExploreAPIError, type ExploreAPI, type TimelineScope } from './api';
 import { parseAttachmentSelection } from './attachment-authority';
 import { parseArchiveMeetingSelection } from '../meetings/archive-selection';
 import { parseRecordingSelection } from '../archive/recording-selection';
@@ -33,6 +34,7 @@ export type PageLoadOutcome =
  * wrote to that shared state, preserving imperative last-write-wins order. */
 export interface ExploreLoaderCallbacks {
   isEnabled: () => boolean;
+  predicate?: () => ExplorePredicate;
   onPredicateChange: () => void;
   onPagingNotice: (message: string | null) => void;
   onRestorationFocus: () => void;
@@ -66,6 +68,9 @@ function samePageAuthority(
  * to `workspace === 'everything'`), so this class is shared by both call
  * sites rather than owned exclusively by EverythingWorkspace.
  */
+// A message table the shell's reader and Display commands act on.
+export type MessagesTable = { state: ExploreState; loader: ExploreLoader; openRow: (row: EntryRow) => void; resultsWidth: number };
+
 export class ExploreLoader {
   rows = $state<EntryRow[]>([]);
   groupRows = $state<ExploreGroupRow[]>([]);
@@ -104,16 +109,16 @@ export class ExploreLoader {
   private cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   #retryRevision = $state(0);
 
-  constructor(client: APIClient, state: ExploreState, callbacks: ExploreLoaderCallbacks) {
+  constructor(client: APIClient, state: ExploreState, callbacks: ExploreLoaderCallbacks, scope?: TimelineScope) {
     this.state = state;
-    this.api = createExploreAPI(client);
+    this.api = createExploreAPI(client, scope);
     this.callbacks = callbacks;
 
     // Declared as a constructor-local (rather than a class field) because a
     // $derived field initializer referencing `this.state` would run before
     // the constructor body above assigns it; TS's field-initializer-order
     // check flags that even though $derived itself is evaluated lazily.
-    const requestFingerprint = $derived(predicateFingerprint(this.state.predicate()));
+    const requestFingerprint = $derived(predicateFingerprint(this.callbacks.predicate?.() ?? this.state.predicate()));
 
     $effect(() => {
       if (this.state.peekRestorationEpoch() === undefined) this.restoring = false;
@@ -129,10 +134,10 @@ export class ExploreLoader {
     const workspace = this.state.current.workspace;
     const restorationEpoch = this.state.restorationEpoch;
     void this.#retryRevision;
-    const predicate = untrack(() => this.state.predicate());
+    const predicate = untrack(() => this.callbacks.predicate?.() ?? this.state.predicate());
     const fingerprint = requestFingerprint;
     if (fingerprint !== this.selectionFingerprint) {
-      this.callbacks.onPredicateChange();
+      untrack(() => this.callbacks.onPredicateChange());
       this.selectionFingerprint = fingerprint;
     }
     const filesGrouping = workspace === 'files' && this.state.current.groupingChain.length > 0;
@@ -345,6 +350,9 @@ export class ExploreLoader {
     } catch (cause: unknown) {
       if (generation !== this.requestGeneration) return { status: 'stale' };
       if (cause instanceof DOMException && cause.name === 'AbortError') return { status: 'aborted' };
+      if (cause instanceof ExploreAPIError && cause.status === 409 && cause.code === 'archive_revision_changed') {
+        return this.failPaging(REVISION_CHANGED_NOTICE);
+      }
       this.failPage(cause instanceof Error ? cause.message : 'Could not load more Messages results.');
       return { status: 'failed' };
     } finally {
