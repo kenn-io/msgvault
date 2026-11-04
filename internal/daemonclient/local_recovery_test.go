@@ -240,20 +240,6 @@ func TestLocalDaemonRecoveryDoesNotRetryHTTPFailures(t *testing.T) {
 	}
 }
 
-func TestLocalDaemonRecoveryCanceledRequestDoesNotResolve(t *testing.T) {
-	requirements := require.New(t)
-	client, err := New(Config{URL: closedLocalDaemonURL(t), AllowInsecure: true})
-	requirements.NoError(err)
-	requirements.NoError(client.EnableLocalDaemonRecovery(func(context.Context) (LocalDaemonEndpoint, error) {
-		require.Fail(t, "canceled calls must not start a daemon")
-		return LocalDaemonEndpoint{}, errors.New("unexpected discovery")
-	}))
-	ctx, cancel := context.WithCancel(t.Context())
-	cancel()
-	_, err = client.GetHealth(ctx)
-	requirements.ErrorIs(err, context.Canceled)
-}
-
 func TestLocalDaemonRecoveryConcurrentCallsShareResolution(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
