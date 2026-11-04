@@ -1430,6 +1430,12 @@ func buildCacheLockedAttempt(
 	}
 	buildStart := time.Now()
 
+	// Build WHERE clause for incremental exports
+	idFilter := fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) <= %d", maxID)
+	if !replaceAll && lastMessageID > 0 {
+		idFilter += fmt.Sprintf(" AND TRY_CAST(m.id AS BIGINT) > %d", lastMessageID)
+	}
+
 	// runExport runs one dataset export and prints timing info.
 	runExport := func(label string, export func() error) error {
 		start := time.Now()
@@ -1545,14 +1551,14 @@ func buildCacheLockedAttempt(
 			CAST(EXTRACT(YEAR FROM m.sent_at) AS INTEGER) as year,
 			CAST(EXTRACT(MONTH FROM m.sent_at) AS INTEGER) as month
 		FROM %s m
-		WHERE `+exportableMessageWhere("m")+`
+		WHERE `+exportableMessageWhere("m")+`%s
 	) TO '%s' (
 		FORMAT PARQUET,
 		PARTITION_BY (year),
 		OVERWRITE_OR_IGNORE,
 		COMPRESSION 'zstd'
 	)
-	`, columns, messagesRelation, escapedMessagesDir))
+	`, columns, messagesRelation, idFilter, escapedMessagesDir))
 		return err
 	}); err != nil {
 		return nil, fmt.Errorf("export messages: %w", err)
@@ -1898,7 +1904,6 @@ func writeCacheStatsLine(w io.Writer, format string, args ...any) error {
 // transaction directly. The fallback exports every table from one go-sqlite3
 // transaction before DuckDB reads the resulting static CSV files.
 type cacheSourceSnapshot struct {
-	messageSlices               map[cacheMessageSlice]string
 	duckDB                      *sql.DB
 	duckTx                      *sql.Tx
 	sqliteDB                    *sql.DB
@@ -1916,11 +1921,6 @@ type cacheSourceSnapshot struct {
 	// point. Address presence uses the snapshot's boolean columns instead
 	// of the raw email_address bytes.
 	csvSnapshot bool
-}
-
-type cacheMessageSlice struct {
-	table, idColumn string
-	after, through  int64
 }
 
 type cacheSnapshotTable struct {
@@ -2024,17 +2024,8 @@ func (s *cacheSourceSnapshot) DuckDB() sqlRunner {
 // reads an incremental slice. Cast back to the attached schema because
 // sqlite_query transports columns as VARCHAR.
 func (s *cacheSourceSnapshot) messageSliceRelation(table, idColumn string, after, through int64) (string, error) {
-	key := cacheMessageSlice{table, idColumn, after, through}
-	if relation, ok := s.messageSlices[key]; ok {
-		return relation, nil
-	}
-	if s.messageSlices == nil {
-		s.messageSlices = make(map[cacheMessageSlice]string)
-	}
 	relation := "sqlite_db." + table
 	if s.csvSnapshot || after == 0 {
-		relation = fmt.Sprintf("(SELECT * FROM %s WHERE TRY_CAST(%s AS BIGINT) > %d AND TRY_CAST(%s AS BIGINT) <= %d)", relation, idColumn, after, idColumn, through)
-		s.messageSlices[key] = relation
 		return relation, nil
 	}
 	rows, err := s.DuckDB().Query("DESCRIBE SELECT * FROM " + relation)
@@ -2049,25 +2040,15 @@ func (s *cacheSourceSnapshot) messageSliceRelation(table, idColumn string, after
 		if err := rows.Scan(&name, &typ, &nullable, &key, &def, &extra); err != nil {
 			return "", fmt.Errorf("scan message slice schema %s: %w", table, err)
 		}
-		column := `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+		column := `"` + name + `"`
 		columns = append(columns, column)
-		value := fmt.Sprintf("CAST(%s AS %s)", column, typ)
-		if typ == "TIMESTAMP" {
-			// The scanner treats numeric SQLite timestamps as epoch seconds.
-			// Carry their storage type so text still uses timestamp parsing.
-			storageType := fmt.Sprintf(`"__cache_slice_type_%d"`, len(casts))
-			columns = append(columns, "typeof("+column+") AS "+storageType)
-			value = fmt.Sprintf("CASE WHEN %s IN ('integer', 'real') THEN to_timestamp(CAST(%s AS DOUBLE)) AT TIME ZONE 'UTC' ELSE %s END", storageType, column, value)
-		}
-		casts = append(casts, value+" AS "+column)
+		casts = append(casts, fmt.Sprintf("CAST(%s AS %s) AS %s", column, typ, column))
 	}
 	if err := rows.Err(); err != nil {
 		return "", fmt.Errorf("read message slice schema %s: %w", table, err)
 	}
 	sqliteSQL := fmt.Sprintf("SELECT %s FROM %s WHERE %s > %d AND %s <= %d", strings.Join(columns, ", "), table, idColumn, after, idColumn, through)
-	relation = "(SELECT " + strings.Join(casts, ", ") + " FROM sqlite_query('sqlite_db', '" + strings.ReplaceAll(sqliteSQL, "'", "''") + "'))"
-	s.messageSlices[key] = relation
-	return relation, nil
+	return "(SELECT " + strings.Join(casts, ", ") + " FROM sqlite_query('sqlite_db', '" + strings.ReplaceAll(sqliteSQL, "'", "''") + "'))", nil
 }
 
 // identityPresenceSQL preserves raw address presence independently of UTF-8

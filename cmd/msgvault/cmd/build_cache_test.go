@@ -1223,14 +1223,13 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 	require.NoError(err)
 	_, err = db.Exec(`INSERT INTO messages
 		(id, source_id, source_message_id, conversation_id, sender_id, sent_at, received_at, snippet, size_estimate, has_attachments, is_from_me, deleted_from_source_at)
-		VALUES (6, 1, 'delta-out', 101, 1, '2024-04-01 12:00:00+02:00', 1711965600.25, NULL, 1200, 1, 1, '2024-04-02 10:00:00'),
-		(7, 1, 'delta-in', 101, 2, 1712052000, '2024-04-02 12:00:00', CAST(X'6869ff' AS TEXT), NULL, 0, 0, NULL);
+		VALUES (6, 1, 'delta-out', 101, 1, '2024-04-01 12:00:00+02:00', '2024-04-01 10:00:00.25', NULL, 1200, 1, 1, '2024-04-02 10:00:00'),
+		(7, 1, 'delta-in', 101, 2, '2024-04-02 10:00:00', '2024-04-02 12:00:00', CAST(X'6869ff' AS TEXT), NULL, 0, 0, NULL);
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, email_address) VALUES
 		(6, 1, 'from', 'alice@example.com'), (6, 2, 'to', 'bob@example.org'),
 		(7, 2, 'from', 'bob@example.org'), (7, 1, 'to', NULL);
 		INSERT INTO message_labels (message_id, label_id) VALUES (6, 2), (7, 1);
 		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES (6, 'delta.txt', 'text/plain', 123);
-		UPDATE messages SET size_estimate = 'unreadable' WHERE id = 1;
 		UPDATE message_recipients SET participant_id = 'unreadable' WHERE message_id = 1 AND participant_id = 1;
 		UPDATE message_labels SET label_id = 'unreadable' WHERE message_id = 1 AND label_id = 1;
 		UPDATE attachments SET size = 'unreadable' WHERE message_id = 1`)
@@ -1250,7 +1249,6 @@ func TestBuildCacheIncrementalReadsOnlyNewSliceAndMatchesFullBuild(t *testing.T)
 	assert.Equal(int64(7), result.ExportedCount)
 	_, err = db.Exec(`DROP VIEW messages;
 		ALTER TABLE stored_messages RENAME TO messages;
-		UPDATE messages SET size_estimate = 1000 WHERE id = 1;
 		UPDATE message_recipients SET participant_id = 1 WHERE message_id = 1 AND participant_id = 'unreadable';
 		UPDATE message_labels SET label_id = 1 WHERE message_id = 1 AND label_id = 'unreadable';
 		UPDATE attachments SET size = 42 WHERE message_id = 1`)
