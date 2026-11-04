@@ -21,6 +21,17 @@ type MessageDisplay struct {
 }
 
 func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int64]MessageDisplay, error) {
+	return s.messageDisplayContext(ctx, ids, false)
+}
+
+// MessageDisplayForOwnerAnchorContext reads retained source-deleted messages
+// for explicit owner anchors. Source authorization and local-deletion checks
+// still apply.
+func (s *Store) MessageDisplayForOwnerAnchorContext(ctx context.Context, ids []int64) (map[int64]MessageDisplay, error) {
+	return s.messageDisplayContext(ctx, ids, true)
+}
+
+func (s *Store) messageDisplayContext(ctx context.Context, ids []int64, allowSourceDeleted bool) (map[int64]MessageDisplay, error) {
 	result := make(map[int64]MessageDisplay, len(ids))
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	for start := 0; start < len(ids); start += activityCandidateIDChunk {
@@ -32,7 +43,11 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		}
 		args = append(args, scopeArgs...)
 		// Undated anchors still carry safety and identity metadata.
-		eligible := strings.Replace(s.activityLiveEligibleSQL(), "COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL", "TRUE", 1)
+		eligibleSQL := s.activityLiveEligibleSQL()
+		if allowSourceDeleted {
+			eligibleSQL = s.activityLiveEligibleForOwnerAnchorSQL()
+		}
+		eligible := strings.Replace(eligibleSQL, "COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL", "TRUE", 1)
 		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT m.id,COALESCE(m.subject,''),COALESCE(m.snippet,''),m.hidden_text_present,
    m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,src.source_type,m.message_type
    FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.id IN (`+marks+`) AND `+eligible+scope), args...)

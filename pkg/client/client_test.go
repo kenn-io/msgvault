@@ -1663,3 +1663,23 @@ func TestGeneratedTimelineMarkdownKeepsTheRawResponseBody(t *testing.T) {
 	assert.Nil(t, response.JSON200)
 	assert.Equal(t, body, string(response.Body))
 }
+
+func TestGeneratedTimelineTypedClientRejectsMarkdown(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		_, err := w.Write([]byte("# Timeline\n"))
+		assertions.NoError(err)
+	}))
+	t.Cleanup(server.Close)
+	client, err := New(server.URL)
+	requirements.NoError(err)
+	format := "markdown"
+	_, err = client.GetTimeline(t.Context(), &generated.GetTimelineRequestOptions{
+		Query: &generated.GetTimelineQuery{Format: &format},
+	})
+	requirements.ErrorContains(err, "use GetTimelineWithResponse for the raw Markdown body")
+	assertions.False(called)
+}

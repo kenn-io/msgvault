@@ -93,6 +93,35 @@ func TestMalformedPersonReferenceIsInputError(t *testing.T) {
 	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
 }
 
+func TestAnchorPersonReaderFailureDoesNotExposeUnfilteredNeighbors(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fail bool
+	}{
+		{name: "unavailable"},
+		{name: "read failure", fail: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			id := f.add(f.now.Add(-time.Hour), false)
+			f.project()
+			if tc.fail {
+				f.src.People = personReadFailure{f.src.People}
+			} else {
+				f.src.People = nil
+			}
+
+			req := anchorRequest(messageRef(id))
+			req.With = "person:1"
+			got, err := Build(t.Context(), f.src, req)
+			requirements.NoError(err)
+			assertions.Empty(got.History)
+			assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+		})
+	}
+}
+
 func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

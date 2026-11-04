@@ -137,6 +137,9 @@ func Markdown(t *Timeline) string {
 	}
 	var omitted []string
 	for section, n := range t.Omitted.Budget {
+		if section == "open_loops" && t.OpenLoops != nil && t.OpenLoops.Truncated {
+			continue
+		}
 		omitted = append(omitted, fmt.Sprintf("%s %v", section, n))
 	}
 	sort.Strings(omitted)
@@ -209,9 +212,6 @@ func entryRow(e Entry, loc *time.Location) string {
 		if m.ActionItemCount > 0 {
 			body += fmt.Sprintf(" · %d actions", m.ActionItemCount)
 		}
-		if m.Status == "cancelled" {
-			body += " [cancelled]"
-		}
 		if len(m.PossiblyRelated) > 0 {
 			body += " · possibly related " + strings.Join(m.PossiblyRelated, ", ")
 		}
@@ -260,6 +260,14 @@ func entryRow(e Entry, loc *time.Location) string {
 	// Suppress all message-derived displayed text for hidden-text rows.
 	if e.HiddenText {
 		body = clock + " " + e.Kind + " [hidden text]"
+	}
+	if e.Meeting != nil {
+		if e.Meeting.Status == "cancelled" {
+			body += " [cancelled]"
+		}
+		if e.Meeting.DeletedFromSource {
+			body += " [deleted from source]"
+		}
 	}
 	body += " · " + ref
 	if e.Filtered {

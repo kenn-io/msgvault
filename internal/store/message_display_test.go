@@ -42,3 +42,29 @@ func TestMessageDisplayCarriesHiddenTextAndEncrypted(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(got)
 }
+
+func TestOwnerAnchorMessageDisplayAllowsSourceDeletionOnly(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := storetest.New(t)
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	sourceDeleted := f.NewMessage().WithSentAt(at).WithSnippet("Source deleted question").Create(t, f.Store)
+	localDeleted := f.NewMessage().WithSentAt(at.Add(time.Minute)).WithSnippet("Locally deleted question").Create(t, f.Store)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), at, sourceDeleted)
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), at, localDeleted)
+	requirements.NoError(err)
+
+	regular, err := f.Store.MessageDisplayContext(t.Context(), []int64{sourceDeleted, localDeleted})
+	requirements.NoError(err)
+	assertions.Empty(regular)
+
+	ownerAnchor, err := f.Store.MessageDisplayForOwnerAnchorContext(t.Context(), []int64{sourceDeleted, localDeleted})
+	requirements.NoError(err)
+	assertions.Contains(ownerAnchor, sourceDeleted)
+	assertions.NotContains(ownerAnchor, localDeleted)
+
+	restricted, err := f.Store.MessageDisplayForOwnerAnchorContext(sourcescope.WithSourceIDs(t.Context(), []int64{}), []int64{sourceDeleted})
+	requirements.NoError(err)
+	assertions.Empty(restricted)
+}

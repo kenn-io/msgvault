@@ -68,7 +68,8 @@ func TestTimelineCommandFlagsAndFormats(t *testing.T) {
 	command.SetOut(&out)
 	command.SetErr(&out)
 	command.SetArgs([]string{"--with", "Alice"})
-	requirements.Error(command.Execute())
+	commandErr := command.Execute()
+	requirements.ErrorContains(commandErr, "Choose a person")
 	assertions.Contains(out.String(), "Alice")
 	assertions.Contains(out.String(), "person:7")
 }

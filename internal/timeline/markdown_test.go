@@ -49,6 +49,34 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 	v.Gaps = nil
 	assert.NotContains(t, Markdown(v), "retry:")
 }
+
+func TestMarkdownMarksSourceDeletedMeeting(t *testing.T) {
+	v := sampleTimeline()
+	v.Days = []Day{{Date: "2026-10-22", Meetings: []Entry{{
+		Kind: "meeting", Key: "occ:evt:42", Ref: "evt:42", AnchorRef: "evt:42",
+		Time:    v.Now,
+		Meeting: &MeetingEntry{Title: UntrustedText{Text: "Planning"}, DeletedFromSource: true},
+	}}}}
+	assert.Contains(t, Markdown(v), "[deleted from source]")
+	v.Days[0].Meetings[0].HiddenText = true
+	assert.Contains(t, Markdown(v), "[deleted from source]")
+}
+
+func TestMarkdownDoesNotRepeatOpenLoopTruncationInOmittedFooter(t *testing.T) {
+	v := sampleTimeline()
+	got := Markdown(v)
+	assert.Equal(t, 1, strings.Count(got, "more available\n"))
+	assert.Contains(t, got, "omitted: history 2 · noise 2 · cold 3\n")
+	assert.NotContains(t, got, "open_loops")
+
+	v.Days = nil
+	v.History = nil
+	v.Upcoming = nil
+	v.Gaps = nil
+	v.Omitted = Omitted{Budget: map[string]any{"open_loops": "more"}}
+	got = Markdown(v)
+	assert.NotContains(t, got, "omitted:")
+}
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline()
 	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}

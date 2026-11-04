@@ -183,18 +183,19 @@ func resolveWindow(req Request, now time.Time, loc *time.Location) (Window, erro
 }
 
 type composer struct {
-	subject      store.ActivitySubject
-	participants []int64
-	ctx          context.Context
-	src          Sources
-	req          Request
-	t            *Timeline
-	loc          *time.Location
-	positions    map[string]string
-	entryDates   map[string]string
-	keys         map[string]string
-	more         map[string]bool
-	tiers        map[int64]store.PersonTier
+	subject        store.ActivitySubject
+	participants   []int64
+	personResolved bool
+	ctx            context.Context
+	src            Sources
+	req            Request
+	t              *Timeline
+	loc            *time.Location
+	positions      map[string]string
+	entryDates     map[string]string
+	keys           map[string]string
+	more           map[string]bool
+	tiers          map[int64]store.PersonTier
 }
 
 func (c *composer) gap(section string, err error, partial bool) {

@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -63,5 +64,33 @@ func FuzzMergeBurstsKeepsCanonicalCopiesOnce(f *testing.F) {
 
 		mergedAgain := mergeBursts(merged, nil)
 		assertions.Equal(merged, mergedAgain)
+	})
+}
+
+func FuzzMergeEntriesExcludesInactiveMeetingsFromUpcoming(f *testing.F) {
+	f.Add("confirmed", false, false)
+	f.Add("cancelled", false, false)
+	f.Add("CONFIRMED", true, false)
+	f.Add("confirmed", false, true)
+	f.Fuzz(func(t *testing.T, status string, deletedFromSource, past bool) {
+		assertions, requirements := assert.New(t), require.New(t)
+		now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+		start := now.Add(time.Hour)
+		if past {
+			start = now.Add(-time.Hour)
+		}
+		occurrence := store.CalendarOccurrence{
+			Ref: "evt:24", MessageID: 24, Subject: "Planning", Status: status,
+			DeletedFromSource: deletedFromSource, Start: start, End: start.Add(time.Hour),
+		}
+		entries, upcoming := composeCalendarEntries(t, time.UTC, now, []store.CalendarOccurrence{occurrence})
+		requirements.Len(entries, 1)
+		assertions.Equal(deletedFromSource, entries[0].Meeting.DeletedFromSource)
+		wantUpcoming := !deletedFromSource && !past && !strings.EqualFold(status, "cancelled")
+		if wantUpcoming {
+			requirements.Len(upcoming, 1)
+		} else {
+			assertions.Empty(upcoming)
+		}
 	})
 }

@@ -197,6 +197,7 @@ type MeetingEntry struct {
 	End                 time.Time     `json:"end,omitzero"`
 	Time                time.Time     `json:"time,omitzero"`
 	Status              string        `json:"status,omitempty"`
+	DeletedFromSource   bool          `json:"deleted_from_source,omitempty,omitzero"`
 	AllDay              bool          `json:"all_day"`
 	Attendees           []Person      `json:"attendees,omitempty"`
 	People              []Person      `json:"people,omitempty"`

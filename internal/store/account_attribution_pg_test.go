@@ -163,6 +163,9 @@ func TestCalendarResourceTransactionLocksParticipantDirectoryBeforeCallbackPG(t 
 	resourceDone := make(chan error, 1)
 	go func() {
 		resourceDone <- st.WithCalendarResourceTransactionContext(t.Context(), func(ctx context.Context) error {
+			close(callbackStarted)
+			<-continueResource
+
 			_, err := st.PersistMessageWithParticipantsContext(
 				ctx,
 				[]store.ParticipantPersistData{{EmailAddress: participantEmail, Domain: "example.test"}},
@@ -177,8 +180,6 @@ func TestCalendarResourceTransactionLocksParticipantDirectoryBeforeCallbackPG(t 
 			if err != nil {
 				return err
 			}
-			close(callbackStarted)
-			<-continueResource
 			return nil
 		})
 	}()

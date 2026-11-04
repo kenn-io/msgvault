@@ -20968,6 +20968,9 @@ func (c *Client) GetTextStats(ctx context.Context, options *GetTextStatsRequestO
 
 // GetTimeline Read bounded activity by day, person, or anchor
 func (c *Client) GetTimeline(ctx context.Context, options *GetTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTimelineResponse, error) {
+	if options != nil && options.Query != nil && options.Query.Format != nil && *options.Query.Format == "markdown" {
+		return nil, fmt.Errorf("GetTimeline does not support format=markdown; use GetTimelineWithResponse for the raw Markdown body")
+	}
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/timeline",

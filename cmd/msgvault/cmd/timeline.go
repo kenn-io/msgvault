@@ -39,7 +39,7 @@ func newTimelineCommand() *cobra.Command {
 	command := &cobra.Command{
 		Use:     "timeline",
 		Short:   "Read activity by day, person, or anchor",
-		Long:    "Read a bounded timeline of archived messages, meetings, calls, and notes.\nUse an entry's open targets to read its details.",
+		Long:    "Read a bounded timeline of archived messages, meetings, calls, and notes.\nUse tool calls in --json for details.",
 		Args:    cobra.NoArgs,
 		Example: "  msgvault timeline\n  msgvault timeline --with person:7\n  msgvault timeline --around msg:42 --before 5 --after 5\n  msgvault timeline --brief --json",
 	}
@@ -56,7 +56,7 @@ func newTimelineCommand() *cobra.Command {
 	flags.IntSliceVar(&req.Tiers, "tier", nil, "Filter person tiers (1,2,3)")
 	flags.BoolVar(&req.IncludeCold, "include-cold", false, "Include archived cold activity")
 	flags.BoolVar(&req.IncludeNoise, "include-noise", false, "Include activity excluded as noise")
-	flags.BoolVar(&req.Brief, "brief", false, "Use shorter sections and a default budget of 6144 bytes")
+	flags.BoolVar(&req.Brief, "brief", false, "Use shorter sections")
 	flags.IntVar(&req.Budget, "budget", 0, "Final output bytes (2048–65536); default 16384, or 6144 with --brief")
 	flags.StringVar(&req.Cursor, "cursor", "", "Continue with the same filters and format")
 	flags.BoolVar(&jsonOutput, flagJSON, false, "Output compact JSON instead of Markdown")

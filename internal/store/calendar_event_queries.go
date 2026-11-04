@@ -635,6 +635,49 @@ func readCalendarCancellationEvidence(ctx context.Context, r contextRowQuerier, 
 			evidence.diagnostic = fmt.Sprintf("decode cancellation evidence: %s", err)
 			return evidence, nil
 		}
+	case calevent.CalDAVRawFormat:
+		var selector calevent.CalDAVMetadata
+		if err := json.Unmarshal(evidence.metadata, &selector); err != nil {
+			evidence.diagnostic = fmt.Sprintf("decode CalDAV cancellation metadata: %s", err)
+			return evidence, nil
+		}
+		if selector.EventID == "" {
+			evidence.diagnostic = "decode CalDAV cancellation evidence: component selector missing or ambiguous"
+			return evidence, nil
+		}
+		zone := evidence.calendarZone
+		if zone == "" {
+			zone = selector.TimeZone
+		}
+		if zone == "" {
+			zone = "UTC"
+		}
+		components, decodeErr := calevent.ParseCalDAVResource(ctx, raw, zone)
+		if decodeErr != nil {
+			evidence.diagnostic = fmt.Sprintf("decode CalDAV cancellation evidence: %s", decodeErr)
+			return evidence, nil
+		}
+		for _, component := range components {
+			if component.Event.ProviderEventID != selector.EventID {
+				continue
+			}
+			fields = make(map[string]any)
+			for key, present := range map[string]bool{
+				"summary": component.Present.Summary, "attendees": component.Present.Attendees,
+				"organizer": component.Present.Organizer, "start": component.Present.Start,
+				"end": component.Present.End, "location": component.Present.Location,
+				"description": component.Present.Description, "join_url": component.Present.URL,
+			} {
+				if present {
+					fields[key] = true
+				}
+			}
+			break
+		}
+		if fields == nil {
+			evidence.diagnostic = "decode CalDAV cancellation evidence: component selector missing or ambiguous"
+			return evidence, nil
+		}
 	default:
 		evidence.diagnostic = fmt.Sprintf("unsupported cancellation raw format %q", format)
 		return evidence, nil

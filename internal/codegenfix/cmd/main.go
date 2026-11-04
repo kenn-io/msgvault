@@ -21,6 +21,10 @@ func main() {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+	if err := rewrite(os.Args[2], codegenfix.RewriteTimelineTypedClient); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	if err := rewrite(os.Args[3], codegenfix.RewriteTimelineMarkdownClient); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

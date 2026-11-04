@@ -93,6 +93,29 @@ func (c *Client) RunQuery(ctx context.Context, options *RunQueryRequestOptions, 
 	assert.Equal(got, again)
 }
 
+func TestRewriteTimelineTypedClientRoutesMarkdownToRawResponse(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	fixture := `package generated
+import "fmt"
+func (c *Client) GetTimeline(ctx context.Context, options *GetTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTimelineResponse, error) {
+	return nil, nil
+}
+`
+	got, err := RewriteTimelineTypedClient([]byte(fixture))
+	requirements.NoError(err)
+	assertions.Contains(string(got), `if options != nil && options.Query != nil && options.Query.Format != nil && *options.Query.Format == "markdown"`)
+	assertions.Contains(string(got), `use GetTimelineWithResponse for the raw Markdown body`)
+	assertions.Equal(1, strings.Count(string(got), "GetTimeline does not support format=markdown"))
+	again, err := RewriteTimelineTypedClient(got)
+	requirements.NoError(err)
+	assertions.Equal(got, again)
+}
+
+func TestRewriteTimelineTypedClientRejectsChangedMethodShape(t *testing.T) {
+	_, err := RewriteTimelineTypedClient([]byte("package generated\n"))
+	require.ErrorContains(t, err, "generated GetTimeline method shape changed")
+}
+
 func TestRewriteGeneratedValidatorsRejectsMissingGroupingValidator(t *testing.T) {
 	_, err := RewriteGeneratedValidators([]byte("package generated\n"))
 

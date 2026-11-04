@@ -18,6 +18,21 @@ type anchorTarget struct {
 	occurrence                *store.CalendarOccurrence
 }
 
+type ownerAnchorDisplaySource interface {
+	MessageDisplayForOwnerAnchorContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error)
+}
+
+func (c *composer) readAnchorDisplay(ref AnchorRef, id int64) readResult[map[int64]store.MessageDisplay] {
+	if c.req.Scope.Owner && ref.Kind == entryKindMessage {
+		if source, ok := c.src.Activity.(ownerAnchorDisplaySource); ok {
+			return readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]store.MessageDisplay, error) {
+				return source.MessageDisplayForOwnerAnchorContext(ctx, []int64{id})
+			})
+		}
+	}
+	return c.readDisplays([]int64{id})
+}
+
 func (c *composer) resolveAnchor() (anchorTarget, error) {
 	ref, err := ParseAnchor(c.req.Around, c.loc)
 	if err != nil {
@@ -77,6 +92,22 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
 		}
 		target.messageID = r.value
+		if target.messageID <= 0 && c.req.IncludeCold && c.src.Cold != nil {
+			filters := c.filters()
+			filters.IncludeNoise = true
+			cold := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.ActivityMessage, error) {
+				return c.src.Cold.ListColdActivityMessagesContext(ctx, store.MessageQuery{
+					ConversationID: ref.ID, Descending: true, Limit: 1, Filters: filters,
+				})
+			})
+			if cold.err != nil {
+				c.gap("anchor", cold.err, false)
+				return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
+			}
+			if len(cold.value) > 0 {
+				target.messageID = cold.value[0].MessageID
+			}
+		}
 		target.conversationID = ref.ID
 	case entryKindMessage:
 		target.messageID = ref.ID
@@ -115,7 +146,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	if target.messageID <= 0 {
 		return target, ErrUnknownReference
 	}
-	display := c.readDisplays([]int64{target.messageID})
+	display := c.readAnchorDisplay(ref, target.messageID)
 	if display.err != nil {
 		c.gap("anchor", display.err, false)
 		return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
@@ -292,7 +323,7 @@ func (c *composer) buildAnchor(target anchorTarget) {
 			found = true
 		}
 	}
-	if !found && target.messageID > 0 {
+	if !found && target.messageID > 0 && c.hasResolvedSubject() {
 		c.t.Anchor.Filtered = true
 		entries = append(entries, c.anchorFallback(target))
 	}

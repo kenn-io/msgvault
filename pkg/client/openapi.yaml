@@ -16990,6 +16990,8 @@ components:
           type: array
         attendees_truncated:
           type: boolean
+        deleted_from_source:
+          type: boolean
         end:
           format: date-time
           type: string

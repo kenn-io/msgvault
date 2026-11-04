@@ -42,3 +42,16 @@ func TestMergeEntriesOmitsCancelledMeetingFromUpcomingAndRendersStatus(t *testin
 	got := Markdown(&Timeline{Mode: ModeDay, Timezone: "UTC", Window: Window{From: "2026-10-22", To: "2026-10-22"}, Days: []Day{{Date: "2026-10-22", Meetings: entries}}})
 	assertions.Contains(got, "[cancelled]")
 }
+
+func TestMergeEntriesOmitsSourceDeletedMeetingFromUpcomingAndPreservesMarker(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	occurrence := store.CalendarOccurrence{
+		Ref: "evt:23", MessageID: 23, Subject: "Planning", Status: "confirmed", DeletedFromSource: true,
+		Start: now.Add(time.Hour), End: now.Add(2 * time.Hour),
+	}
+	entries, upcoming := composeCalendarEntries(t, time.UTC, now, []store.CalendarOccurrence{occurrence})
+	requirements.Len(entries, 1)
+	assertions.Empty(upcoming)
+	assertions.True(entries[0].Meeting.DeletedFromSource)
+}

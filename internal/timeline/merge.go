@@ -360,7 +360,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if at.IsZero() {
 			continue
 		}
-		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, Status: o.Status, AllDay: o.AllDay, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
+		e := Entry{Kind: "meeting", Key: key, Ref: o.Ref, AnchorRef: o.Ref, Time: at, HiddenText: hidden, Open: c.open("get_calendar_event", map[string]any{"ref": o.Ref}), Meeting: &MeetingEntry{Title: UntrustedText{Text: title}, Start: at, End: end, Status: o.Status, DeletedFromSource: o.DeletedFromSource, AllDay: o.AllDay, Attendees: people, AttendeeCount: len(people), People: people, PeopleCount: len(people), Attended: len(linked) > 0, LinkedTranscriptIDs: linked, ActionItemCount: count}}
 		if len(linked) > 0 {
 			e.Open = append(e.Open, c.open("get_meeting_context", map[string]any{"message_ids": linked})...)
 		}
@@ -395,7 +395,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if c.req.Brief {
 			until = c.t.Now.Add(24 * time.Hour)
 		}
-		if o.Status != "cancelled" && !at.Before(c.t.Now) && at.Before(until) {
+		if !strings.EqualFold(o.Status, "cancelled") && !o.DeletedFromSource && !at.Before(c.t.Now) && at.Before(until) {
 			upcoming = append(upcoming, e)
 		}
 	}

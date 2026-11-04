@@ -97,6 +97,44 @@ func TestAnchorNeighboursChronologicalWithProbeGrowth(t *testing.T) {
 	}
 	assertions.True(got.History[3].Anchor)
 }
+
+func TestOwnerAnchorCanFollowSourceDeletedMessage(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	f := newTimelineFixture(t)
+	id := f.add(f.now, false)
+	person := f.savePerson()
+	f.project()
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_from_source_at=? WHERE id=?`), f.now, id)
+	requirements.NoError(err)
+
+	req := anchorRequest(messageRef(id))
+	req.Mode = ModeAnchor
+	req.With = fmt.Sprintf("person:%d", person)
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	assertions.Equal(messageRef(id), got.Anchor.Ref)
+	var anchor *Entry
+	for i := range got.History {
+		if got.History[i].Anchor {
+			anchor = &got.History[i]
+			break
+		}
+	}
+	requirements.NotNil(anchor)
+	requirements.NotNil(anchor.Message)
+	assertions.Equal("Synthetic message", anchor.Message.Snippet.Text)
+
+	_, err = Build(sourcescope.WithSourceIDs(t.Context(), []int64{}), f.src, req)
+	requirements.ErrorIs(err, ErrUnknownReference)
+
+	localID := f.add(f.now.Add(time.Minute), false)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=? WHERE id=?`), f.now, localID)
+	requirements.NoError(err)
+	_, err = Build(t.Context(), f.src, anchorRequest(messageRef(localID)))
+	requirements.ErrorIs(err, ErrUnknownReference)
+}
 func TestAnchorFilteredAnchorStillShown(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -140,6 +178,27 @@ func TestAnchorBareConversationUsesLatestEligible(t *testing.T) {
 	got, err := Build(t.Context(), f.src, anchorRequest(fmt.Sprintf("conv:%d", f.ConvID)))
 	require.NoError(t, err)
 	assert.WithinDuration(t, f.now, got.Anchor.Time, time.Microsecond)
+}
+
+func TestAnchorBareColdConversationUsesLatestMessageWhenIncluded(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	conversation, err := f.Store.EnsureConversation(f.Source.ID, "cold-anchor", "Synthetic conversation")
+	requirements.NoError(err)
+	id := f.add(f.now.Add(-time.Hour), false, func(message *store.Message) {
+		message.ConversationID = conversation
+	})
+	f.project()
+	requirements.NoError(f.seedConversationPolicy(t.Context(), f.Source.ID, "cold-anchor"))
+
+	req := anchorRequest(fmt.Sprintf("conv:%d", conversation))
+	req.Conversation, req.IncludeCold = true, true
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	requirements.Len(got.History, 1)
+	assertions.True(got.History[0].Anchor)
+	assertions.Equal(messageRef(id), got.History[0].Ref)
 }
 func TestAnchorWithPersonNarrows(t *testing.T) {
 	requirements := require.New(t)

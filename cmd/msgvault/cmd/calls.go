@@ -58,7 +58,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		return nil
 	}
 	importCommand := &cobra.Command{
-		Use: "import [file|-]", Short: "Import one supplied JSON observation (default: stdin)",
+		Use: "import [file|-]", Short: "Import one JSON record (default: stdin)",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			input := cmd.InOrStdin()
@@ -94,7 +94,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 	}
 	root.AddCommand(importCommand)
 	for _, summary := range []bool{false, true} {
-		name, description := "list", "Inspect source observations and participant attendance"
+		name, description := "list", "Show imported records and attendance"
 		if summary {
 			name, description = "summary", "Rank people by confirmed answered calls"
 		}
@@ -102,7 +102,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		var after, before string
 		command := &cobra.Command{Use: name, Short: description, Args: cobra.NoArgs}
 		command.Flags().Int64Var(&q.PersonID, "person-id", 0, "Filter by durable person ID")
-		command.Flags().IntVar(&q.Limit, "limit", 50, "Maximum rows (1–100)")
+		command.Flags().IntVar(&q.Limit, "limit", 50, "Results (1–100)")
 		command.Flags().StringVar(&after, "after", "", "Inclusive RFC3339 time")
 		command.Flags().StringVar(&before, "before", "", "Exclusive RFC3339 time")
 		if summary {

@@ -49,6 +49,7 @@ func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 		}
 		return store.PersonCandidate{}, &ErrAmbiguousReference{Candidates: c.t.Candidates}
 	}
+	c.personResolved = true
 	return r.value[0], nil
 }
 func (c *composer) setSubject(p store.PersonCandidate) {
@@ -58,7 +59,13 @@ func (c *composer) setSubject(p store.PersonCandidate) {
 	}
 	c.participants = slices.Clone(p.ParticipantIDs)
 }
+func (c *composer) hasResolvedSubject() bool {
+	return c.req.With == "" || c.personResolved && (c.subject.PersonID != 0 || len(c.subject.ParticipantIDs) > 0)
+}
 func (c *composer) matchesSubject(e Entry) bool {
+	if !c.hasResolvedSubject() {
+		return false
+	}
 	if c.subject.PersonID == 0 && len(c.subject.ParticipantIDs) == 0 {
 		return true
 	}

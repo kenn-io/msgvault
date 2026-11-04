@@ -17188,6 +17188,7 @@ type TimelineMeetingEntry struct {
 	AttendeeCount       int64                 `json:"attendee_count"`
 	Attendees           []TimelinePerson      `json:"attendees,omitempty"`
 	AttendeesTruncated  *bool                 `json:"attendees_truncated,omitempty"`
+	DeletedFromSource   *bool                 `json:"deleted_from_source,omitempty"`
 	End                 *time.Time            `json:"end,omitempty"`
 	LinkedTranscriptIds []int64               `json:"linked_transcript_ids,omitempty"`
 	People              []TimelinePerson      `json:"people,omitempty"`

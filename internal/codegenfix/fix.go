@@ -96,6 +96,42 @@ func RewriteTimelineMarkdownClient(source []byte) ([]byte, error) {
 	return source, nil
 }
 
+// RewriteTimelineTypedClient rejects Markdown for the typed convenience method;
+// callers that need the text response can use GetTimelineWithResponse.Body.
+func RewriteTimelineTypedClient(source []byte) ([]byte, error) {
+	signature := []byte("func (c *Client) GetTimeline(ctx context.Context, options *GetTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetTimelineResponse, error) {\n")
+	start := bytes.Index(source, signature)
+	if start < 0 {
+		return nil, errors.New("generated GetTimeline method shape changed")
+	}
+	endOffset := bytes.Index(source[start:], []byte("\n}\n"))
+	if endOffset < 0 {
+		return nil, errors.New("generated GetTimeline method boundary changed")
+	}
+	end := start + endOffset
+	method := append([]byte(nil), source[start:end]...)
+	guard := []byte("\tif options != nil && options.Query != nil && options.Query.Format != nil && *options.Query.Format == \"markdown\" {\n\t\treturn nil, fmt.Errorf(\"GetTimeline does not support format=markdown; use GetTimelineWithResponse for the raw Markdown body\")\n\t}\n")
+	switch bytes.Count(method, guard) {
+	case 1:
+		if !bytes.Contains(source, []byte("\"fmt\"")) {
+			return nil, errors.New("generated GetTimeline fmt import is missing")
+		}
+		return source, nil
+	case 0:
+	default:
+		return nil, errors.New("generated GetTimeline Markdown guard is duplicated")
+	}
+	if !bytes.Contains(source, []byte("\"fmt\"")) {
+		return nil, errors.New("generated GetTimeline fmt import is missing")
+	}
+	result := append([]byte(nil), source[:start]...)
+	result = append(result, signature...)
+	result = append(result, guard...)
+	result = append(result, method[len(signature):]...)
+	source = append(result, source[end:]...)
+	return source, nil
+}
+
 // Present empty strings and raw JSON values must survive JSON v2 encoding of generated responses.
 var optionalValueJSONTag = regexp.MustCompile("((?:\\*string|\\*?jsontext\\.Value)\\s+`json:\"[^\"]+),omitempty(\")")
 

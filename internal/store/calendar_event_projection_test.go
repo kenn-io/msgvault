@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 const calendarRaw = `{"id":"event-example","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"iCalUID":"event-uid@example.com","description":"Raw description","attendees":[{"email":"PERSON@EXAMPLE.COM","responseStatus":"accepted"}]}`
@@ -113,6 +114,73 @@ func TestCalendarEventProjectionPersistRefreshDelete(t *testing.T) {
 	requirements.Len(calendarRows(t, st, id), 1)
 	requirements.NoError(st.UpsertMessageRawWithFormat(id, []byte(`{}`), "unknown_calendar"))
 	assertions.Empty(calendarRows(t, st, id))
+}
+
+func TestCalDAVSparseCancellationInheritsSelectedMasterFields(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource(calevent.CalDAVSourceType, "calendar@example.com")
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(source.ID, `{"time_zone":"UTC"}`))
+	persist := func(key, summary, resource string) int64 {
+		t.Helper()
+		components, parseErr := calevent.ParseCalDAVResource(t.Context(), []byte(resource), "UTC")
+		requirements.NoError(parseErr)
+		requirements.Len(components, 1)
+		metadata, marshalErr := json.Marshal(calevent.CalDAVMetadata{
+			EventID: components[0].Event.ProviderEventID, ICalUID: components[0].UID, TimeZone: "UTC",
+		})
+		requirements.NoError(marshalErr)
+		id, persistErr := st.PersistMessage(&MessagePersistData{
+			Message: &Message{
+				SourceID: source.ID, SourceMessageID: key, MessageType: "calendar_event",
+				Subject: sql.NullString{String: summary, Valid: summary != ""},
+			},
+			Conversation: &ConversationPersistData{SourceConversationID: key, ConversationType: "calendar", Title: summary},
+			RawMIME:      []byte(resource), RawFormat: calevent.CalDAVRawFormat,
+			Metadata: &sql.NullString{String: string(metadata), Valid: true},
+		})
+		requirements.NoError(persistErr)
+		return id
+	}
+	resource := func(lines ...string) string { return strings.Join(append(lines, ""), "\r\n") }
+	master := persist("master", "Planning", resource(
+		"BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:series@example.test",
+		"DTSTART:20270302T170000Z", "DTEND:20270302T180000Z", "RRULE:FREQ=DAILY;COUNT=2",
+		"SUMMARY:Planning", "ATTENDEE;CN=Alice;PARTSTAT=ACCEPTED:mailto:alice@example.test",
+		"END:VEVENT", "END:VCALENDAR",
+	))
+	cancelled := persist("cancelled", "", resource(
+		"BEGIN:VCALENDAR", "VERSION:2.0", "BEGIN:VEVENT", "UID:series@example.test",
+		"RECURRENCE-ID:20270303T170000Z", "STATUS:CANCELLED", "END:VEVENT", "END:VCALENDAR",
+	))
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 6)})
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 2)
+	var occurrence *CalendarOccurrence
+	for i := range page.Occurrences {
+		if page.Occurrences[i].MessageID == cancelled {
+			occurrence = &page.Occurrences[i]
+		}
+	}
+	requirements.NotNil(occurrence)
+	assertions.Equal(master, occurrence.SeriesMessageID)
+	assertions.Equal("cancelled", occurrence.Status)
+	assertions.Equal("Planning", occurrence.Subject)
+	requirements.Len(occurrence.Attendees, 1)
+	assertions.Equal("alice@example.test", occurrence.Attendees[0].Email)
+	assertions.Equal("2027-03-03T17:00:00Z", occurrence.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-03T18:00:00Z", occurrence.End.Format(time.RFC3339))
+
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@20270303T170000Z", master))
+	requirements.NoError(err)
+	assertions.Equal("Planning", detail.Subject)
+	requirements.Len(detail.Attendees, 1)
+	assertions.Equal("alice@example.test", detail.Attendees[0].Email)
+	assertions.Equal("2027-03-03T17:00:00Z", detail.Start.Format(time.RFC3339))
+	assertions.Equal("2027-03-03T18:00:00Z", detail.End.Format(time.RFC3339))
 }
 
 func TestCalendarEventProjectionSkipsUnchanged(t *testing.T) {
