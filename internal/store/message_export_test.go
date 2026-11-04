@@ -44,12 +44,14 @@ func (s *collectingMessageExportSink) Message(message store.MessageExportMessage
 }
 
 func TestExportMessagesInMemory(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
 	st, err := store.Open(":memory:")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	require.NoError(t, st.InitSchema())
+	requirements.NoError(err)
+	t.Cleanup(func() { requirements.NoError(st.Close()) })
+	requirements.NoError(st.InitSchema())
 	source, err := st.GetOrCreateSource("text", "fixture")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	conversationID := insertMessageExportConversation(t, st, source.ID, "conversation", "", "direct_chat", `{}`)
 	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
 	for _, id := range []string{"c", "a", "b"} {
@@ -57,10 +59,10 @@ func TestExportMessagesInMemory(t *testing.T) {
 		switch id {
 		case "b":
 			_, err = st.DB().Exec(`UPDATE message_bodies SET body_text = NULL WHERE message_id = ?`, messageID)
-			require.NoError(t, err)
+			requirements.NoError(err)
 		case "c":
 			_, err = st.DB().Exec(`DELETE FROM message_bodies WHERE message_id = ?`, messageID)
-			require.NoError(t, err)
+			requirements.NoError(err)
 		}
 	}
 
@@ -69,11 +71,11 @@ func TestExportMessagesInMemory(t *testing.T) {
 	defer cancel()
 	sink := &collectingMessageExportSink{}
 	counts, err := st.ExportMessages(ctx, store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}, sink)
-	require.NoError(t, err)
-	assert.Equal(t, store.MessageExportCounts{Sources: 1, Conversations: 1, Messages: 3}, counts)
-	require.Len(t, sink.messages, 3)
+	requirements.NoError(err)
+	assertions.Equal(store.MessageExportCounts{Sources: 1, Conversations: 1, Messages: 3}, counts)
+	requirements.Len(sink.messages, 3)
 	type messageBody struct{ id, text string }
-	assert.Equal(t, []messageBody{{"a", "Body a"}, {"b", ""}, {"c", ""}}, []messageBody{
+	assertions.Equal([]messageBody{{"a", "Body a"}, {"b", ""}, {"c", ""}}, []messageBody{
 		{sink.messages[0].ID, sink.messages[0].Text},
 		{sink.messages[1].ID, sink.messages[1].Text},
 		{sink.messages[2].ID, sink.messages[2].Text},
