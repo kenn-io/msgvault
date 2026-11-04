@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -326,7 +327,7 @@ func sortClause(opts AggregateOptions) (string, error) {
 // Returns joinClauses (already joined by \n), conditions (slice), and args.
 // This is used for SubAggregate to apply drill-down filters before sub-grouping.
 func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (string, []string, []any) {
-	predicate, args := senderMatchSQL(filter, false)
+	predicate, args := senderMatchSQL(filter, 0)
 	return e.buildFilterWithSender(filter, predicate, args)
 }
 
@@ -914,11 +915,12 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 	return results, nil
 }
 
-// senderRowBound counts stored rows, including both sender representations and hidden messages.
-const senderRowBound = 10000
+// senderMessageBound counts distinct messages across both sender representations, including hidden ones.
+const senderMessageBound = 5000
 
 // senderMatchSQL owns the address and same-row name rules for both query paths.
-func senderMatchSQL(filter MessageFilter, candidates bool) (string, []any) {
+// A zero limit builds the EXISTS predicate; otherwise senderCandidateSQL applies it.
+func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
 	if filter.Sender == "" {
 		return "", nil
 	}
@@ -933,7 +935,7 @@ func senderMatchSQL(filter MessageFilter, candidates bool) (string, []any) {
 		fromArgs = append(fromArgs, filter.SenderName)
 		directArgs = append(directArgs, filter.SenderName)
 	}
-	if candidates {
+	if limit != 0 {
 		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
 			WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (
 				SELECT id FROM participants p_filter_from WHERE ` + address + `)`
@@ -942,7 +944,7 @@ func senderMatchSQL(filter MessageFilter, candidates bool) (string, []any) {
 		}
 		direct := `SELECT id FROM messages WHERE sender_id IN (
 			SELECT id FROM participants p_direct_sender WHERE ` + directAddress + directName + `)`
-		return direct + ` UNION ALL ` + from, append(directArgs, fromArgs...)
+		return senderCandidateSQL(direct, from, directArgs, fromArgs, limit)
 	}
 	return `(EXISTS (
 		SELECT 1 FROM message_recipients mr_filter_from
@@ -955,19 +957,31 @@ func senderMatchSQL(filter MessageFilter, candidates bool) (string, []any) {
 	))`, append(fromArgs, directArgs...)
 }
 
+// senderCandidateSQL lists every sender message ID for a negative limit. A positive limit instead
+// counts distinct messages, reading at most limit from each representation and skipping From
+// deduplication when direct senders alone fill the limit.
+func senderCandidateSQL(direct, from string, directArgs, fromArgs []any, limit int) (string, []any) {
+	if limit < 0 {
+		return direct + ` UNION ALL ` + from, slices.Concat(directArgs, fromArgs)
+	}
+	return `WITH direct(id) AS MATERIALIZED (` + direct + ` LIMIT ?) SELECT CASE WHEN (SELECT COUNT(*) FROM direct) = ? THEN ?
+		ELSE (SELECT COUNT(*) FROM (SELECT id FROM direct UNION SELECT id FROM (SELECT DISTINCT id FROM (` + from + `) LIMIT ?))) END`,
+		slices.Concat(directArgs, []any{limit, limit, limit}, fromArgs, []any{limit})
+}
+
 // ListMessages retrieves messages matching the filter.
 func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
-	senderPredicate, senderArgs := senderMatchSQL(filter, false)
+	senderPredicate, senderArgs := senderMatchSQL(filter, 0)
 	membership := false
 	if _, sqlite := e.dialect.(SQLiteQueryDialect); sqlite && filter.Sender != "" {
 		// Probe only indexed sender rows, before visibility, name, or other filters.
-		candidateSQL, candidateArgs := senderMatchSQL(MessageFilter{Sender: filter.Sender}, true)
+		candidateSQL, candidateArgs := senderMatchSQL(MessageFilter{Sender: filter.Sender}, senderMessageBound+1)
 		var count int
-		if err := e.queryRowContext(ctx, `SELECT COUNT(*) FROM (`+candidateSQL+` LIMIT ?) AS sender_candidates`, append(candidateArgs, senderRowBound+1)...).Scan(&count); err != nil {
+		if err := e.queryRowContext(ctx, candidateSQL, candidateArgs...).Scan(&count); err != nil {
 			return nil, fmt.Errorf("probe sender candidates: %w", err)
 		}
-		if count <= senderRowBound {
-			candidateSQL, senderArgs = senderMatchSQL(filter, true)
+		if count <= senderMessageBound {
+			candidateSQL, senderArgs = senderMatchSQL(filter, -1)
 			senderPredicate = "m.id IN (" + candidateSQL + ")"
 			membership = true
 		}

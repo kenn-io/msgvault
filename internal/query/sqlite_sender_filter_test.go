@@ -108,8 +108,8 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
 		hideSource   bool
 	}{
 		{"overlapping sender paths", "", 4000, 100, 4099, false},
-		{"deduplicated messages", "deleted_at", 6000, 1, 100, false},
-		{"source-deleted messages", "deleted_from_source_at", 6000, 1, 100, true},
+		{"deduplicated messages", "deleted_at", 4900, 1, 100, false},
+		{"source-deleted messages", "deleted_from_source_at", 4900, 1, 100, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
@@ -148,7 +148,7 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
 				messages, err = engine.ListMessages(t.Context(), filter)
 				require.NoError(err)
 				require.Len(messages, 100)
-				assert.Equal(t, int64(6099), messages[0].ID)
+				assert.Equal(t, int64(99+tc.count), messages[0].ID)
 			}
 		})
 	}
@@ -160,7 +160,7 @@ func TestSenderListDistinctMessageWork(t *testing.T) {
 		name           string
 		count, aliases int
 	}{
-		{"6000 dual representations", 6000, 1},
+		{"4900 dual representations", 4900, 1},
 		{"3000 merged From aliases", 3000, 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
