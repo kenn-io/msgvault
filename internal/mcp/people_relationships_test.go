@@ -27,6 +27,11 @@ func (b *relationshipPeopleBackend) ListRelationships(
 	return b.page, b.err
 }
 
+type relationshipDaemonAPIError string
+
+func (e relationshipDaemonAPIError) Error() string        { return string(e) }
+func (e relationshipDaemonAPIError) APIErrorCode() string { return string(e) }
+
 func relationshipToolOptions(backend peoplebrowser.Backend) ServeOptions {
 	return ServeOptions{Engine: &querytest.MockEngine{}, PeopleBackend: backend}
 }
@@ -92,4 +97,21 @@ func TestMCPListRelationshipsIsOptionalPeopleCapability(t *testing.T) {
 	with := toolsByName(t, rawListTools(t, relationshipToolOptions(backend), false))
 	assert.Contains(t, with, ToolListRelationships)
 	assert.Equal(t, true, toolReadOnlyHint(t, with[ToolListRelationships]))
+}
+
+func TestMCPListRelationshipsTranslatesPaginationConflicts(t *testing.T) {
+	for _, code := range []string{"archive_revision_changed", "identity_revision_changed", "cadence_revision_changed"} {
+		t.Run(code, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			backend := &relationshipPeopleBackend{err: relationshipDaemonAPIError(code)}
+			result := rawCallTool(t, relationshipToolOptions(backend), ToolListRelationships, map[string]any{
+				"cursor": "stale",
+			})
+			assert.Equal(true, result["isError"])
+			message := toolErrorTextFromResult(t, result)
+			require.Contains(message, code)
+			assert.Contains(message, "restart without a cursor")
+		})
+	}
 }
