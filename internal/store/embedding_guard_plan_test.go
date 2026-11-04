@@ -13,10 +13,12 @@ import (
 func seedMembershipEmbeddingGuard(tb testing.TB, s *Store, size int) {
 	tb.Helper()
 	seedLiveMessages(tb, s, size)
-	conversationID, err := s.EnsureConversation(1, "beeper-chat", "Beeper chat")
+	source, err := s.GetOrCreateSource("beeper", "synthetic-account")
+	require.NoError(tb, err)
+	conversationID, err := s.EnsureConversationWithType(source.ID, "beeper-chat", "group_chat", "Beeper chat")
 	require.NoError(tb, err)
 	for _, id := range []string{"beeper-1", "beeper-2", "beeper-3"} {
-		messageID, err := s.UpsertMessage(&Message{SourceID: 1, SourceMessageID: id, ConversationID: conversationID, MessageType: "beeper"})
+		messageID, err := s.UpsertMessage(&Message{SourceID: source.ID, SourceMessageID: id, ConversationID: conversationID, MessageType: "beeper"})
 		require.NoError(tb, err)
 		require.NoError(tb, s.UpsertMessageBody(messageID, sql.NullString{String: "Synthetic body", Valid: true}, sql.NullString{}))
 	}
@@ -32,12 +34,10 @@ func TestMembershipEmbeddingGuardSeeksBeeperIndex(t *testing.T) {
 	seedMembershipEmbeddingGuard(t, s, 30000)
 	// A mixed archive gives the timeline index a low average conversation size,
 	// while all 30,000 Beeper messages belong to one conversation.
-	_, err = s.db.Exec(`UPDATE messages SET message_type = 'whatsapp' WHERE conversation_id = 1`)
-	requirements.NoError(err)
 	_, err = s.db.Exec(`
 		WITH RECURSIVE n(i) AS (SELECT 4 UNION ALL SELECT i + 1 FROM n WHERE i < 30000)
 		INSERT INTO messages (source_id, source_message_id, conversation_id, message_type)
-		SELECT 1, 'beeper-' || i, 2, 'beeper' FROM n`)
+		SELECT 2, 'beeper-' || i, 2, 'beeper' FROM n`)
 	requirements.NoError(err)
 	_, err = s.db.Exec(`
 		WITH RECURSIVE n(i) AS (SELECT 3 UNION ALL SELECT i + 1 FROM n WHERE i < 10002)
