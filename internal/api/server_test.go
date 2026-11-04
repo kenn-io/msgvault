@@ -1843,112 +1843,96 @@ func TestMarkedCLIProtectiveCeilingInventory(t *testing.T) {
 
 func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing.T) {
 	t.Parallel()
-	const ordinaryReadTimeout = 100 * time.Millisecond
+	for _, tt := range []struct {
+		name       string
+		path       string
+		marked     bool
+		wantStatus int
+	}{
+		{
+			name:       "protective route extends read deadline",
+			path:       "/api/v1/cli/build-cache",
+			marked:     true,
+			wantStatus: http.StatusNoContent,
+		},
+		{
+			name:       "unmarked route keeps ordinary read deadline",
+			path:       "/api/v1/cli/stats",
+			wantStatus: http.StatusRequestTimeout,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				const ordinaryReadTimeout = 100 * time.Millisecond
+				srv := NewServerWithOptions(ServerOptions{
+					Config: &config.Config{Server: config.ServerConfig{
+						APIPort: 8080,
+						APIKey:  cliTimeoutTestAPIKey,
+					}},
+					Logger: testLogger(),
+				})
+				t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.Background()), "shutdown") })
+				handlerEntered := make(chan struct{})
+				handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					close(handlerEntered)
+					body, err := io.ReadAll(r.Body)
+					if err != nil {
+						http.Error(w, err.Error(), http.StatusRequestTimeout)
+						return
+					}
+					if string(body) != "ab" {
+						http.Error(w, "unexpected body", http.StatusBadRequest)
+						return
+					}
+					w.WriteHeader(http.StatusNoContent)
+				}))
+				// Keep real HTTP parsing and connection deadlines, with an
+				// in-memory network so runner scheduling cannot consume the budget.
+				server := httptest.NewTestServer(t, handler)
+				server.Config.ReadTimeout = ordinaryReadTimeout
+				transport, ok := server.Client().Transport.(*http.Transport)
+				require.True(t, ok, "test server uses an HTTP transport")
+				conn, err := transport.DialContext(t.Context(), "tcp", "example.com:80")
+				require.NoError(t, err, "dial server")
+				defer func() { _ = conn.Close() }()
+				require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)), "bound test connection")
 
-	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{
-			APIPort: 8080,
-			APIKey:  cliTimeoutTestAPIKey,
-		}},
-		Logger: testLogger(),
-	})
-	srv.readTimeout = ordinaryReadTimeout //nolint:kennlint // deadlinetest: the unmarked socket request must expire while its body stays incomplete
-	handlerEntered := make(chan struct{}, 1)
-	srv.router = srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		handlerEntered <- struct{}{}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusRequestTimeout)
-			return
-		}
-		if string(body) != "ab" {
-			http.Error(w, "unexpected body", http.StatusBadRequest)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err, "listen")
-	serveErr := make(chan error, 1)
-	go func() {
-		serveErr <- srv.StartOnListener(listener)
-	}()
-	t.Cleanup(func() {
-		// net/http delays closing connections with unread request data, then
-		// polls for shutdown. Allow cleanup time beyond the request deadlines.
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		require.NoError(t, srv.Shutdown(ctx), "shutdown")
-		require.ErrorIs(t, <-serveErr, http.ErrServerClosed, "serve result")
-	})
-
-	slowBodyStatus := func(t *testing.T, path string, marked bool) (int, error) {
-		t.Helper()
-		conn, err := net.Dial("tcp", listener.Addr().String())
-		require.NoError(t, err, "dial server")
-		defer func() { _ = conn.Close() }()
-		require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)), "bound test connection")
-
-		marker := ""
-		if marked {
-			marker = fmt.Sprintf("%s: %s\r\n",
-				apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
-		}
-		_, err = fmt.Fprintf(conn,
-			"POST %s HTTP/1.1\r\n"+
-				"Host: %s\r\n"+
-				"X-Api-Key: %s\r\n"+
-				"%s"+
-				"Content-Length: 2\r\n\r\n"+
-				"a",
-			path,
-			listener.Addr().String(),
-			cliTimeoutTestAPIKey,
-			marker,
-		)
-		require.NoError(t, err, "write headers and first body byte")
-
-		select {
-		case <-handlerEntered:
-		case <-time.After(2 * time.Second):
-			require.FailNow(t, "inner handler did not start")
-		}
-		if marked {
-			time.Sleep(2 * ordinaryReadTimeout) //nolint:kennlint // sleeptest: outlasts the real socket read deadline
-			_, err = conn.Write([]byte("b"))
-			require.NoError(t, err, "write delayed body byte")
-		}
-		// An unmarked request never receives its last body byte, so the
-		// server can only respond once its ordinary read deadline fires. A
-		// late write would race that deadline on a loaded runner.
-
-		resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
-		if err != nil {
-			return 0, err
-		}
-		defer func() { _ = resp.Body.Close() }()
-		return resp.StatusCode, nil
+				marker := ""
+				if tt.marked {
+					marker = fmt.Sprintf("%s: %s\r\n",
+						apiprotocol.ClientClassHeader, apiprotocol.ClientClassCLI)
+				}
+				_, err = fmt.Fprintf(conn,
+					"POST %s HTTP/1.1\r\n"+
+						"Host: example.com\r\n"+
+						"X-Api-Key: %s\r\n"+
+						"%s"+
+						"Content-Length: 2\r\n\r\n"+
+						"a",
+					tt.path,
+					cliTimeoutTestAPIKey,
+					marker,
+				)
+				require.NoError(t, err, "write headers and first body byte")
+				synctest.Wait()
+				select {
+				case <-handlerEntered:
+				default:
+					require.FailNow(t, "inner handler did not start")
+				}
+				if tt.marked {
+					time.Sleep(2 * ordinaryReadTimeout)
+					_, err = conn.Write([]byte("b"))
+					require.NoError(t, err, "write delayed body byte")
+				}
+				// The unmarked body stays incomplete until its read deadline fires.
+				resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: http.MethodPost})
+				require.NoError(t, err, "read response")
+				defer func() { _ = resp.Body.Close() }()
+				assert.Equal(t, tt.wantStatus, resp.StatusCode)
+			})
+		})
 	}
-
-	t.Run("protective route extends read deadline", func(t *testing.T) {
-		status, err := slowBodyStatus(t, "/api/v1/cli/build-cache", true)
-		require.NoError(t, err, "read marked response")
-		assert.Equal(t, http.StatusNoContent, status)
-	})
-	t.Run("unmarked route keeps ordinary read deadline", func(t *testing.T) {
-		status, err := slowBodyStatus(t, "/api/v1/cli/stats", false)
-		if err != nil {
-			// net/http may write a 408 before closing the connection, or the
-			// platform may abort the connection as soon as the read deadline
-			// expires. Either outcome proves the delayed body was bounded.
-			var netErr *net.OpError
-			require.ErrorAs(t, err, &netErr, "read deadline closes the connection")
-			assert.False(t, netErr.Timeout(), "server closed the connection before the client deadline")
-			return
-		}
-		assert.Equal(t, http.StatusRequestTimeout, status)
-	})
 }
 
 type blockingAddrListener struct {

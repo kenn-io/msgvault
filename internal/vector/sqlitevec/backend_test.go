@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
 	"go.kenn.io/msgvault/internal/testutil/vectorcheckpoints"
 	"go.kenn.io/msgvault/internal/vector"
 )
@@ -1552,22 +1554,67 @@ func TestBackend_Search_ExhaustedCorpusReturnsWhatsAvailable(t *testing.T) {
 	require.Len(hits, 2, "only 2 live messages exist")
 }
 
+func TestBackend_Delete_UsesPointLookup(t *testing.T) {
+	b, ctx := newBackendForTest(t)
+	db, observer := sqlobserve.Open(t, nil)
+	require.NoError(t, Migrate(ctx, db, 768))
+	require.NoError(t, b.db.Close())
+	b.db = db
+	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
+	observer.Reset()
+	require.NoError(t, b.Delete(ctx, gid, []int64{1}))
+
+	vecPlan := func(statement string) string {
+		rows, err := db.QueryContext(ctx, "EXPLAIN QUERY PLAN "+statement, 1, 1, "[1]")
+		require.NoError(t, err)
+		defer func() { require.NoError(t, rows.Close()) }()
+		var vecDetail string
+		for rows.Next() {
+			var id, parent, unused int
+			var detail string
+			require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+			if strings.Contains(detail, "vectors_vec_d768") {
+				vecDetail = detail
+			}
+		}
+		require.NoError(t, rows.Err())
+		require.NotEmpty(t, vecDetail)
+		return vecDetail
+	}
+	fullScan := vecPlan(`DELETE FROM vectors_vec_d768 WHERE generation_id = ?`)
+	var deletes int
+	for _, statement := range observer.Statements() {
+		if strings.HasPrefix(strings.TrimSpace(statement), "DELETE FROM vectors_vec_d768") {
+			deletes++
+			assert.NotEqual(t, fullScan, vecPlan(statement), statement)
+		}
+	}
+	require.Positive(t, deletes, "Delete must execute a vector delete")
+}
+
 func TestBackend_Delete_RemovesFromAllTables(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	b, ctx := newBackendForTest(t)
 	gid := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 0)})
+	require.NoError(b.ActivateGeneration(ctx, gid, true))
+	otherGen := seedAndEmbed(t, b, map[int64][]float32{1: unitVec(768, 1)})
 
 	require.NoError(b.Delete(ctx, gid, []int64{1}), "Delete")
 	var n int
 	err := b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM embeddings WHERE message_id = 1`).Scan(&n)
+		`SELECT COUNT(*) FROM embeddings WHERE generation_id = ? AND message_id = 1`, gid).Scan(&n)
 	require.NoError(err, "count embeddings")
 	assert.Equal(0, n, "embeddings remaining")
 	err = b.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM vectors_vec_d768`).Scan(&n)
+		`SELECT COUNT(*) FROM vectors_vec_d768 WHERE generation_id = ?`, gid).Scan(&n)
 	require.NoError(err, "count vectors")
 	assert.Equal(0, n, "vectors remaining")
+	err = b.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM embeddings e
+		JOIN vectors_vec_d768 v ON v.embedding_id = e.embedding_id
+		WHERE e.generation_id = ? AND e.message_id = 1`, otherGen).Scan(&n)
+	require.NoError(err)
+	assert.Equal(1, n, "another generation's metadata and vector survive")
 }
 
 func TestBackend_Delete_EmptyIDsIsNoop(t *testing.T) {
