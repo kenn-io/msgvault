@@ -63,6 +63,30 @@ func Publish(directory, address, token, backendURL string) (func() error, error)
 	}, nil
 }
 
+// UpdateBackendURL refreshes this process's published listener after daemon
+// recovery. Stdio servers have no listener record to update.
+func UpdateBackendURL(directory, backendURL string) error {
+	store := daemon.RuntimeStore{Dir: directory, Prefix: "mcp"}
+	path, err := store.Path(os.Getpid())
+	if err != nil {
+		return fmt.Errorf("MCP discovery: %w", err)
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("MCP discovery: %w", err)
+	}
+	rec, err := store.Read(path)
+	if err != nil {
+		return fmt.Errorf("MCP discovery: %w", err)
+	}
+	rec.Metadata["backend_url"] = backendURL
+	if _, err := store.Write(rec); err != nil {
+		return fmt.Errorf("MCP discovery: %w", err)
+	}
+	return nil
+}
+
 // List is observational: it never starts a daemon or prunes another process's
 // records. Only records matching the live process's creation identity are
 // returned, so PID reuse after an unclean exit cannot revive stale records.

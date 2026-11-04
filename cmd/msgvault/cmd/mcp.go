@@ -76,7 +76,7 @@ Add to Claude Desktop config:
 		if err != nil {
 			return usageErr(cmd, err)
 		}
-		st, info, err := OpenHTTPStore(cmd.Context())
+		st, info, err := openMCPHTTPStore(cmd.Context())
 		if err != nil {
 			return fmt.Errorf("open daemon: %w", err)
 		}

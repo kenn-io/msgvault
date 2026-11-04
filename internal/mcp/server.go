@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/jsonrpc"
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/apiprotocol"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/mcpdiscovery"
 
 	sdkmcp "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -308,6 +309,12 @@ func officialToolHandler(
 }
 
 func mapInternalError(err error) error {
+	if local, ok := errors.AsType[*daemonclient.LocalDaemonUnavailableError](err); ok {
+		return &jsonrpc.Error{
+			Code:    jsonrpc.CodeInternalError,
+			Message: local.Error(),
+		}
+	}
 	if privateErr, ok := errors.AsType[*internalError](err); ok {
 		slog.Error("MCP operation failed", "operation", privateErr.operation, "error", privateErr.cause)
 	} else {

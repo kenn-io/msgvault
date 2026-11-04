@@ -177,6 +177,18 @@ func (c *Client) BaseURL() string {
 	return c.baseURL
 }
 
+func (c *Client) currentDaemonURL() string {
+	if c == nil {
+		return ""
+	}
+	if c.httpClient != nil {
+		if recovery, ok := c.httpClient.Transport.(*localDaemonRecovery); ok {
+			return recovery.connection().endpoint.URL
+		}
+	}
+	return c.baseURL
+}
+
 // Timeout returns the HTTP timeout configured for non-streaming requests.
 func (c *Client) Timeout() time.Duration {
 	if c == nil || c.httpClient == nil {
