@@ -4,8 +4,9 @@
   import { listLoops } from '../../api/generated/api/api';
   import type { LoopItem } from '../../api/generated/models';
 
-  interface Props { client: APIClient; personID: number }
-  let { client, personID }: Props = $props();
+  // refreshKey changes when the person's identities change, so the list reloads.
+  interface Props { client: APIClient; personID: number; refreshKey?: string }
+  let { client, personID, refreshKey }: Props = $props();
   const limit = 5;
   let items = $state<LoopItem[]>([]);
   let loading = $state(true);
@@ -20,6 +21,7 @@
   $effect(() => {
     const selectedID = personID;
     const selectedClient = client;
+    void refreshKey;
     const controller = new AbortController();
     checkMoreFailed = false;
     checkingMore = false;
