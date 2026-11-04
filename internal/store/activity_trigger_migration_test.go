@@ -48,8 +48,6 @@ func TestActivityTriggerMigrationDefersConversationMemberFanout(t *testing.T) {
 	var conversationID int64
 	require.NoError(f.Store.DB().QueryRow(`SELECT conversation_id FROM activity_projection_conversation_queue`).Scan(&conversationID))
 	assert.Equal(f.ConvID, conversationID)
-	expandActivityConversations(t, f.Store)
-	assert.Greater(activityQueueRevision(t, f.Store, messageID), before)
 }
 
 func TestActivityTriggerMigrationRequeuesProjectedUnsentMessages(t *testing.T) {

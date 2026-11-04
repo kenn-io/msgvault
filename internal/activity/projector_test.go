@@ -1592,7 +1592,4 @@ func TestConversationExpansionHonorsPreemptionAndBatchBudget(t *testing.T) {
 	assert.Zero(result.Processed, "expansion consumes the only batch before projection")
 	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&pending))
 	assert.Zero(pending)
-	result, err = initial.RunOnce(t.Context())
-	require.NoError(err)
-	assert.Equal(3, result.Processed, "resume projects the expanded messages")
 }

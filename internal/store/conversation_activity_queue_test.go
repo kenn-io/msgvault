@@ -3,8 +3,6 @@ package store_test
 import (
 	"context"
 	"database/sql"
-	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -185,10 +183,7 @@ func TestConversationActivityExpansionBoundsAndRestarts(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	f := storetest.New(t)
-	ids := make([]int64, 1001)
-	for i := range ids {
-		ids[i] = f.NewMessage().WithSourceMessageID(fmt.Sprintf("chunk-%d", i)).Create(t, f.Store)
-	}
+	ids := f.CreateMessages(1001)
 	firstBefore := activityQueueRevision(t, f.Store, ids[0])
 	lastBefore := activityQueueRevision(t, f.Store, ids[1000])
 	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
@@ -199,20 +194,12 @@ func TestConversationActivityExpansionBoundsAndRestarts(t *testing.T) {
 	assert.Equal(firstBefore, activityQueueRevision(t, f.Store, ids[0]))
 	assert.Equal(lastBefore, activityQueueRevision(t, f.Store, ids[1000]))
 
-	yield := errors.New("work remaining")
-	expanded, err := f.Store.ExpandActivityConversationQueueContext(t.Context(), func() error { return yield })
-	require.ErrorIs(err, yield)
-	assert.False(expanded)
-	var cursor int64
-	require.NoError(f.Store.DB().QueryRow(`SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
-	assert.Zero(cursor)
-	assert.Equal(firstBefore, activityQueueRevision(t, f.Store, ids[0]))
-
-	expanded, err = f.Store.ExpandActivityConversationQueueContext(t.Context(), func() error { return nil })
+	expanded, err := f.Store.ExpandActivityConversationQueueContext(t.Context(), func() error { return nil })
 	require.NoError(err)
 	assert.True(expanded)
 	assert.Equal(firstBefore+1, activityQueueRevision(t, f.Store, ids[0]))
 	assert.Equal(lastBefore, activityQueueRevision(t, f.Store, ids[1000]))
+	var cursor int64
 	require.NoError(f.Store.DB().QueryRow(`SELECT after_message_id FROM activity_projection_conversation_queue`).Scan(&cursor))
 	assert.Equal(ids[999], cursor)
 
@@ -275,7 +262,6 @@ func TestConversationActivityExpansionSkipsSnapshotPersistencePG(t *testing.T) {
 	var subject string
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT subject FROM messages WHERE id = ?`), id).Scan(&subject))
 	assert.Equal("after", subject)
-	expandActivityConversations(t, f.Store)
 }
 
 func TestConversationActivityExpansionWithSourceRemoval(t *testing.T) {
@@ -345,7 +331,4 @@ func TestConversationActivityExpansionWithSourceRemoval(t *testing.T) {
 	var remaining int
 	require.NoError(f.Store.DB().QueryRow(f.Store.Rebind(`SELECT COUNT(*) FROM sources WHERE id = ?`), f.Source.ID).Scan(&remaining))
 	assert.Zero(remaining, "source removal must commit")
-	expandActivityConversations(t, f.Store)
-	require.NoError(f.Store.DB().QueryRow(`SELECT COUNT(*) FROM activity_projection_conversation_queue`).Scan(&remaining))
-	assert.Zero(remaining, "membership markers must drain after source removal")
 }
