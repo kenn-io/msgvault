@@ -135,6 +135,7 @@ import type {
   FilteredMessagesResponse,
   FindContactCandidatesParams,
   FindKataIssuesParams,
+  FindPeopleWhoKnowParams,
   FindSimilarMessagesParams,
   GeneratePersonBriefPathParameters,
   GetActivityDayParams,
@@ -474,6 +475,7 @@ import type {
   VerifyCLIParams,
   VisualBuildRequest,
   VisualRetryRequest,
+  WhoKnowsResponse,
 } from "../models";
 
 import { orvalFetch } from "../../runtime";
@@ -2887,6 +2889,19 @@ export const previewPersonTiers = (
 ) => {
   return orvalFetch<PersonTierPreview>(
     { url: `/api/v1/people/tiers`, method: "GET" },
+    options,
+  );
+};
+/**
+ * Ranks saved people, then unsaved contacts, by how many matching messages they wrote and how recent those are. Each entry cites its messages. limits lists each way the search came up short: pool_full when more messages may match beyond the search pool, partial_index when the vector index leaves out some message types or accounts or, for an empty answer, has not embedded a message yet, and declared_truncated when declared topics were searched only in part. Both lists empty with no limits means no message cleared min_score. Lower min_score to widen the search. A message's From address is not a verified identity unless its citation has sender_authenticated.
+ * @summary Find people who wrote about a topic
+ */
+export const findPeopleWhoKnow = (
+  params: FindPeopleWhoKnowParams,
+  options?: SecondParameter<typeof orvalFetch<WhoKnowsResponse>>,
+) => {
+  return orvalFetch<WhoKnowsResponse>(
+    { url: `/api/v1/people/who-knows`, method: "GET", params },
     options,
   );
 };

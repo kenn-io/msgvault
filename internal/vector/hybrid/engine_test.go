@@ -162,6 +162,30 @@ func unitVec(axis int) []float32 {
 	return v
 }
 
+func TestEngine_Hybrid_CapsEachSignal(t *testing.T) {
+	f := newEngineFixture(t)
+	for _, tt := range []struct {
+		name       string
+		configured int
+		requested  int
+		want       int
+	}{
+		{"request lowers config", 2, 1, 1},
+		{"config lowers request", 1, 2, 1},
+		{"unset uses config", 2, 0, 2},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			engine := NewEngine(f.Backend, f.MainDB, &fakeEmbedder{dim: 4},
+				Config{KPerSignal: tt.configured, RRFK: 60, SubjectBoost: 1})
+			hits, _, err := engine.Search(t.Context(), SearchRequest{
+				Mode: ModeHybrid, FreeText: "unmatched", Limit: 10, KPerSignal: tt.requested,
+			})
+			require.NoError(t, err)
+			assert.Len(t, hits, tt.want)
+		})
+	}
+}
+
 func TestEngine_Hybrid_HappyPath(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

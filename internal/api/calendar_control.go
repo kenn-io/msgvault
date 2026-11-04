@@ -17,9 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/gcal"
 )
 
-// Calendar, Muesli, and person tier types have short names such as Person,
-// Result, and Signals. Prefix only those packages' types to preserve existing
-// wire names.
+// Calendar, Muesli, person tier, and who-knows types have short names such as
+// Person, Result, Signals, and Request. Prefix only those packages' types to
+// preserve existing wire names.
 func prefixedSchemaName(t reflect.Type, hint string) string {
 	original := t
 	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
@@ -35,6 +35,8 @@ func prefixedSchemaName(t reflect.Type, hint string) string {
 		return "Muesli" + name
 	case "go.kenn.io/msgvault/internal/persontiers":
 		return "PersonTier" + name
+	case "go.kenn.io/msgvault/internal/whoknows":
+		return "WhoKnows" + name
 	default:
 		return name
 	}

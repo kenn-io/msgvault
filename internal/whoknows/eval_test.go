@@ -1,0 +1,560 @@
+//go:build sqlite_vec
+
+package whoknows
+
+import (
+	"cmp"
+	"context"
+	"database/sql"
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"math"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+	"unicode"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/eval"
+	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/vector"
+	"go.kenn.io/msgvault/internal/vector/hybrid"
+	"go.kenn.io/msgvault/internal/vector/sqlitevec"
+)
+
+// openPostgresFixtureBackend is set by backend_pg_test.go in pgvector builds.
+var openPostgresFixtureBackend func(*testing.T, *store.Store) vector.Backend
+
+const embedDimension = 512
+
+// bagOfWordsEmbedder maps each word to a hashed dimension and normalizes, so
+// similarity grows with shared words. It skips question filler, as a meaning
+// model would, so "who knows about X" lands near messages about X. It is
+// deterministic, and it proves behavior at the default floor; it does not
+// calibrate a real model.
+type bagOfWordsEmbedder struct{}
+
+func (bagOfWordsEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
+	return embedWords(text), nil
+}
+
+// scaledEmbedder embeds as bagOfWordsEmbedder does, then scales the vector,
+// as a provider that does not normalize its vectors would.
+type scaledEmbedder struct{ scale float32 }
+
+func (e scaledEmbedder) EmbedQuery(_ context.Context, text string) ([]float32, error) {
+	return scaled(embedWords(text), e.scale), nil
+}
+
+func scaled(v []float32, by float32) []float32 {
+	out := make([]float32, len(v))
+	for i, x := range v {
+		out[i] = x * by
+	}
+	return out
+}
+
+var fillerWords = map[string]bool{
+	"who": true, "knows": true, "about": true, "the": true, "a": true, "an": true,
+}
+
+func embedWords(text string) []float32 {
+	v := make([]float32, embedDimension)
+	for _, word := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	}) {
+		if fillerWords[word] {
+			continue
+		}
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(word))
+		v[h.Sum32()%embedDimension]++
+	}
+	var norm float64
+	for _, x := range v {
+		norm += float64(x * x)
+	}
+	if norm == 0 {
+		return v
+	}
+	for i := range v {
+		v[i] /= float32(math.Sqrt(norm))
+	}
+	return v
+}
+
+type evalMailbox struct {
+	Owner  string `json:"owner"`
+	People []struct {
+		Email      string   `json:"email"`
+		Name       string   `json:"name"`
+		Saved      bool     `json:"saved"`
+		AskMeAbout []string `json:"ask_me_about"`
+	} `json:"people"`
+	Messages []struct {
+		ID      string   `json:"id"`
+		Date    string   `json:"date"`
+		From    string   `json:"from"`
+		To      []string `json:"to"`
+		CC      []string `json:"cc"`
+		Subject string   `json:"subject"`
+		Body    string   `json:"body"`
+		Type    string   `json:"type"`
+		ListID  string   `json:"list_id"`
+	} `json:"messages"`
+}
+
+type evalFixture struct {
+	service      *Service
+	emails       map[int64]string // person ID to address
+	store        *store.Store
+	backend      vector.Backend
+	generation   vector.GenerationID
+	source       int64
+	conversation int64
+}
+
+var evalNow = time.Date(2026, 10, 17, 0, 0, 0, 0, time.UTC)
+
+func newEvalFixture(t *testing.T) *evalFixture {
+	t.Helper()
+	ctx := t.Context()
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "owner@example.net")
+	require.NoError(t, err)
+	raw, err := os.ReadFile("testdata/eval/mailbox.json")
+	require.NoError(t, err)
+	var box evalMailbox
+	require.NoError(t, json.Unmarshal(raw, &box))
+	require.NoError(t, st.AddAccountIdentity(source.ID, box.Owner, "manual"))
+
+	participants := map[string]int64{}
+	ensure := func(email string) int64 {
+		if id, ok := participants[email]; ok {
+			return id
+		}
+		id, err := st.EnsureParticipant(email, email, "example.net")
+		require.NoError(t, err)
+		participants[email] = id
+		return id
+	}
+	emails := map[int64]string{}
+	for _, p := range box.People {
+		id, err := st.EnsureParticipant(p.Email, p.Name, "example.net")
+		require.NoError(t, err)
+		participants[p.Email] = id
+		if !p.Saved {
+			continue
+		}
+		person, _, err := st.CreatePersonFromParticipant(id)
+		require.NoError(t, err)
+		emails[person.ID] = p.Email
+		for i, topic := range p.AskMeAbout {
+			_, err := st.SetPersonAttributeValueContext(ctx, store.PersonAttributeValueInput{
+				PersonID: person.ID, DefinitionSlug: store.AttributeSlugAskMeAbout, Ordinal: new(int64(i)),
+				Value:  store.AttributeValue{Type: store.AttributeValueText, Text: &topic},
+				Source: store.ProvenanceUser,
+			})
+			require.NoError(t, err)
+		}
+	}
+
+	var backend vector.Backend
+	if st.IsPostgreSQL() {
+		if openPostgresFixtureBackend == nil {
+			t.Skip("the PostgreSQL vector fixture needs the pgvector build tag")
+		}
+		backend = openPostgresFixtureBackend(t, st)
+	} else {
+		var seq int
+		var name, mainPath string
+		require.NoError(t, st.DB().QueryRow("PRAGMA database_list").Scan(&seq, &name, &mainPath))
+		b, err := sqlitevec.Open(ctx, sqlitevec.Options{
+			Path: filepath.Join(t.TempDir(), "vectors.db"), MainPath: mainPath,
+			MainDB: st.DB(), Dimension: embedDimension,
+		})
+		require.NoError(t, err)
+		backend = b
+	}
+	t.Cleanup(func() { require.NoError(t, backend.Close()) })
+	generation, err := backend.CreateGeneration(ctx, "bag-of-words", embedDimension, "")
+	require.NoError(t, err)
+
+	conversation, err := st.EnsureConversation(source.ID, "evaluation", "Evaluation")
+	require.NoError(t, err)
+	var chunks []vector.Chunk
+	for _, m := range box.Messages {
+		sentAt, err := time.Parse(time.RFC3339, m.Date)
+		require.NoError(t, err)
+		id, err := st.UpsertMessage(&store.Message{
+			ConversationID: conversation, SourceID: source.ID, SourceMessageID: m.ID,
+			MessageType: m.Type, SenderID: sql.NullInt64{Int64: ensure(m.From), Valid: true},
+			SentAt:  sql.NullTime{Time: sentAt, Valid: true},
+			Subject: sql.NullString{String: m.Subject, Valid: true},
+			Snippet: sql.NullString{String: m.Body, Valid: true},
+			ListID:  sql.NullString{String: m.ListID, Valid: m.ListID != ""},
+		})
+		require.NoError(t, err)
+		require.NoError(t, st.UpsertMessageBody(id, sql.NullString{String: m.Body, Valid: true}, sql.NullString{}))
+		require.NoError(t, st.UpsertFTS(id, m.Subject, m.Body, m.From,
+			strings.Join(m.To, ","), strings.Join(m.CC, ",")))
+		for role, addresses := range map[string][]string{"to": m.To, "cc": m.CC} {
+			var ids []int64
+			for _, address := range addresses {
+				ids = append(ids, ensure(address))
+			}
+			require.NoError(t, st.ReplaceMessageRecipients(id, role, ids, addresses))
+		}
+		chunks = append(chunks, vector.Chunk{
+			MessageID: id, Vector: embedWords(m.Subject + " " + m.Body), SourceCharLen: len(m.Body),
+		})
+	}
+	require.NoError(t, backend.Upsert(ctx, generation, chunks))
+	require.NoError(t, backend.ActivateGeneration(ctx, generation, true))
+	// The embedding worker stamps each message it embeds.
+	_, err = st.DB().ExecContext(ctx, st.Rebind("UPDATE messages SET embed_gen = ?"), int64(generation))
+	require.NoError(t, err)
+
+	return &evalFixture{
+		service: &Service{
+			Retriever: evalEngine(st, backend, bagOfWordsEmbedder{}), Data: st, Index: backend,
+			Now: func() time.Time { return evalNow },
+		},
+		emails: emails, store: st, backend: backend,
+		generation: generation, source: source.ID, conversation: conversation,
+	}
+}
+
+func evalEngine(st *store.Store, backend vector.Backend, embedder hybrid.EmbeddingClient) *hybrid.Engine {
+	return hybrid.NewEngine(backend, st.DB(), embedder,
+		hybrid.Config{KPerSignal: 100, RRFK: 60, SubjectBoost: 1, Rebind: st.Rebind})
+}
+
+// post stores an email from a new sender, indexed for keyword search, and
+// embeds it as vec and stamps it, as the embedding worker does.
+func (f *evalFixture) post(t *testing.T, from, text string, vec []float32) int64 {
+	t.Helper()
+	sender, err := f.store.EnsureParticipant(from, from, "example.net")
+	require.NoError(t, err)
+	id, err := f.store.UpsertMessage(&store.Message{
+		ConversationID: f.conversation, SourceID: f.source, SourceMessageID: from, MessageType: "email",
+		SenderID: sql.NullInt64{Int64: sender, Valid: true},
+		SentAt:   sql.NullTime{Time: evalNow, Valid: true},
+		Subject:  sql.NullString{String: text, Valid: true},
+	})
+	require.NoError(t, err)
+	require.NoError(t, f.store.UpsertFTS(id, text, text, from, "", ""))
+	require.NoError(t, f.backend.Upsert(t.Context(), f.generation,
+		[]vector.Chunk{{MessageID: id, Vector: vec, SourceCharLen: len(text)}}))
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind("UPDATE messages SET embed_gen = ? WHERE id = ?"),
+		int64(f.generation), id)
+	require.NoError(t, err)
+	return id
+}
+
+func (f *evalFixture) ranked(response Response) []string {
+	var out []string
+	for _, p := range response.People {
+		out = append(out, f.emails[p.PersonID])
+	}
+	return out
+}
+
+// TestFindEvaluation runs the real store, vector backend, and hybrid engine at
+// default settings. Topics nobody wrote about must return nothing: the
+// nearest messages of an unrelated topic sit below the default floor.
+func TestFindEvaluation(t *testing.T) {
+	f := newEvalFixture(t)
+	topics, stats, err := eval.LoadTopics("testdata/eval/topics.tsv")
+	require.NoError(t, err)
+	require.Equal(t, 5, stats.Parsed)
+	qrels, _, err := eval.LoadQrels("testdata/eval/qrels.txt")
+	require.NoError(t, err)
+
+	for _, topic := range topics {
+		t.Run(topic.ID, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			got, err := f.service.Find(t.Context(), Request{Topic: topic.Query})
+			require.NoError(err)
+			ranked := f.ranked(got)
+			relevant := qrels.RelevantSet(topic.ID)
+			var expectedOrder []string
+			for person, grade := range qrels[topic.ID] {
+				if grade == 0 {
+					assert.NotContains(ranked, person, "a person judged irrelevant must be excluded")
+				} else if grade > 0 {
+					expectedOrder = append(expectedOrder, person)
+				}
+			}
+			slices.SortFunc(expectedOrder, func(a, b string) int {
+				return cmp.Compare(qrels[topic.ID][b], qrels[topic.ID][a])
+			})
+			for i, person := range expectedOrder {
+				require.Contains(ranked, person)
+				for _, higher := range expectedOrder[:i] {
+					if qrels[topic.ID][higher] > qrels[topic.ID][person] {
+						assert.Less(slices.Index(ranked, higher), slices.Index(ranked, person),
+							"higher-grade person %s must rank before %s: %v", higher, person, ranked)
+					}
+				}
+			}
+
+			if len(relevant) == 0 {
+				assert.Empty(got.People, "judged: nobody wrote about it")
+				assert.Empty(got.UnsavedContacts)
+				assert.Empty(got.Limits)
+				return
+			}
+			assert.Empty(got.Limits)
+			scores := eval.Evaluate(ranked, relevant, eval.CutoffsForDepth(10))
+			assert.InDelta(1.0, scores.MRR, 1e-9, "the author ranks first: %v", ranked)
+			assert.InDelta(1.0, scores.NDCG, 1e-9, "relevant people are listed in order: %v", ranked)
+			assert.InDelta(1.0, scores.Recall, 1e-9, "every author is listed: %v", ranked)
+			for _, p := range got.People {
+				assert.Equal(p.AuthoredMessages == 0, len(p.Citations) == 0)
+			}
+			if topic.ID == "ambiguous" {
+				assert.Equal([]string{"gopher@example.net"}, ranked,
+					"keyword-only matches on good, going, and google do not count")
+			}
+		})
+	}
+}
+
+// A full pool of unit vectors far from an unrelated topic shows nobody wrote
+// about it, rather than reporting the full pool as a limit.
+func TestFindSaysNobodyWhenAFullPoolIsOffTopic(t *testing.T) {
+	f := newEvalFixture(t)
+	for i := range 120 {
+		text := fmt.Sprintf("quarterly budget review notes %d", i)
+		f.post(t, fmt.Sprintf("colleague%d@example.net", i), text, embedWords(text))
+	}
+	hits, meta, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+		Mode: hybrid.ModeHybrid, FreeText: "volcanic basalt geology", Limit: SearchPool, KPerSignal: SearchPool / 2,
+	})
+	require.NoError(t, err)
+	require.True(t, meta.PoolSaturated, "the vector pool is full: %d hits", len(hits))
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "volcanic basalt geology"})
+	require.NoError(t, err)
+	assert.Empty(t, got.People)
+	assert.Empty(t, got.UnsavedContacts)
+	assert.Empty(t, got.Limits)
+}
+
+// fillPool posts 101 messages at cosine 0.3 to the topic, scaled by scale:
+// below the floor, but nearer the query by L2 than a long vector pointing the
+// topic's way.
+func (f *evalFixture) fillPool(t *testing.T, topic []float32, scale float32) {
+	t.Helper()
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	filler := scaled(topic, .3)
+	filler[off] = float32(math.Sqrt(1 - .3*.3))
+	filler = scaled(filler, scale)
+	for i := range 101 {
+		f.post(t, fmt.Sprintf("filler%d@example.net", i), "routine note", filler)
+	}
+}
+
+func (f *evalFixture) fillOwnerPool(t *testing.T, topic []float32, count int) {
+	t.Helper()
+	ownerID, err := f.store.EnsureParticipant("owner@example.net", "Owner", "example.net")
+	require.NoError(t, err)
+	for i := range count {
+		f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
+	}
+	_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(
+		`UPDATE messages SET sender_id = ? WHERE subject = ?`), ownerID, "airship tethering")
+	require.NoError(t, err)
+}
+
+func TestFindKeepsVectorMatchesWithLargeSignalPools(t *testing.T) {
+	f := newEvalFixture(t)
+	topic := embedWords("zeppelin mooring")
+	f.fillOwnerPool(t, topic, 99)
+	var ownerID int64
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT id FROM participants WHERE email_address = ?`), "owner@example.net").Scan(&ownerID))
+	var ownerMessages int
+	require.NoError(t, f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+		`SELECT COUNT(*) FROM messages WHERE subject = ? AND sender_id = ?`), "airship tethering", ownerID).Scan(&ownerMessages))
+	assert.Equal(t, 99, ownerMessages, "every filler message must resolve to the owner")
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	match := scaled(topic, .9)
+	match[off] = float32(math.Sqrt(1 - .9*.9))
+	f.post(t, "captain@example.net", "airship tethering", match)
+	lexical := make([]float32, embedDimension)
+	lexical[off] = 1
+	for i := range 150 {
+		f.post(t, fmt.Sprintf("lexical%d@example.net", i), "zeppelin mooring", lexical)
+	}
+	f.service.Retriever = hybrid.NewEngine(f.backend, f.store.DB(), bagOfWordsEmbedder{},
+		hybrid.Config{KPerSignal: 150, RRFK: 60, SubjectBoost: 100, Rebind: f.store.Rebind})
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	var captain *Entry
+	for i := range got.UnsavedContacts {
+		if got.UnsavedContacts[i].EmailAddress == "captain@example.net" {
+			captain = &got.UnsavedContacts[i]
+		}
+	}
+	require.NotNil(t, captain, "boosted keyword-only hits must leave room for the vector match")
+	assert.Equal(t, 1, captain.AuthoredMessages)
+}
+
+func TestFindCountsKeywordHitWithStoredVectorOutsideVectorPool(t *testing.T) {
+	f := newEvalFixture(t)
+	topic := embedWords("zeppelin mooring")
+	f.fillOwnerPool(t, topic, 100)
+	off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+	match := scaled(topic, .8)
+	match[off] = .6
+	anaID := f.post(t, "ana@example.net", "zeppelin mooring", match)
+	f.post(t, "zero@example.net", "zeppelin mooring", make([]float32, embedDimension))
+	missingID := f.post(t, "missing@example.net", "zeppelin mooring", match)
+	require.NoError(t, f.backend.Delete(t.Context(), f.generation, []int64{missingID}))
+
+	// Verify that the real hybrid search finds Ana only through keywords.
+	hits, _, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+		Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
+	})
+	require.NoError(t, err)
+	ana := slices.IndexFunc(hits, func(h vector.FusedHit) bool { return h.MessageID == anaID })
+	require.NotEqual(t, -1, ana)
+	require.True(t, math.IsNaN(hits[ana].VectorScore), "owner messages filled the vector pool")
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	require.Len(t, got.People, 1)
+	assert.Equal(t, []string{"ana@example.net"}, f.ranked(got))
+	assert.Equal(t, 1, got.People[0].AuthoredMessages)
+	require.Len(t, got.People[0].Citations, 1)
+	assert.Equal(t, anaID, got.People[0].Citations[0].MessageID)
+	assert.Empty(t, got.UnsavedContacts, "keyword hits with zero or missing vectors do not count")
+}
+
+func TestFindReportsVectorPoolLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		setup        func(*testing.T, *evalFixture, []float32)
+		wantContacts *int
+		wantLimits   []string
+	}{
+		{
+			name: "full vector pool despite low keyword cosine",
+			setup: func(t *testing.T, f *evalFixture, topic []float32) {
+				t.Helper()
+				for i := range 101 {
+					f.post(t, fmt.Sprintf("semantic%d@example.net", i), "airship tethering", topic)
+				}
+				off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+				keyword := scaled(topic, .3)
+				keyword[off] = float32(math.Sqrt(1 - .3*.3))
+				keywordID := f.post(t, "keyword@example.net", "zeppelin mooring", keyword)
+				hits, meta, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+					Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
+				})
+				require.NoError(t, err)
+				require.True(t, meta.PoolSaturated)
+				i := slices.IndexFunc(hits, func(h vector.FusedHit) bool { return h.MessageID == keywordID })
+				require.NotEqual(t, -1, i)
+				require.True(t, math.IsNaN(hits[i].VectorScore))
+			},
+			wantLimits: []string{LimitPoolFull},
+		},
+		{
+			name: "full pool of unit vectors whose edge is below the floor",
+			setup: func(t *testing.T, f *evalFixture, topic []float32) {
+				t.Helper()
+				f.fillPool(t, topic, 1)
+				off := slices.IndexFunc(topic, func(x float32) bool { return x == 0 })
+				match := scaled(topic, .9)
+				match[off] = float32(math.Sqrt(1 - .9*.9))
+				f.post(t, "captain@example.net", "airship tethering", match)
+			},
+			wantContacts: new(1),
+			wantLimits:   []string{},
+		},
+		{
+			name: "full pool of vectors that are not unit length",
+			setup: func(t *testing.T, f *evalFixture, topic []float32) {
+				t.Helper()
+				if f.store.IsPostgreSQL() {
+					t.Skip("pgvector ranks by cosine distance")
+				}
+				// sqlite-vec ranks by L2, so a full pool of long vectors
+				// can hide a match even when no filler clears the floor.
+				f.fillPool(t, topic, 3)
+				f.post(t, "captain@example.net", "airship tethering", scaled(topic, 100))
+				f.service.Retriever = evalEngine(f.store, f.backend, scaledEmbedder{3})
+			},
+			wantContacts: new(0),
+			wantLimits:   []string{LimitPoolFull},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newEvalFixture(t)
+			tc.setup(t, f, embedWords("zeppelin mooring"))
+			got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantLimits, got.Limits)
+			if tc.wantContacts != nil {
+				require.Len(t, got.UnsavedContacts, *tc.wantContacts)
+			}
+			if tc.wantContacts != nil && *tc.wantContacts == 1 {
+				assert.Equal(t, "captain@example.net", got.UnsavedContacts[0].EmailAddress)
+				assert.Equal(t, 1, got.UnsavedContacts[0].AuthoredMessages)
+			}
+		})
+	}
+}
+
+func TestFindReportsSaturatedSQLitePoolWithHiddenNonUnitMatch(t *testing.T) {
+	f := newEvalFixture(t)
+	if f.store.IsPostgreSQL() {
+		t.Skip("pgvector ranks by cosine distance")
+	}
+	topic := embedWords("zeppelin mooring")
+	f.fillPool(t, topic, 1)
+	hiddenID := f.post(t, "captain@example.net", "airship tethering", scaled(topic, 10))
+
+	hits, meta, err := f.service.Retriever.Search(t.Context(), hybrid.SearchRequest{
+		Mode: hybrid.ModeHybrid, FreeText: "zeppelin mooring", Limit: SearchPool, KPerSignal: SearchPool / 2,
+	})
+	require.NoError(t, err)
+	require.True(t, meta.PoolSaturated)
+	assert.False(t, slices.ContainsFunc(hits, func(hit vector.FusedHit) bool { return hit.MessageID == hiddenID }),
+		"L2 retrieval omits the longer vector with cosine 1")
+
+	ids := make([]int64, 0, len(hits))
+	for _, hit := range hits {
+		if !math.IsNaN(hit.VectorScore) {
+			ids = append(ids, hit.MessageID)
+		}
+	}
+	scorer, ok := f.backend.(interface {
+		MessageCosines(ctx context.Context, gen vector.Generation, queryVec []float32, messageIDs []int64) (vector.CosineScores, error)
+	})
+	require.True(t, ok)
+	scores, err := scorer.MessageCosines(t.Context(), vector.Generation{ID: f.generation, Dimension: embedDimension}, topic, ids)
+	require.NoError(t, err)
+	for _, hit := range hits {
+		if !math.IsNaN(hit.VectorScore) {
+			assert.InDelta(t, .3, scores.Scores[hit.MessageID], 1e-5)
+		}
+	}
+
+	got, err := f.service.Find(t.Context(), Request{Topic: "zeppelin mooring"})
+	require.NoError(t, err)
+	assert.Empty(t, got.People)
+	assert.Empty(t, got.UnsavedContacts)
+	assert.Equal(t, []string{LimitPoolFull}, got.Limits)
+}

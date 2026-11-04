@@ -918,7 +918,7 @@ jobs:
       - name: Test (pgvector-tagged)
         run: >-
           go tool gotestsum --format pkgname-and-test-fails --format-icons text --jsonfile gotestsum/pgvector.json --rerun-fails=2 --rerun-fails-report gotestsum/pgvector-reruns.txt
-          --packages "./internal/vector/... ./internal/scheduler/..." --
+          --packages "./internal/vector/... ./internal/whoknows/... ./internal/scheduler/..." --
           -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1
 
       - name: Upload test events

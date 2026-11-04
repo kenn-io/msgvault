@@ -57,6 +57,11 @@ func Migrate(ctx context.Context, db *sql.DB, defaultDim int) error {
 	}{
 		{`ALTER TABLE index_generations ADD COLUMN seeded_at INTEGER`, "seeded_at"},
 		{`ALTER TABLE embedding_document_progress ADD COLUMN journal_cursor TEXT NOT NULL DEFAULT ''`, "document journal cursor"},
+		// No defaults: nothing recorded an existing generation's vector
+		// lengths, so they stay unknown.
+		{`ALTER TABLE index_generations ADD COLUMN vector_norm_min REAL`, "vector length minimum"},
+		{`ALTER TABLE index_generations ADD COLUMN vector_norm_max REAL`, "vector length maximum"},
+		{`ALTER TABLE index_generations ADD COLUMN vector_norm_revision INTEGER`, "vector length revision"},
 	} {
 		if _, err := db.ExecContext(ctx, m.sql); err != nil &&
 			!isDuplicateColumnErr(err) {
