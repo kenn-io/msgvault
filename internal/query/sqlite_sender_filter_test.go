@@ -154,6 +154,49 @@ func TestSenderListLiveCandidateWork(t *testing.T) {
 	}
 }
 
+func TestSenderListDistinctMessageWork(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "SQLite row-visit instrumentation")
+	for _, tc := range []struct {
+		name           string
+		count, aliases int
+	}{
+		{"6000 dual representations", 6000, 1},
+		{"3000 merged From aliases", 3000, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "archive.db")
+			st := testutil.NewSQLiteTestStoreAt(t, path)
+			fixture := &dbtest.TestDB{DB: st.DB(), T: t}
+			fixture.SeedStandardDataSet()
+			_, err := st.DB().Exec(`INSERT INTO participants(id,email_address) VALUES(4,'bounded@example.org');
+WITH RECURSIVE ids(id) AS (SELECT 100 UNION ALL SELECT id+1 FROM ids WHERE id<300099)
+INSERT INTO messages(id,source_id,conversation_id,source_message_id,sent_at,sender_id,message_type)
+SELECT id,1,1,'bulk-' || id,datetime('2024-06-01','+' || id || ' seconds'),CASE WHEN id<? THEN 4 ELSE 1 END,'email' FROM ids`, 100+tc.count)
+			require.NoError(t, err)
+			for alias := range tc.aliases {
+				// Merges preserve each envelope address on the surviving participant.
+				_, err = st.DB().Exec(`INSERT INTO message_recipients(message_id,participant_id,recipient_type,email_address)
+SELECT id,4,'from',? FROM messages WHERE sender_id=4`, fmt.Sprintf("alias-%d@example.org", alias))
+				require.NoError(t, err)
+			}
+			require.NoError(t, st.Close())
+			st, err = store.Open(path)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, st.Close()) }()
+			visits := countSenderMessageVisits(t, st.DB())
+			messages, err := query.NewSQLiteEngine(st.DB()).ListMessages(t.Context(), query.MessageFilter{
+				Sender:     "bounded@example.org",
+				Sorting:    query.MessageSorting{Field: query.MessageSortByDate, Direction: query.SortDesc},
+				Pagination: query.Pagination{Limit: 100},
+			})
+			require.NoError(t, err)
+			require.Len(t, messages, 100)
+			assert.Equal(t, int64(99+tc.count), messages[0].ID)
+			assert.Less(t, *visits, 30000, "duplicate sender representations must avoid scanning unrelated messages")
+		})
+	}
+}
+
 func TestSenderListEquivalence(t *testing.T) {
 	dbtest.SkipIfPostgres(t, "SQLite candidate-path comparison")
 	st := testutil.NewSQLiteTestStore(t)
