@@ -2018,22 +2018,29 @@ func TestLimitedSweepDrainsBigTailAcrossRuns(t *testing.T) {
 	_, err = imp.Import(context.Background(), limited)
 	require.NoError(err)
 	// Count just the tail replies present after one limited run.
+	tailIDs := make([]any, len(tail))
+	for i, ts := range tail {
+		tailIDs[i] = "C09:" + ts
+	}
 	tailCount := func() int {
-		n := 0
-		for _, ts := range tail {
-			var c int
-			require.NoError(st.DB().QueryRow(st.Rebind(
-				`SELECT COUNT(*) FROM messages WHERE source_message_id = ?`), "C09:"+ts).Scan(&c))
-			n += c
-		}
+		var n int
+		require.NoError(st.DB().QueryRow(st.Rebind(
+			`SELECT COUNT(*) FROM messages WHERE source_message_id IN (`+strings.TrimSuffix(strings.Repeat("?,", len(tail)), ",")+`)`), tailIDs...).Scan(&n))
 		return n
 	}
-	assert.LessOrEqual(tailCount(), 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
+	count := tailCount()
+	assert.LessOrEqual(count, 8, "a --limit 4 run must not fetch a 30-reply tail wholesale")
 
-	for range 15 {
+	runs := 0
+	for ; runs < 15 && count < 30; runs++ {
 		_, err = imp.Import(context.Background(), limited)
 		require.NoError(err)
+		count = tailCount()
 	}
+	require.Equal(30, count, "the tail must drain within 15 further limited runs")
+	t.Logf("tail drained in %d limited runs after the first", runs)
+	_, err = imp.Import(context.Background(), limited)
+	require.NoError(err)
 	assert.Equal(30, tailCount(), "repeated limited runs must drain the whole tail")
 	var total, distinct int
 	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM messages WHERE message_type='slack'`).Scan(&total))
