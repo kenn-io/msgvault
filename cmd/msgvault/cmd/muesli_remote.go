@@ -100,7 +100,7 @@ func runMuesliClientSync(cmd *cobra.Command, args []string, meetingID int64) err
 	run := &muesliRemoteRun{cmd: cmd, cfg: state.cfg, meetingID: meetingID, after: after, skipCache: skip}
 	defer run.close()
 	if len(watched) > 0 {
-		return runMuesliWatch(cmd.Context(), watched, run.watchScan, waitMuesliSchedule, func(err error) {
+		return runMuesliWatch(cmd.Context(), watched, run.watchScan, waitMeetingSchedule, func(err error) {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Muesli scan failed: %s. The next scheduled rescan will retry.\n", muesliWatchFailureReason(err))
 		})
 	}

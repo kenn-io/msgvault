@@ -9,6 +9,7 @@ import (
 	"github.com/cenkalti/backoff/v7"
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 	"go.kenn.io/msgvault/internal/hex"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 )
 
 type hexRecordingOptions struct{ upload hex.RecordingUpload }
@@ -26,7 +27,7 @@ func (o hexRecordingOptions) GetHeader() (map[string]string, error) {
 // ImportHexRecording streams the immutable private snapshot through the
 // generated client's authenticated request construction. Busy/rate-limit
 // retries rewind the snapshot; interrupted uploads are retried by a rescan.
-func (c *Client) ImportHexRecording(ctx context.Context, upload hex.RecordingUpload, recording *hex.Recording) error {
+func (c *Client) ImportHexRecording(ctx context.Context, upload hex.RecordingUpload, recording *meetingarchive.Recording) error {
 	upload, err := upload.Normalize()
 	if err != nil {
 		return err
@@ -57,7 +58,7 @@ func (c *Client) ImportHexRecording(ctx context.Context, upload hex.RecordingUpl
 		}
 		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode == http.StatusRequestEntityTooLarge {
-			return struct{}{}, backoff.Permanent(hex.ErrRecordingTooLarge)
+			return struct{}{}, backoff.Permanent(meetingarchive.ErrRecordingTooLarge)
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return struct{}{}, backoff.RetryAfter(retryAfterDelay(resp.Header.Get("Retry-After")), HandleErrorResponse(resp))

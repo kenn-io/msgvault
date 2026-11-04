@@ -10,6 +10,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"go.kenn.io/msgvault/internal/hex"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -67,10 +68,10 @@ func (s *Server) handleHexRecording(w http.ResponseWriter, r *http.Request) {
 	}
 	capBytes := s.cfg.Server.HexRecordingMaxBytes
 	if capBytes <= 0 {
-		capBytes = hex.DefaultRecordingMaxBytes
+		capBytes = meetingarchive.DefaultRecordingMaxBytes
 	}
 	if size > capBytes || r.ContentLength > capBytes {
-		writeError(w, 413, "recording_too_large", hex.ErrRecordingTooLarge.Error())
+		writeError(w, 413, "recording_too_large", meetingarchive.ErrRecordingTooLarge.Error())
 		return
 	}
 	importer, ok := s.store.(HexRecordingImporter)
@@ -110,9 +111,9 @@ func (s *Server) writeHexRecordingImportError(w http.ResponseWriter, err error) 
 		return
 	}
 	switch {
-	case errors.Is(err, hex.ErrRecordingTooLarge):
-		writeError(w, 413, "recording_too_large", hex.ErrRecordingTooLarge.Error())
-	case errors.Is(err, hex.ErrRemoteValidation), errors.Is(err, hex.ErrRecordingChanged):
+	case errors.Is(err, meetingarchive.ErrRecordingTooLarge):
+		writeError(w, 413, "recording_too_large", meetingarchive.ErrRecordingTooLarge.Error())
+	case errors.Is(err, hex.ErrRemoteValidation), errors.Is(err, meetingarchive.ErrRecordingChanged):
 		writeError(w, 422, "record_validation_failed", "Recording failed validation; sync again")
 	case errors.Is(err, store.ErrSourceNotFound):
 		writeError(w, 404, "source_not_found", "Hex source is not registered")

@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/hex"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
 )
 
@@ -73,12 +74,12 @@ func runHexClientSync(cmd *cobra.Command, args []string) error {
 			return errors.New("invalid --after (expected YYYY-MM-DD)")
 		}
 	}
-	var watched []hexWatchSource
+	var watched []meetingWatchSource[config.HexSource]
 	if syncHexWatch {
 		if syncHexLimit != 0 || syncHexAfter != "" || syncHexFull || force {
 			return errors.New("--watch cannot combine with --limit, --after, --full or --build-cache")
 		}
-		watched, err = hexWatchSources(sources)
+		watched, err = meetingWatchSources(sources, func(s config.HexSource) bool { return s.Enabled }, func(s config.HexSource) string { return s.Schedule })
 		if err != nil {
 			return err
 		}
@@ -92,7 +93,7 @@ func runHexClientSync(cmd *cobra.Command, args []string) error {
 	run := &hexRemoteRun{cmd: cmd, cfg: state.cfg, after: after, skipCache: skip}
 	defer run.close()
 	if len(watched) > 0 {
-		return runHexWatch(cmd.Context(), watched, run.watchScan, waitHexSchedule, func(err error) {
+		return runMeetingWatch(cmd.Context(), watched, run.watchScan, waitMeetingSchedule, func(err error) {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Hex scan failed: %s. The next scheduled rescan will retry.\n", hexWatchFailureReason(err))
 		})
 	}
@@ -175,7 +176,7 @@ func (r *hexRemoteRun) scan(ctx context.Context, source config.HexSource) (summa
 	opts := hexImportOptions(source)
 	opts.AccountEmail, _ = source.EffectiveAccountEmail()
 	opts.RemoteTarget, opts.LockDir = r.cfg.Remote.URL, hexSyncStateDir(r.cfg)
-	opts.SendRecording = func(ctx context.Context, upload hex.RecordingUpload, recording *hex.Recording) error {
+	opts.SendRecording = func(ctx context.Context, upload hex.RecordingUpload, recording *meetingarchive.Recording) error {
 		uploaded = true
 		upload.NoBuildCache = r.skipCache
 		return r.client.ImportHexRecording(ctx, upload, recording)
@@ -202,12 +203,12 @@ func (r *hexRemoteRun) watchScan(ctx context.Context, source config.HexSource) e
 		if transientDaemonError(err) {
 			return err
 		}
-		return hexWatchStopError{err: err}
+		return meetingWatchStopError{err: err}
 	}
 	_, _, err := r.scan(ctx, source)
 	if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok &&
 		(apiErr.Status == http.StatusUnauthorized || apiErr.Status == http.StatusForbidden) {
-		return hexWatchStopError{err: err}
+		return meetingWatchStopError{err: err}
 	}
 	return err
 }
@@ -255,7 +256,7 @@ func hexWatchFailureReason(err error) string {
 		}
 	}
 	if hexRecordErrorsOnly(err) {
-		if errors.Is(err, hex.ErrRecordingTooLarge) {
+		if errors.Is(err, meetingarchive.ErrRecordingTooLarge) {
 			return "a recording exceeds its size cap; increase recording_max_bytes and the daemon hex_recording_max_bytes, then retry"
 		}
 		if errors.Is(err, hex.ErrRemoteTooLarge) {
@@ -276,5 +277,5 @@ func hexRecordErrorsOnly(err error) bool {
 		}
 		return true
 	}
-	return errors.Is(err, hex.ErrRemoteRecordValidation) || errors.Is(err, hex.ErrRemoteValidation) || errors.Is(err, hex.ErrRemoteTooLarge) || errors.Is(err, hex.ErrRecordingTooLarge)
+	return errors.Is(err, hex.ErrRemoteRecordValidation) || errors.Is(err, hex.ErrRemoteValidation) || errors.Is(err, hex.ErrRemoteTooLarge) || errors.Is(err, meetingarchive.ErrRecordingTooLarge)
 }

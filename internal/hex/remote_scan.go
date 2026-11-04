@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
 )
 
@@ -75,7 +76,7 @@ func ScanRemote(ctx context.Context, opts ImportOptions, send RemoteSender) (sum
 		err := pushMeeting(ctx, opts, m, send, receipts, sum)
 		if err != nil {
 			sum.Errors++
-			if !errors.Is(err, ErrRemoteRecordValidation) && !errors.Is(err, ErrRemoteTooLarge) && !errors.Is(err, ErrRecordingTooLarge) {
+			if !errors.Is(err, ErrRemoteRecordValidation) && !errors.Is(err, ErrRemoteTooLarge) && !errors.Is(err, meetingarchive.ErrRecordingTooLarge) {
 				return sum, errors.Join(errors.Join(failures...), err)
 			}
 			failures = append(failures, err)
@@ -99,7 +100,7 @@ func pushMeeting(ctx context.Context, opts ImportOptions, m Meeting, send Remote
 	if err != nil {
 		return err
 	}
-	recordings := map[string]*Recording{}
+	recordings := map[string]*meetingarchive.Recording{}
 	var failures []error
 	pending := false
 	for _, track := range []string{"system", "microphone"} {

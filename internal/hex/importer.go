@@ -29,7 +29,7 @@ type ImportOptions struct {
 	Limit             int
 	StartedAfter      time.Time
 	Progress          func(string)
-	SendRecording     func(context.Context, RecordingUpload, *Recording) error
+	SendRecording     func(context.Context, RecordingUpload, *meetingarchive.Recording) error
 }
 type ImportSummary struct {
 	SourceID          int64

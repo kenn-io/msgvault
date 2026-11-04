@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/hex"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -48,7 +49,7 @@ func TestHexRecorderToHTTPArchiveAndMeetingContext(t *testing.T) {
 		require.NoError(t, os.Chtimes(path, old, old))
 	}
 	options := hex.ImportOptions{Identifier: source.Identifier, AccountEmail: source.AccountEmail, MeetingsDir: root, LockDir: t.TempDir(), RemoteTarget: server.URL, Recordings: true}
-	options.SendRecording = func(ctx context.Context, u hex.RecordingUpload, r *hex.Recording) error {
+	options.SendRecording = func(ctx context.Context, u hex.RecordingUpload, r *meetingarchive.Recording) error {
 		u.NoBuildCache = true
 		return client.ImportHexRecording(ctx, u, r)
 	}

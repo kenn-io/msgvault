@@ -12,12 +12,6 @@ import (
 	"go.kenn.io/msgvault/internal/meetingimport"
 )
 
-const DefaultRecordingMaxBytes = meetingarchive.DefaultRecordingMaxBytes
-
-var ErrRecordingTooLarge = meetingarchive.ErrRecordingTooLarge
-var ErrRecordingChanged = meetingarchive.ErrRecordingChanged
-
-type Recording = meetingarchive.Recording
 type RecordingUpload struct {
 	Source       meetingimport.Source
 	MessageID    int64
@@ -40,7 +34,7 @@ func (u RecordingUpload) Normalize() (RecordingUpload, error) {
 	}
 	return u, nil
 }
-func StageRecordingUpload(ctx context.Context, u RecordingUpload, input io.Reader, maxBytes int64) (*Recording, error) {
+func StageRecordingUpload(ctx context.Context, u RecordingUpload, input io.Reader, maxBytes int64) (*meetingarchive.Recording, error) {
 	u, err := u.Normalize()
 	if err != nil {
 		return nil, err
@@ -57,10 +51,10 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 		return false, err
 	}
 	if maxBytes <= 0 {
-		maxBytes = DefaultRecordingMaxBytes
+		maxBytes = meetingarchive.DefaultRecordingMaxBytes
 	}
 	if u.Size > maxBytes {
-		return false, ErrRecordingTooLarge
+		return false, meetingarchive.ErrRecordingTooLarge
 	}
 	source, err := imp.registeredSource(ctx, u.Source, false)
 	if err != nil {
@@ -76,7 +70,7 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 	}
 	return changed, err
 }
-func prepareTrack(ctx context.Context, opts ImportOptions, m Meeting, track string) (*Recording, error) {
+func prepareTrack(ctx context.Context, opts ImportOptions, m Meeting, track string) (*meetingarchive.Recording, error) {
 	return meetingarchive.PrepareRecording(ctx, opts.MeetingsDir, filepath.Join(m.Manifest.ID, track+".wav"), opts.RecordingMaxBytes)
 }
 func (imp *Importer) importRecordings(ctx context.Context, opts ImportOptions, m Meeting, messageID int64, sum *ImportSummary) (bool, error) {

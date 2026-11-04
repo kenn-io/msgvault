@@ -112,3 +112,14 @@ func runMeetingWatch[S any](ctx context.Context, sources []meetingWatchSource[S]
 		}
 	}
 }
+
+func waitMeetingSchedule(ctx context.Context, next time.Time) error {
+	timer := time.NewTimer(time.Until(next))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/store"
@@ -160,7 +161,7 @@ func TestTwoTrackAudioAndLateCapture(t *testing.T) {
 	assert.Zero(t, sum.MeetingsUpdated)
 	opts.RecordingMaxBytes = 8
 	_, err = imp.Import(t.Context(), opts)
-	assert.ErrorIs(t, err, ErrRecordingTooLarge)
+	assert.ErrorIs(t, err, meetingarchive.ErrRecordingTooLarge)
 	opts.RecordingMaxBytes = 0
 	require.NoError(t, os.Remove(filepath.Join(dir, "microphone.wav")))
 	sum, err = imp.Import(t.Context(), opts)
@@ -181,7 +182,7 @@ func TestRemoteEquivalenceReceiptsAndRecordingRecovery(t *testing.T) {
 	opts.Recordings = true
 	sends, tracks := 0, 0
 	failMic := false
-	opts.SendRecording = func(ctx context.Context, u RecordingUpload, r *Recording) error {
+	opts.SendRecording = func(ctx context.Context, u RecordingUpload, r *meetingarchive.Recording) error {
 		tracks++
 		if failMic && u.Track == "microphone" {
 			return errors.New("lost audio response")
@@ -263,7 +264,7 @@ func TestRemoteLostMeetingResponseReoffersAudio(t *testing.T) {
 	writeTrack(t, dir, "system")
 	opts.Recordings = true
 	audioCalls := 0
-	opts.SendRecording = func(ctx context.Context, u RecordingUpload, r *Recording) error {
+	opts.SendRecording = func(ctx context.Context, u RecordingUpload, r *meetingarchive.Recording) error {
 		audioCalls++
 		_, err := imp.ImportRecording(ctx, u, opts.AttachmentsDir, r.File, 0)
 		return err
