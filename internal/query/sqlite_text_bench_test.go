@@ -37,20 +37,39 @@ func BenchmarkSQLiteConversationMessagesSnapshot(b *testing.B) {
 			}
 			require.NoError(b, stmt.Close())
 			require.NoError(b, tx.Commit())
+			_, err = s.DB().Exec(`UPDATE messages SET content_changed_at = '2020-01-01 00:00:00'`)
+			require.NoError(b, err)
 			engine := NewSQLiteEngine(s.DB())
-			filter := TextFilter{
-				ParticipantIDs: []int64{1},
-				Pagination:     Pagination{Limit: 100},
-				SortDirection:  SortDesc,
+			for _, tc := range []struct {
+				name   string
+				offset int
+			}{{"early", 0}, {"deep", size / 2}} {
+				b.Run(tc.name, func(b *testing.B) {
+					filter := TextFilter{
+						ParticipantIDs: []int64{1},
+						Pagination:     Pagination{Limit: 100, Offset: tc.offset},
+						SortDirection:  SortDesc,
+					}
+					b.ReportAllocs()
+					for b.Loop() {
+						page, revision, err := engine.ListConversationMessagesSnapshot(b.Context(), 1, filter)
+						require.NoError(b, err)
+						require.Len(b, page, 100)
+						require.Equal(b, int64(size-tc.offset), page[0].ID)
+						require.NotEmpty(b, revision)
+					}
+				})
 			}
-			b.ReportAllocs()
-			for b.Loop() {
-				page, revision, err := engine.ListConversationMessagesSnapshot(b.Context(), 1, filter)
-				require.NoError(b, err)
-				require.Len(b, page, 100)
-				require.Equal(b, int64(size), page[0].ID)
-				require.NotEmpty(b, revision)
-			}
+			b.Run("probe", func(b *testing.B) {
+				id := int64(1)
+				scope := TextSnapshotScope{ConversationID: &id, Filter: TextFilter{ParticipantIDs: []int64{1}, SortDirection: SortDesc}}
+				b.ReportAllocs()
+				for b.Loop() {
+					revision, err := engine.TextSnapshotRevision(b.Context(), scope)
+					require.NoError(b, err)
+					require.NotEmpty(b, revision)
+				}
+			})
 		})
 	}
 }

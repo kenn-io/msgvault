@@ -2,6 +2,7 @@ package query
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -64,7 +65,7 @@ func (e *SQLiteEngine) ListConversationMessagesSnapshot(
 
 const sqliteTimelineSnapshotProbe = `SELECT
 	COUNT(*), MAX(content_changed_at),
-	COALESCE(SUM(CAST(unixepoch(content_changed_at, 'subsec') * 1000 AS INTEGER)), 0),
+	COALESCE(julianday(MAX(content_changed_at)) >= julianday('now', '-0.002 seconds'), 0) AS recent,
 	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_display_name_revision'), '0'),
 	COALESCE((SELECT updated_at FROM conversations WHERE id = ?), ''),
 	COALESCE((SELECT title FROM conversations WHERE id = ?), '')
@@ -84,11 +85,12 @@ func readSQLiteTimelineSnapshot(
 	}()
 
 	conversationID := *scope.ConversationID
-	var count, changedSum int64
+	var count int64
+	var recent bool
 	var changedAt sql.NullString
 	var participantRevision, conversationUpdatedAt, conversationTitle string
 	if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID, conversationID).Scan(
-		&count, &changedAt, &changedSum, &participantRevision, &conversationUpdatedAt, &conversationTitle,
+		&count, &changedAt, &recent, &participantRevision, &conversationUpdatedAt, &conversationTitle,
 	); err != nil {
 		return nil, "", fmt.Errorf("probe text timeline snapshot: %w", err)
 	}
@@ -98,8 +100,17 @@ func readSQLiteTimelineSnapshot(
 	}
 	hasher := sha256.New()
 	writeSnapshotField(hasher, identity)
-	for _, field := range []any{conversationID, count, changedAt.String, changedSum, participantRevision, conversationUpdatedAt, conversationTitle} {
+	for _, field := range []any{conversationID, count, changedAt.String, participantRevision, conversationUpdatedAt, conversationTitle} {
 		writeSnapshotField(hasher, snapshotFieldBytes(field))
+	}
+	// A second edit can share a fresh millisecond stamp, so fence each read
+	// until SQLite's clock has moved past that stamp.
+	if recent {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return nil, "", fmt.Errorf("generate text timeline revision nonce: %w", err)
+		}
+		writeSnapshotField(hasher, nonce[:])
 	}
 	revision = "text-" + hex.EncodeToString(hasher.Sum(nil))
 
