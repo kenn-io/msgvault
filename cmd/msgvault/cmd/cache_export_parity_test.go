@@ -27,31 +27,11 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	derivedDir := filepath.Join(tmp, "analytics-derived")
 	fullDir := filepath.Join(tmp, "analytics-full")
 	st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-	source, err := st.GetOrCreateSource("gmail", "alice@example.com")
-	require.NoError(err)
-	require.NoError(st.AddAccountIdentity(source.ID, "alice@example.com", "manual"))
-	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	require.NoError(err)
-	bob, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	require.NoError(err)
-	carol, err := st.EnsureParticipant("carol@example.com", "Carol", "example.com")
-	require.NoError(err)
+	sourceID, alice, bob, carol := cacheExportParityParticipants(t, st)
 	var conversations []int64
 	for i, sender := range []int64{alice, bob} {
-		conv, err := st.EnsureConversationWithType(source.ID, fmt.Sprintf("thread-%d", i), "direct_chat", "Thread")
-		require.NoError(err)
+		conv, _ := addCacheExportParityMessage(t, st, sourceID, sender, alice+bob-sender, i)
 		conversations = append(conversations, conv)
-		id, err := st.UpsertMessage(&store.Message{
-			ConversationID: conv, SourceID: source.ID, SourceMessageID: fmt.Sprintf("message-%d", i), MessageType: "email",
-			SenderID: sql.NullInt64{Int64: sender, Valid: true},
-			SentAt:   sql.NullTime{Time: time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC), Valid: true},
-		})
-		require.NoError(err)
-		require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{""}))
-		require.NoError(st.ReplaceMessageRecipients(id, "to", []int64{alice + bob - sender}, []string{""}))
-		_, err = st.DB().Exec(`INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?), (?, ?)`,
-			conv, alice, conv, bob)
-		require.NoError(err)
 	}
 	person, _, err := st.CreatePersonFromParticipant(bob)
 	require.NoError(err)
@@ -85,24 +65,84 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 	_, err = buildCache(dbPath, fullDir, true)
 	require.NoError(err)
 
+	assertCacheExportParity(t, tmp, derivedDir, fullDir, []string{
+		tableParticipants, tableParticipantIdentifiers, tablePersonDisplayNames, tableOwnerParticipants,
+		tableParticipantClusters, tableConversations, tableConversationParticipants,
+	})
+}
+
+func cacheExportParityParticipants(t *testing.T, st *store.Store) (sourceID, alice, bob, carol int64) {
+	t.Helper()
+	require := require.New(t)
+	source, err := st.GetOrCreateSource("gmail", "alice@example.com")
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(source.ID, "alice@example.com", "manual"))
+	alice, err = st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	require.NoError(err)
+	bob, err = st.EnsureParticipant("bob@example.com", "Bob", "example.com")
+	require.NoError(err)
+	carol, err = st.EnsureParticipant("carol@example.com", "Carol", "example.com")
+	require.NoError(err)
+	return source.ID, alice, bob, carol
+}
+
+func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender, recipient int64, i int) (conversationID, messageID int64) {
+	t.Helper()
+	require := require.New(t)
+	conv, err := st.EnsureConversationWithType(sourceID, fmt.Sprintf("thread-%d", i), "direct_chat", "Thread")
+	require.NoError(err)
+	id, err := st.UpsertMessage(&store.Message{
+		ConversationID: conv, SourceID: sourceID, SourceMessageID: fmt.Sprintf("message-%d", i), MessageType: "email",
+		SenderID: sql.NullInt64{Int64: sender, Valid: true},
+		Subject:  sql.NullString{String: "Subject", Valid: true}, Snippet: sql.NullString{String: "Snippet", Valid: true},
+		SentAt: sql.NullTime{Time: time.Date(2025, 4, i+1, 12, 0, 0, 0, time.UTC), Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{sender}, []string{""}))
+	require.NoError(st.ReplaceMessageRecipients(id, "to", []int64{recipient}, []string{""}))
+	_, err = st.DB().Exec(`INSERT INTO conversation_participants (conversation_id, participant_id) VALUES (?, ?), (?, ?)`,
+		conv, sender, conv, recipient)
+	require.NoError(err)
+	return conv, id
+}
+
+func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string) {
+	t.Helper()
+	assert, require := assert.New(t), require.New(t)
 	duckDB, err := duckdbutil.Open(context.Background(), duckdbutil.BuilderPolicy(filepath.Join(tmp, "parity-duckdb-tmp")))
 	require.NoError(err)
 	defer func() { require.NoError(duckDB.Close()) }()
-	for _, dataset := range []string{
-		tableParticipants, tableParticipantIdentifiers, tablePersonDisplayNames, tableOwnerParticipants,
-		tableParticipantClusters, tableConversations, tableConversationParticipants,
-	} {
-		derived := filepath.Join(derivedDir, dataset, "*.parquet")
-		full := filepath.Join(fullDir, dataset, "*.parquet")
+	columnSchema := func(path string) []string {
+		rows, err := duckDB.Query(`SELECT * FROM read_parquet(?, hive_partitioning=true) LIMIT 0`, path)
+		require.NoError(err, path)
+		defer func() { require.NoError(rows.Close()) }()
+		types, err := rows.ColumnTypes()
+		require.NoError(err, path)
+		require.NoError(rows.Err())
+		var schema []string
+		for _, column := range types {
+			schema = append(schema, column.Name()+" "+column.DatabaseTypeName())
+		}
+		return schema
+	}
+	for _, dataset := range datasets {
+		actual := filepath.Join(actualDir, dataset, "**", "*.parquet")
+		full := filepath.Join(fullDir, dataset, "**", "*.parquet")
+		assert.Equal(columnSchema(full), columnSchema(actual), "%s column names and types", dataset)
+		columns := "*"
+		if dataset == "relationship_people" {
+			// Each build records its own wall-clock watermark.
+			columns = "* EXCLUDE (temperature_effective_at)"
+		}
 		var rows, missing, extra int
-		require.NoError(duckDB.QueryRow(`SELECT
-				(SELECT count(*) FROM read_parquet(?)),
-				(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?))),
-				(SELECT count(*) FROM (SELECT * FROM read_parquet(?) EXCEPT ALL SELECT * FROM read_parquet(?)))`,
-			full, full, derived, derived, full).Scan(&rows, &missing, &extra), dataset)
+		require.NoError(duckDB.QueryRow(fmt.Sprintf(`SELECT
+			(SELECT count(*) FROM read_parquet(?, hive_partitioning=true)),
+			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true))),
+			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true)))`, columns),
+			full, full, actual, actual, full).Scan(&rows, &missing, &extra), dataset)
 		require.Positive(rows, "%s must hold rows for the comparison to mean anything", dataset)
-		require.Zero(missing, "%s rows the derived refresh did not write", dataset)
-		require.Zero(extra, "%s rows only the derived refresh wrote", dataset)
+		assert.Zero(missing, dataset)
+		assert.Zero(extra, dataset)
 	}
 }
 

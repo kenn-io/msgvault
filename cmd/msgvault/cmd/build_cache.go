@@ -1395,6 +1395,7 @@ func buildCacheLockedAttempt(
 		}
 	}
 	afterMessageIDs["source_merge_archive_only_messages"] = lastMessageID
+	afterMessageIDs[tableMessages] = lastMessageID
 	if err := sourceSnapshot.Prepare(maxID, afterMessageIDs); err != nil {
 		return nil, err
 	}
@@ -2099,9 +2100,11 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		messageTypes += ", 'account_address': 'VARCHAR', 'account_path': 'VARCHAR'"
 	}
 	messageTypes += "}"
-	// Old rows support conversation membership and visibility checks. Repairs
-	// keep full rows; labels are definitions and have no message-ID boundary.
-	after := min(afterMessageIDs["message_recipients"], afterMessageIDs["message_labels"], afterMessageIDs[tableAttachments])
+	// Old rows keep id, conversation_id, sent_at, and deleted_at for conversations
+	// and conversation_participants exports and fingerprints, related-dataset
+	// parent filters, and related stats. Only the messages append boundary
+	// determines which rows need full payloads, even during child repairs.
+	after := afterMessageIDs[tableMessages]
 	if after > 0 {
 		columns := strings.Split(messageColumns, ", ")
 		for i, column := range columns {
