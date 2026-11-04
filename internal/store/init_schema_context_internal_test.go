@@ -349,7 +349,7 @@ func TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled(t *tes
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
-	trigger := cancelAtStatement{stop: "FROM participant_links", cancel: cancel}
+	trigger := cancelAtStatement{stop: "JOIN participant_links", cancel: cancel}
 	trigger.install(st.db)
 
 	err = st.InitSchemaContext(ctx)
@@ -357,7 +357,7 @@ func TestInitSchemaContext_LegacyPhoneMergeStopsWhenTheContextIsCancelled(t *tes
 	require.True(trigger.fired, "the merge never reached the link-graph rewrite")
 	require.Error(err, "a cancelled migration must report failure")
 	require.ErrorIs(err, context.Canceled, "and report it as cancellation")
-	assert.Contains(err.Error(), "query participant links",
+	assert.Contains(err.Error(), "query participant component links",
 		"the cancellation has to stop the link read itself; an error raised by a LATER "+
 			"statement means the rewrite ran with the context already cancelled")
 

@@ -4777,7 +4777,7 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		if err := s.verifyParticipantsExistTxContext(ctx, tx, oldID, newID); err != nil {
 			return err
 		}
-		edges, err := s.loadLinkEdgesTxContext(ctx, tx)
+		edges, err := s.loadComponentEdgesTxContext(ctx, tx, oldID, newID)
 		if err != nil {
 			return err
 		}
@@ -4898,8 +4898,8 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		// Candidate and link endpoints must both reference the survivor before
 		// unsupported generated matches are withdrawn. Otherwise an owned link
 		// can evade cleanup because it still names the absorbed participant.
-		if err := s.reconcileCurrentObservationIdentityMatchesTxContext(
-			ctx, tx,
+		if err := s.reconcileObservationIdentityMatchesForParticipantTxContext(
+			ctx, tx, newID,
 		); err != nil {
 			return err
 		}
