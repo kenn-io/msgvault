@@ -16,7 +16,6 @@ import (
 	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -531,14 +530,6 @@ func (h handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	return rec.Result(), nil
-}
-
-func newHandlerTestImporter(t *testing.T, f *fakeBeeper) (*Importer, *store.Store) {
-	t.Helper()
-	st := testutil.NewTestStore(t)
-	client := NewClient("http://beeper.test", testToken, 10000)
-	client.http.Transport = handlerTransport(f.handler())
-	return NewImporter(st, client), st
 }
 
 func TestImportBudgetCancelsBlockedMessagePageAndResumes(t *testing.T) {
