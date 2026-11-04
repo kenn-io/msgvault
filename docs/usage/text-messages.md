@@ -178,6 +178,9 @@ search no longer matches that text. Unsending a message on iOS 16, macOS 13, or
 later removes its text this way. The message stays in the archive with its date
 and participants. Messages deleted from `chat.db` also stay in the archive.
 
+If msgvault can't decode a message's text in `chat.db`, it keeps the archived
+text and counts the message under `Unreadable text` in the import summary.
+
 ### Flags
 
 | Flag | Default | Description |

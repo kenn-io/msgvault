@@ -149,7 +149,43 @@ func TestImportPreservesArchivedBodyWhenAttributedBodyCannotBeDecoded(t *testing
 	require.NoError(err)
 	assert.Equal(int64(1), total)
 	assert.Equal([]int64{id}, ids)
-	assert.Contains(logs.String(), "failed to decode attributed body")
+	assert.Equal(1, summary.BodiesUndecoded)
+	assert.Contains(logs.String(), `level=WARN msg="failed to decode attributed body" rowid=1 archived_text_kept=true`)
+}
+
+func TestImportRepairsTruncatedLongAttributedBody(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	ctx := context.Background()
+	path, db := testutil.NewIMessageChatDB(t)
+	full := strings.Repeat("é", 146) + " tailmarker."
+	// 0x0130 is the 304-byte length; earlier releases read only its low byte, 48.
+	blob := []byte(streamtypedPrefix + "\x81\x30\x01" + full + "\x86")
+	_, err := db.Exec(`INSERT INTO message (date,attributedBody) VALUES (725760000, ?)`, blob)
+	require.NoError(err)
+	client, err := NewClient(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	st := testutil.NewTestStore(t)
+	if !st.FTS5Available() {
+		t.Skip("FTS5 not available")
+	}
+	src, err := st.GetOrCreateSource("apple_messages", "fixture")
+	require.NoError(err)
+	_, err = client.Import(ctx, st, src.ID)
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+	require.NoError(st.UpsertMessageBody(id, sql.NullString{String: full[:48], Valid: true}, sql.NullString{}))
+
+	summary, err := client.Import(ctx, st, src.ID)
+	require.NoError(err)
+	assert.Zero(summary.BodiesUndecoded)
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Equal(full, body)
+	ids, _, err := st.SearchMessageIDsQueryContext(ctx, &search.Query{TextTerms: []string{"tailmarker"}}, 10)
+	require.NoError(err)
+	assert.Equal([]int64{id}, ids)
 }
 
 func TestImportFTSFailureContinues(t *testing.T) {

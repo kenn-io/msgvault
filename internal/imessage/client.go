@@ -476,7 +476,8 @@ func (c *Client) importMessage(
 			SELECT id FROM messages
 			WHERE source_id = ? AND source_message_id = ?
 		`), sourceID, sourceMessageID).Scan(&existingMessageID)
-		if err == nil {
+		archived := err == nil
+		if archived {
 			body, err = s.GetMessageBodyText(existingMessageID)
 			if err != nil {
 				return fmt.Errorf("read archived body after attributed body decode failure: %w", err)
@@ -484,7 +485,14 @@ func (c *Client) importMessage(
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("find existing message after attributed body decode failure: %w", err)
 		}
-		c.logger.Warn("failed to decode attributed body; preserving archived text")
+		summary.BodiesUndecoded++
+		// Every run rereads all of chat.db, so warn once and count the rest.
+		level := slog.LevelDebug
+		if summary.BodiesUndecoded == 1 {
+			level = slog.LevelWarn
+		}
+		c.logger.Log(ctx, level, "failed to decode attributed body",
+			"rowid", msg.ROWID, "archived_text_kept", archived)
 	}
 	clearsExistingDate := false
 	if msgDate.IsZero() {
