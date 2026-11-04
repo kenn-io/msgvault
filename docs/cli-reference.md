@@ -5171,12 +5171,12 @@ physical MIME occurrence, so separate parts with identical bytes still count
 separately. Older rows without part keys cannot prove how many times identical
 content occurred.
 
-An `inconclusive` raw MIME result means the stored MIME is missing, empty, cannot be
-decoded or parsed, or exceeds the audit's 64 MiB decompression limit. Repair
-fetches fresh MIME from Gmail and requires it to parse successfully. If fetching,
-parsing, publishing attachment bytes, or replacing the snapshot fails, the stored
-snapshot stays unchanged. A later cache-refresh error can occur after the
-snapshot has been committed; re-audit to check that snapshot. If a message
+An `inconclusive` raw MIME result means the stored MIME is missing, empty,
+cannot be decoded or parsed, or exceeds the audit's 64 MiB decompression limit.
+Repair fetches fresh MIME from Gmail and requires it to parse successfully. If
+fetching, parsing, publishing attachment bytes, or replacing the snapshot fails,
+the stored snapshot stays unchanged. A later cache-refresh error can occur after
+the snapshot has been committed; re-audit to check that snapshot. If a message
 remains flagged after a successful repair, retain the new audit result and the
 repair's error output for diagnosis.
 
