@@ -1,11 +1,14 @@
 package matrix
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/operations"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
@@ -29,6 +33,7 @@ type recoveryFixture struct {
 	timeline   []*event.Event
 	edits      []*event.Event
 	quiet      bool
+	left       bool
 	extraRooms map[string][]*event.Event
 	nextBatch  string
 }
@@ -183,6 +188,9 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 			join["!room:example.org"] = map[string]any{"timeline": map[string]any{"events": f.timeline, "prev_batch": "history"}}
 		}
 		rooms := map[string]any{"join": join}
+		if f.left {
+			rooms["leave"] = map[string]any{"!room:example.org": map[string]any{"timeline": map[string]any{"events": []*event.Event{}}}}
+		}
 		writeMatrixJSON(t, w, map[string]any{"next_batch": f.nextBatch, "rooms": rooms})
 	})
 	mux.HandleFunc("GET /_matrix/client/v3/user/{user}/account_data/m.direct", func(w http.ResponseWriter, _ *http.Request) {
@@ -493,7 +501,7 @@ func TestImportRecoversPlaceholderFromInterruptedRun(t *testing.T) {
 			fresh := f.message(t, "$fresh", "fresh", 20)
 			fresh.RoomID = "!room:example.org"
 			// Commit the placeholder, then discard the importer before it recovers anything.
-			req.NoError(NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).persistEvent(t.Context(), f.sourceID, convID, fresh, &ImportSummary{}))
+			req.NoError(NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).persistEvent(t.Context(), f.sourceID, convID, fresh, attachmentpolicy.Conversation{}, ImportOptions{}, &ImportSummary{}))
 			f.timeline, f.quiet = []*event.Event{fresh}, mode == "quiet follow-up sync"
 			sum, err := f.run(t, true, false)
 			req.NoError(err)
@@ -1048,4 +1056,185 @@ func TestImportPendingEditsRejectOtherSendersAndKeepNewestBounded(t *testing.T) 
 			check.Equal(wantBody, f.body(t, "$original"))
 		})
 	}
+}
+
+func TestImportRecoveryMediaSurvivesCancellation(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	f := newRecoveryFixture(t)
+	f.timeline = []*event.Event{f.backup.encrypted(t, "$photo", 10, event.EventMessage, map[string]any{"msgtype": "m.image", "body": "photo.jpg", "url": "mxc://example.org/photo"})}
+	_, err := f.run(t, false, false)
+	req.NoError(err)
+	f.quiet, f.left = true, true
+	mux, ok := f.server.Config.Handler.(*http.ServeMux)
+	req.True(ok)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	interrupt := true
+	observed := make(chan struct {
+		body string
+		err  error
+	}, 1)
+	mux.HandleFunc("GET /_matrix/client/v1/media/download/example.org/photo", func(w http.ResponseWriter, r *http.Request) {
+		if interrupt {
+			probe, done := context.WithTimeout(t.Context(), 5*time.Second)
+			defer done()
+			var body string
+			err := f.store.DB().QueryRowContext(probe, f.store.Rebind(`SELECT snippet FROM messages WHERE source_id = ? AND source_message_id = ?`), f.sourceID, "$photo").Scan(&body)
+			observed <- struct {
+				body string
+				err  error
+			}{body, err}
+			w.WriteHeader(http.StatusOK)
+			_ = http.NewResponseController(w).Flush()
+			cancel()
+			<-r.Context().Done()
+			return
+		}
+		_, _ = w.Write([]byte("photo bytes"))
+	})
+	opts := ImportOptions{UserID: "@archive:example.org", AttachmentsDir: t.TempDir(), MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll}}
+	leased := false
+	opts.MediaMutation = func(_ context.Context, write func() error) error {
+		check.False(leased, "media writes must not nest the maintenance lease")
+		leased = true
+		defer func() { leased = false }()
+		if err := write(); err != nil {
+			return err
+		}
+		probe, done := context.WithTimeout(t.Context(), 5*time.Second)
+		defer done()
+		var body string
+		err := f.store.DB().QueryRowContext(probe, f.store.Rebind(`SELECT snippet FROM messages WHERE source_id = ? AND source_message_id = ?`), f.sourceID, "$photo").Scan(&body)
+		check.Equal("[image]", body, "the recovered message must be written before its media")
+		return err
+	}
+	sum, err := NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(ctx, opts)
+	req.ErrorIs(err, context.Canceled)
+	result := <-observed
+	req.NoError(result.err)
+	check.Equal("[image]", result.body, "recovery must commit before media download")
+	check.Equal(int64(1), sum.Recovered)
+	check.Equal("[image]", f.body(t, "$photo"))
+	interrupt = false
+	sum, err = NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+	req.NoError(err)
+	check.Zero(sum.Recovered)
+	check.Equal(int64(1), sum.AttachmentsDownloaded)
+}
+
+func TestImportRecoversRoomMedia(t *testing.T) {
+	for _, mode := range []string{"download", "no-media"} {
+		t.Run(mode, func(t *testing.T) {
+			req := require.New(t)
+			check := assert.New(t)
+			f := newRecoveryFixture(t)
+			mux, ok := f.server.Config.Handler.(*http.ServeMux)
+			req.True(ok)
+			mux.HandleFunc("GET /_matrix/client/v1/media/download/example.org/photo", func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte("photo bytes"))
+			})
+			content := map[string]any{"body": "photo.jpg", "url": "mxc://example.org/photo", "info": map[string]any{"mimetype": "image/jpeg", "size": 11}}
+			content["msgtype"] = "m.image"
+			f.timeline = []*event.Event{f.backup.encrypted(t, "$photo", 10, event.EventMessage, content)}
+			_, err := f.run(t, false, false)
+			req.NoError(err)
+			check.Equal(encryptedPlaceholder, f.body(t, "$photo"))
+			f.quiet, f.left = true, true
+			opts := ImportOptions{UserID: "@archive:example.org", NoMedia: mode == "no-media", AttachmentsDir: t.TempDir(), MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll, MaxParticipants: 20, MaxBytes: attachmentpolicy.DefaultChatMaxBytes}}
+			sum, err := NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+			req.NoError(err)
+			check.Equal(int64(1), sum.Recovered)
+			if mode != "download" {
+				check.Zero(sum.AttachmentsDownloaded)
+				check.Equal(int64(1), sum.AttachmentsPending)
+				check.Zero(sum.AttachmentsFailed)
+				opts.NoMedia = false
+				opts.ExcludeRooms = []string{"!room:example.org"}
+				sum, err = NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+				req.NoError(err)
+				check.Zero(sum.AttachmentsDownloaded)
+				opts.ExcludeRooms = nil
+				opts.Rooms = []string{"!other:example.org"}
+				sum, err = NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+				req.NoError(err)
+				check.Zero(sum.AttachmentsDownloaded)
+				opts.Rooms = []string{"!room:example.org"}
+				sum, err = NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+				req.NoError(err)
+				check.Zero(sum.Recovered)
+			}
+			check.Equal(int64(1), sum.AttachmentsDownloaded)
+			check.Zero(sum.PendingEncrypted)
+			ids, err := f.store.MessageExistsBatch(f.sourceID, []string{"$photo"})
+			req.NoError(err)
+			refs, err := f.store.MessageMatrixAttachments(ids["$photo"])
+			req.NoError(err)
+			ref := refs["matrix:mxc://example.org/photo"]
+			check.Equal(attachmentpolicy.StateStored, ref.State)
+			bytes, err := os.ReadFile(filepath.Join(opts.AttachmentsDir, ref.StoragePath))
+			req.NoError(err)
+			check.Equal("photo bytes", string(bytes))
+		})
+	}
+}
+
+func TestImportRecoveryEarlierMessageTakesMediaFromCopy(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	f := newRecoveryFixture(t)
+	mux, ok := f.server.Config.Handler.(*http.ServeMux)
+	req.True(ok)
+	mux.HandleFunc("GET /_matrix/client/v1/media/download/example.org/photo", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("photo bytes"))
+	})
+	original := f.backup.encrypted(t, "$a-original", 10, event.EventMessage, map[string]any{"msgtype": "m.image", "body": "photo.jpg", "url": "mxc://example.org/photo"})
+	replayed := *original
+	replayed.ID, replayed.Sender, replayed.Timestamp = "$z-replayed", "@other:example.org", 20
+	f.timeline = []*event.Event{&replayed}
+	opts := ImportOptions{UserID: "@archive:example.org", AttachmentsDir: t.TempDir(), MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll}}
+	_, err := NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+	req.NoError(err)
+	media := func(eventID string) map[string]store.AttachmentRef {
+		t.Helper()
+		ids, err := f.store.MessageExistsBatch(f.sourceID, []string{eventID})
+		req.NoError(err)
+		refs, err := f.store.MessageMatrixAttachments(ids[eventID])
+		req.NoError(err)
+		return refs
+	}
+	req.Equal(attachmentpolicy.StateStored, media("$z-replayed")["matrix:mxc://example.org/photo"].State)
+
+	// Backfill then archives the original event, which takes the index back.
+	handler := f.server.Config.Handler
+	f.server.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/messages") {
+			writeMatrixJSON(t, w, map[string]any{"chunk": []*event.Event{original}, "end": ""})
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
+	opts.Full = true
+	_, err = NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+	req.NoError(err)
+	check.Equal(encryptedPlaceholder, f.body(t, "$z-replayed"))
+	check.Empty(media("$z-replayed"))
+	check.Equal(attachmentpolicy.StateStored, media("$a-original")["matrix:mxc://example.org/photo"].State)
+}
+
+func TestImportRecordsMediaAnInterruptedWriteLeftOut(t *testing.T) {
+	req, check := require.New(t), assert.New(t)
+	f := newRecoveryFixture(t)
+	f.timeline = []*event.Event{matrixTestEvent(t, `{"type":"m.room.message","event_id":"$media","sender":"@member:example.org","content":{"msgtype":"m.file","body":"file","url":"mxc://example.org/file"}}`)}
+	opts := ImportOptions{UserID: "@archive:example.org", NoMedia: true, AttachmentsDir: t.TempDir(), MediaPolicy: attachmentpolicy.Policy{Scope: attachmentpolicy.ScopeAll}}
+	_, err := NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+	req.NoError(err)
+	ids, err := f.store.MessageExistsBatch(f.sourceID, []string{"$media"})
+	req.NoError(err)
+	// The message write committed and the run stopped before its media write.
+	req.NoError(f.store.ReplaceMessageMatrixAttachments(t.Context(), ids["$media"], nil))
+
+	_, err = NewImporter(f.store, backupRuntime(t, f.server.URL, f.backup)).Import(t.Context(), opts)
+	req.NoError(err)
+	refs, err := f.store.MessageMatrixAttachments(ids["$media"])
+	req.NoError(err)
+	check.Equal(attachmentpolicy.StatePending, refs["matrix:mxc://example.org/file"].State)
 }

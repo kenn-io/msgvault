@@ -193,6 +193,8 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 		}
 	}
 	require.NotZero(excluded.AttachmentID)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET size_estimate = 4321 WHERE id = ?`), excludedMessageID)
+	require.NoError(err)
 	require.NoError(st.ExcludeAttachmentOccurrences(context.Background(), []store.AttachmentExclusion{{
 		AttachmentID: excluded.AttachmentID, Reason: attachmentpolicy.SkipPolicyScope,
 	}}))
@@ -205,6 +207,9 @@ func TestExcludeAttachmentOccurrencesRemovesOnlySelectedBlobReference(t *testing
 	assert.Equal(string(attachmentpolicy.SkipPolicyScope), reason)
 	assert.Empty(contentHash)
 	assert.Equal("excluded:beeper:excluded", storagePath)
+	var sizeEstimate int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT size_estimate FROM messages WHERE id = ?`), excludedMessageID).Scan(&sizeEstimate))
+	assert.Equal(int64(4321), sizeEstimate)
 
 	referenced, err := st.AttachmentBlobReferenced(context.Background(), hash, path)
 	require.NoError(err)
