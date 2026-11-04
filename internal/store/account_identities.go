@@ -244,6 +244,9 @@ func (s *Store) addAccountIdentityOnce(
 			if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 				return err
 			}
+			if err := s.refreshICSAccountIdentityAttendeesWith(ctx, tx, sourceID); err != nil {
+				return err
+			}
 			if onInsert != nil {
 				if err := onInsert(ctx, tx, addr); err != nil {
 					return err
@@ -585,6 +588,9 @@ func (s *Store) RemoveAccountIdentityContext(
 			return err
 		}
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
+			return err
+		}
+		if err := s.refreshICSAccountIdentityAttendeesWith(ctx, tx, sourceID); err != nil {
 			return err
 		}
 		if err := refreshIdentityMessageAttributionContext(ctx, tx, sourceID, removedAddresses, ""); err != nil {

@@ -181,5 +181,8 @@ func (s *Store) syncChatwootSelfAgentsTx(ctx context.Context, tx *loggedTx, sour
 	if err = s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 		return err
 	}
+	if err = s.refreshICSAccountIdentityAttendeesWith(ctx, tx, sourceID); err != nil {
+		return err
+	}
 	return refreshSourceMessageAttributionContext(ctx, tx, sourceID)
 }

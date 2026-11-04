@@ -215,6 +215,32 @@ func (s *Store) markICSAccountIdentitiesSelfWith(ctx context.Context, tx *logged
 	return nil
 }
 
+func (s *Store) refreshICSAccountIdentityAttendeesWith(ctx context.Context, tx *loggedTx, sourceID int64) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE calendar_event_attendees
+		SET is_copy_self = EXISTS (
+			SELECT 1
+			FROM messages m
+			JOIN message_raw r ON r.message_id = m.id
+			JOIN account_identities ai ON ai.source_id = m.source_id
+			WHERE m.id = calendar_event_attendees.message_id
+			  AND m.source_id = ?
+			  AND r.raw_format = ?
+			  AND lower(trim(ai.address)) = lower(trim(calendar_event_attendees.email))
+		)
+		WHERE message_id IN (
+			SELECT m.id
+			FROM messages m
+			JOIN message_raw r ON r.message_id = m.id
+			WHERE m.source_id = ? AND r.raw_format = ?
+		)
+	`, sourceID, rawFormatICS, sourceID, rawFormatICS)
+	if err != nil {
+		return fmt.Errorf("refresh ICS attendee self flags: %w", err)
+	}
+	return nil
+}
+
 func (s *Store) writeCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID, sourceID int64, event calevent.Event) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	var oldVersion int

@@ -199,6 +199,11 @@ func (s *Store) MigrateLegacyIdentityConfigContext(
 			if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 				return err
 			}
+			for sourceID := range pending {
+				if err := s.refreshICSAccountIdentityAttendeesWith(ctx, tx, sourceID); err != nil {
+					return fmt.Errorf("refresh ICS attendee identities (source=%d): %w", sourceID, err)
+				}
+			}
 		}
 
 		_, txErr := tx.ExecContext(ctx,

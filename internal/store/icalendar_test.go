@@ -76,6 +76,37 @@ func TestICalendarProjectionUsesConfirmedSourceIdentityForSelfAttendees(t *testi
 	assertions.Equal(calendarEventProjectionVersion, projectionVersion)
 }
 
+func TestICalendarProjectionRefreshesSelfAttendeesAfterIdentityChanges(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	raw := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Owner invitation\r\n"+
+		"ORGANIZER;CN=Owner:mailto:owner@example.test\r\n"+
+		"ATTENDEE;CN=Owner:mailto:owner@example.test\r\n"+
+		"ATTENDEE;CN=Guest:mailto:guest@example.test")
+	imported, err := st.PersistICalendarContext(t.Context(), source, raw)
+	requirements.NoError(err)
+	requirements.Len(imported.MessageIDs, 1)
+	id := imported.MessageIDs[0]
+	readSelf := func(email string) bool {
+		var isSelf bool
+		requirements.NoError(st.db.QueryRowContext(t.Context(), st.Rebind(`SELECT is_copy_self FROM calendar_event_attendees WHERE message_id = ? AND lower(email) = ?`), id, email).Scan(&isSelf))
+		return isSelf
+	}
+
+	assertions.False(readSelf("owner@example.test"))
+	assertions.False(readSelf("guest@example.test"))
+	requirements.NoError(st.AddAccountIdentityContext(t.Context(), source, "OWNER@example.test", "manual"))
+	assertions.True(readSelf("owner@example.test"), "adding a confirmed identity refreshes existing invitation attendees")
+	assertions.False(readSelf("guest@example.test"))
+
+	removed, err := st.RemoveAccountIdentityContext(t.Context(), source, "owner@example.test")
+	requirements.NoError(err)
+	assertions.Equal(int64(1), removed)
+	assertions.False(readSelf("owner@example.test"), "removing a confirmed identity refreshes existing invitation attendees")
+	assertions.False(readSelf("guest@example.test"))
+}
+
 func TestICalendarSeriesCancellationActivityEligibility(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

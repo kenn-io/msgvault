@@ -412,6 +412,9 @@ func (s *Store) addAccountIdentityConfirmationChunkOnce(
 		if err := s.bumpAccountIdentityRevisionContext(ctx, tx); err != nil {
 			return err
 		}
+		if err := s.refreshICSAccountIdentityAttendeesWith(ctx, tx, sourceID); err != nil {
+			return err
+		}
 		if err := refreshIdentityMessageAttributionContext(ctx, tx, sourceID, addedAddresses, ""); err != nil {
 			return err
 		}
