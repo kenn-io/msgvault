@@ -36,6 +36,8 @@ jobs:
               - '!{web/**,docs/**,*.md}'
               - 'docs/assets/**'
               - 'docs/screenshots/**'
+              - 'docs/*.go'
+              - 'docs/guides/agent-quickstart.md'
               - 'web/src/lib/settings/cron-corpus.json'
               - 'web/tests/e2e/fixtures/operations-public.json'
               - 'web/tests/e2e/fixtures/operations-private-sentinels.json'
