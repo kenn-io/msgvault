@@ -780,12 +780,19 @@ func recordParticipantEmailObservations(
 	}
 	slices.Sort(chatKeys)
 	type observationKey struct {
-		participantID int64
-		email         string
+		participantID  int64
+		email          string
+		conversationID int64
 	}
 	seenObservations := make(map[observationKey]struct{})
 	for _, chatKey := range chatKeys {
 		chat := chats[chatKey]
+		conversationID, err := st.EnsureConversationWithTypeContext(
+			ctx, sourceID, chat.key, chat.typeName, chat.title,
+		)
+		if err != nil {
+			return fmt.Errorf("ensure iMazing CSV conversation for email evidence: %w", err)
+		}
 		participantKeys := make([]string, 0, len(chat.participants))
 		for key := range chat.participants {
 			participantKeys = append(participantKeys, key)
@@ -800,7 +807,9 @@ func recordParticipantEmailObservations(
 				continue
 			}
 			participantID := chat.participantIDs[key]
-			identityKey := observationKey{participantID: participantID, email: identity.Value}
+			identityKey := observationKey{
+				participantID: participantID, email: identity.Value, conversationID: conversationID,
+			}
 			if _, seen := seenObservations[identityKey]; seen {
 				continue
 			}
@@ -810,7 +819,8 @@ func recordParticipantEmailObservations(
 			}
 			sourceRef := "imazing_csv:participant:" + stableHash(string(identity.Kind), identity.Value)
 			if _, err := st.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
-				SourceID: &sourceID, AddressKind: store.ContactAddressEmail,
+				SourceID: &sourceID, ConversationID: &conversationID,
+				AddressKind:   store.ContactAddressEmail,
 				OriginalValue: originalValue,
 				Envelope: store.ValueEnvelopeInput{
 					Source: store.ProvenanceArchiveObservation, SourceRef: &sourceRef,

@@ -2247,11 +2247,34 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 		return 0, nil
 	}
 
+	observationWhere := `participant_id IN (SELECT id FROM participants)`
+	hasObservationConversationSupport, err := sourceTableExists(
+		tx, "participant_contact_observation_conversations",
+	)
+	if err != nil {
+		return 0, fmt.Errorf("check observation room support schema: %w", err)
+	}
+	if hasObservationConversationSupport {
+		// Do not copy a scoped observation when all its supporting rooms were
+		// omitted. Copying the row without any support edges would make it
+		// appear unscoped and eligible in the destination archive.
+		observationWhere += ` AND (
+			NOT EXISTS (
+				SELECT 1 FROM src.participant_contact_observation_conversations support
+				WHERE support.observation_id = id
+			)
+			OR EXISTS (
+				SELECT 1 FROM src.participant_contact_observation_conversations support
+				WHERE support.observation_id = id
+				  AND support.conversation_id IN (SELECT id FROM main.conversations)
+			)
+		)`
+	}
 	// Observations keep their source foreign key, even when that source had no
 	// selected message. A complete copied profile must retain that provenance.
 	sourceResult, err := copyByName(tx, "sources", `id IN (
 			SELECT DISTINCT source_id FROM src.participant_contact_observations
-			WHERE participant_id IN (SELECT id FROM participants)
+			WHERE `+observationWhere+`
 			  AND source_id IS NOT NULL
 		) AND id NOT IN (SELECT id FROM sources)`)
 	if err != nil {
@@ -2277,7 +2300,7 @@ func copyStructuredProfiles(tx *sql.Tx) (int64, error) {
 		return 0, fmt.Errorf("copy person_contact_points: %w", err)
 	}
 	if err := copyByNameWithCommunicationServiceMap(tx, "participant_contact_observations",
-		`participant_id IN (SELECT id FROM participants)`); err != nil {
+		observationWhere); err != nil {
 		return 0, fmt.Errorf("copy participant_contact_observations: %w", err)
 	}
 	if exists, err := sourceTableExists(tx, "participant_contact_observation_conversations"); err != nil {

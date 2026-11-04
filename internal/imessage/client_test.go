@@ -106,7 +106,24 @@ func TestImportEmailHandlesKeepSourceEvidenceAndRecipientAddresses(t *testing.T)
 		store.FullParticipantValueWhere("p.id", "'email'", "p.email_address")+
 		` FROM participants p WHERE p.id=?`), peerID).Scan(&eligible))
 	assertions.True(eligible,
-		"the independently imported iMessage observation must keep the email eligible after a Cold chat is linked")
+		"the Full iMessage conversation must keep its email evidence eligible after a Cold chat is linked")
+
+	requirements.NoError(st.SetConversationPolicyOverride(
+		t.Context(), source.ID, "no-chat-1", conversationpolicy.Cold,
+	))
+	observations, err = st.ListParticipantObservationsContext(t.Context(), peerID, true)
+	requirements.NoError(err)
+	requirements.Len(observations, 1)
+	eligible, err = st.ObservationFullEligibleContext(t.Context(), observations[0].Envelope.ID)
+	requirements.NoError(err)
+	assertions.False(eligible,
+		"email evidence supported only by a Cold iMessage conversation must be ineligible")
+	var supportCount int64
+	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT COUNT(*)
+		FROM participant_contact_observation_conversations
+		WHERE observation_id = ?`), observations[0].Envelope.ID).Scan(&supportCount))
+	assertions.Equal(int64(1), supportCount,
+		"the imported email observation must retain its exact message conversation")
 }
 
 func TestImportInvalidDatesRetainsMessages(t *testing.T) {

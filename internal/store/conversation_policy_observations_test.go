@@ -629,6 +629,55 @@ func TestNativePhoneAndServiceIdentityRemainEligibleAfterColdChatRoom(t *testing
 	assertions.Zero(identifierCount(coldOnlyParticipant, "+15550123457"), "cold-only provider identifier stays hidden")
 }
 
+func TestExplicitlyColdNativeHistoryCannotSupportPhoneIdentifiers(t *testing.T) {
+	for _, fixture := range []struct {
+		name           string
+		sourceType     string
+		identifierType string
+		messageType    string
+		phone          string
+	}{
+		{name: "whatsapp", sourceType: "whatsapp", identifierType: "whatsapp", messageType: "whatsapp", phone: "+12025550161"},
+		{name: "imessage", sourceType: "apple_messages", identifierType: "imessage", messageType: "imessage", phone: "+12025550162"},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			s := testutil.NewTestStore(t)
+			ctx := t.Context()
+
+			participantID, err := s.EnsureParticipantByPhone(fixture.phone, "Synthetic Cold Native Contact", fixture.identifierType)
+			requirements.NoError(err)
+			source, err := s.GetOrCreateSource(fixture.sourceType, "synthetic-cold-native-"+fixture.name)
+			requirements.NoError(err)
+			conversationID, err := s.EnsureConversation(source.ID, "native-room", "Synthetic native room")
+			requirements.NoError(err)
+			_, err = s.UpsertMessageContext(ctx, &store.Message{
+				SourceID: source.ID, ConversationID: conversationID, SourceMessageID: "cold-native-phone-support",
+				MessageType: fixture.messageType, SenderID: sql.NullInt64{Int64: participantID, Valid: true},
+			})
+			requirements.NoError(err)
+			requirements.NoError(s.SetConversationPolicyOverride(ctx, source.ID, "native-room", conversationpolicy.Cold))
+
+			phoneWhere := store.FullParticipantValueWhere("p.id", "'phone'", "p.phone_number")
+			var phoneCount int64
+			err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participants p WHERE p.id=? AND `+phoneWhere), participantID).Scan(&phoneCount)
+			requirements.NoError(err)
+			assertions.Zero(phoneCount, "native history from an explicitly Cold conversation cannot support its phone")
+
+			identifierWhere := store.FullParticipantIdentifierWhereSQLite("pi")
+			if s.IsPostgreSQL() {
+				identifierWhere = store.FullParticipantIdentifierWherePostgres("pi")
+			}
+			var identifierCount int64
+			err = s.DB().QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*) FROM participant_identifiers pi
+				WHERE pi.participant_id=? AND pi.identifier_type=? AND pi.identifier_value=? AND `+identifierWhere), participantID, fixture.identifierType, fixture.phone).Scan(&identifierCount)
+			requirements.NoError(err)
+			assertions.Zero(identifierCount, "native history from an explicitly Cold conversation cannot support its service identifier")
+		})
+	}
+}
+
 func TestImportedNativePhoneIdentifiersRemainEligibleAfterColdChatRoom(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

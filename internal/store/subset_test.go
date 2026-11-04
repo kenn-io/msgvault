@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/sqliteutil"
 	"go.kenn.io/msgvault/internal/vcard"
 )
@@ -2335,6 +2336,43 @@ func TestCopySubsetPreservesStructuredProfileHistoryAndDependencies(t *testing.T
 	).Scan(&leakedProfileLabels))
 	assert.Zero(leakedProfileLabels,
 		"profile-only provenance must not broaden message label selection")
+}
+
+func TestCopySubsetOmitsObservationWithOnlyExcludedConversationSupport(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	ctx := t.Context()
+	srcDB := createTestSourceDB(t, t.TempDir(), 4)
+	source, err := Open(srcDB)
+	require.NoError(err)
+	matrixSource, err := source.GetOrCreateSource("matrix", "synthetic-cold-subset")
+	require.NoError(err)
+	coldRoomID, err := source.EnsureConversation(matrixSource.ID, "!cold:example.org", "Cold room")
+	require.NoError(err)
+	require.NoError(source.SetConversationPolicyOverride(
+		ctx, matrixSource.ID, "!cold:example.org", conversationpolicy.Cold,
+	))
+	_, err = source.RecordContactObservationContext(ctx, 2, ParticipantContactObservationInput{
+		SourceID: &matrixSource.ID, ConversationID: &coldRoomID,
+		AddressKind: ContactAddressProviderIdentity, ServiceSlug: new("matrix"),
+		ScopeKind: new("server"), ScopeValue: new("example.org"),
+		ProviderUserID: new("@bob:example.org"), OriginalValue: "@bob:example.org",
+		Envelope: ValueEnvelopeInput{Source: ProvenanceArchiveObservation},
+	})
+	require.NoError(err)
+	require.NoError(source.Close())
+
+	dstDir := filepath.Join(t.TempDir(), "dst")
+	_, err = CopySubsetWithOptions(srcDB, dstDir, 2, CopySubsetOptions{IncludeProfiles: true})
+	require.NoError(err)
+	destination, err := Open(filepath.Join(dstDir, "msgvault.db"))
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(destination.Close()) })
+
+	observations, err := destination.ListParticipantObservationsContext(ctx, 2, true)
+	require.NoError(err)
+	assert.Empty(observations,
+		"a scoped observation must not become unscoped when its only cold Matrix room is omitted")
 }
 
 func TestCopySubsetPreservesIdentityMatchSourceSupport(t *testing.T) {

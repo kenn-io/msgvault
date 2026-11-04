@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -140,7 +141,18 @@ func TestImporterMessagesConversationsAndIdentity(t *testing.T) {
 	require.NoError(err, "reimport must recover and reuse existing email evidence")
 	observations, err = st.ListParticipantObservationsContext(t.Context(), bobID, true)
 	require.NoError(err)
-	assert.Len(observations, 1, "reimporting must not duplicate the source-qualified observation")
+	require.Len(observations, 1, "reimporting must not duplicate the source-qualified observation")
+	var sourceConversationID string
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT source_conversation_id FROM conversations WHERE id = ?`), conversationID,
+	).Scan(&sourceConversationID))
+	require.NoError(st.SetConversationPolicyOverride(
+		t.Context(), source.ID, sourceConversationID, conversationpolicy.Cold,
+	))
+	eligible, err := st.ObservationFullEligibleContext(t.Context(), observations[0].Envelope.ID)
+	require.NoError(err)
+	assert.False(eligible,
+		"iMazing email evidence must remain scoped to its Cold source conversation")
 }
 
 func TestImporterPreservesRemovedIdentityOptOut(t *testing.T) {

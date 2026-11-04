@@ -17,10 +17,11 @@ const nativeEmailObservationBackfillBatchSize = 256
 var errNativeEmailPayloadTooLarge = errors.New("native email payload too large")
 
 type nativeEmailObservationEvidence struct {
-	participantID int64
-	sourceID      int64
-	sourceType    string
-	originalValue string
+	participantID  int64
+	sourceID       int64
+	sourceType     string
+	conversationID int64
+	originalValue  string
 }
 
 // backfillNativeEmailObservationProvenanceContext recovers exact email handles
@@ -39,7 +40,7 @@ func (s *Store) backfillNativeEmailObservationPayloadsContext(ctx context.Contex
 	var after int64
 	for {
 		rows, err := s.db.QueryContext(ctx, `
-			SELECT m.id, m.source_id, source.source_type, m.sender_id,
+			SELECT m.id, m.source_id, source.source_type, m.sender_id, m.conversation_id,
 			       raw.raw_data, raw.raw_format, raw.compression
 			FROM messages m
 			JOIN sources source ON source.id = m.source_id
@@ -59,7 +60,7 @@ func (s *Store) backfillNativeEmailObservationPayloadsContext(ctx context.Contex
 			var rawFormat string
 			var compression sql.NullString
 			if err := rows.Scan(&after, &item.sourceID, &item.sourceType, &item.participantID,
-				&compressed, &rawFormat, &compression); err != nil {
+				&item.conversationID, &compressed, &rawFormat, &compression); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("scan native email payload: %w", err)
 			}
@@ -123,7 +124,7 @@ func (s *Store) backfillNativeEmailObservationEnvelopesContext(ctx context.Conte
 	var after int64
 	for {
 		rows, err := s.db.QueryContext(ctx, `
-			SELECT recipient.id, message.source_id, source.source_type,
+			SELECT recipient.id, message.source_id, source.source_type, message.conversation_id,
 			       recipient.participant_id, recipient.email_address
 			FROM message_recipients recipient
 			JOIN messages message ON message.id = recipient.message_id
@@ -141,7 +142,7 @@ func (s *Store) backfillNativeEmailObservationEnvelopesContext(ctx context.Conte
 		count := 0
 		for rows.Next() {
 			var item nativeEmailObservationEvidence
-			if err := rows.Scan(&after, &item.sourceID, &item.sourceType,
+			if err := rows.Scan(&after, &item.sourceID, &item.sourceType, &item.conversationID,
 				&item.participantID, &item.originalValue); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("scan native email recipient envelope: %w", err)
@@ -180,7 +181,8 @@ func (s *Store) recordBackfilledNativeEmailObservationContext(
 	}
 	sourceRef := nativeEmailObservationSourceRef(item.sourceType, original, normalized)
 	_, err := s.RecordContactObservationContext(ctx, item.participantID, ParticipantContactObservationInput{
-		SourceID: &item.sourceID, AddressKind: ContactAddressEmail, OriginalValue: original,
+		SourceID: &item.sourceID, ConversationID: &item.conversationID,
+		AddressKind: ContactAddressEmail, OriginalValue: original,
 		Envelope: ValueEnvelopeInput{Source: ProvenanceArchiveObservation, SourceRef: &sourceRef},
 	})
 	if err != nil {

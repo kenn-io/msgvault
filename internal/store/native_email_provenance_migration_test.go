@@ -38,6 +38,10 @@ func TestInitSchemaBackfillsNativeEmailObservationsFromPayloads(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(s.UpsertMessageRawWithFormat(appleMessage,
 		[]byte(`{"handle_id":"apple-peer@example.test","is_from_me":0}`), "imessage_json"))
+	requirements.NoError(s.ReplaceMessageRecipientSetContext(t.Context(), appleMessage, RecipientSet{
+		Type: "from", ParticipantIDs: []int64{appleParticipant},
+		EmailAddresses: []string{"apple-peer@example.test"},
+	}))
 	imazingMessage, err := s.UpsertMessage(&Message{
 		SourceID: imazing.ID, ConversationID: imazingRoom, SourceMessageID: "imazing-message",
 		MessageType: "imessage", SenderID: sql.NullInt64{Int64: imazingParticipant, Valid: true},
@@ -45,6 +49,10 @@ func TestInitSchemaBackfillsNativeEmailObservationsFromPayloads(t *testing.T) {
 	requirements.NoError(err)
 	requirements.NoError(s.UpsertMessageRawWithFormat(imazingMessage,
 		[]byte(`{"Sender ID":"imazing-peer@example.test","Type":"Incoming"}`), "imazing_csv_json"))
+	requirements.NoError(s.ReplaceMessageRecipientSetContext(t.Context(), imazingMessage, RecipientSet{
+		Type: "from", ParticipantIDs: []int64{imazingParticipant},
+		EmailAddresses: []string{"imazing-peer@example.test"},
+	}))
 
 	_, err = s.DB().ExecContext(t.Context(), s.Rebind(
 		`DELETE FROM applied_migrations WHERE name = ?`), migrationNativeEmailObservationProvenance)
@@ -86,6 +94,26 @@ func TestInitSchemaBackfillsNativeEmailObservationsFromPayloads(t *testing.T) {
 			` FROM participants p WHERE p.id=?`), participant).Scan(&eligible))
 		assertions.True(eligible,
 			"archived native email evidence must remain eligible after a Cold chat is linked")
+	}
+
+	for _, nativeRoom := range []struct {
+		sourceID int64
+		roomID   string
+		personID int64
+	}{
+		{sourceID: apple.ID, roomID: "native-room", personID: appleParticipant},
+		{sourceID: imazing.ID, roomID: "imazing-room", personID: imazingParticipant},
+	} {
+		requirements.NoError(s.SetConversationPolicyOverride(
+			t.Context(), nativeRoom.sourceID, nativeRoom.roomID, conversationpolicy.Cold,
+		))
+		observations, err := s.ListParticipantObservationsContext(t.Context(), nativeRoom.personID, true)
+		requirements.NoError(err)
+		requirements.Len(observations, 1)
+		eligible, err := s.ObservationFullEligibleContext(t.Context(), observations[0].Envelope.ID)
+		requirements.NoError(err)
+		assertions.False(eligible,
+			"native email evidence supported only by its Cold source conversation must be ineligible")
 	}
 
 	requirements.NoError(s.InitSchemaContext(t.Context()))

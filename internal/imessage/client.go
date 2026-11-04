@@ -34,6 +34,11 @@ type Client struct {
 // ClientOption configures a Client.
 type ClientOption func(*Client)
 
+type emailObservationCacheKey struct {
+	sourceRef      string
+	conversationID int64
+}
+
 // WithAfterDate filters to messages on or after this date.
 func WithAfterDate(t time.Time) ClientOption {
 	return func(c *Client) { c.afterDate = t }
@@ -195,7 +200,8 @@ func (c *Client) Import(
 	// Track resolved participants to avoid repeated DB calls
 	phoneCache := map[string]int64{} // phone -> participantID
 	emailCache := map[string]int64{} // email -> participantID
-	convCache := map[string]int64{}  // chatGUID -> conversationID
+	emailObservationCache := make(map[emailObservationCacheKey]struct{})
+	convCache := map[string]int64{} // chatGUID -> conversationID
 	imported := 0
 	lastROWID := int64(0)
 
@@ -227,7 +233,7 @@ func (c *Client) Import(
 			if err := c.importMessage(
 				ctx, s, sourceID, &msg,
 				imessageLabelID, smsLabelID,
-				phoneCache, emailCache, convCache,
+				phoneCache, emailCache, emailObservationCache, convCache,
 				ownerPID, summary,
 			); err != nil {
 				c.logger.Warn(
@@ -333,6 +339,7 @@ func (c *Client) importMessage(
 	imessageLabelID, smsLabelID int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
+	emailObservationCache map[emailObservationCacheKey]struct{},
 	convCache map[string]int64,
 	ownerPID int64,
 	summary *ImportSummary,
@@ -345,7 +352,7 @@ func (c *Client) importMessage(
 
 	convID, isNewConv, err := c.ensureConversation(
 		ctx, s, sourceID, msg, chatGUID, convCache,
-		phoneCache, emailCache, summary,
+		phoneCache, emailCache, emailObservationCache, summary,
 	)
 	if err != nil {
 		return fmt.Errorf("ensure conversation: %w", err)
@@ -363,7 +370,8 @@ func (c *Client) importMessage(
 		}
 	} else if msg.HandleID != nil {
 		pid, err := c.resolveImportedParticipant(
-			ctx, s, sourceID, *msg.HandleID, phoneCache, emailCache, summary,
+			ctx, s, sourceID, convID, *msg.HandleID,
+			phoneCache, emailCache, emailObservationCache, summary,
 		)
 		if err != nil {
 			return fmt.Errorf("resolve message sender: %w", err)
@@ -446,8 +454,8 @@ func (c *Client) importMessage(
 
 	// Write message_recipients rows
 	if err := c.writeMessageRecipients(
-		ctx, s, sourceID, msgID, msg, senderID, ownerPID,
-		phoneCache, emailCache, summary,
+		ctx, s, sourceID, convID, msgID, msg, senderID, ownerPID,
+		phoneCache, emailCache, emailObservationCache, summary,
 	); err != nil {
 		return fmt.Errorf("write message recipients: %w", err)
 	}
@@ -485,12 +493,14 @@ func (c *Client) writeMessageRecipients(
 	ctx context.Context,
 	s *store.Store,
 	sourceID int64,
+	conversationID int64,
 	msgID int64,
 	msg *messageRow,
 	senderID sql.NullInt64,
 	ownerPID int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
+	emailObservationCache map[emailObservationCacheKey]struct{},
 	summary *ImportSummary,
 ) error {
 	if msg.IsFromMe != 0 {
@@ -505,7 +515,8 @@ func (c *Client) writeMessageRecipients(
 		}
 		// Recipients are the other chat participants
 		toPIDs, toEmails, err := c.getChatParticipantIDs(
-			ctx, s, sourceID, msg, phoneCache, emailCache, summary,
+			ctx, s, sourceID, conversationID, msg,
+			phoneCache, emailCache, emailObservationCache, summary,
 		)
 		if err != nil {
 			return err
@@ -550,17 +561,19 @@ func (c *Client) getChatParticipantIDs(
 	ctx context.Context,
 	s *store.Store,
 	sourceID int64,
+	conversationID int64,
 	msg *messageRow,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
+	emailObservationCache map[emailObservationCacheKey]struct{},
 	summary *ImportSummary,
 ) ([]int64, []string, error) {
 	if msg.ChatROWID == nil {
 		// No chat info; fall back to handle if available
 		if msg.HandleID != nil {
 			pid, err := c.resolveImportedParticipant(
-				ctx, s, sourceID, *msg.HandleID,
-				phoneCache, emailCache, summary,
+				ctx, s, sourceID, conversationID, *msg.HandleID,
+				phoneCache, emailCache, emailObservationCache, summary,
 			)
 			if err != nil {
 				return nil, nil, err
@@ -591,7 +604,8 @@ func (c *Client) getChatParticipantIDs(
 			return nil, nil, fmt.Errorf("scan chat participant handle: %w", err)
 		}
 		pid, err := c.resolveImportedParticipant(
-			ctx, s, sourceID, handleID, phoneCache, emailCache, summary,
+			ctx, s, sourceID, conversationID, handleID,
+			phoneCache, emailCache, emailObservationCache, summary,
 		)
 		if err != nil {
 			return nil, nil, err
@@ -655,6 +669,7 @@ func (c *Client) ensureConversation(
 	convCache map[string]int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
+	emailObservationCache map[emailObservationCacheKey]struct{},
 	summary *ImportSummary,
 ) (int64, bool, error) {
 	if id, ok := convCache[chatGUID]; ok {
@@ -698,7 +713,7 @@ func (c *Client) ensureConversation(
 	if msg.ChatROWID != nil {
 		if err := c.linkChatParticipants(
 			ctx, s, sourceID, *msg.ChatROWID, convID,
-			phoneCache, emailCache, summary,
+			phoneCache, emailCache, emailObservationCache, summary,
 		); err != nil {
 			return 0, false, fmt.Errorf("link chat participants: %w", err)
 		}
@@ -786,6 +801,7 @@ func (c *Client) linkChatParticipants(
 	chatROWID, convID int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
+	emailObservationCache map[emailObservationCacheKey]struct{},
 	summary *ImportSummary,
 ) error {
 	rows, err := c.db.QueryContext(ctx, `
@@ -805,7 +821,8 @@ func (c *Client) linkChatParticipants(
 			return fmt.Errorf("scan chat participant handle: %w", err)
 		}
 		pid, err := c.resolveImportedParticipant(
-			ctx, s, sourceID, handleID, phoneCache, emailCache, summary,
+			ctx, s, sourceID, convID, handleID,
+			phoneCache, emailCache, emailObservationCache, summary,
 		)
 		if err != nil {
 			return fmt.Errorf("resolve chat participant: %w", err)
@@ -873,23 +890,29 @@ func (c *Client) resolveImportedParticipant(
 	ctx context.Context,
 	s *store.Store,
 	sourceID int64,
+	conversationID int64,
 	handleID string,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
+	emailObservationCache map[emailObservationCacheKey]struct{},
 	summary *ImportSummary,
 ) (int64, error) {
 	_, email, _ := resolveHandle(handleID)
-	_, wasResolved := emailCache[email]
 	participantID, err := c.resolveParticipant(s, handleID, phoneCache, emailCache, summary)
 	if err != nil || participantID == 0 {
 		return participantID, err
 	}
-	if email == "" || wasResolved {
+	if email == "" {
 		return participantID, nil
 	}
 	sourceRef := "imessage:handle:" + strings.TrimSpace(handleID)
+	cacheKey := emailObservationCacheKey{sourceRef: sourceRef, conversationID: conversationID}
+	if _, ok := emailObservationCache[cacheKey]; ok {
+		return participantID, nil
+	}
 	_, err = s.RecordContactObservationContext(ctx, participantID, store.ParticipantContactObservationInput{
-		SourceID: &sourceID, AddressKind: store.ContactAddressEmail,
+		SourceID: &sourceID, ConversationID: &conversationID,
+		AddressKind:   store.ContactAddressEmail,
 		OriginalValue: strings.TrimSpace(handleID),
 		Envelope: store.ValueEnvelopeInput{
 			Source: store.ProvenanceArchiveObservation, SourceRef: &sourceRef,
@@ -899,6 +922,7 @@ func (c *Client) resolveImportedParticipant(
 		delete(emailCache, email)
 		return 0, fmt.Errorf("record iMessage email evidence: %w", err)
 	}
+	emailObservationCache[cacheKey] = struct{}{}
 	return participantID, nil
 }
 
