@@ -108,6 +108,7 @@ done
     --exclude './screenshots' \
     --exclude './diagrams' \
     --exclude './README.md' \
+    --exclude './embed.go' \
     --exclude './pyproject.toml' \
     --exclude './uv.lock' \
     --exclude './vercel.json' \

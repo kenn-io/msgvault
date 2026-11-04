@@ -49,6 +49,7 @@ oauth_client*.json
 # Documentation (exclude most .md files but keep embedded assets)
 *.md
 !cmd/msgvault/cmd/quickstart.md
+!docs/guides/agent-quickstart.md
 !go.mod
 LICENSE
 
