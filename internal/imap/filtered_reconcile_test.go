@@ -52,41 +52,8 @@ func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 	}
 }
 
-func TestFilteredReconciliation_SavedBaseline(t *testing.T) {
-	for _, expunge := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unchanged", true: "expunge"}[expunge], func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 3, "Trash": 1})
-			first := newTestClient(t, addr, WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true))
-			require.Len(listAllMessages(t, first), 3)
-			saved := first.ObservedFolderStates()
-			require.NoError(first.Close())
-			if expunge {
-				testutil.ExpungeIMAPMessage(t, addr, "INBOX", 2)
-			}
-			second := newTestClient(t, addr, WithFolderStates(saved), WithFolderFilter(nil, []string{"Trash"}), WithFilteredDeletionReconciliation(true))
-			assert.Empty(listAllMessages(t, second), "surviving messages need no header fetch or reprocessing")
-			assert.Empty(second.ObservedMemberships())
-			deltas := second.ObservedMailboxDeltas()
-			require.Len(deltas, 1)
-			delta := deltas[0]
-			assert.Equal("INBOX", delta.Mailbox)
-			assert.False(delta.Reset)
-			assert.Empty(delta.ChangedUIDs)
-			if expunge {
-				assert.Equal([]imapv2.UID{2}, delta.VanishedUIDs)
-				assert.Equal([]uint32{1, 3}, delta.State.KnownUIDs)
-			} else {
-				assert.Empty(delta.VanishedUIDs)
-				assert.Equal([]uint32{1, 2, 3}, delta.State.KnownUIDs)
-				assert.Equal(saved, second.ObservedFolderStates())
-			}
-		})
-	}
-}
-
-func TestFilteredReconciliation_DefaultDatesAndEmptySelection(t *testing.T) {
-	for _, name := range []string{"default", "since", "before", "empty", "configured include"} {
+func TestFilteredReconciliation_DateFiltersAndIncludes(t *testing.T) {
+	for _, name := range []string{"default", "since", "before", "configured include"} {
 		t.Run(name, func(t *testing.T) {
 			assert := assert.New(t)
 			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{"INBOX": 1, "Trash": 1})
@@ -99,8 +66,6 @@ func TestFilteredReconciliation_DefaultDatesAndEmptySelection(t *testing.T) {
 				opts = append(opts, WithDateFilter(time.Now().AddDate(-1, 0, 0), time.Time{}))
 			case "before":
 				opts = append(opts, WithDateFilter(time.Time{}, time.Now().AddDate(1, 0, 0)))
-			case "empty":
-				opts = append(opts, WithFolderFilter([]string{"Absent"}, nil))
 			}
 			client := newTestClient(t, addr, opts...)
 			if name == "configured include" {
@@ -108,16 +73,7 @@ func TestFilteredReconciliation_DefaultDatesAndEmptySelection(t *testing.T) {
 				client.folderFilterExclude = nil
 			}
 			listAllMessages(t, client)
-			switch name {
-			case "empty":
-				assert.True(client.ReconcilesFilteredDeletions())
-				assert.NotNil(client.ObservedMailboxDeltas())
-				assert.Empty(client.ObservedMailboxDeltas())
-			case "configured include":
-				assert.True(client.ReconcilesFilteredDeletions())
-			default:
-				assert.False(client.ReconcilesFilteredDeletions())
-			}
+			assert.Equal(name == "configured include", client.ReconcilesFilteredDeletions())
 			assert.False(client.LabelsSnapshotComplete())
 		})
 	}

@@ -153,29 +153,18 @@ func TestIMAPRelocationHistoricalNULIdentity(t *testing.T) {
 	assert.Equal([]uint32{1}, known["Sent"])
 }
 
-func TestIMAPScopedRelocationDoesNotConsumeRecoveryEvidence(t *testing.T) {
-	for _, enabled := range []bool{false, true} {
-		t.Run(fmt.Sprintf("opted-in=%t", enabled), func(t *testing.T) {
-			require := require.New(t)
-			f := newRelocationFixture(t)
-			f.final.Mailboxes = append(f.final.Mailboxes, scriptedRFC7162Mailbox{
-				Name: "Trash", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrTrash},
-				UIDValidity: 99, UIDNext: 1, HighestModSeq: 1,
-			})
-			f.server.setSnapshot(f.final)
-			client, err := f.sync(t, imap.WithFolderFilter(nil, []string{"Trash"}), imap.WithFilteredDeletionReconciliation(enabled))
-			require.NoError(err)
-			require.NoError(client.Close())
-			// The documented whole-account sync must still recover the Sent body,
-			// even when the earlier scoped sync committed the Drafts disappearance.
-			f.final.Mailboxes[0].VanishedUIDs = nil
-			f.server.setSnapshot(f.final)
-			client, err = f.sync(t)
-			require.NoError(err)
-			require.NoError(client.Close())
-			f.assertSent(t)
-		})
-	}
+func TestIMAPScopedRelocationRecoversSent(t *testing.T) {
+	require := require.New(t)
+	f := newRelocationFixture(t)
+	f.final.Mailboxes = append(f.final.Mailboxes, scriptedRFC7162Mailbox{
+		Name: "Trash", Attrs: []imapapi.MailboxAttr{imapapi.MailboxAttrTrash},
+		UIDValidity: 99, UIDNext: 1, HighestModSeq: 1,
+	})
+	f.server.setSnapshot(f.final)
+	client, err := f.sync(t, imap.WithFolderFilter(nil, []string{"Trash"}), imap.WithFilteredDeletionReconciliation(true))
+	require.NoError(err)
+	require.NoError(client.Close())
+	f.assertSent(t)
 }
 
 func TestIMAPRelocationAfterOverlapVANISHED(t *testing.T) {

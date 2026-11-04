@@ -33,6 +33,7 @@ type IMAPMailboxDelta struct {
 	State        IMAPFolderState
 	Memberships  []IMAPMembershipObservation
 	VanishedUIDs []uint32
+	KnownUIDs    []uint32 // complete resulting UID set; read by scoped applies
 	Reset        bool
 }
 
@@ -176,8 +177,8 @@ func (s *Store) ApplyIMAPMailboxDeltasForSyncContext(
 
 // ApplyIMAPScannedMailboxDeltasForSyncContext reconciles only the mailboxes
 // named by deltas. Other mailboxes retain their saved topology.
-// Callers must supply complete observations for each scanned mailbox and the
-// latest source generation, whose status must be completed.
+// Callers must supply complete observations and KnownUIDs for each scanned
+// mailbox and the latest source generation, whose status must be completed.
 func (s *Store) ApplyIMAPScannedMailboxDeltasForSyncContext(
 	ctx context.Context,
 	sourceID int64,
@@ -220,11 +221,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err != nil {
 			return err
 		}
-		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations, fullTopology); err != nil {
+		affected := make(map[int64]struct{})
+		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations, fullTopology, affected); err != nil {
 			return err
 		}
 
-		affected := make(map[int64]struct{})
 		if fullTopology {
 			if err := s.captureUntrackedIMAPMessageIDs(tx, sourceID, len(generations) != 0, affected); err != nil {
 				return err
@@ -788,7 +789,9 @@ type imapMembershipResolver struct {
 	legacyMessages    map[string]int64
 }
 
-func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration, fullTopology bool) error {
+func (r *imapMembershipResolver) retireObsoleteKeys(
+	deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration, fullTopology bool, affected map[int64]struct{},
+) error {
 	current := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
 	for _, delta := range deltas {
 		current[delta.mailbox] = delta
@@ -825,8 +828,18 @@ func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailb
 	}
 
 	for _, delta := range deltas {
-		if _, ok := previous[delta.mailbox]; !ok {
+		generation, ok := previous[delta.mailbox]
+		if !ok {
 			previous[delta.mailbox] = 0
+		}
+		// Capture before retirement rewrites keys. UIDs from a replaced
+		// generation are not comparable, so every such row is judged by the
+		// identity rules that retire its key.
+		if !fullTopology {
+			newGeneration := generation != 0 && generation != delta.uidValidity
+			if err := r.captureScannedUntracked(delta, newGeneration, affected); err != nil {
+				return err
+			}
 		}
 	}
 	for mailbox, generation := range previous {
@@ -850,17 +863,8 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		observation.Mailbox, observation.UIDValidity = mailbox, delta.uidValidity
 		observations[observation.UID] = observation
 	}
-	// Validate the final UID separator below to exclude nested mailboxes.
-	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(mailbox+"|") + "%"
-	predicate := `source_message_id LIKE ? ESCAPE '\'`
-	args := []any{mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID, pattern}
-	if r.sqlite {
-		// SQLite's default LIKE cannot use the binary source-key index. The
-		// byte after '|' is '}', so these bounds cover exactly this prefix.
-		predicate = `source_message_id >= ? AND source_message_id < ?`
-		args[len(args)-1] = mailbox + "|"
-		args = append(args, mailbox+"}")
-	}
+	predicate, keyArgs := r.sourceKeyPrefix(mailbox)
+	args := append([]any{mailbox, delta.uidValidity, mailbox, delta.uidValidity, r.sourceID}, keyArgs...)
 	rows, err := r.tx.Query(`
 		SELECT messages.id, messages.source_message_id, messages.deleted_from_source_at IS NOT NULL,
 		  EXISTS (SELECT 1 FROM imap_message_memberships m WHERE m.source_id = messages.source_id AND m.message_id = messages.id),
@@ -886,15 +890,10 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 			_ = rows.Close()
 			return err
 		}
-		separator := strings.LastIndexByte(c.key, '|')
-		if separator < 0 || c.key[:separator] != mailbox {
+		var valid bool
+		if c.uid, valid = imapSourceKeyUID(c.key, mailbox); !valid {
 			continue
 		}
-		uid, err := strconv.ParseUint(c.key[separator+1:], 10, 32)
-		if err != nil || uid == 0 || c.key[separator+1:] != strconv.FormatUint(uid, 10) {
-			continue
-		}
-		c.uid = uint32(uid)
 		_, observed := observations[c.uid]
 		if protected {
 			continue
@@ -933,6 +932,69 @@ func (r *imapMembershipResolver) retireMailboxKeys(mailbox string, previous uint
 		}
 	}
 	return nil
+}
+
+// sourceKeyPrefix matches source keys starting with mailbox and '|'. Callers
+// validate matches with imapSourceKeyUID to exclude nested mailboxes.
+func (r *imapMembershipResolver) sourceKeyPrefix(mailbox string) (string, []any) {
+	if r.sqlite {
+		// SQLite's default LIKE cannot use the binary source-key index. The
+		// byte after '|' is '}', so these bounds cover exactly this prefix.
+		return `source_message_id >= ? AND source_message_id < ?`, []any{mailbox + "|", mailbox + "}"}
+	}
+	pattern := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(mailbox+"|") + "%"
+	return `source_message_id LIKE ? ESCAPE '\'`, []any{pattern}
+}
+
+// imapSourceKeyUID returns the UID of a mailbox|uid source key in mailbox.
+func imapSourceKeyUID(key, mailbox string) (uint32, bool) {
+	separator := strings.LastIndexByte(key, '|')
+	if separator < 0 || key[:separator] != mailbox {
+		return 0, false
+	}
+	uid, err := strconv.ParseUint(key[separator+1:], 10, 32)
+	if err != nil || uid == 0 || key[separator+1:] != strconv.FormatUint(uid, 10) {
+		return 0, false
+	}
+	return uint32(uid), true
+}
+
+// captureScannedUntracked marks live rows without memberships whose source key
+// names delta's mailbox at a UID missing from its complete resulting UID set,
+// or at any UID when the mailbox has a new generation.
+func (r *imapMembershipResolver) captureScannedUntracked(
+	delta normalizedIMAPMailboxDelta, newGeneration bool, affected map[int64]struct{},
+) error {
+	predicate, keyArgs := r.sourceKeyPrefix(delta.mailbox)
+	rows, err := r.tx.Query(`
+		SELECT id, source_message_id FROM messages
+		WHERE source_id = ? AND deleted_from_source_at IS NULL AND `+predicate+`
+		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages marker
+			WHERE marker.message_id = messages.id)
+		  AND NOT EXISTS (SELECT 1 FROM imap_message_memberships m
+			WHERE m.source_id = messages.source_id AND m.message_id = messages.id)
+	`, append([]any{r.sourceID}, keyArgs...)...)
+	if err != nil {
+		return fmt.Errorf("read untracked IMAP messages for %q: %w", delta.mailbox, err)
+	}
+	defer func() { _ = rows.Close() }()
+	present := make(map[uint32]struct{}, len(delta.delta.KnownUIDs))
+	for _, uid := range delta.delta.KnownUIDs {
+		present[uid] = struct{}{}
+	}
+	for rows.Next() {
+		var id int64
+		var key string
+		if err := rows.Scan(&id, &key); err != nil {
+			return fmt.Errorf("scan untracked IMAP message for %q: %w", delta.mailbox, err)
+		}
+		if uid, valid := imapSourceKeyUID(key, delta.mailbox); valid {
+			if _, ok := present[uid]; newGeneration || !ok {
+				affected[id] = struct{}{}
+			}
+		}
+	}
+	return rows.Err()
 }
 
 // Snapshot identity evidence before key retirement and membership changes can invalidate it.

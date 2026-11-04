@@ -1031,9 +1031,8 @@ remain unchanged and can keep messages live indefinitely, until those folders ar
 scanned again. A message already recorded in Trash by an earlier unfiltered sync
 stays live after Trash is skipped. Skipped-only messages keep their labels and deletion markers.
 
-Tracking starts with the first clean opted-in sync. Messages that left the
-scanned folders before then, or that were never seen in a scanned folder by a
-committed sync, keep their current status.
+Each opted-in sync also checks messages archived by earlier filtered syncs. A
+message whose folder was scanned but no longer holds it is marked deleted.
 
 Stored memberships in skipped folders are never changed. A deleted or renamed
 folder keeps its messages live until a sync without folder exclusions.
