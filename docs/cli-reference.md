@@ -2655,7 +2655,7 @@ the archive host or pass `--local` there to select that host's local archive.
 ## find-chat
 
 Find archived chats when a person's name differs across networks. Requires
-daemon API schema 3.44.0 or newer.
+daemon API schema 3.24.0 or newer.
 
 ```bash
 msgvault find-chat "Jordan Lee Chen"
