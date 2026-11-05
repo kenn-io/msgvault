@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -70,24 +71,12 @@ func TestSQLiteListThreadUsesExpressionIndex(t *testing.T) {
 			}
 			checked++
 			t.Run(fmt.Sprintf("page/scoped=%t", scoped), func(t *testing.T) {
-				require := require.New(t)
 				assert := assert.New(t)
 				queryArgs := append([]any{}, args...)
 				queryArgs = append(queryArgs, q.Limit, q.Offset)
-				rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+statement, queryArgs...)
-				require.NoError(err)
-				defer func() { require.NoError(rows.Close()) }()
-				var plan strings.Builder
-				for rows.Next() {
-					var selectID, order, from int
-					var detail string
-					require.NoError(rows.Scan(&selectID, &order, &from, &detail))
-					plan.WriteString(detail)
-					plan.WriteByte('\n')
-				}
-				require.NoError(rows.Err())
-				assert.Contains(plan.String(), "idx_messages_conversation_sent_at_julianday", plan.String())
-				assert.NotContains(plan.String(), "TEMP B-TREE", plan.String())
+				plan := dbtest.ExplainQueryPlan(t, db, statement, queryArgs...)
+				assert.Contains(plan, "idx_messages_conversation_sent_at_julianday", plan)
+				assert.NotContains(plan, "TEMP B-TREE", plan)
 			})
 		}
 		// Count index selection depends on archive statistics; Total above

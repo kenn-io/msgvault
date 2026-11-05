@@ -529,3 +529,33 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 	// Equal instants written with different offsets fall back to id.
 	assert.Equal(earlier, firstID("2026-01-15 14:00:00+00:00", "2026-01-15 09:00:00-05:00"))
 }
+
+func TestListThreadUnparseableDateOrder(t *testing.T) {
+	t.Parallel()
+	must := require.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("PostgreSQL rejects malformed timestamps on write")
+	}
+	firstInvalid := f.CreateMessage("invalid-first")
+	undated := f.CreateMessage("undated")
+	secondInvalid := f.CreateMessage("invalid-second")
+	dated := f.CreateMessage("dated")
+	for _, tc := range []struct {
+		id     int64
+		sentAt any
+	}{
+		{firstInvalid, "z-invalid"}, {undated, nil},
+		{secondInvalid, "a-invalid"}, {dated, "2026-01-15 14:00:00+00:00"},
+	} {
+		_, err := f.Store.DB().ExecContext(t.Context(), "UPDATE messages SET sent_at = ? WHERE id = ?", tc.sentAt, tc.id)
+		must.NoError(err)
+	}
+	page, err := originalEngine(f).ListThread(t.Context(), query.ThreadQuery{ID: dated, All: true})
+	must.NoError(err)
+	var ids []int64
+	for _, message := range page.Messages {
+		ids = append(ids, message.ID)
+	}
+	assert.Equal(t, []int64{dated, firstInvalid, undated, secondInvalid}, ids)
+}
