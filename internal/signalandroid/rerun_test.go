@@ -214,6 +214,55 @@ func TestRerunLongTextRemovalKeepsMediaOccurrence(t *testing.T) {
 	assert.Equal(1, count)
 }
 
+func TestRerunRefreshesAttachmentMetadata(t *testing.T) {
+	for _, tc := range []struct {
+		name, change, filename, mime, media string
+		width, height                       int64
+	}{
+		{"filename", `file_name = 'photo.jpg'`, "photo.jpg", "image/jpeg", "image", 640, 480},
+		{"MIME type", `content_type = 'image/png'`, "", "image/png", "image", 640, 480},
+		{"width", `width = 1280`, "", "image/jpeg", "image", 1280, 480},
+		{"height", `height = 960`, "", "image/jpeg", "image", 640, 960},
+		{"media type", `sticker_pack_id = 'example-pack'`, "", "image/jpeg", "sticker", 640, 480},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir, storage := testutil.NewTestStore(t), t.TempDir(), t.TempDir()
+			signalfixture.Write(t, dir, signalfixture.Current, 0)
+			runImport(t, st, dir, storage)
+			var attachmentID, messageID int64
+			require.NoError(st.DB().QueryRow(`SELECT id, message_id FROM attachments`).Scan(&attachmentID, &messageID))
+			before, err := st.MessageMIMEAttachmentsContext(context.Background(), messageID)
+			require.NoError(err)
+			require.Len(before, 1)
+
+			changeFixture(t, dir, `UPDATE attachment SET `+tc.change+` WHERE _id = 500`)
+			summary := runImport(t, st, dir, storage)
+			assert.Equal(int64(1), summary.AttachmentsStored)
+			after, err := st.MessageMIMEAttachmentsContext(context.Background(), messageID)
+			require.NoError(err)
+			require.Len(after, 1)
+			assert.Equal(tc.filename, after[0].Filename)
+			assert.Equal(tc.mime, after[0].MimeType)
+			assert.Equal(tc.media, after[0].MediaType)
+			assert.Equal(tc.width, after[0].Width)
+			assert.Equal(tc.height, after[0].Height)
+			assert.Equal(before[0].SourcePartKey, after[0].SourcePartKey)
+			assert.Equal(before[0].ContentHash, after[0].ContentHash)
+			var updatedID int64
+			require.NoError(st.DB().QueryRow(`SELECT id FROM attachments`).Scan(&updatedID))
+			assert.Equal(attachmentID, updatedID)
+			if tc.media == "sticker" {
+				assert.Equal(store.AttachmentRoleSticker, after[0].Role)
+				assert.Equal(store.AttachmentRoleSourceProviderExplicit, after[0].RoleSource)
+			}
+
+			summary = runImport(t, st, dir, storage)
+			assert.Zero(summary.AttachmentsStored)
+		})
+	}
+}
+
 func TestRerunAttachmentOrderKeepsOccurrences(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st, dir := testutil.NewTestStore(t), t.TempDir()
@@ -234,7 +283,9 @@ func TestRerunAttachmentOrderKeepsOccurrences(t *testing.T) {
 	changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type, display_order) VALUES (504, 200, 'image/jpeg', -2)`)
 	require.NoError(os.WriteFile(filepath.Join(dir, "Attachment_504_-1.bin"), []byte("photo bytes"), 0o600))
 	summary = runImport(t, st, dir, storage)
-	assert.Equal(int64(1), summary.AttachmentsStored)
+	// The new first occurrence refreshes the old key's dimensions, and the
+	// original photo now occupies a second key.
+	assert.Equal(int64(2), summary.AttachmentsStored)
 	assert.Equal(3, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
 	assert.Equal(2, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE content_hash = '2a6927613ddc903379f3e02145f22074ccf048c7753cfa1ed8ee26c746682997'`))
 	summary = runImport(t, st, dir, storage)

@@ -702,17 +702,17 @@ func (r *run) resolveReplies(ctx context.Context) error {
 	return nil
 }
 
-// prepareAttachments stores only source parts that are absent from the archive.
+// prepareAttachments stores new source parts and refreshes changed metadata.
 func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachments []sigAttachment) ([]store.AttachmentWrite, int64, int64, error) {
 	var writes []store.AttachmentWrite
-	archived := make(map[string]bool)
+	archived := make(map[string]store.AttachmentRef)
 	if archivedID != 0 {
 		refs, err := r.imp.store.MessageMIMEAttachmentsContext(ctx, archivedID)
 		if err != nil {
 			return nil, 0, 0, err
 		}
 		for _, ref := range refs {
-			archived[ref.SourcePartKey] = true
+			archived[ref.SourcePartKey] = ref
 		}
 	}
 	var found, missing int64
@@ -739,10 +739,11 @@ func (r *run) prepareAttachments(ctx context.Context, archivedID int64, attachme
 		}
 		key := fmt.Sprintf("signal:attachment:%s:%d", contentHash, occurrences[contentHash])
 		occurrences[contentHash]++
-		if archived[key] {
+		mediaType := attachmentMediaType(a)
+		if ref, ok := archived[key]; ok && ref.Filename == a.FileName && ref.MimeType == a.ContentType &&
+			ref.Width == a.Width && ref.Height == a.Height && ref.MediaType == mediaType {
 			continue
 		}
-		mediaType := attachmentMediaType(a)
 		role, roleSource := store.AttachmentRoleStandalone, store.AttachmentRoleSourceImporterSemantics
 		if mediaType == "sticker" {
 			role, roleSource = store.AttachmentRoleSticker, store.AttachmentRoleSourceProviderExplicit
