@@ -16,7 +16,7 @@
   {/each}
   {#if posix && cmd}
     {#if kind.id === 'imap'}<p>You'll be prompted for your password.</p>{/if}
-    {#if posix === cmd || (kind.id === 'mbox' && values.path?.trim().startsWith('~/'))}
+    {#if posix === cmd}
       <CommandLine command={posix} />
     {:else}
       <div class="terminal"><p>POSIX shell</p><CommandLine command={posix} /></div>
@@ -25,7 +25,7 @@
         <CommandLine command={cmd} />
       </div>
     {/if}
-    <p>Run this in a terminal where msgvault is installed. When it finishes, {kind.id === 'mbox' ? '' : 'run the printed first sync command, then '}reload Sources to see the new source.</p>
+    <p>Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.</p>
   {/if}
   <a href={kind.docs} target="_blank" rel="noreferrer">Learn more</a>
 </div>

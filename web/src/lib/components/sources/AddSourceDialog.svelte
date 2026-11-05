@@ -24,7 +24,7 @@
           </li>
         {/each}
       </ul>
-      <p>Slack, Teams, WhatsApp, meeting notes, calendars, and more: <a href="https://msgvault.io/docs/guides/sources/" target="_blank" rel="noreferrer">see every source</a></p>
+      <p>Slack, Teams, WhatsApp, MBOX imports, meeting notes, calendars, and more: <a href="https://msgvault.io/docs/guides/sources/" target="_blank" rel="noreferrer">see every source</a></p>
     </div>
   {/if}
 </Dialog>

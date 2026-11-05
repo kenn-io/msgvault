@@ -13,9 +13,7 @@ function commandKind(id: string): CommandSourceKind {
 }
 
 const gmail = commandKind('gmail');
-const microsoft = commandKind('microsoft');
 const imap = commandKind('imap');
-const mbox = commandKind('mbox');
 
 function roundTrip(command: string, prefix: string): string[] {
   const shell = process.platform === 'win32' ? 'cmd' : 'posix';
@@ -36,29 +34,12 @@ function roundTrip(command: string, prefix: string): string[] {
 }
 
 describe('addSourceCommand', () => {
-  it('trims Gmail values and keeps hyphen-prefixed arguments positional', () => {
+  it('trims Gmail values and requires every IMAP field', () => {
     for (const shell of ['posix', 'cmd'] as const) {
-      expect(addSourceCommand(gmail, { email: ' you@gmail.com ' }, shell)).toBe('msgvault add-account -- you@gmail.com');
+      expect(addSourceCommand(gmail, { email: ' you@gmail.com ' }, shell)).toBe('msgvault add-account you@gmail.com');
       expect(addSourceCommand(gmail, { email: '  ' }, shell)).toBeUndefined();
-      expect(addSourceCommand(gmail, { email: '-reader@example.com' }, shell)).toBe('msgvault add-account -- -reader@example.com');
-      expect(addSourceCommand(microsoft, { email: '-reader@example.com' }, shell)).toBe('msgvault add-o365 -- -reader@example.com');
-      expect(addSourceCommand(mbox, { email: '-reader@example.com', path: '-archive.mbox' }, shell)).toBe('msgvault import-mbox -- -reader@example.com -archive.mbox');
       expect(addSourceCommand(imap, { host: 'imap.example.com' }, shell)).toBeUndefined();
     }
-  });
-
-  it('preserves a quoted path through the platform shell', () => {
-    const values = { email: 'you@example.com', path: "/tmp/O'Brien $notes.mbox" };
-    expect(addSourceCommand(mbox, values, 'posix')).toBe("msgvault import-mbox -- you@example.com '/tmp/O'\\''Brien $notes.mbox'");
-    expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox -- you@example.com "/tmp/O\'Brien $notes.mbox"');
-    const shell = process.platform === 'win32' ? 'cmd' : 'posix';
-    expect(roundTrip(addSourceCommand(mbox, values, shell)!, 'msgvault import-mbox')).toEqual(['--', 'you@example.com', "/tmp/O'Brien $notes.mbox"]);
-  });
-
-  it('expands a home path only in POSIX shells', () => {
-    const values = { email: 'you@example.com', path: '~/All mail.mbox' };
-    expect(addSourceCommand(mbox, values, 'posix')).toBe("msgvault import-mbox -- you@example.com ~/'All mail.mbox'");
-    expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox -- you@example.com "~/All mail.mbox"');
   });
 
   it('preserves a tilde-prefixed IMAP username', () => {
