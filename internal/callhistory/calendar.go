@@ -1,11 +1,11 @@
 package callhistory
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"regexp"
 	"slices"
 	"strings"
-	"time"
 
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/meetingurl"
@@ -19,6 +19,7 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 		return Observation{}, invalid("calendar event; recurring masters require expanded instances")
 	}
 	var conference struct {
+		Start          jsontext.Value
 		ConferenceData struct {
 			EntryPoints []struct{ EntryPointType, URI string }
 		}
@@ -26,11 +27,9 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 	if err := json.Unmarshal(r.Record, &conference, json.MatchCaseInsensitiveNames(true)); err != nil {
 		return Observation{}, invalid("calendar conference data")
 	}
-	var start time.Time
+	start, ok := event.Start.Instant()
 	var precision string
-	if event.Status != "cancelled" || !event.Start.IsZero() {
-		var ok bool
-		start, ok = event.Start.Instant()
+	if event.Status != "cancelled" || len(conference.Start) != 0 {
 		if !ok {
 			return Observation{}, invalid("calendar start requires a date or RFC3339 offset")
 		}
@@ -40,7 +39,7 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 		}
 	}
 	o := Observation{
-		RecordID: event.ID, Sparse: event.Status == "cancelled" && event.Start.IsZero(),
+		RecordID: event.ID, Sparse: event.Status == "cancelled" && len(conference.Start) == 0,
 
 		Version: 1, Provider: "google_calendar", Account: r.Account, Kind: "scheduled_meeting",
 		Direction: unknown, Outcome: unknown, OwnerParticipation: unknown,
@@ -82,17 +81,17 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 	for _, entry := range conference.ConferenceData.EntryPoints {
 		if entry.EntryPointType == "phone" {
 			add("phone", entry.URI)
-		} else if join := meetingurl.KnownJoinURL(entry.URI); join != "" {
+		} else if join := meetingurl.KnownJoinURL(entry.URI, "cal.com"); join != "" {
 			add("url", join)
 		}
 	}
-	if join := meetingurl.KnownJoinURL(event.HangoutLink); join != "" {
+	if join := meetingurl.KnownJoinURL(event.HangoutLink, "cal.com"); join != "" {
 		add("url", join)
 	}
 	for _, link := range calendarLink.FindAllString(event.Description+" "+event.Location, -1) {
 		if strings.HasPrefix(link, "tel:") {
 			add("phone", link)
-		} else if join := meetingurl.KnownJoinURL(strings.TrimRight(link, ".,);]")); join != "" {
+		} else if join := meetingurl.KnownJoinURL(strings.TrimRight(link, ".,);]"), "cal.com"); join != "" {
 			add("url", join)
 		}
 	}

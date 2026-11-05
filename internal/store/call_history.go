@@ -102,7 +102,7 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 		before, nil, func([]int64) *MessagePersistData {
 			return &MessagePersistData{
 				Message: &Message{
-					SourceID: sourceID, SourceMessageID: o.RecordID, MessageType: callhistory.MessageType,
+					SourceID: sourceID, SourceMessageID: o.RecordID, MessageType: callhistory.MessageType, IsFromMe: o.Direction == "outgoing",
 					SentAt:  sql.NullTime{Time: o.OccurredAt, Valid: true},
 					Subject: sql.NullString{String: "Call evidence", Valid: true},
 				},
