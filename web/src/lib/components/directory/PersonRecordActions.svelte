@@ -27,7 +27,6 @@
   let renaming = $state(false);
   let renameValue = $state('');
   let confirmingDelete = $state(false);
-  const trackingDefinitions = $derived([...controller.definitions, ...(controller.attributes?.attributes ?? []).map(field => field.definition)]);
 
   function beginRename(): void {
     renameValue = controller.person?.display_name ?? '';
@@ -154,7 +153,7 @@
     maxHeight="min(720px, calc(100svh - 64px))"
     onclose={() => maintenance = undefined}
   >
-    <PersonTrackingControl {client} {personID} definitions={trackingDefinitions} {onAnnounce} />
+    <PersonTrackingControl {client} {personID} {onAnnounce} />
     {#snippet footer()}<Button label="Close" onclick={() => maintenance = undefined} />{/snippet}
   </Modal>
   </div>

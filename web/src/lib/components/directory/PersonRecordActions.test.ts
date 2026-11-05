@@ -1,5 +1,4 @@
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
-import { definition } from '../../directory/attribute-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -14,10 +13,10 @@ function person() {
   return { id: 7, revision: 3, display_name: 'Test User', participant_ids: [], vcard_uid: 'person-7', created_at: when, updated_at: when };
 }
 
-function renderActions(fetchFn: typeof fetch, personETag: string | null = '"person-7-r3"', initial: Partial<DirectoryReadBundle> = {}) {
+function renderActions(fetchFn: typeof fetch, personETag: string | null = '"person-7-r3"') {
   const bundle = {
     person: person(),
-    etags: { person: personETag ?? undefined }, errors: {}, ...initial
+    etags: { person: personETag ?? undefined }, errors: {}
   } satisfies DirectoryReadBundle;
   const client = createAPIClient(fetchFn);
   const controller = new DirectoryProfileController(client, 7, bundle);
@@ -46,37 +45,6 @@ describe('PersonRecordActions', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     resolveDefinitions(Response.json({ definitions: [] }));
-  });
-
-  it('opens with embedded labels when the registry is unavailable', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path.endsWith('/attribute-definitions')) return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 });
-      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
-      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
-    });
-    renderActions(fetchFn, '"person-7-r3"', {
-      attributes: { person_id: 7, attributes: [{ definition: definition({ slug: 'favorites_food', label: 'Favorite food', is_sensitive: false }), current: [], history: [] }] }
-    });
-    await choose('Keep this profile updated');
-    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
-    expect(await within(dialog).findByText('Favorite food')).toBeDefined();
-  });
-
-  it('prefers registry labels over embedded labels for the same definition', async () => {
-    renderActions(vi.fn<typeof fetch>(async input => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
-      if (new URL(request.url).pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
-      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
-    }), '"person-7-r3"', {
-      definitions: { definitions: [definition({ slug: 'favorites_food', label: 'Preferred food' })] },
-      attributes: { person_id: 7, attributes: [{ definition: definition({ slug: 'favorites_food', label: 'Favorite food' }), current: [], history: [] }] }
-    });
-    await choose('Keep this profile updated');
-    expect(await screen.findByText('Preferred food')).toBeDefined();
-    expect(screen.queryByText('Favorite food')).toBeNull();
   });
 
   it('renames the selected person with the current strong ETag', async () => {

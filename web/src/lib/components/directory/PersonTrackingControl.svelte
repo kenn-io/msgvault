@@ -12,11 +12,10 @@
   interface Props {
     client: APIClient;
     personID: number;
-    definitions?: AttributeDefinition[];
     onAnnounce?: (message: string) => void;
   }
 
-  let { client, personID, definitions = [], onAnnounce = () => undefined }: Props = $props();
+  let { client, personID, onAnnounce = () => undefined }: Props = $props();
   const controller = new PersonTrackingController(untrack(() => client));
   let root = $state<HTMLElement>();
   let catalogRetryIncludesSensitive = $state(false);
@@ -24,7 +23,7 @@
 
   onMount(() => {
     const abort = new AbortController();
-    void listAttributeDefinitions({ object_type: 'person', include_hidden: true }, { ...client, signal: abort.signal })
+    void listAttributeDefinitions({ object_type: 'person' }, { ...client, signal: abort.signal })
       .then(response => { if (!abort.signal.aborted && response.data) loadedDefinitions = response.data.definitions ?? []; })
       .catch(() => undefined);
     return () => abort.abort();
@@ -65,11 +64,8 @@
   }
 
   async function loadSensitiveCatalog(): Promise<void> {
-    const contextToken = controller.contextToken;
     catalogRetryIncludesSensitive = true;
     await controller.retryCatalog(true);
-    await tick();
-    if (controller.isContextCurrent(contextToken) && controller.catalogIncludesSensitive && root?.parentElement) root.parentElement.scrollTop = 0;
   }
 </script>
 
@@ -121,7 +117,7 @@
         {#each controller.targets as target}
           <li>
             <span class="value">
-              {target.kind === 'employment' ? 'Work history' : (loadedDefinitions.find((definition) => definition.slug === target.slug) ?? definitions.find((definition) => definition.slug === target.slug))?.label ?? sentenceCase(target.slug)}
+              {target.kind === 'employment' ? 'Work history' : loadedDefinitions.find((definition) => definition.slug === target.slug)?.label ?? sentenceCase(target.slug)}
               {#if target.kind === 'employment'}<small>Employer, title, and dates</small>{/if}
             </span>
             {#if target.sensitive}<span class="meta">Sensitive</span>{/if}

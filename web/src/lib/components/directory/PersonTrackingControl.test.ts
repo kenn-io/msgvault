@@ -1,4 +1,3 @@
-import { definition } from '../../directory/attribute-fixtures.test-support';
 import { requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
@@ -59,7 +58,7 @@ describe('PersonTrackingControl', () => {
     expect(document.body.innerHTML).not.toMatch(/forbidden\.example/i);
   });
 
-  it('uses supplied and asynchronously loaded labels, slug fallbacks, and a compact Work history row', async () => {
+  it('uses asynchronously loaded labels, slug fallbacks, and a compact Work history row', async () => {
     const definitions = deferredResponse();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;
@@ -68,15 +67,15 @@ describe('PersonTrackingControl', () => {
       const target = catalog(false).targets[0]!;
       return Response.json({ targets: [target, { ...target, slug: 'favorite_foods' }, { ...target, slug: 'conversation_topics' }, { ...target, kind: 'employment', slug: 'employment' }] });
     });
-    const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [definition({ slug: 'time_zone', label: 'Local time zone' })] });
-    expect(await screen.findByText('Local time zone')).toBeDefined();
+    const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    expect(await screen.findByText('Time zone')).toBeDefined();
     expect(screen.getByText('Favorite foods')).toBeDefined();
     expect(screen.getByText('Conversation topics')).toBeDefined();
     expect(screen.getByText('Work history')).toBeDefined();
     expect(screen.getByText('Employer, title, and dates')).toBeDefined();
     expect(screen.getByRole('switch', { name: 'Update automatically — On' })).toBeDefined();
     expect(document.querySelector('.tracked-time')).toBeNull();
-    definitions.resolve(Response.json({ definitions: [definition({ slug: 'conversation_topics', label: 'Conversation starters' })] }));
+    definitions.resolve(Response.json({ definitions: [{ slug: 'conversation_topics', label: 'Conversation starters' }] }));
     expect(await screen.findByText('Conversation starters')).toBeDefined();
 
     view.unmount();
