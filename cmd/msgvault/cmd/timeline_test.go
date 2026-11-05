@@ -116,6 +116,23 @@ func TestTimelineCommandRefusesOldDaemon(t *testing.T) {
 	assert.Zero(t, timelineCalls.Load())
 }
 
+func TestTimelineCommandAmbiguityExplainsHowToChoose(t *testing.T) {
+	old := timelineOpen
+	t.Cleanup(func() { timelineOpen = old })
+	fake := &timelineFakeClient{err: &timeline.ErrAmbiguousReference{Candidates: []timeline.Candidate{
+		{PersonID: 7, DisplayName: "Alice", Address: "alice@example.org"},
+		{PersonID: 8, DisplayName: "Alice", Address: "alice@example.com"},
+	}}}
+	timelineOpen = func(context.Context) (timelineClient, func(), error) { return fake, func() {}, nil }
+	var stderr bytes.Buffer
+	command := newTimelineCommand()
+	command.SilenceUsage = true
+	command.SetErr(&stderr)
+	command.SetArgs([]string{"--with", "alice"})
+	require.ErrorContains(t, command.Execute(), "more than one person matches; choose a match")
+	assert.Equal(t, "person:7\tAlice\talice@example.org\nperson:8\tAlice\talice@example.com\nError: more than one person matches; choose a match\n", stderr.String())
+}
+
 func TestTimelineRealTransportPreservesResponseAndFlagPresence(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -108,7 +108,7 @@ func (s *Store) LatestEligibleMessageContext(ctx context.Context, conversationID
 	args = append([]any{conversationID}, args...)
 	var id int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id JOIN activity_events ae ON ae.message_id=m.id
- WHERE m.conversation_id=? AND m.message_type<>'call_record' AND `+s.activityLiveEligibleSQL()+` AND `+FullActivityEventWhere("ae")+scope+`
+ WHERE m.conversation_id=? AND m.message_type<>'call_record' AND `+s.activityLiveEligibleSQL()+scope+`
  ORDER BY ae.occurred_at DESC,m.id DESC LIMIT 1`), args...).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil

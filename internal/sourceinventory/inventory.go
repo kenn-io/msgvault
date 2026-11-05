@@ -6,9 +6,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"net/url"
 	"slices"
 	"strings"
 
+	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
@@ -25,6 +27,7 @@ type configuredSource struct {
 	enabled                             bool
 	provider                            bool
 	accountURL                          string
+	username                            string
 	accountID                           int64
 	accountSourceIDs                    []int64
 }
@@ -162,7 +165,18 @@ func matches(source *store.Source, entry configuredSource) bool {
 	}
 	if entry.kind == "caldav" {
 		var identity [2]string
-		return json.Unmarshal([]byte(source.Identifier), &identity) == nil && identity[0] == entry.identifier
+		if json.Unmarshal([]byte(source.Identifier), &identity) != nil || identity[0] != entry.username {
+			return false
+		}
+		collection, err := url.Parse(identity[1])
+		if err != nil {
+			return false
+		}
+		account, err := url.Parse(entry.accountURL)
+		if err != nil {
+			return false
+		}
+		return carddav.CollectionURLIdentity(&url.URL{Scheme: collection.Scheme, Host: collection.Host}) == carddav.CollectionURLIdentity(&url.URL{Scheme: account.Scheme, Host: account.Host})
 	}
 	if entry.kind == "gcal" {
 		identifier := gcalmodel.NormalizeParticipantEmail(source.Identifier)
@@ -210,7 +224,8 @@ func configuration(cfg *config.Config) []configuredSource {
 		add("synctech_sms", s.OwnerPhone, s.Enabled, s.Schedule, "msgvault sync-synctech-sms "+shellArgument(s.Name))
 	}
 	for _, s := range cfg.CalDAV.Sources {
-		add("caldav", s.Name, true, "", "msgvault sync-caldav "+shellArgument(s.Name))
+		entries = append(entries, configuredSource{kind: "caldav", identifier: s.Name, enabled: true,
+			command: "msgvault sync-caldav " + shellArgument(s.Name), username: s.Username, accountURL: s.URL})
 	}
 	for _, s := range cfg.GCal {
 		name := s.Name

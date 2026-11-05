@@ -18,4 +18,6 @@ type ErrAmbiguousReference struct {
 	Candidates []Candidate `json:"candidates"`
 }
 
-func (e *ErrAmbiguousReference) Error() string { return "ambiguous_reference" }
+func (e *ErrAmbiguousReference) Error() string {
+	return "more than one person matches; choose a match"
+}
