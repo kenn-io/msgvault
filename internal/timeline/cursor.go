@@ -64,7 +64,6 @@ func SetContinuation(t *Timeline, c Continuation) {
 	c.SortKeys = copyMap(c.SortKeys)
 	c.Binding.SourceIDs = slices.Clone(c.Binding.SourceIDs)
 	c.Binding.Request.Tiers = slices.Clone(c.Binding.Request.Tiers)
-	c.Binding.Request.Scope.PersonIDs = slices.Clone(c.Binding.Request.Scope.PersonIDs)
 	c.Binding.Request.Scope.OpenTools = slices.Clone(c.Binding.Request.Scope.OpenTools)
 	t.continuation = &c
 }
@@ -157,7 +156,6 @@ func cursorHashes(b CursorBinding) (string, string, error) {
 		req.After = 5
 	}
 	req.Tiers = sortedSet(req.Tiers)
-	req.Scope.PersonIDs = sortedSet(req.Scope.PersonIDs)
 	req.Scope.OpenTools = sortedSet(req.Scope.OpenTools)
 	payload := struct {
 		SourceScoped      bool

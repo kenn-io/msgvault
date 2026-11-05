@@ -308,11 +308,12 @@ See [Timeline](timeline.md) for filters, freshness, and continuation.
 | `a` | Show activity around the selected entry |
 | `w` | Show the relationship with the entry's first person |
 | `n` | Load the next page when available |
+| `r` | Refresh from the first page, or retry a failed detail read |
 | `Enter` | Open the selected entry's details |
 | `Esc` | Return from details or to the previous timeline request |
 
 Day, relationship, anchor, and page shortcuts apply while the timeline list is
-visible. Use `j`/`k` to select an entry and `r` to refresh or retry.
+visible. Use `j`/`k` to select an entry.
 
 ## Keyboard Shortcuts
 

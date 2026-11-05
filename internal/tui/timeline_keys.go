@@ -77,8 +77,8 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	switch m.timelineState.reader {
 	case timelineReaderNone:
 		// List navigation continues below.
-	case timelineReaderCalendar:
-		return m.handleTimelineCalendarKey(msg)
+	case timelineReaderCalendar, timelineReaderNote:
+		return m.handleTimelineArchiveKey(msg)
 	case timelineReaderMessage:
 		// Horizontal navigation belongs to the parked Email/Text reader state.
 		if msg.String() == "h" || msg.String() == keyNameLeft || msg.String() == "l" || msg.String() == keyNameRight || msg.String() == "T" {
@@ -112,7 +112,9 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	}
 	switch msg.String() {
 	case "r":
-		return m.requestTimeline(m.timelineState.request, false)
+		req := m.timelineState.request
+		req.Cursor = ""
+		return m.requestTimeline(req, false)
 	case "n":
 		if result := m.timelineState.result; result != nil && result.Cursor != "" {
 			req := m.timelineState.request
@@ -220,6 +222,12 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 	var calendarRef string
 	for _, open := range entry.Open {
 		switch open.Tool {
+		case "get_daily_note":
+			date, _ := open.Args["date"].(string)
+			if id := timelineOpenID(open.Args["id"]); date != "" && id > 0 {
+				m.timelineState.noteDate, m.timelineState.note = date, nil
+				return m.openTimelineReader(timelineReaderNote, id)
+			}
 		case "get_calendar_event":
 			if ref, ok := open.Args["ref"].(string); ok && ref != "" {
 				calendarRef = ref
@@ -268,22 +276,32 @@ func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleTimelineCalendarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleTimelineArchiveKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	scroll := m.timelineState.calendarScroll
+	lines := m.timelineCalendarLines()
+	if m.timelineState.reader == timelineReaderNote {
+		scroll, lines = m.timelineState.noteScroll, m.timelineNoteLines()
+	}
 	switch msg.String() {
 	case "up", "k", keyNameCtrlP:
-		m.timelineState.calendarScroll--
+		scroll--
 	case keyNameDown, "j", keyNameCtrlN:
-		m.timelineState.calendarScroll++
+		scroll++
 	case keyNamePageUp, keyNameCtrlU:
-		m.timelineState.calendarScroll -= m.detailPageSize()
+		scroll -= m.detailPageSize()
 	case keyNamePageDown, keyNameCtrlD:
-		m.timelineState.calendarScroll += m.detailPageSize()
+		scroll += m.detailPageSize()
 	case keyNameHome:
-		m.timelineState.calendarScroll = 0
+		scroll = 0
 	case keyNameEnd, "G":
-		m.timelineState.calendarScroll = len(m.timelineCalendarLines())
+		scroll = len(lines)
 	}
-	m.timelineState.calendarScroll = min(max(m.timelineState.calendarScroll, 0), max(len(m.timelineCalendarLines())-m.detailPageSize(), 0))
+	scroll = min(max(scroll, 0), max(len(lines)-m.detailPageSize(), 0))
+	if m.timelineState.reader == timelineReaderNote {
+		m.timelineState.noteScroll = scroll
+	} else {
+		m.timelineState.calendarScroll = scroll
+	}
 	return m, nil
 }
 

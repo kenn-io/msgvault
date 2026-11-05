@@ -23,7 +23,6 @@ type Request struct {
 }
 type Scope struct {
 	Owner     bool
-	PersonIDs []int64  // already authorized via AllowsPerson by the API; nil for owner
 	OpenTools []string // MCP tools the caller may call; nil for owner = all
 }
 type Timeline struct {

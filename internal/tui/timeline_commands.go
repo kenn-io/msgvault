@@ -21,6 +21,7 @@ type timelineLoadedMsg struct {
 type timelineReaderLoadedMsg struct {
 	detail                *query.MessageDetail
 	calendar              *store.CalendarOccurrenceDetail
+	note                  *store.DailyNoteEntry
 	messages              []query.MessageSummary
 	truncated             bool
 	err                   error
@@ -98,9 +99,15 @@ func (m *Model) loadTimelineReader(reader timelineReader, id int64) tea.Cmd {
 	requestID, generation := m.timelineState.requestID, m.presentationGeneration
 	engine, limit := m.engine, m.threadMessageLimit
 	backend, ref := m.timelineBackend, m.timelineState.calendarRef
+	date := m.timelineState.noteDate
 	return safeCmdWithPanic(func() tea.Msg {
 		msg := timelineReaderLoadedMsg{requestID: requestID, generation: generation}
 		switch reader {
+		case timelineReaderNote:
+			msg.note, msg.err = backend.GetDailyNoteContext(ctx, date, id)
+			if msg.err == nil && (msg.note == nil || msg.note.ID != id || msg.note.LocalDate != date) {
+				msg.err = errors.New("daily note reader: empty or mismatched entry")
+			}
 		case timelineReaderCalendar:
 			detail, err := backend.GetCalendarOccurrenceContext(ctx, ref)
 			msg.err = err
@@ -146,6 +153,9 @@ func (m Model) handleTimelineReaderLoaded(msg timelineReaderLoadedMsg) (tea.Mode
 	switch m.timelineState.reader {
 	case timelineReaderNone:
 		return m, nil
+	case timelineReaderNote:
+		m.timelineState.note = msg.note
+		m.timelineState.noteScroll = 0
 	case timelineReaderCalendar:
 		m.timelineState.calendar = msg.calendar
 		m.timelineState.calendarScroll = 0
@@ -169,6 +179,11 @@ func (m *Model) activateTimeline() tea.Cmd {
 		switch m.timelineState.reader {
 		case timelineReaderNone:
 			return nil
+		case timelineReaderNote:
+			if m.timelineState.note != nil {
+				m.loading = false
+				return nil
+			}
 		case timelineReaderCalendar:
 			if m.timelineState.calendar != nil {
 				m.loading = false

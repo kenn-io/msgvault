@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/timeline"
@@ -107,6 +109,9 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 	_, err = projector.RunOnce(t.Context())
 	requirements.NoError(err)
 	calendarIDs, _ := testutil.CalendarArchive(t, f.Store)
+	noteBody := strings.Repeat("Synthetic daily note line. ", 1000) + "Full daily note ends here."
+	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2027-03-01", Body: noteBody, Author: "owner"})
+	requirements.NoError(err)
 	cfg := config.NewDefaultConfig()
 	cfg.Server.APIKey = "synthetic-owner"
 	cfg.Server.AgentAccess = true
@@ -148,12 +153,15 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 			requirements.NoError(json.Unmarshal(wire, &got))
 			var opened []string
 			for _, day := range got.Days {
-				for _, entries := range [][]timeline.Entry{day.Bursts, day.Meetings, day.Calls} {
+				for _, entries := range [][]timeline.Entry{day.Bursts, day.Meetings, day.Calls, day.Notes} {
 					for _, entry := range entries {
 						for _, open := range entry.Open {
 							call := rawCallTool(t, opts, open.Tool, open.Args)
 							assertions.NotEqual(true, call["isError"], fmt.Sprint(call))
 							opened = append(opened, open.Tool)
+							if open.Tool == ToolGetDailyNote {
+								assert.Contains(t, fmt.Sprint(call["structuredContent"]), "Full daily note ends here.")
+							}
 						}
 					}
 				}
@@ -161,6 +169,11 @@ func TestTimelineOpenTargetsCallableByCaller(t *testing.T) {
 			assertions.Contains(opened, "get_message")
 			assertions.Contains(opened, "list_messages")
 			assertions.Contains(opened, "get_calendar_event")
+			if delegated {
+				assertions.NotContains(opened, ToolGetDailyNote)
+			} else {
+				assertions.Contains(opened, ToolGetDailyNote)
+			}
 		})
 	}
 }
@@ -179,4 +192,20 @@ func TestTimelineToolPreservesNeighborPresence(t *testing.T) {
 		assertions.Zero(backend.req.Before)
 		assertions.Zero(backend.req.After)
 	}
+}
+
+func TestTimelineRejectsExplicitZeroDaysAndBudget(t *testing.T) {
+	for _, name := range []string{"days", "budget"} {
+		t.Run(name, func(t *testing.T) {
+			backend := &timelineTestBackend{}
+			h := &handlers{timelineBackend: backend}
+			got := callToolDirect(t, ToolTimeline, h.timeline, map[string]any{name: 0})
+			assert.True(t, got.isError)
+			assert.Empty(t, backend.req.Format, "invalid input must fail before calling the backend")
+		})
+	}
+}
+
+func (f *timelineTestBackend) GetDailyNoteContext(context.Context, string, int64) (*store.DailyNoteEntry, error) {
+	return nil, f.err
 }

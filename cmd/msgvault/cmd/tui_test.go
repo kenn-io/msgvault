@@ -1,13 +1,16 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -414,4 +417,22 @@ func TestTUITimelineBackendRequiresTimelineSchema(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestTUITimelineProbeFailureIsLogged(t *testing.T) {
+	assertions := assert.New(t)
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "schema probe unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	client, err := daemonclient.New(daemonclient.Config{URL: srv.URL, AllowInsecure: true})
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, client.Close()) })
+	assertions.Nil(tuiTimelineBackend(t.Context(), client))
+	assertions.Contains(strings.ToLower(output.String()), "timeline")
+	assertions.Contains(output.String(), "503")
 }

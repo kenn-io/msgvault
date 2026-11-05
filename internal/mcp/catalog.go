@@ -245,6 +245,7 @@ func buildOperationCatalog(capabilities catalogCapabilities) []toolDefinition {
 func operationDefinitions(capabilities catalogCapabilities) []toolDefinition {
 	definitions := []toolDefinition{
 		timelineDefinition(),
+		dailyNoteDefinition(),
 		listCalendarEventsDefinition(),
 		getCalendarEventDefinition(),
 		aggregateDefinition(nil),

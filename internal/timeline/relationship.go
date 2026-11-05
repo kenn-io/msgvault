@@ -20,21 +20,14 @@ func (c *composer) resolvePerson() (store.PersonCandidate, error) {
 	} else if strings.HasPrefix(value, "+") {
 		kind = "phone"
 	}
-	allowed := c.req.Scope.PersonIDs
-	if c.req.Scope.Owner {
-		allowed = nil
-	} else if allowed == nil {
-		allowed = []int64{}
-	}
 	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.PersonCandidate, error) {
-		return c.src.People.ResolvePersonReferenceContext(ctx, store.PersonRefKind(kind), value, allowed, 11)
+		return c.src.People.ResolvePersonReferenceContext(ctx, store.PersonRefKind(kind), value, nil, 11)
 	})
 	if r.err != nil {
 		if errors.Is(r.err, store.ErrInvalidActivityRequest) {
 			return store.PersonCandidate{}, fmt.Errorf("%w: %w", ErrInvalidRequest, r.err)
 		}
-		c.gap("person", r.err, false)
-		return store.PersonCandidate{}, nil // Source failures belong in gaps; only invalid requests return errors.
+		return store.PersonCandidate{}, fmt.Errorf("resolve timeline person: %w", r.err)
 	}
 	if len(r.value) == 0 {
 		return store.PersonCandidate{}, ErrUnknownReference
@@ -251,18 +244,12 @@ func monthlyAt(at, now time.Time, loc *time.Location) [12]int {
 	}
 	return monthly
 }
-func mergeTime(dst **time.Time, src *time.Time, first bool) {
-	if src != nil && (*dst == nil || first && src.Before(**dst) || !first && src.After(**dst)) {
-		at := src.UTC()
-		*dst = &at
-	}
-}
 func (c *composer) mergeContact(a store.ContactAggregate, call bool) {
 	h := c.t.Person
-	mergeTime(&h.FirstAt, a.FirstAt, true)
-	mergeTime(&h.LastAt, a.LastAt, false)
-	mergeTime(&h.LastInboundAt, a.LastInboundAt, false)
-	mergeTime(&h.LastOutboundAt, a.LastOutboundAt, false)
+	store.MergeActivityTime(&h.FirstAt, a.FirstAt, true)
+	store.MergeActivityTime(&h.LastAt, a.LastAt, false)
+	store.MergeActivityTime(&h.LastInboundAt, a.LastInboundAt, false)
+	store.MergeActivityTime(&h.LastOutboundAt, a.LastOutboundAt, false)
 	h.InteractionCount += a.Count
 	if call {
 		if a.Count > 0 {

@@ -110,10 +110,10 @@ func (s *Store) messageContactAggregateContext(ctx context.Context, q ContactQue
 			_ = rows.Close()
 			return result, fmt.Errorf("scan message contact: %w", err)
 		}
-		mergeActivityTime(&result.FirstAt, nullableTimePointer(first), true)
-		mergeActivityTime(&result.LastAt, nullableTimePointer(last), false)
-		mergeActivityTime(&result.LastInboundAt, nullableTimePointer(in), false)
-		mergeActivityTime(&result.LastOutboundAt, nullableTimePointer(out), false)
+		MergeActivityTime(&result.FirstAt, nullableTimePointer(first), true)
+		MergeActivityTime(&result.LastAt, nullableTimePointer(last), false)
+		MergeActivityTime(&result.LastInboundAt, nullableTimePointer(in), false)
+		MergeActivityTime(&result.LastOutboundAt, nullableTimePointer(out), false)
 		result.Count += count
 		result.InitiatedByContact += contact
 		result.InitiatedByOwner += owner
@@ -142,7 +142,8 @@ func (s *Store) messageContactAggregateContext(ctx context.Context, q ContactQue
 	return result, nil
 }
 
-func mergeActivityTime(target **time.Time, value *time.Time, earliest bool) {
+// MergeActivityTime keeps the earliest or latest contact timestamp.
+func MergeActivityTime(target **time.Time, value *time.Time, earliest bool) {
 	if value == nil {
 		return
 	}

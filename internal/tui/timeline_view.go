@@ -29,6 +29,8 @@ func (m Model) renderTimelineView() string {
 	title := m.styles.titleBar.Render(padRight("msgvault [Timeline]", max(m.width-2, 0)))
 	var body string
 	switch m.timelineState.reader {
+	case timelineReaderNote:
+		body = m.timelineNoteView()
 	case timelineReaderCalendar:
 		body = m.timelineCalendarView()
 	case timelineReaderMessage:
@@ -73,7 +75,7 @@ func (m Model) renderTimelineView() string {
 		m.modal = modal
 		body = m.overlayModal(body)
 	}
-	footer := "j/k move · [/] day · a around · w person · Enter open · Esc back · m mode · ? help"
+	footer := "r refresh · j/k move · [/] day · a around · w person · Enter open · Esc back · m mode · ? help"
 	if m.timelineState.reader != timelineReaderNone {
 		footer = "j/k scroll · PgUp/PgDn · Home/End · Esc back · m mode · ? help"
 		if m.timelineState.err != nil {
@@ -96,7 +98,7 @@ var timelineHelpLines = []string{
 	"Timeline", "", "j/k, arrows       Select an entry", "PgUp/PgDn         Scroll", "[ / ]             Previous / next archive day",
 	"a                 Around the highlighted entry", "w                 Relationship with its first person",
 	"Enter             Open details", "Esc               Back to the timeline / previous request",
-	"n                 Next page (when available)", "r                 Retry / refresh", "m                 Switch content mode", "?                 Help", "q / ctrl+c        Quit",
+	"n                 Next page (when available)", "r                 Refresh from first page / retry detail", "m                 Switch content mode", "?                 Help", "q / ctrl+c        Quit",
 }
 
 func (m Model) timelineCalendarLines() []string {
@@ -151,6 +153,32 @@ func (m Model) timelineCalendarView() string {
 	}
 	size := m.detailPageSize()
 	start := min(max(m.timelineState.calendarScroll, 0), max(len(lines)-size, 0))
+	end := min(start+size, len(lines))
+	return m.fillScreenWithPageSize(strings.Join(lines[start:end], "\n"), end-start, size)
+}
+
+func (m Model) timelineNoteLines() []string {
+	note := m.timelineState.note
+	if note == nil {
+		return nil
+	}
+	lines := []string{note.LocalDate, ""}
+	for line := range strings.SplitSeq(textutil.SanitizeTerminal(note.Body), "\n") {
+		lines = append(lines, wrapText(line, max(m.width-2, 1))...)
+	}
+	return lines
+}
+
+func (m Model) timelineNoteView() string {
+	lines := m.timelineNoteLines()
+	if lines == nil {
+		if m.timelineState.loading {
+			return m.fillScreenDetail("Loading daily note…")
+		}
+		return m.fillScreenDetail("Could not load daily note.")
+	}
+	size := m.detailPageSize()
+	start := min(max(m.timelineState.noteScroll, 0), max(len(lines)-size, 0))
 	end := min(start+size, len(lines))
 	return m.fillScreenWithPageSize(strings.Join(lines[start:end], "\n"), end-start, size)
 }

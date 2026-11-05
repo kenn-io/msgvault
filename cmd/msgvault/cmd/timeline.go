@@ -112,8 +112,11 @@ func newTimelineCommand() *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("encode timeline: %w", err)
 		}
-		_, err = cmd.OutOrStdout().Write(data)
-		return err
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(data))
+		if err != nil {
+			return fmt.Errorf("write timeline: %w", err)
+		}
+		return nil
 	}
 	return command
 }

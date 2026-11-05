@@ -21,7 +21,7 @@ import (
 func TestDelegatedResponseIgnoresHiddenSourceAndNativeCalls(t *testing.T) {
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
-	p := f.savePerson()
+	f.savePerson()
 	id := f.add(f.now, false)
 	f.calendar("event", singleDayEvent)
 	calendar, err := f.Store.GetOrCreateSource("gcal", "calendar@example.com")
@@ -35,14 +35,14 @@ func TestDelegatedResponseIgnoresHiddenSourceAndNativeCalls(t *testing.T) {
 	requirements.NoError(err)
 	f.project()
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID, calendar.ID, callDisplay[baselineCall].SourceID})
-	requests := []Request{dayRequest(), relationshipRequest(fmt.Sprintf("person:%d", p)), anchorRequest(messageRef(id)), anchorRequest(fmt.Sprintf("conv:%d", f.ConvID))}
+	requests := []Request{dayRequest(), anchorRequest(messageRef(id)), anchorRequest(fmt.Sprintf("conv:%d", f.ConvID))}
 	for _, req := range append([]Request(nil), requests...) {
 		req.IncludeNoise = true
 		requests = append(requests, req)
 	}
 	before := [][]byte{}
 	for i := range requests {
-		requests[i].Scope = Scope{PersonIDs: []int64{p}, OpenTools: []string{"get_message"}}
+		requests[i].Scope = Scope{OpenTools: []string{"get_message"}}
 		src := f.src
 		if requests[i].Around != "" {
 			src = snapshotAnchorBurstReads(ctx, t, src, requests[i], id)
@@ -153,7 +153,7 @@ func TestDelegatedOmitsOwnerOnlySectionsWithoutQuerying(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
-	p := f.savePerson()
+	f.savePerson()
 	id := f.add(f.now, false)
 	f.calendar("event", singleDayEvent)
 	f.project()
@@ -168,8 +168,8 @@ func TestDelegatedOmitsOwnerOnlySectionsWithoutQuerying(t *testing.T) {
 	f.src.Activity = deniedCadence{f.src.Activity, &hits}
 	f.src.Meetings = deniedSuggestions{f.src.Meetings, &hits}
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID, calendar.ID})
-	for _, req := range []Request{dayRequest(), relationshipRequest(fmt.Sprintf("person:%d", p)), anchorRequest(messageRef(id))} {
-		req.Scope = Scope{PersonIDs: []int64{p}}
+	for _, req := range []Request{dayRequest(), anchorRequest(messageRef(id))} {
+		req.Scope = Scope{}
 		got, e := Build(ctx, f.src, req)
 		requirements.NoError(e)
 		assertions.Nil(got.OpenLoops)
@@ -229,7 +229,7 @@ func TestDelegatedRequiresExplicitNonemptySourceScope(t *testing.T) {
 	f.project()
 	for _, ctx := range []context.Context{t.Context(), sourcescope.WithSourceIDs(t.Context(), []int64{})} {
 		for _, req := range []Request{dayRequest(), relationshipRequest(fmt.Sprintf("person:%d", p)), anchorRequest(messageRef(id))} {
-			req.Scope = Scope{PersonIDs: []int64{p}}
+			req.Scope = Scope{}
 			_, err := Build(ctx, f.src, req)
 			assert.ErrorIs(t, err, ErrInvalidRequest)
 		}

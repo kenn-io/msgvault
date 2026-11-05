@@ -34,12 +34,10 @@ func TestCursorRoundTrip(t *testing.T) {
 	// Canonicalize unordered set-valued filters without changing the request.
 	b.Request.Tiers = []int{2, 1, 2}
 	b.Request.Scope.OpenTools = []string{"b", "a"}
-	b.Request.Scope.PersonIDs = []int64{8, 7}
 	encoded, err = EncodeCursor(b, nil)
 	requirements.NoError(err)
 	b.Request.Tiers = []int{1, 2}
 	b.Request.Scope.OpenTools = []string{"a", "b"}
-	b.Request.Scope.PersonIDs = []int64{7, 8}
 	_, err = DecodeCursor(encoded, b)
 	requirements.NoError(err)
 }
@@ -86,7 +84,7 @@ func TestCursorRejectsChangedScope(t *testing.T) {
 		change  func(*CursorBinding)
 	}{
 		{"scope", nil, func(b *CursorBinding) {
-			b.Request.Scope = Scope{PersonIDs: []int64{7}, OpenTools: []string{"get_message"}}
+			b.Request.Scope = Scope{OpenTools: []string{"get_message"}}
 		}},
 		{"format", nil, func(b *CursorBinding) { b.Request.Format = "markdown" }},
 		{"archive", nil, func(b *CursorBinding) { b.ArchiveUID = "other-archive" }},

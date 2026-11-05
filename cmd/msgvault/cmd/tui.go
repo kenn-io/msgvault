@@ -421,7 +421,11 @@ func tuiTimelineBackend(ctx context.Context, client *daemonclient.Client) tui.Ti
 		return nil
 	}
 	compatible, err := client.SupportsAPISchemaVersion(ctx, timelineMinAPISchemaVersion)
-	if err != nil || !compatible {
+	if err != nil {
+		slog.Warn("Timeline capability probe failed", "error", err)
+		return nil
+	}
+	if !compatible {
 		return nil
 	}
 	return client

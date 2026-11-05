@@ -10,6 +10,7 @@ import (
 
 // TimelineBackend reads the selected daemon's timeline and archived event details.
 type TimelineBackend interface {
+	GetDailyNoteContext(ctx context.Context, date string, id int64) (*store.DailyNoteEntry, error)
 	Timeline(ctx context.Context, req timeline.Request) (*timeline.Timeline, string, error)
 	GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error)
 }
@@ -22,6 +23,7 @@ const (
 	timelineReaderThread
 	timelineReaderMeeting
 	timelineReaderCalendar
+	timelineReaderNote
 )
 
 type timelineSelectableEntry struct {
@@ -58,6 +60,9 @@ type timelineState struct {
 	calendarRef                string
 	calendar                   *store.CalendarOccurrenceDetail
 	calendarScroll             int
+	noteDate                   string
+	note                       *store.DailyNoteEntry
+	noteScroll                 int
 }
 
 func (m *Model) cancelTimelineRequest() {

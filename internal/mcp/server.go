@@ -39,6 +39,7 @@ const (
 	ToolDraftRecover              = "draft_recover"
 	ToolDraftSendAs               = "draft_send_as"
 	ToolTimeline                  = "timeline"
+	ToolGetDailyNote              = "get_daily_note"
 	ToolSearchMessages            = "search_messages"
 	ToolQuerySQL                  = "query_sql"
 	ToolSearchMetadata            = "search_metadata"

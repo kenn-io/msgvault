@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,7 @@ type timelineModeBackend struct {
 	requests []timeline.Request
 	contexts []context.Context
 	result   *timeline.Timeline
+	note     *store.DailyNoteEntry
 }
 
 func (b *timelineModeBackend) Timeline(ctx context.Context, req timeline.Request) (*timeline.Timeline, string, error) {
@@ -749,4 +751,57 @@ func TestTimelineRelationshipKeySkipsUnresolvedPeople(t *testing.T) {
 		}
 		assert.Equal(t, want, updated.timelineState.request.With)
 	}
+}
+
+func TestTimelineRefreshAfterNextPageRestartsFirstPage(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		t.Run(strconv.FormatBool(failed), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			m := timelineModeModel()
+			original := m.timelineState.request
+			m.timelineState.result.Cursor = "opaque-next-page"
+			backend, ok := m.timelineBackend.(*timelineModeBackend)
+			requirements.True(ok)
+			next, cmd := sendKey(t, m, key('n'))
+			requirements.NotNil(cmd)
+			msg, ok := cmd().(timelineLoadedMsg)
+			requirements.True(ok)
+			if failed {
+				msg.err = timeline.ErrCursorExpired
+			}
+			next = sendMsg(t, next, msg)
+			refreshed, cmd := sendKey(t, next, key('r'))
+			requirements.NotNil(cmd)
+			refreshed = sendMsg(t, refreshed, cmd())
+			requirements.Len(backend.requests, 2)
+			assertions.Empty(backend.requests[1].Cursor)
+			assertions.Equal(original.Date, backend.requests[1].Date)
+			assertions.Equal(original.Mode, backend.requests[1].Mode)
+			assertions.Empty(refreshed.timelineState.request.Cursor)
+		})
+	}
+}
+
+func TestTimelineDailyNoteOpensDetail(t *testing.T) {
+	assertions := assert.New(t)
+	m := timelineModeModel()
+	backend, ok := m.timelineBackend.(*timelineModeBackend)
+	require.True(t, ok)
+	backend.note = &store.DailyNoteEntry{ID: 7, LocalDate: "2027-03-14", Body: strings.Repeat("Full note line\n", 50) + "Final note line"}
+	m.timelineState.result.Days[0].Bursts = nil
+	m.timelineState.result.Days[0].Notes = []timeline.Entry{{Kind: "note", Key: "note:7", Ref: "2027-03-14", Note: &timeline.NoteEntry{Text: timeline.UntrustedText{Text: "Short preview", Truncated: true}}, Open: []timeline.Open{{Tool: "get_daily_note", Args: map[string]any{"date": "2027-03-14", "id": jsontext.Value("7")}}}}}
+	m.rebuildTimelineRows()
+	opened, cmd := sendKey(t, m, keyEnter())
+	require.NotNil(t, cmd)
+	opened = sendMsg(t, opened, cmd())
+	assertions.Contains(strings.Join(opened.timelineNoteLines(), "\n"), "Final note line")
+	end, _ := sendKey(t, opened, key('G'))
+	assertions.Contains(stripANSI(end.renderView()), "Final note line")
+	back, _ := sendKey(t, end, keyEsc())
+	assertions.Equal(timelineReaderNone, back.timelineState.reader)
+}
+
+func (b *timelineModeBackend) GetDailyNoteContext(context.Context, string, int64) (*store.DailyNoteEntry, error) {
+	return b.note, nil
 }

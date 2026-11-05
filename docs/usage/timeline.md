@@ -7,7 +7,7 @@ The timeline is unreleased. It combines archived messages, meetings, calls,
 open loops, and notes.
 It reads the archive through the daemon and shows where a source is missing or
 out of date. Start here to find activity, then follow an entry's `open` targets
-to read its details.
+to read its details. The `get_daily_note` tool opens an authored note in full.
 
 ```bash
 msgvault timeline
@@ -50,7 +50,7 @@ Markdown is the default. JSON returns the same timeline envelope with entries,
 gaps, freshness, omission counts, and `open` targets. The byte budget
 applies to the final UTF-8 encoding, including JSON escaping: 16384 bytes by
 default, 6144 with `--brief`, and 2048 through 65536 with `--budget`.
-JSON output stays compact and adds no newline beyond that budget. Pass an
+JSON output stays compact. The CLI appends a newline after the budgeted payload. Pass an
 emitted `cursor` back with the same filters and format to continue. A different
 archive, request, or authorization scope can invalidate continuation; retry the
 original request when `cursor_expired` is returned.

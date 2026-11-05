@@ -241,6 +241,16 @@ func anchorMatches(e Entry, target anchorTarget) bool {
 	return false
 }
 func (c *composer) anchorFallback(target anchorTarget) Entry {
+	if target.occurrence != nil {
+		cc := *c
+		cc.req.Tiers = nil
+		entries, _ := cc.mergeEntries(nil, nil, []store.CalendarOccurrence{*target.occurrence}, nil, nil)
+		if len(entries) > 0 {
+			entry := entries[0]
+			entry.Anchor, entry.Filtered = true, true
+			return entry
+		}
+	}
 	d := target.display
 	ref := messageRef(target.messageID)
 	snippet := displaySnippet(d)
@@ -287,7 +297,7 @@ func (c *composer) buildAnchor(target anchorTarget) {
 			found = true
 		}
 	}
-	if !found && target.messageID > 0 {
+	if !found && (target.messageID > 0 || target.occurrence != nil) {
 		c.t.Anchor.Filtered = true
 		entries = append(entries, c.anchorFallback(target))
 	}

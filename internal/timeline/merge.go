@@ -187,7 +187,8 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		linked := []int64{}
-		hidden := display[o.MessageID].HiddenText
+		d, present := display[o.MessageID]
+		hidden := !present || d.HiddenText
 		count := 0
 		for _, id := range info.LinkedTranscriptIDs {
 			if d, ok := display[id]; ok {
@@ -304,7 +305,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 			continue
 		}
 		at, _ := time.ParseInLocation(time.DateOnly, note.LocalDate, c.loc)
-		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: []Open{}, Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
+		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: c.open("get_daily_note", map[string]any{"date": note.LocalDate, "id": note.ID}), Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
 		c.entryDates[e.Key] = note.LocalDate
 		entries = append(entries, e)
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/calrecur"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 var fullRefPattern = regexp.MustCompile(`^(msg|conv|evt):([1-9][0-9]*)(?:@([0-9TZ]+))?$`)
@@ -78,12 +78,14 @@ func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 		if err != nil {
 			return a, fmt.Errorf("%w: invalid ID", ErrUnknownReference)
 		}
+		if m[1] == "evt" {
+			if _, err := store.ParseMeetingIdentityRef(s); err != nil {
+				return a, ErrUnknownReference
+			}
+		}
 		a.ID = id
 		if m[3] != "" {
 			if m[1] != "evt" {
-				return a, ErrUnknownReference
-			}
-			if _, ok := calrecur.ParseKey(m[3]); !ok {
 				return a, ErrUnknownReference
 			}
 		}

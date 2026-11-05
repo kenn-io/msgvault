@@ -271,7 +271,7 @@ func staticSource(kind string) bool {
 	return slices.Contains([]string{
 		"apple-mail", "mbox", "pst", "eml", "maildir", "hey", "google-groups", "google_voice",
 		"facebook_messenger", "imazing_csv", "slackdump", "synctech-sms",
-		"ics", "whatsapp", "apple_messages", "google_messages", "imessage", "meeting_import",
+		"call_history", "ics", "whatsapp", "apple_messages", "google_messages", "imessage", "meeting_import",
 	}, kind)
 }
 
