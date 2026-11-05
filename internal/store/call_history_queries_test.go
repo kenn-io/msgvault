@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"database/sql"
 	"strconv"
 	"testing"
 	"time"
@@ -12,6 +13,42 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestCallReadersExcludeUndatedLegacyCalls(t *testing.T) {
+	f := storetest.New(t)
+	peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Example", "google_voice")
+	require.NoError(t, err)
+	person, _, err := f.Store.CreatePersonFromParticipant(peer)
+	require.NoError(t, err)
+	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	var datedID int64
+	for _, dated := range []bool{false, true} {
+		message := f.NewMessage().Build()
+		message.MessageType = store.MessageTypeGoogleVoiceCall
+		message.SentAt = sql.NullTime{Time: at, Valid: dated}
+		id, err := f.Store.UpsertMessage(message)
+		require.NoError(t, err)
+		require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{peer}, nil))
+		require.NoError(t, f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
+		if dated {
+			datedID = id
+		}
+	}
+	t.Run("list", func(t *testing.T) {
+		items, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{})
+		require.NoError(t, err)
+		require.Len(t, items, 1)
+		assert.Equal(t, datedID, items[0].MessageID)
+		assert.True(t, at.Equal(items[0].OccurredAt))
+	})
+	t.Run("summary", func(t *testing.T) {
+		summary, err := f.Store.SummarizeCallsContext(t.Context(), store.CallQuery{})
+		require.NoError(t, err)
+		require.Len(t, summary, 1)
+		assert.Equal(t, person.ID, summary[0].PersonID)
+		assert.Equal(t, 1, summary[0].Answered)
+	})
+}
 
 func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
 	assertions := assert.New(t)
