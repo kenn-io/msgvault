@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	Assert "github.com/stretchr/testify/assert" //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/store"
@@ -33,7 +33,7 @@ func (b *policyMCPBackend) ClearDeliveryPolicy(_ context.Context, write store.De
 }
 
 func TestDeliveryPolicyMCPSeparateOptInAndDelegation(t *testing.T) {
-	assertions := assert.New(t)
+	assertions := Assert.New(t)
 
 	backend := &policyMCPBackend{}
 	opts := ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: backend}
@@ -53,7 +53,7 @@ func TestDeliveryPolicyMCPSeparateOptInAndDelegation(t *testing.T) {
 }
 
 func TestDeliveryPolicyMCPWriteNeedsConfirmation(t *testing.T) {
-	assertions := assert.New(t)
+	assertions := Assert.New(t)
 	requirements := require.New(t)
 
 	backend := &policyMCPBackend{}
@@ -79,15 +79,18 @@ func TestDeliveryPolicyMCPConfirmationPrompt(t *testing.T) {
 		{ToolClearDeliveryPolicy, "Clear delivery policy: "},
 	} {
 		t.Run(test.tool, func(t *testing.T) {
+			assert := Assert.New(t)
+			require := require.New(t)
+
 			backend := &policyMCPBackend{}
 			opts := ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: backend, AllowDeliveryPolicyWrites: true}
 			args := map[string]any{"person_uid": "synthetic-uid", "endpoint": "alice@example.test", "expected_revision": 3, "policy": "send_allowed", "scope_acknowledgement": "person_all_routes", "reason": "Explicit synthetic approval"}
 			var prompt string
 			confirmedCallTool(t, opts, test.tool, args, false, func(message string) { prompt = message })
-			require.True(t, strings.HasPrefix(prompt, test.prefix), "prompt: %s", prompt)
-			require.True(t, strings.HasSuffix(prompt, ". No message will be sent."), "prompt: %s", prompt)
-			assert.JSONEq(t, `{"person_uid":"synthetic-uid","endpoint":"alice@example.test","expected_revision":3,"policy":"send_allowed","scope_acknowledgement":"person_all_routes","reason":"Explicit synthetic approval"}`, strings.TrimSuffix(strings.TrimPrefix(prompt, test.prefix), ". No message will be sent."))
-			assert.Zero(t, backend.writes)
+			require.True(strings.HasPrefix(prompt, test.prefix), "prompt: %s", prompt)
+			require.True(strings.HasSuffix(prompt, ". No message will be sent."), "prompt: %s", prompt)
+			assert.JSONEq(`{"person_uid":"synthetic-uid","endpoint":"alice@example.test","expected_revision":3,"policy":"send_allowed","scope_acknowledgement":"person_all_routes","reason":"Explicit synthetic approval"}`, strings.TrimSuffix(strings.TrimPrefix(prompt, test.prefix), ". No message will be sent."))
+			assert.Zero(backend.writes)
 		})
 	}
 }
