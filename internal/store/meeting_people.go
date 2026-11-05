@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -42,7 +43,6 @@ func (s *Store) ParticipantsByEmailContext(ctx context.Context, emails []string)
 	if sourcescope.Restricted(ctx) {
 		clause, args := sourceScopeClause(ctx, "m.source_id")
 		scope = ` AND EXISTS (SELECT 1 FROM messages m WHERE m.deleted_at IS NULL
- AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages am WHERE am.message_id=m.id)
  AND (m.sender_id=p.id OR EXISTS (SELECT 1 FROM message_recipients mr WHERE mr.message_id=m.id AND mr.participant_id=p.id))` + clause + `)`
 		scopeArgs = args
 	}
@@ -88,12 +88,16 @@ func (s *Store) MeetingActionItemCountsContext(ctx context.Context, transcriptID
 	defer release()
 	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
 	scope, args := sourceScopeClause(ctx, "m.source_id")
-	query := `SELECT m.id,COUNT(a.message_id) FROM messages m LEFT JOIN meeting_action_items a ON a.message_id=m.id
- WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s) GROUP BY m.id`
+	query := `SELECT m.id,md.projection_version,COUNT(a.message_id) FROM messages m LEFT JOIN meeting_details md ON md.message_id=m.id LEFT JOIN meeting_action_items a ON a.message_id=m.id
+ WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s) GROUP BY m.id,md.projection_version`
 	err = queryInChunksContext(ctx, snapshot.tx, ids, args, query, func(rows *loggedRows) error {
 		var id int64
 		var count int
-		if err := rows.Scan(&id, &count); err != nil {
+		var version sql.NullInt64
+		if err := rows.Scan(&id, &version, &count); err != nil {
+			return err
+		}
+		if err := validateMeetingProjectionVersion(version); err != nil {
 			return err
 		}
 		result[id] = count

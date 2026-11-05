@@ -155,3 +155,11 @@ func (s *Store) refreshMeetingProjectionWith(ctx context.Context, tx *loggedTx, 
 	}
 	return nil
 }
+
+// A newer projection may assign different meanings to its keys and action rows.
+func validateMeetingProjectionVersion(version sql.NullInt64) error {
+	if version.Valid && version.Int64 > meetingProjectionVersion {
+		return fmt.Errorf("%w: unsupported meeting projection version %d", ErrMeetingProjectionUnavailable, version.Int64)
+	}
+	return nil
+}

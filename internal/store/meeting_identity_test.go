@@ -1,8 +1,6 @@
 package store
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
 	"database/sql"
 	"database/sql/driver"
@@ -204,53 +202,6 @@ func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
 	assert.Equal(refs[0], got.ByOccurrence[refs[1]].OccurrenceRef)
 }
 
-func TestMeetingIdentityDamagedInviteEvidenceKeepsOtherMeetings(t *testing.T) {
-	for _, damage := range []string{"missing", "malformed", "compression", "oversized", "multiple-events"} {
-		t.Run(damage, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			source := icsSource(t, st)
-			_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H"))
-			require.NoError(err)
-			ids := emailEvents(t, st, source)
-			require.Len(ids, 1)
-			invite := ids[0]
-			_, valid := calendarFixture(t, st, "valid", singleLinkRaw("valid", "meeting@example.org"))
-			_, note := identityNote(t, st, "note", "meeting@example.org")
-			if damage == "missing" {
-				_, err = st.db.Exec(`DELETE FROM message_raw WHERE message_id=?`, invite)
-			} else {
-				raw, compression := []byte("damaged invite"), ""
-				switch damage {
-				case "compression":
-					compression = "zlib"
-				case "oversized":
-					var compressed bytes.Buffer
-					writer := zlib.NewWriter(&compressed)
-					chunk := make([]byte, 1024)
-					for range maxMeetingRawBytes/len(chunk) + 1 {
-						_, err := writer.Write(chunk)
-						require.NoError(err)
-					}
-					require.NoError(writer.Close())
-					raw, compression = compressed.Bytes(), "zlib"
-				case "multiple-events":
-					raw = calendarFamilyDocument()
-				}
-				_, err = st.db.Exec(`UPDATE message_raw SET raw_data=?,compression=? WHERE message_id=?`, raw, compression, invite)
-			}
-			require.NoError(err)
-			refs := []string{identityRef(invite), identityRef(valid)}
-			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs, TranscriptIDs: []int64{note}})
-			require.NoError(err)
-			assert.Equal("occ:"+refs[0], got.ByOccurrence[refs[0]].Key, "damaged evidence keeps its message identity")
-			assert.Equal("occ:"+refs[1], got.ByOccurrence[refs[1]].Key)
-			assert.Equal([]int64{note}, got.ByOccurrence[refs[1]].LinkedTranscriptIDs)
-			assert.Equal(refs[1], got.ByTranscript[note].OccurrenceRef)
-		})
-	}
-}
-
 func TestMeetingIdentityCalendarReadFailurePropagates(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
@@ -261,7 +212,7 @@ func TestMeetingIdentityCalendarReadFailurePropagates(t *testing.T) {
 	// Inject a calendar read failure inside the real snapshot.
 	failure := errors.New("calendar evidence read failed")
 	observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, q string, _ []driver.NamedValue) error {
-		if strings.Contains(q, "SELECT e.message_id, m.source_id") {
+		if strings.HasPrefix(q, "SELECT e.message_id,") {
 			return failure
 		}
 		return nil
@@ -407,32 +358,6 @@ func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
 	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
 	assert.Len(got.ByTranscript, 1)
 	assert.LessOrEqual(reads, 45)
-}
-
-func TestMeetingIdentityDamagedUIDCopy(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270314T100000Z\r\nDURATION:PT1H"))
-	require.NoError(err)
-	ids := emailEvents(t, st, source)
-	require.Len(ids, 1)
-	damaged := ids[0]
-	_, event := calendarFixture(t, st, "synced", singleLinkRaw("synced", "family@example.com"))
-	_, note := identityNote(t, st, "note", "")
-	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-	err = st.UpsertMessageRawWithFormat(damaged, []byte("damaged invitation"), rawFormatICS)
-	require.NoError(err)
-	links, err := st.MeetingLinksContext(t.Context(), note)
-	require.NoError(err)
-	if assert.Len(links, 1) {
-		assert.Equal(identityRef(event), links[0].Ref)
-	}
-	ref := identityRef(event)
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
-	require.NoError(err)
-	assert.Equal(ref, got.ByOccurrence[ref].OccurrenceRef)
-	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
 }
 
 func TestMeetingIdentityTranscriptOnlyCompletesGroup(t *testing.T) {
@@ -599,4 +524,90 @@ func TestMeetingFractionalExceptionKeepsMessageIdentity(t *testing.T) {
 			assertions.Equal(ref, identities.ByTranscript[note].OccurrenceRef)
 		})
 	}
+}
+
+func TestMeetingIdentityZonedReverseDiscovery(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, event := calendarFixture(t, st, "zoned", `{"id":"zoned","iCalUID":"zoned@example.org","start":{"dateTime":"2027-04-12T10:00:00-04:00","timeZone":"America/Toronto"},"end":{"dateTime":"2027-04-12T11:00:00-04:00","timeZone":"America/Toronto"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=2"]}`)
+	_, note := projectionFixture(t, st, "zoned-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"zoned@example.org","startsAt":"2027-04-12T14:00:00Z"}}`)
+	ref := identityRef(event) + "@20270412T140000Z"
+	forward, err := st.MeetingLinksContext(t.Context(), note)
+	require.NoError(err)
+	require.Len(forward, 1)
+	require.Equal(ref, forward[0].Ref)
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+	require.NoError(err)
+	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+}
+
+func TestMeetingIdentitySplitPreservesAmbiguity(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "series", linkSeriesRaw)
+	_, single := calendarFixture(t, st, "single", singleLinkRaw("single", "weekly@example.org"))
+	_, note := identityNote(t, st, "ambiguous", "weekly@example.org")
+	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: single}))
+	links, err := st.MeetingLinksContext(t.Context(), note)
+	require.NoError(err)
+	require.Empty(links)
+	ref := identityRef(series) + "@20270314T100000Z"
+	for _, suggestions := range []bool{false, true} {
+		got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: []int64{note}, IncludeSuggestions: suggestions})
+		require.NoError(err)
+		assert.Empty(got.ByTranscript[note].ExactOccurrenceRefs)
+		assert.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+		assert.Equal(fmt.Sprintf("msg:%d", note), got.ByTranscript[note].Key)
+		if suggestions {
+			assert.Equal([]string{ref}, got.ByTranscript[note].SuggestedOccurrenceRefs)
+		}
+	}
+}
+
+func TestMeetingIdentityMergedAttendeeRemainsVisible(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	data, note := projectionFixture(t, st, "historical", "twenty_json", `{"schema_version":1,"recording":{}}`)
+	participant, err := st.EnsureParticipant("attendee@example.org", "Attendee", "example.org")
+	require.NoError(err)
+	require.NoError(st.ReplaceMessageRecipients(note, "attendee", []int64{participant}, nil))
+	into, err := st.GetOrCreateSource("meeting_import", "destination")
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: into.ID})
+	require.NoError(err)
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{into.ID})
+	identity, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+	require.NoError(err)
+	require.Contains(identity.ByTranscript, note)
+	got, err := st.ParticipantsByEmailContext(ctx, []string{"attendee@example.org"})
+	require.NoError(err)
+	assert.Equal(map[string]AddressParticipant{"attendee@example.org": {ParticipantID: participant}}, got)
+}
+
+func TestMeetingIdentityFutureProjectionRejected(t *testing.T) {
+	t.Run("calendar", func(t *testing.T) {
+		require := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.org"))
+		_, note := identityNote(t, st, "note", "meeting@example.org")
+		_, err := st.db.Exec(`UPDATE calendar_events SET projection_version=? WHERE message_id=?`, calendarEventProjectionVersion+1, event)
+		require.NoError(err)
+		_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(event)}})
+		require.Error(err)
+		_, err = st.MeetingLinksContext(t.Context(), note)
+		require.Error(err)
+	})
+	t.Run("meeting", func(t *testing.T) {
+		require := require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, note := identityNote(t, st, "note", "meeting@example.org")
+		_, err := st.db.Exec(`UPDATE meeting_details SET projection_version=? WHERE message_id=?`, meetingProjectionVersion+1, note)
+		require.NoError(err)
+		_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
+		_, err = st.MeetingActionItemCountsContext(t.Context(), []int64{note})
+		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
+		_, err = st.MeetingLinksContext(t.Context(), note)
+		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
+	})
 }

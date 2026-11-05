@@ -40,7 +40,8 @@ type timelineMeetingGroup struct {
 	linked     []int64
 }
 
-// ResolveMeetingIdentitiesContext resolves a bounded batch in one read snapshot.
+// ResolveMeetingIdentitiesContext resolves references in one read snapshot.
+// A shared read budget limits calendar candidate reads and recurrence expansion.
 // Out-of-scope and inactive references are absent. A scoped request never returns
 // suggestions, even when IncludeSuggestions is set.
 func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req MeetingIdentityRequest) (MeetingIdentityResult, error) {
@@ -148,26 +149,23 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				terms = append(terms, q.predicate)
 				args = append(args, q.args...)
 			}
-			rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL "), args...)
-			if err != nil {
-				return result, err
-			}
-			defer func() { _ = rows.Close() }()
-			for rows.Next() {
-				var id int64
-				if err := rows.Scan(&id); err != nil {
-					_ = rows.Close()
-					return result, err
+			err := func() error {
+				rows, err := r.QueryContext(ctx, strings.Join(terms, " UNION ALL "), args...)
+				if err != nil {
+					return err
 				}
-				members[id] = true
-			}
-			err = rows.Err()
-			closeErr := rows.Close()
+				defer func() { _ = rows.Close() }()
+				for rows.Next() {
+					var id int64
+					if err := rows.Scan(&id); err != nil {
+						return err
+					}
+					members[id] = true
+				}
+				return errors.Join(rows.Err(), rows.Close())
+			}()
 			if err != nil {
 				return result, err
-			}
-			if closeErr != nil {
-				return result, closeErr
 			}
 		}
 		ids := make([]int64, 0, len(members))
@@ -217,7 +215,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if err != nil {
 				return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
 			}
-			exact := len(candidates) == 1 || len(candidates) > 0 && candidates[0].Provenance == "manual"
+			exact := len(candidates) > 0 && candidates[0].Exact
 			if !explicit[id] {
 				relevant := false
 				if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
@@ -249,7 +247,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				continue
 			}
 			info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
-			exact := len(candidates) == 1 || len(candidates) > 0 && candidates[0].Provenance == "manual"
+			exact := len(candidates) > 0 && candidates[0].Exact
 			for _, candidate := range candidates {
 				if !exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
 					continue
@@ -385,8 +383,8 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 		}
 	}
 	query := `SELECT m.id FROM messages m WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL
- AND (EXISTS (SELECT 1 FROM meeting_link_decisions d WHERE d.member_message_id=m.id AND (` + strings.Join(clauses, " OR ") + `))
- OR EXISTS (SELECT 1 FROM meeting_link_key k WHERE k.message_id=m.id AND (` + strings.Join(keyClauses, " OR ") + `)))`
+ AND m.id IN (SELECT d.member_message_id FROM meeting_link_decisions d WHERE ` + strings.Join(clauses, " OR ") + `
+ UNION SELECT k.message_id FROM meeting_link_key k WHERE ` + strings.Join(keyClauses, " OR ") + `)`
 	args = append(args, keyArgs...)
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	args = append(args, scopeArgs...)
@@ -404,9 +402,9 @@ func meetingIdentityUIDMemberClauses(ctx context.Context, r reboundReader, o lin
 	if err != nil {
 		return nil, nil, err
 	}
-	starts := []any{o.Start}
+	starts := []any{o.Start.UTC()}
 	for _, copy := range copies {
-		starts = append(starts, copy.Start)
+		starts = append(starts, copy.Start.UTC())
 	}
 	clause = `(k.kind='ical_uid' AND k.value=? AND k.value<>'' AND k.scheduled_at IN (` + placeholders(len(starts)) + `))`
 	return []string{clause}, append([]any{o.Identity.ICalUID}, starts...), nil
