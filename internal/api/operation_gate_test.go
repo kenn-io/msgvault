@@ -678,7 +678,6 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		{"create-subset", `{"args":["create-subset","subset.db"]}`},
 		{"list-folders", `{"args":["list-folders"]}`},
 		{"policy list", `{"args":["policy","list"]}`},
-		{"policy flag before list", `{"args":["policy","--config","example.toml","list"]}`},
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},

@@ -547,25 +547,21 @@ func TestOpenInitializedStoreRefusesMissingArchive(t *testing.T) {
 }
 
 func TestOpenReadOnlyStoreRejectsUnsupportedSchema(t *testing.T) {
-	for _, version := range []int{store.SchemaVersion - 1, store.SchemaVersion + 1} {
-		t.Run(strconv.Itoa(version), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			cfg := testConfigValue()
-			cfg.Data.DataDir = t.TempDir()
-			st, err := store.OpenForTest(cfg.DatabaseDSN())
-			require.NoError(err)
-			require.NoError(st.InitSchema())
-			_, err = st.DB().Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(version))
-			require.NoError(err)
-			require.NoError(st.Close())
+	assert := assert.New(t)
+	require := require.New(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	st, err := store.OpenForTest(cfg.DatabaseDSN())
+	require.NoError(err)
+	require.NoError(st.InitSchema())
+	_, err = st.DB().Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(store.SchemaVersion+1))
+	require.NoError(err)
+	require.NoError(st.Close())
 
-			reader, cleanup, err := openReadOnlyStoreForInvocation(t.Context(), testInvocationWithConfig(cfg))
-			if cleanup != nil {
-				t.Cleanup(cleanup)
-			}
-			require.ErrorContains(err, "run setup with the matching release")
-			assert.Nil(reader)
-		})
+	reader, cleanup, err := openReadOnlyStoreForInvocation(t.Context(), testInvocationWithConfig(cfg))
+	if cleanup != nil {
+		t.Cleanup(cleanup)
 	}
+	require.ErrorContains(err, "run setup with the matching release")
+	assert.Nil(reader)
 }

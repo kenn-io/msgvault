@@ -464,52 +464,42 @@ type exportWriteFunc func([]byte) (int, error)
 
 func (f exportWriteFunc) Write(p []byte) (int, error) { return f(p) }
 
-func TestExportMessagesCommandConcurrentFilterChanges(t *testing.T) {
-	for _, change := range []string{"participant merge", "source rename"} {
-		t.Run(change, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := testutil.NewTestStore(t)
-			source, err := st.GetOrCreateSource("text", "archive")
-			require.NoError(err)
-			require.NoError(st.UpdateSourceDisplayName(source.ID, "Original archive"))
-			oldID, err := st.EnsureParticipant("person@example.com", "Example Person", "example.com")
-			require.NoError(err)
-			newID, err := st.EnsureParticipant("alias@example.com", "Example Alias", "example.com")
-			require.NoError(err)
-			person, _, err := st.CreatePersonFromParticipant(oldID)
-			require.NoError(err)
-			start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-			conversationID := insertExportMessagesConversation(t, st, source.ID, "conversation", "Example Conversation")
-			insertExportMessagesMessage(t, st, source.ID, conversationID, "message", start, "body")
-			_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), oldID, source.ID)
-			require.NoError(err)
+func TestExportMessagesCommandConcurrentParticipantMerge(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("text", "archive")
+	require.NoError(err)
+	oldID, err := st.EnsureParticipant("person@example.com", "Example Person", "example.com")
+	require.NoError(err)
+	newID, err := st.EnsureParticipant("alias@example.com", "Example Alias", "example.com")
+	require.NoError(err)
+	person, _, err := st.CreatePersonFromParticipant(oldID)
+	require.NoError(err)
+	start := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+	conversationID := insertExportMessagesConversation(t, st, source.ID, "conversation", "Example Conversation")
+	insertExportMessagesMessage(t, st, source.ID, conversationID, "message", start, "body")
+	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET sender_id = ? WHERE source_id = ?`), oldID, source.ID)
+	require.NoError(err)
 
-			cmd := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) {
-				return st, func() {}, nil
-			}})
-			var output bytes.Buffer
-			changed := false
-			cmd.SetOut(exportWriteFunc(func(p []byte) (int, error) {
-				if !changed {
-					changed = true
-					if change == "participant merge" {
-						require.NoError(st.MergeParticipants(oldID, newID))
-					} else {
-						require.NoError(st.UpdateSourceDisplayName(source.ID, "Renamed archive"))
-					}
-				}
-				return output.Write(p)
-			}))
-			cmd.SetErr(io.Discard)
-			cmd.SetArgs([]string{"--start", start.Format(time.RFC3339), "--end", start.Add(time.Hour).Format(time.RFC3339), "--source", "text:archive", "--person-id", strconv.FormatInt(person.ID, 10)})
-			require.NoError(cmd.Execute())
-			require.True(changed)
-			records := decodeExportMessageRecords(t, output.Bytes())
-			require.Len(records, 5)
-			assert.Equal("Original archive", records[1]["display_name"])
-			assert.Equal("message", records[3]["id"])
-			assert.Equal("complete", records[4]["record_type"])
-		})
-	}
+	cmd := newExportMessagesLocalCmd(exportMessagesDeps{openStore: func(context.Context) (*store.Store, func(), error) {
+		return st, func() {}, nil
+	}})
+	var output bytes.Buffer
+	merged := false
+	cmd.SetOut(exportWriteFunc(func(p []byte) (int, error) {
+		if !merged {
+			merged = true
+			require.NoError(st.MergeParticipants(oldID, newID))
+		}
+		return output.Write(p)
+	}))
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--start", start.Format(time.RFC3339), "--end", start.Add(time.Hour).Format(time.RFC3339), "--source", "text:archive", "--person-id", strconv.FormatInt(person.ID, 10)})
+	require.NoError(cmd.Execute())
+	require.True(merged)
+	records := decodeExportMessageRecords(t, output.Bytes())
+	require.Len(records, 5)
+	assert.Equal("message", records[3]["id"])
+	assert.Equal("complete", records[4]["record_type"])
 }

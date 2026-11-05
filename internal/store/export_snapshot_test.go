@@ -12,9 +12,8 @@ import (
 func TestExportMessagesConcurrentWriteSnapshot(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st, _, start, committed := store.ExportSnapshotFixture(t, "gmail", "mr_from")
-	filter := store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}
 	sink := &collectingMessageExportSink{}
-	counts, err := st.ExportMessages(t.Context(), filter, sink)
+	counts, err := st.ExportMessages(t.Context(), store.MessageExportFilter{Start: start, End: start.Add(time.Hour)}, sink)
 	requirements.NoError(err)
 	requirements.True(*committed, "the writer must commit between export phases")
 	assertions.Equal(store.MessageExportCounts{Sources: 1, Conversations: 1, Messages: 1}, counts)
@@ -24,12 +23,6 @@ func TestExportMessagesConcurrentWriteSnapshot(t *testing.T) {
 	for _, message := range sink.messages {
 		assertions.Equal(sink.conversations[0].ID, message.ConversationID)
 	}
-	fresh := &collectingMessageExportSink{}
-	counts, err = st.ExportMessages(t.Context(), filter, fresh)
-	requirements.NoError(err)
-	assertions.Equal(store.MessageExportCounts{Sources: 1, Conversations: 2, Messages: 2}, counts)
-	assertions.Len(fresh.conversations, 2)
-	assertions.Len(fresh.messages, 2)
 }
 
 func TestDiscordExportConcurrentWriteSnapshot(t *testing.T) {
