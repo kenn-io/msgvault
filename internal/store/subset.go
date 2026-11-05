@@ -234,11 +234,6 @@ func CopySubsetWithOptions(
 		closeAndCleanup()
 		return nil, fmt.Errorf("reset copied calendar projection migration: %w", err)
 	}
-	if _, err := tx.Exec(`DELETE FROM applied_migrations WHERE name = ?`, migrationCalendarEventProjectionV2); err != nil {
-		_ = tx.Rollback()
-		closeAndCleanup()
-		return nil, fmt.Errorf("reset copied calendar projection v2 migration: %w", err)
-	}
 
 	// A source that predates matrix_encrypted_events copies placeholders the
 	// empty destination never registered.
