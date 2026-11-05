@@ -1,6 +1,7 @@
-import { stubOperationStatus } from './kit-ui';
+import { setKitTheme, stubOperationStatus } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { exploreHistoryState } from './explore-state';
+import { shortPagesPDF } from './pdf-fixture';
 
 function exploreURLState() {
   return {
@@ -195,7 +196,7 @@ async function stubContainingConversation(page: Page) {
 
 test('opening a containing conversation and one Back restores the exact Files URL and active row', async ({ page, baseURL }) => {
   await stubContainingConversation(page);
-  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Back fixture'));
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1, { height: 792, text: 'Back fixture' }));
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
   await page.keyboard.press('Enter');
@@ -235,7 +236,7 @@ test('a phone opens a message from Files and returns to results', async ({ page,
 });
 
 test('Back from an open file viewer closes it and restores the Files list URL', async ({ page, baseURL }) => {
-  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Back close fixture'));
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1, { height: 792, text: 'Back close fixture' }));
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
   await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-7');
@@ -259,7 +260,7 @@ for (const deviceScaleFactor of [1, 2]) {
   test.describe(`PDF reading at device scale ${deviceScaleFactor}`, () => {
     test.use({ deviceScaleFactor });
     test('Letter PDF renders in-app and Escape closes with shortcut isolation and exact focus restoration', async ({ page, baseURL }) => {
-      const pdf = tinyPDF('Fixture preview text', 3);
+      const pdf = shortPagesPDF(3, { height: 792, text: 'Fixture preview text' });
       await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), pdf);
 
       const grid = page.getByRole('grid', { name: 'Files results' });
@@ -306,30 +307,35 @@ for (const deviceScaleFactor of [1, 2]) {
   });
 }
 
-function tinyPDF(text: string, pageCount = 1): Buffer {
-  const escaped = text.replace(/[()\\]/g, (character) => `\\${character}`);
-  const stream = `BT /F1 18 Tf 36 100 Td (${escaped}) Tj ET`;
-  const fontID = 3 + pageCount * 2;
-  const objects = [
-    '<< /Type /Catalog /Pages 2 0 R >>',
-    `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pageCount} >>`,
-    ...Array.from({ length: pageCount }, (_, index) => [
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontID} 0 R >> >> /Contents ${4 + index * 2} 0 R >>`,
-      `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
-    ]).flat(),
-    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
-  ];
-  let source = '%PDF-1.4\n';
-  const offsets = [0];
-  for (let index = 0; index < objects.length; index += 1) {
-    offsets.push(Buffer.byteLength(source));
-    source += `${index + 1} 0 obj\n${objects[index]}\nendobj\n`;
+test('PDF text overlay honors page user units at fit, zoom, and resize', async ({ page, baseURL }) => {
+  await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1, { height: 792, userUnit: 2 }));
+  await page.getByRole('gridcell', { name: 'fixture.pdf', exact: true }).click();
+  const layer = page.locator('.textLayer');
+  await expect(layer).toContainText('Fixture page');
+  for (const state of ['fit', 'zoom', 'resize']) {
+    if (state === 'zoom') await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+    if (state === 'resize') await page.setViewportSize({ width: 800, height: 700 });
+    await expect.poll(() => layer.evaluate(element => {
+      const canvas = element.closest('.pdf-page')!.querySelector('canvas')!;
+      const span = element.querySelector('span')!;
+      // The fixture uses 18-point text on a 612-point-wide page.
+      return Math.abs(parseFloat(getComputedStyle(span).fontSize) - canvas.getBoundingClientRect().width * 18 / 612);
+    })).toBeLessThan(0.1);
   }
-  const xref = Buffer.byteLength(source);
-  source += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  source += offsets.slice(1).map((offset) => `${String(offset).padStart(10, '0')} 00000 n \n`).join('');
-  source += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(source, 'ascii');
+});
+
+for (const theme of ['light', 'dark'] as const) {
+  test(`PDF import preserves the chosen ${theme} color scheme against the OS preference`, async ({ page, baseURL }) => {
+    await page.emulateMedia({ colorScheme: theme === 'light' ? 'dark' : 'light' });
+    await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), shortPagesPDF(1));
+    await setKitTheme(page, theme);
+    await expect(page.locator('html')).toHaveCSS('color-scheme', theme);
+    await page.getByRole('gridcell', { name: 'fixture.pdf', exact: true }).click();
+    await expect(page.locator('.textLayer')).toContainText('Fixture page');
+    await expect(page.locator('html')).toHaveCSS('color-scheme', theme);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('html')).toHaveCSS('color-scheme', theme);
+  });
 }
 
 test('Files exposes visual search after setup supplies a consented active generation', async ({ page, baseURL }) => {
