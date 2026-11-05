@@ -1819,6 +1819,7 @@ func (e *SQLiteEngine) GetDeletionTargetsBySearch(
 		return nil, fmt.Errorf("unsupported deletion search mode %q", mode)
 	}
 	searchConditions = append(searchConditions, archiveOnlyDeletionTargetGuard)
+
 	queryText := fmt.Sprintf(`
 		SELECT m.id, m.source_id, s_gmail.source_type, s_gmail.identifier,
 		       m.source_message_id
@@ -1878,7 +1879,7 @@ func (e *SQLiteEngine) GetDeletionTargetsByAggregateSearch(
 	filter.Pagination = Pagination{}
 	filter.HideDeletedFromSource = true
 	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
-	conditions = append(conditions, emailOnlyFilterM, archiveOnlyDeletionTargetGuard)
+	conditions = append(conditions, archiveOnlyDeletionTargetGuard)
 	timeGranularity := filter.TimeRange.Granularity
 	if groupBy == ViewTime {
 		timeGranularity = inferTimeGranularity(timeGranularity, key)

@@ -421,7 +421,6 @@ const (
 	sourceTypeSlackdump     = "slackdump"
 	sourceTypeBeeper        = "beeper"
 	sourceTypeAppleMessages = "apple_messages"
-	sourceTypeIMAP          = "imap"
 )
 
 // membershipRecord is the provider-maintained membership a conversation's
