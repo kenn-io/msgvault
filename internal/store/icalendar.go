@@ -99,7 +99,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		var id int64
 		var metadata sql.NullString
 		var format string
-		err := q.QueryRow(`SELECT m.id,m.metadata,r.raw_format FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND (m.source_message_id=? OR EXISTS (SELECT 1 FROM source_merge_messages smm WHERE smm.message_id=m.id AND smm.original_message_id=?)) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format)
+		err := q.QueryRow(`SELECT m.id,m.metadata,r.raw_format FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_messages WHERE original_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format)
 		exists := err == nil
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read prior ICS identity: %w", err)
