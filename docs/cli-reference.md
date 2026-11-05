@@ -3318,7 +3318,7 @@ Each row shows the message ID, state, and a description of the failure; JSON als
 ## verify
 
 Verify archive integrity against Gmail through the configured remote server or
-local daemon. Email counts exclude calendar events extracted from invitations.
+local daemon. The provider-message counts used by `verify` and `remove-account` exclude calendar events extracted from invitations.
 The command streams the daemon's stdout/stderr back to the terminal.
 
 ```bash
