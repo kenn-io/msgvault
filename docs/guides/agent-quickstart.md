@@ -174,6 +174,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `get_calendar_event` | read | — | calendar.event.read or message.read |
 | `get_carddav_publication` | read | — | owner-only |
 | `get_carddav_sync_status` | read | — | owner-only |
+| `get_daily_note` | read | — | owner-only |
 | `get_embeddings_status` | read | — | owner-only |
 | `get_identity_match` | read | — | owner-only |
 | `get_identity_scoring_status` | read | — | owner-only |
@@ -222,6 +223,7 @@ backend checks for action permissions, source scope, and sender identity;
 | `search_visual_attachments` | read | — | owner-only |
 | `semantic_search_messages` | read | — | owner-only |
 | `suggest_meeting_links` | read | — | owner-only |
+| `timeline` | read | — | message.read |
 | `sync_source` | source_write | `--allow-source-writes` | owner-only |
 | `update_slack_sync_policy` | source_write | `--allow-source-writes` | owner-only |
 | `create_saved_view` | write | — | owner-only |
