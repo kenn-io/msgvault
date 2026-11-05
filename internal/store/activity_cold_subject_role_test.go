@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -39,11 +38,6 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", to, nil))
 			burstQuery := timelineBurstQuery()
 			burstQuery.Subject = subject
-			// The cold room stays unprojected; RunOnce stores the audience limit.
-			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 25})
-			requirements.NoError(err)
-			_, err = projector.RunOnce(t.Context())
-			requirements.NoError(err)
 			burstQuery.Filters = store.ActivityFilters{IncludeNoise: true}
 			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), burstQuery)
 			requirements.NoError(err)
