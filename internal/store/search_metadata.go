@@ -60,8 +60,8 @@ func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Qu
 	if expression == "" {
 		return result, nil
 	}
-	err = queryInChunksContext(ctx, s.db, ids, []any{expression}, `SELECT f.rowid, snippet(messages_fts, -1, char(1), char(2), '…', 24)
-		FROM messages m JOIN messages_fts f ON f.rowid = m.id WHERE f.messages_fts MATCH ? AND m.id IN (%s)`, func(rows *loggedRows) error {
+	err = queryInChunksContext(ctx, s.db, ids, []any{expression}, `SELECT rowid, snippet(messages_fts, -1, char(1), char(2), '…', 24)
+		FROM messages_fts WHERE messages_fts MATCH ? AND +rowid IN (%s)`, func(rows *loggedRows) error {
 		var id int64
 		var excerpt string
 		if err := rows.Scan(&id, &excerpt); err != nil {
