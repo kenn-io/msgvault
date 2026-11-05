@@ -95,7 +95,10 @@ func ParseCalDAVResource(ctx context.Context, raw []byte, calendarZone string) (
 	if len(raw) > 2<<20 {
 		return nil, errors.New("CalDAV resource exceeds 2 MiB")
 	}
-	if !utf8.Valid(raw) {
+	// RFC 5545 allows a fold between UTF-8 octets. Validate logical lines,
+	// including the LF-only line endings accepted by go-ical.
+	unfolded := strings.NewReplacer("\r\n ", "", "\r\n\t", "", "\n ", "", "\n\t", "").Replace(string(raw))
+	if !utf8.ValidString(unfolded) {
 		return nil, errors.New("CalDAV resource is not valid UTF-8")
 	}
 	// go-ical's content-line parser can panic on malformed parameters. Convert
@@ -267,9 +270,6 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 			}
 			if e.AllDay {
 				endDate, err = calDAVCivilDate(end)
-				if err == nil && endDate <= startDate {
-					err = errors.New("all-day DTEND must follow DTSTART")
-				}
 				if err == nil {
 					finish, _, err = calrecur.CivilDateBoundary(endDate, zone)
 				}
@@ -363,9 +363,6 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 				return item, fmt.Errorf("CalDAV RECURRENCE-ID: %w", err)
 			}
 			id = calrecur.Identity{Instant: original.UTC()}
-		}
-		if start != nil && id.AllDay != e.AllDay {
-			return item, errors.New("CalDAV recurrence value type differs from DTSTART")
 		}
 		e.Kind, e.SeriesProviderID, e.Original = "exception", e.ProviderEventID, &id
 		key := id.Key()

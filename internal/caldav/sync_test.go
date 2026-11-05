@@ -39,6 +39,8 @@ type syncFixture struct {
 	forceSnapshot           bool
 	incompleteSnapshot      bool
 	explicitCollectionPort  bool
+	getRequests             int
+	multigetSizes           []int
 }
 
 func archiveFixture(t *testing.T) (*Client, *syncFixture) {
@@ -109,6 +111,7 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 			return
 		}
 		if r.Method == http.MethodGet {
+			f.getRequests++
 			raw, ok := f.raw[strings.TrimPrefix(r.URL.Path, "/home/cal/")]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -118,6 +121,13 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 			_, _ = io.WriteString(w, raw)
 			return
 		}
+		var request struct {
+			Hrefs []string `xml:"href"`
+		}
+		if !assertions.NoError(xml.Unmarshal(req, &request)) {
+			return
+		}
+		f.multigetSizes = append(f.multigetSizes, len(request.Hrefs))
 		var responses strings.Builder
 		for name, raw := range f.raw {
 			if strings.Contains(string(req), "/home/cal/"+name) {
@@ -191,6 +201,87 @@ func TestReviewMicrosoftPrefixedRecurrenceDates(t *testing.T) {
 			assert.Contains(body, "09:00")
 		})
 	}
+}
+
+func TestSyncOversizedMultigetResponse(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	f.raw = make(map[string]string)
+	for i := range 17 {
+		raw := strings.Replace(calendarBody, "UID:example@example.org", "UID:event-"+strconv.Itoa(i)+"@example.org", 1)
+		raw = strings.Replace(raw, "SUMMARY:Example meeting", "DESCRIPTION:"+strings.Repeat("x", (2<<20)-512), 1)
+		f.raw[strconv.Itoa(i)+".ics"] = raw
+	}
+	st := testutil.NewTestStore(t)
+	result, err := c.Sync(t.Context(), st, syncOpts())
+	require.NoError(err)
+	assert.Zero(result.Skipped)
+	assert.Equal(17, result.Events)
+	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	assert.Empty(page.Unexpandable)
+	assert.Len(page.Occurrences, 17)
+	f.Lock()
+	defer f.Unlock()
+	assert.Equal([]int{17, 8, 9}, f.multigetSizes)
+	assert.Zero(f.getRequests)
+}
+
+func TestSyncOverrideChangesValueType(t *testing.T) {
+	for _, tc := range []struct {
+		name, master, override, wantStart string
+		wantAllDay                        bool
+	}{
+		{"timed to all-day", "DTSTART:20270307T140000Z\r\nDURATION:PT1H", "RECURRENCE-ID:20270314T140000Z\r\nDTSTART;VALUE=DATE:20270314\r\nDURATION:P1D", "2027-03-14T00:00:00Z", true},
+		{"all-day to timed", "DTSTART;VALUE=DATE:20270307\r\nDURATION:P1D", "RECURRENCE-ID;VALUE=DATE:20270314\r\nDTSTART:20270314T150000Z\r\nDURATION:PT1H", "2027-03-14T15:00:00Z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			f.raw["a.ics"] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@example.org\r\n" + tc.master + "\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:series@example.org\r\n" + tc.override + "\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+			st := testutil.NewTestStore(t)
+			result, err := c.Sync(t.Context(), st, syncOpts())
+			require.NoError(err)
+			assert.Zero(result.Skipped)
+			require.Equal(2, result.Events)
+			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			require.NoError(err)
+			assert.Empty(page.Unexpandable)
+			require.Len(page.Occurrences, 3)
+			assert.Equal(tc.wantStart, page.Occurrences[1].Start.UTC().Format(time.RFC3339))
+			assert.Equal(tc.wantAllDay, page.Occurrences[1].AllDay)
+			assert.Equal(!tc.wantAllDay, page.Occurrences[0].AllDay)
+			assert.Equal(!tc.wantAllDay, page.Occurrences[2].AllDay)
+		})
+	}
+}
+
+func TestSyncRetiredCalendarSelection(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	c, _ := archiveFixture(t)
+	st := testutil.NewTestStore(t)
+	opts := syncOpts()
+	_, err := c.Sync(t.Context(), st, opts)
+	require.NoError(err)
+	sources, err := st.ListSources("caldav")
+	require.NoError(err)
+	require.Len(sources, 1)
+	destination, err := st.GetOrCreateSource("caldav", "destination@example.org")
+	require.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: sources[0].ID, IntoSourceID: destination.ID})
+	require.NoError(err)
+
+	result, err := c.Sync(t.Context(), st, opts)
+	require.NoError(err)
+	assert.Zero(result.Calendars)
+	assert.Zero(result.Events)
+	assert.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_events`))
+
+	opts.Calendars = []string{"http://203.0.113.1/home/cal/"}
+	_, err = c.Sync(t.Context(), st, opts)
+	require.ErrorIs(err, store.ErrSourceRetired)
 }
 
 func TestSyncNonMailtoParticipants(t *testing.T) {

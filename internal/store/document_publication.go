@@ -233,7 +233,7 @@ func (s *Store) ClaimDocumentExtraction(
 				(id, profile_id, rebuild_id, canonical_blob_hash, extraction_input_key,
 				 source_media_type, state, lease_owner, lease_until, local_bytes, source_sequence, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?)`,
-			input.ExtractionID, input.ProfileID, NullIfEmpty(input.RebuildID), input.CanonicalBlobHash,
+			input.ExtractionID, input.ProfileID, nullIfEmpty(input.RebuildID), input.CanonicalBlobHash,
 			input.ExtractionInputKey, input.OccurrenceMIMEType, input.LeaseOwner, input.LeaseUntil,
 			input.LocalBytes, input.SourceSequence, createdAt,
 		); err != nil {
@@ -549,7 +549,7 @@ func (s *Store) PublishDocumentExtraction(
 					 footer_text, width, height, dpi, checksum, char_count, truncated, heading_marks)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, `+s.dialect.JSONBindExpr()+`)`,
 				publication.ExtractionID, unit.Index, unit.Kind, unit.Text,
-				NullIfEmpty(unit.Header), NullIfEmpty(unit.Footer), nullIfZero(int64(unit.Width)),
+				nullIfEmpty(unit.Header), nullIfEmpty(unit.Footer), nullIfZero(int64(unit.Width)),
 				nullIfZero(int64(unit.Height)), nullIfZero(int64(unit.DPI)), unit.Checksum,
 				unit.CharCount, unit.Truncated, string(headingMarks),
 			); err != nil {

@@ -1563,9 +1563,9 @@ func upsertDocumentOccurrenceTx(
 				reconciled_at = CURRENT_TIMESTAMP
 			WHERE document_occurrences.source_sequence <= EXCLUDED.source_sequence`,
 		occurrence.OccurrenceKey, occurrence.AttachmentID, occurrence.MessageID,
-		occurrence.SourceID, NullIfEmpty(occurrence.SourcePartKey),
+		occurrence.SourceID, nullIfEmpty(occurrence.SourcePartKey),
 		occurrence.StableSourcePart, occurrence.CanonicalBlobHash,
-		NullIfEmpty(occurrence.Filename), NullIfEmpty(occurrence.MIMEType),
+		nullIfEmpty(occurrence.Filename), nullIfEmpty(occurrence.MIMEType),
 		occurrence.AttachmentRole, occurrence.RoleSource, occurrence.SourceSequence,
 	)
 	if err != nil {

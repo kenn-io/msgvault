@@ -89,7 +89,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	data := MapEventMessage(ev, s.opts.AccountEmail, &store.MessagePersistData{
 		Message:      &store.Message{SourceID: sourceID, SourceMessageID: smid, SizeEstimate: int64(len(body))},
 		Conversation: &store.ConversationPersistData{SourceConversationID: conversationKey(ev)},
-		BodyText:     store.NullIfEmpty(body),
+		BodyText:     sql.NullString{String: body, Valid: body != ""},
 	}, senderID, attendeeIDs)
 	convID, err := s.store.EnsureConversationWithType(sourceID, data.Conversation.SourceConversationID, data.Conversation.ConversationType, data.Conversation.Title)
 	if err != nil {
@@ -158,8 +158,9 @@ func MapEventMessage(ev gcal.Event, account string, data *store.MessagePersistDa
 	data.Message.SentAt = eventSentAt(ev)
 	data.Message.IsFromMe = ev.Organizer.Self || identityFromMe
 	data.Message.IdentityDerivedIsFromMe = identityFromMe
-	data.Message.Subject = store.NullIfEmpty(ev.Summary)
-	data.Message.Snippet = store.NullIfEmpty(calevent.Snippet(data.BodyText.String))
+	data.Message.Subject = sql.NullString{String: ev.Summary, Valid: ev.Summary != ""}
+	snippet := calevent.Snippet(data.BodyText.String)
+	data.Message.Snippet = sql.NullString{String: snippet, Valid: snippet != ""}
 	data.Conversation.ConversationType = gcal.ConversationType
 	data.Conversation.Title = ev.Summary
 	if ev.RecurringEventID != "" {

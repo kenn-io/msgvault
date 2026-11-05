@@ -127,7 +127,7 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		if err != nil {
 			return fmt.Errorf("read CalDAV message text: %w", err)
 		}
-		text, snippet := NullIfEmpty(body), NullIfEmpty(calevent.Snippet(body))
+		text, snippet := nullIfEmpty(body), nullIfEmpty(calevent.Snippet(body))
 		if !row.matches(text, sql.NullString{}, snippet) {
 			row.fts.Body = body
 			if err := s.updateMessageDerivedText(q, messageID, text, sql.NullString{}, snippet, row.fts, s.dialect.FTSUpsert); err != nil {
