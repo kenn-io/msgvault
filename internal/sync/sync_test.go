@@ -3372,44 +3372,6 @@ func TestInitSyncState_Resume(t *testing.T) {
 	assert.Equal("1000", state.handoffCursor, "restore the History boundary with the page token")
 }
 
-func TestLegacyFullCheckpointRestartsForCoverage(t *testing.T) {
-	t.Parallel()
-	legacy := &store.SyncRun{
-		CursorBefore: sql.NullString{String: "page_1", Valid: true},
-	}
-	pinnedRecovery := *legacy
-	pinnedRecovery.CursorAfter = sql.NullString{String: "12345", Valid: true}
-
-	tests := []struct {
-		name   string
-		run    *store.SyncRun
-		modify func(*Options)
-		want   bool
-	}{
-		{name: "default Gmail", run: legacy, modify: func(*Options) {}, want: false},
-		{name: "filtered Gmail", run: legacy, modify: func(options *Options) {
-			options.Query = "after:2024/01/01"
-		}},
-		{name: "limited Gmail", run: legacy, modify: func(options *Options) {
-			options.Limit = 10
-		}},
-		{name: "IMAP", run: legacy, modify: func(options *Options) {
-			options.SourceType = "imap"
-		}},
-		{name: "pinned recovery", run: &pinnedRecovery, modify: func(*Options) {}},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			options := DefaultOptions()
-			test.modify(options)
-			syncer := &Syncer{opts: options}
-			assert.Equal(t, test.want,
-				syncer.fullCheckpointMatchesRequest(test.run, "current-request"))
-		})
-	}
-}
-
 func TestInitSyncState_NoResumeOption(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

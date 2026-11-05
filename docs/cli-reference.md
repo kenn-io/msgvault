@@ -834,9 +834,11 @@ msgvault sync-full account@example.com
 
 An idle incremental sync cannot discover older omitted messages unless Gmail
 reports a new history event for them. The full listing resumes from its saved
-checkpoint when the request scope matches. A resumed full sync publishes the
-History point its first run recorded, so the next incremental sync catches mail
-that arrived meanwhile. A full sync interrupted under an earlier release starts
+checkpoint when the request scope matches. A resumed full sync without filters
+or a limit publishes the History point its first run recorded, unless the source
+already has a newer cursor. The next incremental sync catches mail that arrived
+meanwhile. Filtered or limited full syncs leave the source cursor
+unchanged. A full sync interrupted under an earlier release starts
 from the first page once. Previously archived messages aren't downloaded again
 or duplicated. Gmail can return only messages that still exist in the mailbox;
 permanently deleted messages cannot be backfilled.

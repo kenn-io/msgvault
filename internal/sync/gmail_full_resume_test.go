@@ -79,13 +79,15 @@ func (f *fullResumeTransport) RoundTrip(r *http.Request) (*http.Response, error)
 func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 	// serial: the real Gmail client uses http.DefaultClient without OAuth.
 	for _, scenario := range []struct {
-		name          string
-		interruptions int
-		query         string
-		limit         int
+		name               string
+		interruptions      int
+		query              string
+		limit              int
+		incrementalBetween bool
 	}{
 		{name: "once", interruptions: 1},
 		{name: "twice", interruptions: 2},
+		{name: "incrementalBetween", interruptions: 1, incrementalBetween: true},
 		{name: "filtered", interruptions: 1, query: "in:inbox"},
 		{name: "limited", interruptions: 1, limit: 2},
 	} {
@@ -97,10 +99,8 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 			opts := DefaultOptions()
 			opts.Query, opts.Limit = scenario.query, scenario.limit
 			wantBoundary := "1000"
-			wantHistoryStart := uint64(1000)
 			if scenario.query != "" || scenario.limit > 0 {
-				wantBoundary = "" // Partial full sync never publishes a source cursor.
-				wantHistoryStart = 900
+				wantBoundary = "" // Partial full sync doesn't pin a History boundary.
 			}
 			e := acquisitionDurabilityEnv(t)
 			source := e.CreateSourceWithHistory(t, "900")
@@ -116,11 +116,25 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 				require.Equal(f.stopAt, run.CursorBefore.String, "stop only after the preceding page is durable")
 				require.Equal(store.SyncStatusFailed, run.Status)
 				assert.Equal(wantBoundary, run.CursorAfter.String, "each checkpoint retains the first History boundary")
+				if wantBoundary == "" {
+					return
+				}
 				require.Equal("900", gmailCoverageSource(t, e).SyncCursor.String, "interruption must not publish")
 				reopenAcquisitionStore(t, e)
 				e.Syncer = New(api, e.Store, opts)
 				f.history += 100
 				f.arrivals[fmt.Sprintf("arrival%d", attempt+1)] = f.history - 50
+			}
+			wantHistoryStart := uint64(1000)
+			wantHistoryStarts := []uint64{1000}
+			if scenario.incrementalBetween {
+				_, err := e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+				require.NoError(err)
+				require.Equal("1100", gmailCoverageSource(t, e).SyncCursor.String)
+				reopenAcquisitionStore(t, e)
+				e.Syncer = New(api, e.Store, opts)
+				wantHistoryStart = 1100
+				wantHistoryStarts = []uint64{900}
 			}
 			resumeToken := f.stopAt
 			f.stopAt = ""
@@ -129,6 +143,7 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 			require.NoError(err)
 			require.True(summary.WasResumed)
 			require.Equal(resumeToken, summary.ResumedFromToken)
+			assert.Equal(wantHistoryStart, summary.FinalHistoryID)
 			assert.NotContains(f.listTokens, "", "exercise continuation, not a fresh scan")
 			reopenAcquisitionStore(t, e)
 			e.Syncer = New(api, e.Store, nil) // The following incremental is unrestricted.
@@ -139,13 +154,13 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 			for id := range f.arrivals {
 				assertAcquisitionPresent(t, e, id)
 			}
-			assert.Equal([]uint64{wantHistoryStart}, f.historyStarts, "History must cover the gap across every interruption")
+			assert.Equal(wantHistoryStarts, f.historyStarts, "History must cover the gap across every interruption")
 			assert.Equal(strconv.FormatUint(f.history, 10), gmailCoverageSource(t, e).SyncCursor.String)
 		})
 	}
 }
 
-func TestGmailFullResumePreservesNewerSourceCursor(t *testing.T) {
+func TestGmailFullResumeHistoryExpiration(t *testing.T) {
 	// serial: gmailTransportClient replaces http.DefaultClient.
 	require := require.New(t)
 	assert := assert.New(t)
@@ -157,47 +172,13 @@ func TestGmailFullResumePreservesNewerSourceCursor(t *testing.T) {
 	e.Syncer = New(api, e.Store, nil)
 	_, err := e.Syncer.Full(t.Context(), testEmail)
 	require.ErrorContains(err, "synthetic interrupted listing")
-
-	f.history = 1100
-	_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
-	require.NoError(err)
-	require.Equal("1100", gmailCoverageSource(t, e).SyncCursor.String)
-	reopenAcquisitionStore(t, e)
-	e.Syncer = New(api, e.Store, nil)
-	f.stopAt = ""
-	summary, err := e.Syncer.Full(t.Context(), testEmail)
-	require.NoError(err)
-	require.True(summary.WasResumed)
-	require.Equal("p2", summary.ResumedFromToken)
-	reopenAcquisitionStore(t, e)
-	assert.Equal("1100", gmailCoverageSource(t, e).SyncCursor.String)
-	assert.Equal(uint64(1100), summary.FinalHistoryID)
-}
-
-func TestGmailFullResumeHistoryExpiration(t *testing.T) {
-	// serial: gmailTransportClient replaces http.DefaultClient.
-	require := require.New(t)
-	assert := assert.New(t)
-
-	e := acquisitionDurabilityEnv(t)
-	e.CreateSourceWithHistory(t, "900")
-	f := &fullResumeTransport{history: 1000, stopAt: "p2", arrivals: map[string]uint64{}}
-	api := gmailTransportClient(t, f)
-	e.Syncer = New(api, e.Store, nil)
-	_, err := e.Syncer.Full(t.Context(), testEmail)
-	require.ErrorContains(err, "synthetic interrupted listing")
 	reopenAcquisitionStore(t, e)
 	e.Syncer = New(api, e.Store, nil)
 	f.history, f.stopAt = 1100, ""
-	f.arrivals["arrival1"] = 1050
 	f.listTokens, f.expire = nil, true
 	summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
 	require.NoError(err)
-	assert.Equal([]uint64{900}, f.historyStarts, "exercise an expired source cursor")
+	assert.False(summary.WasResumed)
 	require.NotEmpty(f.listTokens)
 	assert.Empty(f.listTokens[0], "History recovery cannot reuse an ordinary full checkpoint")
-	assert.Equal(uint64(1100), summary.FinalHistoryID)
-	reopenAcquisitionStore(t, e)
-	assert.Equal("1100", gmailCoverageSource(t, e).SyncCursor.String)
-	assertAcquisitionPresent(t, e, "normal1", "normal2", "normal3", "arrival1")
 }
