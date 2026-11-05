@@ -28,7 +28,7 @@ test('palette shows commands, grouping, fallbacks, and persisted recents', async
 
   await input.fill('source');
   await expect(palette.getByRole('option', { name: 'Sources', exact: true })).toBeVisible();
-  await expect(palette.getByRole('option', { name: 'Group by Source', exact: true })).toBeVisible();
+  await expect(palette.getByRole('option', { name: 'Group by… › Source', exact: true })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('artifacts/190-shell-commands-filtered.png') });
   await input.fill('zzzxxyy');
   await expect(palette.getByRole('option')).toHaveCount(2);
@@ -38,7 +38,7 @@ test('palette shows commands, grouping, fallbacks, and persisted recents', async
   await input.clear();
   await palette.getByRole('option', { name: /Group by…/ }).click();
   await expect(palette.getByRole('listbox')).toHaveAccessibleName('Group by…');
-  await palette.getByRole('option', { name: 'Group by Source', exact: true }).click();
+  await palette.getByRole('option', { name: 'Source', exact: true }).click();
   await expect(page.getByLabel('Active analytical context')).toContainText('Source');
   await page.keyboard.press('Control+k');
   await palette.getByRole('option', { name: 'People', exact: true }).click();

@@ -999,7 +999,7 @@
       const dimension = value as ExploreGroupDimension;
       return {
         id: `group:${dimension}`,
-        label: `Group by ${label}`,
+        label,
         icon: Group,
         keywords: groupingByDimension(dimension).keywords,
         disabled: exploreState.current.groupingChain.includes(dimension),

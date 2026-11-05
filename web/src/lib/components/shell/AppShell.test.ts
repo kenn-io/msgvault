@@ -291,7 +291,7 @@ describe('AppShell', () => {
     const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
     await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'source' } });
     expect(within(palette).getByRole('option', { name: 'Sources' })).toBeDefined();
-    await fireEvent.click(within(palette).getByRole('option', { name: 'Group by Source' }));
+    await fireEvent.click(within(palette).getByRole('option', { name: 'Group by… › Source' }));
     expect(state.current.groupingChain).toEqual(['source']);
     rendered.unmount(); state.destroy();
   });
@@ -2439,10 +2439,10 @@ describe('AppShell', () => {
     expect(palette).toBeDefined();
     await fireEvent.click(within(palette).getByRole('option', { name: /Group by…/ }));
     expect(within(palette).getAllByRole('option').map(option => option.textContent?.trim())).toEqual([
-      'Group by People', 'Group by Domains', 'Group by Year', 'Group by Month',
-      'Group by Source', 'Group by Modality', 'Group by Entry kind', 'Group by Lists',
+      'People', 'Domains', 'Year', 'Month',
+      'Source', 'Modality', 'Entry kind', 'Lists',
     ]);
-    expect(within(palette).getByRole('option', { name: 'Group by People' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(palette).getByRole('option', { name: 'People' }).getAttribute('aria-disabled')).toBe('true');
     const paletteInput = within(palette).getByRole('combobox');
     paletteInput.focus();
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('everything-editable'));
