@@ -1,13 +1,52 @@
 package store_test
 
 import (
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/importer"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestImportedMIMEInvitationFromExcludedSenderRemainsVisible(t *testing.T) {
+	f := newTimelineActivityFixture(t)
+	raw := []byte("From: Calendar sender <noreply@example.com>\r\n" +
+		"To: Owner <owner@example.com>\r\n" +
+		"Date: Sat, 17 Oct 2026 12:00:00 +0000\r\n" +
+		"Message-ID: <invitation@example.com>\r\n" +
+		"Subject: Planning invitation\r\nMIME-Version: 1.0\r\n" +
+		"Content-Type: multipart/alternative; boundary=invite\r\n\r\n" +
+		"--invite\r\nContent-Type: text/plain\r\n\r\nCan you join?\r\n" +
+		"--invite\r\nContent-Type: text/calendar; method=REQUEST\r\n\r\n" +
+		"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//Calendar//EN\r\nMETHOD:REQUEST\r\n" +
+		"BEGIN:VEVENT\r\nUID:planning@example.com\r\nDTSTAMP:20261017T120000Z\r\n" +
+		"DTSTART:20261018T120000Z\r\nDTEND:20261018T130000Z\r\n" +
+		"ORGANIZER:mailto:noreply@example.com\r\nATTENDEE:mailto:owner@example.com\r\n" +
+		"SUMMARY:Planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--invite--\r\n")
+	require.NoError(t, importer.IngestRawMessage(t.Context(), f.Store, f.Source.ID, "owner@example.com", "", nil, "invitation", "invitation-hash", raw, tierAsOf, slog.Default()))
+	var id, conversationID int64
+	var messageType string
+	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id,conversation_id,message_type FROM messages WHERE source_id=? AND source_message_id='invitation'`), f.Source.ID).Scan(&id, &conversationID, &messageType))
+	require.Equal(t, "email", messageType)
+	projectTimelineActivity(t, f, "UTC")
+	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+	require.NoError(t, err)
+	assert.Len(t, page.Bursts, 1)
+	assert.Zero(t, page.NoiseOmitted)
+	if len(page.Bursts) == 1 {
+		assert.Equal(t, id, page.Bursts[0].AnchorMessageID)
+		assert.Zero(t, page.Bursts[0].Inbound)
+	}
+	messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conversationID, Limit: 10})
+	require.NoError(t, err)
+	assert.Len(t, messages, 1)
+	if len(messages) == 1 {
+		assert.Equal(t, id, messages[0].MessageID)
+	}
+}
 
 func TestSavedCounterpartMatchesBurstCountWithOtherAccountOwner(t *testing.T) {
 	require := require.New(t)
