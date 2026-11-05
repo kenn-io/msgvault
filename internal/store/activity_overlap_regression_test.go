@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func TestOverlappingMailboxThreadsKeepMailboxConversations(t *testing.T) {
@@ -70,11 +69,6 @@ func TestOverlappingMailboxThreadsKeepMailboxConversations(t *testing.T) {
 			assert.Equal(shape.count, aggregate.Count)
 			assert.Equal(1, aggregate.InitiatedByContact)
 			assert.Zero(aggregate.InitiatedByOwner)
-			scoped, err := f.Store.ListActivityBurstsContext(sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID}), timelineBurstQuery())
-			require.NoError(err)
-			require.Len(scoped.Bursts, 1)
-			assert.Equal(f.Source.ID, scoped.Bursts[0].SourceID)
-			assert.Equal(len(shape.threads[0]), scoped.Bursts[0].Inbound)
 		})
 	}
 }

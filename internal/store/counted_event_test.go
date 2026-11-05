@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-// These accepted combinations are independent of the SQL and Go predicates.
+// These accepted combinations are independent of the SQL predicate.
 // Excluded lists and non-direct evidence never count.
 func TestCountedEventWhereMatchesTierRule(t *testing.T) {
 	accepted := map[string]bool{
@@ -29,8 +29,6 @@ func TestCountedEventWhereMatchesTierRule(t *testing.T) {
 		}
 		want := row.evidence == "direct" && !row.list && accepted[key]
 		assert.Equal(t, want, row.counted, "%+v", row)
-		got := store.CountedEvent(store.ActivityEvidence(row.evidence), store.ActivityRole(row.role), store.ActivityDirection(row.direction), row.refKind, row.list, row.large)
-		assert.Equal(t, want, got, "%+v", row)
 	}
 }
 

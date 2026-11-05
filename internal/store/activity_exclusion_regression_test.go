@@ -17,6 +17,7 @@ func TestActivityMixedConversationExcludesNoiseBeforeDisplay(t *testing.T) {
 			requirements := require.New(t)
 			f := newTimelineActivityFixture(t)
 			at := timelineContactQuery(f).Now
+			personalPeer := f.peer
 			personal := f.add(t, f.ConvID, f.Source.ID, at, false, "")
 			if noise == "automated sender" {
 				f.peer = f.EnsureParticipant("noreply@example.com", "Automated sender", "example.com")
@@ -27,6 +28,13 @@ func TestActivityMixedConversationExcludesNoiseBeforeDisplay(t *testing.T) {
 				requirements.NoError(err)
 			}
 			projectTimelineActivity(t, f, "UTC")
+			contact := timelineContactQuery(f)
+			contact.Subject = store.ActivitySubject{ParticipantIDs: []int64{personalPeer, f.peer}}
+			contact.Now = at.Add(2 * time.Hour)
+			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
+			requirements.NoError(err)
+			assert.Equal(t, 1, aggregate.Count)
+			assert.Equal(t, &at, aggregate.LastAt)
 			for _, include := range []bool{false, true} {
 				t.Run(strconv.FormatBool(include), func(t *testing.T) {
 					assertions, requirements := assert.New(t), require.New(t)
@@ -60,11 +68,24 @@ func TestActivityMixedConversationExcludesNoiseBeforeDisplay(t *testing.T) {
 }
 
 func TestActivityUnicodeAddressExclusions(t *testing.T) {
-	for _, identifier := range []bool{false, true} {
-		t.Run(strconv.FormatBool(identifier), func(t *testing.T) {
+	for _, tc := range []struct {
+		name                      string
+		identifier, saved, domain bool
+	}{
+		{name: "address"},
+		{name: "identifier", identifier: true},
+		{name: "custom domain unsaved", domain: true},
+		{name: "custom domain saved", domain: true, saved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			f := newTimelineActivityFixture(t)
-			if identifier {
+			if tc.domain {
+				if tc.saved {
+					_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+					requirements.NoError(err)
+				}
+			} else if tc.identifier {
 				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address=NULL WHERE id=?`), f.peer)
 				requirements.NoError(err)
 				requirements.NoError(f.Store.SetParticipantIdentifier(f.peer, "email", "BÜRO@example.com"))
@@ -73,19 +94,36 @@ func TestActivityUnicodeAddressExclusions(t *testing.T) {
 				requirements.NoError(err)
 			}
 			q := timelineContactQuery(f)
-			f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+			if tc.domain {
+				id := f.add(t, f.ConvID, f.Source.ID, q.Now, true, "")
+				bob := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, bob}, []string{"Alice", "Bob"}))
+			} else {
+				f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+			}
 			projectTimelineActivity(t, f, "UTC")
+			bq := timelineBurstQuery()
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
 			q.Filters.Exclusions = persontiers.DefaultConfig()
-			q.Filters.Exclusions.ExcludeAddressPatterns = []string{"büro"}
+			if tc.domain {
+				q.Filters.Exclusions.ExcludeDomainPatterns = []string{"example.com"}
+			} else {
+				q.Filters.Exclusions.ExcludeAddressPatterns = []string{"büro"}
+			}
 			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Zero(aggregate.Count)
-			bq := timelineBurstQuery()
 			bq.Filters = q.Filters
-			page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
+			page, err = f.Store.ListActivityBurstsContext(t.Context(), bq)
 			requirements.NoError(err)
 			assertions.Empty(page.Bursts)
 			assertions.Equal(1, page.NoiseOmitted)
+			bq.Filters.IncludeNoise = true
+			page, err = f.Store.ListActivityBurstsContext(t.Context(), bq)
+			requirements.NoError(err)
+			assertions.Len(page.Bursts, 1)
 		})
 	}
 }

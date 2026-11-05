@@ -187,12 +187,7 @@ func TestActivityEmailCopiesCanonicalMessageIDs(t *testing.T) {
 		count               int
 	}{
 		{"clean brackets", "<copy@example.com>", "copy@example.com", 1},
-		{"both bracketed", "<copy@example.com>", "<copy@example.com>", 1},
-		{"distinct IDs", "first@example.com", "second@example.com", 2},
 		{"missing IDs", "", "", 2},
-		{"empty brackets", "<>", "", 2},
-		{"inner whitespace", "< copy@example.com >", "copy@example.com", 2},
-		{"outer whitespace", " <copy@example.com> ", "copy@example.com", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)

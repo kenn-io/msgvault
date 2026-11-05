@@ -11,71 +11,83 @@ import (
 )
 
 func TestScopedTierHiddenIdentifier(t *testing.T) {
-	for _, reader := range []string{"tier", "aggregate and bursts"} {
-		t.Run(reader, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			f := newTimelineActivityFixture(t)
-			f.peer = f.EnsureParticipant("noreply@example.com", "Peer", "example.com")
-			alias := f.EnsureParticipant("noreply@other.example.com", "Alias", "other.example.com")
-			_, err := f.Store.LinkParticipants(f.peer, alias)
-			requirements.NoError(err)
-			person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-			requirements.NoError(err)
-			q := timelineContactQuery(f)
-			if reader == "tier" {
-				q.Now = tierAsOf
-				for i := range 3 {
-					f.add(t, f.ConvID, f.Source.ID, tierAsOf.AddDate(0, 0, i-3), i == 1, "")
-				}
-			} else {
-				f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
-			}
-			hidden, err := f.Store.GetOrCreateSource("matrix", "hidden@example.com")
-			requirements.NoError(err)
-			conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
-			requirements.NoError(err)
-			peer := f.peer
-			f.peer = alias
-			hiddenAt := q.Now
-			if reader == "tier" {
-				hiddenAt = q.Now.AddDate(0, 0, -1)
-			}
-			f.add(t, conv, hidden.ID, hiddenAt, false, "")
-			f.peer = peer
-			projectTimelineActivity(t, f, "UTC")
-			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-			if reader == "tier" {
-				before, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
-				requirements.NoError(err)
-				requirements.Equal(3, before.Tier)
-				requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
-				after, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
-				requirements.NoError(err)
-				assertions.Equal(before.Tier, after.Tier)
-				assertions.Equal(before.Signals, after.Signals)
-				return
-			}
-			before, err := f.Store.MessageContactAggregateContext(ctx, q)
-			requirements.NoError(err)
-			requirements.Zero(before.Count)
-			requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
-			after, err := f.Store.MessageContactAggregateContext(ctx, q)
-			requirements.NoError(err)
-			assertions.Equal(before, after)
-			bq := timelineBurstQuery()
-			bq.Filters.IncludeNoise = true
-			bursts, err := f.Store.ListActivityBurstsContext(ctx, bq)
-			requirements.NoError(err)
-			requirements.Len(bursts.Bursts, 1)
-			assertions.Zero(bursts.Bursts[0].Inbound)
-			for _, cp := range bursts.Bursts[0].Counterparts {
-				if cp.ParticipantID == f.peer {
-					assertions.Equal("automated_address", cp.Excluded)
-					assertions.False(cp.Counted)
-				}
-			}
-		})
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	f.peer = f.EnsureParticipant("noreply@example.com", "Peer", "example.com")
+	alias := f.EnsureParticipant("noreply@other.example.com", "Alias", "other.example.com")
+	_, err := f.Store.LinkParticipants(f.peer, alias)
+	requirements.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+	requirements.NoError(err)
+	q := timelineContactQuery(f)
+	q.Now = tierAsOf
+	for i := range 3 {
+		f.add(t, f.ConvID, f.Source.ID, tierAsOf.AddDate(0, 0, i-3), i == 1, "")
+	}
+	hidden, err := f.Store.GetOrCreateSource("matrix", "hidden@example.com")
+	requirements.NoError(err)
+	conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
+	requirements.NoError(err)
+	peer := f.peer
+	f.peer = alias
+	hiddenAt := q.Now.AddDate(0, 0, -1)
+	f.add(t, conv, hidden.ID, hiddenAt, false, "")
+	f.peer = peer
+	projectTimelineActivity(t, f, "UTC")
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
+	before, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
+	requirements.NoError(err)
+	requirements.Equal(3, before.Tier)
+	requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
+	after, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
+	requirements.NoError(err)
+	assertions.Equal(before.Tier, after.Tier)
+	assertions.Equal(before.Signals, after.Signals)
+}
+
+func TestScopedActivityHiddenIdentifier(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	f.peer = f.EnsureParticipant("noreply@example.com", "Peer", "example.com")
+	alias := f.EnsureParticipant("noreply@other.example.com", "Alias", "other.example.com")
+	_, err := f.Store.LinkParticipants(f.peer, alias)
+	requirements.NoError(err)
+	_, _, err = f.Store.CreatePersonFromParticipant(f.peer)
+	requirements.NoError(err)
+	q := timelineContactQuery(f)
+	f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+	hidden, err := f.Store.GetOrCreateSource("matrix", "hidden@example.com")
+	requirements.NoError(err)
+	conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
+	requirements.NoError(err)
+	peer := f.peer
+	f.peer = alias
+	hiddenAt := q.Now
+	f.add(t, conv, hidden.ID, hiddenAt, false, "")
+	f.peer = peer
+	projectTimelineActivity(t, f, "UTC")
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
+
+	before, err := f.Store.MessageContactAggregateContext(ctx, q)
+	requirements.NoError(err)
+	requirements.Zero(before.Count)
+	requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
+	after, err := f.Store.MessageContactAggregateContext(ctx, q)
+	requirements.NoError(err)
+	assertions.Equal(before, after)
+	bq := timelineBurstQuery()
+	bq.Filters.IncludeNoise = true
+	bursts, err := f.Store.ListActivityBurstsContext(ctx, bq)
+	requirements.NoError(err)
+	requirements.Len(bursts.Bursts, 1)
+	assertions.Zero(bursts.Bursts[0].Inbound)
+	for _, cp := range bursts.Bursts[0].Counterparts {
+		if cp.ParticipantID == f.peer {
+			assertions.Equal("automated_address", cp.Excluded)
+			assertions.False(cp.Counted)
+		}
 	}
 }
 
@@ -196,18 +208,32 @@ func TestPersonReferenceRejectsMalformedEmail(t *testing.T) {
 }
 
 func TestActivityWindowDateAndTimestampBounds(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	day := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	f.add(t, f.ConvID, f.Source.ID, day.AddDate(0, 0, -1), false, "")
 	f.add(t, f.ConvID, f.Source.ID, day, false, "")
 	projectTimelineActivity(t, f, "UTC")
-	before := day.Add(12 * time.Hour)
-	page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Before: &before, Limit: 10})
-	require.NoError(err)
-	require.Len(page.Bursts, 1)
-	assert.Equal("2026-10-22", page.Bursts[0].LocalDate)
+	before := day.Add(-time.Hour)
+	for _, tc := range []struct {
+		name, from, to, want string
+		before               *time.Time
+	}{
+		{"date range", "2026-10-22", "2026-10-22", "2026-10-22", nil},
+		{"timestamp cuts admitted date", "2026-10-21", "2026-10-22", "2026-10-21", &before},
+		{"both bounds exclude", "2026-10-22", "2026-10-22", "", &before},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: tc.from, ToDate: tc.to, Before: tc.before, Limit: 10})
+			require.NoError(err)
+			if tc.want == "" {
+				assert.Empty(page.Bursts)
+			} else {
+				require.Len(page.Bursts, 1)
+				assert.Equal(tc.want, page.Bursts[0].LocalDate)
+			}
+		})
+	}
 }
 
 func TestActivityWindowValidatesDatesWithTimestamps(t *testing.T) {

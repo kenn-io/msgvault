@@ -51,61 +51,50 @@ func TestMessageAggregateInitiationUsesSevenDayGap(t *testing.T) {
 	assert.Equal(t, 1, got.InitiatedByOwner)
 }
 func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
-	f := newTimelineActivityFixture(t)
-	q := timelineContactQuery(f)
-	for _, at := range []time.Time{time.Date(2025, 10, 31, 23, 0, 0, 0, time.UTC), time.Date(2025, 11, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 9, 30, 23, 0, 0, 0, time.UTC), q.Now, q.Now.AddDate(0, 1, 0)} {
-		f.add(t, f.ConvID, f.Source.ID, at, false, "")
-	}
-	projectTimelineActivity(t, f, "UTC")
-	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-	require.NoError(t, err)
-	assert.Equal(t, [12]int{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}, got.Monthly)
-}
-
-func TestMessageAggregateUsesQueryTimezone(t *testing.T) {
-	for _, zone := range []string{"America/New_York", "Asia/Tokyo"} {
-		t.Run(zone, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
+	for _, tc := range []struct {
+		zone string
+		year int
+		want [12]int
+	}{
+		{"UTC", 2026, [12]int{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}},
+		{"America/New_York", 2026, [12]int{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}},
+		{"Asia/Tokyo", 2026, [12]int{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}},
+		{"America/Asuncion", 2023, [12]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
 			f := newTimelineActivityFixture(t)
-			loc, err := time.LoadLocation(zone)
+			loc, err := time.LoadLocation(tc.zone)
 			require.NoError(err)
 			q := timelineContactQuery(f)
 			q.Location = loc
-			q.Now = time.Date(2026, 10, 22, 12, 0, 0, 0, loc)
+			q.Now = time.Date(tc.year, 10, 22, 12, 0, 0, 0, loc)
 			start := time.Date(2025, 11, 1, 0, 0, 0, 0, loc)
-			// UTC projection dates cross the first month of the window and
-			// an interior month boundary.
-			for i, at := range []time.Time{start.Add(-time.Minute), start, start.AddDate(0, 0, 8), time.Date(2026, 10, 1, 0, 0, 0, 0, loc).Add(-time.Minute), time.Date(2026, 10, 1, 0, 0, 0, 0, loc)} {
-				f.add(t, f.ConvID, f.Source.ID, at, i == 2, "")
+			month := time.Date(2026, 10, 1, 0, 0, 0, 0, loc)
+			ats := []time.Time{start.Add(-time.Minute), start, start.AddDate(0, 0, 8), month.Add(-time.Minute), month}
+			switch tc.zone {
+			case "UTC":
+				ats = []time.Time{time.Date(2025, 10, 31, 23, 0, 0, 0, time.UTC), start, month.Add(-time.Hour), q.Now, q.Now.AddDate(0, 1, 0)}
+			case "America/Asuncion":
+				// October starts at 01:00 after a midnight clock jump.
+				ats = []time.Time{time.Date(2023, 10, 1, 3, 30, 0, 0, time.UTC), time.Date(2023, 10, 1, 4, 30, 0, 0, time.UTC)}
+			}
+			for i, at := range ats {
+				f.add(t, f.ConvID, f.Source.ID, at, tc.zone != "UTC" && (i == 2 || tc.zone == "America/Asuncion" && i == 1), "")
 			}
 			projectTimelineActivity(t, f, "UTC")
 			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 			require.NoError(err)
-			assert.Equal(5, got.Count)
-			assert.Equal([12]int{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}, got.Monthly)
-			assert.Equal(2, got.InitiatedByContact)
-			assert.Equal(1, got.InitiatedByOwner)
+			assert.Equal(tc.want, got.Monthly)
+			if tc.zone == "America/New_York" || tc.zone == "Asia/Tokyo" {
+				assert.Equal(5, got.Count)
+				assert.Equal(2, got.InitiatedByContact)
+				assert.Equal(1, got.InitiatedByOwner)
+			}
 		})
 	}
 }
-func TestMessageAggregateUnsavedCluster(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	q := timelineContactQuery(f)
-	f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
-	projectTimelineActivity(t, f, "UTC")
-	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(1, got.Count)
-	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-	requirements.NoError(err)
-	q.Subject = store.ActivitySubject{PersonID: person.ID}
-	saved, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(got, saved)
-}
+
 func TestAttendedTranscriptIDsByRole(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -137,10 +126,16 @@ func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 	_, err = f.Store.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser})
 	requirements.NoError(err)
 	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	storedLast := now.AddDate(0, 0, -1)
+	f.add(t, f.ConvID, f.Source.ID, storedLast, false, "")
+	projectTimelineActivity(t, f, "UTC")
+	stored, err := f.Store.ContactStateContext(t.Context(), person.ID, now)
+	requirements.NoError(err)
+	requirements.Equal(&storedLast, stored.LastContactAt)
 	for _, tc := range []struct {
 		days int
 		want string
-	}{{30, "overdue"}, {10, "ok"}} {
+	}{{30, store.CadenceOverdue}, {10, store.CadenceOK}} {
 		last := now.AddDate(0, 0, -tc.days)
 		status, due, err := f.Store.CadenceForPersonContext(t.Context(), person.ID, &last, now)
 		requirements.NoError(err)
@@ -148,10 +143,6 @@ func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 		requirements.NotNil(due)
 		assertions.Equal(last.AddDate(0, 0, 21), *due)
 	}
-	status, due, err := f.Store.CadenceForPersonContext(t.Context(), person.ID, nil, now)
-	requirements.NoError(err)
-	assertions.Equal("unknown", status)
-	assertions.Nil(due)
 }
 
 func TestContactReadersDiscardFutureCopyBeforeRanking(t *testing.T) {

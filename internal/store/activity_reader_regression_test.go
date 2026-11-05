@@ -64,82 +64,101 @@ func TestActivityReadersDefaultMissingPolicyToFull(t *testing.T) {
 	}
 }
 
-// Sender plus a non-owner recipient is a two-person audience, even when
-// recipient-only counting sees just one. Saved aliases count as one person.
-func TestActivityReadersInboundAudienceMatchesClassifier(t *testing.T) {
-	for _, aliases := range []bool{false, true} {
-		t.Run(strconv.FormatBool(aliases), func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
+// The projection's audience policy also governs live readers and saved aliases.
+func TestActivityReadersAudienceUsesProjectionPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name                            string
+		out, saved, aliases, otherOwner bool
+	}{
+		{name: "inbound extra recipient"},
+		{name: "inbound saved aliases", saved: true, aliases: true},
+		{name: "outbound unsaved", out: true},
+		{name: "outbound saved", out: true, saved: true},
+		{name: "inbound other account owner", saved: true, otherOwner: true},
+		{name: "outbound other account owner", out: true, saved: true, otherOwner: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
 			f := newTimelineActivityFixture(t)
-			id := f.add(t, f.ConvID, f.Source.ID, timelineContactQuery(f).Now, false, "")
 			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
-			if aliases {
-				_, err := f.Store.LinkParticipants(f.peer, other)
-				requirements.NoError(err)
-				_, _, err = f.Store.CreatePersonFromParticipant(f.peer)
-				requirements.NoError(err)
+			if tc.otherOwner {
+				src, err := f.Store.GetOrCreateSource("gmail", "bob@example.com")
+				require.NoError(err)
+				require.NoError(f.Store.AddAccountIdentity(src.ID, "bob@example.com", "manual"))
 			}
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other}, []string{"Owner", "Other"}))
+			if tc.aliases {
+				_, err := f.Store.LinkParticipants(f.peer, other)
+				require.NoError(err)
+			}
+			var personID int64
+			if tc.saved {
+				person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+				require.NoError(err)
+				personID = person.ID
+			}
+			id := f.add(t, f.ConvID, f.Source.ID, tierAsOf, tc.out, "")
+			to := []int64{f.owner, other}
+			if tc.out {
+				to = []int64{f.peer, other}
+			}
+			require.NoError(f.Store.ReplaceMessageRecipients(id, "to", to, nil))
 			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 1})
-			requirements.NoError(err)
+			require.NoError(err)
 			_, err = projector.RunOnce(t.Context())
-			requirements.NoError(err)
-			q := timelineBurstQuery()
-			q.Filters = store.ActivityFilters{IncludeNoise: true}
-			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			requirements.Len(got.Bursts, 1)
+			require.NoError(err)
 			want := 0
-			if aliases {
+			if tc.aliases {
 				want = 1
 			}
-			assertions.Equal(want, got.Bursts[0].Inbound)
-			for _, cp := range got.Bursts[0].Counterparts {
-				if cp.ParticipantID == f.peer {
-					assertions.Equal(aliases, cp.Counted)
-				}
-			}
-		})
-	}
-}
-
-// An omitted reader limit follows projection policy for saved and unsaved
-// contacts, rather than silently switching classification back to 25.
-func TestActivityReadersOmittedLimitUsesProjectionPolicy(t *testing.T) {
-	for _, saved := range []bool{false, true} {
-		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			f := newTimelineActivityFixture(t)
-			if saved {
-				_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-				requirements.NoError(err)
-			}
-			id := f.add(t, f.ConvID, f.Source.ID, timelineContactQuery(f).Now, true, "")
-			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, other}, []string{"Alice", "Bob"}))
-			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 1})
-			requirements.NoError(err)
-			_, err = projector.RunOnce(t.Context())
-			requirements.NoError(err)
-			got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-			requirements.NoError(err)
-			assertions.Empty(got.Bursts)
 			q := timelineBurstQuery()
+			if tc.otherOwner {
+				q.Subject = store.ActivitySubject{PersonID: personID}
+			}
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+			require.NoError(err)
+			assert.Len(page.Bursts, want)
 			q.Filters.IncludeNoise = true
-			got, err = f.Store.ListActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			requirements.Len(got.Bursts, 1)
-			assertions.Zero(got.Bursts[0].Outbound)
-			for _, cp := range got.Bursts[0].Counterparts {
+			page, err = f.Store.ListActivityBurstsContext(t.Context(), q)
+			require.NoError(err)
+			require.Len(page.Bursts, 1)
+			wantInbound, wantOutbound := want, 0
+			if tc.out {
+				wantInbound, wantOutbound = 0, want
+			}
+			assert.Equal(wantInbound, page.Bursts[0].Inbound)
+			assert.Equal(wantOutbound, page.Bursts[0].Outbound)
+			found := false
+			for _, cp := range page.Bursts[0].Counterparts {
 				if cp.ParticipantID == f.peer {
-					assertions.False(cp.Counted)
+					found = true
+					assert.Equal(tc.aliases, cp.Counted)
+					if tc.otherOwner && tc.out {
+						assert.Equal(store.EvidenceCoPresence, cp.Evidence)
+					}
 				}
 			}
-			summary, err := f.Store.MessageContactAggregateContext(t.Context(), timelineContactQuery(f))
-			requirements.NoError(err)
-			assertions.Zero(summary.Count)
+			assert.True(found)
+			contact := timelineContactQuery(f)
+			contact.Now = tierAsOf
+			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
+			require.NoError(err)
+			assert.Equal(want, aggregate.Count)
+			if tc.otherOwner {
+				tier, err := f.Store.ExplainPersonTierContext(t.Context(), personID, tierOptions())
+				require.NoError(err)
+				assert.Equal([2]int{wantInbound, wantOutbound}, [2]int{tier.Signals.InboundLong, tier.Signals.OutboundLong})
+			}
+			if tc.otherOwner && tc.out {
+				messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: q.Filters})
+				require.NoError(err)
+				require.Len(messages, 1)
+				for _, cp := range messages[0].Counterparts {
+					if cp.ParticipantID == f.peer {
+						assert.Equal(store.EvidenceCoPresence, cp.Evidence)
+						assert.False(cp.Counted)
+					}
+				}
+			}
 		})
 	}
 }

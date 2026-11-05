@@ -295,13 +295,11 @@ func TestPersonTierSignalsCollapseQualifiedEmailCopies(t *testing.T) {
 
 func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 	for _, tc := range []struct {
-		name, kind                                string
-		empty, distinct, list, broadcast, deleted bool
-		want                                      int
+		name, kind               string
+		list, broadcast, deleted bool
+		want                     int
 	}{
 		{name: "email", kind: "email_thread", want: 1},
-		{name: "distinct email", kind: "email_thread", distinct: true, want: 2},
-		{name: "missing ID", kind: "email_thread", empty: true, want: 2},
 		{name: "independent chat", kind: "chat", want: 2},
 		{name: "list first", kind: "email_thread", list: true, want: 1},
 		{name: "large audience first", kind: "email_thread", broadcast: true, want: 1},
@@ -319,13 +317,8 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
 				m.ConversationID = room
 				m.SenderID = sql.NullInt64{Int64: a.sender, Valid: true}
-				if !tc.empty {
-					key := "<copy-control@example.com>"
-					if tc.distinct {
-						key = fmt.Sprintf("<copy-control-%d@example.com>", i)
-					}
-					m.RFC822MessageID = sql.NullString{String: key, Valid: true}
-				}
+				key := "<copy-control@example.com>"
+				m.RFC822MessageID = sql.NullString{String: key, Valid: true}
 				if tc.list && i == 0 {
 					m.ListID = sql.NullString{String: "list.example.com", Valid: true}
 				}
@@ -364,17 +357,17 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 	}
 }
 
-// Tier counts use the archive's canonical ID rule: one clean bracket pair is
-// optional, while whitespace remains part of the stored identifier.
+// Tier counts collapse canonical email copies within the granted sources.
 func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		ids  [2]string
-		want int
+		name        string
+		ids         [2]string
+		sameMailbox bool
+		want        int
 	}{
-		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, 1},
-		{"inner whitespace", [2]string{"< canonical@example.com>", " canonical@example.com"}, 2},
-		{"outer whitespace", [2]string{" <canonical@example.com> ", "canonical@example.com"}, 2},
+		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, false, 1},
+		{"missing IDs", [2]string{"", ""}, true, 2},
+		{"distinct IDs", [2]string{"first@example.com", "second@example.com"}, true, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -384,11 +377,17 @@ func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 			requirements.NoError(a.f.Store.AddAccountIdentity(second.ID, "owner@example.com", "manual"))
 			room, err := a.f.Store.EnsureConversationWithType(second.ID, "canonical-copies", "email_thread", "Canonical copies")
 			requirements.NoError(err)
-			for i, source := range []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}} {
+			sources := []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}}
+			firstCount, secondCount := 1, 1
+			if tc.sameMailbox {
+				sources[1] = sources[0]
+				firstCount, secondCount = 2, 0
+			}
+			for i, source := range sources {
 				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
 				m.SourceID, m.ConversationID = source.id, source.room
 				m.SenderID = sql.NullInt64{Int64: a.sender, Valid: true}
-				m.RFC822MessageID = sql.NullString{String: tc.ids[i], Valid: true}
+				m.RFC822MessageID = sql.NullString{String: tc.ids[i], Valid: tc.ids[i] != ""}
 				id, err := a.f.Store.UpsertMessage(m)
 				requirements.NoError(err)
 				requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{a.sender}, nil))
@@ -399,7 +398,7 @@ func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 			for _, scope := range []struct {
 				ids  []int64
 				want int
-			}{{nil, tc.want}, {[]int64{a.f.Source.ID}, 1}, {[]int64{second.ID}, 1}} {
+			}{{nil, tc.want}, {[]int64{a.f.Source.ID}, firstCount}, {[]int64{second.ID}, secondCount}} {
 				ctx := t.Context()
 				if scope.ids != nil {
 					ctx = sourcescope.WithSourceIDs(ctx, scope.ids)

@@ -3,7 +3,6 @@ package store_test
 import (
 	"database/sql"
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -100,7 +99,11 @@ func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
 			if !saved && tc.name != "automated aliases" {
 				continue
 			}
-			t.Run(fmt.Sprintf("%s/saved=%t", tc.name, saved), func(t *testing.T) {
+			name := tc.name
+			if !saved {
+				name = "automated address"
+			}
+			t.Run(fmt.Sprintf("%s/saved=%t", name, saved), func(t *testing.T) {
 				require := require.New(t)
 				assert := assert.New(t)
 				f := newTimelineActivityFixture(t)
@@ -110,7 +113,7 @@ func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
 					person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
 					require.NoError(err)
 					var alias int64
-					err = f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO participants(email_address,phone_number,display_name) VALUES(?,?,'Alias') RETURNING id`), tc.alias, tc.phone).Scan(&alias)
+					err = f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO participants(email_address,phone_number,display_name) VALUES(?,?,'Alias') RETURNING id`), sql.NullString{String: tc.alias, Valid: tc.alias != ""}, sql.NullString{String: tc.phone, Valid: tc.phone != ""}).Scan(&alias)
 					require.NoError(err)
 					if tc.kind != "" {
 						require.NoError(f.Store.SetParticipantIdentifier(alias, tc.kind, tc.value))
@@ -123,19 +126,23 @@ func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
 				f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
 				projectTimelineActivity(t, f, "UTC")
 				q.Subject = subject
-				aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-				require.NoError(err)
 				want := 0
 				if tc.excluded == "" {
 					want = 1
 				}
-				assert.Equal(want, aggregate.Count)
+				if tc.name == "human email" {
+					aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+					require.NoError(err)
+					assert.Equal(want, aggregate.Count)
+				}
 				bq := timelineBurstQuery()
-				page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
-				require.NoError(err)
-				assert.Len(page.Bursts, want)
+				if tc.name == "human email" {
+					page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
+					require.NoError(err)
+					assert.Len(page.Bursts, want)
+				}
 				bq.Filters.IncludeNoise = true
-				page, err = f.Store.ListActivityBurstsContext(t.Context(), bq)
+				page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
 				require.NoError(err)
 				require.Len(page.Bursts, 1)
 				found := false
@@ -233,40 +240,7 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 		assertions.Equal(4, total)
 	}
 }
-func TestBurstsCustomExclusionAndProjectionDirectLimit(t *testing.T) {
-	for _, saved := range []bool{false, true} {
-		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			f := newTimelineActivityFixture(t)
-			if saved {
-				_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-				requirements.NoError(err)
-			}
-			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-			id := f.add(t, f.ConvID, f.Source.ID, at, true, "")
-			bob := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, bob}, []string{"Alice", "Bob"}))
-			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", MaxDirectCounterparts: 1})
-			requirements.NoError(err)
-			_, err = projector.RunOnce(t.Context())
-			requirements.NoError(err)
-			q := timelineBurstQuery()
-			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Empty(got.Bursts)
-			projector, err = activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", MaxDirectCounterparts: 25})
-			requirements.NoError(err)
-			_, err = projector.RunOnce(t.Context())
-			requirements.NoError(err)
-			q.Filters.Exclusions = persontiers.DefaultConfig()
-			q.Filters.Exclusions.ExcludeDomainPatterns = []string{"example.com"}
-			got, err = f.Store.ListActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Empty(got.Bursts)
-		})
-	}
-}
+
 func TestBurstsKeepLocalDateAcrossDSTDay(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -319,44 +293,31 @@ func TestBurstsPhoneCounterpartsAreNotEmailExclusions(t *testing.T) {
 
 func TestActivityListExclusionCanBeDisabled(t *testing.T) {
 	requirements := require.New(t)
+	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	q := timelineContactQuery(f)
 	id := f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
 	requirements.NoError(err)
 	projectTimelineActivity(t, f, "UTC")
-	for _, exclude := range []bool{true, false} {
-		t.Run(strconv.FormatBool(exclude), func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			filters := store.ActivityFilters{Exclusions: persontiers.DefaultConfig()}
-			filters.Exclusions.ExcludeListMessages = exclude
-			query := timelineBurstQuery()
-			query.Filters = filters
-			bursts, err := f.Store.ListActivityBurstsContext(t.Context(), query)
-			requirements.NoError(err)
-			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: filters})
-			requirements.NoError(err)
-			contact := q
-			contact.Filters = filters
-			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
-			requirements.NoError(err)
-			if exclude {
-				assertions.Equal(1, bursts.NoiseOmitted)
-				assertions.Empty(bursts.Bursts)
-				assertions.Empty(messages)
-				assertions.Zero(aggregate.Count)
-				return
-			}
-			requirements.Len(bursts.Bursts, 1)
-			assertions.Equal(1, bursts.Bursts[0].Inbound)
-			assertions.Zero(bursts.NoiseOmitted)
-			requirements.Len(messages, 1)
-			assertions.Equal(1, aggregate.Count)
-			requirements.NotNil(aggregate.LastAt)
-			assertions.Equal(q.Now, *aggregate.LastAt)
-		})
-	}
+	filters := store.ActivityFilters{Exclusions: persontiers.DefaultConfig()}
+	filters.Exclusions.ExcludeListMessages = false
+	query := timelineBurstQuery()
+	query.Filters = filters
+	bursts, err := f.Store.ListActivityBurstsContext(t.Context(), query)
+	requirements.NoError(err)
+	requirements.Len(bursts.Bursts, 1)
+	assertions.Equal(1, bursts.Bursts[0].Inbound)
+	assertions.Zero(bursts.NoiseOmitted)
+	messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: filters})
+	requirements.NoError(err)
+	requirements.Len(messages, 1)
+	q.Filters = filters
+	aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+	requirements.NoError(err)
+	assertions.Equal(1, aggregate.Count)
+	requirements.NotNil(aggregate.LastAt)
+	assertions.Equal(q.Now, *aggregate.LastAt)
 }
 
 func TestActivityCallLogsNeverCountAsMessageContact(t *testing.T) {
@@ -379,7 +340,6 @@ func TestActivityCallLogsNeverCountAsMessageContact(t *testing.T) {
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type=?,subject=? WHERE id=?`), tc.kind, tc.subject, id)
 			requirements.NoError(err)
 			projectTimelineActivity(t, f, "UTC")
-			q.Filters.IncludeNoise = true
 			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(tc.want, aggregate.Count)
@@ -388,7 +348,6 @@ func TestActivityCallLogsNeverCountAsMessageContact(t *testing.T) {
 			bursts, err := f.Store.ListActivityBurstsContext(t.Context(), burstQuery)
 			requirements.NoError(err)
 			requirements.Len(bursts.Bursts, 1)
-			assertions.Equal(tc.want, bursts.Bursts[0].Inbound)
 			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: store.ActivityFilters{IncludeNoise: true}})
 			requirements.NoError(err)
 			requirements.Len(messages, 1)

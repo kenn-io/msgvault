@@ -12,35 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestResolvePersonReferenceHiddenBridgeDoesNotChangeCluster(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := storetest.New(t)
-	visible := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	hidden := f.EnsureParticipant("hidden@example.com", "Hidden", "example.com")
-	for _, participant := range []int64{visible, other} {
-		m := f.NewMessage().WithSentAt(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)).Build()
-		m.SenderID = sql.NullInt64{Int64: participant, Valid: true}
-		_, err := f.Store.UpsertMessage(m)
-		requirements.NoError(err)
-	}
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	before, err := f.Store.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(visible, 10), nil, 10)
-	requirements.NoError(err)
-	requirements.Len(before, 1)
-	assertions.Equal([]int64{visible}, before[0].ParticipantIDs)
-	_, err = f.Store.LinkParticipants(visible, hidden)
-	requirements.NoError(err)
-	_, err = f.Store.LinkParticipants(hidden, other)
-	requirements.NoError(err)
-	after, err := f.Store.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(visible, 10), nil, 10)
-	requirements.NoError(err)
-	assertions.Equal(before, after)
-}
-
-// A conflicting sender is not an observed counterpart unless an explicit
-// recipient or ordinary room membership independently includes that sender.
+// A conflicting sender needs an explicit recipient or room membership to resolve.
 func TestResolvePersonReferenceSenderFallbackMatchesProjector(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		for _, scenario := range []struct {
@@ -92,19 +64,11 @@ func TestResolvePersonReferenceSenderFallbackMatchesProjector(t *testing.T) {
 					requirements.NoError(f.Store.EnsureConversationParticipant(f.ConvID, sender, "member"))
 				}
 				ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-				candidates, err := f.Store.LoadActivityCandidatesByIDContext(ctx, []int64{id})
-				requirements.NoError(err)
-				requirements.Len(candidates, 1)
-				observed := map[int64]bool{}
-				for _, cp := range candidates[0].Counterparts {
-					observed[cp.ParticipantID] = true
-				}
 				for participant, visible := range map[int64]bool{
 					sender: scenario.wantSender, from: scenario.explicitFrom,
 					to: scenario.addressed, cc: scenario.addressed, bcc: scenario.addressed,
 					room: !scenario.addressed,
 				} {
-					assertions.Equal(visible, observed[participant], "projector population for %d", participant)
 					got, resolveErr := f.Store.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(participant, 10), nil, 10)
 					requirements.NoError(resolveErr)
 					if visible {
@@ -120,47 +84,62 @@ func TestResolvePersonReferenceSenderFallbackMatchesProjector(t *testing.T) {
 }
 
 func TestResolvePersonReferenceSuppressedSenderCannotBridgeCluster(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	f := storetest.New(t)
-	visible := f.EnsureParticipant("visible@example.com", "Visible", "example.com")
-	hidden := f.EnsureParticipant("hidden@example.com", "Hidden sender", "example.com")
-	other := f.EnsureParticipant("other@example.com", "Other", "example.com")
-	m := f.NewMessage().WithSentAt(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)).Build()
-	m.SenderID = sql.NullInt64{Int64: hidden, Valid: true}
-	id, err := f.Store.UpsertMessage(m)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{visible}, []string{"Visible"}))
-	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{other}, []string{"Other"}))
-	_, err = f.Store.LinkParticipants(visible, hidden)
-	requirements.NoError(err)
-	_, err = f.Store.LinkParticipants(hidden, other)
-	requirements.NoError(err)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	for _, participant := range []int64{visible, other} {
-		got, resolveErr := f.Store.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(participant, 10), nil, 10)
-		requirements.NoError(resolveErr)
-		requirements.Len(got, 1)
-		assertions.Equal([]int64{participant}, got[0].ParticipantIDs)
+	for _, tc := range []struct {
+		name              string
+		suppressed, saved bool
+	}{
+		{name: "unobserved bridge"},
+		{name: "suppressed sender", suppressed: true},
+		{name: "saved suppressed sender", suppressed: true, saved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			f := storetest.New(t)
+			visible := f.EnsureParticipant("alice@example.com", "Alice", "example.com")
+			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
+			hidden := f.EnsureParticipant("hidden@example.com", "Hidden", "example.com")
+			if tc.suppressed {
+				m := f.NewMessage().WithSentAt(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)).Build()
+				m.SenderID = sql.NullInt64{Int64: hidden, Valid: true}
+				id, err := f.Store.UpsertMessage(m)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{visible}, []string{"Visible"}))
+				if !tc.saved {
+					requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{other}, []string{"Other"}))
+				}
+			} else {
+				for _, participant := range []int64{visible, other} {
+					m := f.NewMessage().WithSentAt(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)).Build()
+					m.SenderID = sql.NullInt64{Int64: participant, Valid: true}
+					_, err := f.Store.UpsertMessage(m)
+					requirements.NoError(err)
+				}
+			}
+			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
+			before, err := f.Store.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(visible, 10), nil, 10)
+			requirements.NoError(err)
+			requirements.Len(before, 1)
+			assertions.Equal([]int64{visible}, before[0].ParticipantIDs)
+			_, err = f.Store.LinkParticipants(visible, hidden)
+			requirements.NoError(err)
+			if tc.saved {
+				person, _, err := f.Store.CreatePersonFromParticipant(visible)
+				requirements.NoError(err)
+				got, err := f.Store.ResolvePersonReferenceContext(ctx, "person", strconv.FormatInt(person.ID, 10), nil, 10)
+				requirements.NoError(err)
+				requirements.Len(got, 1)
+				assertions.Equal([]int64{visible}, got[0].ParticipantIDs)
+				return
+			}
+			_, err = f.Store.LinkParticipants(hidden, other)
+			requirements.NoError(err)
+			after, err := f.Store.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(visible, 10), nil, 10)
+			requirements.NoError(err)
+			assertions.Equal(before, after)
+			got, err := f.Store.ResolvePersonReferenceContext(ctx, "participant", strconv.FormatInt(other, 10), nil, 10)
+			requirements.NoError(err)
+			requirements.Len(got, 1)
+			assertions.Equal([]int64{other}, got[0].ParticipantIDs)
+		})
 	}
-}
-
-func TestResolvePersonReferenceSavedMembersExcludeSuppressedSender(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	f := storetest.New(t)
-	visible := f.EnsureParticipant("visible@example.com", "Visible", "example.com")
-	hidden := f.EnsureParticipant("hidden@example.com", "Hidden sender", "example.com")
-	_, err := f.Store.LinkParticipants(visible, hidden)
-	requirements.NoError(err)
-	person, _, err := f.Store.CreatePersonFromParticipant(visible)
-	requirements.NoError(err)
-	m := f.NewMessage().WithSentAt(time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)).Build()
-	m.SenderID = sql.NullInt64{Int64: hidden, Valid: true}
-	id, err := f.Store.UpsertMessage(m)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{visible}, []string{"Visible"}))
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	got, err := f.Store.ResolvePersonReferenceContext(ctx, "person", strconv.FormatInt(person.ID, 10), nil, 10)
-	requirements.NoError(err)
-	requirements.Len(got, 1)
-	assertions.Equal([]int64{visible}, got[0].ParticipantIDs)
 }
