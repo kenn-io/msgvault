@@ -1380,10 +1380,10 @@ func entryKinds(rows []EntryRow) []EntryKind {
 	return kinds
 }
 
-// TestExploreCounterpartParticipantIDExcludesOwner verifies
+// TestExploreCounterpartParticipantIDExcludesOwnerAndRooms verifies
 // counterpart_participant_id is the smallest eligible non-owner participant.
 // The owner and room have lower IDs than either person and remain in the entry.
-func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
+func TestExploreCounterpartParticipantIDExcludesOwnerAndRooms(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
 	assert := assert.New(t)

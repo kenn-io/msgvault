@@ -15,64 +15,52 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestConversationWindowRoomRecipientsRespectIdentityLinks(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("gcal", "archive@example.com")
-	requirements.NoError(err)
-	conversation, err := st.EnsureConversationWithType(source.ID, "room-event", "calendar", "Planning")
-	requirements.NoError(err)
-	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
-	requirements.NoError(err)
-	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	requirements.NoError(err)
-	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "room-event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC), Valid: true}})
-	requirements.NoError(err)
-	requirements.NoError(st.ReplaceMessageRecipients(message, "to", []int64{room, alice}, []string{"Room", "Alice"}))
-	window, err := st.GetConversationWindow(conversation, message, 0, 0)
-	requirements.NoError(err)
-	requirements.Len(window.Messages, 1)
-	assertions.ElementsMatch([]store.ParticipantDisplay{
-		{ParticipantID: 0, Display: "Room <room@resource.calendar.google.com>"},
-		{ParticipantID: alice, Display: "Alice <alice@example.com>"},
-	}, window.Messages[0].ToParticipants)
-	_, err = st.LinkParticipants(room, alice)
-	requirements.NoError(err)
-	window, err = st.GetConversationWindow(conversation, message, 0, 0)
-	requirements.NoError(err)
-	requirements.Len(window.Messages, 1)
-	assertions.ElementsMatch([]store.ParticipantDisplay{
-		{ParticipantID: room, Display: "Room <room@resource.calendar.google.com>"},
-		{ParticipantID: alice, Display: "Alice <alice@example.com>"},
-	}, window.Messages[0].ToParticipants)
-}
-
-func TestConversationWindowRoomSenderRespectsIdentityLinks(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
+func TestConversationWindowRoomLinksRequirePerson(t *testing.T) {
+	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	requirements.NoError(err)
-	conversation, err := st.EnsureConversation(source.ID, "room-declined", "Declined: Planning")
+	conversation, err := st.EnsureConversation(source.ID, "room-reply", "Declined: Planning")
 	requirements.NoError(err)
 	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	requirements.NoError(err)
 	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
 	requirements.NoError(err)
-	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "room-declined", MessageType: "email", SenderID: sql.NullInt64{Int64: room, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC), Valid: true}})
+	otherRoom, err := st.EnsureParticipant("room2@resource.calendar.google.com", "Room 2", "resource.calendar.google.com")
 	requirements.NoError(err)
-	requirements.NoError(st.ReplaceMessageRecipients(message, "from", []int64{room}, []string{"Room"}))
-	window, err := st.GetConversationWindow(conversation, message, 0, 0)
+	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "room-reply", MessageType: "email", SenderID: sql.NullInt64{Int64: otherRoom, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC), Valid: true}})
 	requirements.NoError(err)
-	requirements.Len(window.Messages, 1)
-	assertions.Zero(window.Messages[0].FromParticipantID)
-	assertions.Equal("room@resource.calendar.google.com", window.Messages[0].FromEmail)
-	assertions.Equal("Room <room@resource.calendar.google.com>", window.Messages[0].From)
-	_, err = st.LinkParticipants(alice, room)
-	requirements.NoError(err)
-	window, err = st.GetConversationWindow(conversation, message, 0, 0)
-	requirements.NoError(err)
-	requirements.Len(window.Messages, 1)
-	assertions.Equal(room, window.Messages[0].FromParticipantID)
+	requirements.NoError(st.ReplaceMessageRecipients(message, "from", []int64{otherRoom}, []string{"Room 2"}))
+	requirements.NoError(st.ReplaceMessageRecipients(message, "to", []int64{room, otherRoom, alice}, []string{"Room", "Room 2", "Alice"}))
+	for _, phase := range []struct {
+		name                    string
+		link                    [2]int64
+		wantRoom, wantOtherRoom int64
+	}{
+		{name: "unlinked"},
+		{name: "rooms_only", link: [2]int64{room, otherRoom}},
+		{name: "transitive_person", link: [2]int64{otherRoom, alice}, wantRoom: room, wantOtherRoom: otherRoom},
+	} {
+		if phase.link[0] != 0 {
+			_, err := st.LinkParticipants(phase.link[0], phase.link[1])
+			requirements.NoError(err)
+		}
+		t.Run(phase.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			window, err := st.GetConversationWindow(conversation, message, 0, 0)
+			requirements.NoError(err)
+			requirements.Len(window.Messages, 1)
+			row := window.Messages[0]
+			assertions.Equal(phase.wantOtherRoom, row.FromParticipantID)
+			assertions.Equal("room2@resource.calendar.google.com", row.FromEmail)
+			assertions.Equal("Room 2 <room2@resource.calendar.google.com>", row.From)
+			assertions.ElementsMatch([]store.ParticipantDisplay{
+				{ParticipantID: phase.wantRoom, Display: "Room <room@resource.calendar.google.com>"},
+				{ParticipantID: phase.wantOtherRoom, Display: "Room 2 <room2@resource.calendar.google.com>"},
+				{ParticipantID: alice, Display: "Alice <alice@example.com>"},
+			}, row.ToParticipants)
+		})
+	}
 }
 
 func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *testing.T) {
