@@ -143,6 +143,11 @@ type Client struct {
 	aliasLoader     func(mailbox string, uids []uint32) (map[string]string, error)
 	aliasLoadWarned bool // one failing load must not warn once per request
 
+	// storedMembershipLoader reads archived flags so a listing on a server
+	// without mod-sequences can refresh flags of messages it already holds.
+	// Nil disables the refresh.
+	storedMembershipLoader func(mailbox string, uidValidity uint32, uids []uint32) (map[uint32]StoredMembership, error)
+
 	// folderFilter overrides which mailboxes are included in the sync.
 	// Zero-valued (empty include and exclude) means "all mailboxes".
 	folderFilterInclude, folderFilterExclude []string
@@ -1427,6 +1432,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 							Incremental: true,
 						})
 						unchangedFolders++
+						// Flag changes move neither UIDNEXT nor the message
+						// count, so "unchanged" here says nothing about flags.
+						c.refreshKnownFlagsLocked(ctx, mailbox, status, scan)
 						return true
 					}
 				}
@@ -1493,6 +1501,9 @@ func (c *Client) buildMessageListCache(ctx context.Context) error {
 				VanishedUIDs: append([]imap.UID(nil), scan.vanished...),
 				Reset:        reset,
 			})
+			if planned && !reset {
+				c.refreshKnownFlagsLocked(ctx, mailbox, trackState, scan)
+			}
 		}
 		c.logger.Debug("listed mailbox", "mailbox", mailbox, "count", len(uids))
 		return true

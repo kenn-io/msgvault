@@ -148,6 +148,95 @@ func (s *Store) readIMAPMessageAliases(
 	return nil
 }
 
+// IMAPStoredMembership is the archived state of one mailbox UID.
+type IMAPStoredMembership struct {
+	// SourceMessageID is the source message ID of the archived message the
+	// membership points at.
+	SourceMessageID string
+	// Flags are the saved flags. Nil means the saved JSON did not decode, so
+	// the row cannot be compared and should be rewritten.
+	Flags []string
+}
+
+// GetIMAPStoredMemberships returns the archived membership of each requested
+// UID in one mailbox epoch. A listing on a server without mod-sequences
+// compares these flags with the server's to find flag changes that UIDNEXT
+// cannot reveal. UIDs without a membership row, or whose message has no source
+// message ID, are absent from the result.
+func (s *Store) GetIMAPStoredMemberships(
+	sourceID int64,
+	mailbox string,
+	uidValidity uint32,
+	uids []uint32,
+) (map[uint32]IMAPStoredMembership, error) {
+	memberships := make(map[uint32]IMAPStoredMembership, len(uids))
+	for chunk := range slices.Chunk(uids, aliasUIDChunkSize) {
+		if err := s.readIMAPStoredMemberships(
+			sourceID, mailbox, uidValidity, chunk, memberships,
+		); err != nil {
+			return nil, err
+		}
+	}
+	return memberships, nil
+}
+
+// readIMAPStoredMemberships adds one chunk of UIDs to memberships. It is a
+// separate function so each chunk closes its rows before the next query runs.
+func (s *Store) readIMAPStoredMemberships(
+	sourceID int64,
+	mailbox string,
+	uidValidity uint32,
+	uids []uint32,
+	memberships map[uint32]IMAPStoredMembership,
+) error {
+	if len(uids) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(uids)+3)
+	args = append(args, sourceID, mailbox, uidValidity)
+	for _, uid := range uids {
+		args = append(args, uid)
+	}
+	rows, err := s.db.Query(`
+		SELECT membership.uid, messages.source_message_id, membership.flags
+		FROM imap_message_memberships membership
+		JOIN messages ON messages.id = membership.message_id
+		WHERE membership.source_id = ? AND membership.mailbox = ?
+		  AND membership.uidvalidity = ?
+		  AND messages.source_message_id IS NOT NULL
+		  AND membership.uid IN (?`+strings.Repeat(",?", len(uids)-1)+`)
+	`, args...)
+	if err != nil {
+		return fmt.Errorf("query IMAP stored memberships: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	for rows.Next() {
+		var (
+			uid        uint32
+			membership IMAPStoredMembership
+			flagsJSON  sql.NullString
+		)
+		if err := rows.Scan(&uid, &membership.SourceMessageID, &flagsJSON); err != nil {
+			return fmt.Errorf("scan IMAP stored membership: %w", err)
+		}
+		// Decode rather than compare text: SQLite returns the JSON we wrote,
+		// PostgreSQL reformats it. An empty or NULL value is no flags, as in
+		// loadIMAPMailboxMemberships.
+		membership.Flags = []string{}
+		if flagsJSON.Valid && flagsJSON.String != "" {
+			if err := json.Unmarshal([]byte(flagsJSON.String), &membership.Flags); err != nil {
+				membership.Flags = nil
+			}
+		}
+		memberships[uid] = membership
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate IMAP stored memberships: %w", err)
+	}
+	return nil
+}
+
 // ApplyIMAPMailboxDeltas atomically replaces the source's authoritative IMAP
 // mailbox topology, memberships, labels, tombstones, and cursors. Callers must
 // pass one delta for every current mailbox; a non-nil empty slice means the

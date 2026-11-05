@@ -1012,6 +1012,44 @@ func TestGetIMAPSourceMessageAliases_AccumulatesEveryUIDChunk(t *testing.T) {
 	}, aliases)
 }
 
+func TestGetIMAPStoredMemberships_ReturnsFlagsAndArchivedIdentity(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newIMAPMembershipFixture(t)
+	f.createMessage(t, "[Gmail]/All Mail|1", "")
+	f.createMessage(t, "INBOX|2", "")
+	f.createMessage(t, "INBOX|3", "")
+
+	require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{{
+		Mailbox: "INBOX",
+		State: store.IMAPFolderState{
+			Mailbox: "INBOX", UIDValidity: 17, UIDNext: 4,
+		},
+		Memberships: []store.IMAPMembershipObservation{
+			{UID: 1, SourceMessageID: "INBOX|1",
+				CanonicalSourceMessageID: "[Gmail]/All Mail|1",
+				Flags:                    []string{`\Answered`, `\Seen`}},
+			{UID: 2, SourceMessageID: "INBOX|2"},
+			{UID: 3, SourceMessageID: "INBOX|3", Flags: []string{`\Flagged`}},
+		},
+	}}))
+
+	stored, err := f.store.GetIMAPStoredMemberships(f.source.ID, "INBOX", 17, []uint32{1, 2, 4})
+	require.NoError(err)
+	assert.Equal(map[uint32]store.IMAPStoredMembership{
+		1: {SourceMessageID: "[Gmail]/All Mail|1", Flags: []string{`\Answered`, `\Seen`}},
+		2: {SourceMessageID: "INBOX|2", Flags: []string{}},
+	}, stored, "UID 3 was not asked for and UID 4 has no row")
+
+	otherEpoch, err := f.store.GetIMAPStoredMemberships(f.source.ID, "INBOX", 18, []uint32{1, 2, 3})
+	require.NoError(err)
+	assert.Empty(otherEpoch, "rows of another UIDVALIDITY describe different messages")
+
+	empty, err := f.store.GetIMAPStoredMemberships(f.source.ID, "INBOX", 17, nil)
+	require.NoError(err)
+	assert.Empty(empty)
+}
+
 const membershipStamp = "1999-01-01 00:00:00"
 
 // stampMemberships rewrites updated_at on every saved membership so a later
