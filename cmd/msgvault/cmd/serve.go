@@ -889,6 +889,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	// Start the schedulers
 	sched.Start()
+	startSQLiteMaintenanceJob(sched, s, logger)
 	mediaSched.Start()
 
 	// Create adapters for the API interfaces
@@ -2341,7 +2342,9 @@ func (a *storeAPIAdapter) RunCLISync(
 	emit func(api.CLISyncEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return a.runCLISyncOperationWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+	return a.runCLISyncOperationWithRunner(ctx, req, emit, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return a.runChild(ctx, args, nil, "", emit)
+	})
 }
 
 func (a *storeAPIAdapter) runCLISyncOperationWithRunner(
@@ -2469,7 +2472,7 @@ func (a *storeAPIAdapter) RunCLIVerify(
 	emit func(api.CLIVerifyEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return runDaemonCLISubprocessStream(ctx, cliVerifySubprocessArgs(req), func(stream, data string) error {
+	return a.runChild(ctx, cliVerifySubprocessArgs(req), nil, "", func(stream, data string) error {
 		if emit == nil {
 			return nil
 		}
@@ -2497,7 +2500,7 @@ func (a *storeAPIAdapter) RunCLIRepairEncoding(
 	emit func(api.CLIRepairEncodingEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return runDaemonCLISubprocessStream(ctx, []string{"repair-encoding"}, func(stream, data string) error {
+	return a.runChild(ctx, []string{"repair-encoding"}, nil, "", func(stream, data string) error {
 		if emit == nil {
 			return nil
 		}
@@ -2511,7 +2514,9 @@ func (a *storeAPIAdapter) RunCLIRepairMessage(
 	emit func(api.CLIRepairMessageEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return a.runCLIRepairMessageWithRunner(ctx, req, emit, runDaemonCLISubprocessStream)
+	return a.runCLIRepairMessageWithRunner(ctx, req, emit, func(ctx context.Context, args []string, emit func(string, string) error) error {
+		return a.runChild(ctx, args, nil, "", emit)
+	})
 }
 
 func (a *storeAPIAdapter) runCLIRepairMessageWithRunner(
@@ -2566,7 +2571,12 @@ func (a *storeAPIAdapter) RunCLICommand(
 	emit func(api.CLIRunEvent) error,
 ) error {
 	ctx = a.invocationContext(ctx)
-	return a.runCLICommandWithRunner(ctx, req, emit, runDaemonCLISubprocessStreamWithEnv)
+	return a.runCLICommandWithRunner(ctx, req, emit, a.runChild)
+}
+
+func (a *storeAPIAdapter) runChild(ctx context.Context, args []string, env map[string]string, cwd string, emit func(string, string) error) error {
+	defer a.store.ReloadSQLitePlannerStatistics(ctx)
+	return runDaemonCLISubprocessStreamWithEnv(ctx, args, env, cwd, emit)
 }
 
 type cliCommandSubprocessRunner func(

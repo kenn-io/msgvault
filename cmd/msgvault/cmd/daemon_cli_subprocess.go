@@ -34,14 +34,6 @@ func isDaemonConsoleSubprocess() bool {
 	return isDaemonCLISubprocess() || isDaemonBuildCacheChild()
 }
 
-func runDaemonCLISubprocessStream(
-	ctx context.Context,
-	args []string,
-	emit func(stream, data string) error,
-) error {
-	return runDaemonCLISubprocessStreamWithEnv(ctx, args, nil, "", emit)
-}
-
 func runDaemonCLISubprocessStreamWithEnv(
 	ctx context.Context,
 	args []string,
