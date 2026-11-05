@@ -127,11 +127,11 @@ func TestLineReplyRejectedReceiptSurvivesDraftDeletion(t *testing.T) {
 	rejected, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true})
 	require.NoError(err)
 	assert.Equal(store.LineReplyProviderRejected, rejected.State)
-	edited, err := st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "edited after rejection")
-	require.NoError(err)
-	_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, edited.Revision, now, allowLineReply)
+	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "edited after rejection")
+	require.ErrorIs(err, store.ErrChatDraftFrozen)
+	_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 2, now, allowLineReply)
 	require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
-	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, edited.Revision))
+	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
 	repeated, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 	require.NoError(err)
 	assert.Equal(rejected, repeated)
@@ -266,7 +266,7 @@ func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
 	repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
 	require.ErrorIs(err, store.ErrLineReplyExpired)
 	assert.Equal(original.RetryKey, repeated.RetryKey)
-	require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1), store.ErrChatDraftFrozen)
+	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
 }
 
 func TestLineReplyBindingChangesFailClosed(t *testing.T) {
@@ -373,4 +373,77 @@ func TestLineReplyCompletionUpdatesConversationSummary(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
 	assert.Equal(int64(2), count)
+}
+
+func TestLineReplyExpiredDraftDeletion(t *testing.T) {
+	for _, accepted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "unknown", true: "accepted"}[accepted], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+			require.NoError(err)
+			if accepted {
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200})
+				require.NoError(err)
+			}
+			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour))
+			require.ErrorIs(err, store.ErrLineReplyExpired)
+			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+			require.ErrorIs(err, store.ErrChatDraftFrozen)
+			err = st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1)
+			if accepted {
+				assert.ErrorIs(err, store.ErrChatDraftFrozen)
+				return
+			}
+			require.NoError(err)
+			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+			require.ErrorIs(err, store.ErrChatDraftNotFound)
+			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(expired, receipt)
+		})
+	}
+}
+
+func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
+	for _, phase := range []string{"before admission", "lost response", "known receipt"} {
+		t.Run(phase, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, parent := replyStoreFixture(t)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			if phase != "before admission" {
+				_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+				require.NoError(err)
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+			}
+			_, err := st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM messages WHERE id=?`), parent)
+			require.NoError(err)
+			if phase == "before admission" {
+				_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+				assert.ErrorIs(err, store.ErrChatDraftInvalidDestination)
+				return
+			}
+			if phase == "lost response" {
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(time.Minute), now.Add(2*time.Minute))
+				require.NoError(err)
+			}
+			_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"})
+			require.NoError(err)
+			sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(store.LineReplySent, sent.State)
+			var reply sql.NullInt64
+			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), sent.MessageID).Scan(&reply))
+			assert.False(reply.Valid)
+			durable, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(parent, durable.ReplyToMessageID, "the admitted snapshot stays frozen")
+		})
+	}
 }

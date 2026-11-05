@@ -153,14 +153,16 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 		return receipt, err
 	}
 	var client *Client
+	var input PushTextRequest
 	authorize := func(candidate store.LineReplyAttempt) error {
-		if _, err := replyRequest(candidate); err != nil {
+		var err error
+		input, err = replyRequest(candidate)
+		if err != nil {
 			return err
 		}
 		if s.Client == nil {
 			return errors.New("line: reply sending is not configured")
 		}
-		var err error
 		client, err = s.Client(ctx, candidate)
 		if err != nil {
 			return err
@@ -185,18 +187,13 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	if a.RemoteMessageID != "" {
 		return s.complete(ctx, a)
 	}
+	first := a.State == store.LineReplyAdmitted
 	now := s.now()
-	if !now.Before(a.RetryUntil) {
-		a, err = s.Store.StartLineReplyRequestContext(ctx, id, now, now)
-		if errors.Is(err, store.ErrLineReplyExpired) {
-			err = nil
-		}
-		return replyReceipt(a), err
-	}
-	if now.Before(a.NextRetryAt) {
+	a, err = s.Store.StartLineReplyRequestContext(ctx, id, now, now.Add(30*time.Second))
+	if errors.Is(err, store.ErrLineReplyExpired) || errors.Is(err, store.ErrLineReplyRetryWait) {
 		return replyReceipt(a), nil
 	}
-	if err = s.Store.ValidateLineReplyContext(ctx, id); err != nil {
+	if err != nil {
 		return replyReceipt(a), err
 	}
 	// Admission already authorized its exact snapshot; recovery must recheck.
@@ -204,19 +201,6 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 		if err = authorize(a); err != nil {
 			return replyReceipt(a), err
 		}
-	}
-	input, err := replyRequest(a)
-	if err != nil {
-		return replyReceipt(a), err
-	}
-	first := a.State == store.LineReplyAdmitted
-	now = s.now()
-	a, err = s.Store.StartLineReplyRequestContext(ctx, id, now, now.Add(30*time.Second))
-	if errors.Is(err, store.ErrLineReplyExpired) || errors.Is(err, store.ErrLineReplyRetryWait) {
-		return replyReceipt(a), nil
-	}
-	if err != nil {
-		return replyReceipt(a), err
 	}
 	timeout := min(30*time.Second, a.RetryUntil.Sub(now))
 	requestCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -239,7 +223,7 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	defer cleanup()
 	beforeOutcome := a
 	a, err = s.Store.RecordLineReplyOutcomeContext(evidenceCtx, id, store.LineReplyOutcome{
-		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && status >= 400 && status < 500 && status != http.StatusConflict && status != http.StatusTooManyRequests,
+		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && status >= 400 && status < 500 && status != http.StatusConflict && status != http.StatusUnauthorized && status != http.StatusForbidden,
 		StatusCode: status, MessageID: result.MessageID, QuoteToken: result.QuoteToken, RequestID: result.RequestID, NextRetryAt: deadline})
 	if err != nil {
 		// Preserve the admitted identity even if the Store could not read at all.
@@ -255,6 +239,9 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	}
 	if a.RemoteMessageID != "" {
 		return s.complete(evidenceCtx, a)
+	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return replyReceipt(a), pushErr
 	}
 	return replyReceipt(a), nil
 }

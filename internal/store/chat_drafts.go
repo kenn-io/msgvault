@@ -171,7 +171,7 @@ func (s *Store) UpdateChatDraftContext(
 ) (ChatDraft, error) {
 	var draft ChatDraft
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision); err != nil {
+		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision, false); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, fmt.Sprintf(`
@@ -190,7 +190,7 @@ func (s *Store) UpdateChatDraftContext(
 // DeleteChatDraftContext removes the draft when expectedRevision is current.
 func (s *Store) DeleteChatDraftContext(ctx context.Context, draftID string, expectedRevision int64) error {
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision); err != nil {
+		if err := requireMutableChatDraftTx(ctx, tx, draftID, expectedRevision, true); err != nil {
 			return err
 		}
 		result, err := tx.ExecContext(ctx, `
@@ -242,7 +242,7 @@ func loadChatDraft(ctx context.Context, q contextRowQuerier, draftID string) (Ch
 
 // Hold the draft row in its own statement before reading a LINE attempt. This
 // prevents a mutation that waited for admission from using an older snapshot.
-func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, revision int64) error {
+func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, revision int64, deleting bool) error {
 	if err := lockChatDraftTx(ctx, tx, id); err != nil {
 		return err
 	}
@@ -257,7 +257,7 @@ func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, rev
 		return nil
 	}
 	var frozen bool
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM line_reply_attempts WHERE draft_id=? AND state<>'provider_rejected')`, id).Scan(&frozen); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM line_reply_attempts WHERE draft_id=? AND NOT (? AND state IN ('provider_rejected','remote_unknown_expired')))`, id, deleting).Scan(&frozen); err != nil {
 		return err
 	}
 	if frozen {

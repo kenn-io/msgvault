@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -247,4 +248,21 @@ func TestLineReplyUnpersistedAcceptanceEmitsBoundedRecoveryReceipt(t *testing.T)
 	assert.Equal(store.LineReplyRemoteUnknown, durable.State)
 	assert.Empty(durable.RemoteMessageID)
 	assert.Equal(1, fake.AcceptedPushes())
+}
+
+func TestLineReplyCredentialFailureCode(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			a, draft, fake := lineReplyAdapterFixture(t)
+			fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: status}, lineapi.Response{Status: status})
+			err := a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1"}}, func(api.CLIRunEvent) error { return nil })
+			require.Error(err)
+			assert.Equal("credentials_unavailable", err.Error())
+			attempt, err := a.store.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
+		})
+	}
 }

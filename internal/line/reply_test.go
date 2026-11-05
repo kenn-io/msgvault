@@ -187,7 +187,7 @@ func TestReplyAcceptanceCannotRegressOnReplayFailures(t *testing.T) {
 }
 
 func TestReplyAdmissionFailuresDoNotFreeze(t *testing.T) {
-	for _, kind := range []string{"invalid text", "disabled policy", "missing client"} {
+	for _, kind := range []string{"invalid text", "invalid recipient", "disabled policy", "missing client"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
 			f := newReplyFixture(t, "user", nil)
@@ -198,6 +198,12 @@ func TestReplyAdmissionFailuresDoNotFreeze(t *testing.T) {
 				require.NoError(err)
 				f.draft = edited
 			}
+			if kind == "invalid recipient" {
+				_, err := f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE conversations SET source_conversation_id='user:invalid' WHERE id=?`), f.draft.ConversationID)
+				require.NoError(err)
+				_, err = f.st.DB().ExecContext(t.Context(), f.st.Rebind(`UPDATE chat_drafts SET source_conversation_id='user:invalid' WHERE draft_id=?`), f.draft.DraftID)
+				require.NoError(err)
+			}
 			if kind == "disabled policy" {
 				sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) { return nil, denied }
 			}
@@ -207,6 +213,9 @@ func TestReplyAdmissionFailuresDoNotFreeze(t *testing.T) {
 			before := len(f.fake.Requests())
 			_, err := sender.Send(t.Context(), f.draft.DraftID, f.draft.Revision)
 			require.Error(err)
+			if kind == "invalid recipient" {
+				require.ErrorIs(err, store.ErrChatDraftInvalidDestination)
+			}
 			assert.Len(t, f.fake.Requests(), before)
 			_, err = f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
 			require.ErrorIs(err, sql.ErrNoRows)
@@ -296,58 +305,71 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 	rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
 	assert.Equal("provider_rejected", rejected.Status)
-	edited, err := f.st.UpdateChatDraftContext(t.Context(), f.draft.DraftID, 1, "new text")
-	require.NoError(err)
-	require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, edited.Revision))
+	_, err = f.st.UpdateChatDraftContext(t.Context(), f.draft.DraftID, 1, "new text")
+	require.ErrorIs(err, store.ErrChatDraftFrozen)
+	require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
 	sender := f.sender()
 	sender.Client = nil
 	repeated, err := sender.Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
 	assert.Equal(rejected, repeated)
-	_, err = sender.Send(t.Context(), f.draft.DraftID, edited.Revision)
+	_, err = sender.Send(t.Context(), f.draft.DraftID, 2)
 	require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
 	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
 	assert.Zero(f.fake.AcceptedPushes())
 }
 
-func TestReplyInitialRateLimitWaitsAndRetriesSameKey(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newReplyFixture(t, "user", nil)
-	retryAt := f.now.Add(3 * time.Minute)
-	f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"180"}}})
-
-	pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
-	assert.False(pending.Accepted)
-	require.NotNil(pending.RetryAfter)
-	assert.Equal(retryAt, *pending.RetryAfter)
-	durable, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-	require.NoError(err)
-	assert.Equal(store.LineReplyRemoteUnknown, durable.State)
-	assert.Equal(http.StatusTooManyRequests, durable.StatusCode)
-	assert.Equal(retryAt, durable.NextRetryAt)
-
-	f.now = retryAt.Add(-time.Second)
-	stillWaiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(pending, stillWaiting)
-	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-
-	f.now = retryAt
-	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(store.LineReplySent, sent.Status)
-	assert.Equal(1, f.fake.AcceptedPushes())
-	var retryKeys []string
-	for _, request := range f.fake.Requests() {
-		if request.Path == "/v2/bot/message/push" {
-			retryKeys = append(retryKeys, request.Header.Get("X-Line-Retry-Key"))
-		}
+func TestReplyRateLimitClassification(t *testing.T) {
+	for _, first := range []bool{true, false} {
+		t.Run(map[bool]string{true: "first submission", false: "recovery"}[first], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newReplyFixture(t, "user", nil)
+			if !first {
+				f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+				_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				require.NoError(err)
+				f.now = f.now.Add(31 * time.Second)
+			}
+			retryAt := f.now.Add(3 * time.Minute)
+			f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"180"}}})
+			receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			if first {
+				assert.Equal(store.LineReplyProviderRejected, receipt.Status)
+				assert.Nil(receipt.RetryAfter)
+				f.now = retryAt
+				repeated, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				require.NoError(err)
+				assert.Equal(receipt, repeated)
+				assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+				assert.Zero(f.fake.AcceptedPushes())
+				return
+			}
+			assert.Equal(store.LineReplyRemoteUnknown, receipt.Status)
+			require.NotNil(receipt.RetryAfter)
+			assert.Equal(retryAt, *receipt.RetryAfter)
+			f.now = retryAt.Add(-time.Second)
+			waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(receipt, waiting)
+			assert.Equal(2, f.fake.Count("POST", "/v2/bot/message/push"))
+			f.now = retryAt
+			sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(store.LineReplySent, sent.Status)
+			assert.Equal(1, f.fake.AcceptedPushes())
+			var keys []string
+			for _, request := range f.fake.Requests() {
+				if request.Path == "/v2/bot/message/push" {
+					keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
+				}
+			}
+			require.Len(keys, 3)
+			assert.Equal(keys[0], keys[1])
+			assert.Equal(keys[0], keys[2])
+		})
 	}
-	require.Len(retryKeys, 2)
-	assert.Equal(retryKeys[0], retryKeys[1])
 }
 
 func TestReplyConcurrentCallsAcceptOnce(t *testing.T) {
@@ -665,3 +687,83 @@ func (h *replyLookupHandler) Handle(_ context.Context, record slog.Record) error
 }
 func (h *replyLookupHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *replyLookupHandler) WithGroup(string) slog.Handler      { return h }
+
+func TestReplyRecoveryAfterParentGC(t *testing.T) {
+	for _, lost := range []bool{false, true} {
+		t.Run(map[bool]string{false: "known receipt", true: "lost response"}[lost], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newReplyFixture(t, "user", testutil.NewSQLiteTestStore(t))
+			if lost {
+				f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+			} else {
+				_, err := f.st.DB().Exec(`CREATE TRIGGER fail_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
+				require.NoError(err)
+			}
+			pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			if lost {
+				require.NoError(err)
+				assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
+			} else {
+				require.Error(err)
+				assert.Equal("sent_archive_pending", pending.Status)
+				_, err = f.st.DB().Exec(`DROP TRIGGER fail_reply_archive`)
+				require.NoError(err)
+			}
+			require.NoError(f.st.MarkMessageDeletedContext(t.Context(), f.draft.SourceID, "100"))
+			plan, err := f.st.PlanGCContext(t.Context())
+			require.NoError(err)
+			assert.Equal(int64(1), plan.SourceDeleted)
+			deleted, err := f.st.ExecuteGCContext(t.Context(), plan)
+			require.NoError(err)
+			assert.Equal(int64(1), deleted)
+			f.now = f.now.Add(31 * time.Second)
+			sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(store.LineReplySent, sent.Status)
+			assert.Equal(1, f.fake.AcceptedPushes())
+			var parent sql.NullInt64
+			require.NoError(f.st.DB().QueryRow(`SELECT reply_to_message_id FROM messages WHERE id=?`, sent.MessageID).Scan(&parent))
+			assert.False(parent.Valid)
+			body, err := f.st.GetMessageBodyText(sent.MessageID)
+			require.NoError(err)
+			assert.Equal("Thanks!", body)
+		})
+	}
+}
+
+func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			f := newReplyFixture(t, "user", nil)
+			f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: status}, lineapi.Response{Status: status})
+			pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			var apiErr *line.APIError
+			require.ErrorAs(err, &apiErr)
+			assert.Equal(status, apiErr.StatusCode)
+			assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
+			// A 401 consumes both responses during token refresh; a 403 uses one.
+			if status == http.StatusForbidden {
+				f.now = f.now.Add(31 * time.Second)
+				_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				require.ErrorAs(err, &apiErr)
+			}
+			f.now = f.now.Add(31 * time.Second)
+			sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+			require.NoError(err)
+			assert.Equal(store.LineReplySent, sent.Status)
+			assert.Equal(1, f.fake.AcceptedPushes())
+			var keys []string
+			for _, request := range f.fake.Requests() {
+				if request.Path == "/v2/bot/message/push" {
+					keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
+				}
+			}
+			require.Len(keys, 3)
+			assert.Equal(keys[0], keys[1])
+			assert.Equal(keys[0], keys[2])
+		})
+	}
+}

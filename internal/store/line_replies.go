@@ -150,7 +150,7 @@ func (s *Store) admitLineReplyTx(ctx context.Context, tx *loggedTx, sourceID int
 	if draft.SourceID != sourceID {
 		return a, ErrChatDraftInvalidDestination
 	}
-	binding, err := readLineReplyBinding(ctx, tx, draft.SourceID, draft.ConversationID, draft.ReplyToSourceMessageID, true)
+	binding, err := readLineReplyBinding(ctx, tx, draft.SourceID, draft.ConversationID, draft.ReplyToSourceMessageID, true, true)
 	if err != nil {
 		return a, err
 	}
@@ -210,7 +210,7 @@ type lineReplyBinding struct {
 	metadata                         sql.NullString
 }
 
-func readLineReplyBinding(ctx context.Context, q contextRowQuerier, sourceID, conversationID int64, parentNativeID string, checkBot bool) (lineReplyBinding, error) {
+func readLineReplyBinding(ctx context.Context, q contextRowQuerier, sourceID, conversationID int64, parentNativeID string, checkBot, requireParent bool) (lineReplyBinding, error) {
 	var b lineReplyBinding
 	if parentNativeID == "" {
 		return b, ErrChatDraftInvalidDestination
@@ -240,29 +240,36 @@ func readLineReplyBinding(ctx context.Context, q contextRowQuerier, sourceID, co
 	if err != nil {
 		return b, fmt.Errorf("read LINE reply conversation: %w", err)
 	}
-	err = q.QueryRowContext(ctx, `SELECT id,metadata FROM messages WHERE source_id=? AND conversation_id=? AND source_message_id=?`, sourceID, conversationID, parentNativeID).Scan(&b.parentID, &b.metadata)
+	var parentConversation int64
+	err = q.QueryRowContext(ctx, `SELECT id,conversation_id,metadata FROM messages WHERE source_id=? AND source_message_id=?`, sourceID, parentNativeID).Scan(&b.parentID, &parentConversation, &b.metadata)
 	if errors.Is(err, sql.ErrNoRows) {
-		return b, ErrChatDraftInvalidDestination
+		if requireParent {
+			return b, ErrChatDraftInvalidDestination
+		}
+		return b, nil
 	}
 	if err != nil {
 		return b, fmt.Errorf("read LINE reply parent: %w", err)
 	}
 
+	if parentConversation != conversationID {
+		return b, ErrChatDraftInvalidDestination
+	}
 	return b, nil
 }
 
-func validateLineReplyBinding(ctx context.Context, q contextStatementQuerier, a LineReplyAttempt, checkBot bool) error {
+func validateLineReplyBinding(ctx context.Context, q contextStatementQuerier, a LineReplyAttempt, checkBot bool) (int64, error) {
 	if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: q}, a.SourceID); err != nil {
-		return err
+		return 0, err
 	}
-	b, err := readLineReplyBinding(ctx, q, a.SourceID, a.ConversationID, a.ReplyToSourceMessageID, checkBot)
+	b, err := readLineReplyBinding(ctx, q, a.SourceID, a.ConversationID, a.ReplyToSourceMessageID, checkBot, false)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if b.channelID != a.ChannelID || b.nativeID != a.SourceConversationID || b.kind != a.ConversationType || b.parentID != a.ReplyToMessageID || checkBot && b.botID != a.BotUserID {
-		return ErrChatDraftInvalidDestination
+	if b.channelID != a.ChannelID || b.nativeID != a.SourceConversationID || b.kind != a.ConversationType || b.parentID != 0 && b.parentID != a.ReplyToMessageID || checkBot && b.botID != a.BotUserID {
+		return 0, ErrChatDraftInvalidDestination
 	}
-	return nil
+	return b.parentID, nil
 }
 
 // ValidateLineReplyContext rechecks destination/identity before provider I/O.
@@ -279,6 +286,7 @@ func (s *Store) ValidateLineReplyContext(ctx context.Context, id string) error {
 		if err := s.lockSyncSourceTx(ctx, tx, a.SourceID); err != nil {
 			return err
 		}
-		return validateLineReplyBinding(ctx, tx, a, true)
+		_, err := validateLineReplyBinding(ctx, tx, a, true)
+		return err
 	})
 }

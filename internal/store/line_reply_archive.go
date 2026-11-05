@@ -6,6 +6,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 var errLineReplyAlreadySent = errors.New("LINE reply already archived")
@@ -24,7 +26,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 	if err := s.requireSyncSource(a.SourceID); err != nil {
 		return a, err
 	}
-	var sender int64
+	var sender, parentID int64
 	var senderName string
 	var metadata sql.NullString
 	var raw []byte
@@ -46,7 +48,8 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		if a.State != LineReplyRemoteAccepted || a.RemoteMessageID == "" {
 			return ErrLineReplyInvalidState
 		}
-		if err := validateLineReplyBinding(ctx, tx, a, false); err != nil {
+		parentID, err = validateLineReplyBinding(ctx, tx, a, false)
+		if err != nil {
 			return err
 		}
 		// Persistence already holds the shared identity lock. Resolve the registered
@@ -58,7 +61,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(display_name,'') FROM participants WHERE id=?`, sender).Scan(&senderName); err != nil {
 			return err
 		}
-		if err := validateExistingLineReply(ctx, tx, a, sender); err != nil {
+		if err := validateExistingLineReply(ctx, tx, a, sender, parentID); err != nil {
 			return err
 		}
 		fields, err := json.Marshal(struct {
@@ -86,15 +89,11 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 		return nil
 	}
 	build := func([]int64) *MessagePersistData {
-		snippet := []rune(a.Body)
-		if len(snippet) > 200 {
-			snippet = snippet[:200]
-		}
 		return &MessagePersistData{
 			Message: &Message{SourceID: a.SourceID, ConversationID: a.ConversationID, SourceMessageID: a.RemoteMessageID,
 				MessageType: lineSourceType, SenderID: sql.NullInt64{Int64: sender, Valid: true}, IsFromMe: true,
-				ReplyToMessageID: sql.NullInt64{Int64: a.ReplyToMessageID, Valid: true}, SentAt: sql.NullTime{Time: a.AdmittedAt, Valid: true},
-				Snippet: sql.NullString{String: string(snippet), Valid: true}, SizeEstimate: int64(len(a.Body)), PreserveAttachmentStats: true},
+				ReplyToMessageID: sql.NullInt64{Int64: parentID, Valid: parentID != 0}, SentAt: sql.NullTime{Time: a.AdmittedAt, Valid: true},
+				Snippet: sql.NullString{String: textutil.PrefixRunes(a.Body, 200), Valid: true}, SizeEstimate: int64(len(a.Body)), PreserveAttachmentStats: true},
 			BodyText: sql.NullString{String: a.Body, Valid: true}, Metadata: &metadata, RawMIME: raw, RawFormat: "line_push_receipt_json",
 			Recipients:     []RecipientSet{{Type: messageSenderRole, ParticipantIDs: []int64{sender}, DisplayNames: []string{senderName}}},
 			PreserveLabels: true, FTS: &FTSDoc{Body: a.Body, FromAddr: senderName},
@@ -138,7 +137,7 @@ func (s *Store) CompleteLineReplyContext(ctx context.Context, id string) (LineRe
 
 // An existing native ID must already describe this same sent reply. Never
 // overwrite an inbound message or a different conversation with a bad receipt.
-func validateExistingLineReply(ctx context.Context, tx *loggedTx, a LineReplyAttempt, senderID int64) error {
+func validateExistingLineReply(ctx context.Context, tx *loggedTx, a LineReplyAttempt, senderID, parentID int64) error {
 	var id, conversation, reply int64
 	var sender sql.NullInt64
 	var fromMe bool
@@ -149,7 +148,7 @@ func validateExistingLineReply(ctx context.Context, tx *loggedTx, a LineReplyAtt
 	if err != nil {
 		return err
 	}
-	if conversation != a.ConversationID || reply != a.ReplyToMessageID || !fromMe || !sender.Valid || sender.Int64 != senderID {
+	if conversation != a.ConversationID || reply != parentID || !fromMe || !sender.Valid || sender.Int64 != senderID {
 		return ErrLineReplyReceiptConflict
 	}
 	var body sql.NullString

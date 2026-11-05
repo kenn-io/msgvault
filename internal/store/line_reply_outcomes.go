@@ -94,7 +94,7 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 			resultErr = ErrLineReplyRetryWait
 			return nil
 		}
-		if err := validateLineReplyBinding(ctx, tx, *a, true); err != nil {
+		if _, err := validateLineReplyBinding(ctx, tx, *a, true); err != nil {
 			return err
 		}
 		if a.State == LineReplyAdmitted {
@@ -117,7 +117,7 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 }
 
 // RecordLineReplyOutcomeContext preserves known acceptance on later failures.
-// The only path that unfreezes a draft is a definite first-request rejection.
+// A definite first-request rejection keeps the draft deletable.
 func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, outcome LineReplyOutcome) (LineReplyAttempt, error) {
 	prior, err := s.GetLineReplyAttemptContext(ctx, id)
 	if err != nil || lineReplyTerminal(prior.State) {

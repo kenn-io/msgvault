@@ -73,12 +73,6 @@ func (c *Client) PushText(ctx context.Context, retryKey string, input PushTextRe
 	if len(retryKey) != 36 || uuid.Validate(retryKey) != nil {
 		return receipt, errors.New("line: invalid retry UUID")
 	}
-	if !validPushRecipient(input.To) {
-		return receipt, errors.New("line: invalid push recipient")
-	}
-	if err := ValidateReplyText(input.Text); err != nil {
-		return receipt, err
-	}
 	type textMessage struct {
 		Type       string `json:"type"`
 		Text       string `json:"text"`

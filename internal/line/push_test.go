@@ -123,10 +123,9 @@ func TestPushLostResponseRecoversSameMessage(t *testing.T) {
 	assert.Equal(1, fake.AcceptedPushes())
 }
 
-func TestPushRejectsInvalidInputBeforeTokenIO(t *testing.T) {
+func TestPushRejectsInvalidRetryKeyBeforeTokenIO(t *testing.T) {
 	for _, tc := range []struct{ key, to, text string }{
 		{"", replyUser, "hello"}, {"not-a-uuid", replyUser, "hello"},
-		{replyRetryKey, "not-a-line-id", "hello"}, {replyRetryKey, replyUser, " "},
 	} {
 		client, fake := newClient(t)
 		_, err := client.PushText(t.Context(), tc.key, line.PushTextRequest{To: tc.to, Text: tc.text})
