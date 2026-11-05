@@ -2,12 +2,12 @@ package line
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -406,7 +406,7 @@ func TestMediaLocalFailureDoesNotStarveLaterBatch(t *testing.T) {
 	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
 	for i := range 501 {
 		e := f.fileEvent()
-		e.Message.ID = fmt.Sprint(i + 1)
+		e.Message.ID = strconv.Itoa(i + 1)
 		e.WebhookEventID = "media-" + e.Message.ID
 		e.Timestamp = f.now.UnixMilli() + int64(i)
 		f.api.Enqueue(http.MethodGet, "/v2/bot/message/"+e.Message.ID+"/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
