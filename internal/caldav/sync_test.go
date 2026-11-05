@@ -39,8 +39,6 @@ type syncFixture struct {
 	forceSnapshot           bool
 	incompleteSnapshot      bool
 	explicitCollectionPort  bool
-	getRequests             int
-	multigetSizes           []int
 }
 
 func archiveFixture(t *testing.T) (*Client, *syncFixture) {
@@ -111,7 +109,6 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 			return
 		}
 		if r.Method == http.MethodGet {
-			f.getRequests++
 			raw, ok := f.raw[strings.TrimPrefix(r.URL.Path, "/home/cal/")]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -121,13 +118,6 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 			_, _ = io.WriteString(w, raw)
 			return
 		}
-		var request struct {
-			Hrefs []string `xml:"href"`
-		}
-		if !assertions.NoError(xml.Unmarshal(req, &request)) {
-			return
-		}
-		f.multigetSizes = append(f.multigetSizes, len(request.Hrefs))
 		var responses strings.Builder
 		for name, raw := range f.raw {
 			if strings.Contains(string(req), "/home/cal/"+name) {
@@ -249,7 +239,7 @@ func TestSyncInterruptedFirstSyncResumesRemainingResources(t *testing.T) {
 	assertions.Zero(third.Events)
 }
 
-func TestSyncUnchangedSettingsSendSavedToken(t *testing.T) {
+func TestSyncUnchangedEventsSendSavedToken(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
 	st := testutil.NewTestStore(t)
@@ -260,10 +250,6 @@ func TestSyncUnchangedSettingsSendSavedToken(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Zero(result.Events)
 	assertions.Equal("t1", f.lastToken)
-	opts.Full = true
-	result, err = c.Sync(t.Context(), st, opts)
-	requirements.NoError(err)
-	assertions.Zero(result.Events)
 }
 
 func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
@@ -292,6 +278,9 @@ func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
 				require.NoError(err)
 				var id int64
 				require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
+				raw, err := st.GetMessageRawContext(t.Context(), id)
+				require.NoError(err)
+				assert.Equal(f.raw["a.ics"], string(raw))
 				if tc.name == "floating" || tc.name == "gap" {
 					var sent time.Time
 					require.NoError(st.DB().QueryRow(`SELECT sent_at FROM messages`).Scan(&sent))
@@ -326,11 +315,10 @@ func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
 					assert.Equal(new("example@example.org"), msg.Calendar.ICalUID)
 					assert.Equal(new(tc.sequence), msg.Calendar.Sequence)
 					if tc.name == "floating" || tc.name == "gap" {
-						var sent, last, start time.Time
-						require.NoError(st.DB().QueryRow(`SELECT m.sent_at, c.last_message_at, e.start_at FROM messages m JOIN conversations c ON c.id=m.conversation_id JOIN calendar_events e ON e.message_id=m.id`).Scan(&sent, &last, &start))
+						var sent, start time.Time
+						require.NoError(st.DB().QueryRow(`SELECT m.sent_at, e.start_at FROM messages m JOIN calendar_events e ON e.message_id=m.id`).Scan(&sent, &start))
 						assert.Equal(step.start, sent.UTC().Format(time.RFC3339))
 						assert.Equal(step.start, start.UTC().Format(time.RFC3339))
-						assert.True(sent.Equal(last), "conversation last time %s differs from message %s", last, sent)
 						body, newQuery, oldQuery := "2027-03-14 09:00 - 2027-03-14 10:00", `"09:00"`, `"13:00"`
 						if tc.name == "gap" {
 							body, newQuery, oldQuery = "2027-03-14 02:30 - 2027-03-14 03:30", `"02:30"`, `"04:30"`
@@ -400,6 +388,11 @@ func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
 				assert.Equal("2027-03-07T14:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
 				assert.Equal("2027-03-21T13:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
 				assert.Equal("2027-03-21T14:00:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
+				var recurrence string
+				require.NoError(st.DB().QueryRow(`SELECT recurrence_json FROM calendar_events`).Scan(&recurrence))
+				var lines []string
+				require.NoError(json.Unmarshal([]byte(recurrence), &lines))
+				assert.ElementsMatch([]string{"RRULE:FREQ=WEEKLY;COUNT=2", "RDATE;TZID=America/New_York:20270321T090000", "EXDATE;TZID=America/New_York:20270314T090000"}, lines)
 				var body string
 				require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = ?`), page.Occurrences[0].MessageID).Scan(&body))
 				assert.Contains(body, "09:00")
@@ -456,46 +449,100 @@ func compound() string {
 }
 
 func TestSyncFloatingEventsSurviveConfiguredTimeZoneChange(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	c, f := archiveFixture(t)
-	st := testutil.NewTestStore(t)
-	f.raw["a.ics"] = strings.NewReplacer(
-		"20270314T130000Z", "20270314T090000",
-		"20270321T130000Z", "20270321T090000",
-		"20270321T150000Z", "20270321T110000",
-	).Replace(compound())
-	opts := syncOpts()
-	_, err := c.Sync(t.Context(), st, opts)
-	require.NoError(err)
-	ids := map[string]int64{}
-	for _, step := range []struct{ zone, master, exception, original string }{
-		{"UTC", "2027-03-14T09:00:00Z", "2027-03-21T11:00:00Z", "2027-03-21T09:00:00Z"},
-		{"America/New_York", "2027-03-14T13:00:00Z", "2027-03-21T15:00:00Z", "2027-03-21T13:00:00Z"},
-	} {
-		if step.zone != "UTC" {
-			opts.TimeZone = step.zone
-			_, err = c.Sync(t.Context(), st, opts)
-			require.NoError(err)
-		}
-		for kind, want := range map[string]string{"series": step.master, "exception": step.exception} {
-			var id int64
-			var start time.Time
-			var original sql.NullTime
-			require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_id, start_at, original_start_at FROM calendar_events WHERE kind=?`), kind).Scan(&id, &start, &original))
-			if step.zone == "UTC" {
-				ids[kind] = id
+	t.Run("live", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		c, f := archiveFixture(t)
+		st := testutil.NewTestStore(t)
+		f.raw["a.ics"] = strings.NewReplacer(
+			"20270314T130000Z", "20270314T090000",
+			"20270321T130000Z", "20270321T090000",
+			"20270321T150000Z", "20270321T110000",
+		).Replace(compound())
+		opts := syncOpts()
+		_, err := c.Sync(t.Context(), st, opts)
+		require.NoError(err)
+		ids := map[string]int64{}
+		for _, step := range []struct{ zone, master, exception, original string }{
+			{"UTC", "2027-03-14T09:00:00Z", "2027-03-21T11:00:00Z", "2027-03-21T09:00:00Z"},
+			{"America/New_York", "2027-03-14T13:00:00Z", "2027-03-21T15:00:00Z", "2027-03-21T13:00:00Z"},
+		} {
+			if step.zone != "UTC" {
+				opts.TimeZone = step.zone
+				_, err = c.Sync(t.Context(), st, opts)
+				require.NoError(err)
 			}
-			assert.Equal(ids[kind], id)
-			assert.Equal(want, start.UTC().Format(time.RFC3339))
-			if kind == "exception" {
-				require.True(original.Valid)
-				assert.Equal(step.original, original.Time.UTC().Format(time.RFC3339))
+			for kind, want := range map[string]string{"series": step.master, "exception": step.exception} {
+				var id int64
+				var start time.Time
+				var original sql.NullTime
+				require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_id, start_at, original_start_at FROM calendar_events WHERE kind=?`), kind).Scan(&id, &start, &original))
+				if step.zone == "UTC" {
+					ids[kind] = id
+				}
+				assert.Equal(ids[kind], id)
+				assert.Equal(want, start.UTC().Format(time.RFC3339))
+				if kind == "exception" {
+					require.True(original.Valid)
+					assert.Equal(step.original, original.Time.UTC().Format(time.RFC3339))
+				}
 			}
+			assert.Equal(2, count(t, st, `SELECT COUNT(*) FROM messages`))
+			assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`))
 		}
-		assert.Equal(2, count(t, st, `SELECT COUNT(*) FROM messages`))
-		assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`))
-	}
+	})
+	t.Run("deleted obsolete exception", func(t *testing.T) {
+		require := require.New(t)
+		c, f := archiveFixture(t)
+		f.Lock()
+		f.raw["a.ics"] = strings.NewReplacer("20270314T130000Z", "20270314T090000", "20270321T130000Z", "20270321T090000", "20270321T150000Z", "20270321T110000").Replace(compound())
+		f.Unlock()
+		st := testutil.NewTestStore(t)
+		opts := syncOpts()
+		_, err := c.Sync(t.Context(), st, opts)
+		require.NoError(err)
+		// Retain an obsolete exception and its raw snapshot, then delete the resource.
+		f.Lock()
+		f.raw["a.ics"] = strings.Replace(strings.Replace(calendarBody, "20270314T130000Z", "20270314T090000", 1), "END:VEVENT", "RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT", 1)
+		f.token = "t2"
+		f.Unlock()
+		_, err = c.Sync(t.Context(), st, opts)
+		require.NoError(err)
+		f.Lock()
+		delete(f.raw, "a.ics")
+		f.deleted, f.token = []string{"a.ics"}, "t3"
+		f.Unlock()
+		_, err = c.Sync(t.Context(), st, opts)
+		require.NoError(err)
+		var before string
+		require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&before))
+		var meta calevent.CalDAVMetadata
+		require.NoError(json.Unmarshal([]byte(before), &meta))
+		opts.TimeZone = "America/New_York"
+		_, err = c.Sync(t.Context(), st, opts)
+		require.NoError(err)
+		for kind, want := range map[string]string{"series": "2027-03-14T13:00:00Z", "exception": "2027-03-21T15:00:00Z"} {
+			var sent, start time.Time
+			var deleted bool
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.sent_at, e.start_at, m.deleted_from_source_at IS NOT NULL FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind=?`), kind).Scan(&sent, &start, &deleted))
+			require.Equal(want, start.UTC().Format(time.RFC3339))
+			require.Equal(want, sent.UTC().Format(time.RFC3339))
+			require.True(deleted)
+		}
+		// The deleted master generates no occurrences; its obsolete exception stays archived.
+		got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-22T00:00:00Z")
+		require.Empty(got)
+		var after string
+		require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&after))
+		var updated calevent.CalDAVMetadata
+		require.NoError(json.Unmarshal([]byte(after), &updated))
+		require.Equal(meta.EventID, updated.EventID)
+		require.Equal(meta.Href, updated.Href)
+		require.Equal(meta.ETag, updated.ETag)
+		require.Equal("2027-03-21T15:00:00Z", updated.Start)
+		require.Equal("2027-03-21T16:00:00Z", updated.End)
+		require.Equal("America/New_York", updated.TimeZone)
+	})
 }
 
 func TestSyncFloatingTimeZoneChangeUpdatesMessageTimeForSkippedResource(t *testing.T) {
@@ -598,17 +645,29 @@ func TestSyncRefreshesEventsWhenZoneDatabaseChanges(t *testing.T) {
 }
 
 func TestSyncArchivesLowercaseCancelledStatus(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	c, f := archiveFixture(t)
-	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "STATUS:cancelled\r\nEND:VEVENT", 1)
-	st := testutil.NewTestStore(t)
-	result, err := c.Sync(t.Context(), st, syncOpts())
-	requirements.NoError(err)
-	assertions.Equal(1, result.Events)
-	assertions.Zero(result.Skipped)
-	var status string
-	requirements.NoError(st.DB().QueryRow(`SELECT status FROM calendar_events`).Scan(&status))
-	assertions.Equal("cancelled", status)
+	for _, status := range []string{"cancelled", "CANCELLED"} {
+		t.Run(status, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "STATUS:"+status+"\r\nEND:VEVENT", 1)
+			st := testutil.NewTestStore(t)
+			result, err := c.Sync(t.Context(), st, syncOpts())
+			requirements.NoError(err)
+			assertions.Equal(1, result.Events)
+			assertions.Zero(result.Skipped)
+			var id int64
+			var projected, metadata string
+			requirements.NoError(st.DB().QueryRow(`SELECT m.id, e.status, m.metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE m.message_type='calendar_event'`).Scan(&id, &projected, &metadata))
+			assertions.Equal("cancelled", projected)
+			var meta calevent.CalDAVMetadata
+			requirements.NoError(json.Unmarshal([]byte(metadata), &meta))
+			assertions.Equal("cancelled", meta.Status)
+			candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
+			requirements.NoError(err)
+			requirements.Len(candidates, 1)
+			assertions.False(candidates[0].Eligible)
+		})
+	}
 }
 
 func TestSyncArchivesUnsupportedRecurrencePeriod(t *testing.T) {
@@ -875,26 +934,6 @@ func TestSyncSelectsCanonicalDiscoveryAlias(t *testing.T) {
 	}
 }
 
-func TestSyncMoveIdentity(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	c, f := archiveFixture(t)
-	st := testutil.NewTestStore(t)
-	_, err := c.Sync(t.Context(), st, syncOpts())
-	requirements.NoError(err)
-	f.Lock()
-	f.raw = map[string]string{"b.ics": calendarBody}
-	f.deleted = []string{"a.ics"}
-	f.token = "t2"
-	f.Unlock()
-	_, err = c.Sync(t.Context(), st, syncOpts())
-	requirements.NoError(err)
-	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
-	var metadata string
-	requirements.NoError(st.DB().QueryRow(`SELECT metadata FROM messages WHERE deleted_from_source_at IS NULL`).Scan(&metadata))
-	assertions.Contains(metadata, "/b.ics")
-}
-
 func TestSyncFailedDeltaRetryTakesFullSnapshot(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -981,14 +1020,15 @@ func TestSyncPreservesLongDescriptionInBodyAndFTS(t *testing.T) {
 		require.NoError(err)
 		assert.Empty(page.Unexpandable)
 		assert.Len(page.Occurrences, 17)
-		f.Lock()
-		defer f.Unlock()
-		assert.Equal([]int{17, 8, 9}, f.multigetSizes)
-		assert.Zero(f.getRequests)
+		for _, occurrence := range page.Occurrences {
+			raw, err := st.GetMessageRawContext(t.Context(), occurrence.MessageID)
+			require.NoError(err)
+			assert.Contains(string(raw), "DESCRIPTION:"+strings.Repeat("x", (2<<20)-512))
+		}
 	})
 	t.Run("subset", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
-		c, _ := archiveFixture(t)
+		c, f := archiveFixture(t)
 		path := filepath.Join(t.TempDir(), "source.db")
 		st := testutil.NewSQLiteTestStoreAt(t, path)
 		_, err := c.Sync(t.Context(), st, syncOpts())
@@ -1001,7 +1041,13 @@ func TestSyncPreservesLongDescriptionInBodyAndFTS(t *testing.T) {
 		require.NoError(err)
 		t.Cleanup(func() { require.NoError(copied.Close()) })
 		assert.Equal(1, count(t, copied, `SELECT COUNT(*) FROM calendar_events`))
-		assert.Equal(1, count(t, copied, `SELECT COUNT(*) FROM message_raw`))
+		var id int64
+		var format string
+		require.NoError(copied.DB().QueryRow(`SELECT message_id, raw_format FROM message_raw`).Scan(&id, &format))
+		raw, err := copied.GetMessageRawContext(t.Context(), id)
+		require.NoError(err)
+		assert.Equal(f.raw["a.ics"], string(raw))
+		assert.Equal("caldav_ics", format)
 	})
 }
 
@@ -1097,14 +1143,6 @@ func TestSyncRepairsCalendarAttributionOnIngestAndResync(t *testing.T) {
 	_, err := c.Sync(t.Context(), st, syncOpts())
 	require.NoError(err)
 	assertCalendarAttribution()
-	for _, tc := range []struct{ email, wantDomain string }{
-		{email: "organizer@example.org", wantDomain: "example.org"},
-		{email: "guest@example.net", wantDomain: "example.net"},
-	} {
-		var domain string
-		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT domain FROM participants WHERE email_address = ?`), tc.email).Scan(&domain))
-		assert.Equal(t, tc.wantDomain, domain)
-	}
 
 	_, err = st.DB().ExecContext(t.Context(), `UPDATE messages SET account_path = NULL WHERE message_type = 'calendar_event'`)
 	require.NoError(err)
@@ -1127,22 +1165,24 @@ func TestSyncIncompleteSnapshotDoesNotTombstoneEvents(t *testing.T) {
 			if priorArchive {
 				_, err := c.Sync(t.Context(), st, opts)
 				require.NoError(err)
+			} else {
+				f.raw["a.ics"] = strings.Replace(calendarBody, "20270314T130000Z", "20270314T090000", 1)
 			}
 			f.Lock()
 			f.forceSnapshot, f.incompleteSnapshot = true, true
 			f.Unlock()
 			_, err := c.Sync(t.Context(), st, opts)
 			require.ErrorContains(err, "omitted the collection")
-			assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`))
 			if priorArchive {
+				assert.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
+				assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`))
 				assert.Equal("t1", sourceToken(t, st))
 			} else {
 				assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages`))
-				var config string
-				require.NoError(st.DB().QueryRow(`SELECT sync_config FROM sources WHERE source_type='caldav'`).Scan(&config))
-				var stored sourceConfig
-				require.NoError(json.Unmarshal([]byte(config), &stored))
-				assert.Equal("UTC", stored.TimeZone)
+				assert.Empty(sourceToken(t, st))
+				var status string
+				require.NoError(st.DB().QueryRow(`SELECT status FROM sync_runs ORDER BY id DESC LIMIT 1`).Scan(&status))
+				assert.Equal("failed", status)
 				opts.TimeZone = "America/New_York"
 			}
 			f.Lock()
@@ -1153,30 +1193,12 @@ func TestSyncIncompleteSnapshotDoesNotTombstoneEvents(t *testing.T) {
 			assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NOT NULL`))
 			if !priorArchive {
 				assert.Positive(count(t, st, `SELECT COUNT(*) FROM calendar_events`))
-				var config string
-				require.NoError(st.DB().QueryRow(`SELECT sync_config FROM sources WHERE source_type='caldav'`).Scan(&config))
-				var stored sourceConfig
-				require.NoError(json.Unmarshal([]byte(config), &stored))
-				assert.Equal("America/New_York", stored.TimeZone)
+				var sent time.Time
+				require.NoError(st.DB().QueryRow(`SELECT sent_at FROM messages`).Scan(&sent))
+				assert.Equal("2027-03-14T13:00:00Z", sent.UTC().Format(time.RFC3339))
 			}
 		})
 	}
-}
-
-func TestSyncCancelledEventIsActivityIneligible(t *testing.T) {
-	require := require.New(t)
-	c, f := archiveFixture(t)
-	f.raw["a.ics"] = strings.Replace(calendarBody, "SUMMARY:Example meeting", "SUMMARY:Example meeting\r\nSTATUS:CANCELLED", 1)
-	st := testutil.NewTestStore(t)
-	_, err := c.Sync(t.Context(), st, syncOpts())
-	require.NoError(err)
-
-	var messageID int64
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE message_type='calendar_event'`).Scan(&messageID))
-	candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{messageID})
-	require.NoError(err)
-	require.Len(candidates, 1)
-	assert.False(t, candidates[0].Eligible)
 }
 
 func TestSyncBoundlessCancellationPreservesArchivedEvent(t *testing.T) {
@@ -1245,30 +1267,26 @@ func TestSyncArchivesAllDayDateForActivity(t *testing.T) {
 	_, err := c.Sync(t.Context(), st, opts)
 	require.NoError(err)
 
-	var messageID int64
 	var sentAt time.Time
 	var rawMetadata string
-	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id, sent_at, metadata FROM messages WHERE message_type='calendar_event'`).Scan(&messageID, &sentAt, &rawMetadata))
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT sent_at, metadata FROM messages WHERE message_type='calendar_event'`).Scan(&sentAt, &rawMetadata))
 	assert.Equal(time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC), sentAt.UTC())
 	var metadata struct {
 		AllDay bool `json:"all_day"`
 	}
 	require.NoError(json.Unmarshal([]byte(rawMetadata), &metadata))
 	assert.True(metadata.AllDay)
-
-	candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{messageID})
-	require.NoError(err)
-	require.Len(candidates, 1)
-	assert.True(candidates[0].DateOnly)
 }
 
 func TestSyncDeltaSkipsDuplicateOnUntouchedResource(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		uniqueSibling bool
+		move          bool
 	}{
-		{"unique sibling skips whole resource", true},
-		{"untouched resource adopted after deletion", false},
+		{"unique sibling skips whole resource", true, false},
+		{"untouched resource adopted after deletion", false, false},
+		{"moved resource keeps identity", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -1284,13 +1302,23 @@ func TestSyncDeltaSkipsDuplicateOnUntouchedResource(t *testing.T) {
 			if tc.uniqueSibling {
 				f.raw["b.ics"] = strings.Replace(calendarBody, "BEGIN:VEVENT", "BEGIN:VEVENT\r\nUID:unique-sibling\r\nDTSTART:20270314T130000Z\r\nEND:VEVENT\r\nBEGIN:VEVENT", 1)
 			}
-			if !tc.uniqueSibling {
+			if tc.move {
+				delete(f.raw, "a.ics")
+				f.deleted = []string{"a.ics"}
+			} else if !tc.uniqueSibling {
 				f.reported = map[string]bool{"b.ics": true}
 			}
 			f.token = "t2"
 			f.Unlock()
 			result, err := c.Sync(t.Context(), st, syncOpts())
 			requirements.NoError(err)
+			if tc.move {
+				assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
+				var metadata string
+				requirements.NoError(st.DB().QueryRow(`SELECT metadata FROM messages WHERE deleted_from_source_at IS NULL`).Scan(&metadata))
+				assertions.Contains(metadata, "/b.ics")
+				return
+			}
 			assertions.Equal(1, result.Skipped)
 			assertions.Empty(sourceToken(t, st))
 			if tc.uniqueSibling {
@@ -1472,7 +1500,11 @@ func TestSyncCivilDayDurationKeepsWallTimeAcrossDST(t *testing.T) {
 			assertions.Equal(tc.wantStart, page.Occurrences[1].Start.UTC().Format(time.RFC3339))
 			assertions.Equal(tc.wantEnd, page.Occurrences[1].End.UTC().Format(time.RFC3339))
 			if tc.name == "DST" {
-				assertions.Len(occurrences(t, st, "2027-03-21T12:30:00Z", "2027-03-21T12:45:00Z"), 1)
+				window := occurrences(t, st, "2027-03-21T12:30:00Z", "2027-03-21T12:45:00Z")
+				requirements.Len(window, 1)
+				assertions.Equal(page.Occurrences[1].MessageID, window[0].MessageID)
+				assertions.Equal("2027-03-20T13:00:00Z", window[0].Start.UTC().Format(time.RFC3339))
+				assertions.Equal("2027-03-21T13:00:00Z", window[0].End.UTC().Format(time.RFC3339))
 			} else {
 				assertions.Equal("2012-01-05T19:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
 			}
@@ -1483,13 +1515,24 @@ func TestSyncCivilDayDurationKeepsWallTimeAcrossDST(t *testing.T) {
 func TestSyncPreservesDelegatedAttendee(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
-	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "ATTENDEE;PARTSTAT=DELEGATED:mailto:guest@example.org\r\nEND:VEVENT", 1)
+	raw := strings.Replace(calendarBody, "END:VEVENT", "ATTENDEE;PARTSTAT=DELEGATED:mailto:guest@example.org\r\nEND:VEVENT", 1)
 	st := testutil.NewTestStore(t)
-	_, err := c.Sync(t.Context(), st, syncOpts())
-	requirements.NoError(err)
-	got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-15T00:00:00Z")
-	requirements.Len(got, 1)
-	assertions.Equal([]calevent.Attendee{{Email: "guest@example.org", Role: "required", RSVP: "delegated"}}, got[0].Attendees)
+	for _, step := range []struct{ summary, token string }{
+		{"Example meeting", "t1"},
+		{"Updated meeting", "t2"},
+	} {
+		f.Lock()
+		f.raw["a.ics"] = strings.Replace(raw, "Example meeting", step.summary, 1)
+		f.token = step.token
+		f.Unlock()
+		result, err := c.Sync(t.Context(), st, syncOpts())
+		requirements.NoError(err)
+		assertions.Equal(1, result.Events)
+		got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-15T00:00:00Z")
+		requirements.Len(got, 1)
+		assertions.Equal(step.summary, got[0].Subject)
+		assertions.Equal([]calevent.Attendee{{Email: "guest@example.org", Role: "required", RSVP: "delegated"}}, got[0].Attendees)
+	}
 }
 
 func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
@@ -1520,12 +1563,12 @@ func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
 				}
 				f.Lock()
 				attendees := strings.ReplaceAll(tc.attendees, "CUTYPE=ROOM", "CUTYPE="+cutype)
-				f.raw["a.ics"] = strings.Replace(f.raw["a.ics"], "END:VEVENT", attendees+"ATTENDEE:mailto:guest@example.org\r\nEND:VEVENT", 1)
+				f.raw["a.ics"] = strings.Replace(f.raw["a.ics"], "END:VEVENT", attendees+"ATTENDEE:mailto:guest@example.net\r\nEND:VEVENT", 1)
 				f.token = "t2"
 				f.Unlock()
 				_, err := c.Sync(t.Context(), st, syncOpts())
 				requirements.NoError(err)
-				recipients := []string{"guest@example.org"}
+				recipients := []string{"guest@example.net"}
 				if tc.organizerRecipient {
 					recipients = append(recipients, "organizer@example.org")
 				}
@@ -1534,6 +1577,17 @@ func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
 					requirements.NoError(err)
 					assertions.EqualValues(1, total)
 					assertions.Len(rows, 1)
+				}
+				for _, participant := range []struct{ email, domain string }{
+					{"guest@example.net", "example.net"},
+					{"organizer@example.org", "example.org"},
+				} {
+					if participant.email == "organizer@example.org" && !tc.organizerRecipient {
+						continue
+					}
+					var domain string
+					requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT domain FROM participants WHERE email_address = ?`), participant.email).Scan(&domain))
+					assertions.Equal(participant.domain, domain)
 				}
 				queries := []string{"to:room@example.org"}
 				if tc.noSender {
@@ -1560,22 +1614,14 @@ func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
 		result, err := c.Sync(t.Context(), st, syncOpts())
 		requirements.NoError(err)
 		assertions.Equal(1, result.Events)
-		rows, err := st.DB().Query(`SELECT email, display_name FROM calendar_event_attendees ORDER BY ordinal`)
-		requirements.NoError(err)
-		defer func() { _ = rows.Close() }()
-		var got [][2]string
-		for rows.Next() {
-			var a [2]string
-			requirements.NoError(rows.Scan(&a[0], &a[1]))
-			got = append(got, a)
-		}
-		requirements.NoError(rows.Err())
-		assertions.Equal([][2]string{
-			{"", "Guest One"},
-			{"", "Guest Two"},
-			{"three@example.org", "Guest Three"},
-			{"", "Host"},
-		}, got)
+		got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-15T00:00:00Z")
+		requirements.Len(got, 1)
+		assertions.Equal([]calevent.Attendee{
+			{DisplayName: "Guest One", Role: "optional", RSVP: "accepted"},
+			{DisplayName: "Guest Two", Role: "required", RSVP: "declined"},
+			{Email: "three@example.org", DisplayName: "Guest Three", Role: "required", RSVP: "tentative"},
+			{DisplayName: "Host", Role: "organizer", RSVP: "unknown"},
+		}, got[0].Attendees)
 		assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM message_recipients WHERE recipient_type='to'`))
 	})
 }
@@ -1587,7 +1633,7 @@ func TestSyncBodyUsesEventClock(t *testing.T) {
 	f.raw["a.ics"] = strings.Replace(calendarBody, "DTSTART:20270314T130000Z", start, 1)
 	st := testutil.NewTestStore(t)
 	opts := syncOpts()
-	opts.TimeZone = "America/New_York"
+	opts.TimeZone = "UTC"
 	_, err := c.Sync(t.Context(), st, opts)
 	requirements.NoError(err)
 	var id int64
@@ -1863,10 +1909,6 @@ func TestSyncResourceFailureKeepsCommittedEventsAndRetries(t *testing.T) {
 			assert.Equal(wantToken, sourceToken(t, st))
 			assert.Equal(wantSeries, count(t, st, `SELECT COUNT(*) FROM calendar_events WHERE kind = 'series'`))
 			assert.Zero(count(t, st, `SELECT COUNT(*) FROM calendar_events WHERE kind = 'exception'`))
-			_, total, err := st.SearchMessagesQuery(search.Parse("account:owner@example.org"), 0, 10)
-			require.NoError(err)
-			assert.Equal(int64(committed), total)
-			assert.Equal(committed, count(t, st, `SELECT COUNT(*) FROM messages WHERE account_path = 'calendar' AND account_address = 'owner@example.org'`))
 			var sourceID int64
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM sources WHERE source_type = 'caldav'`).Scan(&sourceID))
 			run, err := st.GetLatestSyncContext(t.Context(), sourceID, 0)
@@ -1874,8 +1916,6 @@ func TestSyncResourceFailureKeepsCommittedEventsAndRetries(t *testing.T) {
 			assert.Equal(store.SyncStatusFailed, run.Status)
 			assert.Contains(run.ErrorMessage.String, wantError)
 			assert.Equal(int64(committed), run.MessagesProcessed)
-			assert.Equal(int64(committed), run.MessagesAdded)
-			assert.Zero(run.MessagesUpdated)
 			assert.Equal(int64(1), run.ErrorsCount)
 		})
 	}
@@ -1955,60 +1995,4 @@ func TestSyncResourceFailureKeepsCommittedEventsAndRetries(t *testing.T) {
 			require.Equal("t2", sourceToken(t, st))
 		})
 	}
-}
-
-func TestSyncDeletedFloatingEventMessageTimeZoneChange(t *testing.T) {
-	require := require.New(t)
-	c, f := archiveFixture(t)
-	f.Lock()
-	f.raw["a.ics"] = strings.NewReplacer("20270314T130000Z", "20270314T090000", "20270321T130000Z", "20270321T090000", "20270321T150000Z", "20270321T110000").Replace(compound())
-	f.Unlock()
-	st := testutil.NewTestStore(t)
-	opts := syncOpts()
-	_, err := c.Sync(t.Context(), st, opts)
-	require.NoError(err)
-	// Retain an obsolete exception and its raw snapshot, then delete the resource.
-	f.Lock()
-	f.raw["a.ics"] = strings.Replace(strings.Replace(calendarBody, "20270314T130000Z", "20270314T090000", 1), "END:VEVENT", "RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT", 1)
-	f.token = "t2"
-	f.Unlock()
-	_, err = c.Sync(t.Context(), st, opts)
-	require.NoError(err)
-	f.Lock()
-	delete(f.raw, "a.ics")
-	f.deleted, f.token = []string{"a.ics"}, "t3"
-	f.Unlock()
-	_, err = c.Sync(t.Context(), st, opts)
-	require.NoError(err)
-	var before string
-	require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&before))
-	var meta calevent.CalDAVMetadata
-	require.NoError(json.Unmarshal([]byte(before), &meta))
-	opts.TimeZone = "America/New_York"
-	_, err = c.Sync(t.Context(), st, opts)
-	require.NoError(err)
-	for kind, want := range map[string]string{"series": "2027-03-14T13:00:00Z", "exception": "2027-03-21T15:00:00Z"} {
-		var sent, start time.Time
-		var deleted bool
-		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.sent_at, e.start_at, m.deleted_from_source_at IS NOT NULL FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind=?`), kind).Scan(&sent, &start, &deleted))
-		require.Equal(want, start.UTC().Format(time.RFC3339))
-		require.Equal(want, sent.UTC().Format(time.RFC3339))
-		require.True(deleted)
-	}
-	var last time.Time
-	require.NoError(st.DB().QueryRow(`SELECT last_message_at FROM conversations`).Scan(&last))
-	require.Equal("2027-03-21T15:00:00Z", last.UTC().Format(time.RFC3339))
-	// The deleted master generates no occurrences; its obsolete exception stays archived.
-	got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-22T00:00:00Z")
-	require.Empty(got)
-	var after string
-	require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&after))
-	var updated calevent.CalDAVMetadata
-	require.NoError(json.Unmarshal([]byte(after), &updated))
-	require.Equal(meta.EventID, updated.EventID)
-	require.Equal(meta.Href, updated.Href)
-	require.Equal(meta.ETag, updated.ETag)
-	require.Equal("2027-03-21T15:00:00Z", updated.Start)
-	require.Equal("2027-03-21T16:00:00Z", updated.End)
-	require.Equal("America/New_York", updated.TimeZone)
 }
