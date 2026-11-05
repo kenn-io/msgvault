@@ -133,6 +133,7 @@ func TestImportClearsSearchIndexWhenMessageTextIsRemoved(t *testing.T) {
 	summary, err = client.Import(ctx, st, src.ID)
 	require.NoError(err)
 	assert.Equal(1, summary.MessagesImported)
+	assert.Equal(1, summary.MessagesUpdated)
 	body, err := st.GetMessageBodyText(id)
 	require.NoError(err)
 	assert.Empty(body)
@@ -406,35 +407,6 @@ func TestImportRerunWritesOnlyChanges(t *testing.T) {
 	var body string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = (SELECT id FROM messages WHERE source_id = ? AND source_message_id = '2')`), src.ID).Scan(&body))
 	assert.Equal("edited", body)
-}
-
-func TestImportClearsHistoricallyRetainedBody(t *testing.T) {
-	require := require.New(t)
-	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'orchard')`)
-	require.NoError(err)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("apple_messages", "local")
-	require.NoError(err)
-	client, err := NewClient(path)
-	require.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	_, err = client.Import(t.Context(), st, src.ID)
-	require.NoError(err)
-	var id int64
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
-	body, err := st.GetMessageBodyText(id)
-	require.NoError(err)
-	require.Equal("orchard", body)
-	// Remove the source text after the first import archives it.
-	_, err = db.Exec(`UPDATE message SET text = ''`)
-	require.NoError(err)
-	summary, err := client.Import(t.Context(), st, src.ID)
-	require.NoError(err)
-	body, err = st.GetMessageBodyText(id)
-	require.NoError(err)
-	assert.Empty(t, body)
-	assert.Equal(t, 1, summary.MessagesUpdated)
 }
 
 func TestImportRepairsMissingProviderLabel(t *testing.T) {
