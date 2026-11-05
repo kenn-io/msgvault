@@ -257,6 +257,26 @@ describe('MessageCard', () => {
     const request = fetchFn.mock.calls.find(([input]) => new URL((input as Request).url).pathname.endsWith('/recordings'))![0] as Request;
     expect(new URL(request.url).pathname).toBe('/api/v1/messages/42/recordings');
   });
+
+  it('offers related copies on email only', () => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({}));
+    const client = createAPIClient(fetchFn);
+    const related = () => screen.queryByRole('button', { name: 'Related copies' });
+
+    const first = render(MessageCard, { props: { message: detail(), expanded: true, client } });
+    expect(related(), 'a message with no type is an email').not.toBeNull();
+    first.unmount();
+    const second = render(MessageCard, { props: { message: detail({ messageType: 'email' }), expanded: true, client } });
+    expect(related()).not.toBeNull();
+    second.unmount();
+    for (const messageType of ['meeting_transcript', 'chat']) {
+      const other = render(MessageCard, { props: { message: detail({ messageType }), expanded: true, client } });
+      expect(related(), messageType).toBeNull();
+      other.unmount();
+    }
+    render(MessageCard, { props: { message: detail(), expanded: true } });
+    expect(related(), 'no client, no panel').toBeNull();
+  });
 });
 
 it.each([{ state: 'ready', shown: true }, { state: 'disabled', shown: false }])('offers the Kata task flow when $state', async ({ state, shown }) => {
