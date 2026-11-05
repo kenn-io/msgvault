@@ -131,7 +131,8 @@ func TestExecutor_FinalizeIgnoresStaleJournal(t *testing.T) {
 	assert.Empty(loaded.Execution.FailedIDs)
 	require.NotNil(loaded.Execution.CompletedAt)
 
-	// Simulate a crash after publishing the terminal file but before moving it.
+	// Exercise executor restart after publication but before the terminal move.
+	// A manager-only claim cannot catch the executor replaying these messages.
 	require.NoError(os.Chmod(baseDir, 0o700))
 	require.NoError(os.Rename(path, filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")))
 	tc.MockAPI.BeforeTrash = nil
@@ -219,28 +220,6 @@ func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 	require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(1)))
 	tc.AssertManifestExecution(m.ID, 3, 0)
 	assert.Equal([]string{"msg1", "msg2"}, tc.MockAPI.TrashCalls)
-}
-
-func TestExecutor_CancelAfterCheckpoint(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tc := NewTestContext(t)
-	m := tc.CreateManifest("cancel progress", msgIDs(3))
-	tc.MockAPI.BeforeTrash = func(id string) error {
-		if id == "msg1" {
-			require.NoError(tc.Mgr.CancelManifest(m.ID))
-		}
-		return nil
-	}
-	require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
-	assert.True(tc.Mgr.ManifestCancelled(m.ID))
-	assert.Equal([]string{"msg0", "msg1"}, tc.MockAPI.TrashCalls)
-	cancelled, status, err := tc.Mgr.GetManifestWithStatus(m.ID)
-	require.NoError(err)
-	assert.Equal(StatusCancelled, status)
-	require.NotNil(cancelled.Execution)
-	assert.Equal(1, cancelled.Execution.Succeeded)
-	assert.Equal(1, cancelled.Execution.LastProcessedIndex)
 }
 
 func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
