@@ -67,8 +67,10 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	checks.Contains(output, "Restart")
 	checks.Contains(output, "Use webhook")
 	checks.Contains(output, "Webhook redelivery")
-	_, err = executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000002", "--secret-env", "OTHER_LINE_SECRET")
+	checks.NotContains(output, "Webhook route:")
+	output, err = executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000002", "--secret-env", "OTHER_LINE_SECRET")
 	must.NoError(err)
+	checks.Contains(output, "Webhook route: /webhooks/line/2000000002")
 	loaded, err := config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	must.Len(loaded.Line, 2)
@@ -106,7 +108,7 @@ func TestLineCommandValidation(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"--channel-id", "01", "--secret-env", "EXAMPLE_LINE_SECRET"}, "--channel-id must be a canonical positive decimal uint64"},
+		{[]string{"--channel-id", "01", "--secret-env", "EXAMPLE_LINE_SECRET"}, "--channel-id: 1–18446744073709551615, no leading zeros"},
 		{[]string{"--channel-id", "1", "--secret-env", "BAD-NAME"}, "--secret-env must name an explicit environment variable"},
 		{[]string{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "http://archive.example.com"}, "--webhook-base-url must be an HTTPS origin"},
 		{[]string{"--channel-id", "1", "--secret-env", "EXAMPLE_LINE_SECRET", "--webhook-base-url", "https://user:secret@archive.example.com"}, "--webhook-base-url must be an HTTPS origin"},
@@ -149,7 +151,7 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	must.NoError(st.EnqueueLineEventsContext(t.Context(), source.ID, source.Identifier, botID, events))
 	output, err := executeLineCommand(t, loaded, addManualSyncCacheFlags(newSyncLineCmd()), "--channel-id", "2000000001", "--no-build-cache")
 	must.NoError(err)
-	checks.Contains(output, "Push source")
+	checks.Contains(output, "Processing due LINE events; no history is fetched.")
 	checks.Contains(output, "pending: 0")
 	checks.Contains(output, "failed: 0")
 	var archived int

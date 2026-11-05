@@ -97,8 +97,6 @@ export function syncStatusChip(
   if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return { label: 'Queued', tone: 'info' };
   if (source.line_webhook && latest?.status !== 'failed') {
     const webhook = source.line_webhook;
-    if (webhook.failed > 0) return { label: 'Inbox has failures', tone: 'warning' };
-    if (webhook.pending > 0) return { label: 'Inbox pending', tone: 'info' };
     return webhook.active
       ? { label: 'Listening', tone: 'success' }
       : { label: 'Receiver inactive', tone: 'warning' };

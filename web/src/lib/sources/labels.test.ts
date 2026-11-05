@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
+import { syncStatusChip, syncCommand, sourceFailure, sourceRunState, sourceTypeLabel, syncUnavailableLabel } from './labels';
 
 const run = (status: string, errors = 0) => ({
   id: 1, source_id: 1, started_at: '2026-07-19T10:00:00Z', completed_at: null, status,
@@ -62,4 +62,17 @@ it.each([
   ['msmail', 'sync_not_configured', null, 'msgvault sync --source-id 4'],
 ] as const)('offers a manual sync command for %s with reason %s and last successful sync %j', (source_type, sync_unavailable_reason, last_successful_sync, want) => {
   expect(syncCommand({ id: 4, source_type, sync_unavailable_reason, last_successful_sync })).toBe(want);
+});
+
+
+it.each([
+  [true, 0, 0, 'Listening', 'success'],
+  [true, 2, 0, 'Listening', 'success'],
+  [true, 2, 1, 'Listening', 'success'],
+  [false, 0, 0, 'Receiver inactive', 'warning'],
+  [false, 2, 1, 'Receiver inactive', 'warning'],
+] as const)('shows receiver state when active=%s, pending=%i, failed=%i', (active, pending, failed, label, tone) => {
+  expect(syncStatusChip({ active_sync: null, latest_sync: null, scheduler_queued: false,
+    line_webhook: { active, pending, failed, invalid_signatures: 0 }
+  })).toEqual({ label, tone });
 });

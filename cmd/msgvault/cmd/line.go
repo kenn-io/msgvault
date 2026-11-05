@@ -49,7 +49,7 @@ func newAddLineCmd() *cobra.Command {
 	command := &cobra.Command{Use: "add-line", Short: "Add a LINE Official Account", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !config.ValidLineChannelID(channelID) {
-				return usageErr(cmd, errors.New("--channel-id must be a canonical positive decimal uint64"))
+				return usageErr(cmd, errors.New("--channel-id: 1–18446744073709551615, no leading zeros"))
 			}
 			if !envutil.ValidName(secretEnv) {
 				return usageErr(cmd, errors.New("--secret-env must name an explicit environment variable"))
@@ -101,7 +101,10 @@ func newAddLineCmd() *cobra.Command {
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 			out := cmd.OutOrStdout()
-			_, _ = fmt.Fprintf(out, "Registered LINE channel %s (source %d).\nWebhook route: /webhooks/line/%s\n", channelID, source.ID, channelID)
+			_, _ = fmt.Fprintf(out, "Registered LINE channel %s (source %d).\n", channelID, source.ID)
+			if base == "" {
+				_, _ = fmt.Fprintf(out, "Webhook route: /webhooks/line/%s\n", channelID)
+			}
 			_, _ = fmt.Fprintln(out, "Enable Use webhook in LINE Developers Console; Webhook redelivery is recommended.")
 			_, _ = fmt.Fprintf(out, "Restart the daemon/service with %s in its environment.\n", secretEnv)
 			if base != "" {
@@ -137,10 +140,10 @@ func lineSyncProfiles(cfg *config.Config, channelID string) ([]config.LineSource
 
 func newSyncLineCmd() *cobra.Command {
 	var channelID string
-	command := &cobra.Command{Use: "sync-line", Short: "Process LINE inbox work", Long: "Drain due LINE webhook work, including configured disabled channels. This push source has no history API; Sync now never fetches past messages.", Args: cobra.NoArgs,
+	command := &cobra.Command{Use: "sync-line", Short: "Process LINE inbox work", Long: "Drain due LINE webhook work, including configured disabled channels. Earlier messages cannot be fetched.", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("channel-id") && !config.ValidLineChannelID(channelID) {
-				return usageErr(cmd, errors.New("--channel-id must be a canonical positive decimal uint64"))
+				return usageErr(cmd, errors.New("--channel-id: 1–18446744073709551615, no leading zeros"))
 			}
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
@@ -159,9 +162,9 @@ func newSyncLineCmd() *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. LINE inbox work remains durable...")
+			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Pending LINE work is saved.")
 			defer stop()
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Push source: processing due LINE inbox work; no message history is fetched.")
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Processing due LINE events; no history is fetched.")
 			var errs []error
 			for _, profile := range profiles {
 				if err := ctx.Err(); err != nil {

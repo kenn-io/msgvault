@@ -22,7 +22,7 @@ enabled=false
 	for _, id := range []string{"", "0", "00", "01", "+1", "-1", "1.0", "1e3", "١", "18446744073709551616", "2000/evil", " 2000000001 "} {
 		t.Run("channel_"+id, func(t *testing.T) {
 			err := loadConfigTextError(t, fmt.Sprintf("[[line]]\nchannel_id=%q\nsecret_env=\"EXAMPLE_LINE_SECRET\"\nenabled=false\n", id))
-			require.ErrorContains(t, err, "channel_id")
+			require.ErrorContains(t, err, "line[0].channel_id: 1–18446744073709551615, no leading zeros")
 		})
 	}
 	for _, env := range []string{"", "1KEY", "BAD-NAME", "KEY=value"} {

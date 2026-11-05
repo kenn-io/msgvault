@@ -444,11 +444,12 @@
           </td>
           <td><div class="name">
             {#if source.line_webhook}
-              <strong>Push source · webhook</strong>
-              <span>Archives from webhook go-live.</span>
-              <span>{source.line_webhook.active ? 'Receiver active' : 'Receiver inactive · check configuration and restart'}</span>
+              <span>New messages only.</span>
+              {#if !source.line_webhook.active}<span>Check configuration and restart</span>{/if}
               {#if source.line_webhook.last_received_at}<span>Last event <time datetime={source.line_webhook.last_received_at}>{formatDateTime(source.line_webhook.last_received_at)}</time></span>{:else}<span>No events received yet</span>{/if}
-              <span>{source.line_webhook.pending.toLocaleString()} pending · {source.line_webhook.failed.toLocaleString()} failed</span>
+              {#if source.line_webhook.last_received_at || source.line_webhook.pending > 0 || source.line_webhook.failed > 0}
+                <span>{source.line_webhook.pending.toLocaleString()} pending · <span style:color={source.line_webhook.failed > 0 ? 'var(--status-warning-ink)' : undefined}>{source.line_webhook.failed.toLocaleString()} failed</span></span>
+              {/if}
               {#if source.line_webhook.invalid_signatures > 0}<span>{source.line_webhook.invalid_signatures.toLocaleString()} invalid signatures since daemon start</span>{/if}
             {/if}
             <Chip size="sm" tone={chip.tone} dot uppercase={false}>{chip.label}</Chip>{#if source.active_sync}<span class="muted">{source.active_sync.messages_processed.toLocaleString()} processed</span><span class="muted">{source.active_sync.messages_added.toLocaleString()} added · {source.active_sync.errors_count.toLocaleString()} errors</span>{:else if staleLastResult(source)}<span class="muted">This result may be out of date.</span>{/if}

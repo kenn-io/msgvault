@@ -66,6 +66,23 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
 const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
+  it.each([
+    [true, null, 0, 0, false],
+    [false, null, 0, 0, false],
+    [true, null, 2, 0, true],
+    [true, null, 0, 1, true],
+    [true, '2026-07-19T10:00:00Z', 0, 0, true],
+  ] as const)('shows LINE inbox counts for active=%s, last event=%s, pending=%i, failed=%i', async (active, last_received_at, pending, failed, showCounts) => {
+    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
+      source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
+      line_webhook: { active, pending, failed, invalid_signatures: 0, last_received_at }
+    })] }));
+    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
+    await screen.findByText('New messages only.');
+    expect(screen.queryByText(`${pending} pending ·`) !== null).toBe(showCounts);
+    expect(screen.queryByText('Check configuration and restart') !== null).toBe(!active);
+  });
+
   it('shows LINE webhook delivery instead of a polling schedule', async () => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
@@ -74,10 +91,10 @@ describe('SourcesWorkspace', () => {
         last_received_at: '2026-07-19T10:00:00Z' }
     })] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-    expect(await screen.findByText('Push source · webhook')).toBeDefined();
-    expect(screen.getByText('Archives from webhook go-live.')).toBeDefined();
-    expect(screen.getByText('Receiver active')).toBeDefined();
-    expect(screen.getByText('2 pending · 1 failed')).toBeDefined();
+    expect(await screen.findByText('New messages only.')).toBeDefined();
+    expect(screen.getByText('Listening')).toBeDefined();
+    expect(screen.getByText('2 pending ·')).toBeDefined();
+    expect(screen.getByText('1 failed')).toBeDefined();
     expect(screen.getByText('3 invalid signatures since daemon start')).toBeDefined();
     expect(screen.queryByText('@every 30s')).toBeNull();
     expect(screen.getByRole('button', { name: 'Process inbox Example OA' })).toBeDefined();

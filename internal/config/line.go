@@ -37,7 +37,7 @@ func (c *Config) validateLineSources() error {
 	for index := range c.Line {
 		source := &c.Line[index]
 		if !ValidLineChannelID(source.ChannelID) {
-			return fmt.Errorf("line[%d].channel_id must be a canonical positive decimal uint64", index)
+			return fmt.Errorf("line[%d].channel_id: 1–18446744073709551615, no leading zeros", index)
 		}
 		if seen[source.ChannelID] {
 			return fmt.Errorf("line[%d].channel_id is duplicate", index)
