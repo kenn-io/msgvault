@@ -26,8 +26,7 @@ textarea {
 
 /* Kit has no CSS hook for MEDIA.touch. */
 @media (hover: none), (pointer: coarse) {
-  .touch-controls button:not(.kit-popover-card *),
-  .touch-controls .kit-text-input:not(.kit-popover-card *) {
+  .touch-controls button:not(.kit-popover-card *) {
     min-height: 44px;
   }
 
