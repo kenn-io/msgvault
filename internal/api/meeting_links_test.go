@@ -135,13 +135,12 @@ func TestMeetingLinkRoutes(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMeetingLinkErrorRetainsMissingBoundsReason(t *testing.T) {
-	backend := &meetingLinksTestStore{mockStore: &mockStore{stats: &StoreStats{}}, err: fmt.Errorf("cancelled event missing bounds: %w", sql.ErrNoRows)}
-	srv := NewServer(&config.Config{}, backend, nil, testLogger())
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/meetings/record?ref=evt:81", nil))
-	assert.Equal(t, 404, w.Code)
-	assert.Contains(t, w.Body.String(), "cancelled event missing bounds")
+	t.Run("missing bounds reason", func(t *testing.T) {
+		backend := &meetingLinksTestStore{mockStore: &mockStore{stats: &StoreStats{}}, err: fmt.Errorf("cancelled event missing bounds: %w", sql.ErrNoRows)}
+		srv := NewServer(&config.Config{}, backend, nil, testLogger())
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/meetings/record?ref=evt:81", nil))
+		assert.Equal(t, 404, w.Code)
+		assert.Contains(t, w.Body.String(), "cancelled event missing bounds")
+	})
 }

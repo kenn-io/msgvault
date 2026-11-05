@@ -38,7 +38,7 @@ func TestMeetingSchemaPlainSQLiteIntegrity(t *testing.T) {
 	assert.Equal(t, "ok", integrity)
 }
 
-func testMeetingLinksUnsupportedMasterException(t *testing.T) {
+func TestMeetingLinksUnsupportedMasterException(t *testing.T) {
 	t.Helper()
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -76,14 +76,10 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "window@example.org"))
 	// Enough historical notes make a narrow range cheaper than a population scan.
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`)
-	_, err := st.db.Exec(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sent_at) SELECT source_id,conversation_id, 'history-' || n, 'meeting_transcript', '2020-01-01 00:00:00+00:00' FROM messages CROSS JOIN `+func() string {
-		if st.IsPostgreSQL() {
-			return `generate_series(1,3000) AS n`
-		}
-		return `(WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<3000) SELECT n FROM nums)`
-	}()+` WHERE id = ?`, note)
-	requirements.NoError(err)
-	_, err = st.db.Exec(`INSERT INTO meeting_link_key(message_id,kind,value,calendar_id,scheduled_at) SELECT id,'ical_uid','old@example.org','','2020-01-01 00:00:00+00:00' FROM messages WHERE source_message_id LIKE 'history-%'`)
+	for i := range 3000 {
+		projectionFixture(t, st, fmt.Sprintf("history-%d", i), "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"old@example.org","startsAt":"2020-01-01T00:00:00Z"}}`)
+	}
+	_, err := st.db.Exec(`UPDATE messages SET sent_at = '2020-01-01 00:00:00+00:00' WHERE source_message_id LIKE 'history-%'`)
 	requirements.NoError(err)
 	_, err = st.db.Exec(`ANALYZE`)
 	requirements.NoError(err)
@@ -101,6 +97,7 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	suggestions, err := observed.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: event}, 10)
 	requirements.NoError(err)
 	requirements.Len(suggestions.Suggestions, 1)
+	assertions.Equal(note, suggestions.Suggestions[0].MemberMessageID)
 	requirements.NotEmpty(query)
 	explain := "EXPLAIN QUERY PLAN "
 	if st.IsPostgreSQL() {
@@ -129,7 +126,7 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	}
 }
 
-func testMeetingSuggestionsOffsetCancellation(t *testing.T) {
+func TestMeetingSuggestionsOffsetCancellation(t *testing.T) {
 	t.Helper()
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -149,7 +146,7 @@ func testMeetingSuggestionsOffsetCancellation(t *testing.T) {
 	assert.Empty(t, suggestions.Suggestions)
 }
 
-func testMeetingUnsupportedSeriesCandidates(t *testing.T) {
+func TestMeetingUnsupportedSeriesCandidates(t *testing.T) {
 	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -163,7 +160,7 @@ func testMeetingUnsupportedSeriesCandidates(t *testing.T) {
 	assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), linkedMeetingRefs(t, st, note)[note])
 }
 
-func testMeetingLinkTargetsRequireBounds(t *testing.T) {
+func TestMeetingLinkTargetsRequireBounds(t *testing.T) {
 	t.Helper()
 	for _, tc := range []struct{ name, raw string }{
 		{"tombstone", `{"id":"gone","status":"cancelled"}`},
@@ -237,7 +234,7 @@ func TestMeetingDedupRawBackfillProjections(t *testing.T) {
 	}
 }
 
-func testMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
+func TestMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
 	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -274,42 +271,4 @@ func TestMeetingLinksFormerSeriesReferenceLinksAndUnlinks(t *testing.T) {
 	assert.Equal(page.Occurrences[0].Ref, linkedMeetingRefs(t, st, note)[note], "the edit resolves through its former series")
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
 	assert.Empty(linkedMeetingRefs(t, st, note)[note])
-}
-
-func TestMeetingCancelledSuggestions(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingSuggestionsOffsetCancellation", testMeetingSuggestionsOffsetCancellation},
-		{"MeetingLinksSuggestionsRankingAndReadOnly", testMeetingLinksSuggestionsRankingAndReadOnly},
-		{"MeetingLinksUnidentifiedExceptionWithCancelledMaster", testMeetingLinksUnidentifiedExceptionWithCancelledMaster},
-		{"MeetingLinksAllDayExceptionWithTombstoneMaster", testMeetingLinksAllDayExceptionWithTombstoneMaster},
-	} {
-		t.Run(tc.name, tc.run)
-	}
-}
-
-func TestMeetingLinkTargetBounds(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingLinkTargetsRequireBounds", testMeetingLinkTargetsRequireBounds},
-	} {
-		t.Run(tc.name, tc.run)
-	}
-}
-
-func TestMeetingUnsupportedSeries(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"manual exception alias", testMeetingLinksUnsupportedMasterException},
-		{"automatic candidates", testMeetingUnsupportedSeriesCandidates},
-		{"exception without original", testMeetingUnsupportedSeriesExceptionWithoutOriginal},
-	} {
-		t.Run(tc.name, tc.run)
-	}
 }

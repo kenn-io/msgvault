@@ -23,20 +23,11 @@ func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
 	_, id := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"metadata@example.org"}}`)
 	// Distinct calendar UIDs make an indexed lookup cheaper than scanning events.
-	series := `(WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<3000) SELECT n FROM nums)`
-	metadata := `json_object('ical_uid', 'history-' || n || '@example.org')`
-	if st.IsPostgreSQL() {
-		series = `generate_series(1,3000) AS n`
-		metadata = `jsonb_build_object('ical_uid', 'history-' || n || '@example.org')`
+	for i := range 3000 {
+		key := fmt.Sprintf("history-%d", i)
+		calendarFixture(t, st, key, singleLinkRaw(key, key+"@example.org"))
 	}
-	_, err := st.db.Exec(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,metadata)
-		SELECT source_id,conversation_id,'history-' || n,'calendar_event',`+metadata+`
-		FROM messages CROSS JOIN `+series+` WHERE id = ?`, id)
-	requirements.NoError(err)
-	_, err = st.db.Exec(`INSERT INTO calendar_events(message_id,projection_version,content_hash,provider_event_id,kind)
-		SELECT id,1,'history',source_message_id,'single' FROM messages WHERE source_message_id LIKE 'history-%'`)
-	requirements.NoError(err)
-	_, err = st.db.Exec(`ANALYZE messages`)
+	_, err := st.db.Exec(`ANALYZE messages`)
 	requirements.NoError(err)
 	_, err = st.db.Exec(`ANALYZE calendar_events`)
 	requirements.NoError(err)
@@ -139,7 +130,7 @@ func granolaLinkFixture(t *testing.T, st *Store, event string) int64 {
 	return id
 }
 
-func testMeetingLinksGranolaOwnCalendar(t *testing.T) {
+func TestMeetingLinksGranolaOwnCalendar(t *testing.T) {
 	t.Helper()
 	for _, tc := range []struct{ name, calendar, owner string }{
 		{"exact email", "calendar@example.com", "calendar@example.com"},
@@ -400,7 +391,7 @@ func linkedMeetingRefs(t *testing.T, st *Store, ids ...int64) map[int64]string {
 	return out
 }
 
-func testMeetingLinksPrimaryCalendar(t *testing.T) {
+func TestMeetingLinksPrimaryCalendar(t *testing.T) {
 	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -472,18 +463,6 @@ func TestMeetingDecisionSourceRemoval(t *testing.T) {
 			requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions`).Scan(&count))
 			assertions.Zero(count, "decisions follow the member note's lifetime")
 		})
-	}
-}
-
-func TestMeetingOwnCalendar(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingLinksPrimaryCalendar", testMeetingLinksPrimaryCalendar},
-		{"MeetingLinksGranolaOwnCalendar", testMeetingLinksGranolaOwnCalendar},
-	} {
-		t.Run(tc.name, tc.run)
 	}
 }
 

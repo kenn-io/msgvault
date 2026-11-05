@@ -61,6 +61,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 		unexpandable, warning  bool
 	}{
 		{"links", []string{"links", "42"}, "", "", "Planning", false, false},
+		{"event record", []string{"links", "evt:81@20270314T100000Z"}, "", "", "Notes: 42", false, false},
 		{"links json", []string{"links", "42", "--json"}, "", "", `"ref":"evt:81"`, false, false},
 		{"old daemon links", []string{"links", "42"}, "3.43.0", "upgrade the daemon", "", false, false},
 		{"invalid links ID", []string{"links", "0"}, "", "positive message ID", "", false, false},
@@ -118,7 +119,11 @@ func TestMeetingLinkCommands(t *testing.T) {
 					assertions.Empty(errOut.String())
 				}
 			case "links":
-				assertions.Equal("msg:42", fake.ref)
+				wantRef := "msg:42"
+				if tc.name == "event record" {
+					wantRef = "evt:81@20270314T100000Z"
+				}
+				assertions.Equal(wantRef, fake.ref)
 				assertions.Contains(out.String(), tc.want)
 				assertions.Contains(out.String(), "evt:81")
 				assertions.Contains(out.String(), "2027-03-14T10:00:00Z")
@@ -138,7 +143,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 	}
 }
 
-func TestIndependentReviewCLIEventRecord(t *testing.T) {
+func TestMeetingLinksCLIEventRecord(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")

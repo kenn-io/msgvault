@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-func testMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
+func TestMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
 	t.Helper()
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -158,7 +158,7 @@ func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 	}
 }
 
-func testMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
+func TestMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -197,7 +197,7 @@ func testMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 	}
 }
 
-func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
+func TestMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -255,19 +255,6 @@ func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
 	}
 }
 
-func TestMeetingAllDayExceptionStates(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingLinksAllDayExceptionUsesCalendarZone", testMeetingLinksAllDayExceptionUsesCalendarZone},
-		{"MeetingLinksAllDayExceptionWithUnsupportedRecurrence", testMeetingLinksAllDayExceptionWithUnsupportedRecurrence},
-		{"MeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget", testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget},
-	} {
-		t.Run(tc.name, tc.run)
-	}
-}
-
 func TestMeetingSuggestionsExcludeSavedDecisions(t *testing.T) {
 	for _, decision := range []string{"link", "split"} {
 		t.Run(decision, func(t *testing.T) {
@@ -298,6 +285,8 @@ func TestMeetingSuggestionsExcludeSavedDecisions(t *testing.T) {
 	}
 }
 
+// A missing candidate cannot normally occur within the read snapshot. This
+// exercises the filter's handling of a stale reference at its boundary.
 func TestMeetingSuggestionsSkipUnresolvableOccurrence(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

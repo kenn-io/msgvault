@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-func testMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
+func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 	t.Helper()
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -91,7 +91,7 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 	assertions.Equal("cancelled", occurrences[0].Row.Event.Status)
 }
 
-func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
+func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	t.Helper()
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -143,7 +143,7 @@ func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	}
 }
 
-func testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.T) {
+func TestMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.T) {
 	t.Helper()
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
