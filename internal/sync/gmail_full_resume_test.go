@@ -108,7 +108,7 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 			api := gmailTransportClient(t, f)
 			e.Syncer = New(api, e.Store, opts)
 			for attempt := range interruptions {
-				f.stopAt = []string{"p2", "p3"}[attempt]
+				f.stopAt = fmt.Sprintf("p%d", attempt+2)
 				_, err := e.Syncer.Full(t.Context(), testEmail)
 				require.ErrorContains(err, "synthetic interrupted listing")
 				run, err := e.Store.GetLatestSync(source.ID)
