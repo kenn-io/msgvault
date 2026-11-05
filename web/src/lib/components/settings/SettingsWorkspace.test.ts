@@ -787,3 +787,25 @@ it('refreshes a pending message rebuild and keeps Contacts available', async () 
   }
   await waitFor(() => expect(screen.getByRole('button', { name: 'Build index, Message search' })).toHaveProperty('disabled', false));
 });
+
+it('turns on local search once and keeps unrelated drafts when setup finishes', async () => {
+  let phase = 'idle';
+  let enabled = false;
+  const { client, operationsController, seen } = fixture(settingsDoc(), async request => {
+    if (new URL(request.url).pathname !== '/api/v1/embeddings/local') return;
+    if (request.method === 'POST') phase = 'indexing';
+    return Response.json({ enabled, provider: enabled ? 'builtin' : '', compatible: true, ollama_available: false,
+      phase, download_bytes: 290000000, done_bytes: 0, total_bytes: 0 }, { status: request.method === 'POST' ? 202 : 200 });
+  });
+  render(SettingsWorkspace, { client, operationsController, category: 'advanced' });
+  await chooseSelectOption(await screen.findByLabelText('Theme'), 'Dark');
+  await fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+  const turnOn = await screen.findByRole('button', { name: 'Turn on' });
+  await fireEvent.click(turnOn);
+  await screen.findByRole('progressbar', { name: 'Search by meaning setup' });
+  expect(seen.filter(request => request.path === '/api/v1/embeddings/local' && request.method === 'POST')).toHaveLength(1);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  phase = 'idle'; enabled = true;
+  await screen.findByText('On', {}, { timeout: 3000 });
+  expect(screen.getByText('1 unsaved change')).toBeDefined();
+});

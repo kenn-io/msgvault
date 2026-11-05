@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button, Chip } from '@kenn-io/kit-ui';
+  import { Button, Chip, SearchByMeaningRow } from '@kenn-io/kit-ui';
+  import type { SearchByMeaningState, SearchByMeaningLabels } from '@kenn-io/kit-ui';
   import BuildIndexAction from '../search/BuildIndexAction.svelte';
 
   import type { OperationStatusAuthority } from '../../explore/models';
@@ -7,6 +8,10 @@
 
   let {
     rows,
+    localSearch,
+    localLabels,
+    localError = '',
+    onLocalSearch = () => undefined,
     working = {},
     onSetUp,
     onStart,
@@ -14,6 +19,10 @@
     onDetails = () => undefined,
   }: {
     rows: readonly OverviewRow[];
+    localSearch?: SearchByMeaningState;
+    localLabels?: Partial<SearchByMeaningLabels>;
+    localError?: string;
+    onLocalSearch?: (builtin: boolean) => void;
     onDetails?: (authority: OperationStatusAuthority) => void;
     /** Start actions in progress; each button waits for its own action. */
     working?: Readonly<Record<string, boolean>>;
@@ -29,6 +38,12 @@
     {@const action = row.action}
     {@const authority = row.relatedStatus}
     <li class="row" data-feature={row.id}>
+      {#if row.id === 'message_embedding' && localSearch}
+        <div class="row__local">
+          <SearchByMeaningRow state={localSearch} itemNoun="messages" labels={localLabels} onturnon={() => onLocalSearch(false)} onusebuiltin={() => onLocalSearch(true)} />
+          {#if localError}<p class="row__error" role="alert">{localError}</p>{/if}
+        </div>
+      {:else}
       <span class="row__name">
         {row.name}
       </span>
@@ -61,6 +76,7 @@
       </span>
       {#if action?.kind === 'host'}<span class="row__consent">{action.text}</span>{/if}
       {#if action?.kind === 'start' && action.consent}<span class="row__consent">{action.consent}</span>{/if}
+      {/if}
     </li>
   {/each}
 </ul>
@@ -87,6 +103,8 @@
   .row + .row {
     border-top: 1px solid var(--border-default);
   }
+  .row__local { grid-column: 1 / -1; min-width: 0; }
+  .row__error { color: var(--text-danger); font-size: var(--font-size-xs); }
   .row__name {
     display: flex;
     align-items: center;

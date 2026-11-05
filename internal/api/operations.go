@@ -824,7 +824,7 @@ func (s *Server) operationLaneConfigured(
 			return status.Enabled && status.Configured && status.Available && status.CredentialConfigured
 		})
 	case operations.KindDocumentEmbedding:
-		return s.cfg.Vector.Enabled && s.cfg.Attachments.Documents.Index.Embeddings.Enabled
+		return s.currentVectorConfig().Enabled && s.cfg.Attachments.Documents.Index.Embeddings.Enabled
 	case operations.KindDocumentExtraction:
 		if !s.cfg.Attachments.Documents.Enabled {
 			return false
@@ -832,9 +832,10 @@ func (s *Server) operationLaneConfigured(
 		_, err := s.currentDocumentIndexStatusRequest(ctx)
 		return !errors.Is(err, store.ErrDocumentIndexStatusScopeUnavailable)
 	case operations.KindMessageEmbedding:
-		return s.cfg.Vector.Enabled
+		return s.currentVectorConfig().Enabled
 	case operations.KindPersonEmbedding:
-		return s.cfg.Vector.Enabled && s.cfg.Vector.People.Enabled
+		cfg := s.currentVectorConfig()
+		return cfg.Enabled && cfg.People.Enabled
 	case operations.KindPersonEnrichment:
 		if !s.cfg.People.Enrichment.Enabled || s.scheduler == nil ||
 			!s.scheduler.IsJobScheduled(operationPersonEnrichmentJob) {

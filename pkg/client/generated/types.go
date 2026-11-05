@@ -7339,6 +7339,38 @@ func (l ListDeletionsResponse) Validate() error {
 	return errors
 }
 
+type LocalEmbeddingsRequest struct {
+	UseBuiltin bool `json:"use_builtin"`
+}
+
+type LocalEmbeddingsStatus struct {
+	Compatible      bool                       `json:"compatible"`
+	DoneBytes       int64                      `json:"done_bytes"`
+	DownloadBytes   int64                      `json:"download_bytes"`
+	Enabled         bool                       `json:"enabled"`
+	ErrorData       *string                    `json:"error,omitzero"`
+	OllamaAvailable bool                       `json:"ollama_available"`
+	Phase           LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
+	Provider        string                     `json:"provider" validate:"required"`
+	TotalBytes      int64                      `json:"total_bytes"`
+}
+
+func (l LocalEmbeddingsStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(l.Phase).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Phase", err)
+		}
+	}
+	if err := typesValidator.Var(l.Provider, "required"); err != nil {
+		errors = errors.Append("Provider", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type MCPCapabilities struct {
 	Routes  []MCPRouteDescriptor `json:"routes" validate:"required"`
 	Version int64                `json:"version"`

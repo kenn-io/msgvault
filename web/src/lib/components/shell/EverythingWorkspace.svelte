@@ -1,8 +1,9 @@
 <script lang="ts">
   import { tasksSettingsDestination } from './navigation';
-  import { Button, PageHeader } from '@kenn-io/kit-ui';
+  import { Button, PageHeader, SearchByMeaningHint } from '@kenn-io/kit-ui';
   import { onDestroy, untrack } from 'svelte';
 
+  import { getLocalEmbeddings, enableLocalEmbeddings } from '../../api/generated/api/api';
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
   import { reportError } from '../../telemetry/actions';
@@ -420,6 +421,28 @@
     readingDetailRetryRevision += 1;
   }
 
+  let localSearchOff = $state(false);
+  let startingLocalSearch = $state(false);
+  $effect(() => {
+    localSearchOff = false;
+    if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text' || !exploreState.current.query.trim() || loader.loading || !loader.result) return;
+    const controller = new AbortController();
+    void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
+      if (!controller.signal.aborted && response.ok) localSearchOff = Boolean(data && !data.enabled && data.phase === 'idle');
+    }).catch(() => undefined);
+    return () => controller.abort();
+  });
+  async function turnOnSearchByMeaning(): Promise<void> {
+    if (startingLocalSearch) return;
+    startingLocalSearch = true;
+    try {
+      await enableLocalEmbeddings({ use_builtin: false }, client);
+    } catch { /* Settings shows the current setup state and allows a retry. */ } finally {
+      startingLocalSearch = false;
+      commitNavigation({ workspace: 'settings', settingsCategory: 'overview', settingsAuthority: '', selectedRow: null, conversationAnchor: null });
+    }
+  }
+
   const coverageFiltersFingerprint = $derived(canonicalFingerprint(exploreState.current.filters));
 
   $effect(() => {
@@ -700,6 +723,9 @@
     </div>
   {/if}
 
+  {#if localSearchOff}
+    <div class="local-search-hint"><SearchByMeaningHint onturnon={() => void turnOnSearchByMeaning()} /></div>
+  {/if}
   {#if session.coverage}
     <SearchCoverage
       requestedMode={exploreState.current.searchMode}
@@ -876,6 +902,7 @@
 </svelte:element>
 
 <style>
+  .local-search-hint { margin: var(--control-gap) var(--pane-pad-x); }
   .everything-workspace {
     display: flex;
     width: 100%;

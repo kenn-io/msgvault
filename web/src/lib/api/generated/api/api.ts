@@ -277,6 +277,8 @@ import type {
   ListTextConversationMessagesParams,
   ListTextConversationMessagesPathParameters,
   ListTextConversationsParams,
+  LocalEmbeddingsRequest,
+  LocalEmbeddingsStatus,
   MCPCapabilities,
   Manifest,
   MediaSearchResponse,
@@ -1637,6 +1639,34 @@ export const getDomain = (
     {
       url: `/api/v1/domains/${encodeURIComponent(String(domain))}`,
       method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Get local search setup
+ */
+export const getLocalEmbeddings = (
+  options?: SecondParameter<typeof orvalFetch<LocalEmbeddingsStatus>>,
+) => {
+  return orvalFetch<LocalEmbeddingsStatus>(
+    { url: `/api/v1/embeddings/local`, method: "GET" },
+    options,
+  );
+};
+/**
+ * @summary Turn on local search
+ */
+export const enableLocalEmbeddings = (
+  localEmbeddingsRequest: LocalEmbeddingsRequest,
+  options?: SecondParameter<typeof orvalFetch<LocalEmbeddingsStatus>>,
+) => {
+  return orvalFetch<LocalEmbeddingsStatus>(
+    {
+      url: `/api/v1/embeddings/local`,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: localEmbeddingsRequest,
     },
     options,
   );

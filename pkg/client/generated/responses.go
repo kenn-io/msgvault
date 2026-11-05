@@ -1101,6 +1101,24 @@ func (g *GetDomainTimelineErrorResponseJSON503) UnmarshalJSON(data []byte) error
 
 type GetDomainTimelineErrorResponseJSONDefault = ErrorResponse
 
+type GetLocalEmbeddingsResponse = LocalEmbeddingsStatus
+
+type GetLocalEmbeddingsErrorResponse = ErrorResponse
+
+type GetLocalEmbeddingsErrorResponseJSON = ErrorResponse
+
+type GetLocalEmbeddingsErrorResponseJSONDefault = ErrorResponse
+
+type EnableLocalEmbeddingsResponse = LocalEmbeddingsStatus
+
+type EnableLocalEmbeddingsErrorResponse = ErrorResponse
+
+type EnableLocalEmbeddingsErrorResponseJSON = ErrorResponse
+
+type EnableLocalEmbeddingsErrorResponseJSON503 = ErrorResponse
+
+type EnableLocalEmbeddingsErrorResponseJSONDefault = ErrorResponse
+
 type GetEmbeddingStatusResponse = EmbeddingStatus
 
 type GetEmbeddingStatusErrorResponse = ErrorResponse
@@ -5211,6 +5229,27 @@ type GetDomainTimelineResp struct {
 	JSON409      *GetDomainTimelineErrorResponseJSON
 	JSON503      *GetDomainTimelineErrorResponseJSON503
 	JSONDefault  *GetDomainTimelineErrorResponseJSONDefault
+}
+
+type GetLocalEmbeddingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetLocalEmbeddingsResponse
+	JSON401      *GetLocalEmbeddingsErrorResponse
+	JSON503      *GetLocalEmbeddingsErrorResponseJSON
+	JSONDefault  *GetLocalEmbeddingsErrorResponseJSONDefault
+}
+
+type EnableLocalEmbeddingsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON202      *EnableLocalEmbeddingsResponse
+	JSON400      *EnableLocalEmbeddingsErrorResponse
+	JSON401      *EnableLocalEmbeddingsErrorResponseJSON
+	JSON503      *EnableLocalEmbeddingsErrorResponseJSON503
+	JSONDefault  *EnableLocalEmbeddingsErrorResponseJSONDefault
 }
 
 type GetEmbeddingStatusResp struct {

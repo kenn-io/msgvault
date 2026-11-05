@@ -7556,6 +7556,51 @@ components:
       required:
         - manifests
       type: object
+    LocalEmbeddingsRequest:
+      additionalProperties: false
+      properties:
+        use_builtin:
+          type: boolean
+      required:
+        - use_builtin
+      type: object
+    LocalEmbeddingsStatus:
+      properties:
+        compatible:
+          type: boolean
+        done_bytes:
+          format: int64
+          type: integer
+        download_bytes:
+          format: int64
+          type: integer
+        enabled:
+          type: boolean
+        error:
+          type: string
+        ollama_available:
+          type: boolean
+        phase:
+          enum:
+            - idle
+            - downloading
+            - indexing
+          type: string
+        provider:
+          type: string
+        total_bytes:
+          format: int64
+          type: integer
+      required:
+        - enabled
+        - provider
+        - compatible
+        - ollama_available
+        - download_bytes
+        - phase
+        - done_bytes
+        - total_bytes
+      type: object
     MCPCapabilities:
       properties:
         routes:
@@ -22007,6 +22052,83 @@ paths:
       summary: Get one domain's canonical activity timeline
       tags:
         - Exploration
+  /api/v1/embeddings/local:
+    get:
+      operationId: getLocalEmbeddings
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalEmbeddingsStatus"
+          description: OK
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Get local search setup
+      tags:
+        - API
+    post:
+      operationId: enableLocalEmbeddings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LocalEmbeddingsRequest"
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LocalEmbeddingsStatus"
+          description: Accepted
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Turn on local search
+      tags:
+        - API
   /api/v1/embeddings/status:
     get:
       operationId: getEmbeddingStatus

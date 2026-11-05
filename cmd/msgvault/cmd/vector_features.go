@@ -59,5 +59,6 @@ type vectorFeatures struct {
 	// a no-op because the pgvector backend shares the main store's handle,
 	// which is owned and closed elsewhere. Every caller that receives a
 	// non-nil vectorFeatures must invoke Close during shutdown.
-	Close func() error
+	Close         func() error
+	configureText func(context.Context, *invocation, vector.Config) (*vectorFeatures, error)
 }

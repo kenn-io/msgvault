@@ -2786,3 +2786,25 @@ describe('EverythingWorkspace', () => {
 function selectionStatus(): HTMLElement {
   return screen.getByRole('status', { name: 'Selection status' });
 }
+
+it('turns on semantic search from an empty full-text result and opens Settings overview', async () => {
+  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'orchard', searchMode: 'full_text' }))}`);
+  const posts: unknown[] = [];
+  const client = createAPIClient(async input => {
+    const request = input as Request;
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/embeddings/local') {
+      if (request.method === 'POST') posts.push(await request.json());
+      return Response.json({ enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
+    }
+    return Response.json(exploreResponse());
+  });
+  const state = new ExploreState(window);
+  const view = render(AppShell, { client, state });
+  await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
+  await waitFor(() => expect(state.current.workspace).toBe('settings'));
+  expect(posts).toEqual([{ use_builtin: false }]);
+  expect(state.current.settingsCategory).toBe('overview');
+  view.unmount();
+  state.destroy();
+});

@@ -125,6 +125,8 @@ func startVectorInit(
 			}
 			defer release()
 		}
+		h.mu.Lock()
+		defer h.mu.Unlock()
 		vf, err := setupVectorFeaturesForRun(ctx, s, dbPath, false, openers...)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -144,29 +146,9 @@ func startVectorInit(
 			logger.Warn("vector init returned no components despite no error; leaving vector search uninitialized")
 			return
 		}
-		h.mu.Lock()
 		h.vf = vf
-		h.mu.Unlock()
 		if cfg.Vector.Enabled {
-			status := embeddingStatusSource{st: s, backend: vf.Backend, cfg: vf.Cfg, coverage: newEmbeddingCoverageCache(ctx, nil)}
-			apiServer.SetEmbeddingStatus(status.read, vf.Cfg.Embeddings.ETAWindow)
-			apiServer.SetVectorFeatures(
-				vf.HybridEngine, vf.PersonSearchEngine, vf.Backend, vf.Cfg,
-			)
-			apiServer.SetDocumentSearchService(vf.DocumentSearch)
-			// Preflight drift detection: vector-search requests re-resolve the
-			// durable account scope (throttled) so drift latches index_stale
-			// even on daemons whose embed job never runs (empty cron,
-			// run_after_sync=false). The embed job's own per-run check remains
-			// the detection path for scheduled embeds.
-			apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope(), state))
-			apiServer.SetVectorRestartFingerprint(restartVectorFingerprint(s, state))
-			checkVectorIndexFreshness(ctx, apiServer, vf, logger)
-			if err := registerEmbedJob(sched, vf, s, apiServer, cfg, logger); err != nil {
-				// Cron was validated in precheckVectorFeatures, so this is an
-				// invariant violation, not user error; vector search still works.
-				logger.Error("register embed job failed", "error", err)
-			}
+			publishTextVectorFeatures(ctx, s, apiServer, sched, vf, state)
 		}
 		if vf.Visual != nil {
 			searchService, searchErr := visual.NewSearchService(s, vf.Visual.Provider, vf.Visual.Backend,
@@ -621,5 +603,28 @@ func newSchedulerEmbedJob(vf *vectorFeatures, s *store.Store, logger *slog.Logge
 		BackstopInterval: vf.Cfg.Embed.BackstopInterval,
 		BuildScope:       vf.Cfg.Embed.Scope.BuildScope(),
 		Log:              repairLogger(logger),
+	}
+}
+
+func publishTextVectorFeatures(ctx context.Context, s *store.Store, apiServer *api.Server, sched *scheduler.Scheduler, vf *vectorFeatures, state *invocation) {
+	logger := state.logger
+	status := embeddingStatusSource{st: s, backend: vf.Backend, cfg: vf.Cfg, coverage: newEmbeddingCoverageCache(ctx, nil)}
+	apiServer.SetEmbeddingStatus(status.read, vf.Cfg.Embeddings.ETAWindow)
+	apiServer.SetVectorFeatures(
+		vf.HybridEngine, vf.PersonSearchEngine, vf.Backend, vf.Cfg,
+	)
+	apiServer.SetDocumentSearchService(vf.DocumentSearch)
+	// Preflight drift detection: vector-search requests re-resolve the
+	// durable account scope (throttled) so drift latches index_stale
+	// even on daemons whose embed job never runs (empty cron,
+	// run_after_sync=false). The embed job's own per-run check remains
+	// the detection path for scheduled embeds.
+	apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope(), state))
+	apiServer.SetVectorRestartFingerprint(restartVectorFingerprint(s, state))
+	checkVectorIndexFreshness(ctx, apiServer, vf, logger)
+	if err := registerEmbedJob(sched, vf, s, apiServer, state.cfg, logger); err != nil {
+		// Cron was validated in precheckVectorFeatures, so this is an
+		// invariant violation, not user error; vector search still works.
+		logger.Error("register embed job failed", "error", err)
 	}
 }

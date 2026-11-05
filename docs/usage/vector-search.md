@@ -46,6 +46,21 @@ text. Those indexes have separate builds and consent. For a guided setup using
 the provider keys you have, start with
 [Recommended Configuration](/docs/usage/recommended-configuration/).
 
+## Turn on search by meaning
+
+In the Web UI, open Settings, then Overview, and click **Turn on** beside
+**Search by meaning**. MsgVault downloads the shared local server if needed,
+builds the message index, and enables semantic search in the running daemon.
+The row shows download and indexing progress. You can close the page while it
+runs and keep using keyword search.
+
+If Ollama already serves `nomic-embed-text`, Turn on uses it. **Use built-in
+instead** switches an existing Ollama configuration to the shared server. A
+matching Nomic recipe keeps the message index; another model rebuilds it.
+When the daemon runs on another computer, the download line names that host.
+The **Turn on** hint below full-text search results starts the same setup and
+opens Settings to show progress.
+
 ## Prerequisites
 
 1. **An embedding provider.** Run `msgvault setup providers --local-embeddings`

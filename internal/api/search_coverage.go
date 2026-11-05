@@ -404,7 +404,7 @@ func (s *Server) searchCoverageActions(
 		actions = append(actions, SearchCoverageActionRetry)
 	}
 	if fullBuildAvailable {
-		if _, ok := s.store.(CLIRunner); ok && s.cfg != nil && s.cfg.Vector.Enabled {
+		if _, ok := s.store.(CLIRunner); ok && s.cfg != nil && s.currentVectorConfig().Enabled {
 			actions = append(actions, SearchCoverageActionBuildIndex)
 		}
 	}

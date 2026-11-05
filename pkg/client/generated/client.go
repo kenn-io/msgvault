@@ -451,6 +451,14 @@ type ClientInterface interface {
 	GetDomainTimeline(ctx context.Context, options *GetDomainTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDomainTimelineResponse, error)
 	GetDomainTimelineWithResponse(ctx context.Context, options *GetDomainTimelineRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetDomainTimelineResp, error)
 
+	// GetLocalEmbeddings Get local search setup
+	GetLocalEmbeddings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalEmbeddingsResponse, error)
+	GetLocalEmbeddingsWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalEmbeddingsResp, error)
+
+	// EnableLocalEmbeddings Turn on local search
+	EnableLocalEmbeddings(ctx context.Context, options *EnableLocalEmbeddingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResponse, error)
+	EnableLocalEmbeddingsWithResponse(ctx context.Context, options *EnableLocalEmbeddingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResp, error)
+
 	// GetEmbeddingStatus Get message embedding coverage and live batch diagnostics
 	GetEmbeddingStatus(ctx context.Context, options *GetEmbeddingStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmbeddingStatusResponse, error)
 	GetEmbeddingStatusWithResponse(ctx context.Context, options *GetEmbeddingStatusRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetEmbeddingStatusResp, error)
@@ -7626,6 +7634,132 @@ func (c *Client) GetDomainTimeline(ctx context.Context, options *GetDomainTimeli
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/domains/{domain}/timeline")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetLocalEmbeddings Get local search setup
+func (c *Client) GetLocalEmbeddings(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetLocalEmbeddingsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/embeddings/local",
+		Method:     "GET",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetLocalEmbeddingsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetLocalEmbeddingsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetLocalEmbeddingsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetLocalEmbeddingsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetLocalEmbeddingsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/embeddings/local")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// EnableLocalEmbeddings Turn on local search
+func (c *Client) EnableLocalEmbeddings(ctx context.Context, options *EnableLocalEmbeddingsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnableLocalEmbeddingsResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/v1/embeddings/local",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*EnableLocalEmbeddingsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 202 {
+			target := new(EnableLocalEmbeddingsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "EnableLocalEmbeddingsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(EnableLocalEmbeddingsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "EnableLocalEmbeddingsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/embeddings/local")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

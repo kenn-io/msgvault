@@ -1162,6 +1162,24 @@ func (i ImportJobResponseStatus) Validate() error {
 	}
 }
 
+type LocalEmbeddingsStatusPhase string
+
+const (
+	Downloading LocalEmbeddingsStatusPhase = "downloading"
+	Idle        LocalEmbeddingsStatusPhase = "idle"
+	Indexing    LocalEmbeddingsStatusPhase = "indexing"
+)
+
+// Validate checks if the LocalEmbeddingsStatusPhase value is valid
+func (l LocalEmbeddingsStatusPhase) Validate() error {
+	switch l {
+	case Downloading, Idle, Indexing:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid LocalEmbeddingsStatusPhase value, got: %v", l))
+	}
+}
+
 type MediaSearchResultOrigin string
 
 const (

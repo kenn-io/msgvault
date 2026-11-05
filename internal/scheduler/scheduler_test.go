@@ -3768,3 +3768,36 @@ func TestEndedPassKeepsAcceptedTrigger(t *testing.T) {
 		})
 	}
 }
+
+func TestQueuedJobUsesCurrentCallableAfterGate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		for _, removed := range []bool{false, true} {
+			gate := &serialWorkTracker{sem: make(chan struct{}, 1)}
+			release, ok := gate.BeginWork()
+			require.True(ok)
+			s := New(nil).WithWorkTracker(gate)
+			oldCalls, newCalls := 0, 0
+			require.NoError(s.AddJob(Job{Name: "replaceable", Schedule: "0 0 1 1 *", Run: func(context.Context) error { oldCalls++; return nil }}))
+			s.Start()
+			result := make(chan error, 1)
+			go func() { result <- s.TriggerJob("replaceable") }()
+			synctest.Wait()
+			if removed {
+				s.RemoveJob("replaceable")
+			} else {
+				require.NoError(s.AddJob(Job{Name: "replaceable", Schedule: "0 0 1 1 *", Run: func(context.Context) error { newCalls++; return nil }}))
+			}
+			release()
+			require.NoError(<-result)
+			<-s.Stop().Done()
+			assert.Zero(oldCalls)
+			if removed {
+				assert.Zero(newCalls)
+			} else {
+				assert.Equal(1, newCalls)
+			}
+		}
+	})
+}

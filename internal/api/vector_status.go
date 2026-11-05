@@ -455,3 +455,9 @@ func (s *Server) writeVectorUnavailable(w http.ResponseWriter) {
 			"vector search is not configured on this server")
 	}
 }
+
+func (s *Server) currentVectorConfig() vector.Config {
+	s.vectorMu.RLock()
+	defer s.vectorMu.RUnlock()
+	return s.vectorCfg
+}

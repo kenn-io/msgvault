@@ -394,6 +394,7 @@ var operationGateExemptPaths = map[string]bool{
 	agentTokensPath:                    true,
 	sessionLoginPath:                   true,
 	importJobsEndpointPath:             true,
+	localEmbeddingsEndpointPath:        true,
 	meetingImportEndpointPath:          true,
 	muesliImportEndpointPath:           true,
 	muesliRecordingEndpointPath:        true,

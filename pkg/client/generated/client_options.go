@@ -3987,6 +3987,50 @@ func (o *GetDomainTimelineRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
+// EnableLocalEmbeddingsRequestOptions is the options needed to make a request to EnableLocalEmbeddings.
+type EnableLocalEmbeddingsRequestOptions struct {
+	Body *EnableLocalEmbeddingsBody
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *EnableLocalEmbeddingsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Body != nil {
+		if v, ok := any(o.Body).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Body", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *EnableLocalEmbeddingsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *EnableLocalEmbeddingsRequestOptions) GetQuery() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *EnableLocalEmbeddingsRequestOptions) GetBody() any {
+	return o.Body
+}
+
+// GetHeader returns the headers as a map.
+func (o *EnableLocalEmbeddingsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // GetEmbeddingStatusRequestOptions is the options needed to make a request to GetEmbeddingStatus.
 type GetEmbeddingStatusRequestOptions struct {
 	Query *GetEmbeddingStatusQuery
