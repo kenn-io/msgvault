@@ -1699,6 +1699,7 @@ func TestSyncResourceFailureKeepsCommittedEventsAndRetries(t *testing.T) {
 			run, err := st.GetLatestSyncContext(t.Context(), sourceID, 0)
 			require.NoError(err)
 			assert.Equal(store.SyncStatusFailed, run.Status)
+			assert.Contains(run.ErrorMessage.String, wantError)
 			assert.Equal(int64(committed), run.MessagesProcessed)
 			assert.Equal(int64(committed), run.MessagesAdded)
 			assert.Zero(run.MessagesUpdated)

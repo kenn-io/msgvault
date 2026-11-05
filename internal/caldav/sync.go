@@ -234,7 +234,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
 			retErr = errors.Join(retErr, st.FailSyncWithCheckpointContext(
-				cleanup, runID, "CalDAV sync failed", checkpoint,
+				cleanup, runID, retErr.Error(), checkpoint,
 			))
 		}
 	}()
