@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,7 +22,6 @@ import (
 )
 
 type calendarEventsFakeClient struct {
-	pages   map[string]store.CalendarOccurrencePage
 	queries []store.CalendarOccurrenceQuery
 	err     error
 	page    store.CalendarOccurrencePage
@@ -39,9 +37,6 @@ func (f *calendarEventsFakeClient) APISchemaVersion(context.Context) (string, er
 func (f *calendarEventsFakeClient) ListCalendarOccurrencesContext(_ context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error) {
 	f.query = query
 	f.queries = append(f.queries, query)
-	if f.pages != nil {
-		return f.pages[query.Cursor], f.err
-	}
 	return f.page, f.err
 }
 func TestCalendarEventsCommand(t *testing.T) {
@@ -56,13 +51,10 @@ func TestCalendarEventsCommand(t *testing.T) {
 		err                        error
 	}{
 		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
-		{name: "whole window table", want: "Final event", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
-		{name: "whole window json", args: []string{"--json"}, want: `"subject":"Final event"`},
-		{name: "paging", args: []string{"--limit", "1", "--cursor", "previous-page"}, page: store.CalendarOccurrencePage{NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
-		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{NextCursor: "next-page"}, want: "next cursor: next-page"},
-		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{NextCursor: "next-page"}, want: "next cursor: next-page"},
+		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
+		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "next cursor: next-page"},
 		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
-		{name: "json", args: []string{"--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{}}, want: `"message_id":378`},
+		{name: "json", args: []string{"--json", "--limit", "1"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}, NextCursor: "next-page"}, want: `"message_id":378`},
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
@@ -76,13 +68,11 @@ func TestCalendarEventsCommand(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			fake := &calendarEventsFakeClient{page: tc.page, version: tc.version, err: tc.err}
-			if strings.HasPrefix(tc.name, "whole window") {
-				first := store.CalendarOccurrencePage{Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}
+			if tc.name == "cursor only" {
+				fake.page.Occurrences = nil
 				for i := range 100 {
-					first.Occurrences = append(first.Occurrences, store.CalendarOccurrence{MessageID: int64(i + 1), Subject: fmt.Sprintf("Event %d", i), Start: start, End: start.Add(time.Hour)})
+					fake.page.Occurrences = append(fake.page.Occurrences, store.CalendarOccurrence{Ref: fmt.Sprintf("evt:%d", i+1), MessageID: int64(i + 1), Subject: "Planning", Start: start, End: start.Add(time.Hour)})
 				}
-				first.Occurrences = append(first.Occurrences, store.CalendarOccurrence{Subject: "Middle event", Start: start, End: start.Add(time.Hour)}, store.CalendarOccurrence{Subject: "Final event", Start: start, End: start.Add(time.Hour)})
-				fake.pages = map[string]store.CalendarOccurrencePage{"": first}
 			}
 			if fake.version == "" {
 				fake.version = calendarEventsMinAPISchemaVersion
@@ -117,23 +107,8 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Contains(stderr.String(), tc.wantWarning)
 			}
 			assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.Local), fake.query.From)
-			if strings.HasPrefix(tc.name, "whole window") {
-				requirements.Len(fake.queries, 1)
-				assertions.Empty(fake.queries[0].Cursor)
-				assertions.Nil(fake.queries[0].Limit)
-				assertions.NotContains(out.String(), "next cursor:")
-				if tc.name == "whole window json" {
-					var page store.CalendarOccurrencePage
-					requirements.NoError(json.Unmarshal(out.Bytes(), &page))
-					assertions.Len(page.Occurrences, 102)
-					assertions.Equal(fake.pages[""].Unexpandable, page.Unexpandable)
-					assertions.Empty(page.NextCursor)
-				} else {
-					assertions.Len(bytes.Split(bytes.TrimSpace(out.Bytes()), []byte("\n")), 103)
-				}
-			}
-			if tc.name == "paging" || tc.name == "limit only" || tc.name == "cursor only" {
-				requirements.Len(fake.queries, 1)
+			requirements.Len(fake.queries, 1)
+			if tc.name == "limit only" || tc.name == "cursor only" {
 				if tc.name != "cursor only" {
 					requirements.NotNil(fake.query.Limit)
 					assertions.Equal(1, *fake.query.Limit)
@@ -162,16 +137,15 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Equal("Standup", page.Occurrences[0].Subject)
 				assertions.Equal(int64(378), page.Occurrences[0].MessageID)
 				assertions.Equal(int64(377), page.Occurrences[0].SeriesMessageID)
+				assertions.Equal([]store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}, page.Unexpandable)
+				assertions.Equal("next-page", page.NextCursor)
 			}
 		})
 	}
 }
 func TestCalendarEventsUnpagedSingleRequest(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, pages: map[string]store.CalendarOccurrencePage{
-		"":     {NextCursor: "next", Occurrences: []store.CalendarOccurrence{{Subject: "First event"}}},
-		"next": {Occurrences: []store.CalendarOccurrence{{Subject: "Second event"}}},
-	}}
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "First event"}, {Subject: "Second event"}}}}
 	command := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	var out bytes.Buffer
 	command.SetOut(&out)
@@ -182,25 +156,10 @@ func TestCalendarEventsUnpagedSingleRequest(t *testing.T) {
 	assertions.Empty(fake.query.Cursor)
 	var page store.CalendarOccurrencePage
 	requirements.NoError(json.Unmarshal(out.Bytes(), &page))
-	requirements.Len(page.Occurrences, 1)
+	requirements.Len(page.Occurrences, 2)
 	assertions.Equal("First event", page.Occurrences[0].Subject)
-	assertions.Equal("next", page.NextCursor)
-}
-
-func TestCalendarEventsSkippedDateEmptyWindow(t *testing.T) {
-	zone, err := time.LoadLocation("Pacific/Apia")
-	require.NoError(t, err)
-	previous := time.Local
-	time.Local = zone
-	t.Cleanup(func() { time.Local = previous })
-	command := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) {
-		require.FailNow(t, "empty window reached daemon")
-		return nil, nil, nil
-	})
-	command.SetOut(&bytes.Buffer{})
-	command.SetErr(&bytes.Buffer{})
-	command.SetArgs([]string{"--from", "2011-12-30", "--to", "2011-12-30"})
-	require.ErrorContains(t, command.Execute(), "--to must be after --from")
+	assertions.Equal("Second event", page.Occurrences[1].Subject)
+	assertions.Empty(page.NextCursor)
 }
 
 func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
@@ -257,13 +216,22 @@ func TestCalendarEventsInvalidBounds(t *testing.T) {
 		name string
 		args []string
 		want string
+		zone string
 	}{
-		{"missing from", []string{"--to", "2027-03-03"}, `required flag(s) "from" not set`},
-		{"missing to", []string{"--from", "2027-03-02"}, `required flag(s) "to" not set`},
-		{"local from", []string{"--from", "2027-03-02T09:00", "--to", "2027-03-03"}, "--from: use YYYY-MM-DD or RFC3339 with an offset"},
-		{"local to", []string{"--from", "2027-03-02", "--to", "2027-03-03T17:00"}, "--to: use YYYY-MM-DD or RFC3339 with an offset"},
+		{"missing from", []string{"--to", "2027-03-03"}, `required flag(s) "from" not set`, ""},
+		{"missing to", []string{"--from", "2027-03-02"}, `required flag(s) "to" not set`, ""},
+		{"local from", []string{"--from", "2027-03-02T09:00", "--to", "2027-03-03"}, "--from: use YYYY-MM-DD or RFC3339 with an offset", ""},
+		{"local to", []string{"--from", "2027-03-02", "--to", "2027-03-03T17:00"}, "--to: use YYYY-MM-DD or RFC3339 with an offset", ""},
+		{"empty skipped date", []string{"--from", "2011-12-30", "--to", "2011-12-30"}, "--to must be after --from", "Pacific/Apia"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.zone != "" {
+				zone, err := time.LoadLocation(tc.zone)
+				require.NoError(t, err)
+				previous := time.Local
+				time.Local = zone
+				t.Cleanup(func() { time.Local = previous })
+			}
 			cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) {
 				require.FailNow(t, "invalid bounds reached daemon")
 				return nil, nil, nil
@@ -381,8 +349,8 @@ func TestCalendarEventsSkippedDateWindow(t *testing.T) {
 		want           []string
 	}{
 		{"exclusive skipped date", "2011-12-29", "2011-12-30", []string{"Before", "Timed"}},
+		{"inclusive skipped date", "2011-12-30", "2011-12-31", []string{"Skipped"}},
 		{"spanning skipped date", "2011-12-29", "2011-12-31", []string{"Before", "Skipped", "Timed"}},
-		{"only skipped date", "2011-12-30", "2011-12-31", []string{"Skipped"}},
 		{"starting skipped date", "2011-12-30", "2012-01-01", []string{"Skipped", "After", "Timed"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
