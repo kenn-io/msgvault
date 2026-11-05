@@ -272,6 +272,7 @@ configured provider. It requires the separate
 filename browsing does not use that provider.
 
 On a phone-width window, Visual search is in **Filter**.
+**Clear filters** also clears the visual query and query image there.
 
 ### Images in email
 
