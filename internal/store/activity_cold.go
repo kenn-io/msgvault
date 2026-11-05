@@ -93,7 +93,7 @@ func compareColdBurstKey(a, b BurstKey) int {
 	return cmp.Compare(a.Key, b.Key)
 }
 func coldActivityNoise(g *coldActivityGroup) bool {
-	return g.burst.Inbound+g.burst.Outbound == 0 || !g.nonNoise
+	return !g.nonNoise
 }
 
 func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (map[string]*coldActivityGroup, ActivityFilters, error) {
@@ -121,11 +121,11 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	}
 	if q.After != nil {
 		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=?`
-		args = append(args, q.After.UTC())
+		args = append(args, q.After.UTC().Add(-24*time.Hour))
 	}
 	if q.Before != nil {
 		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, q.Before.UTC())
+		args = append(args, q.Before.UTC().Add(24*time.Hour))
 	}
 	if q.After == nil && q.Before == nil {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
@@ -189,6 +189,12 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		c := byID[m.ID]
 		dating, dateErr := activitydate.DateEvent(activitydate.Timestamps{SentAt: c.SentAt, ReceivedAt: c.ReceivedAt, InternalDate: c.InternalDate, DateOnly: c.DateOnly}, loc)
 		if dateErr != nil {
+			continue
+		}
+		// SQL bounds include a day of padding for timestamps stored with offsets.
+		// Apply the exact half-open window to the dated instant.
+		if (q.After != nil && dating.OccurredAt.Before(*q.After)) ||
+			(q.Before != nil && !dating.OccurredAt.Before(*q.Before)) {
 			continue
 		}
 		if q.After == nil && q.Before == nil && (dating.LocalDate < q.FromDate || dating.LocalDate > q.ToDate) {

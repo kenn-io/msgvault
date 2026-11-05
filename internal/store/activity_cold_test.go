@@ -149,8 +149,11 @@ func TestColdAdapterReturnsRetractedColdRoomMessages(t *testing.T) {
 	q.Filters.IncludeNoise = false
 	filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 	requirements.NoError(err)
-	assertions.Empty(filtered.Bursts)
-	assertions.Equal(1, filtered.NoiseOmitted)
+	assertions.Equal(cold.Bursts, filtered.Bursts)
+	assertions.Zero(filtered.NoiseOmitted)
+	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+	requirements.NoError(err)
+	assertions.Equal(1, count)
 }
 
 // Bypassing live eligibility, scope, or exact archive-zone dating leaks a row here.
@@ -691,6 +694,45 @@ func TestColdAdapterUsesUTCWindowBounds(t *testing.T) {
 			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(2, count)
+		})
+	}
+}
+
+func TestColdAdapterFiltersOffsetStoredTimestamps(t *testing.T) {
+	for _, offset := range []int{8 * 60 * 60, -7 * 60 * 60} {
+		t.Run(strconv.Itoa(offset), func(t *testing.T) {
+			f := newTimelineActivityFixture(t)
+			room := coldTimelineRoom(t, f, f.Source.ID, "stored-offset-window")
+			start := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			end := start.Add(time.Hour)
+			zone := time.FixedZone("stored", offset)
+			early := f.add(t, room, f.Source.ID, start.Add(-8*time.Hour).In(zone), false, "")
+			atStart := f.add(t, room, f.Source.ID, start.In(zone), false, "")
+			inside := f.add(t, room, f.Source.ID, start.Add(30*time.Minute).In(zone), false, "")
+			atEnd := f.add(t, room, f.Source.ID, end.In(zone), false, "")
+			late := f.add(t, room, f.Source.ID, start.Add(8*time.Hour).In(zone), false, "")
+			for _, tc := range []struct {
+				name          string
+				after, before *time.Time
+				want          []int64
+			}{
+				{"both bounds", &start, &end, []int64{inside, atStart}},
+				{"after only", &start, nil, []int64{late, atEnd, inside, atStart}},
+				{"before only", nil, &end, []int64{inside, atStart, early}},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					assertions, requirements := assert.New(t), require.New(t)
+					q := timelineBurstQuery()
+					q.After, q.Before = tc.after, tc.before
+					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+					requirements.NoError(err)
+					count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+					requirements.NoError(err)
+					assertions.Equal(len(tc.want), count)
+					requirements.Len(page.Bursts, 1)
+					assertions.Equal(tc.want, page.Bursts[0].LatestMessageIDs)
+				})
+			}
 		})
 	}
 }
