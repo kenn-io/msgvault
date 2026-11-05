@@ -19,11 +19,13 @@ describe('relationship choices', () => {
     expect(relationshipTypeOptions([type('friend', 'friend')]).map(group => group.label)).toEqual(['Social']);
   });
 
-  it('suppresses only a live mirrored inverse alias', () => {
+  it('uses canonical labels for mirrored and renamed inverse aliases', () => {
     const parent = type('parent', 'guardian', 'dependent', { id: 1, inverse_type_id: 2 });
     const child = type('child', 'dependent', 'guardian', { id: 2, inverse_type_id: 1, is_canonical: false });
     expect(relationshipTypeOptions([parent, child])[0].children?.map(choice => choice.name)).toEqual(['parent:incoming', 'parent:outgoing']);
-    expect(relationshipTypeOptions([parent, { ...child, reverse_label: 'parent' }])[0].children).toHaveLength(4);
+    expect(relationshipTypeOptions([parent, { ...child, forward_label: 'descendant', reverse_label: 'parent' }])[0].children?.map(choice => [choice.name, choice.displayLabel])).toEqual([
+      ['parent:incoming', '→ dependent →'], ['parent:outgoing', '→ guardian →'],
+    ]);
   });
 
   it('distinguishes captions shared across types in menus and selections', () => {

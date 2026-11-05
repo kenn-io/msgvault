@@ -68,6 +68,9 @@ for (const width of [1440, 375]) {
     expect(peopleBounds!.x + peopleBounds!.width).toBeLessThanOrEqual(width);
     expect(peopleBounds!.y).toBeGreaterThanOrEqual(0);
     expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(900);
+    const footerBounds = await dialog.locator('.kit-modal-footer').boundingBox();
+    expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(footerBounds!.y);
+    expect(await panel.locator('.kit-typeahead__body').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await people.fill('Synthetic Two');
     await expect(dialog.getByRole('option')).toHaveCount(1);
     await people.press('Enter');

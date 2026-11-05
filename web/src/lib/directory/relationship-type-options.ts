@@ -25,8 +25,7 @@ export function relationshipPhrase(label: string): string {
 
 export function relationshipTypeOptions(types: RelationshipType[]): TypeaheadOption[] {
   const choices = types.flatMap((type): RelationshipChoice[] => {
-    const canonical = types.find(partner => partner.id === type.inverse_type_id && partner.is_canonical);
-    if (!type.is_canonical && canonical && type.forward_label === canonical.reverse_label && type.reverse_label === canonical.forward_label) return [];
+    if (!type.is_canonical) return [];
     const group = Object.keys(groups).find(name => groups[name].includes(type.slug)) ?? 'Other';
     return (type.is_symmetric ? ['outgoing'] as const : ['outgoing', 'incoming'] as const).map(direction => {
       const label = direction === 'outgoing' ? type.forward_label : type.reverse_label;

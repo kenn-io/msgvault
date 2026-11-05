@@ -179,13 +179,14 @@ describe('RelationshipsTab', () => {
     expect(screen.queryByText('No other saved people')).toBeNull();
   });
 
-  it('keeps a renamed inverse type searchable and writes its slug', async () => {
+  it('folds a renamed inverse into the canonical choice through save and Edit', async () => {
     let post: Request | undefined;
+    const saved = relationship(41, 1, { relationship_type_id: 1, type_slug: 'parent', source_person_id: 8, target_person_id: 7, forward_label: 'parent', reverse_label: 'child' });
     const { client, controller } = controllerWith(async input => {
       const request = requestOf(input);
-      if (request.method === 'POST') { post = request; return Response.json(relationship()); }
+      if (request.method === 'POST') { post = request; return Response.json(saved); }
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
-      return Response.json({ relationships: [] });
+      return Response.json({ relationships: post ? [view(41, 'incoming', 'parent', 'Synthetic Two', { counterpart_person_id: 8, relationship: saved })] : [] });
     });
     controller.relationshipTypes = [
       relationshipType({ id: 1, slug: 'parent', ownership: 'system', is_canonical: true, inverse_type_id: 2, forward_label: 'parent', reverse_label: 'child' }),
@@ -196,12 +197,15 @@ describe('RelationshipsTab', () => {
     await openTypeahead('Search people');
     await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
     const input = await openTypeahead('Connection type');
-    await fireEvent.input(input, { target: { value: 'descendant' } });
-    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Is a descendant of' }));
-    expect(screen.getByRole('button', { name: 'Connection type: → is a descendant of →' })).toBeDefined();
+    await fireEvent.input(input, { target: { value: 'child' } });
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Child' }));
+    expect(screen.getByRole('button', { name: 'Connection type: is a child of' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
     await waitFor(() => expect(post).toBeDefined());
-    await expect(post!.clone().json()).resolves.toEqual({ source_person_id: 7, target_person_id: 8, relationship_type_slug: 'child' });
+    await expect(post!.clone().json()).resolves.toEqual({ source_person_id: 8, target_person_id: 7, relationship_type_slug: 'parent' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit relationship' }));
+    expect(screen.getByRole('dialog').textContent).toContain('This person is a child of Synthetic Two');
   });
 
   it.each(['incoming', 'outgoing'] as const)('reads the existing %s connection as a sentence', async direction => {
@@ -224,6 +228,7 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('heading', { name: 'Reviewed (2)' })).toBeDefined();
     const row = screen.getByText('Synthetic Peer').closest('.detail-row') as HTMLElement;
     expect(row.textContent).toContain('from Address book');
+    expect(within(row).queryByText('Pending')).toBeNull();
     expect(screen.queryAllByRole('button', { name: 'Open person' })).toHaveLength(1);
     expect(screen.getByText('Earlier suggestion').closest('.detail-row')?.textContent).toContain('Aug 2, 2026');
     await fireEvent.click(within(row).getByRole('button', { name: 'Open person' }));
