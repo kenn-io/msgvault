@@ -83,6 +83,47 @@ func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
 	requirements.ErrorIs(err, context.Canceled)
 }
 
+func TestImportedCallMessageDirection(t *testing.T) {
+	st := storetest.New(t).Store
+	request := callhistory.ImportRequest{Format: "signal_desktop", Account: "example",
+		Record: []byte(`{"callId":"outgoing","direction":"Outgoing","mode":"Direct","status":"Accepted","timestamp":1790841600000}`),
+	}
+	o, err := request.Observation()
+	require.NoError(t, err)
+	require.Equal(t, "outgoing", o.Direction)
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(t, err)
+	for _, direction := range []string{"outgoing", "incoming", "unknown"} {
+		o.Direction = direction
+		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+		require.NoError(t, err)
+		var isFromMe bool
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&isFromMe))
+		assert.Equal(t, direction == "outgoing", isFromMe, direction)
+	}
+}
+
+func TestImportedCallConversationStats(t *testing.T) {
+	st := storetest.New(t).Store
+	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
+	}
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(t, err)
+	for range 2 {
+		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+		require.NoError(t, err)
+		var count int
+		var latest sql.NullTime
+		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT c.message_count, c.last_message_at FROM conversations c JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), id).Scan(&count, &latest))
+		assert.Equal(t, 1, count)
+		assert.True(t, latest.Valid)
+		assert.True(t, o.OccurredAt.Equal(latest.Time))
+		o.OccurredAt = o.OccurredAt.Add(time.Hour)
+	}
+}
+
 func TestSparseCalendarCancellationKeepsEvent(t *testing.T) {
 	testCalendarCancellationKeepsEvent(t, `{"id":"e1","status":"cancelled"}`)
 }

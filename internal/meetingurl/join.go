@@ -3,12 +3,13 @@ package meetingurl
 
 import (
 	"net/url"
+	"slices"
 	"strings"
 )
 
 // KnownJoinURL preserves the usable provider URL, including passcodes and
 // context parameters. Join-key normalization belongs to the link projection.
-func KnownJoinURL(raw string) string {
+func KnownJoinURL(raw string, extraHosts ...string) string {
 	trimmed := strings.TrimSpace(raw)
 	u, err := url.Parse(trimmed)
 	if err != nil || (u.Scheme != "https" && u.Scheme != "http") {
@@ -16,7 +17,7 @@ func KnownJoinURL(raw string) string {
 	}
 	host := strings.ToLower(u.Hostname())
 	switch {
-	case host == "meet.google.com", host == "cal.com",
+	case host == "meet.google.com", slices.Contains(extraHosts, host),
 		host == "teams.microsoft.com", host == "teams.live.com",
 		strings.HasSuffix(host, ".teams.microsoft.us"),
 		host == "zoom.us", strings.HasSuffix(host, ".zoom.us"),
