@@ -242,51 +242,49 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 }
 
 func TestEmailCalendarMaterialization(t *testing.T) {
-	for _, sender := range []string{"organizer@example.com", "other@example.net"} {
-		t.Run(sender, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			var source int64
-			var emailIDs []int64
-			for i, revision := range []struct{ method, props string }{
-				{"REQUEST", "SEQUENCE:0\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Original"},
-				{"REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nDURATION:PT1H\r\nSUMMARY:Updated"},
-				{"CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2"},
-			} {
-				raw := emailFrom(sender, calendarDocument(revision.method, revision.props+"\r\nORGANIZER:mailto:organizer@example.com"))
-				id, sid := persistInviteEmail(t, st, fmt.Sprintf("email-%d", i), raw)
-				emailIDs = append(emailIDs, id)
-				source = sid
-				stored, err := st.GetMessageRaw(id)
-				requirements.NoError(err)
-				assertions.Equal(raw, stored)
-			}
-			ids := emailEvents(t, st, source)
-			requirements.Len(ids, 1)
-			rows := calendarRows(t, st, ids...)
-			requirements.Len(rows, 1)
-			assertions.Equal("cancelled", rows[0].Event.Status)
-			assertions.Equal("Updated", rows[0].Subject)
-			for _, id := range emailIDs {
-				email, err := st.GetMessage(id)
-				requirements.NoError(err)
-				assertions.Equal("Original email", email.Subject)
-				assertions.Equal("Email body stays intact", email.BodyText)
-				metadata, err := st.GetMessageMetadata(id)
-				requirements.NoError(err)
-				assertions.NotContains(metadata.String, "calendar_invite_errors")
-			}
-			var emails int
-			requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
-			assertions.Equal(3, emails)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC))
+	t.Run("revisions", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		var source int64
+		var emailIDs []int64
+		for i, revision := range []struct{ method, props string }{
+			{"REQUEST", "SEQUENCE:0\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Original"},
+			{"REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nDURATION:PT1H\r\nSUMMARY:Updated"},
+			{"CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2"},
+		} {
+			raw := emailFrom("organizer@example.com", calendarDocument(revision.method, revision.props+"\r\nORGANIZER:mailto:organizer@example.com"))
+			id, sid := persistInviteEmail(t, st, fmt.Sprintf("email-%d", i), raw)
+			emailIDs = append(emailIDs, id)
+			source = sid
+			stored, err := st.GetMessageRaw(id)
 			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 1)
-			assertions.Equal("cancelled", page.Occurrences[0].Status)
-			assertions.Equal("Updated", page.Occurrences[0].Subject)
-		})
-	}
+			assertions.Equal(raw, stored)
+		}
+		ids := emailEvents(t, st, source)
+		requirements.Len(ids, 1)
+		rows := calendarRows(t, st, ids...)
+		requirements.Len(rows, 1)
+		assertions.Equal("cancelled", rows[0].Event.Status)
+		assertions.Equal("Updated", rows[0].Subject)
+		for _, id := range emailIDs {
+			email, err := st.GetMessage(id)
+			requirements.NoError(err)
+			assertions.Equal("Original email", email.Subject)
+			assertions.Equal("Email body stays intact", email.BodyText)
+			metadata, err := st.GetMessageMetadata(id)
+			requirements.NoError(err)
+			assertions.NotContains(metadata.String, "calendar_invite_errors")
+		}
+		var emails int
+		requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM messages WHERE source_id=? AND message_type='email'`, source).Scan(&emails))
+		assertions.Equal(3, emails)
+		page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC), time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC))
+		requirements.NoError(err)
+		requirements.Len(page.Occurrences, 1)
+		assertions.Equal("cancelled", page.Occurrences[0].Status)
+		assertions.Equal("Updated", page.Occurrences[0].Subject)
+	})
 
 	t.Run("claim identity", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)
@@ -396,13 +394,13 @@ func TestEmailCalendarCancellationPreemptsOlderInvite(t *testing.T) {
 
 func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 	for _, tc := range []struct {
-		name, organizer, sender, cancel, status, diagnostic string
-		events                                              int
-		forged                                              bool
+		name, organizer, cancel, status, diagnostic string
+		events                                      int
+		family                                      bool
 	}{
-		{"matching claimed organizer", "ORGANIZER;CN=Owner;SENT-BY=\"mailto:service@example.org\":mailto:OWNER@EXAMPLE.COM", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Different;SENT-BY=\"mailto:other@example.net\":mailto:owner@example.com", "cancelled", "", 1, false},
-		{"missing incoming organizer", "ORGANIZER:mailto:owner@example.com", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 1, false},
-		{"forged", "", "attendee@example.net", "STATUS:CANCELLED\r\nSEQUENCE:999\r\nORGANIZER:mailto:attendee@example.net\r\nSUMMARY:Forged cancellation", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 2, true},
+		{"matching claimed organizer", "ORGANIZER;CN=Owner;SENT-BY=\"mailto:service@example.org\":mailto:OWNER@EXAMPLE.COM", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Different;SENT-BY=\"mailto:other@example.net\":mailto:owner@example.com", "cancelled", "", 1, false},
+		{"missing incoming organizer", "ORGANIZER:mailto:owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 1, false},
+		{"mismatched family organizer", "", "STATUS:CANCELLED\r\nSEQUENCE:999\r\nORGANIZER:mailto:attendee@example.net\r\nSUMMARY:Rejected cancellation", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 2, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -416,14 +414,14 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 				props += "\r\n" + tc.organizer
 			}
 			request := emailFrom("notifications@example.com", calendarDocument("REQUEST", props))
-			if tc.forged {
+			if tc.family {
 				request = inviteEmail([]byte(strings.ReplaceAll(string(calendarFamilyDocument()), "UID:family@example.com\r\n", "UID:family@example.com\r\nORGANIZER:mailto:organizer@example.com\r\n")))
 			}
 			_, source := persistInviteEmail(t, st, "original", request)
 			ids := emailEvents(t, st, source)
 			requirements.Len(ids, tc.events)
 			before := calendarRows(t, st, ids...)
-			rawCancel := emailFrom(tc.sender, calendarDocument("CANCEL", tc.cancel))
+			rawCancel := inviteEmail(calendarDocument("CANCEL", tc.cancel))
 			cancel, _ := persistInviteEmail(t, st, "cancel", rawCancel)
 			assertions.Equal(ids, emailEvents(t, st, source))
 			for _, row := range calendarRows(t, st, ids...) {
@@ -443,25 +441,6 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 			assertions.Equal(rawCancel, retained)
 		})
 	}
-	t.Run("missing original organizer", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		st := newRFC822IDBackfillBackendStore(t)
-		_, source := persistInviteEmail(t, st, "original", emailFrom("notifications@example.com", calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original")))
-		ids := emailEvents(t, st, source)
-		requirements.Len(ids, 1)
-		persistInviteEmail(t, st, "update", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner@example.com")))
-		assertions.Equal("Updated", calendarRows(t, st, ids...)[0].Subject)
-		rawCancel := emailFrom("owner@example.com", calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner@example.com"))
-		cancel, _ := persistInviteEmail(t, st, "cancel", rawCancel)
-		assertions.Equal(ids, emailEvents(t, st, source))
-		assertions.Equal("cancelled", calendarRows(t, st, ids...)[0].Event.Status)
-		metadata, err := st.GetMessageMetadata(cancel)
-		requirements.NoError(err)
-		assertions.NotContains(metadata.String, "calendar_invite_errors")
-		retained, err := st.GetMessageRaw(cancel)
-		requirements.NoError(err)
-		assertions.Equal(rawCancel, retained)
-	})
 }
 
 func TestEmailCalendarReplyAndCancellationPreserveInviteRSVP(t *testing.T) {
@@ -515,18 +494,32 @@ func TestEmailCalendarStaleRevisionDoesNotPinOrganizer(t *testing.T) {
 }
 
 func TestEmailCalendarFamilyOrganizerAdoption(t *testing.T) {
-	for _, tombstone := range []bool{false, true} {
-		t.Run(fmt.Sprintf("tombstone=%t", tombstone), func(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		tombstone, single bool
+	}{
+		{"series", false, false},
+		{"tombstone", true, false},
+		{"missing original organizer", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			first := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nRRULE:FREQ=DAILY;COUNT=2")
-			if tombstone {
+			if tc.tombstone {
 				first = calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED")
 			}
+			if tc.single {
+				first = calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original")
+			}
 			_, source := persistInviteEmail(t, st, "original", inviteEmail(first))
+			originalIDs := emailEvents(t, st, source)
 			props := "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nORGANIZER:mailto:organizer@example.com"
-			if !tombstone {
+			if !tc.tombstone && !tc.single {
 				props += "\r\nRECURRENCE-ID:20270303T120000Z"
+			}
+			if tc.single {
+				props = "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner@example.com"
 			}
 			persistInviteEmail(t, st, "adoption", inviteEmail(calendarDocument("REQUEST", props)))
 			ids := emailEvents(t, st, source)
@@ -535,6 +528,22 @@ func TestEmailCalendarFamilyOrganizerAdoption(t *testing.T) {
 			persistInviteEmail(t, st, "mismatch", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:3\r\nDTSTART:20270302T150000Z\r\nSUMMARY:Rejected\r\nORGANIZER:mailto:other@example.org")))
 			assertions.Equal(before, calendarRows(t, st, ids...))
 			assertions.Equal(ids, emailEvents(t, st, source))
+
+			if tc.single {
+				requirements.Len(originalIDs, 1)
+				assertions.Equal(originalIDs, ids)
+				assertions.Equal("Updated", before[0].Subject)
+				rawCancel := inviteEmail(calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner@example.com"))
+				cancel, _ := persistInviteEmail(t, st, "cancel", rawCancel)
+				assertions.Equal(ids, emailEvents(t, st, source))
+				assertions.Equal("cancelled", calendarRows(t, st, ids...)[0].Event.Status)
+				metadata, err := st.GetMessageMetadata(cancel)
+				requirements.NoError(err)
+				assertions.NotContains(metadata.String, "calendar_invite_errors")
+				retained, err := st.GetMessageRaw(cancel)
+				requirements.NoError(err)
+				assertions.Equal(rawCancel, retained)
+			}
 		})
 	}
 }
