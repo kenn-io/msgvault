@@ -78,7 +78,7 @@
   }
 </script>
 
-<aside class="sidebar" class:sidebar--rail={collapsed} aria-label="Sidebar">
+<aside class="sidebar" class:sidebar--rail={collapsed} class:sidebar--drawer={!!onCloseNavigation} aria-label="Sidebar">
   <div class="sidebar__brand">msgvault{#if onCloseNavigation}<IconButton ariaLabel="Close navigation" onclick={onCloseNavigation}><X size={18} /></IconButton>{/if}</div>
   <nav aria-label="Primary">
     <ul>
@@ -219,6 +219,15 @@
   .sidebar__views {
     margin: var(--space-1) 0 var(--space-3) calc(var(--pane-pad-x) + var(--space-4));
     border-left: 1px solid var(--border-muted);
+  }
+
+  @media (hover: none), (pointer: coarse) {
+    .sidebar--drawer .sidebar__brand {
+      padding-left: calc(var(--pane-pad-x) + var(--space-3));
+      padding-right: calc(var(--pane-pad-x) - var(--space-4));
+    }
+
+    .sidebar--drawer .sidebar__views { margin-bottom: 0; }
   }
 
   .sidebar__views-error {

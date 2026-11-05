@@ -39,7 +39,7 @@ test.describe('touch navigation', () => {
   test('touch drawer sizes controls and keeps focus through close', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
-    await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [saved] } }));
+    await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [saved, view(4, 'Second view'), view(5, 'Files view', 'files')] } }));
     await page.goto('/?workspace=everything');
     const opener = page.getByRole('button', { name: 'Open navigation' });
     const search = await page.getByRole('searchbox', { name: 'Search messages' }).boundingBox();
@@ -54,6 +54,27 @@ test.describe('touch navigation', () => {
     const drawer = page.getByRole('dialog', { name: 'Navigation' });
     await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
     await expect(drawer.getByRole('button', { name: 'Project notes actions' })).toBeVisible();
+    const geometry = await drawer.evaluate((root) => {
+      const rect = (selector: string) => root.querySelector(selector)!.getBoundingClientRect();
+      const brand = root.querySelector('.sidebar__brand')!;
+      const text = document.createRange();
+      text.selectNodeContents(brand.firstChild!);
+      const panel = root.getBoundingClientRect();
+      const close = rect('[aria-label="Close navigation"] svg');
+      const dots = rect('[aria-label="Project notes actions"] svg');
+      const center = (selector: string) => { const box = rect(selector); return box.top + box.height / 2; };
+      return {
+        alignment: (close.left + close.right - dots.left - dots.right) / 2,
+        padding: text.getBoundingClientRect().left - panel.left - (panel.right - close.right),
+        regular: center('[aria-label="Files"]') - center('[aria-label="People"]'),
+        messages: center('[aria-label="People"]') - center('[aria-label="Messages saved views"] li:last-child .saved-view__open'),
+        files: center('[aria-label="Sources"]') - center('[aria-label="Files saved views"] li:last-child .saved-view__open')
+      };
+    });
+    expect.soft(Math.abs(geometry.alignment), 'close and saved-view actions align').toBeLessThanOrEqual(1);
+    expect.soft(Math.abs(geometry.padding), 'brand has balanced visual insets').toBeLessThanOrEqual(1);
+    expect.soft(Math.abs(geometry.messages - geometry.regular), 'message group spacing').toBeLessThanOrEqual(1);
+    expect.soft(Math.abs(geometry.files - geometry.regular), 'files group spacing').toBeLessThanOrEqual(1);
     for (const button of await drawer.locator('button:visible').all()) {
       expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
     }

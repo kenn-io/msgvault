@@ -582,6 +582,11 @@ test.describe('touch People toolbar', () => {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipShowAll: true }))}`);
     await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
     const toolbar = page.locator('.people-list .toolbar');
+    const segment = await page.getByRole('radiogroup', { name: 'List' }).boundingBox();
+    const filter = await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox();
+    const bounds = await toolbar.boundingBox();
+    expect.soft(Math.abs(segment!.height - filter!.height), 'toolbar controls share height').toBeLessThanOrEqual(1);
+    expect.soft(Math.abs((segment!.y - bounds!.y) - (segment!.x - bounds!.x)), 'toolbar top and left insets match').toBeLessThanOrEqual(1);
     await expect(toolbar.locator('.chips button')).toBeVisible();
     for (const button of await toolbar.locator('button:visible').all()) {
       expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
