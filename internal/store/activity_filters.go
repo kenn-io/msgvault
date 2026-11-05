@@ -240,7 +240,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	query := prefix + eligibleName + ` AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,
- CASE WHEN ` + matrixPendingEncryptedSQL + ` THEN 1 ELSE 0 END AS encrypted,
+ CASE WHEN ` + matrixPendingEncryptedSQL("m") + ` THEN 1 ELSE 0 END AS encrypted,
  CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible,
  CASE WHEN ae.ref_kind='meeting' OR (m.list_id IS NULL AND EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id AND (LOWER(a.mime_type) IN ('text/calendar','application/ics') OR LOWER(a.filename) LIKE '%.ics'))) THEN 1 ELSE 0 END AS invitation
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `

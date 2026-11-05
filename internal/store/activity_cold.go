@@ -166,7 +166,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
  SELECT m.id FROM messages m WHERE `+where+`
  ) SELECT m.id,m.list_id IS NOT NULL,
- `+matrixPendingEncryptedSQL+`
+ `+matrixPendingEncryptedSQL("cw")+`
  FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id
  WHERE `+s.activityLiveEligibleSQL()+subject+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
@@ -222,7 +222,6 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		m.Direction = classified.Direction
 		m.Meeting = IsMeetingMessageType(c.MessageType)
 		m.ContactEligible = m.Meeting || countedMessageType(c.MessageType, c.ConversationType)
-		m.LargeInbound = m.Direction == DirectionInbound && classified.Broadcast
 		classifiedMessages = append(classifiedMessages, m)
 	}
 	facts := make([]activityReadMessage, len(classifiedMessages))

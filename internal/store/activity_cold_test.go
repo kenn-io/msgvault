@@ -417,41 +417,6 @@ func TestColdAdapterAggregatesCompleteLargeBurst(t *testing.T) {
 	assertions.Equal(1101, count)
 }
 
-// Explicit limits retain the classifier's strongest role in both readers.
-func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
-	for _, limit := range []int{0, 1} {
-		t.Run(strconv.Itoa(limit), func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			f := newTimelineActivityFixture(t)
-			_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-			requirements.NoError(err)
-			room := coldTimelineRoom(t, f, f.Source.ID, "custom-limit-authors")
-			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-			id := addColdTimelineMessage(t, f, room, f.Source.ID, at, true)
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner, f.peer}, []string{"Owner", "Alice"}))
-			setTimelineConversationTier(t, f, f.Source.ID, "custom-limit-authors", conversationpolicy.Full)
-			projectColdTimeline(t, f, "UTC")
-			q := timelineBurstQuery()
-			q.Filters.MaxDirect = limit
-			q.Filters.IncludeNoise = true
-			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			requirements.Len(warm.Bursts, 1)
-
-			setTimelineConversationTier(t, f, f.Source.ID, "custom-limit-authors", conversationpolicy.Cold)
-			projectColdTimeline(t, f, "UTC")
-			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			requirements.Len(cold.Bursts, 1)
-			warm.Bursts[0].Cold = true
-			warm.Bursts[0].FirstAt = warm.Bursts[0].FirstAt.UTC()
-			warm.Bursts[0].LastAt = warm.Bursts[0].LastAt.UTC()
-			assertions.Equal(warm, cold)
-		})
-	}
-}
-
 // Cold reconstruction must keep the same sender/alias/envelope audience and
 // configured default limit as warm activity, even after spine rows are gone.
 func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {

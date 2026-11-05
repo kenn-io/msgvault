@@ -143,7 +143,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  ((`+countedMessageTypeSQL("m", "c")+`
  AND NOT `+s.activityUnsentSQL()+`)
  OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?)))
- AND NOT `+matrixPendingEncryptedSQL+`
+ AND NOT `+matrixPendingEncryptedSQL("m")+`
  ORDER BY aep.person_id,aep.local_date DESC,aep.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)
