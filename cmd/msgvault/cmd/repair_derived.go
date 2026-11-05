@@ -88,7 +88,7 @@ Examples:
 				if err := service.RepairMessageAttachments(ctx, syncer.RepairRequest{Reference: attachmentMessage, SourceID: sourceID}); err != nil {
 					return fmt.Errorf("repair message attachments: %w", err)
 				}
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Message attachments restored from retained MIME")
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Attachments restored")
 				return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
 			}
 
@@ -123,7 +123,7 @@ Examples:
 		"source type to repair (repeatable; default: every source)")
 	cmd.Flags().StringArrayVar(&repairDerivedIdentifiers, "identifier", nil,
 		"source identifier to repair (repeatable; default: all matching sources)")
-	cmd.Flags().StringVar(&attachmentMessage, "attachment-message", "", "restore one Gmail message's missing MIME attachments from local RAW")
+	cmd.Flags().StringVar(&attachmentMessage, "attachment-message", "", "restore missing attachments from one saved Gmail message")
 	cmd.Flags().Int64Var(&sourceID, "source-id", 0, "scope --attachment-message to one positive source ID")
 	return cmd
 }

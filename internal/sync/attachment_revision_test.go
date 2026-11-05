@@ -452,7 +452,7 @@ func TestAttachmentRevisionRemoteFailureRemainsPending(t *testing.T) {
 	debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
 	require.NoError(err)
 	require.Len(debt, 1)
-	assert.Contains(debt[0].ErrorMessage, "materialize MIME attachments")
+	assert.Contains(debt[0].ErrorMessage, "save attachments")
 	assert.Contains(debt[0].ErrorMessage, "archive remote images")
 	require.NoError(os.Remove(blocked))
 	reopenAcquisitionStore(t, e)

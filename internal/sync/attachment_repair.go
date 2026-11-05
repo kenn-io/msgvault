@@ -55,6 +55,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 	if parsed.Incomplete {
 		return errors.New("retained MIME has parse diagnostics; attachment repair is inconclusive")
 	}
+	parsed.OmitNULIdentities()
 	existing, err := s.store.MessageMIMEAttachmentsContext(ctx, target.ID)
 	if err != nil {
 		return err
@@ -75,7 +76,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 			return fmt.Errorf("retained MIME does not match existing attachment %q", ref.Filename)
 		}
 		if ref.State == "skipped" || ref.State == "unavailable" {
-			return fmt.Errorf("attachment %q is intentionally not materialized (%s)", ref.Filename, ref.State)
+			return fmt.Errorf("attachment %q was deliberately omitted (%s)", ref.Filename, ref.State)
 		}
 	}
 	blobs, err := attachmentstore.New(store.NewPackCatalog(s.store), s.opts.AttachmentsDir)

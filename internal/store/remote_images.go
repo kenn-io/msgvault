@@ -15,8 +15,32 @@ func (s *Store) UpsertRemoteImageAttachment(ctx context.Context, messageID int64
 	if write.SourcePartKey == "" {
 		return errors.New("remote image attachment requires a source-part key")
 	}
-	return s.withSyncMessageWriteContext(ctx, messageID, func(q querier) error {
-		return s.upsertAttachmentRecordWithPolicy(q, messageID, write, preserveLegacyAttachmentRows)
+	return s.withTxContext(ctx, func(tx *loggedTx) error {
+		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			return err
+		}
+		// Serialize image summary increments with other writes to this message.
+		var id int64
+		if err := tx.QueryRow(`SELECT id FROM messages WHERE id = ?`+s.dialect.SelectForUpdate(), messageID).Scan(&id); err != nil {
+			return err
+		}
+		var before, after int
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, messageID).Scan(&before); err != nil {
+			return err
+		}
+		if err := s.upsertAttachmentRecordWithPolicy(tx, messageID, write, preserveLegacyAttachmentRows); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`, messageID).Scan(&after); err != nil {
+			return err
+		}
+		// Only a newly stored occurrence increases the summary. Preserve any
+		// expected MIME occurrences not yet represented by attachment rows.
+		_, err := tx.Exec(`UPDATE messages SET has_attachments = TRUE,
+			attachment_count = CASE WHEN COALESCE(attachment_count, 0) + ? < ?
+				THEN ? ELSE COALESCE(attachment_count, 0) + ? END WHERE id = ?`,
+			after-before, after, after, after-before, messageID)
+		return err
 	})
 }
 

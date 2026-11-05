@@ -755,7 +755,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 					return nil, recErr
 				}
 				checkpoint.ErrorsCount++
-				continue
+				if !s.requireLabelRefresh {
+					continue
+				}
 			}
 		}
 		if canReadLabels {
@@ -787,6 +789,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 		for i, sourceMessageID := range labelRefreshIDs {
 			if i >= len(labelResults) {
 				err := errors.New("label metadata missing from batch response")
+				if s.requireLabelRefresh {
+					checkpoint.MessagesUpdated += result.updated
+					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, err)
+				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, err)
@@ -1961,7 +1967,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		// This obligation and RAW are one transaction. A process exit or a
 		// rejected ledger write cannot leave committed RAW without retry debt.
 		resolution = &store.SyncRunItem{SyncRunID: s.acquisitionSyncID, SourceMessageID: data.message.SourceMessageID,
-			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: "pending materialization"}
+			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: "Message files still need saving"}
 	}
 	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
@@ -2013,7 +2019,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		attachmentErr = fmt.Errorf("%w: %w", errAttachmentMaterialization, attachmentErr)
 	}
 	if work&archiveRemoteImages != 0 {
-		imageErr := s.archiveMessageRemoteImages(ctx, messageID, data.bodyHTML)
+		imageErr := s.archiveMessageRemoteImages(ctx, messageID, data.bodyHTML, attachmentErr != nil)
 		if gmailMaterialization {
 			attachmentErr = errors.Join(attachmentErr, imageErr)
 		}

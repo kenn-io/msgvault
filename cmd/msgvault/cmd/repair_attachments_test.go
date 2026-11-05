@@ -48,7 +48,7 @@ func TestRepairDerivedAttachmentMessage(t *testing.T) {
 		root.SetOut(&out)
 		root.SetErr(&out)
 		require.NoError(root.Execute())
-		assert.Contains(out.String(), "restored from retained MIME")
+		assert.Contains(out.String(), "Attachments restored")
 	}
 	st, err = store.Open(cfg.DatabaseDSN())
 	require.NoError(err)

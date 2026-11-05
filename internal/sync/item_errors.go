@@ -39,7 +39,7 @@ func isAcquisitionReplayCandidate(item store.SyncRunItem) bool {
 var (
 	errRawBatchMissing           = errors.New("missing raw message in batch result")
 	errAcquisitionFailureRecord  = errors.New("record acquisition failure")
-	errAttachmentMaterialization = errors.New("materialize MIME attachments")
+	errAttachmentMaterialization = errors.New("save attachments")
 	errRemoteImageArchival       = errors.New("archive remote images")
 )
 

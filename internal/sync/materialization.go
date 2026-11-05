@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"go.kenn.io/msgvault/internal/remoteimage"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -72,11 +73,12 @@ func (s *Syncer) requiredMaterialization(data *messageData) materializationWork 
 	return work
 }
 
-func (s *Syncer) archiveMessageRemoteImages(ctx context.Context, id int64, html string) error {
+func (s *Syncer) archiveMessageRemoteImages(ctx context.Context, id int64, html string, mimePending bool) error {
 	if s.opts.RemoteImages == nil {
 		return fmt.Errorf("%w: remote image archiving must be enabled to finish pending work", errRemoteImageArchival)
 	}
-	archived := s.opts.RemoteImages.Archive(ctx, s.store, s.opts.AttachmentsDir, id, html)
+	archived := s.opts.RemoteImages.ArchiveWithOptions(ctx, s.store, s.opts.AttachmentsDir, id, html,
+		remoteimage.ArchiveOptions{PreserveExpectedAttachments: mimePending})
 	for _, imageErr := range archived.Errors {
 		s.logger.Warn("failed to archive remote image", "message", id, "error", imageErr)
 	}
@@ -116,7 +118,7 @@ func (s *Syncer) repairPendingAttachments(ctx context.Context, sourceID int64, m
 			if readErr != nil {
 				err = readErr
 			} else {
-				err = s.archiveMessageRemoteImages(ctx, message.ID, message.BodyHTML)
+				err = s.archiveMessageRemoteImages(ctx, message.ID, message.BodyHTML, pendingErr != nil)
 			}
 		}
 		if err != nil {
