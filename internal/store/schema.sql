@@ -4529,7 +4529,6 @@ END;
 -- Call claims are message-backed observations, never inferred attendance.
 CREATE TABLE IF NOT EXISTS call_details (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
-    projection_version INTEGER NOT NULL,
     canonical_key TEXT NOT NULL,
     kind TEXT NOT NULL,
     direction TEXT NOT NULL,

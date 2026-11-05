@@ -114,7 +114,9 @@ func FuzzCallStoreSequences(f *testing.F) {
 			case 0:
 				o.Participants = nil
 			case 1:
-				o.Participants = append(o.Participants, callhistory.Participant{ID: b, Participation: role})
+				if b != a {
+					o.Participants = append(o.Participants, callhistory.Participant{ID: b, Participation: role})
+				}
 			}
 			o.Withdrawn = random.IntN(5) == 0
 			return o
@@ -164,11 +166,33 @@ func FuzzCallStoreSequences(f *testing.F) {
 
 				Raw: []byte(`{}`),
 			}
-			if random.IntN(4) == 0 {
+			if random.IntN(4) == 0 || index == 0 {
 				o.Kind, o.NativeCallID = "scheduled_meeting", ""
 			}
-			put(index, change(o))
+			o = change(o)
+			if index == 0 {
+				o.Outcome, o.Withdrawn = "unknown", false
+			}
+			put(index, o)
 		}
+		check()
+		// Linking keeps both participant rows. A physical merge replaces the
+		// absorbed ID, collapsing equal roles to one recipient.
+		require.NoError(t, st.MergeParticipants(b, a))
+		b = a
+		for i := range records {
+			if len(records[i].Participants) > 0 {
+				records[i].Participants = []callhistory.Participant{{ID: a, Participation: records[i].Participants[0].Participation}}
+			}
+		}
+		check()
+		stale := records[0].Observation
+		withdrawn := stale
+		withdrawn.Outcome, withdrawn.Withdrawn = "cancelled", true
+		withdrawn.Participants = []callhistory.Participant{{ID: a, Participation: "invited"}}
+		put(0, withdrawn)
+		check()
+		put(0, stale)
 		check()
 		for _, index := range random.Perm(len(records)) {
 			put(index, records[index].Observation)

@@ -19,6 +19,10 @@ func TestIsKnownMessageType(t *testing.T) {
 	}
 }
 
+func TestCallRecordMessageTypeAccepted(t *testing.T) {
+	assert.True(t, IsKnownMessageType("call_record"))
+}
+
 func TestKnownMessageTypesIncludesTextTypes(t *testing.T) {
 	t.Parallel()
 	// Every text message type must also be a known message type, otherwise

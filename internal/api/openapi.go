@@ -1215,6 +1215,12 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		}
 	}
 	nullableSchemaProperty(schemas["PersonBriefEnrollment"], "enabled_at")
+	if request := schemas["CallImportRequest"]; request != nil {
+		request.Properties["record"].Extensions = map[string]any{
+			"x-go-type":        "jsontext.Value",
+			"x-go-type-import": map[string]any{pathKey: "encoding/json/jsontext"},
+		}
+	}
 	// Read responses preserve definitions from any stored schema version.
 	if view := schemas["SavedView"]; view != nil {
 		state := view.Properties["canonical_state"]

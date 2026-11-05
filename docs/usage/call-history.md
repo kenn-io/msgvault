@@ -44,7 +44,7 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
-| `google_calendar` | One expanded event JSON object. Account must be the stable **calendar ID**, keeping event IDs from different calendars separate. Bind attendee email addresses to archive participants; every binding stays invited even when the RSVP says accepted. Recurring masters and events without a start are rejected. |
+| `google_calendar` | One expanded event JSON object. Account must be the stable **calendar ID**, keeping event IDs from different calendars separate. Bind attendee email addresses to archive participants; matching ignores case, and every binding stays invited even when the RSVP says accepted. Recurring masters are rejected. Events require a start, except ID-only cancellations of existing events. |
 | `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, precision, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. See the [HTTP contract](../api-server.md#call-history). |
 
 The request limit is 1 MiB; its record and original raw payload are each limited
@@ -83,7 +83,12 @@ observation. `--after` is inclusive and `--before` exclusive.
 Native withdrawal prevents a stale active reimport of that observation.
 Other observations of the call remain usable. Explicit archive deletion or
 garbage collection removes the tombstone too; importing an old export afterward
-can recreate it. Scheduled cancellation is an update, not a sticky withdrawal.
+can recreate it. A complete record replaces the time, participants, raw JSON,
+and withdrawal state together. This includes normalized cancellations and
+Calendar cancellations with a start. An ID-only Calendar cancellation keeps
+the stored event's time, invitees, and raw JSON and changes its outcome to
+`cancelled`. It requires an existing event in the same calendar. Cancellation
+alone allows later updates; an explicit withdrawal blocks stale active imports.
 
 ## Coverage and limitations
 
@@ -97,10 +102,12 @@ can recreate it. Scheduled cancellation is an update, not a sticky withdrawal.
   minus start never becomes talk duration. Epoch timestamps do not identify
   the original time zone.
 - **Calendar:** [conference entry points](https://developers.google.com/workspace/calendar/api/v3/reference/events)
-  and `tel:` links remain scheduled evidence. HTTPS links on Meet, Teams,
-  Cal.com and Zoom.us hosts are retained; custom hosts are not recognized.
+  and complete `tel:` dial sequences remain scheduled evidence. HTTP and HTTPS
+  links on Meet, Teams, Cal.com, Zoom.us, and supported government hosts are
+  retained; custom hosts are not recognized.
   Date-only events use midnight UTC with day precision, not an invented call
-  time. Date-time values require an RFC3339 offset. Calendar phone numbers
+  time. Date-time values accept an RFC3339 offset or an offset-free time with
+  an IANA `timeZone`, such as `America/New_York`. Calendar phone numbers
   are entry points, not person identity or attendance.
 - **Slack:** [huddle history objects](https://docs.slack.dev/reference/objects/conversation-object/)
   can contain room timestamps and participant history. The

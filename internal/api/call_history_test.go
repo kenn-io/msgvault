@@ -143,3 +143,25 @@ func TestCallHistoryImportUsesMutationGate(t *testing.T) {
 	}
 	assertions.Equal(200, out.Code, out.Body.String())
 }
+
+func TestCallHistoryCancelledWithdrawal(t *testing.T) {
+	archive := testutil.NewTestStore(t)
+	st := &callHTTPStore{mockStore: &mockStore{stats: &StoreStats{}}, CallHistoryStore: archive}
+	server := NewServer(&config.Config{Server: config.ServerConfig{APIKey: meetingImportTestAPIKey}}, st, nil, testLogger())
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/import/calls", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Api-Key", meetingImportTestAPIKey)
+		out := httptest.NewRecorder()
+		server.Router().ServeHTTP(out, req)
+		return out
+	}
+	const scheduled = `{"format":"google_calendar","account":"example","record":{"id":"e1","start":{"date":"2026-10-01"}}}`
+	out := post(scheduled)
+	require.Equal(t, 200, out.Code, out.Body.String())
+	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"google_calendar","account":"example","record_id":"e1","kind":"scheduled_meeting","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","precision":"day","withdrawn":true,"raw":{"cancelled":true}}}`)
+	require.Equal(t, 200, out.Code, out.Body.String())
+	out = post(scheduled)
+	assert.Equal(t, 409, out.Code, out.Body.String())
+}

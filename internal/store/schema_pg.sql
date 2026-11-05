@@ -4137,7 +4137,6 @@ CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
 
 CREATE TABLE IF NOT EXISTS call_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
-    projection_version INTEGER NOT NULL,
     canonical_key TEXT NOT NULL,
     kind TEXT NOT NULL,
     direction TEXT NOT NULL,
