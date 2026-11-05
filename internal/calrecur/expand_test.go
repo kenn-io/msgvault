@@ -178,7 +178,7 @@ func TestTimedDateOnlyUntilIncludesLocalDate(t *testing.T) {
 	assert.Equal([]time.Time{
 		instant(t, "2027-03-02T07:30:00Z"), instant(t, "2027-03-03T07:30:00Z"), instant(t, "2027-03-04T07:30:00Z"),
 	}, starts)
-	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	end, bounded, _ := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
 	assert.True(bounded)
 	assert.Equal(instant(t, "2027-03-04T08:30:00Z"), end.UTC())
 }
