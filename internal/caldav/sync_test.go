@@ -1480,6 +1480,18 @@ func TestSyncCivilDayDurationKeepsWallTimeAcrossDST(t *testing.T) {
 	}
 }
 
+func TestSyncPreservesDelegatedAttendee(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "ATTENDEE;PARTSTAT=DELEGATED:mailto:guest@example.org\r\nEND:VEVENT", 1)
+	st := testutil.NewTestStore(t)
+	_, err := c.Sync(t.Context(), st, syncOpts())
+	requirements.NoError(err)
+	got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-15T00:00:00Z")
+	requirements.Len(got, 1)
+	assertions.Equal([]calevent.Attendee{{Email: "guest@example.org", Role: "required", RSVP: "delegated"}}, got[0].Attendees)
+}
+
 func TestSyncNonhumanAttendeeDroppedRegardlessOfOrder(t *testing.T) {
 	plain := "ATTENDEE:mailto:room@example.org\r\n"
 	typed := "ATTENDEE;CUTYPE=ROOM:mailto:room@example.org\r\n"

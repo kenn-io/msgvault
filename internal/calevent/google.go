@@ -121,7 +121,7 @@ func buildAttendees(organizer gcalmodel.Person, attendees []gcalmodel.Attendee) 
 		}
 		rsvp := "unknown"
 		switch a.ResponseStatus {
-		case "accepted", "declined", "tentative":
+		case "accepted", "declined", "tentative", "delegated":
 			rsvp = a.ResponseStatus
 		case "needsAction":
 			rsvp = "needs_action"
