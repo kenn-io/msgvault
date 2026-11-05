@@ -171,7 +171,7 @@ Edits and unsends whose original message has not arrived retain their evidence
 and reconcile if that original arrives later, even after automatic retries end.
 
 The daemon processes incoming work automatically. To process due inbox work
-again, use **Sync now** or:
+again, use **Process inbox** or:
 
 ```bash
 msgvault sync-line

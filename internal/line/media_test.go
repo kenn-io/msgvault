@@ -156,6 +156,36 @@ func TestMediaLocalStorageFailureKeepsInboxWorkPending(t *testing.T) {
 	checks.Equal(attachmentpolicy.StateStored, f.media(t).State)
 }
 
+func TestMediaLocalStorageFailureAllowsOtherChats(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+	blocked := filepath.Join(t.TempDir(), "attachments")
+	must.NoError(os.WriteFile(blocked, []byte("not a directory"), 0o600))
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
+	f.enqueue(t, f.fileEvent(), time.Time{})
+	text := f.message("2", "text in another chat", f.now.UnixMilli()+1)
+	text.Source.GroupID = "C00000000000000000000000000000002"
+	f.enqueue(t, text, time.Time{})
+
+	must.Error(f.processor.Process(context.Background()))
+	var state string
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	checks.Equal("pending", state)
+	checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
+	checks.Equal("text in another chat", f.archived(t, "2").body)
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-2'`).Scan(&state))
+	checks.Equal("processed", state)
+	var messageCount int64
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+text.Source.GroupID).Scan(&messageCount))
+	checks.Equal(int64(1), messageCount)
+	var runStatus, runError string
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT status,error_message FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&runStatus, &runError))
+	checks.Equal("failed", runStatus)
+	checks.NotEmpty(runError)
+}
+
 func TestMediaDroppedDownloadStillRetries(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)

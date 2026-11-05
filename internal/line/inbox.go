@@ -279,7 +279,10 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 				if err = pass.store.FinishLineEventContext(ctx, row.ID, "pending", eventErr.Error(), time.Time{}); err != nil {
 					return err
 				}
-				return fmt.Errorf("process LINE inbox event: %w", eventErr)
+				if resultErr == nil {
+					resultErr = fmt.Errorf("process LINE inbox event: %w", eventErr)
+				}
+				continue
 			}
 			if state == "retry" && p.now().Sub(row.ReceivedAt) >= retryHorizon {
 				state = "failed"
@@ -317,6 +320,9 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	checkpoint.MessagesUpdated = pass.messagesUpdated
 	if err = pass.store.UpdateSyncCheckpointContext(ctx, runID, checkpoint); err != nil {
 		return err
+	}
+	if resultErr != nil {
+		return resultErr
 	}
 	if err = p.store.CompleteSyncAndPreserveSourceCursorContext(ctx, runID, p.sourceID, ""); err != nil {
 		return err
