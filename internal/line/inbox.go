@@ -97,6 +97,12 @@ func NewProcessor(st *store.Store, client *Client, sourceID int64, channelID, at
 	return p
 }
 
+func (p *Processor) recordMutation(ctx context.Context, added, updated int64) {
+	p.messagesAdded += added
+	p.messagesUpdated += updated
+	jobctx.RecordProgress(ctx)
+}
+
 // Drain processes all work due at entry, across bounded passes. Later receipts
 // and newly scheduled retries belong to a later drain.
 func (p *Processor) Drain(ctx context.Context) error {
@@ -158,6 +164,12 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	// Group names can change between passes; fetch each group's summary once per pass.
 	pass.groupNames = map[string]string{}
 	checkpoint := &store.Checkpoint{}
+	saveCheckpoint := func(ctx context.Context) error {
+		// Committed writes must invalidate the cache even if later work fails.
+		checkpoint.MessagesAdded = pass.messagesAdded
+		checkpoint.MessagesUpdated = pass.messagesUpdated
+		return pass.store.UpdateSyncCheckpointContext(ctx, runID, checkpoint)
+	}
 	touched := make(map[string]struct{})
 	var touchedConversations []string
 	messageIDs := make(map[string][]string)
@@ -195,6 +207,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 			cancelSettle()
 			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 			defer cancel()
+			resultErr = errors.Join(resultErr, saveCheckpoint(cleanup))
 			message := "LINE processing interrupted"
 			if resultErr != nil {
 				message = resultErr.Error()
@@ -304,10 +317,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 	if err = settle(ctx); err != nil {
 		return err
 	}
-	// Edits rewrite already exported messages; the analytics cache rebuilds on this counter.
-	checkpoint.MessagesAdded = pass.messagesAdded
-	checkpoint.MessagesUpdated = pass.messagesUpdated
-	if err = pass.store.UpdateSyncCheckpointContext(ctx, runID, checkpoint); err != nil {
+	if err = saveCheckpoint(ctx); err != nil {
 		return err
 	}
 	if resultErr != nil {
@@ -423,7 +433,7 @@ func (p *Processor) unsend(ctx context.Context, e Event) error {
 	if err = p.store.MarkMessageDeletedContext(ctx, p.sourceID, e.Unsend.MessageID); err != nil {
 		return err
 	}
-	jobctx.RecordProgress(ctx)
+	p.recordMutation(ctx, 0, 1)
 	return p.finishUnstoredMedia(ctx, row.ID, attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 }
 
@@ -464,9 +474,6 @@ func (p *Processor) membership(ctx context.Context, e Event) error {
 		}
 	}
 	for _, userID := range users {
-		if userID == "" {
-			return invalidEvent("LINE member identity missing")
-		}
 		pid, err := p.participant(ctx, key, userID, "")
 		if err != nil {
 			return err
@@ -474,6 +481,7 @@ func (p *Processor) membership(ctx context.Context, e Event) error {
 		if err = p.store.SetLineMembershipContext(ctx, conversationID, pid, UserIdentifier(p.channelID, userID), joined, time.UnixMilli(e.Timestamp).UTC()); err != nil {
 			return err
 		}
+		p.recordMutation(ctx, 0, 1)
 	}
 	// Persist every member transition before the first optional provider request.
 	// A failed lookup may delay presentation, never another member's membership.

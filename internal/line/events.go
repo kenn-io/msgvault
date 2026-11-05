@@ -81,17 +81,15 @@ type Members struct {
 // Event retains sanitized evidence even for unrecognized event types.
 // messageEdited has the same message shape as message (group text only).
 type Event struct {
-	Type            string         `json:"type"`
-	Timestamp       int64          `json:"timestamp"`
-	WebhookEventID  string         `json:"webhookEventId"`
-	Source          Source         `json:"source"`
-	Message         *Message       `json:"message,omitempty"`
-	Unsend          *Unsend        `json:"unsend,omitempty"`
-	Joined          *Members       `json:"joined,omitempty"`
-	Left            *Members       `json:"left,omitempty"`
-	Mode            string         `json:"mode,omitempty"`
-	DeliveryContext jsontext.Value `json:"deliveryContext,omitempty"`
-	Raw             jsontext.Value `json:"-"`
+	Type           string         `json:"type"`
+	Timestamp      int64          `json:"timestamp"`
+	WebhookEventID string         `json:"webhookEventId"`
+	Source         Source         `json:"source"`
+	Message        *Message       `json:"message,omitempty"`
+	Unsend         *Unsend        `json:"unsend,omitempty"`
+	Joined         *Members       `json:"joined,omitempty"`
+	Left           *Members       `json:"left,omitempty"`
+	Raw            jsontext.Value `json:"-"`
 }
 
 func (e *Event) UnmarshalJSON(raw []byte) error {

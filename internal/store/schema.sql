@@ -4779,8 +4779,8 @@ AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
 
--- LINE's signed webhook inbox. Terminal events expire after retention.
--- Expired orphan mutations retain their evidence.
+-- LINE's signed webhook inbox retains event IDs for duplicate detection.
+-- Message purges scrub payloads while preserving receipt status.
 CREATE TABLE IF NOT EXISTS line_webhook_events (
     id INTEGER PRIMARY KEY,
     source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

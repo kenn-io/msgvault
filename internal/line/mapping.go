@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/jobctx"
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -136,8 +135,7 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 		if err != nil {
 			return err
 		}
-		p.messagesAdded++
-		jobctx.RecordProgress(ctx)
+		p.recordMutation(ctx, 1, 0)
 	}
 	if err = p.reconcileMutations(ctx, e.Message.ID); err != nil {
 		return err
@@ -227,6 +225,6 @@ func (p *Processor) edit(ctx context.Context, e Event) error {
 	if err != nil {
 		return err
 	}
-	p.messagesUpdated++
+	p.recordMutation(ctx, 0, 1)
 	return nil
 }

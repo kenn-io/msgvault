@@ -121,10 +121,7 @@ func (p *Processor) profile(ctx context.Context, source Source, userID string) (
 	if profile.UserID != userID {
 		return Profile{}, retryEvent(errors.New("LINE profile identity does not match the requested user"))
 	}
-	key, _, err := source.ConversationID()
-	if err != nil {
-		return Profile{}, invalidEvent("invalid LINE profile source")
-	}
+	key, _, _ := source.ConversationID()
 	pid, err := p.participant(ctx, key, userID, profile.DisplayName)
 	if err != nil {
 		return Profile{}, err

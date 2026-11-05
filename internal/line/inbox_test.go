@@ -379,6 +379,23 @@ func TestProcessorInterruptedEditPassCommitsBeforeFinalizationFailure(t *testing
 	checks.True(f.archived(t, "1").edited)
 }
 
+func TestProcessorUnsendUpdatesSyncCounters(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	f.enqueue(t, f.message("1", "original", f.now.UnixMilli()), time.Time{})
+	f.run(t)
+	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "unsend-1", Timestamp: f.now.UnixMilli() + 1, Source: Source{Type: "group", GroupID: testGroup}, Unsend: &Unsend{MessageID: "1"}}, time.Time{})
+	ctx := jobctx.WithProgress(t.Context())
+	must.NoError(f.processor.Process(ctx))
+	checks.True(f.archived(t, "1").deleted)
+	checks.True(jobctx.HasProgress(ctx), "committed unsends must schedule a cache refresh")
+	var added, updated int64
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_added,messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&added, &updated))
+	checks.Zero(added)
+	checks.Equal(int64(1), updated, "unsends must invalidate already exported messages")
+}
+
 func TestProcessorUnsendBeforeMessage(t *testing.T) {
 	checks := assert.New(t)
 
@@ -730,6 +747,35 @@ func TestProcessorFriendshipEventsAreIgnored(t *testing.T) {
 	checks.Zero(conversations)
 	checks.Zero(participants)
 	checks.Equal(2, ignored)
+}
+
+func TestProcessorCanceledMembershipPreservesSyncProgress(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	ctx, cancel := context.WithCancel(jobctx.WithProgress(t.Context()))
+	defer cancel()
+	profilePath := "/v2/bot/group/" + testGroup + "/member/" + testUser
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == profilePath {
+			cancel()
+			<-r.Context().Done()
+			return
+		}
+		f.api.ServeHTTP(w, r)
+	}))
+	t.Cleanup(server.Close)
+	client := NewClient(testChannel, "synthetic-secret", WithBaseURLs(server.URL, server.URL), WithClock(func() time.Time { return f.now }))
+	processor := NewProcessor(f.st, client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
+	f.enqueue(t, Event{Type: "memberJoined", WebhookEventID: "join-canceled", Timestamp: f.now.UnixMilli(), Source: Source{Type: "group", GroupID: testGroup}, Joined: &Members{Members: []Source{{Type: "user", UserID: testUser}, {Type: "user", UserID: "U00000000000000000000000000000003"}}}}, time.Time{})
+	must.ErrorIs(processor.Process(ctx), context.Canceled)
+	var members int
+	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants WHERE joined_at IS NOT NULL AND left_at IS NULL`).Scan(&members))
+	checks.Equal(2, members, "membership commits before profile enrichment")
+	checks.True(jobctx.HasProgress(ctx), "committed memberships must schedule a cache refresh despite cancellation")
+	var updated int64
+	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT messages_updated FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&updated))
+	checks.Equal(int64(2), updated, "each committed membership must invalidate cached participants")
 }
 
 func TestProcessorMembershipEventsProjectTransitions(t *testing.T) {
