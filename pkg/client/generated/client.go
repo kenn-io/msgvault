@@ -615,7 +615,7 @@ type ClientInterface interface {
 	LinkKataEvidence(ctx context.Context, options *LinkKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LinkKataEvidenceResponse, error)
 	LinkKataEvidenceWithResponse(ctx context.Context, options *LinkKataEvidenceRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LinkKataEvidenceResp, error)
 
-	// ListOpenKataIssues List newest open Kata issues in the configured project
+	// ListOpenKataIssues List most recently updated open Kata issues in the configured project
 	ListOpenKataIssues(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListOpenKataIssuesResponse, error)
 	ListOpenKataIssuesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListOpenKataIssuesResp, error)
 
@@ -10211,7 +10211,7 @@ func (c *Client) LinkKataEvidence(ctx context.Context, options *LinkKataEvidence
 	return responseParser(ctx, resp)
 }
 
-// ListOpenKataIssues List newest open Kata issues in the configured project
+// ListOpenKataIssues List most recently updated open Kata issues in the configured project
 func (c *Client) ListOpenKataIssues(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListOpenKataIssuesResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

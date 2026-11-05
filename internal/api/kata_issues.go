@@ -107,7 +107,7 @@ func (s *Server) registerKataIssueRoutes(api huma.API) {
 	create.Responses[httpStatusKey(http.StatusConflict)] = jsonResponsesFor[KataIssueConflictResponse](api, http.StatusConflict)[httpStatusKey(http.StatusConflict)]
 	registerRawHumaRoute(api, create, s.handleCreateKataIssue)
 
-	search := rawAPIV1Operation("listOpenKataIssues", http.MethodGet, "/integrations/kata/open-issues", "List newest open Kata issues in the configured project")
+	search := rawAPIV1Operation("listOpenKataIssues", http.MethodGet, "/integrations/kata/open-issues", "List most recently updated open Kata issues in the configured project")
 	search.Responses = jsonResponsesFor[KataIssueListResponse](api)
 	addErrorResponses(api, search.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	registerRawHumaRoute(api, search, s.handleListOpenKataIssues)

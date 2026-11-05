@@ -14861,7 +14861,7 @@ func (c *Client) LinkKataEvidenceWithResponse(ctx context.Context, options *Link
 	}
 }
 
-// ListOpenKataIssues List newest open Kata issues in the configured project
+// ListOpenKataIssues List most recently updated open Kata issues in the configured project
 func (c *Client) ListOpenKataIssuesWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ListOpenKataIssuesResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

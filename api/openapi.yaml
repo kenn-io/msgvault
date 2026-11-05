@@ -24344,7 +24344,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: List newest open Kata issues in the configured project
+      summary: List most recently updated open Kata issues in the configured project
       tags:
         - API
   /api/v1/integrations/kata/status:

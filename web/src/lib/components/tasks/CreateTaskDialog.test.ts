@@ -58,6 +58,9 @@ describe('CreateTaskDialog', () => {
     });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    for (const label of ['Task title', 'Description', 'Priority', 'Labels']) {
+      expect(screen.getByLabelText(label)).toHaveProperty('disabled', true);
+    }
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
     fail(Response.json({ message: 'Unavailable' }, { status: 503 }));
     expect((await screen.findByRole('alert')).textContent).toContain('Unavailable');

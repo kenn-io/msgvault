@@ -2165,7 +2165,7 @@ export const linkKataEvidence = (
   );
 };
 /**
- * @summary List newest open Kata issues in the configured project
+ * @summary List most recently updated open Kata issues in the configured project
  */
 export const listOpenKataIssues = (
   options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,

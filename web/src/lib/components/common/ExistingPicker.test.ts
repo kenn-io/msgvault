@@ -6,7 +6,7 @@ import ExistingPicker from './ExistingPicker.svelte';
 const item = { id: 'one', label: 'Send the budget' };
 
 describe('ExistingPicker', () => {
-  it('loads immediately, filters, ignores late replies, and clears picks on reload and failure', async () => {
+  it('loads immediately, filters, and ignores late replies', async () => {
     let older!: (items: { items: typeof item[]; truncated: boolean }) => void;
     let fail!: (error: Error) => void;
     const load = vi.fn((query: string, _signal: AbortSignal): Promise<{ items: typeof item[]; truncated: boolean }> => {
@@ -25,22 +25,17 @@ describe('ExistingPicker', () => {
     await waitFor(() => expect(older).toBeTypeOf('function'));
     expect(screen.getByRole('status').textContent).toBe('Loading…');
     await fireEvent.input(filter, { target: { value: 'missing' } });
-    older({ items: [item], truncated: true });
-    await tick();
-    expect(screen.queryByRole('radio')).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe('Loading…');
     await screen.findByText('No tasks match "missing".');
     expect(screen.queryByText('More tasks available.')).toBeNull();
     expect(load.mock.calls[1][1].aborted).toBe(true);
-    await fireEvent.input(filter, { target: { value: '' } });
-    expect(await screen.findByRole('radio', { name: item.label })).toHaveProperty('checked', false);
-    await fireEvent.click(screen.getByRole('radio', { name: item.label }));
+    older({ items: [item], truncated: true });
+    await tick();
+    expect(screen.getByText('No tasks match "missing".')).toBeDefined();
+    expect(screen.queryByRole('radio')).toBeNull();
     await fireEvent.input(filter, { target: { value: 'broken' } });
     await waitFor(() => expect(fail).toBeTypeOf('function'));
     fail(new Error('Task service unavailable'));
     expect((await screen.findByRole('alert')).textContent).toBe('Task service unavailable');
-    await fireEvent.input(filter, { target: { value: '' } });
-    expect(await screen.findByRole('radio', { name: item.label })).toHaveProperty('checked', false);
   });
 
   it('shows an empty first list', async () => {

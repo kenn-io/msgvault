@@ -78,7 +78,7 @@ describe('Add to task', () => {
     } finally { view.unmount(); readiness.dispose(); }
   });
 
-  it('preserves a failed Tasks draft across provider and mode changes', async () => {
+  it('preserves a failed Tasks draft across provider changes', async () => {
     const client = createAPIClient(async (input) => {
       const request = input as Request;
       if (request.method === 'POST') {
@@ -99,11 +99,6 @@ describe('Add to task', () => {
       await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Draft notes' } });
       await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
       await screen.findByText('Response lost after create');
-      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
-      await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
-      expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveProperty('value', 'Revised follow up');
-      expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
       expect(screen.queryByRole('textbox', { name: 'Task title' })).toBeNull();
       expect(screen.getAllByRole('dialog')).toHaveLength(1);
@@ -111,8 +106,6 @@ describe('Add to task', () => {
       await fireEvent.input(screen.getByLabelText('Brief'), { target: { value: 'Brief draft' } });
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
       await fireEvent.click(screen.getByRole('radio', { name: 'Kata' }));
-      await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
-      await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
       expect(screen.getByLabelText('Issue title')).toHaveProperty('value', 'Kata draft');
       expect(screen.getByLabelText('Brief')).toHaveProperty('value', 'Brief draft');
       await fireEvent.click(screen.getByRole('radio', { name: 'Tasks' }));
@@ -136,9 +129,6 @@ describe('Add to task', () => {
   it.each(['success', 'failure'])('guards dismissal while busy and releases it after %s', async (result) => {
     const { respond, onclose } = pendingCreate();
     await fireEvent.click(await screen.findByRole('button', { name: 'Create task' }));
-    for (const label of ['Task title', 'Description', 'Priority', 'Labels']) {
-      expect(screen.getByLabelText(label)).toHaveProperty('disabled', true);
-    }
     const close = screen.getByRole('button', { name: 'Close' });
     close.focus();
     await fireEvent.keyDown(close, { key: 'Escape' });

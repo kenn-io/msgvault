@@ -91,6 +91,10 @@ describe('TaskLinks', () => {
     await fireEvent.input(screen.getByLabelText('Labels'), { target: { value: 'mail, follow-up' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await screen.findByText('Create response unavailable');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
+    expect(screen.getByLabelText('Task title')).toHaveProperty('value', 'Draft title');
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', 'Draft notes');
 
     render(TaskLinks, { props: { client, messageId: 43, title: 'Another message', showSetup: false }, context });
     await screen.findByText('Task integration unreachable: Status unavailable');

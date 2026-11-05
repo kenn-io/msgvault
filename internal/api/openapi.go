@@ -398,7 +398,7 @@ import (
 // Older servers omit body_text; body keeps its HTML fallback.
 // 3.42.0 adds iMessage participant and attachment-size limits to settings.
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
-// 3.44.0 adds newest open Kata issues, optional task search q, and task search truncation.
+// 3.44.0 adds recently updated open Kata issues, optional task search q, and task search truncation.
 const APISchemaVersion = "3.44.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration

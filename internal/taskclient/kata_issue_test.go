@@ -106,7 +106,7 @@ func TestOpenIssues(t *testing.T) {
 	open, err := client.CreateTask(t.Context(), katatest.Project, "open-budget", KataCreate{Title: "Send the budget"})
 	require.NoError(err)
 	for i := range 30 {
-		_, err := client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("other-%d", i), KataCreate{Title: fmt.Sprintf("Other issue %d", i), Body: strings.Repeat("Unrelated detail. ", 20000)})
+		_, err := client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("other-%d", i), KataCreate{Title: fmt.Sprintf("Other issue %d", i)})
 		require.NoError(err)
 	}
 	closed, err := client.CreateTask(t.Context(), katatest.Project, "closed-budget", KataCreate{Title: "Review the budget"})
@@ -133,9 +133,8 @@ func TestOpenIssuesWithOlderKataAPI(t *testing.T) {
 			writeTestJSON(t, w, map[string]any{"api_schema_version": "0.21.0"})
 			return
 		}
-		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet && r.URL.Query().Get("sort") == "created" {
-			http.Error(w, "unsupported sort", http.StatusUnprocessableEntity)
-			return
+		if strings.HasSuffix(r.URL.Path, "/issues") && r.Method == http.MethodGet {
+			assert.False(t, r.URL.Query().Has("sort"))
 		}
 		handler.ServeHTTP(w, r)
 	}))

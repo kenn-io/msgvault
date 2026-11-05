@@ -38,7 +38,7 @@ handle a person:
 3. If Kata's own MCP server is connected, use its `kata.search` tool for
    person or topic searches. Search closed issues too: a completed task may
    hold the answer. Configuring `[integrations.kata]` in msgvault does not
-   connect that separate MCP server. The Web UI filters its newest open issues
+   connect that separate MCP server. The Web UI filters its most recently updated open issues
    by title and ref; use Kata for broader searches.
 4. If the available context does not answer the question, ask the owner once.
    With explicit user intent, record the answer in a Kata issue or comment
@@ -81,7 +81,7 @@ To quote a file, open it and choose **Add to task…**, search for
 a passage, and pick one; the dialog then pages and narrows it like a message.
 This needs text that document indexing has already extracted.
 
-Choose **Existing** to list the 25 newest open issues in the configured project.
+Choose **Existing** to list the 25 most recently updated open issues in the configured project.
 Filter by any part of a title or ref, pick an issue, and choose **Add quote**.
 The passage appears there as a comment that quotes it. To reach an older or
 closed issue, type its ref. When no listed issue matches, choose
