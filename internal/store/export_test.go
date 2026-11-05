@@ -75,6 +75,12 @@ func (s *Store) SetCardDAVConflictResolutionSnapshotHookForTest(fn func()) {
 	s.cardDAVConflictResolveSnapshotHook = fn
 }
 
+// SetCardDAVConflictResolutionBookLockHookForTest pauses keep-remote after
+// locking its address book and before acquiring identity state.
+func (s *Store) SetCardDAVConflictResolutionBookLockHookForTest(fn func()) {
+	s.cardDAVConflictResolveBookLockHook = fn
+}
+
 // SetCardDAVConflictTombstonePreparationSnapshotHookForTest pauses keep-local
 // tombstone preparation after its unlocked routing snapshot and before the
 // ordered mutation transaction.

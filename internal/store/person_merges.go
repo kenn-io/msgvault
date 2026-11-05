@@ -331,6 +331,11 @@ func (s *Store) mergePersonsOnce(
 		if err != nil {
 			return err
 		}
+		for _, person := range []*Person{survivor, absorbed} {
+			if err := confirmCardDAVParticipantBindingsTx(ctx, tx, person.ID, person.ParticipantIDs); err != nil {
+				return err
+			}
+		}
 		snapshot, err := s.capturePersonMergeSnapshotTx(ctx, tx, survivor.ID, absorbed.ID)
 		if err != nil {
 			return err

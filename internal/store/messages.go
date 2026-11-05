@@ -4849,6 +4849,10 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 				return err
 			}
 			if changed {
+				if err := s.advanceCardDAVAutomaticBindingBaselineTx(ctx, tx, personID); err != nil {
+					return err
+				}
+
 				if err := s.bumpPersonRevisionsTx(
 					ctx, tx, personID); err != nil {
 					return err
@@ -4923,6 +4927,20 @@ func (s *Store) MergeParticipantsContext(ctx context.Context, oldID, newID int64
 		// Identifier values are globally unique, so a plain repoint suffices.
 		if _, err := tx.ExecContext(ctx, `UPDATE participant_identifiers SET participant_id = ? WHERE participant_id = ?`, newID, oldID); err != nil {
 			return err
+		}
+		if oldEmail.Valid {
+			// Preserve the absorbed primary email as an unscoped identifier. A
+			// survivor with its own primary address cannot store this value in
+			// email_address, and CardDAV reconciliation needs the alias to support
+			// transferred bindings.
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO participant_identifiers (
+					participant_id, identifier_type, identifier_value, is_primary
+				) VALUES (?, 'email', ?, FALSE)
+				ON CONFLICT (identifier_type, identifier_value) DO NOTHING
+			`, newID, oldEmail.String); err != nil {
+				return fmt.Errorf("preserve absorbed participant email: %w", err)
+			}
 		}
 		if err := s.rewriteObservationsForMergeTx(
 			ctx, tx, oldID, newID,

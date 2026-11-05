@@ -3404,6 +3404,7 @@ book; see the [CardDAV guide](/docs/usage/people-carddav/).
 | `person publish <person-id> --approve <token>` | Approve reviewed changes; conflict previews also need explicit `keep_local` resolution |
 | `carddav books [--connection <name>]` | List discovered books, owning connection names and roles |
 | `carddav books set-role <book-id> [--write-target] [--subscribed] [--lookup-source]` | Replace all three roles; omitted flags become false |
+| `carddav bind-participants [--dry-run] [--undo] [--json]` | Reconcile exact archived email/phone matches from retained subscribed cards; preview counts without writes, or undo only automatic memberships |
 | `carddav conflicts list` | List unresolved conflicts |
 | `carddav conflicts show <conflict-id>` | Compare bounded base, local, and remote summaries |
 | `carddav conflicts resolve <conflict-id> <keep_local\|keep_remote>` | Choose the local or remote side explicitly |
@@ -3421,6 +3422,14 @@ CardDAV commands do not expose a general `--json` flag; role changes,
 publication previews, and conflict list/show commands already print JSON.
 
 ---
+
+`bind-participants` uses the selected daemon and makes no CardDAV network requests.
+Its JSON contains `cards_scanned`, `participants_bound`, `participants_unbound`,
+`conflicts`, and `conflict_details` with numeric participant/person IDs and a
+`reason`. Conflicting ownership is reported without merging people. `--undo`
+releases feature-owned memberships; the next sync may recreate them. See
+[CardDAV identity binding](usage/people-carddav.md#connect-cards-to-archived-identities)
+for persistent corrections and manual confirmation.
 
 ## identity
 

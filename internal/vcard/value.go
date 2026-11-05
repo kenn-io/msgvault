@@ -264,7 +264,7 @@ func OrganizationComponents(name, department string) []string {
 	return components
 }
 
-// PropertyValue decodes text values and retains URI values.
+// PropertyValue decodes legacy text encodings and TEXT escapes while retaining URI values.
 func PropertyValue(version Version, property Property) (string, error) {
 	valueType := ""
 	for _, parameter := range property.ParametersNamed("VALUE") {
@@ -279,7 +279,11 @@ func PropertyValue(version Version, property Property) (string, error) {
 	if !isText {
 		return property.RawValue, nil
 	}
-	return UnescapeText(property.RawValue)
+	raw, err := decodeLegacyRawValue(property)
+	if err != nil {
+		return "", err
+	}
+	return UnescapeText(raw)
 }
 
 // ContactPointValue decodes contact values and retains complete telephone URIs.

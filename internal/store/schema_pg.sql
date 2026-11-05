@@ -411,6 +411,7 @@ CREATE TABLE IF NOT EXISTS person_carddav_inference_state (
 CREATE TABLE IF NOT EXISTS person_participants (
     person_id      BIGINT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
     participant_id BIGINT NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
+    carddav_owned BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (person_id, participant_id),
     UNIQUE(participant_id)
 );

@@ -132,6 +132,9 @@ func (s *Store) CreatePersonFromParticipantWithDisplayNameContext(
 		} else {
 			personID = personIDs[0]
 		}
+		if err := confirmCardDAVParticipantBindingsTx(ctx, tx, personID, members); err != nil {
+			return err
+		}
 		bindingsChanged, err := s.bindPersonParticipantsTx(ctx, tx, personID, members)
 		if err != nil {
 			return err
@@ -193,18 +196,39 @@ func observedPersonDisplayNameTx(ctx context.Context, tx *loggedTx, members []in
 	return nil, nil //nolint:nilnil // A cluster without an observed name has no default.
 }
 
-// bindPersonParticipantsTx binds every member to the person, ignoring
-// members already bound to it, and reports whether any binding was added.
-// Callers must have verified that no member is bound to a different person.
+// bindPersonParticipantsTx binds every member to the person and keeps
+// membership ownership uniform: an all-automatic component stays automatic,
+// while any manual member makes the combined component manual. It reports
+// whether any binding was added. Callers must have verified that no member is
+// bound to a different person.
 func (s *Store) bindPersonParticipantsTx(
 	ctx context.Context, tx *loggedTx, personID int64, members []int64,
 ) (bool, error) {
+	owned, err := cardDAVBindingOwnershipTx(ctx, tx, personID, members)
+	if err != nil {
+		return false, err
+	}
+	changed, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, members, owned)
+	if err != nil {
+		return false, err
+	}
+	if !owned {
+		if err := confirmCardDAVParticipantBindingsTx(ctx, tx, personID, members); err != nil {
+			return false, err
+		}
+	}
+	return changed, nil
+}
+
+// bindPersonParticipantsOwnedTx preserves existing ownership; only newly inserted
+// membership receives the supplied policy.
+func (s *Store) bindPersonParticipantsOwnedTx(ctx context.Context, tx *loggedTx, personID int64, members []int64, owned bool) (bool, error) {
 	insert := s.dialect.InsertOrIgnore(
-		`INSERT OR IGNORE INTO person_participants (person_id, participant_id) VALUES (?, ?)`,
+		`INSERT OR IGNORE INTO person_participants (person_id, participant_id, carddav_owned) VALUES (?, ?, ?)`,
 	)
 	bindingsChanged := false
 	for _, memberID := range members {
-		result, err := tx.ExecContext(ctx, insert, personID, memberID)
+		result, err := tx.ExecContext(ctx, insert, personID, memberID, owned)
 		if err != nil {
 			return false, fmt.Errorf("bind person %d to participant %d: %w", personID, memberID, err)
 		}
@@ -930,6 +954,10 @@ func (s *Store) PersonForParticipantsContext(
 func (s *Store) mergePersonBindingsTx(
 	ctx context.Context, tx *loggedTx, personID, absorbed int64, members []int64,
 ) (bool, error) {
+	owned, err := cardDAVBindingOwnershipTx(ctx, tx, personID, members)
+	if err != nil {
+		return false, err
+	}
 	result, err := tx.ExecContext(ctx,
 		`DELETE FROM person_participants WHERE participant_id = ?`, absorbed)
 	if err != nil {
@@ -945,7 +973,10 @@ func (s *Store) mergePersonBindingsTx(
 			survivors = append(survivors, memberID)
 		}
 	}
-	filled, err := s.bindPersonParticipantsTx(ctx, tx, personID, survivors)
+	filled, err := s.bindPersonParticipantsOwnedTx(ctx, tx, personID, survivors, owned)
+	if err == nil && !owned {
+		err = confirmCardDAVParticipantBindingsTx(ctx, tx, personID, survivors)
+	}
 	if err != nil {
 		return false, err
 	}
