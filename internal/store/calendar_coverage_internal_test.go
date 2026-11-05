@@ -8,6 +8,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCalendarCoverageSQLTrace(t *testing.T) {
+	require := require.New(t)
+	st := openTestStore(t)
+	ctx, release, err := st.BeginReadSnapshotContext(WithRequestID(t.Context(), "calendar-coverage"))
+	require.NoError(err)
+	defer release()
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+	buf := captureSlog(t)
+	_, err = calendarCoverageContext(ctx, st, false, time.Now())
+	require.NoError(err)
+	rec := findLogLine(t, buf)
+	assert.Equal(t, "calendar-coverage", rec["request_id"])
+	assert.Contains(t, rec["stmt"], "baseline.completed_at")
+}
+
 func TestCalendarCoverageFreshnessBoundary(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -26,7 +42,7 @@ func TestCalendarCoverageFreshnessBoundary(t *testing.T) {
 		elapsed time.Duration
 		want    string
 	}{{24 * time.Hour, "complete"}, {24*time.Hour + time.Nanosecond, "stale"}} {
-		coverage, err := calendarCoverageContext(ctx, st, ReadDBContext(ctx, st.db.DB), false, at.Add(tc.elapsed))
+		coverage, err := calendarCoverageContext(ctx, st, false, at.Add(tc.elapsed))
 		requirements.NoError(err)
 		requirements.Len(coverage.Sources, 1)
 		assertions.Equal(tc.want, coverage.Sources[0].Status)

@@ -25,7 +25,7 @@ func listCalendarEventsDefinition() toolDefinition {
 		"limit":  boundedIntegerWithDefault("Maximum occurrences", 1, 500, 100),
 		"cursor": stringSchema("next_cursor from the same window"),
 	}
-	d := readDefinition(ToolListCalendarEvents, untrustedCalendarContent+" List archived calendar occurrences. Results include archive coverage in the coverage block; check it before treating an empty window as free time. Requires calendar.event.read or message.read on their sources. Narrow the window if query_too_broad is returned.", closedObject(properties, "from", "to"), outputSchemaFor[store.CalendarOccurrencePage](), (*handlers).listCalendarEvents)
+	d := readDefinition(ToolListCalendarEvents, untrustedCalendarContent+" List archived calendar occurrences. Results include archive coverage in the coverage block; check it to tell whether an empty window reflects fresh or missing archive data. Requires calendar.event.read or message.read on their sources. Narrow the window if query_too_broad is returned.", closedObject(properties, "from", "to"), outputSchemaFor[store.CalendarOccurrencePage](), (*handlers).listCalendarEvents)
 	d.availability = func(c catalogCapabilities) bool { return c.calEvents }
 	return d
 }

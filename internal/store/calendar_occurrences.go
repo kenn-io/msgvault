@@ -124,7 +124,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 	if err != nil {
 		return page, err
 	}
-	page.Coverage, err = calendarCoverageContext(ctx, s, ReadDBContext(ctx, s.db.DB), len(page.Unexpandable) > 0, time.Now())
+	page.Coverage, err = calendarCoverageContext(ctx, s, len(page.Unexpandable) > 0, time.Now())
 	if err != nil {
 		return page, err
 	}
