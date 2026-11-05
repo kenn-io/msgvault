@@ -770,7 +770,7 @@ export const getCacheBuildStatus = (
   );
 };
 /**
- * @summary Inspect call and scheduled meeting observations
+ * @summary Inspect call observations
  */
 export const listCallObservations = (
   params?: ListCallObservationsParams,
@@ -1980,7 +1980,7 @@ export const unlinkIdentityParticipants = (
   );
 };
 /**
- * @summary Import one supplied call or scheduled meeting observation
+ * @summary Import one supplied call observation
  */
 export const importCallObservation = (
   callImportRequest: CallImportRequest,

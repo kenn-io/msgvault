@@ -32,13 +32,6 @@ func TestObservationValidation(t *testing.T) {
 		valid  bool
 	}{
 		{"answered", func(*Observation) {}, true},
-		{"scheduled owner joined", func(o *Observation) {
-			o.Kind, o.Outcome = "scheduled_meeting", "unknown"
-			o.Participants[0].Participation = "invited"
-		}, false},
-		{"scheduled participant joined", func(o *Observation) {
-			o.Kind, o.Outcome, o.OwnerParticipation = "scheduled_meeting", "unknown", "unknown"
-		}, false},
 		{"unknown status", func(o *Observation) { o.Outcome = "unknown" }, true},
 		{"invalid status", func(o *Observation) { o.Outcome = "perhaps" }, false},
 		{"missing time", func(o *Observation) { o.OccurredAt = time.Time{} }, false},
@@ -52,14 +45,6 @@ func TestObservationValidation(t *testing.T) {
 			require := require.New(t)
 			o := exampleObservation()
 			tc.change(&o)
-			if o.Kind == "scheduled_meeting" {
-				record, err := json.Marshal(o)
-				require.NoError(err)
-				wire, err := json.Marshal(ImportRequest{Format: "normalized", Account: o.Account, Record: record})
-				require.NoError(err)
-				_, err = DecodeImport(bytes.NewReader(wire))
-				require.ErrorIs(err, ErrInvalid)
-			}
 			if tc.valid {
 				require.NoError(o.Validate())
 			} else {
@@ -101,32 +86,17 @@ func identityEvidence(provider, account, nativeCallID string) Evidence {
 }
 
 func FuzzObservationDurationValidation(f *testing.F) {
-	f.Add(0.0, false, true)
-	f.Add(12.5, true, false)
-	f.Add(2.0, true, true)
-	f.Add(0.0, true, true)
-	f.Add(-1.0, false, true)
-	f.Add(math.Inf(1), false, true)
-	f.Add(math.NaN(), false, true)
-	f.Fuzz(func(t *testing.T, duration float64, scheduled, hasDuration bool) {
+	f.Add(0.0, true)
+	f.Add(12.5, false)
+	f.Add(-1.0, true)
+	f.Add(math.Inf(1), true)
+	f.Add(math.NaN(), true)
+	f.Fuzz(func(t *testing.T, duration float64, hasDuration bool) {
 		o := exampleObservation()
 		if hasDuration {
 			o.DurationSeconds = &duration
 		}
-		if scheduled {
-			o.Kind = "scheduled_meeting"
-			o.Outcome, o.OwnerParticipation = "unknown", "unknown"
-			o.Participants[0].Participation = "invited"
-		}
-		if scheduled && hasDuration && !math.IsNaN(duration) && !math.IsInf(duration, 0) {
-			record, err := json.Marshal(o)
-			require.NoError(t, err)
-			wire, err := json.Marshal(ImportRequest{Format: "normalized", Account: o.Account, Record: record})
-			require.NoError(t, err)
-			_, err = DecodeImport(bytes.NewReader(wire))
-			require.ErrorIs(t, err, ErrInvalid)
-		}
-		if hasDuration && (scheduled || duration < 0 || math.IsNaN(duration) || math.IsInf(duration, 0)) {
+		if hasDuration && (duration < 0 || math.IsNaN(duration) || math.IsInf(duration, 0)) {
 			require.ErrorIs(t, o.Validate(), ErrInvalid)
 			return
 		}
@@ -135,11 +105,10 @@ func FuzzObservationDurationValidation(f *testing.F) {
 }
 
 func FuzzNormalizedImportRoundtrip(f *testing.F) {
-	f.Add(uint64(0), false, true)
-	f.Add(uint64(0), false, false)
-	f.Add(math.Float64bits(math.MaxFloat64), false, true)
-	f.Add(uint64(0), true, false)
-	f.Fuzz(func(t *testing.T, bits uint64, scheduled, hasDuration bool) {
+	f.Add(uint64(0), true)
+	f.Add(uint64(0), false)
+	f.Add(math.Float64bits(math.MaxFloat64), true)
+	f.Fuzz(func(t *testing.T, bits uint64, hasDuration bool) {
 		// Materialize any finite nonnegative IEEE value, without rejecting
 		// generated inputs. Validation of negative/nonfinite inputs is separate.
 		bits &^= uint64(1) << 63
@@ -147,10 +116,7 @@ func FuzzNormalizedImportRoundtrip(f *testing.F) {
 			bits &^= uint64(1) << 52
 		}
 		o := exampleObservation()
-		if scheduled {
-			o.Kind, o.Outcome, o.OwnerParticipation = "scheduled_meeting", "unknown", "unknown"
-			o.Participants = []Participant{}
-		} else if hasDuration {
+		if hasDuration {
 			o.NativeCallID = "call-1"
 			duration := math.Float64frombits(bits)
 			o.DurationSeconds = &duration
@@ -163,7 +129,7 @@ func FuzzNormalizedImportRoundtrip(f *testing.F) {
 		require.NoError(t, err)
 		assert.Equal(t, o.RecordID, got.RecordID)
 		assert.Equal(t, o.NativeCallID, got.NativeCallID)
-		assert.Equal(t, scheduled || !hasDuration, got.CanonicalKey() == "")
+		assert.Equal(t, !hasDuration, got.CanonicalKey() == "")
 		assert.Equal(t, o.DurationSeconds, got.DurationSeconds)
 		assert.True(t, o.OccurredAt.Equal(got.OccurredAt))
 		assert.Equal(t, o.Participants, got.Participants)

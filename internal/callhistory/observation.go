@@ -28,26 +28,20 @@ var ErrInvalid = errors.New("invalid call observation")
 // Evidence contains scalar source claims. Archive participant IDs live only
 // in recipient rows, so identity merges cannot leave stale metadata bindings.
 type Evidence struct {
-	Version            int           `json:"version"`
-	Provider           string        `json:"provider"`
-	Account            string        `json:"account"`
-	NativeCallID       string        `json:"native_call_id,omitempty"`
-	Kind               string        `json:"kind"`
-	Direction          string        `json:"direction"`
-	Outcome            string        `json:"outcome"`
-	OwnerParticipation string        `json:"owner_participation"`
-	OccurredAt         time.Time     `json:"occurred_at"`
-	EndedAt            *time.Time    `json:"ended_at,omitempty"`
-	DurationSeconds    *float64      `json:"duration_seconds"`
-	Timezone           string        `json:"timezone,omitempty"`
-	Precision          string        `json:"precision"`
-	Withdrawn          bool          `json:"withdrawn,omitempty"`
-	AccessPoints       []AccessPoint `json:"access_points,omitempty"`
-}
-
-type AccessPoint struct {
-	Kind  string `json:"kind"`
-	Value string `json:"value"`
+	Version            int        `json:"version"`
+	Provider           string     `json:"provider"`
+	Account            string     `json:"account"`
+	NativeCallID       string     `json:"native_call_id,omitempty"`
+	Kind               string     `json:"kind"`
+	Direction          string     `json:"direction"`
+	Outcome            string     `json:"outcome"`
+	OwnerParticipation string     `json:"owner_participation"`
+	OccurredAt         time.Time  `json:"occurred_at"`
+	EndedAt            *time.Time `json:"ended_at,omitempty"`
+	DurationSeconds    *float64   `json:"duration_seconds"`
+	Timezone           string     `json:"timezone,omitempty"`
+	Precision          string     `json:"precision"`
+	Withdrawn          bool       `json:"withdrawn,omitempty"`
 }
 
 type Participant struct {
@@ -61,7 +55,6 @@ type Observation struct {
 	RecordID     string         `json:"record_id"`
 	Participants []Participant  `json:"participants"`
 	Raw          jsontext.Value `json:"raw"`
-	Sparse       bool           `json:"-"` // Only an ID-only Calendar cancellation is a delta.
 }
 
 // SourceIdentifier keeps provider/account namespaces separate without
@@ -94,26 +87,18 @@ func validID(s string) bool {
 }
 
 func (e Evidence) Validate() error {
-	return e.validate(false)
-}
-
-func (e Evidence) validate(sparse bool) error {
-	sparseCancellation := sparse && e.Provider == "google_calendar" && e.Kind == "scheduled_meeting" && e.Outcome == "cancelled" && e.OccurredAt.IsZero()
-	if sparse && !sparseCancellation {
-		return invalid("sparse calendar cancellation")
-	}
 	if e.Version != 1 || !validID(e.Provider) || !validID(e.Account) ||
 		(e.NativeCallID != "" && !validID(e.NativeCallID)) {
 		return invalid("version or provenance")
 	}
-	if !slices.Contains([]string{"call", "scheduled_meeting"}, e.Kind) ||
+	if e.Kind != "call" ||
 		!slices.Contains([]string{"incoming", "outgoing", unknown}, e.Direction) ||
 		!slices.Contains([]string{"answered", "missed", "declined", "cancelled", unknown}, e.Outcome) ||
 		!slices.Contains([]string{"joined", "not_joined", unknown}, e.OwnerParticipation) ||
-		(!slices.Contains([]string{"instant", "day"}, e.Precision) && (!sparseCancellation || e.Precision != "")) {
+		!slices.Contains([]string{"instant", "day"}, e.Precision) {
 		return invalid("evidence classification")
 	}
-	if (e.OccurredAt.IsZero() && !sparseCancellation) || e.OccurredAt.Year() < 1 || e.OccurredAt.Year() > 9999 ||
+	if e.OccurredAt.IsZero() || e.OccurredAt.Year() < 1 || e.OccurredAt.Year() > 9999 ||
 		(e.EndedAt != nil && (e.EndedAt.Before(e.OccurredAt) || e.EndedAt.Year() > 9999)) {
 		return invalid("timestamps")
 	}
@@ -129,24 +114,11 @@ func (e Evidence) validate(sparse bool) error {
 			return invalid("timezone")
 		}
 	}
-	if e.Kind == "scheduled_meeting" && (e.OwnerParticipation == "joined" ||
-		(e.Outcome != unknown && e.Outcome != "cancelled") || e.DurationSeconds != nil || e.NativeCallID != "") {
-		return invalid("scheduled evidence cannot assert an actual call")
-	}
-	if len(e.AccessPoints) > 32 {
-		return invalid("access_points")
-	}
-	for _, p := range e.AccessPoints {
-		if !slices.Contains([]string{"phone", "url"}, p.Kind) ||
-			strings.TrimSpace(p.Value) == "" || len(p.Value) > 2048 || !utf8.ValidString(p.Value) {
-			return invalid("access_points")
-		}
-	}
 	return nil
 }
 
 func (o Observation) Validate() error {
-	if err := o.validate(o.Sparse); err != nil {
+	if err := o.Evidence.Validate(); err != nil {
 		return err
 	}
 	if !validID(o.RecordID) || len(o.Participants) > 100 ||
@@ -160,9 +132,6 @@ func (o Observation) Validate() error {
 		}
 		if old, ok := seen[p.ID]; ok && old != p.Participation {
 			return invalid("conflicting participant roles")
-		}
-		if o.Kind == "scheduled_meeting" && p.Participation == "joined" {
-			return invalid("scheduled attendance")
 		}
 		seen[p.ID] = p.Participation
 	}

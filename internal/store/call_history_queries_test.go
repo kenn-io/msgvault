@@ -152,14 +152,14 @@ func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
 	requirements.NoError(err)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	serial := 0
-	put := func(native, account, outcome, owner, role, kind string) int64 {
+	put := func(native, account, outcome, owner, role string) int64 {
 		t.Helper()
 		serial++
 		o := callhistory.Observation{
 			RecordID: strconv.Itoa(serial),
 
 			Version: 1, Provider: "signal", Account: account, NativeCallID: native,
-			Kind: kind, Direction: "incoming", Outcome: outcome, OwnerParticipation: owner,
+			Kind: "call", Direction: "incoming", Outcome: outcome, OwnerParticipation: owner,
 			OccurredAt: at, Precision: "instant",
 
 			Participants: []callhistory.Participant{{ID: peer, Participation: role}},
@@ -171,16 +171,14 @@ func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
 		requirements.NoError(err)
 		return id
 	}
-	first := put("one", "a", "answered", "joined", "joined", "call")
-	put("one", "a", "answered", "joined", "joined", "call")
-	put("one", "b", "answered", "joined", "joined", "call")
-	put("partial", "a", "answered", "unknown", "joined", "call")
-	put("partial", "a", "unknown", "joined", "unknown", "call")
-	put("conflict", "a", "answered", "joined", "joined", "call")
-	put("conflict", "a", "missed", "not_joined", "unknown", "call")
-	put("", "a", "unknown", "unknown", "invited", "scheduled_meeting")
-	put("", "a", "cancelled", "unknown", "invited", "scheduled_meeting")
-	put("missed", "a", "missed", "not_joined", "unknown", "call")
+	first := put("one", "a", "answered", "joined", "joined")
+	put("one", "a", "answered", "joined", "joined")
+	put("one", "b", "answered", "joined", "joined")
+	put("partial", "a", "answered", "unknown", "joined")
+	put("partial", "a", "unknown", "joined", "unknown")
+	put("conflict", "a", "answered", "joined", "joined")
+	put("conflict", "a", "missed", "not_joined", "unknown")
+	put("missed", "a", "missed", "not_joined", "unknown")
 	got, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{})
 	requirements.NoError(err)
 	requirements.Len(got, 1)
@@ -188,8 +186,6 @@ func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
 	assertions.Equal(2, got[0].Answered)
 	assertions.Equal(1, got[0].Unknown)
 	assertions.Equal(1, got[0].Conflicting)
-	assertions.Equal(2, got[0].Scheduled)
-	assertions.Equal(1, got[0].ScheduledCancelled)
 	assertions.Equal(1, got[0].Missed)
 	assertions.Equal(first, got[0].ExampleMessageID)
 

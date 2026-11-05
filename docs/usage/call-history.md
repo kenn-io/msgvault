@@ -2,7 +2,7 @@
 
 Import call observations and inspect how often you called each person. The
 daemon keeps original evidence, explicit participant bindings and uncertain
-fields. An invitation or conference link never counts as an answered call.
+fields. Synced Google Calendar events stay in the calendar archive; invitations never count as calls.
 These commands require daemon API schema 3.45.0 or newer.
 
 ## Import a supplied record
@@ -44,12 +44,10 @@ Supported formats:
 | Format | Record and binding contract |
 | --- | --- |
 | `signal_desktop` | One supplied `callsHistory` JSON row. Account identifies the Signal account. Bindings may name its exact direct peer ID. Group/Adhoc rows do not supply a joined roster, so participant bindings are rejected. |
-| `google_calendar` | One expanded event JSON object. Account must be the stable **calendar ID**, keeping event IDs from different calendars separate. Bind attendee email addresses to archive participants; matching ignores case, and every binding stays invited even when the RSVP says accepted. Recurring masters are rejected. Events require a start, except ID-only cancellations of existing events. |
 | `normalized` | A version-1 observation with provider/account, record ID, kind, direction, outcome, owner participation, occurrence time, precision, participants and original `raw` JSON. Its account must equal the request account; outer bindings must be absent. See the [HTTP contract](../api-server.md#call-history). |
 
 The request limit is 1 MiB; its record and original raw payload are each limited
-to 512 KiB. An observation allows 100 participants and 32 phone/link entry
-points. No importer opens protected databases, retrieves encryption keys,
+to 512 KiB. An observation allows 100 participants. No importer opens protected databases, retrieves encryption keys,
 changes connected account bindings, or requests additional platform permissions.
 
 ## Read the evidence and counts
@@ -74,8 +72,6 @@ Multiple identities currently bound to one person count once per call.
 | `missed`, `declined`, `cancelled` | Explicit actual-call outcomes, separate from answered calls. |
 | `unknown` | Associated call evidence lacks sufficient outcome or attendance information. |
 | `conflicting` | Exact-identity observations disagree about an answer versus nonattendance, or report incompatible negative outcomes. |
-| `scheduled` | Scheduled meeting observations, including cancelled invitations. |
-| `scheduled_cancelled` | The cancelled subset of `scheduled`; it does not increase actual-call counts. |
 | `example_message_id` | One associated observation to inspect, not proof that every counted event was answered. |
 
 Deduplication requires the exact provider/account/native-call ID. Without that
@@ -88,11 +84,7 @@ Native withdrawal prevents a stale active reimport of that observation.
 Other observations of the call remain usable. Explicit archive deletion or
 garbage collection removes the tombstone too; importing an old export afterward
 can recreate it. A complete record replaces the time, participants, raw JSON,
-and withdrawal state together. This includes normalized cancellations and
-Calendar cancellations with a start. An ID-only Calendar cancellation keeps
-the stored event's time, invitees, and raw JSON and changes its outcome to
-`cancelled`. It requires an existing event in the same calendar. Cancellation
-alone allows later updates; an explicit withdrawal blocks stale active imports.
+and withdrawal state together. Cancellation alone allows later updates; an explicit withdrawal blocks stale active imports.
 
 ## Coverage and limitations
 
@@ -105,14 +97,7 @@ alone allows later updates; an explicit withdrawal blocks stale active imports.
   group `Accepted` does not imply `Joined`. Unknown enums stay unknown; end
   minus start never becomes talk duration. Epoch timestamps do not identify
   the original time zone.
-- **Calendar:** [conference entry points](https://developers.google.com/workspace/calendar/api/v3/reference/events)
-  and complete `tel:` dial sequences remain scheduled evidence. HTTP and HTTPS
-  links on Meet, Teams, Cal.com, Zoom.us, and supported government hosts are
-  retained; custom hosts are not recognized.
-  Date-only events use midnight UTC with day precision, not an invented call
-  time. Date-time values accept an RFC3339 offset or an offset-free time with
-  an IANA `timeZone`, such as `America/New_York`. Calendar phone numbers
-  are entry points, not person identity or attendance.
+- **Calendar:** synced events stay in the [calendar archive](calendar.md). Invitations never count as calls.
 - **Slack:** [huddle history objects](https://docs.slack.dev/reference/objects/conversation-object/)
   can contain room timestamps and participant history. The
   [third-party Calls API](https://docs.slack.dev/apis/web-api/using-the-calls-api)

@@ -30,7 +30,7 @@ type callCommandDeps struct {
 func newCallsCommand(deps callCommandDeps) *cobra.Command {
 	root := &cobra.Command{
 		Use: "calls", Short: "Import and inspect call history",
-		Long: "Read call evidence through the daemon. Scheduled invitations never count as answered calls. All output is JSON.",
+		Long: "Read call evidence through the daemon. Invitations never count as calls. All output is JSON.",
 	}
 	open := func(ctx context.Context) (callCommandClient, func(), error) {
 		client, cleanup, err := deps.open(ctx)
