@@ -37,7 +37,7 @@ func newLoopFixture(t *testing.T) *loopFixture {
 
 func (l *loopFixture) do(t *testing.T, method, path, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req := httptest.NewRequestWithContext(t.Context(), method, path, strings.NewReader(body))
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -86,7 +86,7 @@ func TestListLoopsReportsIncompleteCoverage(t *testing.T) {
 	storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, time.Now().UTC())
 	server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
 	w := httptest.NewRecorder()
-	server.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil))
+	server.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
 	require.Equal(http.StatusOK, w.Code, w.Body.String())
 	var response LoopListResponse
 	require.NoError(json.Unmarshal(w.Body.Bytes(), &response))
@@ -106,11 +106,11 @@ func TestListLoopsAnswersDuringBackupFreezeWithoutWritingEvidence(t *testing.T) 
 	})
 	evidence := func() int {
 		var count int
-		require.NoError(l.f.Store.DB().QueryRow(`SELECT COUNT(*) FROM loop_message_evidence`).Scan(&count))
+		require.NoError(l.f.Store.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM loop_message_evidence`).Scan(&count))
 		return count
 	}
 	list := func(method string) *httptest.ResponseRecorder {
-		request := httptest.NewRequest(method, "/api/v1/loops", nil)
+		request := httptest.NewRequestWithContext(t.Context(), method, "/api/v1/loops", nil)
 		request.RemoteAddr = "127.0.0.1:54321"
 		response := httptest.NewRecorder()
 		srv.Router().ServeHTTP(response, request)
@@ -194,7 +194,7 @@ func TestLoopRoutesUnavailableWithoutStoreCapability(t *testing.T) {
 	assert := assert.New(t)
 	srv := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: &mockStore{}, Scheduler: newMockScheduler(), Logger: testLogger()})
 	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/loops", nil))
+	srv.Router().ServeHTTP(w, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/loops", nil))
 	assert.Equal(http.StatusServiceUnavailable, w.Code)
 }
 
@@ -207,8 +207,8 @@ func TestLoopActionsRetryAfterIncompleteEvidence(t *testing.T) {
 			now := time.Now().UTC()
 			storetest.PersistLoopOriginalReadFixture(f, loops.MaxListEvidenceComputations+1, now)
 			var anchor, conversationID int64
-			require.NoError(f.Store.DB().QueryRow(`SELECT id, conversation_id FROM messages WHERE subject = 'Can you send the contract?'`).Scan(&anchor, &conversationID))
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE messages SET conversation_id = ?`), conversationID)
+			require.NoError(f.Store.DB().QueryRowContext(t.Context(), `SELECT id, conversation_id FROM messages WHERE subject = 'Can you send the contract?'`).Scan(&anchor, &conversationID))
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET conversation_id = ?`), conversationID)
 			require.NoError(err)
 			server := NewServerWithOptions(ServerOptions{Config: config.NewDefaultConfig(), Store: f.Store, Scheduler: newMockScheduler(), Logger: testLogger()})
 			fixture := &loopFixture{f: f, router: server.Router()}
