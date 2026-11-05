@@ -964,7 +964,8 @@ func (m *Manager) cancelManifestLocked(id string) error {
 			return fmt.Errorf("update inline status for %s: %w", id, err)
 		}
 		if err := os.Remove(journalPath(fromPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("clean up saved progress: %w", err)
+			log.Printf("WARNING: cancelled manifest %s but could not remove checkpoint journal: %v",
+				id, err)
 		}
 		return nil
 	}

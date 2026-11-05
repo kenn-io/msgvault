@@ -236,6 +236,40 @@ func TestExecutor_CancelFoldsJournal(t *testing.T) {
 	}
 }
 
+func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("requires Unix file permissions enforced for the current user")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	mgr := testManager(t)
+	m := setupInProgress(t, mgr, "cancel cleanup failure")
+	m.Execution.LastProcessedIndex = 2
+	m.Execution.Succeeded = 1
+	m.Execution.Failed = 1
+	m.Execution.FailedIDs = []string{"msg1"}
+	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
+	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
+	t.Cleanup(func() { require.NoError(os.Chmod(mgr.baseDir, 0o700)) })
+	// Status directories stay writable, so only journal removal fails.
+	require.NoError(os.Chmod(mgr.baseDir, 0o500))
+	assert.NoError(mgr.CancelManifest(m.ID))
+	_, err := os.Stat(journalPath(path))
+	require.NoError(err, "cleanup failure leaves the journal in place")
+
+	// Read without the journal to prove the cancelled manifest saved progress.
+	require.NoError(os.Chmod(mgr.baseDir, 0o700))
+	require.NoError(os.Remove(journalPath(path)))
+	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
+	require.NoError(err)
+	assert.Equal(StatusCancelled, loaded.Status)
+	require.NotNil(loaded.Execution)
+	assert.Equal(2, loaded.Execution.LastProcessedIndex)
+	assert.Equal(1, loaded.Execution.Succeeded)
+	assert.Equal(1, loaded.Execution.Failed)
+	assert.Equal([]string{"msg1"}, loaded.Execution.FailedIDs)
+}
+
 func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
