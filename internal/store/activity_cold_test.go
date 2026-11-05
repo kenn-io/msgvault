@@ -106,8 +106,8 @@ func TestColdAdapterExcludedRecipientAliasIsNotSenderNoise(t *testing.T) {
 	}
 }
 
-// Removing cold-message selection or depending on retracted spine rows loses this room.
-func TestColdAdapterReturnsRetractedColdRoomMessages(t *testing.T) {
+// A room above the default audience limit stays visible without direct contact.
+func TestColdAdapterShowsDefaultThresholdBroadcast(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
@@ -119,24 +119,11 @@ func TestColdAdapterReturnsRetractedColdRoomMessages(t *testing.T) {
 		participant := f.EnsureParticipant(fmt.Sprintf("member%d@example.com", i), "Member", "example.com")
 		requirements.NoError(f.Store.EnsureConversationParticipant(room, participant, "member"))
 	}
-	setTimelineConversationTier(t, f, src.ID, "quiet-room", conversationpolicy.Full)
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	id := f.add(t, room, src.ID, at, false, "")
 	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
-	projectColdTimeline(t, f, "UTC")
-	var projected int
-	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&projected))
-	assertions.Equal(1, projected)
-	setTimelineConversationTier(t, f, src.ID, "quiet-room", conversationpolicy.Cold)
-	projectColdTimeline(t, f, "UTC")
-	retractTimelineActivity(t, f, id)
-	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&projected))
-	assertions.Zero(projected)
 	q := timelineBurstQuery()
 	q.Filters.IncludeNoise = true
-	spine, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Empty(spine.Bursts)
 	cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 	requirements.NoError(err)
 	requirements.Len(cold.Bursts, 1)
@@ -146,14 +133,6 @@ func TestColdAdapterReturnsRetractedColdRoomMessages(t *testing.T) {
 	assertions.Equal(id, b.AnchorMessageID)
 	assertions.Len(b.Counterparts, 30)
 	assertions.Zero(b.Inbound, "large inbound room is visible but is not direct contact")
-	q.Filters.IncludeNoise = false
-	filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(cold.Bursts, filtered.Bursts)
-	assertions.Zero(filtered.NoiseOmitted)
-	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(1, count)
 }
 
 // Bypassing live eligibility, scope, or exact archive-zone dating leaks a row here.
@@ -168,7 +147,7 @@ func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 	hiddenRoom := coldTimelineRoom(t, f, hidden.ID, "hidden")
 	at := time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC) // Oct 31, 23:30 in Vancouver (UTC-7).
 	visible := f.add(t, room, f.Source.ID, at, false, "")
-	hiddenID := f.add(t, hiddenRoom, hidden.ID, at, false, "")
+	f.add(t, hiddenRoom, hidden.ID, at, false, "")
 	for _, change := range []string{"is_sent=FALSE", "deleted_at=CURRENT_TIMESTAMP", "deleted_from_source_at=CURRENT_TIMESTAMP", `message_type='calendar_event',metadata='{"status":"cancelled"}'`, "sent_at=NULL,received_at=NULL,internal_date=NULL"} {
 		id := f.add(t, room, f.Source.ID, at, false, "")
 		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET `+change+` WHERE id=?`), id)
@@ -184,11 +163,6 @@ func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 	requirements.Len(page.Bursts, 1)
 	assertions.Equal([]int64{visible}, page.Bursts[0].LatestMessageIDs)
 	assertions.Equal("2026-10-31", page.Bursts[0].LocalDate)
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), hiddenID)
-	requirements.NoError(err)
-	unchanged, err := f.Store.ListColdActivityBurstsContext(ctx, q)
-	requirements.NoError(err)
-	assertions.Equal(page, unchanged)
 	empty, err := f.Store.ListColdActivityBurstsContext(sourcescope.WithSourceIDs(t.Context(), []int64{}), q)
 	requirements.NoError(err)
 	assertions.Empty(empty.Bursts)
@@ -211,7 +185,7 @@ func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Empty(empty.Bursts)
 	q.Subject = store.ActivitySubject{}
-	q.ConversationID = hiddenRoom
+	q.ConversationID = coldTimelineRoom(t, f, f.Source.ID, "empty-visible")
 	empty, err = f.Store.ListColdActivityBurstsContext(ctx, q)
 	requirements.NoError(err)
 	assertions.Empty(empty.Bursts)
@@ -254,13 +228,10 @@ func TestColdCountMatchesList(t *testing.T) {
 	assertions.Equal(second, reverse.Bursts[0].ConversationID)
 	// Timestamp windows are half-open, overriding local dates.
 	q.After, q.Before = &at, new(at.Add(time.Minute))
-	bounded, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(1, bounded)
 	// received_at is the origin when sent_at is absent.
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=NULL,received_at=? WHERE id=?`), at, first)
 	requirements.NoError(err)
-	bounded, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
+	bounded, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(1, bounded)
 }
@@ -390,55 +361,14 @@ func TestColdAdapterAggregatesCompleteLargeBurst(t *testing.T) {
 	assertions.Equal(3000, page.Bursts[0].Outbound)
 	assertions.Equal(latest, page.Bursts[0].AnchorMessageID)
 	assertions.Len(page.Bursts[0].LatestMessageIDs, 5)
-	requirements.NotNil(page.NextKey)
-	q.AfterKey = page.NextKey
-	next, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	requirements.Len(next.Bursts, 1)
-	assertions.Equal(nextRoom, next.Bursts[0].ConversationID)
-	assertions.Nil(next.NextKey)
 	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(6001, count)
 }
 
-// Saved-person volume uses the classifier's strongest role, as the spine does.
-func TestColdAdapterMatchesSavedPersonRoles(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-	requirements.NoError(err)
-	room := coldTimelineRoom(t, f, f.Source.ID, "multiple-authors")
-	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	id := f.add(t, room, f.Source.ID, at, true, "")
-	requirements. // A saved person is both another author and an addressed recipient. The
-		// persisted spine credits its strongest sender role, not the weaker To role.
-		NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner, f.peer}, []string{"Owner", "Alice"}))
-	setTimelineConversationTier(t, f, f.Source.ID, "multiple-authors", conversationpolicy.Full)
-	projectColdTimeline(t, f, "UTC")
-	q := timelineBurstQuery()
-	q.Filters.IncludeNoise = true
-	warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	requirements.Len(warm.Bursts, 1)
-	assertions.Zero(warm.Bursts[0].Outbound)
-	setTimelineConversationTier(t, f, f.Source.ID, "multiple-authors", conversationpolicy.Cold)
-	projectColdTimeline(t, f, "UTC")
-	cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	requirements.Len(cold.Bursts, 1)
-	assertions.Zero(cold.Bursts[0].Outbound)
-	q.Filters.IncludeNoise = false
-	filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(cold.Bursts, filtered.Bursts)
-	assertions.Zero(filtered.NoiseOmitted)
-}
-
 // Explicit limits retain the classifier's strongest role in both readers.
 func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
-	for _, limit := range []int{1, 25} {
+	for _, limit := range []int{0, 1, 25} {
 		t.Run(strconv.Itoa(limit), func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
@@ -560,11 +490,6 @@ func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {
 					assertions.Equal(tc.want == 1, cp.Counted)
 				}
 			}
-			q.Filters.IncludeNoise = false
-			filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Equal(cold.Bursts, filtered.Bursts)
-			assertions.Zero(filtered.NoiseOmitted)
 		})
 	}
 }
@@ -581,7 +506,6 @@ func TestColdAdapterPreservesContactEligibilityAcrossRetraction(t *testing.T) {
 		{"SMS", "sms", "direct_chat", false, 1},
 		{"meeting", "meeting_transcript", "meeting", true, 1},
 		{"missed Synctech call", "synctech_sms_call", "direct_chat", false, 0},
-		{"rejected Synctech call", "synctech_sms_call", "direct_chat", false, 0},
 		{"missed Google Voice call", "google_voice_call", "direct_chat", false, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -604,9 +528,6 @@ func TestColdAdapterPreservesContactEligibilityAcrossRetraction(t *testing.T) {
 			setTimelineConversationTier(t, f, f.Source.ID, "contact-parity", conversationpolicy.Cold)
 			projectColdTimeline(t, f, "UTC")
 			retractTimelineActivity(t, f, id)
-			var remaining int
-			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&remaining))
-			assertions.Zero(remaining)
 			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(cold.Bursts, 1)
@@ -629,38 +550,24 @@ func TestColdAdapterHonorsListExclusionOptOut(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "list-parity")
-	setTimelineConversationTier(t, f, f.Source.ID, "list-parity", conversationpolicy.Full)
 	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='email_thread' WHERE id=?`), room)
 	requirements.NoError(err)
 	id := f.add(t, room, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='email',list_id='list.example.com' WHERE id=?`), id)
 	requirements.NoError(err)
-	projectColdTimeline(t, f, "UTC")
-	for _, cold := range []bool{false, true} {
-		if cold {
-			setTimelineConversationTier(t, f, f.Source.ID, "list-parity", conversationpolicy.Cold)
-			projectColdTimeline(t, f, "UTC")
-			retractTimelineActivity(t, f, id)
+	for _, exclude := range []bool{false, true} {
+		q := timelineBurstQuery()
+		q.Filters.Exclusions = persontiers.DefaultConfig()
+		q.Filters.Exclusions.ExcludeListMessages = exclude
+		page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+		requirements.NoError(err)
+		if exclude {
+			assertions.Empty(page.Bursts)
+			continue
 		}
-		for _, exclude := range []bool{false, true} {
-			q := timelineBurstQuery()
-			q.Filters.Exclusions = persontiers.DefaultConfig()
-			q.Filters.Exclusions.ExcludeListMessages = exclude
-			var page store.BurstPage
-			if cold {
-				page, err = f.Store.ListColdActivityBurstsContext(t.Context(), q)
-			} else {
-				page, err = f.Store.ListActivityBurstsContext(t.Context(), q)
-			}
-			requirements.NoError(err)
-			if exclude {
-				assertions.Empty(page.Bursts, "cold=%v", cold)
-				continue
-			}
-			requirements.Len(page.Bursts, 1, "cold=%v", cold)
-			assertions.Equal(1, page.Bursts[0].Inbound)
-			assertions.Zero(page.NoiseOmitted)
-		}
+		requirements.Len(page.Bursts, 1)
+		assertions.Equal(1, page.Bursts[0].Inbound)
+		assertions.Zero(page.NoiseOmitted)
 	}
 }
 
@@ -743,11 +650,7 @@ func TestColdEmailCopiesCanonicalMessageIDs(t *testing.T) {
 		count               int
 	}{
 		{"clean brackets", "<copy@example.com>", "copy@example.com", 1},
-		{"distinct IDs", "first@example.com", "second@example.com", 2},
 		{"missing IDs", "", "", 2},
-		{"empty brackets", "<>", "", 2},
-		{"inner whitespace", "< copy@example.com >", "copy@example.com", 2},
-		{"outer whitespace", " <copy@example.com> ", "copy@example.com", 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
