@@ -5,8 +5,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
+
+func TestCalendarAccountTotalsMatchListing(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	env := newTestEnv(t)
+	env.AddMessage(dbtest.MessageOpts{SourceID: 1, ConversationID: 1, MessageType: "calendar_event", Subject: "Invite"})
+	sourceID := int64(1)
+	filter := MessageFilter{AccountScopes: []search.AccountScope{{SourceID: &sourceID, Unattributed: true}}}
+	rows, err := env.Engine.ListMessages(env.Ctx, filter)
+	requirements.NoError(err)
+	stats, err := env.Engine.GetTotalStats(env.Ctx, StatsOptions{Filter: &filter})
+	requirements.NoError(err)
+	assertions.Equal(int64(len(rows)), stats.MessageCount)
+}
 
 func TestCalendarSearchTotalsIncludeEmailDerivedEvents(t *testing.T) {
 	env := newTestEnv(t)

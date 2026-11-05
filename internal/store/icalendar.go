@@ -17,8 +17,8 @@ const rawFormatICS = "ics"
 
 // ICalendarImportSummary counts revision decisions, not generated occurrences.
 type ICalendarImportSummary struct {
-	Changed, Unchanged, Unexpandable int
-	Diagnostics                      []string
+	Changed, Unchanged int
+	Diagnostics        []string
 }
 
 // icsInterpretationError distinguishes unreadable calendars from archive failures.
@@ -120,6 +120,7 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			if apply, err = icsTombstoneLacksBounds(ctx, tx, id); err != nil {
 				return err
 			}
+			old.InviteOrganizer = item.meta.InviteOrganizer
 			item.meta = old
 			item.meta.AllDay = e.AllDay
 		}
@@ -134,16 +135,16 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 			if err := s.persistICSDetailsWith(ctx, tx, sourceID, item); err != nil {
 				return err
 			}
+			if exists {
+				if err := s.bumpDerivedDataRevisionContext(ctx, tx); err != nil {
+					return err
+				}
+			}
 		}
 		if apply {
 			summary.Changed++
 		} else {
 			summary.Unchanged++
-		}
-		if e.Kind == "series" {
-			if _, _, _, err := prepareCalendarRecurrence(e); err != nil {
-				summary.Unexpandable++
-			}
 		}
 	}
 	return nil
