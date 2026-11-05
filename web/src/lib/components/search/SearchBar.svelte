@@ -83,6 +83,7 @@
     <!-- People filters as you type, so it has no Search button. -->
   {:else if compact}
     <SelectDropdown
+      class="search-mode"
       title="Search mode"
       value={draftMode}
       options={modeOptions}
@@ -112,5 +113,10 @@
 
   .global-search--compact {
     gap: var(--space-2);
+  }
+
+  .global-search :global(.search-mode) {
+    min-width: 0;
+    flex: none;
   }
 </style>

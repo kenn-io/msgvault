@@ -1526,6 +1526,7 @@
       <AppSidebar
         active={exploreState.current.workspace}
         collapsed={false}
+        onCloseNavigation={() => void closeDrawer()}
         showCollapseToggle={false}
         jobs={shellData.jobs}
         duplicateCount={shellData.duplicateCount}
