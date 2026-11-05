@@ -15,9 +15,9 @@ import (
 	"go.kenn.io/msgvault/internal/verification"
 )
 
-// MessageBodyLoader supplies complete context below the byte limit and flags oversized bodies.
+// MessageBodyLoader supplies complete message context in the caller's snapshot.
 type MessageBodyLoader interface {
-	PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage, maxFieldBytes int) (map[int64]bool, error)
+	PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error
 }
 
 // verificationWithheld classifies complete messages in the authorized snapshot.
@@ -31,19 +31,13 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 	for i, id := range ids {
 		messages[i].ID = id
 	}
-	if !ok {
+	if !ok || loader.PopulateMessageBodiesContext(r.Context(), messages) != nil {
 		writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
 		return nil, false
 	}
-	withheld, err := loader.PopulateMessageBodiesContext(r.Context(), messages, verification.MaxFieldBytes)
-	if err != nil {
-		writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
-		return nil, false
-	}
+	withheld := make(map[int64]bool, len(ids))
 	for _, msg := range messages {
-		if !withheld[msg.ID] {
-			withheld[msg.ID] = verification.Is(messageVerificationContent(&msg))
-		}
+		withheld[msg.ID] = verification.Is(messageVerificationContent(&msg))
 	}
 	return withheld, true
 }
@@ -67,7 +61,7 @@ func withholdRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows
 		ids[i] = id(&rows[i])
 	}
 	withheld, ok := s.verificationWithheld(w, r, ids)
-	if ok && mask != nil {
+	if ok {
 		for i := range rows {
 			if withheld[id(&rows[i])] {
 				mask(&rows[i])
@@ -77,47 +71,31 @@ func withholdRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows
 	return withheld, ok
 }
 
-func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, rows []MessageSummary) bool {
-	_, ok := withholdRows(s, w, r, rows, func(row *MessageSummary) int64 { return row.ID }, func(row *MessageSummary) {
+func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, rows []MessageSummary, contexts []BodySearchContext) bool {
+	withheld, ok := withholdRows(s, w, r, rows, func(row *MessageSummary) int64 { return row.ID }, func(row *MessageSummary) {
 		row.Subject, row.Snippet = verification.Masked, verification.Masked
 	})
+	for i := range contexts {
+		if withheld[contexts[i].MessageID] {
+			for j := range contexts[i].ContextSnippets {
+				contexts[i].ContextSnippets[j] = verification.Masked
+			}
+		}
+	}
 	return ok
 }
 
-// verificationSearchPage applies pagination after withholding, in the authorized snapshot.
-// ok is false when classification has already written an HTTP error.
-func verificationSearchPage[T any](s *Server, w http.ResponseWriter, r *http.Request, limit, offset int, fetch func(int, int) ([]T, error), id func(*T) int64) (rows []T, hasMore, ok bool, err error) {
-	rows = make([]T, 0)
-	for rawOffset := 0; ; {
-		if err := r.Context().Err(); err != nil {
-			return nil, false, true, err
+func (s *Server) maskQuerySummaries(w http.ResponseWriter, r *http.Request, rows []query.MessageSummary) bool {
+	_, ok := withholdRows(s, w, r, rows, func(row *query.MessageSummary) int64 { return row.ID }, func(row *query.MessageSummary) {
+		row.Subject, row.Snippet, row.MatchSnippet, row.ConversationTitle = verification.Masked, verification.Masked, verification.Masked, verification.Masked
+		if row.BodyText != "" {
+			row.BodyText = verification.Masked
 		}
-		batch, err := fetch(100, rawOffset)
-		if err != nil {
-			return nil, false, true, err
+		for j := range row.AttachmentNames {
+			row.AttachmentNames[j] = verification.Masked
 		}
-		withheld, ok := withholdRows(s, w, r, batch, id, nil)
-		if !ok {
-			return nil, false, false, nil
-		}
-		for i := range batch {
-			if withheld[id(&batch[i])] {
-				continue
-			}
-			if offset > 0 {
-				offset--
-				continue
-			}
-			rows = append(rows, batch[i])
-			if len(rows) > limit {
-				return rows[:limit], true, true, nil
-			}
-		}
-		if len(batch) < 100 {
-			return rows, false, true, nil
-		}
-		rawOffset += len(batch)
-	}
+	})
+	return ok
 }
 
 func (s *Server) maskThread(w http.ResponseWriter, r *http.Request, rows []query.ThreadMessage) bool {
@@ -150,14 +128,6 @@ func (s *Server) maskStoreMessage(r *http.Request, msg *store.APIMessage) {
 	for i := range msg.Attachments {
 		msg.Attachments[i].Filename = verification.Masked
 	}
-}
-
-func (s *Server) withholdAttachmentName(w http.ResponseWriter, r *http.Request, att *query.AttachmentInfo) bool {
-	withheld, ok := s.verificationWithheld(w, r, []int64{att.MessageID})
-	if withheld[att.MessageID] {
-		att.Filename = verification.Masked
-	}
-	return ok
 }
 
 // The caller owns content. Sniffing preserves the original download bytes.

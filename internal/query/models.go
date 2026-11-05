@@ -116,7 +116,6 @@ type Address struct {
 
 // AttachmentInfo represents attachment metadata.
 type AttachmentInfo struct {
-	MessageID   int64                        `json:"-"`
 	Docbank     []store.DocbankAttachmentRef `json:"docbank,omitempty"`
 	ID          int64
 	SourceID    int64 `json:"-"`

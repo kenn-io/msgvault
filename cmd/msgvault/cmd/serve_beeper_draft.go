@@ -40,7 +40,7 @@ func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, intent dra
 	if draft.Pending != nil {
 		output.PendingOperation, output.CandidateContent = draft.Pending.Operation, draft.Pending.Text
 	}
-	if intent.MetadataOnly || intent.WithholdVerification {
+	if intent.MetadataOnly {
 		output.Content, output.CandidateContent = nil, ""
 	}
 	if intent.JSON {
