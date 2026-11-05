@@ -517,7 +517,7 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	eventSQL := "SELECT NULL::BIGINT AS message_id WHERE false"
 	if hasActivity {
 		// Sparse direct rows' is_owner already includes roster owners.
-		eventSQL = "SELECT DISTINCT message_id FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting') AND canonical_id IS NOT NULL AND is_owner AND is_direct"
+		eventSQL = "SELECT DISTINCT message_id FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting') AND is_owner"
 	}
 	if _, err := tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_event_messages AS "+eventSQL); err != nil {
 		return errors.Join(fmt.Errorf("load owner event message IDs: %w", err), tx.Rollback())
