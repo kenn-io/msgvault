@@ -1001,7 +1001,7 @@
         id: `group:${dimension}`,
         label,
         icon: Group,
-        keywords: groupingByDimension(dimension).keywords,
+        keywords: `Group by ${label} ${groupingByDimension(dimension).keywords}`,
         disabled: exploreState.current.groupingChain.includes(dimension),
         run: () => {
           commitGrouping(dimension);
