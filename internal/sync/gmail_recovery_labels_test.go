@@ -197,7 +197,7 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 					require.ErrorContains(err, map[string]string{
 						"read":      "synthetic label read failure",
 						"identity":  "unexpected message identity",
-						"catalogue": "absent from the label catalogue",
+						"catalogue": "Gmail returned an unknown label",
 						"write":     "synthetic acquisition write failure",
 					}[fault], "required metadata reconciliation cannot report success")
 				}
