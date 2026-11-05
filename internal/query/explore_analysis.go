@@ -312,9 +312,11 @@ func exploreGroupExpressions(
 func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) string {
 	domainCTE := ""
 	directJoin, resultJoin := "", ""
-	rosterJoin := ""
+	rosterJoin := `
+		LEFT JOIN read_parquet('` + quoteIdentitySQLPath(clustersGlob) + `') c
+			ON c.participant_id = p.id`
 	directValue := "a.canonical_id"
-	rosterValue := "p.canonical_id"
+	rosterValue := "COALESCE(c.canonical_id, p.id)"
 	rosterFilter := "le.entry_kind = 'conversation'"
 	resultValue := "gm.group_value AS person_id"
 	if dimension == "domain" {
@@ -326,7 +328,7 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 	FROM participants WHERE domain <> '' GROUP BY lower(domain)`
 		directValue, rosterValue = "d.domain_id", "d.domain_id"
 		directJoin = " JOIN group_domains d ON d.domain = a.participant_domain"
-		rosterJoin = "\n\t\tJOIN group_domains d ON d.domain = p.participant_domain"
+		rosterJoin = "\n\t\tJOIN group_domains d ON d.domain = lower(p.domain)"
 		rosterFilter = "true"
 		resultJoin = " JOIN group_domains d ON d.domain_id = gm.group_value"
 		resultValue = "d.domain AS group_value"
@@ -347,7 +349,7 @@ func exploreGroupMembershipCTE(dimension, activityGlob, clustersGlob string) str
 			` + rosterValue + `
 		FROM logical_entries le
 		JOIN conversation_participants cp ON cp.conversation_id = le.conversation_id
-		JOIN (` + identityindex.CanonicalParticipantsSQL("participants", "read_parquet('"+quoteIdentitySQLPath(clustersGlob)+"')") + `) p ON p.participant_id = cp.participant_id` + rosterJoin + `
+		JOIN participants p ON p.id = cp.participant_id` + rosterJoin + `
 		WHERE ` + rosterFilter + `
 	) members
 	WHERE group_value IS NOT NULL

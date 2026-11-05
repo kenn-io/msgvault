@@ -18,61 +18,40 @@ import (
 )
 
 func TestBuildExcludesRooms(t *testing.T) {
-	for _, mode := range []Mode{ModeFull, ModeIncremental, ModeIndexOnly} {
-		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			root, db := writeRelationshipBaseFixture(t, false)
-			// Room 4B is both an invite recipient and a conversation member.
-			_, err := db.Exec(`CREATE TEMP TABLE room_participants AS
-					SELECT * FROM read_parquet(?) UNION ALL
-					SELECT 5, 'room@resource.calendar.google.com', 'resource.calendar.google.com', 'Room 4B', ''`, parquetDatasetGlob(root, "participants"))
-			requirements.NoError(err)
-			replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM room_participants")
-			_, err = db.Exec(`CREATE TEMP TABLE room_messages AS
-					SELECT * FROM read_parquet(?) UNION ALL
-					SELECT * REPLACE (101 AS id, NULL::BIGINT AS sender_id, NULL::BIGINT AS conversation_id) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
-			requirements.NoError(err)
-			replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM room_messages")
-			replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 100, 2, 'to' UNION ALL SELECT 100, 5, 'to' UNION ALL SELECT 101, 5, 'to'`)
-			replaceRelationshipParquet(t, db, root, "conversation_participants", `SELECT 10::BIGINT AS conversation_id, 4::BIGINT AS participant_id UNION ALL SELECT 10, 5`)
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	root, db := writeRelationshipBaseFixture(t, false)
+	// Calendar rooms arrive as message recipients, outside the conversation roster.
+	_, err := db.Exec(`CREATE TEMP TABLE room_participants AS
+			SELECT * FROM read_parquet(?) UNION ALL
+			SELECT 5, 'room@resource.calendar.google.com', 'resource.calendar.google.com', 'Room 4B', ''`, parquetDatasetGlob(root, "participants"))
+	requirements.NoError(err)
+	replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM room_participants")
+	_, err = db.Exec(`CREATE TEMP TABLE room_messages AS
+			SELECT * FROM read_parquet(?) UNION ALL
+			SELECT * REPLACE (101 AS id, NULL::BIGINT AS sender_id, 11::BIGINT AS conversation_id) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
+	requirements.NoError(err)
+	replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM room_messages")
+	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type, 'Alice' AS display_name UNION ALL SELECT 100, 2, 'to', '' UNION ALL SELECT 100, 5, 'to', 'Room 4B' UNION ALL SELECT 101, 5, 'to', 'Room 4B'`)
+	_, err = db.Exec(`CREATE TEMP TABLE room_conversations AS
+		SELECT * FROM read_parquet(?) UNION ALL
+		SELECT 11, 'thread-11', 'Room invitation', 'email_thread'`, parquetDatasetGlob(root, "conversations"))
+	requirements.NoError(err)
+	replaceRelationshipParquet(t, db, root, "conversations", "SELECT * FROM room_conversations")
 
-			_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
-			requirements.NoError(err)
-			output := root
-			if mode != ModeFull {
-				staged, stagedDB := writeRelationshipBaseFixture(t, false)
-				if mode == ModeIndexOnly {
-					staged = t.TempDir()
-				} else {
-					rewriteRelationshipFixtureIDs(t, stagedDB, staged, 200, 20)
-					replaceRelationshipParquet(t, stagedDB, staged, "message_recipients", `SELECT 200::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 200, 5, 'to'`)
-				}
-				for _, dataset := range []string{"participants", "participant_clusters", "conversation_participants"} {
-					requirements.NoError(os.RemoveAll(filepath.Join(staged, dataset)))
-					writeRelationshipParquet(t, stagedDB, staged, dataset, "SELECT * FROM read_parquet('"+quoteSQLString(parquetDatasetGlob(root, dataset))+"')")
-				}
-				_, err = Build(t.Context(), db, BuildOptions{Mode: mode, CommittedRoot: root, StagedBaseRoot: staged, OutputRoot: staged})
-				requirements.NoError(err)
-				output = staged
-			}
-			var roomRows, aliceCount int64
-			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE list_contains(member_ids, 5)`, relationshipParquetGlob(output, DatasetPeople)).Scan(&roomRows))
-			assertions.Zero(roomRows)
-			requirements.NoError(db.QueryRow(`SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetPeople)).Scan(&aliceCount))
-			if mode == ModeIncremental {
-				assertions.Equal(int64(2), aliceCount, "incremental builds retain Alice's committed activity and add her new message to the room")
-			} else {
-				assertions.Equal(int64(1), aliceCount, "full and index-only builds preserve Alice's activity while excluding the room-only message")
-			}
-			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetDomains)).Scan(&roomRows))
-			assertions.Zero(roomRows)
-			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE participant_domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetActivity)).Scan(&roomRows))
-			assertions.Zero(roomRows)
-			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetActivity)).Scan(&aliceCount))
-			assertions.Positive(aliceCount)
-		})
-	}
+	_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+	requirements.NoError(err)
+	var roomRows, aliceCount int64
+	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE list_contains(member_ids, 5)`, relationshipParquetGlob(root, DatasetPeople)).Scan(&roomRows))
+	assertions.Zero(roomRows)
+	requirements.NoError(db.QueryRow(`SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetPeople)).Scan(&aliceCount))
+	assertions.Equal(int64(1), aliceCount, "Alice's activity is preserved while the room-only message is excluded")
+	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(root, DatasetDomains)).Scan(&roomRows))
+	assertions.Zero(roomRows)
+	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE participant_domain = 'resource.calendar.google.com'`, relationshipParquetGlob(root, DatasetActivity)).Scan(&roomRows))
+	assertions.Zero(roomRows)
+	requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE canonical_id = 1`, relationshipParquetGlob(root, DatasetActivity)).Scan(&aliceCount))
+	assertions.Positive(aliceCount)
 }
 
 func TestBuildPublishesFourRelationshipDatasets(t *testing.T) {

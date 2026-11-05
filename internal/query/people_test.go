@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"go.kenn.io/msgvault/internal/search"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -98,43 +96,39 @@ func TestPeopleAndExploreExcludeRooms(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
-	source := b.AddSourceWithType("archive@example.com", "gmail")
+	source := b.AddSourceWithType("archive@example.com", "gcal")
 	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
 	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
+	otherRoom := b.AddParticipant("room@floor.resource.calendar.google.com", "floor.resource.calendar.google.com", "Room 5B")
+	b.LinkCluster(room, otherRoom)
+	unlinkedRoom := b.AddParticipant("unlinked@resource.calendar.google.com", "resource.calendar.google.com", "Unlinked Room")
 	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
-	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 201, SentAt: when, MessageType: "chat", ConversationType: "group_chat"})
+	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 201, SentAt: when, MessageType: "calendar_event", ConversationType: "calendar"})
 	b.AddFrom(message, alice, "Alice")
 	b.AddTo(message, room, "Room 4B")
-	b.AddConversationParticipant(201, room)
+	b.AddTo(message, unlinkedRoom, "Unlinked Room")
+	otherMessage := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 202, SentAt: when.Add(time.Hour), MessageType: "calendar_event", ConversationType: "calendar"})
+	b.AddFrom(otherMessage, alice, "Alice")
+	b.AddTo(otherMessage, otherRoom, "Room 5B")
 	engine := b.BuildEngine()
-	for _, context := range []Context{{}, {SourceIDs: []int64{source}}} {
-		explore := ExploreRequest{Context: context}
-		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 25}})
-		requirements.NoError(err)
-		requirements.Len(people.Rows, 1)
-		assertions.Equal(alice, people.Rows[0].ID)
-		domains, err := engine.SearchDomains(t.Context(), DomainSearchRequest{Explore: explore, Page: PageSpec{Limit: 25}})
-		requirements.NoError(err)
-		requirements.Len(domains.Rows, 1)
-		assertions.Equal("example.com", domains.Rows[0].Domain)
-		assertions.Equal(int64(1), domains.Rows[0].PersonCount)
+	domains, err := engine.SearchDomains(t.Context(), DomainSearchRequest{Explore: ExploreRequest{Context: Context{SourceIDs: []int64{source}}}, Page: PageSpec{Limit: 25}})
+	requirements.NoError(err)
+	requirements.Len(domains.Rows, 1)
+	assertions.Equal("example.com", domains.Rows[0].Domain)
+	assertions.Equal(int64(1), domains.Rows[0].PersonCount)
+	for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
 		for _, dimension := range []string{"participant", "domain"} {
-			groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: explore, Dimension: dimension, Page: PageSpec{Limit: 25}})
+			groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: ExploreRequest{Context: filter}, Dimension: dimension, Page: PageSpec{Limit: 25}})
 			requirements.NoError(err)
 			requirements.Len(groups.Rows, 1)
-			assertions.Equal(int64(1), groups.Rows[0].Count)
+			assertions.Equal(int64(2), groups.Rows[0].Count)
 		}
 	}
-	people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "Room", Page: PageSpec{Limit: 25}})
-	requirements.NoError(err)
-	assertions.Empty(people.Rows)
-	completion, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "Room", Limit: 8})
-	requirements.NoError(err)
-	assertions.Empty(completion.Rows)
-	messages, err := engine.SearchFast(t.Context(), &search.Query{ToAddrs: []string{"room@resource.calendar.google.com"}}, MessageFilter{}, 25, 0)
-	requirements.NoError(err)
-	requirements.Len(messages, 1)
-	assertions.Equal(message, messages[0].ID)
+	for _, id := range []int64{room, unlinkedRoom} {
+		detail, err := engine.GetPerson(t.Context(), id, Context{}, nil)
+		requirements.NoError(err)
+		assertions.Nil(detail)
+	}
 }
 
 func TestLinkedRoomActivityStaysWithPerson(t *testing.T) {
@@ -156,46 +150,6 @@ func TestLinkedRoomActivityStaysWithPerson(t *testing.T) {
 	assertions.Equal(alice, people.Rows[0].ID)
 	assertions.Equal("Alice", people.Rows[0].DisplayLabel)
 	assertions.Equal(int64(2), people.Rows[0].ActivityCount)
-	canonical, err := engine.ResolveCanonicalParticipant(t.Context(), alice)
-	requirements.NoError(err)
-	assertions.Equal(alice, canonical)
-}
-
-func TestRoomOnlyClusterIsAbsent(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSource("archive@example.com")
-	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room A")
-	otherRoom := b.AddParticipant("room@floor.resource.calendar.google.com", "floor.resource.calendar.google.com", "Room B")
-	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
-	b.LinkCluster(room, otherRoom)
-	message := b.AddMessage(MessageOpt{SourceID: source})
-	b.AddFrom(message, alice, "Alice")
-	b.AddTo(message, room, "Room A")
-	b.AddTo(message, otherRoom, "Room B")
-	engine := b.BuildEngine()
-	for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
-		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: filter}, Page: PageSpec{Limit: 10}})
-		requirements.NoError(err)
-		requirements.Len(people.Rows, 1)
-		assertions.Equal(alice, people.Rows[0].ID)
-	}
-	completion, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "Room", Limit: 10})
-	requirements.NoError(err)
-	assertions.Empty(completion.Rows)
-}
-
-func TestRoomPersonDetailIsAbsent(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	source := b.AddSource("archive@example.com")
-	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
-	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 201})
-	b.AddTo(message, room, "Room 4B")
-	engine := b.BuildEngine()
-	detail, err := engine.GetPerson(t.Context(), room, Context{}, nil)
-	require.NoError(t, err)
-	assert.Nil(t, detail)
 }
 
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {

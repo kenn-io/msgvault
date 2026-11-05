@@ -197,12 +197,12 @@ func buildDirectorySQL(path func(string) string) string {
 	return fmt.Sprintf(`
 WITH canon AS (
 	SELECT p.id::BIGINT AS participant_id,
-	       c.canonical_id,
+	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
 	       trim(coalesce(p.display_name, ''))::VARCHAR AS display_name,
 	       trim(coalesce(p.phone_number, ''))::VARCHAR AS phone_number,
 	       trim(coalesce(p.email_address, ''))::VARCHAR AS email_address
 	FROM read_parquet('%s') p
-	JOIN (%s) c ON c.participant_id = p.id
+	LEFT JOIN read_parquet('%s') c ON c.participant_id = p.id
 ), members AS (
 	SELECT canonical_id, list(participant_id ORDER BY participant_id) AS member_ids
 	FROM canon
@@ -362,7 +362,7 @@ LEFT JOIN primitives p USING (canonical_id)
 LEFT JOIN owners o USING (canonical_id)
 ORDER BY m.canonical_id`,
 		quoteSQLString(path("participants")),
-		CanonicalParticipantsSQL(readParquetRelation([]string{path("participants")}, false), readParquetRelation([]string{path("participant_clusters")}, false)),
+		quoteSQLString(path("participant_clusters")),
 		quoteSQLString(path("person_display_names")),
 		quoteSQLString(path("participant_identifiers")),
 		quoteSQLString(path("participant_identifiers")),

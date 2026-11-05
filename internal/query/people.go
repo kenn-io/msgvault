@@ -551,16 +551,22 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // live membership can differ from the cached identity clusters.
 // Listing/search aggregates edges by canonical ID, so linked aliases count once.
 func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (string, []any) {
-	canon := `
-), canon AS (
-	` + identityindex.CanonicalParticipantsSQL("participants", "read_parquet('"+quoteIdentitySQLPath(clustersGlob)+"')") + `
-`
 	if exactID == nil {
-		return canon + `), person_entries AS (` +
+		return fmt.Sprintf(`
+), clusters AS (
+	SELECT participant_id, canonical_id FROM read_parquet('%s')
+), canon AS (
+	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
+	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
+), person_entries AS (`, quoteIdentitySQLPath(clustersGlob)) +
 			sqlActivityEntryEdges(
 				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
+	canon := `
+), canon AS (
+	` + identityindex.CanonicalParticipantsSQL("participants", "read_parquet('"+quoteIdentitySQLPath(clustersGlob)+"')") + `
+`
 	if len(memberIDs) == 0 {
 		memberIDs = []int64{*exactID}
 	}
