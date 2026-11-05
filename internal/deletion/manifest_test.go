@@ -1148,7 +1148,7 @@ func TestManager_WriteInProgressCheckpoint_Cancelled(t *testing.T) {
 	require.ErrorIs(err, ErrManifestCancelled, "checkpoint after cancel")
 
 	_, statErr := os.Stat(journalPath(filepath.Join(mgr.InProgressDir(), m.ID+".json")))
-	assert.ErrorIs(statErr, os.ErrNotExist, "rejected checkpoint must leave no journal")
+	require.ErrorIs(statErr, os.ErrNotExist, "rejected checkpoint must leave no journal")
 	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
 	require.NoError(err, "cancelled manifest parseable")
 	assert.Equal(StatusCancelled, loaded.Status)
@@ -1204,7 +1204,7 @@ func TestManager_CheckpointCancelStress(t *testing.T) {
 		wg.Wait()
 
 		_, err := os.Stat(journalPath(filepath.Join(mgr.InProgressDir(), id+".json")))
-		assert.ErrorIs(t, err, os.ErrNotExist, "cancel must remove every checkpoint journal")
+		require.ErrorIs(t, err, os.ErrNotExist, "cancel must remove every checkpoint journal")
 
 		assertSingleValidManifest(t, mgr, id)
 	}
