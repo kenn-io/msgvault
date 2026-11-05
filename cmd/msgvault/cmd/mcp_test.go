@@ -694,7 +694,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 }
 
 func TestCalendarArchiveMCPVersionGates(t *testing.T) {
-	for _, version := range []string{"3.26.0", "3.27.0"} {
+	for _, version := range []string{"3.42.0", calendarEventsMinAPISchemaVersion} {
 		t.Run(version, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -709,10 +709,10 @@ func TestCalendarArchiveMCPVersionGates(t *testing.T) {
 				assertions.NoError(json.NewEncoder(w).Encode(body))
 			})
 			owner := daemonMCPServeOptions(t.Context(), client, nil)
-			assertions.Equal(version == "3.27.0", owner.CalEvents != nil)
+			assertions.Equal(version == calendarEventsMinAPISchemaVersion, owner.CalEvents != nil)
 			delegated, err := delegatedMCPServeOptions(t.Context(), client)
 			requirements.NoError(err)
-			assertions.Equal(version == "3.27.0", delegated.CalEvents != nil)
+			assertions.Equal(version == calendarEventsMinAPISchemaVersion, delegated.CalEvents != nil)
 		})
 	}
 }
