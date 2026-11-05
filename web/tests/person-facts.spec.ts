@@ -4,6 +4,21 @@ import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 for (const width of [1440, 390]) {
   test(`Facts rows and searchable fields fit at ${width}px`, async ({ page }) => {
     await installDirectoryReviewArchive(page);
+    const longValue = 'x'.repeat(200);
+    await page.route('**/api/v1/people/42/attributes*', route => route.fulfill({ json: {
+      person_id: 42, attributes: [{
+        definition: {
+          id: 8, universal_id: 'forbidden-target-key', object_type: 'person', slug: 'forbidden-extension-field', label: 'Forbidden extension field',
+          value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 10,
+          is_required: false, ownership: 'user', ui_creatable: true, ui_editable: true, api_mutable: true,
+          is_searchable: true, is_sensitive: false, is_audited: true, is_deletable: true, history_exempt: false,
+          is_active: true, revision: 1, created_at: '2026-08-01', updated_at: '2026-08-01',
+        },
+        current: [{ id: 1, person_id: 42, definition_id: 8, definition_slug: 'forbidden-extension-field', ordinal: 0,
+          value: { type: 'text', text: longValue }, source: 'user', created_at: '2026-08-01', active_from: '2026-08-01' }],
+        history: [],
+      }],
+    } }));
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'directory', directoryPersonID: 42 }))}`);
     await page.getByRole('radio', { name: 'Details', exact: true }).click();
@@ -11,6 +26,11 @@ for (const width of [1440, 390]) {
     await facts.getByRole('button', { name: 'Show', exact: true }).click();
     await expect(facts.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeVisible();
     await expect(facts.getByRole('region', { name: 'Claims', exact: true })).toBeVisible();
+    const saved = facts.getByText(longValue, { exact: true });
+    await expect(saved).toBeVisible();
+    const savedBounds = await saved.boundingBox();
+    const columnBounds = await facts.locator('.ledger').boundingBox();
+    expect(savedBounds!.x + savedBounds!.width).toBeLessThanOrEqual(columnBounds!.x + columnBounds!.width);
     if (width === 1440) {
       const tabs = await facts.getByRole('radiogroup').boundingBox();
       const picker = await facts.getByRole('button', { name: 'Search fields: All fields' }).boundingBox();
