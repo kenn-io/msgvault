@@ -10,7 +10,38 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/calrecur"
 )
+
+func TestICSFloatingRecurrenceDatesUseSourceZone(t *testing.T) {
+	for _, start := range []string{"DTSTART:20270302T120000Z", "DTSTART;TZID=Europe/Berlin:20270302T130000"} {
+		t.Run(start, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			raw := []byte("BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:floating-dates@example.com\r\n" + start + "\r\nRRULE:FREQ=DAILY;COUNT=2\r\nRDATE:20270304T210000,20270305T210000\r\nEXDATE:20270303T210000,20270305T210000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+			components, err := ParseICS(raw, "", "Asia/Tokyo")
+			requirements.NoError(err)
+			requirements.Len(components, 1)
+			event := components[0].Event
+			zone, err := time.LoadLocation(event.EventTimeZone)
+			requirements.NoError(err)
+			set, err := calrecur.ParseSet(*event.Start, false, "", zone, event.Recurrence)
+			requirements.NoError(err)
+			requirements.Len(set.RDates, 2)
+			requirements.Len(set.ExDates, 2)
+			assertions.Equal("2027-03-04T12:00:00Z", set.RDates[0].Instant.Format(time.RFC3339))
+			assertions.Equal("2027-03-05T12:00:00Z", set.RDates[1].Instant.Format(time.RFC3339))
+			assertions.Equal("2027-03-03T12:00:00Z", set.ExDates[0].Instant.Format(time.RFC3339))
+			assertions.Equal("2027-03-05T12:00:00Z", set.ExDates[1].Instant.Format(time.RFC3339))
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			occurrences, _, err := calrecur.Expand(t.Context(), set, time.Hour, 0, from, from.AddDate(0, 0, 5), calrecur.SeriesReadBudget)
+			requirements.NoError(err)
+			requirements.Len(occurrences, 2)
+			assertions.Equal("2027-03-02T12:00:00Z", occurrences[0].Start.UTC().Format(time.RFC3339))
+			assertions.Equal("2027-03-04T12:00:00Z", occurrences[1].Start.UTC().Format(time.RFC3339))
+			assertions.Equal(raw, components[0].Raw)
+		})
+	}
+}
 
 func TestICSLocalTimesUseRFC5545GapAndFold(t *testing.T) {
 	for _, tt := range []struct{ name, prop, zone, want string }{
