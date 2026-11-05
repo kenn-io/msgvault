@@ -1,7 +1,6 @@
 package store_test
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -88,91 +87,26 @@ func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
 	}
 }
 
-func TestAttendedTranscriptIDsByRole(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
+func TestContactReadersDiscardFutureCopyBeforeRanking(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := newTimelineActivityFixture(t)
 	q := timelineContactQuery(f)
-	for i := range 3 {
-		id := f.add(t, f.ConvID, f.Source.ID, q.Now.Add(time.Duration(i-3)*time.Minute), false, "")
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id=?`), id)
-		requirements.NoError(err)
-	}
+	past := q.Now.Add(-time.Hour)
+	// The lower-ID future copy wins the normal tie between equal threads.
+	f.add(t, f.ConvID, f.Source.ID, q.Now.Add(time.Hour), false, "<copy@example.com>")
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
+	conv, err := f.Store.EnsureConversation(other.ID, "past-copy", "Past copy")
+	require.NoError(err)
+	f.add(t, conv, other.ID, past, false, "<copy@example.com>")
 	projectTierSignals(t, f.Fixture, "UTC", 0)
-	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
-	requirements.NoError(err)
-	assertions.Len(got, 2)
-	assertions.True(truncated)
-	q.Subject.ParticipantIDs = []int64{f.owner}
-	got, _, err = f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
-	requirements.NoError(err)
-	assertions.Empty(got)
-}
-func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-	requirements.NoError(err)
-	// The existing attribute writer validates and stores a real integer frequency.
-	days := int64(21)
-	_, err = f.Store.SetPersonAttributeValueContext(t.Context(), store.PersonAttributeValueInput{PersonID: person.ID, DefinitionSlug: store.AttributeSlugContactFrequency, Value: store.AttributeValue{Type: store.AttributeValueInteger, Integer: &days}, Source: store.ProvenanceUser})
-	requirements.NoError(err)
-	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	storedLast := now.AddDate(0, 0, -1)
-	f.add(t, f.ConvID, f.Source.ID, storedLast, false, "")
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	stored, err := f.Store.ContactStateContext(t.Context(), person.ID, now)
-	requirements.NoError(err)
-	requirements.Equal(&storedLast, stored.LastContactAt)
-	for _, tc := range []struct {
-		days int
-		want string
-	}{{30, store.CadenceOverdue}, {10, store.CadenceOK}} {
-		last := now.AddDate(0, 0, -tc.days)
-		status, due, err := f.Store.CadenceForPersonContext(t.Context(), person.ID, &last, now)
-		requirements.NoError(err)
-		assertions.Equal(tc.want, status)
-		requirements.NotNil(due)
-		assertions.Equal(last.AddDate(0, 0, 21), *due)
-	}
-}
-
-func TestContactReadersDiscardFutureCopyBeforeRanking(t *testing.T) {
-	for _, transcript := range []bool{false, true} {
-		t.Run(fmt.Sprintf("transcript=%t", transcript), func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			f := newTimelineActivityFixture(t)
-			q := timelineContactQuery(f)
-			past := q.Now.Add(-time.Hour)
-			// The lower-ID future copy wins the normal tie between equal threads.
-			futureID := f.add(t, f.ConvID, f.Source.ID, q.Now.Add(time.Hour), false, "<copy@example.com>")
-			other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-			require.NoError(err)
-			require.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
-			conv, err := f.Store.EnsureConversation(other.ID, "past-copy", "Past copy")
-			require.NoError(err)
-			pastID := f.add(t, conv, other.ID, past, false, "<copy@example.com>")
-			if transcript {
-				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id IN (?,?)`), futureID, pastID)
-				require.NoError(err)
-			}
-			projectTierSignals(t, f.Fixture, "UTC", 0)
-			if transcript {
-				ids, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
-				require.NoError(err)
-				assert.Equal([]int64{pastID}, ids)
-				assert.False(truncated)
-				return
-			}
-			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-			require.NoError(err)
-			assert.Equal(1, got.Count)
-			assert.Equal(&past, got.FirstAt)
-			assert.Equal(&past, got.LastAt)
-			assert.Equal(&past, got.LastInboundAt)
-			assert.Equal(1, got.Monthly[11])
-		})
-	}
+	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+	require.NoError(err)
+	assert.Equal(1, got.Count)
+	assert.Equal(&past, got.FirstAt)
+	assert.Equal(&past, got.LastAt)
+	assert.Equal(&past, got.LastInboundAt)
+	assert.Equal(1, got.Monthly[11])
 }

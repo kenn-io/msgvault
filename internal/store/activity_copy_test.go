@@ -13,8 +13,11 @@ import (
 
 // A lower-ID observed copy must not suppress the owned copy's real contact.
 func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
-	for _, invitation := range []bool{false, true} {
-		t.Run(fmt.Sprintf("counted tie/invitation=%t", invitation), func(t *testing.T) {
+	for _, tc := range []struct {
+		invitation, largeAudience bool
+	}{{false, false}, {true, false}, {true, true}} {
+		t.Run(fmt.Sprintf("counted tie/invitation=%t/largeAudience=%t", tc.invitation, tc.largeAudience), func(t *testing.T) {
+			invitation := tc.invitation
 			assertions, requirements := assert.New(t), require.New(t)
 			f := newTimelineActivityFixture(t)
 			at := timelineContactQuery(f).Now
@@ -29,7 +32,13 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 				id := f.add(t, room, source.ID, at, !invitation, "<display-copy@example.com>")
 				ids = append(ids, id)
 				rooms = append(rooms, room)
-				if invitation {
+				if tc.largeAudience {
+					recipients := []int64{f.owner}
+					for j := range 26 {
+						recipients = append(recipients, f.EnsureParticipant(fmt.Sprintf("guest-%d@example.com", j), "Guest", "example.com"))
+					}
+					requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", recipients, nil))
+				} else if invitation {
 					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
 					requirements.NoError(err)
 				} else if i == 0 {

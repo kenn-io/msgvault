@@ -35,11 +35,7 @@ func TestActivityReadersUseInstantForOffsetBounds(t *testing.T) {
 				q := timelineContactQuery(f)
 				// Earlier clock has a later wall time, and later clock an earlier one.
 				q.Now = q.Now.Add(time.Duration(tc.hours) * time.Hour).In(time.FixedZone("offset", -tc.hours*8*3600))
-				if transcript {
-					ids, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
-					requirements.NoError(err)
-					assertions.Len(ids, tc.want)
-				} else {
+				if !transcript {
 					got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 					requirements.NoError(err)
 					assertions.Equal(tc.want, got.Count)

@@ -232,8 +232,8 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	// them into each correlated fact lookup and rebuild the scoped population
 	// repeatedly while scoring a burst. The fences retain all eligible rows
 	// before copy selection, grouping and pagination. Prefer counted contact
-	// for the requested subject when copies differ, then display eligibility
-	// and the fullest thread.
+	// for the requested subject when copies differ, then invitations, display
+	// eligibility, and the fullest thread.
 	// Thread sizes include eligible messages outside this read's window so
 	// widening the window keeps the same account's copy.
 	query := prefix + eligibleName + ` AS MATERIALIZED (
@@ -258,7 +258,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  WHERE m.source_id=e.source_id AND m.conversation_id=e.conversation_id AND ` + s.activityLiveEligibleSQL() + `) AS thread_messages
  FROM scored e GROUP BY e.source_id,e.conversation_id
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,CASE WHEN non_noise=1 OR invitation=1 THEN 1 ELSE 0 END DESC,COALESCE(ts.thread_messages,1) DESC,e.source_id,message_id) AS copy_rank,
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,invitation DESC,non_noise DESC,COALESCE(ts.thread_messages,1) DESC,e.source_id,message_id) AS copy_rank,
  COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
  FROM scored e LEFT JOIN thread_sizes ts ON ts.source_id=e.source_id AND ts.conversation_id=e.conversation_id
  ), representatives AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1)`

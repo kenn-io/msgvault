@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"slices"
 	"strings"
@@ -151,83 +150,4 @@ func mergeActivityTime(target **time.Time, value *time.Time, earliest bool) {
 		instant := *value
 		*target = &instant
 	}
-}
-
-func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery, limit int) ([]int64, bool, error) {
-	var result []int64
-	var truncated bool
-	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
-		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
-		var err error
-		result, truncated, err = s.attendedTranscriptIDsContext(snapshotCtx, q, limit)
-		return err
-	})
-	return result, truncated, err
-}
-
-func (s *Store) attendedTranscriptIDsContext(ctx context.Context, q ContactQuery, limit int) ([]int64, bool, error) {
-	if q.Now.IsZero() || limit < 1 || limit > 2000 {
-		return nil, false, fmt.Errorf("%w: transcript clock and limit 1..2000 required", ErrInvalidActivityRequest)
-	}
-	subject, subjectArgs, err := activityFactSubjectClause(q.Subject)
-	if err != nil {
-		return nil, false, err
-	}
-	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
-	if err != nil {
-		return nil, false, err
-	}
-	filters.IncludeNoise = false
-	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{Subject: q.Subject, Until: &q.Now}, filters)
-	if err != nil {
-		return nil, false, err
-	}
-	args = append(args, subjectArgs...)
-	args = append(args, limit+1)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+` SELECT r.message_id FROM representatives r WHERE r.message_type='meeting_transcript' AND r.list_id IS NULL
- AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND f.role IN ('attendee','organizer') AND `+subject+`)
- ORDER BY r.occurred_at DESC,r.message_id DESC LIMIT ?`), args...)
-	if err != nil {
-		return nil, false, fmt.Errorf("read attended transcripts: %w", err)
-	}
-	result := []int64{}
-	for rows.Next() {
-		var id int64
-		if err = rows.Scan(&id); err != nil {
-			_ = rows.Close()
-			return nil, false, fmt.Errorf("scan attended transcript: %w", err)
-		}
-		result = append(result, id)
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return nil, false, fmt.Errorf("iterate attended transcripts: %w", err)
-	}
-	truncated := len(result) > limit
-	if truncated {
-		result = result[:limit]
-	}
-	return result, truncated, nil
-}
-
-// CadenceForPersonContext reuses the contact-state cadence calculation while
-// taking the caller's scoped last-contact instant instead of stored state.
-func (s *Store) CadenceForPersonContext(ctx context.Context, personID int64, lastContactAt *time.Time, now time.Time) (string, *time.Time, error) {
-	if personID <= 0 || now.IsZero() {
-		return "", nil, fmt.Errorf("%w: cadence requires person and clock", ErrInvalidActivityRequest)
-	}
-	state := ContactState{LastContactAt: lastContactAt}
-	err := s.withTxOptionsContext(ctx, &sql.TxOptions{ReadOnly: true}, func(tx *loggedTx) error {
-		values, err := listCurrentContactFrequencyTx(ctx, tx, personID)
-		if err != nil {
-			return err
-		}
-		deriveContactCadence(&state, values, now)
-		return nil
-	})
-	if err != nil {
-		return "", nil, fmt.Errorf("read contact cadence: %w", err)
-	}
-	return state.CadenceStatus, state.CadenceDueAt, nil
 }
