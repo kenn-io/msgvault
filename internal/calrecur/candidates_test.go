@@ -110,3 +110,36 @@ func TestTimedRecurrenceGapHonorsUntilAndBudget(t *testing.T) {
 	_, bounded = ConservativeEnd(t.Context(), s, time.Hour, 0, 3)
 	assertions.False(bounded)
 }
+
+func TestExpandSkippedStartCountsDistinctInstants(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("Pacific/Apia")
+	requirements.NoError(err)
+	s, err := ParseSet(instant(t, "2011-12-30T19:00:00Z"), false, "", zone, []string{
+		"DTSTART:20111230T090000", "RRULE:FREQ=DAILY;COUNT=2",
+	})
+	requirements.NoError(err)
+	got, _, err := Expand(t.Context(), s, time.Hour, 0, instant(t, "2011-12-29T00:00:00Z"), instant(t, "2012-01-03T00:00:00Z"), 100)
+	requirements.NoError(err)
+	var starts []time.Time
+	for _, occurrence := range got {
+		starts = append(starts, occurrence.Start.UTC())
+	}
+	assert.Equal(t, []time.Time{
+		instant(t, "2011-12-30T19:00:00Z"), // December 31, 09:00 after the skipped date.
+		instant(t, "2011-12-31T19:00:00Z"), // January 1, 09:00.
+	}, starts)
+}
+
+func TestConservativeEndSkippedStartCountsDistinctInstants(t *testing.T) {
+	requirements := require.New(t)
+	zone, err := time.LoadLocation("Pacific/Apia")
+	requirements.NoError(err)
+	s, err := ParseSet(instant(t, "2011-12-30T19:00:00Z"), false, "", zone, []string{
+		"DTSTART:20111230T090000", "RRULE:FREQ=DAILY;COUNT=2",
+	})
+	requirements.NoError(err)
+	end, bounded := ConservativeEnd(t.Context(), s, time.Hour, 0, 100)
+	requirements.True(bounded)
+	assert.Equal(t, instant(t, "2011-12-31T20:00:00Z"), end.UTC())
+}

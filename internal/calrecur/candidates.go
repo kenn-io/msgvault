@@ -154,9 +154,6 @@ func (i *ruleIterator) next() (time.Time, bool, error) {
 		if !i.set.AllDay {
 			var exists bool
 			value, exists = firstLocalWallTime(anchor, i.set.location())
-			if anchor.Equal(i.set.startCivil) {
-				value, exists = i.start, true
-			}
 			if !exists {
 				continue // A nonexistent wall time must not consume COUNT.
 			}
