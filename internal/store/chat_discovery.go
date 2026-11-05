@@ -205,7 +205,7 @@ func (s *Store) SearchChatsMetadataContext(ctx context.Context, q ChatDiscoveryQ
 		statement += ` AND c.source_id = ?`
 		args = append(args, q.SourceID)
 	}
-	statement += `), raw_members AS MATERIALIZED (
+	statement += `), raw_members AS (
 		SELECT cp.conversation_id, cp.participant_id
 		FROM conversation_participants cp JOIN eligible e ON e.id = cp.conversation_id
 		UNION
