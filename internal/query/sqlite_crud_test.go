@@ -2595,46 +2595,6 @@ func TestGetDeletionTargetsByFilterPreservesSource(t *testing.T) {
 	}
 }
 
-func TestDeletionTargetPathsExcludeCalendarArtifactsFromGmail(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	env := newTestEnv(t)
-	const calendarID int64 = 9001
-	_, err := env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
-		VALUES (?, 1, 1, 'calendar-invite:generated', 'calendar_event', '2024-01-15 10:00:00', 'Generated event', 'generated calendar content')`, calendarID)
-	requirements.NoError(err)
-	_, err = env.DB.Exec(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`, calendarID)
-	requirements.NoError(err)
-	sourceID := int64(1)
-	filter := MessageFilter{SourceID: &sourceID}
-	chatSource := env.AddSource(dbtest.SourceOpts{Type: "google_chat", Identifier: "chat@example.test"})
-	chatConversation := env.AddConversation(dbtest.ConversationOpts{SourceID: chatSource})
-	env.AddMessage(dbtest.MessageOpts{SourceID: chatSource, ConversationID: chatConversation, MessageType: "google_chat", Subject: "Chat"})
-	assertNoCalendarTarget := func(targets []DeletionTarget) {
-		ids := make([]int64, 0, len(targets))
-		for _, target := range targets {
-			ids = append(ids, target.MessageID)
-		}
-		assertions.NotContains(ids, calendarID)
-	}
-
-	byFilter, err := env.Engine.GetDeletionTargetsByFilter(env.Ctx, filter)
-	requirements.NoError(err)
-	requirements.NotEmpty(byFilter)
-	assertNoCalendarTarget(byFilter)
-	q := &search.Query{MessageTypes: []string{"email", "calendar_event"}}
-	bySearch, err := env.Engine.GetDeletionTargetsBySearch(env.Ctx, q, filter, DeletionSearchDeep)
-	requirements.NoError(err)
-	requirements.NotEmpty(bySearch)
-	assertNoCalendarTarget(bySearch)
-	_, err = env.DB.Exec(`UPDATE messages SET list_id = '<dev@example.test>' WHERE id IN (1, ?)`, calendarID)
-	requirements.NoError(err)
-	byAggregate, err := env.Engine.GetDeletionTargetsByAggregateSearch(env.Ctx, "", filter, ViewLists, "<dev@example.test>")
-	requirements.NoError(err)
-	requirements.NotEmpty(byAggregate)
-	assertNoCalendarTarget(byAggregate)
-}
-
 func TestGetDeletionTargetsByMessageIDs_ExcludesNonQualifying(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

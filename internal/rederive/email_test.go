@@ -320,3 +320,28 @@ func TestEmailRederivationExtractsMissingInvites(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Len(page.Occurrences, 1)
 }
+
+func TestEmailRederivationExtractsInvitesMergedBeforeExtraction(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st, src, id := archiveEmailSource(t, "gmail", "Invitation")
+	raw := []byte("Content-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:merged-backfill@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Merged invite\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+	// Retain an invitation from before extraction existed, then merge its source.
+	_, err := st.DB().Exec(st.Rebind(`UPDATE message_raw SET raw_data=?, compression=NULL WHERE message_id=?`), raw, id)
+	requirements.NoError(err)
+	into, err := st.GetOrCreateSource("gmail", "destination@example.org")
+	requirements.NoError(err)
+	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: into.ID})
+	requirements.NoError(err)
+	var marked int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id=?`), id).Scan(&marked))
+	requirements.Equal(1, marked)
+
+	sum, err := Run(t.Context(), st, into.SourceType, into.Identifier, into.ID, nil)
+	requirements.NoError(err)
+	assertions.Zero(sum.Errors)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("Merged invite", page.Occurrences[0].Subject)
+}
