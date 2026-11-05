@@ -31,13 +31,20 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
-	raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:First\r\nRRULE:FREQ=DAILY;COUNT=2")
+	description := strings.Repeat("Meeting details. ", 20)
+	raw := calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z\r\nSUMMARY:First\r\nRRULE:FREQ=DAILY;COUNT=2\r\nDESCRIPTION:"+description+"\\nJoin: https://meet.example.com/meeting\r\nLOCATION:Conference room")
 	first, err := st.PersistICalendarContext(t.Context(), source, raw)
 	requirements.NoError(err)
 	assertions.Equal(1, first.Changed)
 	ids := emailEvents(t, st, source)
 	requirements.Len(ids, 1)
 	id := ids[0]
+	var snippet string
+	requirements.NoError(st.db.QueryRow(`SELECT snippet FROM messages WHERE id=?`, id).Scan(&snippet))
+	assertions.Equal(strings.Repeat("Meeting details. ", 11)+"Meeting de...", snippet)
+	body, err := st.GetMessageBodyText(id)
+	requirements.NoError(err)
+	assertions.Equal(description+"\nJoin: https://meet.example.com/meeting\nLocation: Conference room", body)
 	duplicate, err := st.PersistICalendarContext(t.Context(), source, raw)
 	requirements.NoError(err)
 	assertions.Equal(1, duplicate.Unchanged)
