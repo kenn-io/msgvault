@@ -173,7 +173,7 @@ describe('PersonMergeHistory', () => {
     expect(within(absorbed).getByText('address701@example.org')).toBeDefined();
     const survivor = screen.getByRole('heading', { name: 'Message addresses from Alex Example' }).parentElement!;
     expect(within(survivor).getByText('address702@example.org')).toBeDefined();
-    expect(within(survivor).getByText('Split out')).toBeDefined();
+    expect(within(survivor).getByText('Split out to Alex Restored')).toBeDefined();
     expect(screen.getByText('Alex Restored')).toBeDefined();
     expect(screen.getByText('Partial restore')).toBeDefined();
     expect(screen.getByText('Waiting for review')).toBeDefined();

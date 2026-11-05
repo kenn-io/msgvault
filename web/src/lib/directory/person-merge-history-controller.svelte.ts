@@ -454,21 +454,10 @@ export class PersonMergeHistoryController {
     owner: AbortController,
   ): Promise<boolean> {
     try {
+      const options = { ...this.client, signal: owner.signal };
       const [source, merge] = await Promise.all([
-        generatedGetPersonProfile(
-          { id: target.sourcePersonID },
-          {
-            ...this.client,
-            signal: owner.signal,
-          },
-        ),
-        generatedGetPersonMerge(
-          { mergeId: target.mergeID },
-          {
-            ...this.client,
-            signal: owner.signal,
-          },
-        ),
+        generatedGetPersonProfile({ id: target.sourcePersonID }, options),
+        generatedGetPersonMerge({ mergeId: target.mergeID }, options),
       ]);
       if (!this.ownsSplit(owner, generation, context, target.mergeID)) return false;
       const etag = source.response.headers.get('ETag');
@@ -488,11 +477,14 @@ export class PersonMergeHistoryController {
       this.sourcePerson = source.data;
       this.sourceETag = etag;
       this.detail = merge.data;
+      const detail = this.detail;
       this.selectedParticipantIDs = [];
       this.clearConfirmation();
       this.splitNeedsFreshState = false;
       this.staleReloadTarget = null;
       this.splitError = 'The source changed while you were reviewing it. Confirm the current lineage before splitting.';
+      const labels = await loadMergeLabels(this.client, detail, owner.signal);
+      if (this.ownsSplit(owner, generation, context, target.mergeID)) this.labels = { for: detail, ...labels };
       return true;
     } catch {
       if (this.ownsSplit(owner, generation, context, target.mergeID)) {

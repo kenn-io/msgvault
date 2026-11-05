@@ -63,9 +63,14 @@
     return (controller.detail?.participants ?? []).filter(participant => participant.origin_side === side).flatMap(participant => {
       const addresses = labels?.addresses.get(participant.participant_id) ?? [];
       return (addresses.length ? addresses : [{ title: `Participant ${participant.participant_id}`, detail: '' }]).map((address, index) => ({
-        id: `${participant.participant_id}-${index}`, value: address.title, detail: address.detail, meta: participant.split_id === undefined ? '' : 'Split out'
+        id: `${participant.participant_id}-${index}`, value: address.title, detail: address.detail, meta: splitMeta(participant.split_id)
       }));
     });
+  }
+  function splitMeta(splitID: number | undefined) {
+    if (splitID === undefined) return '';
+    const split = controller.detail?.splits?.find(split => split.id === splitID);
+    return split ? `Split out to ${labels?.names.get(split.new_person_id) ?? 'a profile'}` : 'Split out';
   }
   function reviewRows(pending: boolean) {
     return (controller.detail?.review_candidates ?? []).filter(candidate => (candidate.state === 'pending') === pending).map(candidate => ({
