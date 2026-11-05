@@ -270,7 +270,7 @@ func TestAgentSlowDownloadAllowsOwnerMutation(t *testing.T) {
 			path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 			requirements.NoError(err)
 			requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
-			requirements.NoError(os.WriteFile(path, []byte("allowed"), 0600))
+			requirements.NoError(os.WriteFile(path, []byte("\x00llowed"), 0600))
 			gate := NewSerialOperationGate()
 			protected := &agentReadGateStore{Store: st}
 			srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger(), OperationGate: gate})
@@ -305,7 +305,7 @@ func TestAgentSlowDownloadAllowsOwnerMutation(t *testing.T) {
 			close(w.resume)
 			<-readDone
 			assertions.Equal(http.StatusOK, w.Code)
-			assertions.Equal("allowed", w.Body.String())
+			assertions.Equal("\x00llowed", w.Body.String())
 		})
 	}
 }
@@ -923,7 +923,7 @@ func testAgentPackingSnapshot(t *testing.T) {
 				requirements.NoError(err)
 				id, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "message", MessageType: "email"})
 				requirements.NoError(err)
-				content := []byte("packing preserves authorized bytes")
+				content := []byte("\x00packing preserves authorized bytes")
 				if route == "cid" {
 					content = fakePNG
 				}
