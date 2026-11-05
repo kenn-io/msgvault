@@ -1,5 +1,5 @@
 import { stubOperationStatus } from './kit-ui';
-import { setKitTheme } from './kit-ui';
+import { setKitTheme, setTemporaryDensity } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { meetingAction, meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { exploreHistoryState } from './explore-state';
@@ -345,6 +345,69 @@ for (const facet of ['person', 'domain'] as const) {
     await page.goBack();
     await expect(reading).toBeVisible();
   });
+}
+
+for (const facet of ['person', 'domain'] as const) {
+  for (const [width, height] of [[1280, 720], [420, 900]]) {
+    test(`${facet} Messages stay filled while scrolling and paging at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await prepare(page);
+      const requests: Array<{ cursor?: string }> = [];
+      const timeline = facet === 'person' ? '**/api/v1/participants/*/timeline' : '**/api/v1/domains/example.com/timeline';
+      await page.route(timeline, route => {
+        const body = route.request().postDataJSON() as { cursor?: string };
+        requests.push(body);
+        const offset = body.cursor ? Number(body.cursor.slice('page:'.length)) : 0;
+        const count = Math.min(500, 1200 - offset);
+        return route.fulfill({ json: {
+          rows: Array.from({ length: count }, (_, index) => ({
+            ...timelineRows[0], key: `message:${offset + index + 1}`, title: `Synthetic subject ${offset + index + 1}`
+          })),
+          total_count: 1200, cache_revision: 'cache-relationships', search_provenance: {},
+          ...(offset + count < 1200 ? { next_cursor: `page:${offset + count}` } : {})
+        } });
+      });
+      if (facet === 'domain') {
+        await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: domainSummary }));
+        await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+          rows: [{ key: '2026-07-18', label: '2026-07-18', count: 1200, estimated_bytes: 0, latest_at: when, level: 'FOURTH_QUARTILE' }],
+          total_count: 1, cache_revision: 'cache-domain', search_provenance: {}
+        } }));
+      }
+      await page.goto('/?workspace=relationships');
+      if (width === 420) await setTemporaryDensity(page, 'Comfortable');
+      if (facet === 'domain') await page.getByRole('radio', { name: 'Domains', exact: true }).click();
+      await page.getByRole('grid', { name: 'People results' }).getByText(facet === 'person' ? 'Alice Example' : 'example.com', { exact: true }).click();
+      const grid = page.getByRole('grid', { name: 'Messages results' });
+      await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
+      await page.getByRole('group', { name: 'Person page' }).evaluate(element => element.scrollTo(0, element.scrollHeight));
+      await expect(grid.locator('[data-row-key]').first()).toBeInViewport();
+      expect((await grid.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+
+      const rowHeight = (await grid.locator('[data-row-key]').first().boundingBox())!.height;
+      await grid.evaluate((element, height) => element.scrollTo(0, 490 * height), rowHeight);
+      await expect.poll(() => requests.length).toBe(2);
+      await grid.evaluate((element, height) => element.scrollTo(0, 500 * height), rowHeight);
+      await expect(grid.getByText('Synthetic subject 501', { exact: true })).toBeInViewport();
+      await grid.focus();
+      const active = await grid.getAttribute('aria-activedescendant');
+      await page.keyboard.press('PageDown');
+      await expect(grid).not.toHaveAttribute('aria-activedescendant', active!);
+      let activeID = await grid.getAttribute('aria-activedescendant');
+      await expect(page.locator(`#${activeID}`)).toBeInViewport();
+      await expect(grid).toBeFocused();
+      await page.keyboard.press('End');
+      await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-1200$/);
+      activeID = await grid.getAttribute('aria-activedescendant');
+      await expect(page.locator(`#${activeID}`)).toBeInViewport();
+      await expect(grid).toBeFocused();
+      await page.keyboard.press('Enter');
+      const reader = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
+      await expect(reader.getByText('Preview text', { exact: true })).toBeVisible();
+      expect((await grid.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+      expect((await reader.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+    });
+  }
 }
 
 for (const [width, height] of [[1440, 900], [420, 900], [1280, 720]]) {
