@@ -30,6 +30,12 @@ type ClusterLookupStore interface {
 	ClusterEdges(id int64) ([]store.LinkEdge, error)
 }
 
+// ClusterCanonicalStore resolves a cluster's canonical ID with calendar rooms
+// excluded, matching the analytics cache. Stores without it use the smallest member.
+type ClusterCanonicalStore interface {
+	ClusterCanonicalID(members []int64) (int64, error)
+}
+
 // IdentityCacheRefresher rebuilds the identity-derived Parquet datasets after
 // a link/unlink mutation commits, so cached analytics reflect the new
 // participant clusters without waiting for the next scheduled cache build.

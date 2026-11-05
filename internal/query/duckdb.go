@@ -812,7 +812,7 @@ func (e *DuckDBEngine) parquetCTEs() string {
 	if len(pExtra) > 0 {
 		pCTE += ", " + strings.Join(pExtra, ", ")
 	}
-	pCTE += fmt.Sprintf(" FROM read_parquet('%s')", e.parquetPath(datasetParticipants))
+	pCTE += " FROM " + participantsRelationSQL(e.parquetPath(datasetParticipants))
 
 	// --- conversations CTE ---
 	convReplace := []string{

@@ -30,14 +30,14 @@ func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing
 		INSERT INTO conversation_participants VALUES (700, 1);
 		CREATE TABLE message_recipients(message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR);
 		CREATE TABLE attachments(attachment_id BIGINT, message_id BIGINT);
-		INSERT INTO attachments VALUES (1, 100000);
+		INSERT INTO attachments VALUES (1, 100000); CREATE TABLE participants AS SELECT 1::BIGINT AS id, '' AS domain, false AS is_room; CREATE TABLE participant_clusters(participant_id BIGINT, canonical_id BIGINT);
 	`)
 	requirements.NoError(err)
 
 	ctes, args := personFileMatchCTEs(PersonFileScope{
 		ParticipantIDs: []int64{1},
 		Directions:     []PersonFileDirection{PersonFileGroup},
-	})
+	}, "participant_clusters")
 	var aggregatedMessages int64
 	err = db.QueryRowContext(context.Background(),
 		"WITH "+ctes+" SELECT COUNT(*) FROM person_matches_unfiltered", args...).Scan(&aggregatedMessages)

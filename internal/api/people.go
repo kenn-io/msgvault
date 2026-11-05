@@ -309,12 +309,26 @@ func (s *Server) clusterMemberIDs(id int64) []int64 {
 	return members
 }
 
+// clusterCanonicalID returns the smallest non-room member, the canonical ID
+// the analytics cache publishes. Without room classification it falls back to
+// members[0]: ClusterMembers returns members sorted ascending, and the store's
+// link graph roots every cluster at its smallest member ID (see
+// ParticipantClusters/rebuildClusterAsStar in internal/store/participant_links.go).
+func (s *Server) clusterCanonicalID(members []int64) int64 {
+	if rooms, ok := s.store.(ClusterCanonicalStore); ok {
+		canonical, err := rooms.ClusterCanonicalID(members)
+		if err == nil && canonical > 0 {
+			return canonical
+		}
+		if err != nil {
+			s.logger.Error("cluster canonical lookup failed", "error", err)
+		}
+	}
+	return members[0]
+}
+
 // attachPersonCluster sets person.Cluster from the store's edge graph when
 // id is linked (members has ≥2 entries, as returned by clusterMemberIDs).
-// Canonical is members[0]: ClusterMembers returns members sorted ascending,
-// and the store's link-graph convention roots every cluster at its smallest
-// member ID (see ParticipantClusters/rebuildClusterAsStar in
-// internal/store/participant_links.go).
 func (s *Server) attachPersonCluster(person *query.PersonSummary, id int64, members []int64) {
 	if len(members) < 2 {
 		return
@@ -332,7 +346,7 @@ func (s *Server) attachPersonCluster(person *query.PersonSummary, id int64, memb
 	for _, e := range edges {
 		clusterEdges = append(clusterEdges, query.PersonClusterEdge{ParticipantA: e.A, ParticipantB: e.B})
 	}
-	person.Cluster = &query.PersonCluster{CanonicalID: members[0], MemberIDs: members, Edges: clusterEdges}
+	person.Cluster = &query.PersonCluster{CanonicalID: s.clusterCanonicalID(members), MemberIDs: members, Edges: clusterEdges}
 }
 
 func (s *Server) handleParticipantContextSummary(w http.ResponseWriter, r *http.Request) {
