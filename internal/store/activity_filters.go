@@ -211,18 +211,18 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,
  CASE WHEN ` + matrixPendingEncryptedSQL("m") + ` THEN 1 ELSE 0 END AS encrypted,
- CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible
+ CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible,` + s.activityInvitationSQL() + ` AS invitation
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
  ), ` + classification + `, scored AS (
  SELECT f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
- f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,
+ f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,f.invitation,
  MAX(f.large_inbound) AS large_inbound,
  CASE WHEN f.contact_eligible=1 AND f.encrypted=0
  THEN MAX(CASE WHEN f.excluded=''` + countedSubject + ` AND ` + counted + ` THEN 1 ELSE 0 END) ELSE 0 END AS counted,
  CASE WHEN ` + listExcluded + `=1 OR (MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END)=1
  AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded='' THEN 1 ELSE 0 END)=0) THEN 0 ELSE 1 END AS non_noise
  FROM facts f GROUP BY f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
- f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible
+ f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,f.invitation
  ), thread_sizes AS MATERIALIZED (
  SELECT e.source_id,e.conversation_id,(SELECT COUNT(*) FROM messages m JOIN activity_events ae ON ae.message_id=m.id JOIN sources src ON src.id=m.source_id
  WHERE m.source_id=e.source_id AND m.conversation_id=e.conversation_id AND ` + s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae") + `) AS thread_messages
@@ -278,7 +278,7 @@ func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters
 func activityBurstGroupsCTE(f ActivityFilters) string {
 	where := ""
 	if !f.IncludeNoise {
-		where = " WHERE non_noise=1 OR ref_kind='meeting'"
+		where = " WHERE non_noise=1 OR invitation=1"
 	}
 	return `, displayed AS (
  SELECT * FROM representatives` + where + `
@@ -288,7 +288,7 @@ func activityBurstGroupsCTE(f ActivityFilters) string {
  MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
  SUM(CASE WHEN direction='inbound' THEN counted ELSE 0 END) AS inbound,
  SUM(CASE WHEN direction='outbound' THEN counted ELSE 0 END) AS outbound,
- COUNT(*) AS message_count,CASE WHEN MAX(CASE WHEN ref_kind='meeting' THEN 1 ELSE 0 END)=1 THEN 0
+ COUNT(*) AS message_count,CASE WHEN MAX(invitation)=1 THEN 0
  WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
  FROM displayed GROUP BY thread_source_id,thread_conversation_id,local_date
 )`

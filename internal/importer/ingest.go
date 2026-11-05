@@ -117,12 +117,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		}
 	}
 
-	isFromMe := false
-	if len(parsed.From) > 0 {
-		if strings.EqualFold(parsed.From[0].Email, identifier) {
-			isFromMe = true
-		}
-	}
+	isFromMe := len(parsed.From) > 0 && strings.EqualFold(parsed.From[0].Email, identifier)
 
 	if threadID == "" {
 		threadID = threadKey(parsed, rawHash)
@@ -206,6 +201,7 @@ func ingestRawMessageWithCompletion(ctx context.Context, st *store.Store,
 		RawMIME:    raw,
 		Recipients: recipientSets,
 		LabelIDs:   labelIDs,
+		Metadata:   store.EmailInvitationMetadata(parsed.HasCalendarPart),
 	})
 	if err != nil {
 		return err
