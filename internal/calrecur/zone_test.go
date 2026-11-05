@@ -12,6 +12,8 @@ func TestLoadZone(t *testing.T) {
 		{"Europe/Berlin", "Europe/Berlin"},
 		{"Eastern Standard Time", "America/New_York"},
 		{"tzone://Microsoft/Eastern Standard Time", "America/New_York"},
+		{"tzone://Microsoft/America/New_York", "America/New_York"},
+		{"/vendor:1/America/New_York", "America/New_York"},
 		{"/freeassociation.sourceforge.net/Europe/Berlin", "Europe/Berlin"},
 		{"/example.org/America/Argentina/Buenos_Aires", "America/Argentina/Buenos_Aires"},
 	} {
