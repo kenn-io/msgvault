@@ -59,6 +59,15 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 	return rows, nil
 }
 
+// A source merge can hide an archived copy behind the visible copy of the same
+// provider event, so a saved reference to the hidden copy resolves to that one.
+func meetingEventRowsByID(ctx context.Context, r reboundReader, id int64, budget *int) ([]CalendarEventRow, error) {
+	return meetingEventRows(ctx, r, `e.message_id = ? OR EXISTS (
+ SELECT 1 FROM calendar_events h JOIN messages hm ON hm.id = h.message_id
+ JOIN source_merge_archive_only_messages ha ON ha.message_id = h.message_id
+ WHERE h.message_id = ? AND h.provider_event_id = e.provider_event_id AND hm.source_id = m.source_id)`, []any{id, id}, budget)
+}
+
 func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	refKey := key
 	if key == "" && row.Event.Kind == meetingExceptionKind && row.Event.Original != nil {
@@ -131,7 +140,7 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 }
 
 func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
-	rows, err := meetingEventRows(ctx, r, `e.message_id = ?`, []any{ref.MessageID}, budget)
+	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
 	if err != nil {
 		return linkOccurrence{}, err
 	}
@@ -427,7 +436,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				return nil, err
 			}
-			rows, err := meetingEventRows(ctx, r, "e.message_id = ?", []any{d.Ref.MessageID}, budget)
+			rows, err := meetingEventRowsByID(ctx, r, d.Ref.MessageID, budget)
 			if err != nil {
 				return nil, err
 			}
