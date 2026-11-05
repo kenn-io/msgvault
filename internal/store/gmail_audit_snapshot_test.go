@@ -34,11 +34,10 @@ type gmailAuditSnapshotGate struct {
 	release     chan struct{}
 }
 
-func newGmailAuditSnapshotGate(targetID int64) *gmailAuditSnapshotGate {
+func newGmailAuditSnapshotGate() *gmailAuditSnapshotGate {
 	return &gmailAuditSnapshotGate{
-		targetID: targetID,
-		paused:   make(chan struct{}),
-		release:  make(chan struct{}),
+		paused:  make(chan struct{}),
+		release: make(chan struct{}),
 	}
 }
 
@@ -264,7 +263,7 @@ func gmailAuditRecipientAddress(evidence GmailAuditEvidence, recipientType strin
 func TestGmailAuditEvidencePageReadsOneCoherentSnapshot(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	gate := newGmailAuditSnapshotGate(0)
+	gate := newGmailAuditSnapshotGate()
 	dbURL := os.Getenv("MSGVAULT_TEST_DB")
 	var st *Store
 	if IsPostgresURL(dbURL) {

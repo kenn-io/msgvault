@@ -18,7 +18,7 @@ func TestActivityReadersKeepIdentitySnapshot(t *testing.T) {
 		t.Run(reader, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			gate := newGmailAuditSnapshotGate(0)
+			gate := newGmailAuditSnapshotGate()
 			gate.query = "counterpart_flags AS"
 			var st *Store
 			if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
@@ -113,7 +113,7 @@ func TestActivityReadersKeepIdentitySnapshot(t *testing.T) {
 func TestContactReadersKeepPolicySnapshot(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	gate := newGmailAuditSnapshotGate(0)
+	gate := newGmailAuditSnapshotGate()
 	gate.query = "contact_messages AS"
 	var st *Store
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {

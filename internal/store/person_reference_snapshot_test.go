@@ -12,7 +12,7 @@ import (
 
 func TestResolvePersonReferenceKeepsMembershipAcrossPromotion(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
-	gate := newGmailAuditSnapshotGate(0)
+	gate := newGmailAuditSnapshotGate()
 	gate.query = "WITH RECURSIVE visible_members AS"
 	var st *Store
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {

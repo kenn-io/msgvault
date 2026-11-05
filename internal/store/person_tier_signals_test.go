@@ -272,13 +272,13 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 				m.SenderID = sql.NullInt64{Int64: a.sender, Valid: true}
 				key := "<copy-control@example.com>"
 				m.RFC822MessageID = sql.NullString{String: key, Valid: true}
-				if tc.list && i == 0 {
+				if tc.list && i == 1 {
 					m.ListID = sql.NullString{String: "list.example.com", Valid: true}
 				}
 				id, err := a.f.Store.UpsertMessage(m)
 				require.NoError(err)
 				to := []int64{a.owner}
-				if tc.broadcast && i == 0 {
+				if tc.broadcast && i == 1 {
 					to = append(to, guest)
 				}
 				require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", to, nil))
@@ -297,7 +297,7 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 			defer store.SetPersonTierRowPage(1)()
 			signals := tierSignals(t, a.f, a.personID, a.asOf, persontiers.DefaultConfig())
 			assert.Equal(tc.want, signals.InboundShort)
-			if tc.deleted {
+			if tc.list || tc.broadcast || tc.deleted {
 				assert.Equal(a.asOf.AddDate(0, 0, -2).Format("2006-01-02"), signals.LastDate)
 			}
 		})
