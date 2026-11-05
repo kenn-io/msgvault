@@ -1853,6 +1853,20 @@ type LinkKataEvidenceErrorResponseJSON503 = ErrorResponse
 
 type LinkKataEvidenceErrorResponseJSONDefault = ErrorResponse
 
+type ListOpenKataIssuesResponse = KataIssueListResponse
+
+type ListOpenKataIssuesErrorResponse = ErrorResponse
+
+type ListOpenKataIssuesErrorResponseJSON = ErrorResponse
+
+type ListOpenKataIssuesErrorResponseJSON404 = ErrorResponse
+
+type ListOpenKataIssuesErrorResponseJSON422 = ErrorResponse
+
+type ListOpenKataIssuesErrorResponseJSON503 = ErrorResponse
+
+type ListOpenKataIssuesErrorResponseJSONDefault = ErrorResponse
+
 type GetKataIntegrationStatusResponse = TaskIntegrationStatusResponse
 
 type GetKataIntegrationStatusErrorResponse = ErrorResponse
@@ -5694,6 +5708,19 @@ type LinkKataEvidenceResp struct {
 	JSON422      *LinkKataEvidenceErrorResponseJSON422
 	JSON503      *LinkKataEvidenceErrorResponseJSON503
 	JSONDefault  *LinkKataEvidenceErrorResponseJSONDefault
+}
+
+type ListOpenKataIssuesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListOpenKataIssuesResponse
+	JSON400      *ListOpenKataIssuesErrorResponse
+	JSON401      *ListOpenKataIssuesErrorResponseJSON
+	JSON404      *ListOpenKataIssuesErrorResponseJSON404
+	JSON422      *ListOpenKataIssuesErrorResponseJSON422
+	JSON503      *ListOpenKataIssuesErrorResponseJSON503
+	JSONDefault  *ListOpenKataIssuesErrorResponseJSONDefault
 }
 
 type GetKataIntegrationStatusResp struct {

@@ -9,13 +9,14 @@
     searchIntegrationTasks as generatedSearchIntegrationTasks,
     unlinkMessageTask as generatedUnlinkMessageTask,
   } from '../../api/generated/api/api';
-  import { Button, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
+  import { Button, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type {
     TaskLinkLookupResponse as GeneratedTaskLinkLookupResponse,
     TaskLinkOutboundMetadata as GeneratedTaskLinkOutboundMetadata,
     TaskSummary as GeneratedTaskSummary,
   } from '../../api/generated/models';
+  import ExistingPicker from '../common/ExistingPicker.svelte';
   import CreateTaskDialog from './CreateTaskDialog.svelte';
   type Lookup = GeneratedTaskLinkLookupResponse;
   type OutboundMetadata = GeneratedTaskLinkOutboundMetadata;
@@ -54,9 +55,7 @@
   let reason = $state('');
   let lastScan = $state('');
   let tasks = $state<Task[]>([]);
-  let searchQuery = $state('');
-  let searchResults = $state<Task[]>([]);
-  let searching = $state(false);
+  let selected = $state('');
   let mutating = $state(false);
   let error = $state('');
   let outboundMetadata = $state<OutboundMetadata | null>(null);
@@ -85,9 +84,7 @@
     reason = '';
     lastScan = '';
     tasks = [];
-    searchQuery = '';
-    searchResults = [];
-    searching = false;
+    selected = '';
     mutating = false;
     error = '';
     outboundMetadata = null;
@@ -142,30 +139,10 @@
     tasks = data.tasks ?? [];
     outboundMetadata = data.outbound_metadata;
   }
-  async function search(): Promise<void> {
-    const query = searchQuery.trim();
-    if (!query || searching || !mutationReady) return;
-    const currentGeneration = generation;
-    searching = true;
-    error = '';
-    searchResults = [];
-    try {
-      const { data, error: responseError } = await generatedSearchIntegrationTasks(
-        { q: query },
-        {
-          ...client,
-          signal: activeController?.signal,
-        },
-      );
-      if (currentGeneration !== generation) return;
-      if (!data) throw new Error(messageFor(responseError, 'Unable to search tasks.'));
-      searchResults = data.tasks ?? [];
-    } catch (cause) {
-      if (currentGeneration !== generation || activeController?.signal.aborted) return;
-      error = cause instanceof Error ? cause.message : 'Unable to search tasks.';
-    } finally {
-      if (currentGeneration === generation) searching = false;
-    }
+  async function loadTasks(query: string, signal: AbortSignal) {
+    const { data, error } = await generatedSearchIntegrationTasks(query ? { q: query } : {}, { ...client, signal });
+    if (!data) throw new Error(messageFor(error, 'Unable to search tasks.'));
+    return { items: (data.tasks ?? []).map(task => ({ id: task.id, label: task.title })), truncated: data.truncated };
   }
   async function linkExisting(taskID: string): Promise<void> {
     if (!taskID || mutating || !mutationReady) return;
@@ -192,8 +169,7 @@
       if (currentGeneration !== generation) return;
       if (!data) throw new Error(messageFor(responseError, 'Unable to link task.'));
       existingLinkRetry = undefined;
-      searchQuery = '';
-      searchResults = [];
+      selected = '';
       oncomplete?.();
     } catch (cause) {
       if (currentGeneration !== generation || activeController?.signal.aborted) return;
@@ -272,7 +248,7 @@
 </script>
 
 {#if showSetup || integrationState === 'ready' || integrationState === 'loading' || (tasks.length > 0 && integrationState !== 'authentication_required') || error}
-<section class="task-links" aria-label="Linked tasks">
+<section class="task-links" class:add={mode === 'add'} class:creating={mode === 'add' && action === 'create'} aria-label="Linked tasks">
   {#if mode !== 'add' && integrationState !== 'disabled'}<header>
     <h2>Tasks</h2>
   </header>{/if}
@@ -304,33 +280,16 @@
     {#if mutationReady && mode === 'add'}
       <SegmentedControl disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
       {#if action !== 'create'}
-      <form
-        onsubmit={(event) => {
-          event.preventDefault();
-          void search();
-        }}
-      >
-        <label
-          >Search tasks<TextInput ariaLabel="Search tasks" bind:value={searchQuery} autocomplete="off" block /></label
-        >
-        <Button type="submit" size="sm" surface="soft" label="Search" disabled={searching || !searchQuery.trim()} />
-      </form>
-      {#if searchResults.length > 0}
-        <ul aria-label="Task search results">
-          {#each searchResults as task (task.id)}<li>
-              <span>{task.title}</span><Button
-                size="sm"
-                surface="soft"
-                label={`Link ${task.title}`}
-                disabled={mutating}
-                onclick={() => void linkExisting(task.id)}
-              />
-            </li>{/each}
-        </ul>
-      {/if}
+      <ExistingPicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
+      {#if error}<p role="alert">{error}</p>{/if}
+      <p class="disclosure">Bodies and attachments are never sent.</p>
+      <div class="actions">
+        <Button surface="soft" label="Cancel" disabled={busy} onclick={oncancel} />
+        <Button tone="info" surface="solid" label="Link task" disabled={busy || !mutationReady || !selected} onclick={() => void linkExisting(selected)} />
+      </div>
       {/if}
     {/if}
-    {#if error}<p role="alert">{error}</p>{/if}
+    {#if error && (mode !== 'add' || action === 'create' || !mutationReady)}<p role="alert">{error}</p>{/if}
   {/if}
 </section>
 {/if}
@@ -364,8 +323,11 @@
     gap: var(--space-3);
     padding: 0 var(--space-5) var(--space-5);
   }
+  .task-links.add { padding: 0; gap: var(--space-6); }
+  .creating { margin-bottom: var(--space-6); }
+  .disclosure { color: var(--text-secondary); font-size: 12px; }
+  .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
   header,
-  form,
   li {
     display: flex;
     align-items: center;
@@ -391,13 +353,6 @@
     gap: var(--space-2);
     padding: 0;
     list-style: none;
-  }
-  label {
-    display: grid;
-    flex: 1;
-    gap: var(--space-1);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
   [role='alert'] {
     color: var(--text-muted);

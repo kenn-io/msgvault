@@ -1,6 +1,7 @@
 package taskclient
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -90,5 +91,35 @@ func TestFindActionTask(t *testing.T) {
 			require.NoError(err)
 			assert.Empty(citing)
 		})
+	}
+}
+
+func TestOpenIssues(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	native := katatest.New(t)
+	server := httptest.NewTLSServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project})
+	require.NoError(err)
+	open, err := client.CreateTask(t.Context(), katatest.Project, "open-budget", KataCreate{Title: "Send the budget"})
+	require.NoError(err)
+	for i := range 30 {
+		_, err := client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("other-%d", i), KataCreate{Title: fmt.Sprintf("Other issue %d", i), Body: strings.Repeat("Unrelated detail. ", 20000)})
+		require.NoError(err)
+	}
+	closed, err := client.CreateTask(t.Context(), katatest.Project, "closed-budget", KataCreate{Title: "Review the budget"})
+	require.NoError(err)
+	native.Endpoint(server).CloseIssue(t, closed.UID)
+	issues, truncated, err := client.OpenIssues(t.Context(), katatest.Project, 25)
+	require.NoError(err)
+	assert.Len(issues, 25)
+	assert.True(truncated)
+	assert.Equal("Other issue 29", issues[0].Title)
+	for _, issue := range issues {
+		assert.Equal("open", issue.Status)
+		assert.NotEqual(open.UID, issue.UID)
+		assert.NotEqual(closed.UID, issue.UID)
 	}
 }

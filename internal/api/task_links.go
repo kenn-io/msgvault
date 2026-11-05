@@ -65,7 +65,8 @@ type TaskLinkLookupResponse struct {
 }
 
 type TaskSearchResponse struct {
-	Tasks []tasklinks.TaskSummary `json:"tasks"`
+	Truncated bool                    `json:"truncated" doc:"More tasks matched than were returned"`
+	Tasks     []tasklinks.TaskSummary `json:"tasks"`
 }
 
 func (s *Server) registerTaskLinkRoutes(api huma.API) {
@@ -190,11 +191,11 @@ func (s *Server) handleSearchIntegrationTasks(w http.ResponseWriter, r *http.Req
 		return
 	}
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if query == "" || len(query) > maxTaskSearchQueryLength {
-		writeError(w, http.StatusBadRequest, "invalid_query", "Task search query is required and must be at most 256 bytes")
+	if len(query) > maxTaskSearchQueryLength {
+		writeError(w, http.StatusBadRequest, "invalid_query", "Task search query must be at most 256 bytes")
 		return
 	}
-	tasks, err := s.taskLinkOperations.Search(r.Context(), query)
+	tasks, truncated, err := s.taskLinkOperations.Search(r.Context(), query)
 	if err != nil {
 		writeTaskLinkError(w, err)
 		return
@@ -202,7 +203,7 @@ func (s *Server) handleSearchIntegrationTasks(w http.ResponseWriter, r *http.Req
 	if tasks == nil {
 		tasks = []tasklinks.TaskSummary{}
 	}
-	writeJSON(w, http.StatusOK, TaskSearchResponse{Tasks: tasks})
+	writeJSON(w, http.StatusOK, TaskSearchResponse{Tasks: tasks, Truncated: truncated})
 }
 
 func (s *Server) handleUnlinkMessageTask(w http.ResponseWriter, r *http.Request) {

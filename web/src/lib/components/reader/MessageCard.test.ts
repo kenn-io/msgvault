@@ -292,6 +292,7 @@ it('refreshes links after a Kata comment fails after saving evidence', async () 
     const path = new URL(request.url).pathname;
     if (path.endsWith('/status')) return Response.json({ state: 'ready', project: 'example' });
     if (path.endsWith('/messages/42/tasks')) return Response.json({ state: 'ready', complete: true, tasks: saved ? [{ id: 'task-1', title: 'Linked task' }] : [], outbound_metadata: taskOutboundMetadata });
+    if (path.endsWith('/kata/open-issues')) return Response.json({ issues: [issue], truncated: false });
     if (path.endsWith('/kata/issues')) return Response.json({ issues: saved ? [issue] : [], truncated: false });
     if (path.endsWith('/evidence/prepare')) return Response.json({ evidence: [{ id: 'evidence-1', passage: 'passage-1', reference, excerpt: 'Opening passage', display: { containing_title: 'Synthetic message' }, content_trust: 'untrusted' }] });
     if (path.endsWith('/issues/example%23abcd/evidence') && request.method === 'POST') {
@@ -308,14 +309,13 @@ it('refreshes links after a Kata comment fails after saving evidence', async () 
     await screen.findByText('No linked Kata issues.');
     await fireEvent.click(screen.getByRole('button', { name: /^More actions for .+ on / }));
     await fireEvent.click(screen.getByRole('menuitem', { name: 'Add to task…' }));
-    await chooseSelectOption(await screen.findByRole('combobox', { name: /^Provider:/ }), 'Kata');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add quote to Kata…' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Kata' }));
     await screen.findByText('Opening passage');
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Action:/ }), 'Add to existing issue');
-    await fireEvent.input(screen.getByLabelText('Kata issue ref'), { target: { value: 'example#abcd' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add evidence' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('Comment failed');
-    await fireEvent.click(screen.getByText('Close').closest('button')!);
+    await fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(await screen.findByText('example#abcd: Follow up · open')).toBeDefined();
     expect(await screen.findByText('Linked task')).toBeDefined();
   } finally { view.unmount(); readiness.dispose(); }

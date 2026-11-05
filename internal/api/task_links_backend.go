@@ -86,20 +86,25 @@ func (b *taskLinkBackend) Unlink(ctx context.Context, taskID string, identity ta
 	return task, err
 }
 
-func (b *taskLinkBackend) Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, error) {
+func (b *taskLinkBackend) Search(ctx context.Context, query string) ([]tasklinks.TaskSummary, bool, error) {
 	client, _, err := b.connect(ctx)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	listed, err := client.SearchTasks(ctx, b.projectPath(), query, 25)
+	var listed taskclient.TaskList
+	if query == "" {
+		listed, err = client.ListTasks(ctx, b.projectPath(), 25, "")
+	} else {
+		listed, err = client.SearchTasks(ctx, b.projectPath(), query, 25)
+	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	result := make([]tasklinks.TaskSummary, 0, len(listed.Tasks))
 	for _, task := range listed.Tasks {
 		result = append(result, tasklinks.TaskSummary{ID: task.ID, Title: task.Title, Revision: task.Revision})
 	}
-	return result, nil
+	return result, listed.NextCursor != "", nil
 }
 
 func (b *taskLinkBackend) refresh(ctx context.Context, client *taskclient.Client, project taskclient.Project, identity tasklinks.MessageIdentity) {

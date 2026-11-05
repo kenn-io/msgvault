@@ -157,23 +157,32 @@ func (c *KataClient) ListPersonTasks(ctx context.Context, project, personUID str
 		return nil, ErrRequestRejected
 	}
 	query := url.Values{"meta": {"msgvault.person=" + personUID}, "status": {"open"}, "limit": {strconv.Itoa(limit)}}
+	tasks, _, err := c.listIssues(ctx, project, query)
+	return tasks, err
+}
+
+func (c *KataClient) listIssues(ctx context.Context, project string, query url.Values) ([]KataTask, bool, error) {
 	path, err := c.issuePath(ctx, project, "?"+query.Encode())
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	transport := *c.transport
 	transport.maxResponseBytes = max(transport.maxResponseBytes, issueListMaxResponseBytes)
 	var response kata.ListIssuesResponseBody
 	if err := transport.doJSON(ctx, http.MethodGet, path, nil, nil, &response, http.StatusOK); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	result := make([]KataTask, 0, len(response.Issues))
-	for _, issue := range response.Issues {
+	return tasksFromKataIssues(project, response.Issues), response.Truncated, nil
+}
+
+func tasksFromKataIssues(project string, issues []kata.IssueOut) []KataTask {
+	result := make([]KataTask, 0, len(issues))
+	for _, issue := range issues {
 		task := taskFromKataIssue(project, kata.ShowIssueOut{UID: issue.UID, ShortID: issue.ShortID, Title: issue.Title, Body: issue.Body, Revision: issue.Revision, Metadata: issue.Metadata, Status: issue.Status, Priority: issue.Priority, Owner: issue.Owner}, issue.Labels, issue.WebURL)
 		task.QualifiedRef = issue.QualifiedID
 		result = append(result, task)
 	}
-	return result, nil
+	return result
 }
 
 func (c *KataClient) CreateTask(ctx context.Context, project, idempotencyKey string, create KataCreate) (KataTask, error) {

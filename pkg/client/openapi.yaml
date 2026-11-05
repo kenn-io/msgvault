@@ -7503,7 +7503,7 @@ components:
             $ref: "#/components/schemas/KataIssueReceipt"
           type: array
         truncated:
-          description: "The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"
+          description: "The list may omit matching issues: more matched than were returned, or some citations could not be checked"
           type: boolean
       required:
         - issues
@@ -16142,7 +16142,11 @@ components:
           items:
             $ref: "#/components/schemas/TaskSummary"
           type: array
+        truncated:
+          description: More tasks matched than were returned
+          type: boolean
       required:
+        - truncated
         - tasks
       type: object
     TaskSummary:
@@ -16870,7 +16874,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.43.0
+  version: 3.44.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:
@@ -24086,6 +24090,57 @@ paths:
       summary: Add exact archive evidence to an existing Kata issue
       tags:
         - API
+  /api/v1/integrations/kata/open-issues:
+    get:
+      operationId: listOpenKataIssues
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KataIssueListResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: List newest open Kata issues in the configured project
+      tags:
+        - API
   /api/v1/integrations/kata/status:
     get:
       operationId: getKataIntegrationStatus
@@ -24111,10 +24166,9 @@ paths:
     get:
       operationId: searchIntegrationTasks
       parameters:
-        - description: Task title search within the configured project
+        - description: Task title search within the configured project; omit to list tasks
           in: query
           name: q
-          required: true
           schema:
             type: string
       responses:

@@ -1,7 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
-import { chooseSelectOption } from '../../../test/kit-ui';
 import KataEvidenceDialog from './KataEvidenceDialog.svelte';
 
 const selector = { kind: 'message' as const, message_id: 42, start_rune: 0, max_chars: 1000 };
@@ -31,6 +30,7 @@ function harness(create: (request: Request) => Promise<Response> = async () => R
       const body = await request.json() as { selectors: { start_rune: number }[] };
       return Response.json({ evidence: [passages[body.selectors[0].start_rune]] });
     }
+    if (path.endsWith('/kata/open-issues')) return Response.json({ issues: [issue], truncated: false });
     return create(request);
   });
   const posted = (suffix: string) => requests.filter((request) => request.method === 'POST' && new URL(request.url).pathname.endsWith(suffix));
@@ -42,6 +42,8 @@ describe('KataEvidenceDialog', () => {
     const h = harness();
     render(KataEvidenceDialog, { client: h.client, selector, defaultTitle: 'Follow up' });
     expect(await screen.findByText('Opening passage')).toBeDefined();
+    expect(screen.getAllByRole('button', { name: 'Close' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Earlier passage' })).toHaveProperty('disabled', true);
 
     await fireEvent.click(screen.getByRole('button', { name: 'Later passage' }));
@@ -166,13 +168,51 @@ describe('KataEvidenceDialog', () => {
     expect(keys(remounted)).toEqual(keys(lost));
   });
 
+  it('filters one list by title fragments and refs, and accepts an unlisted ref', async () => {
+    const reads = vi.fn();
+    const posts: Request[] = [];
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.url.endsWith('/open-issues')) {
+        reads();
+        return Response.json({ issues: [{ ...issue, title: 'Send the budget', ref: 'k3f9', qualified_ref: 'example#k3f9' }, { ...issue, title: 'C# guide' }], truncated: true });
+      }
+      if (request.url.endsWith('/prepare')) return Response.json({ evidence: [passages[0]] });
+      posts.push(request);
+      return Response.json({ issue, replayed: false });
+    });
+    render(KataEvidenceDialog, { client, selector, embedded: true });
+    await screen.findByText('Opening passage');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await screen.findByRole('radio', { name: 'Send the budget · example#k3f9' });
+    expect(screen.getByText("Showing the 25 newest open issues. Type an issue's ref to add it.")).toBeDefined();
+    const filter = screen.getByRole('searchbox', { name: 'Filter open issues' });
+    for (const text of ['bud', 'K3F9', 'example#k3f9', 'C# guide']) {
+      await fireEvent.input(filter, { target: { value: text } });
+      const title = text === 'C# guide' ? 'C# guide · example#abcd' : 'Send the budget · example#k3f9';
+      await screen.findByRole('radio', { name: title });
+      await waitFor(() => expect(screen.getByRole('group', { name: 'open issues' }).querySelectorAll('input[type=radio]')).toHaveLength(1));
+    }
+    expect(reads).toHaveBeenCalledOnce();
+    await fireEvent.input(filter, { target: { value: ' example#older ' } });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Add quote to example#older' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
+    await screen.findByText('example#abcd');
+    expect(new URL(posts[0].url).pathname).toBe('/api/v1/integrations/kata/issues/example%23older/evidence');
+    expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
+  });
+
   it('adds the previewed passage to an existing issue', async () => {
     const h = harness(async () => Response.json({ issue, replayed: false }));
     render(KataEvidenceDialog, { client: h.client, selector });
     await screen.findByText('Opening passage');
-    await chooseSelectOption(screen.getByLabelText('Action'), 'Add to existing issue');
-    await fireEvent.input(screen.getByLabelText('Kata issue ref'), { target: { value: 'example#abcd' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Add evidence' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    expect(screen.getByRole('button', { name: 'Add quote' })).toHaveProperty('disabled', true);
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Follow up · example#abcd' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');
     const linked = h.posted('/issues/example%23abcd/evidence');
     expect(await linked[0].json()).toEqual({ evidence: [passages[0].reference] });

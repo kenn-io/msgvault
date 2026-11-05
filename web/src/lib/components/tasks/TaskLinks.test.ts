@@ -16,6 +16,45 @@ function expectOneInitialTaskRead(requests: Request[]): void {
 }
 
 describe('TaskLinks', () => {
+  it('clears a pick before the filter debounce can post a stale task', async () => {
+    const posts = vi.fn();
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.method === 'POST') posts();
+      if (request.url.includes('/search')) return Response.json({ tasks: [{ id: 'task-1', title: 'Send the budget' }], truncated: true });
+      return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    });
+    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Send the budget' }));
+    expect(screen.getByText('Showing the first 25 tasks. Type to search the rest.')).toBeDefined();
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter tasks' }), { target: { value: 'another' } });
+    const link = screen.getByRole('button', { name: 'Link task' });
+    expect(link).toHaveProperty('disabled', true);
+    await fireEvent.click(link);
+    expect(posts).not.toHaveBeenCalled();
+  });
+
+  it('clears a picked task when Existing remounts without it', async () => {
+    let lists = 0;
+    const posts = vi.fn();
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.method === 'POST') posts();
+      if (request.url.includes('/search')) return Response.json({ tasks: ++lists === 1 ? [{ id: 'task-1', title: 'Earlier task' }] : [] });
+      return Response.json(request.url.endsWith('/status') ? { state: 'ready', project: 'example' } : { state: 'ready', complete: true, tasks: [], outbound_metadata: taskOutboundMetadata });
+    });
+    render(TaskLinks, { client, mode: 'add', messageId: 42, title: 'Follow up' });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Earlier task' }));
+    expect(screen.getByRole('button', { name: 'Link task' })).toHaveProperty('disabled', false);
+    await fireEvent.click(screen.getByRole('radio', { name: 'New' }));
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await screen.findByText('No tasks in example yet.');
+    expect(screen.getByRole('button', { name: 'Link task' })).toHaveProperty('disabled', true);
+    expect(posts).not.toHaveBeenCalled();
+  });
+
   it("preserves an open creation draft and retry identity across another message's failed status refresh", async () => {
     const requests: Request[] = [];
     let statusCalls = 0;
@@ -344,9 +383,8 @@ describe('TaskLinks', () => {
     });
     render(TaskLinks, { client: createAPIClient(fetchFn), mode: 'add', messageId: 42, title: 'Synthetic', oncomplete });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Synthetic' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'Link Synthetic result' }));
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Link task' }));
     await waitFor(() => expect(requests.some((request) => request.method === 'POST')).toBe(true));
     const post = requests.find((request) => request.method === 'POST')!;
     await expect(post.clone().json()).resolves.toMatchObject({ task_id: 'task-1' });
@@ -375,9 +413,8 @@ describe('TaskLinks', () => {
     });
 
     await fireEvent.click(await screen.findByRole('radio', { name: 'Existing' }));
-    await fireEvent.input(screen.getByLabelText('Search tasks'), { target: { value: 'Synthetic' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Search' }));
-    const link = await screen.findByRole('button', { name: 'Link Synthetic result' });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Synthetic result' }));
+    const link = screen.getByRole('button', { name: 'Link task' });
     await fireEvent.click(link);
     await screen.findByRole('alert');
     await fireEvent.click(link);

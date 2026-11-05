@@ -39,7 +39,7 @@ func (c *KataClient) FindActionTask(ctx context.Context, project, action string)
 	if action == "" {
 		return KataTask{}, false, ErrRequestRejected
 	}
-	tasks, err := c.listIssues(ctx, project, url.Values{"meta": {ActionMetadataKey + "=" + action}}, 1)
+	tasks, err := c.listAcrossProjects(ctx, project, url.Values{"meta": {ActionMetadataKey + "=" + action}}, 1)
 	if err != nil || len(tasks) == 0 {
 		return KataTask{}, false, err
 	}
@@ -49,13 +49,13 @@ func (c *KataClient) FindActionTask(ctx context.Context, project, action string)
 // FindMetadataTasks returns up to limit open or closed issues carrying the
 // metadata key in any project, newest first.
 func (c *KataClient) FindMetadataTasks(ctx context.Context, project, key string, limit int) ([]KataTask, error) {
-	return c.listIssues(ctx, project, url.Values{"meta": {key}, "sort": {""}}, limit)
+	return c.listAcrossProjects(ctx, project, url.Values{"meta": {key}, "sort": {""}}, limit)
 }
 
-// listIssues lists matching issues across projects, oldest first by default. A grant
+// listAcrossProjects lists matching issues across projects, oldest first by default. A grant
 // scoped to project cannot list the others, so a refusal there narrows the
 // search to project.
-func (c *KataClient) listIssues(ctx context.Context, project string, query url.Values, limit int) ([]KataTask, error) {
+func (c *KataClient) listAcrossProjects(ctx context.Context, project string, query url.Values, limit int) ([]KataTask, error) {
 	if !query.Has("sort") {
 		query.Set("sort", "oldest")
 	}
@@ -89,4 +89,9 @@ func (c *KataClient) listAllIssues(ctx context.Context, query string) ([]KataTas
 		tasks = append(tasks, task)
 	}
 	return tasks, nil
+}
+
+// OpenIssues lists the project's newest open issues.
+func (c *KataClient) OpenIssues(ctx context.Context, project string, limit int) ([]KataTask, bool, error) {
+	return c.listIssues(ctx, project, url.Values{"status": {"open"}, "sort": {"created"}, "limit": {strconv.Itoa(limit)}})
 }

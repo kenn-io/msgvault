@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, SelectDropdown } from '@kenn-io/kit-ui';
+  import { SegmentedControl } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
@@ -13,7 +13,8 @@
   } = $props();
   const kata = kataReadiness();
   let provider = $state(untrack(() => email ? 'tasks' : 'kata'));
-  let quoteOpen = $state(false);
+  let kataInitialized = $state(untrack(() => !email));
+  let kataBusy = $state(false);
   let busy = $state(false);
   const options = $derived([
     ...(email ? [{ value: 'tasks', label: 'Tasks' }] : []),
@@ -21,22 +22,21 @@
   ]);
 </script>
 
-{#if quoteOpen || (!email && kata?.ready)}
-  <KataEvidenceDialog {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} {onclose} />
-{:else}
-  <Dialog title="Add to task" onclose={() => { if (!busy) onclose(); }}>
-    <div class="task-dialog">
-      {#if options.length > 1}<SelectDropdown title="Provider" disabled={busy} options={options} value={provider} onchange={(value) => provider = value} />{/if}
-      {#if email}<div hidden={provider !== 'tasks'}>
-        <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={onclose} />
-      </div>{/if}
-      {#if provider !== 'tasks'}
-        <Button label="Add quote to Kata…" onclick={() => quoteOpen = true} />
-      {/if}
-    </div>
-  </Dialog>
-{/if}
+<Dialog title="Add to task" onclose={() => { if (!busy && !kataBusy) onclose(); }}>
+  <div class="task-dialog">
+    {#if options.length > 1}
+      <div class="provider"><span>Send to</span><SegmentedControl ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
+    {/if}
+    {#if email}<div hidden={provider !== 'tasks'}>
+      <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={onclose} />
+    </div>{/if}
+    {#if kataInitialized && (email || kata?.ready)}<div hidden={provider !== 'kata'}>
+      <KataEvidenceDialog embedded {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} bind:busy={kataBusy} {onclose} />
+    </div>{/if}
+  </div>
+</Dialog>
 
 <style>
-  .task-dialog { display: grid; gap: var(--space-4); }
+  .task-dialog { display: grid; gap: var(--space-6); }
+  .provider { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
 </style>
