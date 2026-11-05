@@ -545,7 +545,7 @@ func TestPersonSweepWorkCoalescesDirtyHighWater(t *testing.T) {
 		before := latestPersonSweepSequence(t, f.store)
 		lease := claimPersonSweepFixture(t, f.store, "before-deletions")
 		requirements.NoError(f.store.AdvancePersonSweepReconciliation(t.Context(), *lease, peoplesweep.GenerationCursor{Key: cursorKey, Mode: peoplesweep.GenerationCursorOptimistic, CursorFrom: 0, CursorThrough: before}))
-		requirements.NoError(f.store.CompleteIdlePersonSweep(t.Context(), *lease, cursorKey.ProgramFingerprint, cursorKey.CatalogFingerprint))
+		requirements.NoError(f.store.CompleteIdlePersonSweep(t.Context(), *lease, cursorKey.ProgramFingerprint, cursorKey.CatalogFingerprint, profile.AllowedSources))
 		// Keep gap recovery focused on the journal, rather than a due backstop.
 		exec(`UPDATE person_sweep_cursors SET last_backstop_at=? WHERE person_id=?`, now, f.alicePersonID)
 		for _, id := range messageIDs {

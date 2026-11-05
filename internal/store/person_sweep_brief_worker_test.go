@@ -776,6 +776,51 @@ func TestPersonSweepWorkerDiscardsObsoleteBriefRetry(t *testing.T) {
 	}
 }
 
+func TestCompleteIdlePersonSweepAfterProfileSwitch(t *testing.T) {
+	for _, meetingOnly := range []bool{true, false} {
+		name := "both lanes active"
+		if meetingOnly {
+			name = "meeting only"
+		}
+		t.Run(name, func(t *testing.T) {
+			checks := assert.New(t)
+			requirements := require.New(t)
+			f := newPersonSweepJournalFixture(t, true, false)
+			profile := peoplesweep.ProviderProfile{AllowedSources: []peoplesweep.SourceClass{
+				peoplesweep.SourceConversationText, peoplesweep.SourceMeetingText,
+			}}
+			sweepCursorsToHighWater(t, f.store, f.alicePersonID, profile, time.Now().UTC())
+			catalog, err := f.store.BuildPersonFactCatalogContext(t.Context(), profile.AllowSensitive)
+			requirements.NoError(err)
+			if meetingOnly {
+				profile.AllowedSources = []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}
+			}
+			meetingKey := peoplesweep.CursorKey{PersonID: f.alicePersonID,
+				SourceLane: peoplesweep.SourceMeetingText, ProgramFingerprint: peoplesweep.ProgramFingerprint(),
+				CatalogFingerprint: catalog.Fingerprint}
+			cursor := loadPersonSweepCursor(t, f.store, meetingKey)
+			f.insertMessage(t, "after-profile-switch", "meeting_transcript", f.aliceID, time.Now().UTC())
+			lease := claimPersonSweepFixture(t, f.store, "profile-switch")
+			requirements.NoError(f.store.AdvancePersonSweepReconciliation(t.Context(), *lease, peoplesweep.GenerationCursor{
+				Key: meetingKey, Mode: peoplesweep.GenerationCursorOptimistic,
+				CursorFrom: cursor.OptimisticSequence, CursorThrough: latestPersonSweepSequence(t, f.store),
+			}))
+			requirements.NoError(f.store.CompleteIdlePersonSweep(t.Context(), *lease, meetingKey.ProgramFingerprint, catalog.Fingerprint, profile.AllowedSources))
+			var count int
+			var owner string
+			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(
+				`SELECT COUNT(*), COALESCE(MAX(lease_owner), '') FROM person_sweep_work WHERE person_id = ?`),
+				f.alicePersonID).Scan(&count, &owner))
+			if meetingOnly {
+				checks.Zero(count, "an inactive conversation cursor must not keep completed meeting work queued")
+			} else {
+				checks.Equal(1, count, "an active conversation cursor still needs to consume the meeting change")
+				checks.Empty(owner, "remaining work can be claimed again")
+			}
+		})
+	}
+}
+
 func TestCompleteIdlePersonSweepKeepsNewWorkAndRequiresCurrentLease(t *testing.T) {
 	for _, name := range []string{"idle", "new activity", "stale fence"} {
 		t.Run(name, func(t *testing.T) {
@@ -798,7 +843,7 @@ func TestCompleteIdlePersonSweepKeepsNewWorkAndRequiresCurrentLease(t *testing.T
 			case "stale fence":
 				lease.Fence--
 			}
-			err = st.CompleteIdlePersonSweep(t.Context(), *lease, peoplesweep.ProgramFingerprint(), catalog.Fingerprint)
+			err = st.CompleteIdlePersonSweep(t.Context(), *lease, peoplesweep.ProgramFingerprint(), catalog.Fingerprint, profile.AllowedSources)
 			if name == "stale fence" {
 				require.ErrorIs(err, peoplesweep.ErrLeaseLost)
 			} else {

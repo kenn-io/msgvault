@@ -268,6 +268,7 @@ func (s *Store) RenewPersonSweep(
 // extraction work remains queued instead of being discarded with the old brief.
 func (s *Store) CompleteIdlePersonSweep(
 	ctx context.Context, lease peoplesweep.Lease, programFingerprint, catalogFingerprint string,
+	sourceLanes []peoplesweep.SourceClass,
 ) error {
 	if programFingerprint == "" || catalogFingerprint == "" {
 		return errors.New("complete idle person sweep: fingerprints are required")
@@ -280,8 +281,13 @@ func (s *Store) CompleteIdlePersonSweep(
 		if !current {
 			return peoplesweep.ErrLeaseLost
 		}
+		lanes := make([]string, len(sourceLanes))
+		for i, lane := range sourceLanes {
+			lanes[i] = string(lane)
+		}
 		_, err = s.finishPersonSweepWorkTx(ctx, tx, personSweepWorkCompletion{
-			Lease: lease, ProgramFingerprint: programFingerprint, CatalogFingerprint: catalogFingerprint,
+			SourceLanes: lanes,
+			Lease:       lease, ProgramFingerprint: programFingerprint, CatalogFingerprint: catalogFingerprint,
 		})
 		return err
 	})

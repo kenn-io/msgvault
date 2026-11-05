@@ -63,6 +63,7 @@ type CursorAdvance struct {
 
 type ApplyRequest struct {
 	Lease              Lease
+	SourceLanes        []SourceClass
 	RunID              string
 	AttemptID          string
 	Generation         personfacts.GenerationInput
@@ -341,7 +342,7 @@ type WorkStore interface {
 	ReservePersonSweepBudget(ctx context.Context, input BudgetReservationRequest) (BudgetReservation, error)
 	ReleasePersonSweepBudget(ctx context.Context, reservation BudgetReservation) error
 	MarkPersonSweepBudgetStarted(ctx context.Context, reservation BudgetReservation, lease Lease) error
-	CompleteIdlePersonSweep(ctx context.Context, lease Lease, programFingerprint, catalogFingerprint string) error
+	CompleteIdlePersonSweep(ctx context.Context, lease Lease, programFingerprint, catalogFingerprint string, sourceLanes []SourceClass) error
 	FailPersonSweepWork(ctx context.Context, failure WorkFailure) error
 	FinalizePersonSweepFailure(ctx context.Context, input FailureFinalization) error
 	DeferPersonSweepAttempt(ctx context.Context, lease Lease, attemptID string, completedAt time.Time) error
@@ -819,7 +820,7 @@ func (w *Worker) runPerson(
 			// A queued brief can become ineligible while waiting to retry. With
 			// extraction caught up, finish the idle claim without an inference
 			// attempt. The store preserves work that arrived during assembly.
-			if err := w.Store.CompleteIdlePersonSweep(ctx, lease, ProgramFingerprint(), catalog.Fingerprint); err != nil {
+			if err := w.Store.CompleteIdlePersonSweep(ctx, lease, ProgramFingerprint(), catalog.Fingerprint, profile.AllowedSources); err != nil {
 				return PersonRunResult{}, failAttemptOrClaim(err)
 			}
 			return PersonRunResult{PersonID: lease.PersonID}, nil
@@ -1095,7 +1096,8 @@ func (w *Worker) runPerson(
 			w.Config.RetryBase, w.Config.RetryMax))
 	}
 	apply, applyErr := w.Sink.ApplyPersonSweep(ctx, ApplyRequest{Lease: lease, RunID: runID,
-		AttemptID: attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
+		SourceLanes: profile.AllowedSources,
+		AttemptID:   attemptID, Generation: generation, CursorEnvelope: assembly.CursorEnvelope,
 		Batches: accounting.completedBatches, Usage: accounting.totalUsage,
 		Budget: w.Config.Budgets, CursorAdvances: advances,
 		DeferredCursorWork: deferredCursorWork, Brief: brief, BriefFailureClass: briefFailure,
