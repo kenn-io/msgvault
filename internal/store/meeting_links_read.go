@@ -221,6 +221,7 @@ func meetingIdentityUIDMemberClauses(ctx context.Context, r reboundReader, o lin
 		starts = append(starts, original.Instant)
 	}
 	for _, copy := range copies {
+		uids = append(uids, copy.Row.ICalUID)
 		starts = append(starts, copy.Start.UTC())
 	}
 	column, values := "k.scheduled_at", placeholders(len(starts))

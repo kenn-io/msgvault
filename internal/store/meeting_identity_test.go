@@ -375,6 +375,25 @@ func TestMeetingIdentityMovedCopyReverseDiscovery(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityEditedCopyUIDReverseDiscovery(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, original := calendarFixture(t, st, "original", linkSeriesRaw)
+	calendarFixture(t, st, "copy", linkSeriesRaw, "other@example.org")
+	_, edited := calendarFixture(t, st, "edited", `{"id":"edited","iCalUID":"edited@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "other@example.org")
+	_, note := projectionFixture(t, st, "edited-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"edited@example.org","startsAt":"2027-03-14T12:00:00Z"}}`)
+	canonical := formatMeetingOccurrence(OccurrenceRef{MessageID: original}) + "@20270314T100000Z"
+	forward, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+	require.NoError(err)
+	require.Equal(canonical, forward.ByTranscript[note].OccurrenceRef)
+	require.Equal([]int64{note}, forward.ByOccurrence[canonical].LinkedTranscriptIDs)
+	ref := formatMeetingOccurrence(OccurrenceRef{MessageID: edited})
+	reverse, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+	require.NoError(err)
+	assert.Equal(forward.ByTranscript[note], reverse.ByTranscript[note])
+	assert.Equal([]int64{note}, reverse.ByOccurrence[ref].LinkedTranscriptIDs)
+}
+
 func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
