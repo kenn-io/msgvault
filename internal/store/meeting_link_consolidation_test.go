@@ -223,10 +223,33 @@ func TestMeetingLinksSubsetCopy(t *testing.T) {
 		requirements.NoError(err)
 		var count int
 		requirements.NoError(dst.db.QueryRow(`SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
-		assertions.Equal(limit-1, count)
+		assertions.Equal(1, count)
 		if limit == 2 {
 			assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, dst, note)[note])
 		}
 		requirements.NoError(dst.Close())
 	}
+}
+
+func TestMeetingLinksSubsetSplitSurvivesCalendarRemoval(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	path := filepath.Join(t.TempDir(), "source.db")
+	st, err := OpenForTest(path)
+	requirements.NoError(err)
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	requirements.NoError(st.InitSchemaContext(t.Context()))
+	data, event := calendarFixture(t, st, "event", singleLinkRaw("event", "subset@example.org"))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"subset@example.org"}}`)
+	requirements.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
+	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+	requirements.NoError(st.RemoveSource(data.Message.SourceID))
+
+	dir := t.TempDir()
+	_, err = CopySubset(path, dir, 1, false)
+	requirements.NoError(err)
+	dst, err := OpenForTest(filepath.Join(dir, "msgvault.db"))
+	requirements.NoError(err)
+	t.Cleanup(func() { require.NoError(t, dst.Close()) })
+	_, imported := calendarFixture(t, dst, "event", singleLinkRaw("event", "subset@example.org"))
+	assertions.Empty(linkedMeetingRefs(t, dst, note)[note], "reimported event %d must remain unlinked", imported)
 }
