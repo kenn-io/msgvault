@@ -61,7 +61,7 @@ All notable changes to msgvault, grouped by release.
   `2026-07-28` or newer.
 
 - Email imports and repairs now index explicit header links for related-copy lookups. Existing emails are indexed on their next sync or with `msgvault repair-derived`.
-- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`. Requires archive schema version 31 and HTTP API schema 3.45.0.
+- Set `document_profile` in the [attachment mirror configuration](configuration.md#mirror-stored-attachments-to-docbank) to request text extraction in Docbank. Attachment status reports extracted, processing, and waiting counts, per-code counts for files without text, and worker errors in `last_error`.
 
 ## 0.23.0
 <small>2026-11-04</small>
