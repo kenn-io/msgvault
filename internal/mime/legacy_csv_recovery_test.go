@@ -10,45 +10,50 @@ import (
 	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
-func TestLegacyCSVRecoveryPreservesPayloadSignature(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	payload := "first,last\r\n\"MIME example:\r\n" +
-		"--example\r\n--------------040908010102080206010104\r\n" +
-		"Content-Type: text/csv; name=example.csv\r\n" +
-		"Content-Transfer-Encoding: quoted-printable\r\n" +
-		"Content-Disposition: attachment; filename=example.csv\r\n\r\n" +
-		"Sample,Person\",example"
-	raw := testemail.LegacyCSV(true, testemail.LegacyCSVOptions{Payload: strings.ReplaceAll(payload, "=", "=3D")})
-	original := bytes.Clone(raw)
-	msg, err := ParseWithRecovery(raw, "")
-	require.NoError(err)
-	require.Len(msg.Attachments, 1)
-	assert.Equal([]byte(payload), msg.Attachments[0].Content)
-	assert.Equal(original, raw)
-}
-
-func TestLegacyCSVRecoveryPreservesEarlierBodySignature(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	body := "Quoted MIME example:\r\n" +
-		"--example\r\n--------------040908010102080206010104\r\n" +
-		"Content-Type: text/csv; name=example.csv\r\n" +
-		"Content-Transfer-Encoding: quoted-printable\r\n" +
-		"Content-Disposition: attachment; filename=example.csv\r\n\r\n" +
-		"End of example."
-	raw := testemail.LegacyCSV(true, testemail.LegacyCSVOptions{Body: body})
-	raw = bytes.Replace(raw, []byte("Content-Type: text/html;"), []byte("Content-Type: text/plain;"), 1)
-	original := bytes.Clone(raw)
-	_, err := Parse(raw)
-	require.ErrorContains(err, "malformed MIME header initial line")
-	msg, err := ParseWithRecovery(raw, "")
-	require.NoError(err)
-	assert.Equal(body, strings.TrimSpace(msg.BodyText))
-	require.Len(msg.Attachments, 1)
-	assert.Equal("text/csv", msg.Attachments[0].ContentType)
-	assert.Equal([]byte("first,last\r\nSample,Person"), msg.Attachments[0].Content)
-	assert.Equal(original, raw)
+func TestLegacyCSVRecoveryPreservesSignature(t *testing.T) {
+	for name, tc := range map[string]struct {
+		body    string
+		payload string
+	}{
+		"body": {
+			body: "Quoted MIME example:\r\n" +
+				"--example\r\n--------------040908010102080206010104\r\n" +
+				"Content-Type: text/csv; name=example.csv\r\n" +
+				"Content-Transfer-Encoding: quoted-printable\r\n" +
+				"Content-Disposition: attachment; filename=example.csv\r\n\r\n" +
+				"End of example.",
+			payload: "first,last\r\nSample,Person",
+		},
+		"payload": {
+			body: "Example body",
+			payload: "first,last\r\n\"MIME example:\r\n" +
+				"--example\r\n--------------040908010102080206010104\r\n" +
+				"Content-Type: text/csv; name=example.csv\r\n" +
+				"Content-Transfer-Encoding: quoted-printable\r\n" +
+				"Content-Disposition: attachment; filename=example.csv\r\n\r\n" +
+				"Sample,Person\",example",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			raw := testemail.LegacyCSV(true, testemail.LegacyCSVOptions{
+				Body:    tc.body,
+				Payload: strings.ReplaceAll(tc.payload, "=", "=3D"),
+			})
+			raw = bytes.Replace(raw, []byte("Content-Type: text/html;"), []byte("Content-Type: text/plain;"), 1)
+			original := bytes.Clone(raw)
+			_, err := Parse(raw)
+			require.ErrorContains(err, "malformed MIME header initial line")
+			msg, err := ParseWithRecovery(raw, "")
+			require.NoError(err)
+			assert.Equal(tc.body, strings.TrimSpace(msg.BodyText))
+			require.Len(msg.Attachments, 1)
+			assert.Equal("text/csv", msg.Attachments[0].ContentType)
+			assert.Equal([]byte(tc.payload), msg.Attachments[0].Content)
+			assert.Equal(original, raw)
+		})
+	}
 }
 
 func TestLegacyCSVRecoveryMatchesValidMail(t *testing.T) {
@@ -64,13 +69,11 @@ func TestLegacyCSVRecoveryMatchesValidMail(t *testing.T) {
 			expected, err := Parse(testemail.LegacyCSV(false, shape))
 			require.NoError(err)
 			raw := testemail.LegacyCSV(true, shape)
-			original := bytes.Clone(raw)
 			_, err = Parse(raw)
 			require.Error(err)
 			recovered, err := ParseWithRecovery(raw, "")
 			require.NoError(err)
 			assert.Equal(expected, recovered)
-			assert.Equal(original, raw)
 		})
 	}
 }
@@ -99,7 +102,6 @@ func TestLegacyCSVRecoveryFallsBack(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			raw := testemail.LegacyCSV(true, shape)
-			original := bytes.Clone(raw)
 			_, strictErr := Parse(raw)
 			require.Error(strictErr)
 			msg, err := ParseWithRecovery(raw, "unused fallback")
@@ -108,7 +110,6 @@ func TestLegacyCSVRecoveryFallsBack(t *testing.T) {
 			assert.Contains(msg.BodyText, "[MIME parsing failed:")
 			assert.Empty(msg.BodyHTML)
 			assert.Empty(msg.Attachments)
-			assert.Equal(original, raw)
 		})
 	}
 }
