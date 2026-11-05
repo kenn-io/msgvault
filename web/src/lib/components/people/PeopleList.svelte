@@ -325,6 +325,16 @@
     min-width: 0;
   }
 
+  @media (max-width: 640px) {
+    .toolbar-row {
+      --kit-control-height: var(--control-h-lg);
+    }
+
+    .toolbar-row :global([role='radio']) {
+      min-height: var(--control-h-lg);
+    }
+  }
+
   .toolbar-row > :global(*) {
     flex: none;
   }

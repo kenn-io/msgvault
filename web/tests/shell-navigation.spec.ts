@@ -32,14 +32,30 @@ test.beforeEach(async ({ page }) => {
 });
 
 test('narrow navigation menu keeps keyboard focus inside the dialog', async ({ page }) => {
-  await page.setViewportSize({ width: 420, height: 860 });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [{
+    id: 3, name: 'Project notes', revision: 1, schema_version: 2,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [], columns: [] }
+  }] } }));
   await page.goto('/?workspace=everything');
   const opener = page.getByRole('button', { name: 'Open navigation' });
+  const search = await page.getByRole('searchbox', { name: 'Search messages' }).boundingBox();
+  const mode = await page.getByRole('combobox', { name: /Search mode/ }).boundingBox();
+  expect(search!.width).toBeGreaterThan(mode!.width);
 
   await opener.click();
   await expect(page.getByRole('button', { name: 'Messages' })).toBeFocused();
   for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
   await expect(page.getByRole('dialog', { name: 'Navigation' }).locator(':focus')).toHaveCount(1);
+  const drawer = page.getByRole('dialog', { name: 'Navigation' });
+  await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
+  for (const row of await drawer.locator('.sidebar button:visible').all()) {
+    expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+  }
+  await drawer.getByRole('button', { name: 'Close navigation' }).click();
+  await expect(drawer).toBeHidden();
+  await expect(opener).toBeFocused();
 });
 
 test('grid shortcuts pressed outside the grid still move the active row', async ({ page }) => {

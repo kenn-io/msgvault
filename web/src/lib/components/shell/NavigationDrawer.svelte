@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { appShortcuts, trapFocus } from '@kenn-io/kit-ui';
+  import { appShortcuts, IconButton, trapFocus } from '@kenn-io/kit-ui';
+  import X from '@lucide/svelte/icons/x';
   import { onMount, tick, type Snippet } from 'svelte';
 
   let { onclose, children }: { onclose: () => void; children: Snippet } = $props();
@@ -23,7 +24,7 @@
   <button
     type="button"
     class="drawer__scrim"
-    aria-label="Close navigation"
+    aria-hidden="true"
     tabindex="-1"
     onclick={onclose}
   ></button>
@@ -36,6 +37,9 @@
     bind:this={panel}
     {@attach trapFocus}
   >
+    <div class="drawer__close">
+      <IconButton ariaLabel="Close navigation" onclick={onclose}><X size={18} /></IconButton>
+    </div>
     {@render children()}
   </div>
 </div>
@@ -57,9 +61,17 @@
   }
 
   .drawer__panel {
+    --control-h: 44px;
+    --control-h-lg: 44px;
     position: absolute;
     inset: 0 auto 0 0;
     height: 100%;
     box-shadow: var(--shadow-lg);
+  }
+
+  .drawer__close {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
   }
 </style>
