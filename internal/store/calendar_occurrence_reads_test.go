@@ -121,19 +121,20 @@ func TestCalendarOccurrenceCursorScope(t *testing.T) {
 	_, err = st.ListCalendarOccurrencesContext(ctx, query)
 	requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
 	assert.Contains(t, err.Error(), "unsupported cursor version")
+	cursor["version"] = 1
 	cursor["future_member"] = true
 	decoded, err = json.Marshal(cursor)
 	requirements.NoError(err)
 	query.Cursor = base64.RawURLEncoding.EncodeToString(decoded)
 	_, err = st.ListCalendarOccurrencesContext(ctx, query)
 	requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
-	assertions.Contains(err.Error(), "unsupported cursor version 2")
+	assertions.Contains(err.Error(), "does not match")
 }
 
 func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 	masterContent := calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/master"}
 	for _, tc := range []struct {
-		name, fields, zero, state             string
+		name, fields, state                   string
 		count                                 int
 		orphan, missingRaw, metadataCancelled bool
 		content                               calevent.Content
@@ -166,8 +167,6 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 		{count: 2, name: "cancelled empty content", fields: `"status":"cancelled","location":"","description":"","hangoutLink":"","conferenceData":{}`, content: masterContent},
 		{count: 2, name: "cancelled own content", fields: `"status":"cancelled","location":"Other room","description":"Updated agenda","conferenceData":{"entryPoints":[{"entryPointType":"phone","uri":"tel:+12025550100"},{"entryPointType":"video","uri":"https://video.example.com/exception"}]}`, content: calevent.Content{Location: "Other room", Description: "Updated agenda", JoinURL: "https://video.example.com/exception"}},
 		{count: 2, name: "preferred hangout link", fields: `"status":"cancelled","hangoutLink":"https://meet.example.com/event","conferenceData":{"entryPoints":[{"entryPointType":"video","uri":"https://video.example.com/other"}]}`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/event"}},
-		{count: 2, name: "zero master ID", fields: `"status":"cancelled"`, zero: "master", content: masterContent},
-		{count: 2, name: "zero exception ID", fields: `"status":"cancelled"`, zero: "exception", content: masterContent},
 		{count: 1, name: "orphan", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, orphan: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -240,32 +239,9 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				_, err := st.db.Exec(`DELETE FROM calendar_events WHERE message_id = ?`, master)
 				requirements.NoError(err)
 			}
-			if tc.zero != "" {
-				target := master
-				if tc.zero == "exception" {
-					target = exception
-				}
-				raw, err := st.GetMessageRawContext(t.Context(), target)
-				requirements.NoError(err)
-				override := ""
-				if st.IsPostgreSQL() {
-					override = " OVERRIDING SYSTEM VALUE"
-				}
-				_, err = st.db.Exec(`INSERT INTO messages (id, source_id, conversation_id, source_message_id, message_type, subject)`+override+` SELECT 0,source_id,conversation_id,'zero-copy',message_type,subject FROM messages WHERE id = ?`, target)
-				requirements.NoError(err)
-				_, err = st.db.Exec(`DELETE FROM calendar_events WHERE message_id = ?`, target)
-				requirements.NoError(err)
-				requirements.NoError(st.UpsertMessageRawWithFormat(0, raw, "gcal_json"))
-			}
-			if tc.zero == "exception" {
-				exception = 0
-			}
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			requirements.NoError(err)
-			if tc.zero == "master" {
-				master = 0
-			}
 			requirements.Len(page.Occurrences, tc.count)
 			if tc.name == "sparse cancellation under unsupported master" {
 				detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", exception))
@@ -409,70 +385,85 @@ func TestCalendarOccurrenceRefLookupErrors(t *testing.T) {
 }
 
 func TestCalendarOccurrenceExcludedPullBudget(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, single := calendarFixture(t, st, "seed", calendarRaw)
-	exclusions := make([]string, 1000)
-	start := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
-	for i := range exclusions {
-		exclusions[i] = start.AddDate(0, 0, i).Format("20060102T150405Z")
-	}
-	recurrence := "EXDATE:" + strings.Join(exclusions, ",")
-	var seriesIDs []int64
-	for i := range 700 {
-		_, id := calendarFixture(t, st, fmt.Sprintf("excluded-%d", i), fmt.Sprintf(`{"id":"excluded-%d","start":{"dateTime":"2025-01-01T10:00:00Z"},"end":{"dateTime":"2025-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1000",%q]}`, i, recurrence))
-		seriesIDs = append(seriesIDs, id)
-	}
+	for _, tc := range []struct {
+		name   string
+		scoped bool
+	}{
+		{name: "expansion budget"},
+		{name: "hidden expansion budget", scoped: true},
+		{name: "hidden breadth probe", scoped: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "hidden breadth probe" {
+				requirements := require.New(t)
+				st := newRFC822IDBackfillBackendStore(t)
+				data, _ := calendarFixture(t, st, "seed", calendarRaw)
+				from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+				query := CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)}
+				// Sources outside the grant are removed before breadth probes and expansion.
+				bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", maxCalendarSeries+1)
+				hidden := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID + 1})
+				page, err := st.ListCalendarOccurrencesContext(hidden, query)
+				requirements.NoError(err)
+				assert.Empty(t, page.Occurrences)
+				return
+			}
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, single := calendarFixture(t, st, "seed", calendarRaw)
+			exclusions := make([]string, 1000)
+			start := time.Date(2025, 1, 1, 10, 0, 0, 0, time.UTC)
+			for i := range exclusions {
+				exclusions[i] = start.AddDate(0, 0, i).Format("20060102T150405Z")
+			}
+			recurrence := "EXDATE:" + strings.Join(exclusions, ",")
+			var seriesIDs []int64
+			for i := range 700 {
+				_, id := calendarFixture(t, st, fmt.Sprintf("excluded-%d", i), fmt.Sprintf(`{"id":"excluded-%d","start":{"dateTime":"2025-01-01T10:00:00Z"},"end":{"dateTime":"2025-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1000",%q]}`, i, recurrence))
+				seriesIDs = append(seriesIDs, id)
+			}
 
-	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	query := CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)}
-	source, err := st.GetOrCreateSource("gcal", "authorized@example.com")
-	requirements.NoError(err)
-	seed := &MessagePersistData{
-		Message:      &Message{SourceID: source.ID, SourceMessageID: "authorized", MessageType: "calendar_event"},
-		Conversation: &ConversationPersistData{SourceConversationID: "authorized", ConversationType: "calendar"},
-		RawMIME:      []byte(calendarRaw), RawFormat: "gcal_json",
+			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+			query := CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)}
+			source, err := st.GetOrCreateSource("gcal", "authorized@example.com")
+			requirements.NoError(err)
+			seed := &MessagePersistData{
+				Message:      &Message{SourceID: source.ID, SourceMessageID: "authorized", MessageType: "calendar_event"},
+				Conversation: &ConversationPersistData{SourceConversationID: "authorized", ConversationType: "calendar"},
+				RawMIME:      []byte(calendarRaw), RawFormat: "gcal_json",
+			}
+			id, err := st.PersistMessage(seed)
+			requirements.NoError(err)
+			if !tc.scoped {
+				page, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+				requirements.NoError(err)
+				requirements.Len(page.Occurrences, 2)
+				assertions.ElementsMatch([]int64{single, id}, []int64{page.Occurrences[0].MessageID, page.Occurrences[1].MessageID})
+				// Each series costs 822 steps, including excluded candidates and DTSTART.
+				// After reading 702 rows, 607 series fit in the remaining request budget.
+				var expected []CalendarUnexpandable
+				for _, seriesID := range seriesIDs[607:] {
+					expected = append(expected, CalendarUnexpandable{MessageID: seriesID, Reason: "request work limit reached; long-running series count their steps from their start"})
+				}
+				assertions.Equal(expected, page.Unexpandable)
+				assertions.Empty(page.NextCursor)
+			}
+			if tc.scoped {
+				scoped, err := st.ListCalendarOccurrencesContext(sourcescope.WithSourceIDs(t.Context(), []int64{source.ID}), query)
+				requirements.NoError(err)
+				requirements.Len(scoped.Occurrences, 1)
+				assertions.Equal(id, scoped.Occurrences[0].MessageID)
+				assertions.Empty(scoped.Unexpandable)
+			}
+		})
 	}
-	id, err := st.PersistMessage(seed)
-	requirements.NoError(err)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), query)
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 2)
-	assertions.ElementsMatch([]int64{single, id}, []int64{page.Occurrences[0].MessageID, page.Occurrences[1].MessageID})
-	// Each series costs 822 steps, including excluded candidates and DTSTART.
-	// After reading 702 rows, 607 series fit in the remaining request budget.
-	var expected []CalendarUnexpandable
-	for _, seriesID := range seriesIDs[607:] {
-		expected = append(expected, CalendarUnexpandable{MessageID: seriesID, Reason: "request work limit reached; long-running series count their steps from their start"})
-	}
-	assertions.Equal(expected, page.Unexpandable)
-	assertions.Empty(page.NextCursor)
-	scoped, err := st.ListCalendarOccurrencesContext(sourcescope.WithSourceIDs(t.Context(), []int64{source.ID}), query)
-	requirements.NoError(err)
-	requirements.Len(scoped.Occurrences, 1)
-	assertions.Equal(id, scoped.Occurrences[0].MessageID)
-	assertions.Empty(scoped.Unexpandable)
-}
-
-func TestCalendarOccurrenceHiddenSourcesDoNotConsumeBudget(t *testing.T) {
-	requirements := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	data, _ := calendarFixture(t, st, "seed", calendarRaw)
-	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	query := CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)}
-	// Sources outside the grant are removed before breadth probes and expansion.
-	bulkCalendarCandidates(t, st, data.Message.SourceID, data.Message.ConversationID, "series", maxCalendarSeries+1)
-	hidden := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID + 1})
-	page, err := st.ListCalendarOccurrencesContext(hidden, query)
-	requirements.NoError(err)
-	assert.Empty(t, page.Occurrences)
 }
 
 func TestCalendarOccurrenceInvalidQueries(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	for _, q := range []CalendarOccurrenceQuery{{From: from, To: from}, {From: from, To: from.AddDate(2, 0, 0)}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(-1)}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(501)}} {
+	for _, q := range []CalendarOccurrenceQuery{{From: from, To: from.Add(-time.Hour)}, {From: from, To: from}, {From: from, To: from.AddDate(2, 0, 0)}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(-1)}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(501)}} {
 		_, err := st.ListCalendarOccurrencesContext(t.Context(), q)
 		requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
 	}

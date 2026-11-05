@@ -47,15 +47,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 	command.Flags().StringVar(&cursor, "cursor", "", "next cursor from the same window")
 	_ = command.MarkFlagRequired("from")
 	_ = command.MarkFlagRequired("to")
-	// Shadow the live-command flags with hidden local copies so help does not
-	// offer them; RunE still rejects them if passed.
-	command.Flags().String("account", "", "")
-	command.Flags().String("send-updates", "", "")
-	command.Flags().Bool("dry-run", false, "")
-	command.Flags().Bool("read-only", false, "")
-	for _, name := range calendarLiveOnlyFlags {
-		_ = command.Flags().MarkHidden(name)
-	}
+	hideCalendarLiveOnlyFlags(command)
 	bounds := make([]time.Time, 2)
 	prepare := func(cmd *cobra.Command) error {
 		for i, value := range []string{from, to} {
@@ -75,13 +67,26 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 		if cmd.Flags().Changed("limit") {
 			query.Limit = &limit
 		}
-		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), query)
-		if err != nil {
-			var apiError *daemonclient.APIError
-			if errors.As(err, &apiError) && apiError.Code == "query_too_broad" {
-				return fmt.Errorf("%w%s", store.ErrQueryTooBroad, strings.TrimPrefix(apiError.Message, store.ErrQueryTooBroad.Error()))
+		var page store.CalendarOccurrencePage
+		for {
+			next, err := client.ListCalendarOccurrencesContext(cmd.Context(), query)
+			if err != nil {
+				var apiError *daemonclient.APIError
+				if errors.As(err, &apiError) && apiError.Code == "query_too_broad" {
+					return fmt.Errorf("%w%s", store.ErrQueryTooBroad, strings.TrimPrefix(apiError.Message, store.ErrQueryTooBroad.Error()))
+				}
+				return err
 			}
-			return err
+			if query.Cursor == cursor {
+				page = next
+			} else {
+				page.Occurrences = append(page.Occurrences, next.Occurrences...)
+				page.NextCursor = next.NextCursor
+			}
+			if cmd.Flags().Changed("limit") || cmd.Flags().Changed("cursor") || next.NextCursor == "" {
+				break
+			}
+			query.Cursor = next.NextCursor
 		}
 		if jsonOutput {
 			data, err := json.Marshal(page)
@@ -135,6 +140,18 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 		return nil
 	})
 	return command
+}
+
+func hideCalendarLiveOnlyFlags(command *cobra.Command) {
+	// Shadow the live-command flags with hidden local copies so help does not
+	// offer them; RunE still rejects them if passed.
+	command.Flags().String("account", "", "")
+	command.Flags().String("send-updates", "", "")
+	command.Flags().Bool("dry-run", false, "")
+	command.Flags().Bool("read-only", false, "")
+	for _, name := range calendarLiveOnlyFlags {
+		_ = command.Flags().MarkHidden(name)
+	}
 }
 
 func parseCalendarEventsBound(value string) (time.Time, error) {
@@ -217,6 +234,7 @@ func newCalendarEventCommand(open calendarEventsOpen) *cobra.Command {
 	var jsonOutput bool
 	command := &cobra.Command{Use: "event <ref>", Short: "Read an archived calendar occurrence", Args: cobra.ExactArgs(1)}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print the occurrence as JSON")
+	hideCalendarLiveOnlyFlags(command)
 	command.RunE = archiveCalendarRun(open, nil, func(cmd *cobra.Command, args []string, client calendarEventsClient) error {
 		o, err := client.GetCalendarOccurrenceContext(cmd.Context(), args[0])
 		if err != nil {
