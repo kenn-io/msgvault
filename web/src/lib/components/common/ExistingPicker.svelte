@@ -39,7 +39,7 @@
 
 <div class="picker">
   <SearchInput block value={query} ariaLabel={`Filter ${noun}`} placeholder={`Filter ${noun}`} {disabled} oninput={(value) => { selected = ''; query = value; schedule(); }} />
-  {#if loading}<p role="status">Loading…</p>
+  {#if loading || query.trim() !== listedQuery}<p role="status">Loading…</p>
   {:else if error}<p role="alert">{error}</p>
   {:else if items.length === 0}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>
   {:else}
@@ -47,7 +47,7 @@
       <RadioGroup legend={noun} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
     </div>
   {/if}
-  {#if !loading && !error && truncated}<p>{moreNote}</p>{/if}
+  {#if !loading && query.trim() === listedQuery && !error && truncated}<p>{moreNote}</p>{/if}
 </div>
 
 <style>

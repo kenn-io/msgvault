@@ -221,4 +221,25 @@ describe('KataEvidenceDialog', () => {
     const linked = h.posted('/issues/example%23abcd/evidence');
     expect(await linked[0].json()).toEqual({ evidence: [passages[0].reference] });
   });
+
+  it('links a typed reference when the open issue list is unavailable', async () => {
+    const posts: Request[] = [];
+    const client = createAPIClient(async input => {
+      const request = input as Request;
+      if (request.url.endsWith('/open-issues')) return Response.json({ message: 'List unavailable' }, { status: 503 });
+      if (request.url.endsWith('/prepare')) return Response.json({ evidence: [passages[0]] });
+      posts.push(request);
+      return Response.json({ issue, replayed: false });
+    });
+    render(KataEvidenceDialog, { client, selector, embedded: true });
+    await screen.findByText('Opening passage');
+    await fireEvent.click(screen.getByRole('radio', { name: 'Existing' }));
+    await screen.findByRole('alert');
+    await fireEvent.input(screen.getByRole('searchbox', { name: 'Filter open issues' }), { target: { value: 'example#abcd' } });
+    await fireEvent.click(await screen.findByRole('radio', { name: 'Add quote to example#abcd' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
+    await screen.findByText('example#abcd');
+    expect(new URL(posts[0].url).pathname).toBe('/api/v1/integrations/kata/issues/example%23abcd/evidence');
+    expect(await posts[0].json()).toEqual({ evidence: [passages[0].reference] });
+  });
 });

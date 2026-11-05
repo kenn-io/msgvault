@@ -150,3 +150,21 @@ func TestOpenIssuesWithOlderKataAPI(t *testing.T) {
 	assert.Equal(t, created.UID, issues[0].UID)
 	assert.False(t, truncated)
 }
+
+func TestOpenIssuesWithLargeBodies(t *testing.T) {
+	t.Parallel()
+	native := katatest.New(t)
+	server := httptest.NewTLSServer(native.Service.Handler())
+	t.Cleanup(server.Close)
+	client, err := ConnectKata(t.Context(), IntegrationConfig{Enabled: true, Endpoint: server.URL, APIKey: katatest.Token, HTTPClient: server.Client(), DefaultProject: katatest.Project, MaxResponseBytes: 4 << 20})
+	require.NoError(t, err)
+	for i := range 25 {
+		_, err := client.CreateTask(t.Context(), katatest.Project, fmt.Sprintf("large-%d", i), KataCreate{Title: fmt.Sprintf("Issue %d", i), Body: strings.Repeat("x", 750000)})
+		require.NoError(t, err)
+	}
+	issues, truncated, err := client.OpenIssues(t.Context(), katatest.Project, 25)
+	require.NoError(t, err)
+	assert.Len(t, issues, 25)
+	assert.Equal(t, "Issue 24", issues[0].Title)
+	assert.False(t, truncated)
+}
