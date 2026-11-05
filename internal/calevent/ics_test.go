@@ -260,6 +260,11 @@ func TestICSRejectMalformed(t *testing.T) {
 		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), "unknown time zone Unknown/Zone"},
 		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
 		{"missing UID", strings.Replace(icsExample, "UID:invite@example.com\r\n", "", 1), "event has no UID"},
+		{"date start with timed end", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DTEND:20270315T180000Z").Replace(icsExample), "event start and end have different value types"},
+		{"timed start with date end", strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DTEND;VALUE=DATE:20270315", 1), "event start and end have different value types"},
+		{"all day duration with hours", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT2H").Replace(icsExample), "all-day event duration contains a time component"},
+		{"all day duration with minutes", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT2M").Replace(icsExample), "all-day event duration contains a time component"},
+		{"all day duration with seconds", strings.NewReplacer("DTSTART;TZID=America/New_York:20270314T090000", "DTSTART;VALUE=DATE:20270314", "DTEND;TZID=America/New_York:20270314T100000", "DURATION:P1DT2S").Replace(icsExample), "all-day event duration contains a time component"},
 		{"malformed property", "BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n", "malformed iCalendar parameters"},
 		{"second calendar", icsExample + icsExample, "calendar has trailing content"},
 	} {
