@@ -1,6 +1,7 @@
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { afterEach, expect, it } from 'vitest';
 import App from './App.svelte';
+import { parseExploreURLState } from './lib/explore/state.svelte';
 import { createSessionController } from './lib/api/session.svelte';
 
 afterEach(() => history.replaceState(null, '', '/'));
@@ -8,6 +9,7 @@ afterEach(() => history.replaceState(null, '', '/'));
 it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explore', async (messageType) => {
   history.replaceState(null, '', '/messages/42001');
   const requested: string[] = [];
+  const exploreRequests: Record<string, unknown>[] = [];
   const message = {
     id: 42001, source_id: 3, source_message_id: 'source-message', conversation_id: 71,
     subject: 'Linked message', message_type: messageType, from: 'sender@example.com',
@@ -20,6 +22,10 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
     requested.push(url.pathname + url.search);
     if (url.pathname === '/api/session') return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
     if (url.pathname === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
+    if (url.pathname === '/api/v1/explore') {
+      exploreRequests.push(await request.json());
+      return Response.json({ rows: [], total_count: 0, cache_revision: 'links', search_provenance: {} });
+    }
     if (url.pathname === '/api/v1/messages/42001') return Response.json(message);
     if (url.pathname === '/api/v1/conversations/71') {
       expect(url.searchParams.get('anchor')).toBe('42001');
@@ -30,7 +36,32 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
     return Response.json({ message: 'Unexpected request' }, { status: 404 });
   });
   render(App, { session });
-  expect((await screen.findByRole('article', { name: 'Message 42001' })).textContent).toContain('The requested old message');
-  expect(requested.filter((path) => /^\/api\/v1\/(?:messages|conversations)\/\d+(?:\?|$)/.test(path))).toHaveLength(2);
-  expect(requested.some((path) => path.startsWith('/api/v1/explore'))).toBe(false);
+  const reader = await screen.findByRole('complementary', { name: 'Reading pane: Linked message' });
+  expect((await within(reader).findByRole('article', { name: 'Message 42001' })).textContent).toContain('The requested old message');
+  expect(screen.getByRole('navigation', { name: 'Primary' })).toBeDefined();
+  expect(screen.getByRole('searchbox', { name: 'Search messages' })).toBeDefined();
+  expect(location.pathname).toBe('/');
+  expect(parseExploreURLState(location.search).selectedRow).toBe('recording:42001');
+  expect(requested.filter((path) => path === '/api/v1/messages/42001')).toHaveLength(1);
+  expect(exploreRequests.length).toBeGreaterThan(0);
+  expect(exploreRequests.every(body => !body.cursor)).toBe(true);
+});
+
+it('keeps a missing linked message in the shell and closes its reader', async () => {
+  history.replaceState(null, '', '/messages/42001');
+  const session = createSessionController(async (input) => {
+    const path = new URL((input as Request).url).pathname;
+    if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
+    if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
+    if (path === '/api/v1/explore') return Response.json({ rows: [], total_count: 0, cache_revision: 'missing', search_provenance: {} });
+    return Response.json({ message: 'Message not found' }, { status: 404 });
+  });
+  render(App, { session });
+  expect(await screen.findByText('This message is no longer available.')).toBeDefined();
+  expect(screen.getByRole('navigation', { name: 'Primary' })).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+  await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
+  expect(screen.getByRole('main', { name: 'Messages' })).toBeDefined();
+  expect(location.pathname).toBe('/');
+  expect(parseExploreURLState(location.search).selectedRow).toBeNull();
 });

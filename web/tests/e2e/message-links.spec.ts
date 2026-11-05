@@ -11,6 +11,7 @@ for (const messageType of ['email', 'whatsapp']) {
       labels: [], has_attachments: false, size_bytes: 20, body: 'The requested old message', attachments: [],
     };
     const archiveRequests: string[] = [];
+    const exploreRequests: Record<string, unknown>[] = [];
     await page.route('**/api/session', (route) => route.fulfill({ json: {
       auth_mode: 'loopback', https: false, plain_http_warning: false,
     } }));
@@ -22,17 +23,26 @@ for (const messageType of ['email', 'whatsapp']) {
       if (url.pathname === '/api/v1/integrations/tasks/status') return route.fulfill({ json: { state: 'disabled', message: 'Tasks disabled.' } });
       if (url.pathname === '/api/v1/messages/42001/tasks') return route.fulfill({ json: disabledTaskLookup(42001, 71) });
       archiveRequests.push(url.pathname);
+      if (url.pathname === '/api/v1/explore') {
+        exploreRequests.push(route.request().postDataJSON());
+        return route.fulfill({ json: { rows: [], total_count: 0, cache_revision: 'links', search_provenance: {} } });
+      }
       if (url.pathname === '/api/v1/messages/42001') return route.fulfill({ json: message });
       if (url.pathname === '/api/v1/conversations/71') {
         expect(url.searchParams.get('anchor')).toBe('42001');
+        expect(url.searchParams.get('before')).toBe('25');
+        expect(url.searchParams.get('after')).toBe('25');
         return route.fulfill({ json: { id: 71, anchor_id: 42001, messages: [message], has_before: true, has_after: true, total: 100000 } });
       }
       return route.fulfill({ status: 404, json: { message: 'Unexpected archive request' } });
     });
     await page.goto('/messages/42001');
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText(messageType === 'email' ? message.subject : 'Team chat');
+    await expect(page.getByRole('complementary', { name: `Reading pane: ${messageType === 'email' ? message.subject : 'Team chat'}` })).toBeVisible();
     await expect(page.getByRole('article', { name: 'Message 42001' })).toContainText('The requested old message');
-    expect(archiveRequests).toEqual(['/api/v1/messages/42001', '/api/v1/conversations/71']);
+    expect(archiveRequests.filter(path => path === '/api/v1/messages/42001')).toHaveLength(1);
+    expect(archiveRequests).toContain('/api/v1/conversations/71');
+    expect(exploreRequests.length).toBeGreaterThan(0);
+    expect(exploreRequests.every(body => !body.cursor)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: `test-results/artifacts/direct-${messageType}.png` });
   });

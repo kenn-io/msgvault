@@ -200,7 +200,7 @@ mirrored PDFs and documents.
 
 ## Read messages
 
-Open a `/messages/<id>` link to go directly to an archived message. CLI
+Open a `/messages/<id>` link to open Messages with that message in the reader. CLI
 `search --json` and `show-message --json` responses include a `web_url` when
 the selected daemon has an HTTP address. The link uses that daemon's address;
 the person opening it still needs access to the archive. Links to chat messages
