@@ -66,7 +66,7 @@ func (s *Store) listActivityMessagesContext(ctx context.Context, q MessageQuery)
 	args = append(args, q.Limit)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+activityBurstGroupsCTE(filters)+`
  SELECT r.message_id,r.source_id,r.conversation_id,r.channel,r.direction,r.occurred_at,r.local_date
- FROM displayed r JOIN burst_groups b ON b.source_id=r.thread_source_id AND b.conversation_id=r.thread_conversation_id AND b.local_date=r.local_date
+ FROM displayed r JOIN burst_groups b ON b.source_id=r.source_id AND b.conversation_id=r.conversation_id AND b.local_date=r.local_date
  WHERE `+where+` ORDER BY r.occurred_at `+order+`,r.message_id `+order+` LIMIT ?`), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read activity messages: %w", err)
@@ -108,7 +108,7 @@ func (s *Store) LatestEligibleMessageContext(ctx context.Context, conversationID
 	args = append([]any{conversationID}, args...)
 	var id int64
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT m.id FROM messages m JOIN sources src ON src.id=m.source_id JOIN activity_events ae ON ae.message_id=m.id
- WHERE m.conversation_id=? AND `+s.activityLiveEligibleSQL()+` AND `+FullActivityEventWhere("ae")+scope+`
+ WHERE m.conversation_id=? AND `+s.activityLiveEligibleSQL()+scope+`
  ORDER BY ae.occurred_at DESC,m.id DESC LIMIT 1`), args...).Scan(&id)
 	if err == sql.ErrNoRows {
 		return 0, nil

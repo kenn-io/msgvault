@@ -42,7 +42,6 @@ type ActivityBurst struct {
 	LatestMessageIDs         []int64
 	CopyCounts               map[int64]int
 	Counterparts             []ActivityMessageCounterpart
-	Cold                     bool
 }
 type BurstPage struct {
 	Bursts       []ActivityBurst
@@ -98,7 +97,7 @@ func (s *Store) listActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
  SELECT omitted.n,b.key,b.source_id,b.conversation_id,b.channel,b.local_date,b.first_at,b.last_at,b.inbound,b.outbound,b.page_number,
  r.message_id,r.copy_count
  FROM omitted LEFT JOIN selected b ON TRUE LEFT JOIN displayed r
- ON b.page_number<=` + strconv.Itoa(q.Limit) + ` AND r.thread_source_id=b.source_id AND r.thread_conversation_id=b.conversation_id AND r.local_date=b.local_date
+ ON b.page_number<=` + strconv.Itoa(q.Limit) + ` AND r.source_id=b.source_id AND r.conversation_id=b.conversation_id AND r.local_date=b.local_date
  ORDER BY b.first_at ` + order + `,b.key ` + order + `,r.occurred_at DESC,r.message_id DESC`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {

@@ -221,20 +221,13 @@ func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options Perso
 	if err := options.Config.Validate(); err != nil {
 		return personTierPlan{}, err
 	}
-	zone, err := s.activityTimezoneTransitionQueryContext(ctx, tx)
+	projection, err := s.activityReadPolicyContext(ctx, tx)
 	if err != nil {
 		return personTierPlan{}, err
-	}
-	limit, err := s.activityDirectLimitTransitionQueryContext(ctx, tx)
-	if err != nil {
-		return personTierPlan{}, err
-	}
-	if zone.Active || limit.Active {
-		return personTierPlan{}, ErrPersonTierRebuilding
 	}
 	plan := personTierPlan{
-		projection: PersonTierProjection{Timezone: zone.Target, MaxDirect: limit.Target},
-		stored:     zone.Target != "" && limit.Target > 0,
+		projection: projection,
+		stored:     projection.Timezone != "" && projection.MaxDirect > 0,
 	}
 	if plan.projection.Timezone == "" {
 		plan.projection.Timezone = "UTC"

@@ -26,8 +26,9 @@ func TestActivityReadersKeepIdentitySnapshot(t *testing.T) {
 			} else {
 				st = newGmailAuditSnapshotSQLiteStore(t, gate)
 			}
-			_, err := st.ClaimActivityDirectLimitTransitionContext(t.Context(), 25)
+			policy, err := st.ClaimActivityDirectLimitTransitionContext(t.Context(), 25)
 			require.NoError(err)
+			require.NoError(st.CompleteActivityDirectLimitTransitionContext(t.Context(), policy))
 			source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 			require.NoError(err)
 			require.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))

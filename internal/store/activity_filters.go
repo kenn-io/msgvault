@@ -19,6 +19,22 @@ type activityReadWindow struct {
 	Subject          ActivitySubject
 }
 
+// activityReadPolicyContext refuses reads while stored evidence follows mixed settings.
+func (s *Store) activityReadPolicyContext(ctx context.Context, queryer contextRowQuerier) (PersonTierProjection, error) {
+	zone, err := s.activityTimezoneTransitionQueryContext(ctx, queryer)
+	if err != nil {
+		return PersonTierProjection{}, err
+	}
+	limit, err := s.activityDirectLimitTransitionQueryContext(ctx, queryer)
+	if err != nil {
+		return PersonTierProjection{}, err
+	}
+	if zone.Active || limit.Active {
+		return PersonTierProjection{}, ErrPersonTierRebuilding
+	}
+	return PersonTierProjection{Timezone: zone.Target, MaxDirect: limit.Target}, nil
+}
+
 func (s *Store) normalizedActivityFilters(ctx context.Context, f ActivityFilters) (ActivityFilters, error) {
 	if f.Exclusions.ShortWindowDays == 0 && f.Exclusions.LongWindowDays == 0 && f.Exclusions.ExcludeAddressPatterns == nil && f.Exclusions.ExcludeDomainPatterns == nil {
 		f.Exclusions = persontiers.DefaultConfig()
@@ -26,11 +42,11 @@ func (s *Store) normalizedActivityFilters(ctx context.Context, f ActivityFilters
 	if err := f.Exclusions.Validate(); err != nil {
 		return f, fmt.Errorf("%w: %w", ErrInvalidActivityRequest, err)
 	}
-	policy, err := s.ActivityDirectLimitTransitionContext(ctx)
+	policy, err := s.activityReadPolicyContext(ctx, s.db)
 	if err != nil {
 		return f, err
 	}
-	f.maxDirect = policy.Target
+	f.maxDirect = policy.MaxDirect
 	return f, nil
 }
 
@@ -132,7 +148,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	if w.ConversationID < 0 || (w.After != nil && w.Before != nil && !w.After.Before(*w.Before)) {
 		return "", nil, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
 	}
-	where := s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae")
+	where := s.activityLiveEligibleSQL()
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	windowWhere := []string{}
@@ -211,35 +227,29 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,
  CASE WHEN ` + matrixPendingEncryptedSQL("m") + ` THEN 1 ELSE 0 END AS encrypted,
- CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible
+ CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible,
+ CASE WHEN ae.ref_kind='meeting' OR EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id AND (LOWER(a.mime_type) IN ('text/calendar','application/ics') OR LOWER(a.filename) LIKE '%.ics')) THEN 1 ELSE 0 END AS invitation
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
  ), ` + classification + `, scored AS (
  SELECT f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
- f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,
+ f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,f.invitation,
  MAX(f.large_inbound) AS large_inbound,
  CASE WHEN f.contact_eligible=1 AND f.encrypted=0
  THEN MAX(CASE WHEN f.excluded=''` + countedSubject + ` AND ` + counted + ` THEN 1 ELSE 0 END) ELSE 0 END AS counted,
  CASE WHEN ` + listExcluded + `=1 OR (MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END)=1
  AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded='' THEN 1 ELSE 0 END)=0) THEN 0 ELSE 1 END AS non_noise
  FROM facts f GROUP BY f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
- f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible
+ f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,f.invitation
  ), thread_sizes AS MATERIALIZED (
  SELECT e.source_id,e.conversation_id,(SELECT COUNT(*) FROM messages m JOIN activity_events ae ON ae.message_id=m.id JOIN sources src ON src.id=m.source_id
- WHERE m.source_id=e.source_id AND m.conversation_id=e.conversation_id AND ` + s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae") + `) AS thread_messages
+ WHERE m.source_id=e.source_id AND m.conversation_id=e.conversation_id AND ` + s.activityLiveEligibleSQL() + `) AS thread_messages
  FROM scored e GROUP BY e.source_id,e.conversation_id
  ), copies AS (
  SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,COALESCE(ts.thread_messages,1) DESC,e.source_id,message_id) AS copy_rank,
  COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
  FROM scored e LEFT JOIN thread_sizes ts ON ts.source_id=e.source_id AND ts.conversation_id=e.conversation_id
- ), ` + s.activityRepresentativesCTE()
+ ), representatives AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1)`
 	return query, args, nil
-}
-
-// activityRepresentativesCTE keeps one copy per logical message in its mailbox conversation.
-func (s *Store) activityRepresentativesCTE() string {
-	return `kept_copies AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1), representatives AS (
- SELECT c.*,c.source_id AS thread_source_id,c.conversation_id AS thread_conversation_id FROM kept_copies c
- )`
 }
 
 // activityClassificationCTE owns the counterpart facts used by totals and flags.
@@ -278,18 +288,18 @@ func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters
 func activityBurstGroupsCTE(f ActivityFilters) string {
 	where := ""
 	if !f.IncludeNoise {
-		where = " WHERE non_noise=1 OR ref_kind='meeting'"
+		where = " WHERE non_noise=1 OR invitation=1"
 	}
 	return `, displayed AS (
  SELECT * FROM representatives` + where + `
  ), burst_groups AS (
- SELECT thread_source_id AS source_id,thread_conversation_id AS conversation_id,local_date,MIN(channel) AS channel,
- 'burst:'||CAST(thread_source_id AS TEXT)||':'||CAST(thread_conversation_id AS TEXT)||':'||local_date AS key,
+ SELECT source_id,conversation_id,local_date,MIN(channel) AS channel,
+ 'burst:'||CAST(source_id AS TEXT)||':'||CAST(conversation_id AS TEXT)||':'||local_date AS key,
  MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
  SUM(CASE WHEN direction='inbound' THEN counted ELSE 0 END) AS inbound,
  SUM(CASE WHEN direction='outbound' THEN counted ELSE 0 END) AS outbound,
- COUNT(*) AS message_count,CASE WHEN MAX(CASE WHEN ref_kind='meeting' THEN 1 ELSE 0 END)=1 THEN 0
+ COUNT(*) AS message_count,CASE WHEN MAX(invitation)=1 THEN 0
  WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
- FROM displayed GROUP BY thread_source_id,thread_conversation_id,local_date
+ FROM displayed GROUP BY source_id,conversation_id,local_date
 )`
 }
