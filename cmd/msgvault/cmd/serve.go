@@ -2284,6 +2284,10 @@ func (a *storeAPIAdapter) ListMessagesContext(
 	return a.store.ListMessagesContext(ctx, offset, limit, sourceIDs)
 }
 
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	return a.store.PopulateMessageBodiesContext(ctx, messages)
+}
+
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
 	return a.store.GetMessageContext(ctx, id)
 }

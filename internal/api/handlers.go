@@ -804,9 +804,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "not_found", "Message not found")
 				return
 			}
-			if !s.maskMessageDetail(w, r, qMsg) {
-				return
-			}
+			s.maskMessageDetail(r, qMsg)
 			detail := messageDetailFromQuery(qMsg)
 			detail.SenderAuth = s.senderAuth(r.Context(), id, qMsg.SourceID, qMsg.MessageType, detail.FromEmail)
 			detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
@@ -841,9 +839,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
 		return
 	}
-	if !s.maskStoreMessage(w, r, msg) {
-		return
-	}
+	s.maskStoreMessage(r, msg)
 	detail := MessageDetail{
 		RelatedMessageID:  msg.RelatedMessageID,
 		MessageSummary:    toMessageSummary(*msg),
@@ -3597,9 +3593,11 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := s.prepareVerificationAttachment(w, r, att); !ok {
+	withheld, ok := s.prepareVerificationAttachments(w, r, []query.AttachmentInfo{*att})
+	if !ok {
 		return
 	}
+	withholdField(&att.Filename, withheld[att.MessageID])
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
 		Filename:    att.Filename,
@@ -3645,8 +3643,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
-	original := *att
-	parentWithheld, ok := s.prepareVerificationAttachment(w, r, att)
+	withheld, ok := s.prepareVerificationAttachments(w, r, attachments)
 	if !ok {
 		return
 	}
@@ -3672,7 +3669,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	reader, apiErr := s.verificationAttachmentReader(content, original, parentWithheld)
+	reader, apiErr := s.verificationAttachmentReader(content, att, withheld)
 	if apiErr != nil {
 		_ = content.Close()
 		writeAPIHTTPError(w, apiErr)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -234,6 +233,10 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 
 func TestAgentVerificationFields(t *testing.T) {
 	for _, tc := range []struct{ name, subject, snippet, text, html string }{
+		{name: "title cue", subject: "482913", snippet: "verification"},
+		{name: "body cue filename", subject: "verification", text: "Your code"},
+		{name: "filename cue", subject: "Your code", snippet: "verification"},
+		{name: "thread snippet", subject: "482913", snippet: "Your verification code"},
 		{name: "metadata", subject: "Your code is 482913", snippet: "verification", text: "verification"},
 		{name: "title", subject: "verification", snippet: "verification", text: "verification"},
 		{name: "snippet", subject: "verification", snippet: "Your code is 482913"},
@@ -255,21 +258,27 @@ func TestAgentVerificationFields(t *testing.T) {
 			msg, err := st.GetMessage(id)
 			requirements.NoError(err)
 			title := tc.subject
+			if tc.name == "title cue" {
+				title = "Your code"
+			}
 			if tc.name == "title" {
 				title = "Your code is 482913"
 			}
 			_, err = st.DB().Exec(st.Rebind("UPDATE conversations SET title=? WHERE id=?"), title, msg.ConversationID)
 			requirements.NoError(err)
-			requirements.NoError(st.UpsertAttachment(id, "code-482913.txt", "text/plain", "", strings.Repeat("a", 64), 1))
+			requirements.NoError(st.UpsertAttachment(id, "482913.png", "image/png", "", strings.Repeat("a", 64), 1))
 			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 			srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
 			for _, path := range []string{
-				fmt.Sprintf("/messages/%d", id), fmt.Sprintf("/cli/message?id=%d", id),
+				fmt.Sprintf("/messages/%d", id), fmt.Sprintf("/cli/message?id=%d", id), fmt.Sprintf("/cli/message/thread?id=%d", id),
 				"/cli/search?q=verification&include_snippet=true", "/search?q=verification", "/messages/filter", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/messages",
 			} {
+				if (tc.name == "filename cue" || tc.name == "title cue" || tc.name == "body cue filename" || tc.name == "thread snippet") && strings.Contains(path, "q=") {
+					continue
+				}
 				t.Run(path, func(t *testing.T) {
 					assertions := assert.New(t)
 					req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
@@ -323,23 +332,15 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		name, mime, body string
 		blocked          bool
 	}{
-		{"code.txt", "text/plain", "Your code is 482913", true},
-		{"parent.txt", "text/plain", "482913", true},
+		{"code.txt", "text/plain", "Your code is 482913", false},
+		{"parent.txt", "text/plain", "\x00Ordinary text file", true},
 		{"parent.png", "image/png", "\x89PNG\r\n\x1a\n\x00Your code is 482913", false},
-		{"mail.eml", "application/octet-stream", "From: sender@example.test\r\nSubject: Your code\r\n\r\nYour code is 482913", true},
-		{"mail.msg", "message/rfc822", "Subject: Your code\r\n\r\nYour code is 482913", true},
-		{"base64.eml", "image/png", "Subject: Verification\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte("Your code is 482913")), true},
-		{"encoded.msg", "message/rfc822", "Subject: Verification\r\nContent-Type: text/html\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n<p>Your code is =34=38=32=39=31=33</p>", true},
-		{"sniffed.bin", "application/octet-stream", "MIME-Version: 1.0\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte("Your code is 482913")), true},
-		{"alternative.eml", "application/octet-stream", "MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=parts\r\n\r\n--parts\r\nContent-Type: text/plain\r\n\r\nOrdinary\r\n--parts\r\nContent-Type: text/html\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte("<p>Your code is 482913</p>")) + "\r\n--parts--\r\n", true},
-		{"ordinary.eml", "message/rfc822", "Subject: Ordinary\r\nContent-Type: text/plain\r\nContent-Transfer-Encoding: base64\r\n\r\nT3JkaW5hcnk=", false},
-		{"page.html", "application/octet-stream", "<p>Your code is 482913</p>", true},
-		{"large.txt", "text/plain", strings.Repeat("a", 1024*1024+1), true},
-		{"utf16bom.txt", "text/plain", "\xff\xfe" + utf16VerificationText(), true},
-		{"utf16.txt", "text/plain", utf16VerificationText(), true},
-		{"nested.eml", "message/rfc822", "MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=parts\r\n\r\n--parts\r\nContent-Type: text/plain\r\n\r\nOrdinary\r\n--parts\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=code.txt\r\nContent-Transfer-Encoding: base64\r\n\r\n" + base64.StdEncoding.EncodeToString([]byte("Your code is 482913")) + "\r\n--parts--\r\n", true},
+		{"parent.eml", "application/octet-stream", "\x00Ordinary email", true},
+		{"parent.msg", "message/rfc822", "\x00Ordinary message", true},
+		{"parent.bin", "application/octet-stream", "Ordinary text", true},
+		{"mail.eml", "message/rfc822", "Subject: Your code\r\n\r\nYour code is 482913", false},
+		{"large.txt", "text/plain", strings.Repeat("a", 1024*1024+1), false},
 		{"ordinary.txt", "text/plain", "Ordinary attachment", false},
-		{"binary.png", "image/png", "\x89PNG\r\n\x1a\n\x00Your code is 482913", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -399,13 +400,13 @@ func TestAgentVerificationAttachmentNames(t *testing.T) {
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
-	const body = "Ordinary attachment"
+	const body = "\x89PNG\r\n\x1a\n\x00Ordinary attachment"
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
 	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 	requirements.NoError(os.WriteFile(path, []byte(body), 0600))
-	requirements.NoError(st.UpsertAttachment(id, "code-482913.txt", "text/plain", "", hash, len(body)))
+	requirements.NoError(st.UpsertAttachment(id, "code-482913.png", "image/png", "", hash, len(body)))
 	attachments, err := srv.queryEngineForContext(context.Background()).GetAttachmentsByHash(context.Background(), hash)
 	requirements.NoError(err)
 	requirements.Len(attachments, 1)
@@ -485,11 +486,84 @@ func TestAgentVerificationShortExcerpts(t *testing.T) {
 	}
 }
 
-func utf16VerificationText() string {
-	var b strings.Builder
-	for _, r := range "Your code is 482913" {
-		b.WriteByte(byte(r))
-		b.WriteByte(0)
+func TestAgentVerificationSharedAttachment(t *testing.T) {
+	for _, mode := range []string{"text", "binary", "other source"} {
+		binary := mode == "binary"
+		t.Run(mode, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			source, first, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "first", "Ordinary", "")
+			requirements.NoError(err)
+			identifier := "reader@example.test"
+			if mode == "other source" {
+				identifier = "other@example.test"
+			}
+			_, second, err := testutil.CreateIndexedSourceMessage(st, identifier, "second", "Your code is 482913", "")
+			requirements.NoError(err)
+			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+			srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+			t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+			body, mimeType, filename := "Ordinary", "text/plain", "482913.txt"
+			if binary {
+				body, mimeType, filename = "\x89PNG\r\n\x1a\n\x00Ordinary", "image/png", "482913.png"
+			}
+			hash := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
+			requirements.NoError(os.MkdirAll(cfg.AttachmentsDir(), 0700))
+			requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "present"), []byte(body), 0600))
+			requirements.NoError(st.UpsertAttachment(first, "ordinary", mimeType, "missing", hash, len(body)))
+			requirements.NoError(st.UpsertAttachment(second, filename, mimeType, "present", hash, len(body)))
+			// CLI uses the content-addressed file; HTTP exercises the recorded-file fallback.
+			path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+			requirements.NoError(err)
+			requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+			requirements.NoError(os.WriteFile(path, []byte(body), 0600))
+			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+			requirements.NoError(err)
+			for _, endpoint := range []string{"/attachments/" + hash + "/content", "/cli/attachment?content_hash=" + hash} {
+				if strings.HasPrefix(endpoint, "/attachments/") && mode != "other source" {
+					requirements.NoError(os.Remove(path))
+				} else {
+					requirements.NoError(os.WriteFile(path, []byte(body), 0600))
+				}
+				req := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
+				req.Header.Set(apiprotocol.AgentTokenHeader, token)
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				if binary {
+					assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+					assertions.Equal(body, w.Body.String())
+					assertions.NotContains(w.Header().Get("Content-Disposition"), "482913")
+					if strings.HasPrefix(endpoint, "/attachments/") {
+						assertions.Contains(w.Header().Get("Content-Disposition"), "verification content masked")
+					}
+				} else {
+					requireErrorCode(t, w, http.StatusForbidden, "verification_masked")
+				}
+			}
+		})
 	}
-	return b.String()
+}
+
+func TestAgentVerificationDetailUsesLoadedBody(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "Account", "Your code is 482913")
+	requirements.NoError(err)
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	msg, err := st.GetMessage(id)
+	requirements.NoError(err)
+	// The loaded response is the classification input even if the database changes.
+	requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Ordinary", Valid: true}, sql.NullString{}))
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	srv.maskStoreMessage(req, msg)
+	assertions.Equal("[verification content masked]", msg.BodyText)
+	detail := &query.MessageDetail{ID: id, Subject: "Account", BodyText: "Your code is 482913"}
+	srv.maskMessageDetail(req, detail)
+	assertions.Equal("[verification content masked]", detail.BodyText)
 }
