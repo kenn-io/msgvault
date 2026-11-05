@@ -16,7 +16,7 @@
   {/each}
   {#if posix && cmd}
     {#if kind.id === 'imap'}<p>You'll be prompted for your password.</p>{/if}
-    {#if posix === cmd}
+    {#if posix === cmd || (kind.id === 'mbox' && values.path?.trim().startsWith('~/'))}
       <CommandLine command={posix} />
     {:else}
       <div class="terminal"><p>POSIX shell</p><CommandLine command={posix} /></div>

@@ -532,6 +532,16 @@ describe('SourcesWorkspace', () => {
     await fireEvent.input(dialog.getByLabelText('Email address'), { target: { value: 'you@example.com' } });
     await fireEvent.input(dialog.getByLabelText('Full path to the file'), { target: { value: '/tmp/export.mbox' } });
     expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, reload Sources to see the new source.')).toBeDefined();
+    await fireEvent.input(dialog.getByLabelText('Full path to the file'), { target: { value: '  ~/Downloads/All mail.mbox  ' } });
+    expect(dialog.getByRole('button', { name: "Copy msgvault import-mbox -- you@example.com ~/'Downloads/All mail.mbox'" })).toBeDefined();
+    expect(dialog.getAllByRole('button', { name: /^Copy / })).toHaveLength(1);
+    expect(dialog.queryByText('POSIX shell')).toBeNull();
+    expect(dialog.queryByText('Command Prompt')).toBeNull();
+    expect(dialog.queryByText(/Start Command Prompt with/)).toBeNull();
+    await fireEvent.input(dialog.getByLabelText('Full path to the file'), { target: { value: '/tmp/All mail.mbox' } });
+    expect(dialog.getByText('POSIX shell')).toBeDefined();
+    expect(dialog.getByText('Command Prompt')).toBeDefined();
+    expect(dialog.getAllByRole('button', { name: /^Copy / })).toHaveLength(2);
   });
 
   it('opens source setup and sync history from an empty workspace', async () => {
