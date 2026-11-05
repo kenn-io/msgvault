@@ -126,7 +126,8 @@ func TestExecutor_JournalResumeMatchesUninterrupted(t *testing.T) {
 func TestManager_JournalTornTailAndCompletedManifest(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
-	mgr := testManager(t)
+	tc := NewTestContext(t)
+	mgr := tc.Mgr
 	m := setupInProgress(t, mgr, "torn tail")
 	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
 	m.Execution.Succeeded = 1
@@ -148,10 +149,13 @@ func TestManager_JournalTornTailAndCompletedManifest(t *testing.T) {
 	assert.Equal(2, loaded.Execution.Succeeded)
 	m.Execution.CompletedAt = new(time.Now().UTC())
 	m.Execution.Succeeded = 3
-	require.NoError(m.Save(path)) // Simulate finalize publishing before journal cleanup.
+	blocker := filepath.Join(mgr.CompletedDir(), m.ID+".json")
+	require.NoError(os.Mkdir(blocker, 0o700))
+	require.Error(tc.Exec.persistTerminalManifest(m.ID, m, StatusCompleted))
+	require.NoError(os.Remove(blocker))
 	loaded, err = LoadManifest(path)
 	require.NoError(err)
-	assert.Equal(2, loaded.Execution.Succeeded)
+	assert.Equal(3, loaded.Execution.Succeeded)
 	assert.Equal(m.Execution.CompletedAt, loaded.Execution.CompletedAt)
 	resumed, err := mgr.ClaimManifest(m.ID, MethodTrash)
 	require.NoError(err)
@@ -161,6 +165,43 @@ func TestManager_JournalTornTailAndCompletedManifest(t *testing.T) {
 	loaded, err = LoadManifest(path)
 	require.NoError(err)
 	assert.Equal(4, loaded.Execution.Succeeded)
+}
+
+func TestExecutor_FinalizeJournalCleanupFailurePreservesProgress(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("requires Unix file permissions enforced for the current user")
+	}
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+	m := tc.CreateManifest("final journal cleanup failure", msgIDs(3))
+	baseDir := tc.Mgr.baseDir
+	t.Cleanup(func() { require.NoError(os.Chmod(baseDir, 0o700)) })
+	tc.MockAPI.BeforeTrash = func(id string) error {
+		if id == "msg2" {
+			// Existing journal appends and the full write in in_progress still
+			// succeed, but unlinking the journal in its parent must fail.
+			require.NoError(os.Chmod(baseDir, 0o500))
+		}
+		return nil
+	}
+	err := tc.ExecuteWithOpts(m.ID, trashOpts(2))
+	require.ErrorIs(err, os.ErrPermission)
+	require.ErrorContains(err, "remove checkpoint journal")
+	path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
+	_, err = os.Stat(journalPath(path))
+	require.NoError(err)
+	loaded, err := LoadManifest(path)
+	require.NoError(err)
+	assert.Equal(3, loaded.Execution.LastProcessedIndex)
+	assert.Equal(3, loaded.Execution.Succeeded)
+	require.NotNil(loaded.Execution.CompletedAt)
+
+	require.NoError(os.Chmod(baseDir, 0o700))
+	tc.MockAPI.BeforeTrash = nil
+	require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(2)))
+	assert.Equal([]string{"msg0", "msg1", "msg2"}, tc.MockAPI.TrashCalls)
+	tc.AssertManifestExecution(m.ID, 3, 0)
 }
 
 func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
