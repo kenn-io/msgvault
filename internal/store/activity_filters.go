@@ -326,8 +326,3 @@ func activityBurstGroupsCTE(f ActivityFilters) string {
  FROM displayed GROUP BY source_id,conversation_id,local_date
 )`
 }
-
-// activityCopyKeySQL is shared by projected and request-time cold readers.
-func (s *Store) activityCopyKeySQL(channel, rfcID, messageID string) string {
-	return `CASE WHEN ` + channel + `='email' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("COALESCE(NULLIF("+rfcID+",''),'id:'||CAST("+messageID+" AS TEXT))") + ` ELSE 'id:'||CAST(` + messageID + ` AS TEXT) END`
-}
