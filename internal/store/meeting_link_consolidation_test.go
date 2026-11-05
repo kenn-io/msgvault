@@ -60,73 +60,6 @@ func TestMeetingLinksDedupUndoAndPurge(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksUnlinkDeduplicatedUIDlessTargetRestoresAutomaticMatch(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, automatic := calendarFixture(t, st, "automatic", singleLinkRaw("automatic", "automatic@example.org"))
-	uidless := singleLinkRaw("uidless", "")
-	_, survivor := calendarFixture(t, st, "uidless-survivor", uidless)
-	_, duplicate := calendarFixture(t, st, "uidless-duplicate", uidless)
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"automatic@example.org"}}`)
-
-	requirements.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: duplicate}))
-	requirements.Equal(fmt.Sprintf("evt:%d", duplicate), linkedMeetingRefs(t, st, note)[note])
-	_, err := st.MergeDuplicates(survivor, []int64{duplicate}, "uidless-link-undo")
-	requirements.NoError(err)
-	requirements.Equal(fmt.Sprintf("evt:%d", survivor), linkedMeetingRefs(t, st, note)[note])
-
-	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: survivor}))
-	assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
-	count, err := st.UndoDedup("uidless-link-undo")
-	requirements.NoError(err)
-	assertions.Equal(int64(1), count)
-	assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
-}
-
-func TestMeetingLinksConsolidationDecisionOrder(t *testing.T) {
-	for _, tc := range []struct {
-		name              string
-		linkDay, splitDay int
-		want              string
-	}{
-		{"newer split", 1, 2, "split"}, {"newer link", 2, 1, "link"}, {"equal split", 1, 1, "split"},
-	} {
-		for _, reverse := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/reverse=%t", tc.name, reverse), func(t *testing.T) {
-				assertions := assert.New(t)
-				requirements := require.New(t)
-
-				st := newRFC822IDBackfillBackendStore(t)
-				_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "copy@example.org"))
-				_, a := projectionFixture(t, st, "a", "plaud_json", `{}`)
-				_, b := projectionFixture(t, st, "b", "plaud_json", `{}`)
-				for _, d := range []struct {
-					member int64
-					kind   string
-					day    int
-				}{{a, "link", tc.linkDay}, {b, "split", tc.splitDay}} {
-					_, err := st.db.Exec(`INSERT INTO meeting_link_decisions(member_message_id,target_ical_uid,occurrence_key,decision,created_at) VALUES (?,'copy@example.org','',?,?)`, d.member, d.kind, time.Date(2027, 1, d.day, 0, 0, 0, 0, time.UTC))
-					requirements.NoError(err)
-				}
-				if reverse {
-					a, b = b, a
-				}
-				_, err := st.MergeDuplicates(a, []int64{b}, "order")
-				requirements.NoError(err)
-				var decision string
-				requirements.NoError(st.db.QueryRow(`SELECT decision FROM meeting_link_decisions WHERE member_message_id = ?`, a).Scan(&decision))
-				assertions.Equal(tc.want, decision)
-				want := ""
-				if tc.want == "link" {
-					want = fmt.Sprintf("evt:%d", event)
-				}
-				assertions.Equal(want, linkedMeetingRefs(t, st, a)[a])
-			})
-		}
-	}
-}
-
 func TestMeetingLinksSourceMessageIDMigration(t *testing.T) {
 	for _, targetSide := range []bool{false, true} {
 		t.Run(fmt.Sprintf("target=%t", targetSide), func(t *testing.T) {
@@ -224,7 +157,7 @@ func testMeetingLinksSubsetCopy(t *testing.T) {
 		requirements.NoError(err)
 		var count int
 		requirements.NoError(dst.db.QueryRow(`SELECT count(*) FROM meeting_link_decisions`).Scan(&count))
-		assertions.Equal(1, count)
+		assertions.Equal(limit-1, count)
 		if limit == 2 {
 			assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, dst, note)[note])
 		}
@@ -232,36 +165,11 @@ func testMeetingLinksSubsetCopy(t *testing.T) {
 	}
 }
 
-func testMeetingLinksSubsetSplitSurvivesCalendarRemoval(t *testing.T) {
-	t.Helper()
-	assertions, requirements := assert.New(t), require.New(t)
-	path := filepath.Join(t.TempDir(), "source.db")
-	st, err := OpenForTest(path)
-	requirements.NoError(err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	requirements.NoError(st.InitSchemaContext(t.Context()))
-	data, event := calendarFixture(t, st, "event", singleLinkRaw("event", "subset@example.org"))
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"subset@example.org"}}`)
-	requirements.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
-	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-	requirements.NoError(st.RemoveSource(data.Message.SourceID))
-
-	dir := t.TempDir()
-	_, err = CopySubset(path, dir, 1, false)
-	requirements.NoError(err)
-	dst, err := OpenForTest(filepath.Join(dir, "msgvault.db"))
-	requirements.NoError(err)
-	t.Cleanup(func() { require.NoError(t, dst.Close()) })
-	_, imported := calendarFixture(t, dst, "event", singleLinkRaw("event", "subset@example.org"))
-	assertions.Empty(linkedMeetingRefs(t, dst, note)[note], "reimported event %d must remain unlinked", imported)
-}
-
 func TestMeetingSubsetDecisions(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		run  func(*testing.T)
 	}{
-		{"MeetingLinksSubsetSplitSurvivesCalendarRemoval", testMeetingLinksSubsetSplitSurvivesCalendarRemoval},
 		{"MeetingLinksSubsetCopy", testMeetingLinksSubsetCopy},
 	} {
 		t.Run(tc.name, tc.run)

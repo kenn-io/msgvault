@@ -257,8 +257,7 @@ func TestMeetingDedupRawBackfillProjections(t *testing.T) {
 	}
 }
 
-func testMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
-	t.Helper()
+func TestMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "master", strings.ReplaceAll(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=HOURLY;COUNT=6"))
@@ -269,27 +268,6 @@ func testMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
 	require.Len(suggestions.Suggestions, 1)
 	assert.Equal(fmt.Sprintf("evt:%d", exception), suggestions.Suggestions[0].Ref)
 	assert.Equal(fmt.Sprintf("evt:%d", exception), linkedMeetingRefs(t, st, note)[note])
-}
-
-func TestMeetingLinksUnlinkedUIDEvidenceStaysSplitWhenEventRecurs(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "weekly@example.org"))
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	assert.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
-	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-	assert.Empty(linkedMeetingRefs(t, st, note)[note])
-
-	raw := strings.ReplaceAll(linkSeriesRaw, `"id":"series"`, `"id":"event"`)
-	require.NoError(st.UpsertMessageRawWithFormat(event, []byte(raw), "gcal_json"))
-	assert.Empty(linkedMeetingRefs(t, st, note)[note], "making the event repeat must preserve the unlink")
-	ref := OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}
-	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), linkedMeetingRefs(t, st, note)[note], "a later owner link wins")
-
-	_, other := projectionFixture(t, st, "other-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-	require.NoError(st.UnlinkMeetingContext(t.Context(), other, OccurrenceRef{MessageID: event, Key: "20270321T100000Z"}))
-	assert.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", event), linkedMeetingRefs(t, st, other)[other], "unlinking another occurrence leaves the automatic match")
 }
 
 func TestMeetingLinksFormerSeriesReferenceLinksAndUnlinks(t *testing.T) {
@@ -316,11 +294,6 @@ func TestMeetingLinksFormerSeriesReferenceLinksAndUnlinks(t *testing.T) {
 	assert.Equal(page.Occurrences[0].Ref, linkedMeetingRefs(t, st, note)[note], "the edit resolves through its former series")
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
 	assert.Empty(linkedMeetingRefs(t, st, note)[note])
-
-	_, automatic := projectionFixture(t, st, "automatic", "granola_json", `{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":"series_20270314T100000Z"}}`)
-	assert.Equal(page.Occurrences[0].Ref, linkedMeetingRefs(t, st, automatic)[automatic])
-	require.NoError(st.UnlinkMeetingContext(t.Context(), automatic, ref))
-	assert.Empty(linkedMeetingRefs(t, st, automatic)[automatic])
 }
 
 func TestMeetingCancelledSuggestions(t *testing.T) {
@@ -329,7 +302,6 @@ func TestMeetingCancelledSuggestions(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"MeetingSuggestionsOffsetCancellation", testMeetingSuggestionsOffsetCancellation},
-		{"MeetingSuggestionsExcludeFractionalExceptionOfCancelledSeries", testMeetingSuggestionsExcludeFractionalExceptionOfCancelledSeries},
 		{"MeetingLinksSuggestionsRankingAndReadOnly", testMeetingLinksSuggestionsRankingAndReadOnly},
 		{"MeetingLinksUnidentifiedExceptionWithCancelledMaster", testMeetingLinksUnidentifiedExceptionWithCancelledMaster},
 	} {

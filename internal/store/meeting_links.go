@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	meetingSeriesKind       = "series"
-	meetingExceptionKind    = "exception"
-	meetingCancelledStatus  = "cancelled"
-	meetingEvidenceSplitKey = "*"
+	meetingSeriesKind      = "series"
+	meetingExceptionKind   = "exception"
+	meetingCancelledStatus = "cancelled"
 )
 
 // OccurrenceRef identifies an event, or one original occurrence of a series.
@@ -61,21 +60,22 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 }
 
 func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
+	refKey := key
+	if key == "" && row.Event.Kind == meetingExceptionKind && row.Event.Original != nil {
+		key = row.Event.Original.Key()
+	}
 	id := meetingIdentity{ICalUID: row.ICalUID, OccurrenceKey: key}
-	fractionalException := row.Event.Kind == meetingExceptionKind && isFractionalCalendarIdentity(row.Event.Original)
 	unidentifiedException := row.Event.Kind == meetingExceptionKind && row.Event.Original == nil
 	// An unidentified exception has no occurrence identity to share with other
 	// rows, even when the provider gave the series an iCalUID.
-	if row.Event.Kind == meetingExceptionKind && (unidentifiedException || fractionalException) {
+	if unidentifiedException {
 		id = meetingIdentity{EventMessageID: row.MessageID}
 	}
 	if id.ICalUID == "" {
 		id.EventMessageID = row.MessageID
 	}
-	refKey := key
-	if fractionalException || unidentifiedException {
-		// Occurrence keys are whole-second Google identities, so expose a
-		// fractional or unidentified exception through its own message reference.
+	if unidentifiedException {
+		// Unidentified exceptions use their own message reference.
 		refKey = ""
 	}
 	o := linkOccurrence{Ref: OccurrenceRef{MessageID: row.MessageID, Key: refKey}, Row: row, Identity: id}
@@ -96,12 +96,6 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 	if err != nil {
 		return nil, err
 	}
-	allRelated, err := queryCalendarExceptionAliases(ctx, r, related, len(related)+max(*budget, 0))
-	if err != nil {
-		return nil, err
-	}
-	*budget -= len(allRelated) - len(related)
-	related = calendarExceptionRows(allRelated)
 	expanded, count, reason, err := expandCalendarSeries(ctx, master, related, from, to, *budget)
 	*budget -= count
 	if err != nil {
@@ -125,7 +119,7 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 			return nil, err
 		}
 		refRow := master
-		if instance.HasException && (instance.Original == (calrecur.Identity{}) || isFractionalCalendarIdentity(effective.Event.Original)) {
+		if instance.HasException && instance.Original == (calrecur.Identity{}) {
 			refRow = effective
 		}
 		o := occurrenceFromRow(refRow, instance.Original.Key())
@@ -153,24 +147,10 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
 			row.Event.Status = meetingCancelledStatus
 		}
-		if isFractionalCalendarIdentity(row.Event.Original) {
-			row, err = freshestCalendarExceptionAlias(ctx, r, row, budget)
-			if err != nil {
-				return linkOccurrence{}, err
-			}
-			if row.Event.Start == nil || row.Event.End == nil {
-				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
-			}
-			return occurrenceFromRow(row, ""), nil
-		}
 		if row.Event.Original != nil {
 			if len(masters) == 1 {
 				row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
 			} else {
-				row, err = freshestCalendarExceptionAlias(ctx, r, row, budget)
-				if err != nil {
-					return linkOccurrence{}, err
-				}
 				if row.Event.Start == nil || row.Event.End == nil {
 					return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
 				}
@@ -216,7 +196,8 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if err != nil {
 		return linkOccurrence{}, err
 	}
-	if x, ok := calendarExceptionOverrides(moved)[ref.Key]; ok {
+	if len(moved) > 0 {
+		x := moved[len(moved)-1]
 		if x.Event.Start != nil && x.Event.End != nil {
 			o := occurrenceFromRow(row, ref.Key)
 			o.Start, o.End, err = seriesExceptionBounds(row, x)
@@ -309,58 +290,6 @@ func (s *Store) calendarUIDPredicate() string {
 	return calendarUIDExpression(s.dialect, "m.metadata") + ` = ? AND m.message_type = 'calendar_event'`
 }
 
-func freshestCalendarExceptionAlias(ctx context.Context, r reboundReader, row CalendarEventRow, budget *int) (CalendarEventRow, error) {
-	identity := row.Event.Original
-	if identity == nil {
-		return row, nil
-	}
-	column, value := "e.original_start_at", any(identity.Instant)
-	if identity.AllDay {
-		column, value = "e.original_start_date", identity.Date
-	}
-	aliases, err := meetingEventRows(ctx, r,
-		`e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND `+column+` = ?`,
-		[]any{row.SourceID, row.Event.SeriesProviderID, value}, budget)
-	if err != nil {
-		return CalendarEventRow{}, err
-	}
-	for _, alias := range aliases {
-		if alias.Event.Original != nil && calendarExceptionIdentityKey(*alias.Event.Original) == calendarExceptionIdentityKey(*identity) && calendarEventSnapshotNewer(alias, row) {
-			row = alias
-		}
-	}
-	return row, nil
-}
-
-func latestVisibleCalendarExceptionPredicate(d Dialect) string {
-	newerUpdated := calendarProviderMetadataNullableNumberExpression(d, "newer_message.metadata", "provider_updated_at_unix_nano")
-	currentUpdated := calendarProviderMetadataNullableNumberExpression(d, "m.metadata", "provider_updated_at_unix_nano")
-	newerSequence := calendarProviderMetadataNullableNumberExpression(d, "newer_message.metadata", "sequence")
-	currentSequence := calendarProviderMetadataNullableNumberExpression(d, "m.metadata", "sequence")
-	updatedEqualOrUnknown := "(" + newerUpdated + " IS NULL OR " + currentUpdated + " IS NULL OR " + newerUpdated + " = " + currentUpdated + ")"
-	sequenceEqualOrUnknown := "(" + newerSequence + " IS NULL OR " + currentSequence + " IS NULL OR " + newerSequence + " = " + currentSequence + ")"
-	return `NOT EXISTS (
-		SELECT 1 FROM calendar_events newer_event
-		JOIN messages newer_message ON newer_message.id = newer_event.message_id
-		WHERE newer_event.kind = 'exception'
-		  AND newer_message.source_id = m.source_id
-		  AND newer_event.series_provider_id = e.series_provider_id
-		  AND ((e.original_start_at IS NOT NULL AND newer_event.original_start_at = e.original_start_at)
-		    OR (e.original_start_date != '' AND newer_event.original_start_date = e.original_start_date))
-		  AND newer_message.message_type = 'calendar_event'
-		  AND newer_message.deleted_at IS NULL
-		  AND NOT EXISTS (
-			SELECT 1 FROM source_merge_archive_only_messages newer_archive
-			WHERE newer_archive.message_id = newer_message.id
-		  )
-		  AND ((` + newerUpdated + ` IS NOT NULL AND ` + currentUpdated + ` IS NOT NULL AND ` + newerUpdated + ` > ` + currentUpdated + `)
-		    OR (` + updatedEqualOrUnknown + ` AND ` + newerSequence + ` IS NOT NULL AND ` + currentSequence + ` IS NOT NULL AND ` + newerSequence + ` > ` + currentSequence + `)
-		    OR (` + updatedEqualOrUnknown + ` AND ` + sequenceEqualOrUnknown + `
-		      AND (newer_event.provider_observation_order > e.provider_observation_order
-		        OR (newer_event.provider_observation_order = e.provider_observation_order AND newer_event.message_id > e.message_id))))
-	)`
-}
-
 func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
 	if key.Kind != "google_event_id" && key.Kind != "ical_uid" {
 		return nil, nil
@@ -392,12 +321,12 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 		if len(sourceIDs) == 0 {
 			return nil, nil
 		}
-		predicate = `m.source_id IN (` + placeholders(len(sourceIDs)) + `) AND (e.provider_event_id = ? OR (e.kind IN ('series', 'single') AND e.provider_event_id = ?))`
+		predicate = `m.source_id IN (` + placeholders(len(sourceIDs)) + `) AND (e.provider_event_id = ? OR (e.kind = 'series' AND e.provider_event_id = ?))`
 		args = sourceIDs
 		args = append(args, key.Value, base)
 	} else if key.ScheduledAt != nil {
 		window, windowArgs := calendarExceptionWindow(r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))
-		predicate += ` AND (e.kind != 'exception' OR ((` + window + `) AND ` + latestVisibleCalendarExceptionPredicate(r.dialect) + `))`
+		predicate += ` AND (e.kind != 'exception' OR (` + window + `))`
 		args = append(args, windowArgs...)
 	} else {
 		predicate += ` AND e.kind != 'exception'`
@@ -419,7 +348,7 @@ candidatesLoop:
 		var candidates []linkOccurrence
 		if key.Kind == "google_event_id" {
 			ref := OccurrenceRef{MessageID: row.MessageID}
-			if row.Event.Kind == meetingSeriesKind || row.Event.Kind == "single" && base != "" && row.Event.ProviderEventID == base {
+			if row.Event.Kind == meetingSeriesKind {
 				if base == "" {
 					continue
 				}
@@ -461,6 +390,13 @@ candidatesLoop:
 			out = append(out, o)
 		}
 	}
+	if key.ScheduledAt != nil {
+		matching := slices.Clone(out)
+		matching = slices.DeleteFunc(matching, func(o linkOccurrence) bool { return !o.Start.Equal(*key.ScheduledAt) })
+		if len(matching) > 0 {
+			out = matching
+		}
+	}
 	for _, o := range out {
 		if o.Identity != out[0].Identity {
 			return nil, nil
@@ -470,9 +406,8 @@ candidatesLoop:
 }
 
 type meetingLinkDecision struct {
-	Identity  meetingIdentity
-	Decision  string
-	CreatedAt time.Time
+	Ref      OccurrenceRef
+	Decision string
 }
 
 func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
@@ -480,47 +415,29 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	if err != nil {
 		return nil, err
 	}
-	type resolvedDecision struct {
-		meetingLinkDecision
-
-		target linkOccurrence
-	}
-	var resolved []resolvedDecision
-	splits := map[meetingIdentity]time.Time{}
+	var out []linkOccurrence
+	splits := map[meetingIdentity]bool{}
+	hasManualLink := false
 	for _, d := range decisions {
 		if d.Decision == "split" {
-			identities, err := s.meetingSplitIdentities(ctx, r, d.Identity, budget)
+			rows, err := meetingEventRows(ctx, r, "e.message_id = ?", []any{d.Ref.MessageID}, budget)
 			if err != nil {
 				return nil, err
 			}
-			for _, identity := range identities {
-				if !d.CreatedAt.Before(splits[identity]) {
-					splits[identity] = d.CreatedAt
-				}
+			if len(rows) == 1 {
+				splits[occurrenceFromRow(rows[0], d.Ref.Key).Identity] = true
 			}
 			continue
 		}
-		targets, err := s.resolveMeetingIdentity(ctx, r, d.Identity, budget)
+		hasManualLink = true
+		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
-		// Keep an absent target's identity so its decision still overrides automatic matches.
-		if len(targets) == 0 {
-			targets = []linkOccurrence{{Identity: d.Identity}}
-		}
-		for _, o := range targets {
-			resolved = append(resolved, resolvedDecision{d, o})
-		}
-	}
-	var out []linkOccurrence
-	hasManualLink := false
-	for _, d := range resolved {
-		if d.Decision == "link" && d.CreatedAt.After(splits[d.target.Identity]) {
-			hasManualLink = true
-			if d.target.Ref.MessageID != 0 {
-				out = append(out, d.target)
-			}
-		}
+		out = append(out, o)
 	}
 	if hasManualLink {
 		return uniqueMeetingOccurrences(out), nil
@@ -529,18 +446,13 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	if err != nil {
 		return nil, err
 	}
-	if _, split := splits[meetingIdentity{ICalUID: key.Value, OccurrenceKey: meetingEvidenceSplitKey}]; key.Kind == "ical_uid" && split {
-		return nil, nil
+	matches, err := s.automaticMeetingOccurrences(ctx, r, key, budget)
+	if err != nil {
+		return nil, err
 	}
-	if key.Value != "" {
-		matches, err := s.automaticMeetingOccurrences(ctx, r, key, budget)
-		if err != nil {
-			return nil, err
-		}
-		for _, o := range matches {
-			if _, split := splits[o.Identity]; !split {
-				out = append(out, o)
-			}
+	for _, o := range matches {
+		if !splits[o.Identity] {
+			out = append(out, o)
 		}
 	}
 	return uniqueMeetingOccurrences(out), nil
@@ -550,27 +462,8 @@ func (s *Store) meetingReader(ctx context.Context) reboundReader {
 	return reboundReader{reader: ReadDBContext(ctx, s.db.DB), rebind: s.dialect.Rebind, dialect: s.dialect}
 }
 
-// Pick the freshest snapshot within each source series, then choose the lowest
-// canonical reference across calendar copies of the same occurrence.
+// Choose the lowest canonical reference across copies of the same occurrence.
 func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
-	var exceptions []CalendarEventRow
-	byID := make(map[int64]linkOccurrence)
-	filtered := make([]linkOccurrence, 0, len(out))
-	for _, occurrence := range out {
-		event := occurrence.Row.Event
-		if event.Kind != meetingExceptionKind || event.Original == nil {
-			filtered = append(filtered, occurrence)
-			continue
-		}
-		exceptions = append(exceptions, occurrence.Row)
-		if _, exists := byID[occurrence.Row.MessageID]; !exists {
-			byID[occurrence.Row.MessageID] = occurrence
-		}
-	}
-	for _, row := range calendarExceptionRows(exceptions) {
-		filtered = append(filtered, byID[row.MessageID])
-	}
-	out = filtered
 	slices.SortFunc(out, func(a, b linkOccurrence) int {
 		if c := cmp.Compare(a.Ref.MessageID, b.Ref.MessageID); c != 0 {
 			return c
@@ -585,82 +478,4 @@ func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
 		seen[o.Identity] = true
 		return false
 	})
-}
-
-func (s *Store) meetingIdentityRows(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]CalendarEventRow, error) {
-	predicate, args := s.calendarUIDPredicate(), []any{identity.ICalUID}
-	if identity.ICalUID == "" {
-		predicate, args = "e.message_id = ?", []any{identity.EventMessageID}
-	}
-	if identity.ICalUID != "" {
-		if identity.OccurrenceKey == "" {
-			predicate += ` AND (e.kind = 'single' OR (e.kind = 'exception' AND e.original_start_at IS NULL AND e.original_start_date = ''))`
-		} else {
-			_, id, ok := calrecur.ParseInstanceID("event_" + identity.OccurrenceKey)
-			if !ok {
-				return nil, nil
-			}
-			column, value := "e.original_start_at", any(id.Instant)
-			if id.AllDay {
-				column, value = "e.original_start_date", id.Date
-			}
-			predicate += ` AND (e.kind IN ('series', 'single') OR (e.kind = 'exception' AND ` + column + ` = ?))`
-			args = append(args, value)
-		}
-	}
-
-	return meetingEventRows(ctx, r, predicate, args, budget)
-}
-
-// Splits retain their saved identity even when a series can no longer expand.
-// Complete exceptions can acquire a master's identity without expansion.
-func (s *Store) meetingSplitIdentities(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]meetingIdentity, error) {
-	rows, err := s.meetingIdentityRows(ctx, r, identity, budget)
-	if err != nil {
-		return nil, err
-	}
-	identities := []meetingIdentity{identity}
-	for _, row := range rows {
-		if row.Event.Kind != meetingExceptionKind || row.Event.Start == nil || row.Event.End == nil {
-			continue
-		}
-		if identity.ICalUID != "" && row.Event.Original != nil && calendarExceptionIdentityKey(*row.Event.Original) != identity.OccurrenceKey {
-			continue
-		}
-		target, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID}, budget)
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) || errors.Is(err, ErrQueryTooBroad) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		identities = append(identities, target.Identity)
-	}
-	return identities, nil
-}
-
-func (s *Store) resolveMeetingIdentity(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]linkOccurrence, error) {
-	rows, err := s.meetingIdentityRows(ctx, r, identity, budget)
-	if err != nil {
-		return nil, err
-	}
-	var out []linkOccurrence
-	for _, row := range rows {
-		ref := OccurrenceRef{MessageID: row.MessageID, Key: identity.OccurrenceKey}
-		if row.Event.Kind == meetingExceptionKind {
-			if identity.ICalUID != "" && row.Event.Original != nil && calendarExceptionIdentityKey(*row.Event.Original) != identity.OccurrenceKey {
-				continue
-			}
-			ref.Key = ""
-		}
-		o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, o)
-	}
-	return uniqueMeetingOccurrences(out), nil
 }
