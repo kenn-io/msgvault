@@ -327,7 +327,7 @@ func (s *Store) RecordDocumentProviderConsent(
 			return fmt.Errorf("select target document extraction profile: %w", err)
 		}
 		if hasHeads {
-			return bumpDocumentIndexRevision(tx)
+			return bumpDocumentIndexRevision(boundQuerier{ctx: ctx, q: tx})
 		}
 		return nil
 	})
@@ -916,7 +916,7 @@ func (s *Store) GarbageCollectDocumentRangeCheckpoints(
 	}
 	var removed int
 	err := s.withTxContext(ctx, func(tx *loggedTx) error {
-		deletedRanges, err := tx.Exec(`
+		deletedRanges, err := tx.ExecContext(ctx, `
 			DELETE FROM document_extraction_ranges WHERE extraction_id IN (
 			    SELECT e.id FROM document_extractions e
 			    WHERE e.updated_at < ?
@@ -1019,7 +1019,7 @@ func (s *Store) GarbageCollectDocumentDerivatives(
 		}
 		result.ExtractionsRemoved = int(count)
 		if result.CurrentHeadsRemoved > 0 || terminalRemoved {
-			return bumpDocumentIndexRevision(tx)
+			return bumpDocumentIndexRevision(boundQuerier{ctx: ctx, q: tx})
 		}
 		return nil
 	})
@@ -1131,7 +1131,7 @@ func (s *Store) RetryDocumentExtraction(
 		}
 		changed = rows > 0
 		if changed && terminalRows > 0 {
-			return bumpDocumentIndexRevision(tx)
+			return bumpDocumentIndexRevision(boundQuerier{ctx: ctx, q: tx})
 		}
 		return nil
 	})
@@ -1176,7 +1176,7 @@ func (s *Store) RetireDocumentExtractionProfile(ctx context.Context, profileID s
 			return fmt.Errorf("read cleared document target result: %w", err)
 		}
 		if headCount > 0 || targetRows > 0 {
-			return bumpDocumentIndexRevision(tx)
+			return bumpDocumentIndexRevision(boundQuerier{ctx: ctx, q: tx})
 		}
 		return nil
 	})
@@ -1208,7 +1208,7 @@ func (s *Store) PurgeDocumentDerivedByHash(
 		}
 		result.ExtractionsRemoved = int(rows)
 		if result.ExtractionsRemoved > 0 {
-			return bumpDocumentIndexRevision(tx)
+			return bumpDocumentIndexRevision(boundQuerier{ctx: ctx, q: tx})
 		}
 		return nil
 	})
@@ -1586,7 +1586,7 @@ func upsertDocumentOccurrenceTx(
 		// replacement. One invalidation is sufficient for the new row too.
 		return true, replaced, nil
 	}
-	if err := bumpDocumentIndexRevision(tx); err != nil {
+	if err := bumpDocumentIndexRevision(boundQuerier{ctx: ctx, q: tx}); err != nil {
 		return false, nil, err
 	}
 	return newOccurrence || replaced != nil, replaced, nil

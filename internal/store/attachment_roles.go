@@ -143,10 +143,11 @@ func (s *Store) UpsertAttachmentRecord(
 	}
 	if s.syncGeneration != nil {
 		return s.withTxContext(ctx, func(tx *loggedTx) error {
-			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			q := boundQuerier{ctx: ctx, q: tx}
+			if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 				return err
 			}
-			return s.upsertAttachmentRecord(tx, messageID, write)
+			return s.upsertAttachmentRecord(q, messageID, write)
 		})
 	}
 	return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: s.db}, messageID, write)
@@ -169,7 +170,7 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
 		if s.syncGeneration != nil {
-			if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+			if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 				return err
 			}
 		}
@@ -195,7 +196,7 @@ func (s *Store) UpsertAttachmentRecordPreservingStored(
 				return fmt.Errorf("load stored attachment occurrence: %w", err)
 			}
 		}
-		return s.upsertAttachmentRecord(tx, messageID, write)
+		return s.upsertAttachmentRecord(boundQuerier{ctx: ctx, q: tx}, messageID, write)
 	})
 }
 
@@ -210,13 +211,14 @@ func (s *Store) UpsertAttachmentRecordWithStats(
 		return err
 	}
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+		q := boundQuerier{ctx: ctx, q: tx}
+		if err := s.requireSyncMessageSourceTx(q, messageID); err != nil {
 			return err
 		}
-		if err := s.upsertAttachmentRecord(tx, messageID, write); err != nil {
+		if err := s.upsertAttachmentRecord(q, messageID, write); err != nil {
 			return err
 		}
-		if err := recomputeMessageAttachmentStatsWith(tx, messageID); err != nil {
+		if err := recomputeMessageAttachmentStatsWith(q, messageID); err != nil {
 			return err
 		}
 		if invalidateCache {

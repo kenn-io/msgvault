@@ -1125,10 +1125,10 @@ func (s *Store) RekeyMessageSourceID(
 		return nil
 	}
 	if s.syncGeneration == nil {
-		err := write(s.db)
+		err := write(boundQuerier{ctx: ctx, q: s.db})
 		return rekeyed, err
 	}
-	err := s.withTxContext(ctx, func(tx *loggedTx) error { return write(tx) })
+	err := s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 	return rekeyed, err
 }
 
@@ -1166,7 +1166,7 @@ func (s *Store) updateMessageOnDedup(
 ) (bool, error) {
 	var changed bool
 	err := s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
-		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
 		var currentSourceMessageID string
@@ -1253,7 +1253,7 @@ func (s *Store) MigrateSourceMessageID(ctx context.Context, sourceID, conversati
 				); err != nil {
 					return fmt.Errorf("repoint legacy replies: %w", err)
 				}
-				if err := s.copyLoopDecisionTx(context.Background(), tx, legacyID, newID); err != nil {
+				if err := s.copyLoopDecisionTx(ctx, tx, legacyID, newID); err != nil {
 					return fmt.Errorf("transfer legacy loop decision: %w", err)
 				}
 			}
@@ -1373,12 +1373,12 @@ func (s *Store) EnsureConversation(ctx context.Context, sourceID int64, sourceCo
 		var id int64
 		err := s.withTxContext(ctx, func(tx *loggedTx) error {
 			var err error
-			id, err = ensureConversation(tx, s.dialect, sourceID, sourceConversationID, title)
+			id, err = ensureConversation(boundQuerier{ctx: ctx, q: tx}, s.dialect, sourceID, sourceConversationID, title)
 			return err
 		})
 		return id, err
 	}
-	return ensureConversation(s.db, s.dialect, sourceID, sourceConversationID, title)
+	return ensureConversation(boundQuerier{ctx: ctx, q: s.db}, s.dialect, sourceID, sourceConversationID, title)
 }
 
 func ensureConversation(
@@ -2715,7 +2715,7 @@ func (s *Store) EnsureParticipantsBatch(ctx context.Context, addresses []mime.Ad
 		for _, email := range emails {
 			addr := unique[email]
 			id, err := ensureParticipantWith(
-				tx, s.dialect, addr.Email, addr.Name, addr.Domain,
+				boundQuerier{ctx: ctx, q: tx}, s.dialect, addr.Email, addr.Name, addr.Domain,
 				func() error {
 					inserted = true
 					return nil
@@ -2925,7 +2925,7 @@ func (s *Store) EnsureLabel(
 		}
 		var txErr error
 		id, txErr = ensureLabelWith(
-			tx, sourceID, sourceLabelID, name, labelType, nil,
+			boundQuerier{ctx: ctx, q: tx}, sourceID, sourceLabelID, name, labelType, nil,
 		)
 		return txErr
 	})
@@ -3157,7 +3157,7 @@ func (s *Store) EnsureLabelsBatch(
 	var result map[string]int64
 	err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
 		var err error
-		result, err = ensureLabelsBatchWith(tx, sourceID, labels, labelFlipsTx(ctx, tx, sourceID))
+		result, err = ensureLabelsBatchWith(boundQuerier{ctx: ctx, q: tx}, sourceID, labels, labelFlipsTx(ctx, tx, sourceID))
 		return err
 	})
 	if err != nil {
@@ -3463,7 +3463,7 @@ func (s *Store) RemoveMessageLabels(ctx context.Context, messageID int64, labelI
 		return nil
 	}
 	return s.withMessageAttributionTxContext(ctx, messageID, func(tx *loggedTx) error {
-		if err := s.requireSyncMessageSourceTx(tx, messageID); err != nil {
+		if err := s.requireSyncMessageSourceTx(boundQuerier{ctx: ctx, q: tx}, messageID); err != nil {
 			return err
 		}
 		return s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error {
@@ -4561,9 +4561,9 @@ func (s *Store) SetConversationTitle(ctx context.Context, sourceID, conversation
 		return err
 	}
 	if s.syncGeneration != nil {
-		return s.withTxContext(ctx, func(tx *loggedTx) error { return write(tx) })
+		return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 	}
-	return write(s.db)
+	return write(boundQuerier{ctx: ctx, q: s.db})
 }
 
 func ensureConversationWithType(q querier, dialect Dialect, sourceID int64, sourceConversationID, conversationType, title string) (int64, error) {
@@ -6085,9 +6085,9 @@ func (s *Store) UpsertReaction(ctx context.Context, messageID, participantID int
 		return err
 	}
 	if s.syncGeneration != nil {
-		return s.withTxContext(ctx, func(tx *loggedTx) error { return write(tx) })
+		return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 	}
-	return write(s.db)
+	return write(boundQuerier{ctx: ctx, q: s.db})
 }
 
 // UpsertReactionWithSourceID inserts a reaction and records the provider event
@@ -6112,7 +6112,7 @@ func (s *Store) UpsertReactionWithSourceID(ctx context.Context, messageID, parti
 			sourceReactionID, messageID, participantID, reactionType, reactionValue)
 		return err
 	}
-	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(tx) })
+	return s.withTxContext(ctx, func(tx *loggedTx) error { return write(boundQuerier{ctx: ctx, q: tx}) })
 }
 
 // DeleteReactionBySourceID forgets one provider reaction event in a
@@ -6885,7 +6885,7 @@ func (s *Store) UpdateMessageDerivedText(
 ) error {
 	fts.MessageID = messageID
 	return s.withTxContext(ctx, func(tx *loggedTx) error {
-		return s.updateMessageDerivedText(tx, messageID, bodyText, bodyHTML, snippet, fts, s.dialect.FTSUpsert)
+		return s.updateMessageDerivedText(boundQuerier{ctx: ctx, q: tx}, messageID, bodyText, bodyHTML, snippet, fts, s.dialect.FTSUpsert)
 	})
 }
 
