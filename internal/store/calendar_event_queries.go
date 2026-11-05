@@ -29,7 +29,7 @@ const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
 var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
-	m.deleted_from_source_at IS NOT NULL,
+ m.deleted_from_source_at IS NOT NULL,
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
  e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.recurrence_duration_days

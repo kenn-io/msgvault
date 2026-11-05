@@ -2030,9 +2030,7 @@ attendees and do not become people.
 
 Raw data keeps the iCalendar payload returned by the server. XML
 `calendar-data` normalizes line endings; GET fallback keeps the returned body
-bytes. Updated resources replace their archived event snapshots. Events removed
-from a resource or deleted upstream retain their last raw data and are marked
-as deleted from the source. Cancelled events carry `status=cancelled`.
+bytes. Updated resources replace their archived event snapshots. Events removed upstream from a listed calendar retain their last raw data and are marked as deleted from the source. Cancelled events carry `status=cancelled`.
 
 ---
 

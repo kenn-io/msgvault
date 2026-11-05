@@ -66,7 +66,7 @@ func newSyncCalDAVLocalCmd() *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		result, syncErr := client.Sync(cmd.Context(), st, caldav.Options{Name: source.Name, BaseURL: source.URL, Username: source.Username, TimeZone: source.TimeZone, Calendars: source.Calendars, MaxEvents: source.MaxEvents, Full: full})
+		result, syncErr := client.Sync(cmd.Context(), st, caldav.Options{BaseURL: source.URL, Username: source.Username, TimeZone: source.TimeZone, Calendars: source.Calendars, MaxEvents: source.MaxEvents, Full: full})
 		_, err = fmt.Fprintf(cmd.OutOrStdout(), "CalDAV sync: %d calendars, %d events, %d removed, %d skipped resources\n", result.Calendars, result.Events, result.Removed, result.Skipped)
 		if err != nil {
 			return errors.Join(syncErr, fmt.Errorf("write CalDAV sync summary: %w", err))

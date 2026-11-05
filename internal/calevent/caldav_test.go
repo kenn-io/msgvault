@@ -1,7 +1,6 @@
 package calevent
 
 import (
-	"encoding/binary"
 	"encoding/json/v2"
 	"fmt"
 	"os"
@@ -16,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/msgvault/internal/calrecur"
+	"go.kenn.io/msgvault/internal/testutil/tzfixture"
 )
 
 const calDAVFixture = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:series@example.org\r\nSUMMARY:Planning\\, session\r\nDTSTART;TZID=America/New_York:20270307T090000\r\nDTEND;TZID=America/New_York:20270307T100000\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEXDATE;TZID=America/New_York:20270314T090000\r\nORGANIZER;CN=Example Organizer:mailto:owner@example.org\r\nATTENDEE;CN=Example Room;CUTYPE=ROOM:mailto:room@example.org\r\nATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:series@example.org\r\nRECURRENCE-ID:20270321T130000Z\r\nDTSTART:20270321T150000Z\r\nDURATION:PT1H\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
@@ -339,14 +339,7 @@ func TestCalDAVFloatingRecurrenceIdentityIgnoresFallbackZone(t *testing.T) {
 			{-4 * 3600, "20270321T130000Z"},
 			{-5 * 3600, "20270321T140000Z"},
 		} {
-			// Minimal TZif v1 file with one fixed-offset local time type.
-			data := make([]byte, 54)
-			copy(data, "TZif")
-			binary.BigEndian.PutUint32(data[36:40], 1)
-			binary.BigEndian.PutUint32(data[40:44], 4)
-			binary.BigEndian.PutUint32(data[44:48], uint32(tc.offset))
-			copy(data[50:], "TST\x00")
-			require.NoError(os.WriteFile(filepath.Join(zoneDir, "Calendar"), data, 0o600))
+			require.NoError(os.WriteFile(filepath.Join(zoneDir, "Calendar"), tzfixture.FixedOffset(tc.offset), 0o600))
 			event, ok, err := Decode(CalDAVRawFormat, []byte(input), meta, "Test/Calendar")
 			require.NoError(err)
 			require.True(ok)

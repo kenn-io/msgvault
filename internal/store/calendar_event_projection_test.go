@@ -225,6 +225,29 @@ func TestCalendarEventBackfillMalformedRecurrenceDoesNotFailInit(t *testing.T) {
 	assertions.False(end.Valid)
 }
 
+func TestCalendarEventUpgradeRebuildsNameOnlyOrganizer(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"name-only","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"organizer":{"displayName":"Example Host"}}`
+	_, archivedID := calendarFixture(t, st, "archived", raw)
+	// Version 1 omitted organizers without an email address.
+	for _, query := range []string{
+		`DELETE FROM calendar_event_attendees`,
+		`UPDATE calendar_events SET projection_version = 1`,
+		`UPDATE applied_migrations SET version = 1 WHERE name = 'calendar_event_projection_v1'`,
+	} {
+		_, err := st.db.Exec(query)
+		require.NoError(err)
+	}
+	require.NoError(st.InitSchemaContext(t.Context()))
+	_, syncedID := calendarFixture(t, st, "newly-synced", raw)
+	archived, synced := calendarRows(t, st, archivedID), calendarRows(t, st, syncedID)
+	require.Len(archived, 1)
+	require.Len(synced, 1)
+	assert.Equal([]calevent.Attendee{{DisplayName: "Example Host", Role: "organizer", RSVP: "unknown"}}, archived[0].Event.Attendees)
+	assert.Equal(synced[0].Event.Attendees, archived[0].Event.Attendees)
+}
+
 func TestCalendarEventUpgradeRebuildsProjection(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
