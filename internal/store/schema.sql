@@ -4794,8 +4794,7 @@ CREATE TABLE IF NOT EXISTS meeting_link_decisions (
     member_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     target_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
     occurrence_key TEXT NOT NULL DEFAULT '',
-    decision TEXT NOT NULL CHECK(decision IN ('link', 'split')),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    decision TEXT NOT NULL CHECK(decision IN ('link', 'split'))
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_meeting_link_decisions_identity ON meeting_link_decisions(member_message_id, target_message_id, occurrence_key);
 CREATE INDEX IF NOT EXISTS idx_meeting_link_decisions_target ON meeting_link_decisions(target_message_id);

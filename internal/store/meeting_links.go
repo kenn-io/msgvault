@@ -59,13 +59,16 @@ func meetingEventRows(ctx context.Context, r reboundReader, predicate string, ar
 	return rows, nil
 }
 
-// A source merge can hide an archived copy behind the visible copy of the same
-// provider event, so a saved reference to the hidden copy resolves to that one.
-func meetingEventRowsByID(ctx context.Context, r reboundReader, id int64, budget *int) ([]CalendarEventRow, error) {
-	return meetingEventRows(ctx, r, `e.message_id = ? OR EXISTS (
+// The visible event also represents archived copies hidden by source merges.
+func meetingEventAliasPredicate(id string) string {
+	return `e.message_id = ` + id + ` OR EXISTS (
  SELECT 1 FROM calendar_events h JOIN messages hm ON hm.id = h.message_id
  JOIN source_merge_archive_only_messages ha ON ha.message_id = h.message_id
- WHERE h.message_id = ? AND h.provider_event_id = e.provider_event_id AND hm.source_id = m.source_id)`, []any{id, id}, budget)
+ WHERE h.message_id = ` + id + ` AND h.provider_event_id = e.provider_event_id AND hm.source_id = m.source_id)`
+}
+
+func meetingEventRowsByID(ctx context.Context, r reboundReader, id int64, budget *int) ([]CalendarEventRow, error) {
+	return meetingEventRows(ctx, r, meetingEventAliasPredicate("?"), []any{id, id}, budget)
 }
 
 func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
@@ -330,8 +333,11 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 		if len(sourceIDs) == 0 {
 			return nil, nil
 		}
-		predicate = `COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id = m.id), m.source_id) IN (` + placeholders(len(sourceIDs)) + `) AND (e.provider_event_id = ? OR (e.kind = 'series' AND e.provider_event_id = ?))`
-		args = sourceIDs
+		predicate = `e.provider_event_id IN (?, ?) AND EXISTS (SELECT 1 FROM calendar_events candidate JOIN messages cm ON cm.id = candidate.message_id
+ WHERE (` + meetingEventAliasPredicate("candidate.message_id") + `)
+ AND COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id = cm.id), cm.source_id) IN (` + placeholders(len(sourceIDs)) + `)
+ AND (candidate.provider_event_id = ? OR (candidate.kind = 'series' AND candidate.provider_event_id = ?)))`
+		args = append([]any{key.Value, base}, sourceIDs...)
 		args = append(args, key.Value, base)
 	} else if key.ScheduledAt != nil {
 		window, windowArgs := calendarExceptionWindow(r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))

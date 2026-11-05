@@ -158,9 +158,7 @@ func testMeetingUnsupportedSeriesCandidates(t *testing.T) {
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
-	if assert.Len(suggestions.Suggestions, 1) {
-		assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), suggestions.Suggestions[0].Ref)
-	}
+	assert.Empty(suggestions.Suggestions)
 	assert.Equal([]CalendarUnexpandable{{MessageID: master, Reason: "unsupported recurrence"}}, suggestions.Unexpandable)
 	assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), linkedMeetingRefs(t, st, note)[note])
 }
@@ -248,8 +246,7 @@ func testMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
 	require.NoError(err)
-	require.Len(suggestions.Suggestions, 1)
-	assert.Equal(fmt.Sprintf("evt:%d", exception), suggestions.Suggestions[0].Ref)
+	assert.Empty(suggestions.Suggestions)
 	assert.Equal(fmt.Sprintf("evt:%d", exception), linkedMeetingRefs(t, st, note)[note])
 }
 

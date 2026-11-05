@@ -1016,7 +1016,7 @@ func copyData(tx *sql.Tx, rowCount int, options CopySubsetOptions) (*CopyResult,
 	if present, err := sourceTableExists(tx, "meeting_link_decisions"); err != nil {
 		return nil, err
 	} else if present {
-		if _, err := tx.Exec(`INSERT INTO meeting_link_decisions(member_message_id,target_message_id,occurrence_key,decision,created_at) SELECT d.member_message_id,d.target_message_id,d.occurrence_key,d.decision,d.created_at FROM src.meeting_link_decisions d WHERE d.member_message_id IN (SELECT id FROM messages) AND d.target_message_id IN (SELECT id FROM messages)`); err != nil {
+		if _, err := tx.Exec(`INSERT INTO meeting_link_decisions(member_message_id,target_message_id,occurrence_key,decision) SELECT d.member_message_id,d.target_message_id,d.occurrence_key,d.decision FROM src.meeting_link_decisions d WHERE d.member_message_id IN (SELECT id FROM messages) AND d.target_message_id IN (SELECT id FROM messages)`); err != nil {
 			return nil, fmt.Errorf("copy meeting decisions: %w", err)
 		}
 	}
