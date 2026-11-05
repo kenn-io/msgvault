@@ -331,10 +331,10 @@ relationship_interactions AS (
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	       CASE WHEN p.entry_kind = 'meeting' AND p.with_owner
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
-	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	           WHEN p.entry_kind = 'meeting' AND p.with_owner
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityMeeting), 10) + `::UTINYINT
 	           WHEN p.entry_kind = 'conversation'
 	               THEN ` + strconv.FormatUint(uint64(identityindex.ModalityChat), 10) + `::UTINYINT

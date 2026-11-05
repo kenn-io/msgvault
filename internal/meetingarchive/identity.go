@@ -5,7 +5,6 @@ import (
 	"strings"
 	"unicode"
 
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/meetingidentity"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -26,17 +25,6 @@ func normalizedPeople(snapshot Snapshot) (Person, []Person) {
 		}
 	}
 	return organizer, attendees
-}
-
-func roomSearchAddresses(person Person) []string {
-	var rooms []string
-	for _, email := range append([]string{person.Email}, person.OtherEmails...) {
-		email = normalizePersonEmail(email)
-		if calevent.IsRoomAttendee(email, false) {
-			rooms = append(rooms, email)
-		}
-	}
-	return rooms
 }
 
 // archiveParticipantKey keeps resolved people distinct even when they share an address.
@@ -70,13 +58,9 @@ func (p Person) Normalized() Person {
 		Anchor:                strings.TrimSpace(p.Anchor),
 		LinkExcludedAddresses: p.LinkExcludedAddresses,
 	}
-	if calevent.IsRoomAttendee(out.Email, false) {
-		out.Email = ""
-		out.ParticipantID = 0
-	}
 	seenEmails := map[string]bool{out.Email: true}
 	for _, email := range p.OtherEmails {
-		if email = normalizePersonEmail(email); email != "" && !seenEmails[email] && !calevent.IsRoomAttendee(email, false) {
+		if email = normalizePersonEmail(email); email != "" && !seenEmails[email] {
 			seenEmails[email] = true
 			out.OtherEmails = append(out.OtherEmails, email)
 		}

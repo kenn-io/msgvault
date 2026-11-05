@@ -43,7 +43,7 @@ WITH message_owner AS (
 	  AND NOT f.unsent
 	  AND f.occurred_at <= TIMESTAMP '%[2]s'
 	  AND (
-	      (f.entry_kind IN ('event', 'meeting'))
+	      (f.entry_kind = 'meeting')
 	      OR (f.is_chat AND lower(f.conversation_type) = 'direct_chat'
 	          AND (f.is_conversation_member OR f.is_direct)
 	          AND (f.is_from_me OR f.is_author))
@@ -56,9 +56,9 @@ WITH message_owner AS (
 	GROUP BY f.message_id, f.canonical_id
 ), classified AS (
 	SELECT *,
-	       entry_kind IN ('event', 'meeting') AS is_meeting,
+	       entry_kind = 'meeting' AS is_meeting,
 	       CASE
-	           WHEN entry_kind IN ('event', 'meeting') THEN owner_present
+	           WHEN entry_kind = 'meeting' THEN owner_present
 	           WHEN is_chat AND lower(conversation_type) = 'direct_chat' THEN
 	               owner_present AND (is_conversation_member OR is_direct)
 	               AND (is_from_me OR is_author)

@@ -282,7 +282,7 @@ promoted profile. The attendee becomes a participant, and the next activity
 update (hourly, or `msgvault activity build`) adds the meeting to the person's
 timeline, relationships, and last-contact information.
 
-Linked copies of one occurrence count once, including across selected sources. A series master stays one calendar item. Imports leave rooms out of people.
+Transcripts count as attended meetings. Transcripts linked to the same occurrence count once, including across selected sources. A transcript linked to two occurrences counts once for each. Counts update on the next scheduled cache refresh or when you run `msgvault build-cache`.
 
 Some sources also know that several emails and phone numbers are the same
 human. msgvault links those identities through the source's stable identifier,

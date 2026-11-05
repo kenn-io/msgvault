@@ -31,7 +31,7 @@ var derivedRefreshBeforeSnapshotHook func()
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
-	repairRelated, deferRelated bool,
+	repairRelated bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (result *buildResult, buildErr error) {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
@@ -86,7 +86,7 @@ func refreshDerivedDatasetsOnly(
 			_ = st.Close()
 			return nil, fmt.Errorf("classify derived-data revision: %w", relatedErr)
 		}
-		if !relatedOnly || !repairRelated && !deferRelated {
+		if !repairRelated || !relatedOnly {
 			_ = st.Close()
 			return nil, fmt.Errorf("%w: derived-data revision changed",
 				ErrDerivedRefreshRequiresFullBuild)

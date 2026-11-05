@@ -8018,29 +8018,13 @@ func (m MeetingLinkDecisionRequest) Validate() error {
 }
 
 type MeetingLinkDecisionResponse struct {
-	CacheState MeetingLinkDecisionResponseCacheState `json:"cache_state" validate:"required"`
-	Decision   string                                `json:"decision" validate:"required"`
-	Event      string                                `json:"event" validate:"required"`
-	MessageID  int64                                 `json:"message_id"`
+	Decision  string `json:"decision" validate:"required"`
+	Event     string `json:"event" validate:"required"`
+	MessageID int64  `json:"message_id"`
 }
 
 func (m MeetingLinkDecisionResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if v, ok := any(m.CacheState).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("CacheState", err)
-		}
-	}
-	if err := typesValidator.Var(m.Decision, "required"); err != nil {
-		errors = errors.Append("Decision", err)
-	}
-	if err := typesValidator.Var(m.Event, "required"); err != nil {
-		errors = errors.Append("Event", err)
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
+	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
 type MeetingMetricsRequest struct {

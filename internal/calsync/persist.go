@@ -8,7 +8,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/store"
@@ -62,20 +61,14 @@ type eventMetadata struct {
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
 	smid := deriveSourceMessageID(ev)
 	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
-	rooms := make([]bool, len(ev.Attendees))
-	organizerRoom := calevent.IsRoomAttendee(ev.Organizer.Email, false)
 	for i := range ev.Attendees {
 		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
-		rooms[i] = calevent.IsRoomAttendee(ev.Attendees[i].Email, ev.Attendees[i].Resource)
-		if ev.Attendees[i].Email == ev.Organizer.Email && rooms[i] {
-			organizerRoom = true
-		}
 	}
 
 	// Organizer → sender, resolved through the email-keyed participant path so
 	// calendar people dedupe with email contacts.
 	var senderID int64
-	if ev.Organizer.Email != "" && !organizerRoom {
+	if ev.Organizer.Email != "" {
 		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
 		if err != nil {
 			return 0, fmt.Errorf("organizer participant: %w", err)
@@ -87,12 +80,8 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	var attendeeIDs []int64
 	var attendeeNames []string
 	var attendeeEmails []string
-	for i, a := range ev.Attendees {
+	for _, a := range ev.Attendees {
 		if a.Email == "" {
-			continue
-		}
-		attendeeEmails = append(attendeeEmails, a.Email)
-		if rooms[i] {
 			continue
 		}
 		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))
@@ -101,6 +90,7 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 		}
 		attendeeIDs = append(attendeeIDs, pid)
 		attendeeNames = append(attendeeNames, a.DisplayName)
+		attendeeEmails = append(attendeeEmails, a.Email)
 	}
 
 	// Only the series master (or a standalone event) sets the conversation

@@ -185,9 +185,9 @@ func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, quer
 func TestStageMeetingKeysBatchesAndHonorsBoundary(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	recorder := newParticipantClusterInsertRecorder(t)
-	keys := make(map[int64]string)
+	keys := make(map[int64][]string)
 	for id := int64(1); id <= 1026; id++ {
-		keys[id] = "uid:example'o@example.test/"
+		keys[id] = []string{"uid:example'o@example.test/"}
 	}
 	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1025))
 	assert.Equal([]int{1024, 1}, recorder.batchRows)

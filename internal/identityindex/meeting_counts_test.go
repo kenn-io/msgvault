@@ -9,6 +9,40 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMeetingCountsMultipleOccurrencesAndCalendarOnly(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	root, db := writeRelationshipBaseFixture(t, true)
+	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+		firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
+		messageType: "meeting_transcript", conversationType: "meeting",
+	})
+	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
+	replaceRelationshipParquet(t, db, root, "meeting_keys", `SELECT * FROM (VALUES
+ (100::BIGINT, 'uid:weekly/first'::VARCHAR),
+ (100::BIGINT, 'uid:weekly/second'::VARCHAR)) t(message_id,meeting_key)`)
+	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+	requirements.NoError(err)
+	var meetings, activities int64
+	requirements.NoError(db.QueryRow(`SELECT meeting_count, activity_count FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetPeople)).Scan(&meetings, &activities))
+	assertions.Equal(int64(2), meetings)
+	assertions.Equal(int64(1), activities)
+}
+
+func TestCalendarOnlyDoesNotCountAsAttended(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	root, db := writeRelationshipBaseFixture(t, true)
+	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
+		firstMessageID: 100, messageCount: 1, memberCount: 2, startDate: "2026-01-01",
+		messageType: "calendar_event", conversationType: "calendar",
+	})
+	replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, participant_id::BIGINT AS participant_id, 'to'::VARCHAR AS recipient_type, ''::VARCHAR AS display_name FROM (VALUES (1), (2)) t(participant_id)`)
+	_, err := Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+	requirements.NoError(err)
+	var meetings int64
+	requirements.NoError(db.QueryRow(`SELECT sum(meeting_units) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&meetings))
+	assertions.Zero(meetings)
+}
+
 func TestPersonMeetingCountDedupesCopiesGlobalAndSourceFiltered(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

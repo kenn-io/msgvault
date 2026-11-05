@@ -27,10 +27,9 @@ type MeetingLinkDecisionRequest struct {
 }
 
 type MeetingLinkDecisionResponse struct {
-	CacheState string `json:"cache_state" enum:"ready,stale"`
-	MessageID  int64  `json:"message_id"`
-	Event      string `json:"event"`
-	Decision   string `json:"decision"`
+	MessageID int64  `json:"message_id"`
+	Event     string `json:"event"`
+	Decision  string `json:"decision"`
 }
 
 type MeetingSuggestionsResponse struct {
@@ -99,30 +98,7 @@ func (s *Server) handleMeetingLinkDecision(w http.ResponseWriter, r *http.Reques
 		s.writeMeetingLinkError(w, err)
 		return
 	}
-	cacheState := identityCacheStateReady
-	// PostgreSQL serves live SQL analytics and has no Parquet cache to refresh.
-	if backend, ok := s.store.(interface{ IsPostgreSQL() bool }); !ok || !backend.IsPostgreSQL() {
-		cacheState = s.refreshIdentityCacheState(r.Context())
-		if boundary, ok := s.store.(interface {
-			CacheMessageBoundary(ctx context.Context) (int64, error)
-		}); ok && cacheState == identityCacheStateReady {
-			lastMessageID, err := boundary.CacheMessageBoundary(r.Context())
-			if err != nil || request.MessageID > lastMessageID {
-				cacheState = identityCacheStateStale
-			}
-		}
-		if pending, ok := s.store.(interface {
-			MeetingCachePending(ctx context.Context) (bool, error)
-		}); ok && cacheState == identityCacheStateReady {
-			if dirty, err := pending.MeetingCachePending(r.Context()); err != nil || dirty {
-				cacheState = identityCacheStateStale
-			}
-		}
-	}
-	writeJSON(w, 200, MeetingLinkDecisionResponse{
-		MessageID: request.MessageID, Event: request.Event, Decision: request.Decision,
-		CacheState: cacheState,
-	})
+	writeJSON(w, 200, MeetingLinkDecisionResponse(request))
 }
 
 func (s *Server) handleMeetingLinkSuggestions(w http.ResponseWriter, r *http.Request) {

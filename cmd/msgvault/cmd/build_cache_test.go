@@ -27,61 +27,17 @@ import (
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
-// cacheMeetingTablesSchema mirrors the meeting and calendar tables in internal/store/schema.sql.
-const cacheMeetingTablesSchema = `
-CREATE TABLE calendar_events (
-    message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
-    projection_version INTEGER NOT NULL,
-    content_hash TEXT NOT NULL,
-    provider_event_id TEXT NOT NULL DEFAULT '',
-    series_provider_id TEXT NOT NULL DEFAULT '',
-    kind TEXT NOT NULL DEFAULT '',
-    original_start_at DATETIME,
-    original_start_date TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL DEFAULT '',
-    all_day BOOLEAN NOT NULL DEFAULT FALSE,
-    start_at DATETIME,
-    end_at DATETIME,
-    start_date TEXT NOT NULL DEFAULT '',
-    end_date TEXT NOT NULL DEFAULT '',
-    event_time_zone TEXT NOT NULL DEFAULT '',
-    calendar_time_zone TEXT NOT NULL DEFAULT '',
-    recurrence_json TEXT NOT NULL DEFAULT '[]',
-    recurrence_end_at DATETIME
-);
-
-CREATE TABLE calendar_event_attendees (
-    message_id INTEGER NOT NULL REFERENCES calendar_events(message_id) ON DELETE CASCADE,
-    ordinal INTEGER NOT NULL,
-    email TEXT NOT NULL DEFAULT '',
-    display_name TEXT NOT NULL DEFAULT '',
-    role TEXT NOT NULL,
-    rsvp TEXT NOT NULL,
-    is_copy_self BOOLEAN NOT NULL DEFAULT FALSE,
-    PRIMARY KEY (message_id, ordinal)
-);
-
-CREATE TABLE meeting_link_key (
-    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    kind TEXT NOT NULL,
-    value TEXT NOT NULL,
-    calendar_id TEXT NOT NULL DEFAULT '',
-    scheduled_at DATETIME,
-    PRIMARY KEY (message_id)
-);
-
-CREATE TABLE meeting_link_decisions (
-    member_message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-    target_ical_uid TEXT NOT NULL DEFAULT '',
-    target_message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
-    occurrence_key TEXT NOT NULL DEFAULT '',
-    decision TEXT NOT NULL CHECK(decision IN ('link', 'split')),
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-`
+func initCacheTestSchema(t *testing.T, path string) *store.Store {
+	t.Helper()
+	st, err := store.OpenForTest(path)
+	require.NoError(t, err)
+	require.NoError(t, st.InitSchema())
+	t.Cleanup(func() { require.NoError(t, st.Close()) })
+	return st
+}
 
 func TestDaemonBuildCacheChildUsesQuietConsolePolicy(t *testing.T) {
 	t.Setenv(daemonCLISubprocessEnv, "")
@@ -133,163 +89,13 @@ func setupTestSQLite(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(t, err, "open sqlite")
-	defer func() { _ = db.Close() }()
-
-	// Create schema
-	schema := cacheMeetingTablesSchema + `
-
-		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
-		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE sources (
-			id INTEGER PRIMARY KEY,
-			source_type TEXT NOT NULL DEFAULT 'gmail',
-			identifier TEXT NOT NULL UNIQUE,
-			display_name TEXT
-		);
-
-		CREATE TABLE messages (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_message_id TEXT NOT NULL,
-			rfc822_message_id TEXT,
-			conversation_id INTEGER,
-			subject TEXT,
-			snippet TEXT,
-			sent_at TIMESTAMP,
-			received_at TIMESTAMP,
-			size_estimate INTEGER,
-			has_attachments BOOLEAN DEFAULT FALSE,
-			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
-			attachment_count INTEGER DEFAULT 0,
-			deleted_from_source_at TIMESTAMP,
-			list_id TEXT,
-			sender_id INTEGER,
-			message_type TEXT NOT NULL DEFAULT 'email',
-			is_from_me BOOLEAN DEFAULT FALSE,
-			is_sent BOOLEAN DEFAULT TRUE,
-			metadata TEXT,
-			deleted_at DATETIME,
-			UNIQUE(source_id, source_message_id)
-		);
-
-		CREATE TABLE participants (
-			id INTEGER PRIMARY KEY,
-			email_address TEXT NOT NULL UNIQUE,
-			domain TEXT,
-			display_name TEXT,
-			phone_number TEXT
-		);
-
-		CREATE TABLE participant_identifiers (
-			id INTEGER PRIMARY KEY,
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			identifier_type TEXT NOT NULL,
-			identifier_value TEXT NOT NULL,
-			display_value TEXT,
-			is_primary BOOLEAN DEFAULT FALSE,
-			UNIQUE(identifier_type, identifier_value)
-		);
-
-		CREATE TABLE message_recipients (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			recipient_type TEXT NOT NULL,
-			display_name TEXT,
-			email_address TEXT
-		);
-
-		CREATE TABLE labels (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_label_id TEXT,
-			name TEXT NOT NULL,
-			label_type TEXT,
-			system_role TEXT
-		);
-
-		CREATE TABLE message_labels (
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			label_id INTEGER NOT NULL REFERENCES labels(id),
-			PRIMARY KEY (message_id, label_id)
-		);
-
-		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
-
-		CREATE TABLE attachments (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			filename TEXT,
-			mime_type TEXT,
-			size INTEGER,
-			content_hash TEXT
-		);
-
-		CREATE TABLE conversations (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_conversation_id TEXT,
-			title TEXT,
-			conversation_type TEXT NOT NULL DEFAULT 'email'
-		);
-
-		CREATE TABLE conversation_participants (
-			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			PRIMARY KEY (conversation_id, participant_id)
-		);
-
-		CREATE TABLE archive_metadata (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		);
-
-		CREATE TABLE account_identities (
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			address TEXT NOT NULL,
-			source_signal TEXT NOT NULL DEFAULT '',
-			confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (source_id, address)
-		);
-
-		CREATE TABLE participant_links (
-			participant_a INTEGER NOT NULL REFERENCES participants(id),
-			participant_b INTEGER NOT NULL REFERENCES participants(id),
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (participant_a, participant_b),
-			CHECK (participant_a < participant_b)
-		);
-
-		CREATE TABLE persons (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			vcard_uid TEXT NOT NULL UNIQUE,
-			display_name TEXT,
-			revision INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE TABLE person_participants (
-			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-			PRIMARY KEY (person_id, participant_id),
-			UNIQUE(participant_id)
-		);
-	`
-
-	if _, err := db.Exec(schema); err != nil {
-		_ = os.RemoveAll(tmpDir)
-		require.NoError(t, err, "create schema")
-	}
+	st := initCacheTestSchema(t, dbPath)
+	db := st.DB()
 
 	// Insert test data
 	testData := `
 		-- Source
-		INSERT INTO sources (id, identifier, display_name) VALUES (1, 'test@gmail.com', 'Test Account');
+		INSERT INTO sources (id, source_type, identifier, display_name) VALUES (1, 'gmail', 'test@gmail.com', 'Test Account');
 
 		-- Participants
 		INSERT INTO participants (id, email_address, domain, display_name) VALUES
@@ -309,13 +115,21 @@ func setupTestSQLite(t *testing.T) string {
 			(2, 1, 'Work'),
 			(3, 1, 'IMPORTANT');
 
+		-- Conversations
+		INSERT INTO conversations (id, source_id, source_conversation_id, title, conversation_type) VALUES
+			(101, 1, 'thread101', 'Hello World Thread', 'email_thread'),
+			(102, 1, 'thread102', 'Follow up Thread', 'email_thread'),
+			(103, 1, 'thread103', 'Question Thread', 'email_thread'),
+			(104, 1, 'thread104', 'Final Thread', 'email_thread');
+
+
 		-- Messages (5 messages across 3 months)
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
-			(1, 1, 'msg1', 101, 'Hello World', 'Preview 1', '2024-01-15 10:00:00', 1000, 0),
-			(2, 1, 'msg2', 101, 'Re: Hello', 'Preview 2', '2024-01-16 11:00:00', 2000, 1),
-			(3, 1, 'msg3', 102, 'Follow up', 'Preview 3', '2024-02-01 09:00:00', 1500, 0),
-			(4, 1, 'msg4', 103, 'Question', 'Preview 4', '2024-02-15 14:00:00', 3000, 1),
-			(5, 1, 'msg5', 104, 'Final', 'Preview 5', '2024-03-01 16:00:00', 500, 0);
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
+			(1, 1, 'msg1', 101, 'Hello World', 'Preview 1', '2024-01-15 10:00:00', 1000, 0, 'email'),
+			(2, 1, 'msg2', 101, 'Re: Hello', 'Preview 2', '2024-01-16 11:00:00', 2000, 1, 'email'),
+			(3, 1, 'msg3', 102, 'Follow up', 'Preview 3', '2024-02-01 09:00:00', 1500, 0, 'email'),
+			(4, 1, 'msg4', 103, 'Question', 'Preview 4', '2024-02-15 14:00:00', 3000, 1, 'email'),
+			(5, 1, 'msg5', 104, 'Final', 'Preview 5', '2024-03-01 16:00:00', 500, 0, 'email');
 
 		-- Message recipients
 		-- msg1: from alice (with envelope snapshot), to bob+carol
@@ -350,24 +164,18 @@ func setupTestSQLite(t *testing.T) string {
 			(5, 1);          -- msg5: INBOX
 
 		-- Attachments
-		INSERT INTO attachments (message_id, filename, mime_type, size) VALUES
-			(2, 'document.pdf', 'application/pdf', 10000),
-			(2, 'image.png', 'image/png', 5000),
-			(4, 'report.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 20000);
+		INSERT INTO attachments (message_id, filename, mime_type, size, storage_path) VALUES
+			(2, 'document.pdf', 'application/pdf', 10000, 'test/document'),
+			(2, 'image.png', 'image/png', 5000, 'test/image'),
+			(4, 'report.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 20000, 'test/report');
 
-		-- Conversations
-		INSERT INTO conversations (id, source_id, source_conversation_id, title) VALUES
-			(101, 1, 'thread101', 'Hello World Thread'),
-			(102, 1, 'thread102', 'Follow up Thread'),
-			(103, 1, 'thread103', 'Question Thread'),
-			(104, 1, 'thread104', 'Final Thread');
 
 		INSERT INTO conversation_participants (conversation_id, participant_id) VALUES
 			(101, 1), (101, 2), (101, 3), (102, 1), (102, 2),
 			(103, 1), (103, 2), (104, 1), (104, 2);
 	`
 
-	_, err = db.Exec(testData)
+	_, err := db.Exec(testData)
 	require.NoError(t, err, "insert test data")
 
 	return tmpDir
@@ -1326,7 +1134,7 @@ func TestBuildCache_IncrementalExport(t *testing.T) {
 	require.NoError(err, "open sqlite")
 
 	_, err = db.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
 			(6, 1, 'msg6', 105, 'New Message 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
 			(7, 1, 'msg7', 105, 'New Message 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
 
@@ -2025,7 +1833,7 @@ func TestBuildCache_BackfillAfterIncrementalNoDuplicates(t *testing.T) {
 	sqliteDB, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = sqliteDB.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
 			(6, 1, 'msg6', 101, 'Incremental 1', 'Preview 6', '2024-03-15 10:00:00', 1200, 0),
 			(7, 1, 'msg7', 102, 'Incremental 2', 'Preview 7', '2024-03-16 11:00:00', 1300, 0);
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
@@ -2101,7 +1909,7 @@ func TestBuildCache_BackfillWithNewMessages(t *testing.T) {
 	sqliteDB, err := sql.Open("sqlite3", dbPath)
 	require.NoError(err, "open sqlite")
 	_, err = sqliteDB.Exec(`
-		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments) VALUES
+		INSERT INTO messages (id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, message_type) VALUES
 			(6, 1, 'msg6', 101, 'New msg', 'Preview 6', '2024-03-15 10:00:00', 1200, 0);
 		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name) VALUES
 			(6, 1, 'from', 'Alice Smith'),
@@ -3085,46 +2893,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "empty.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	// Create empty database with schema
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(err, "open SQLite fixture")
-	defer func() { _ = db.Close() }()
-	_, err = db.Exec(cacheMeetingTablesSchema + `
-		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
-		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE sources (id INTEGER PRIMARY KEY, source_type TEXT NOT NULL DEFAULT 'gmail', identifier TEXT);
-		CREATE TABLE messages (id INTEGER PRIMARY KEY, source_id INTEGER, source_message_id TEXT, rfc822_message_id TEXT, sent_at TIMESTAMP, size_estimate INTEGER, has_attachments BOOLEAN, hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE, subject TEXT, snippet TEXT, conversation_id INTEGER, deleted_from_source_at TIMESTAMP, attachment_count INTEGER DEFAULT 0, list_id TEXT, sender_id INTEGER, message_type TEXT NOT NULL DEFAULT 'email', is_from_me BOOLEAN DEFAULT FALSE, is_sent BOOLEAN DEFAULT TRUE, metadata TEXT, deleted_at DATETIME);
-		CREATE TABLE participants (id INTEGER PRIMARY KEY, email_address TEXT, domain TEXT, display_name TEXT, phone_number TEXT);
-		CREATE TABLE participant_identifiers (participant_id INTEGER, identifier_type TEXT, identifier_value TEXT, display_value TEXT, is_primary BOOLEAN);
-		CREATE TABLE message_recipients (message_id INTEGER, participant_id INTEGER, recipient_type TEXT, display_name TEXT);
-		CREATE TABLE labels (id INTEGER PRIMARY KEY, source_id INTEGER, source_label_id TEXT, system_role TEXT, name TEXT);
-		CREATE TABLE message_labels (message_id INTEGER, label_id INTEGER);
-		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
-		CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, size INTEGER, filename TEXT);
-		CREATE TABLE conversations (id INTEGER PRIMARY KEY, source_conversation_id TEXT, title TEXT, conversation_type TEXT NOT NULL DEFAULT 'email');
-		CREATE TABLE conversation_participants (conversation_id INTEGER, participant_id INTEGER, PRIMARY KEY (conversation_id, participant_id));
-		CREATE TABLE archive_metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-		CREATE TABLE account_identities (source_id INTEGER, address TEXT, source_signal TEXT NOT NULL DEFAULT '', confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (source_id, address));
-		CREATE TABLE participant_links (participant_a INTEGER, participant_b INTEGER, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (participant_a, participant_b));
-		CREATE TABLE persons (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			vcard_uid TEXT NOT NULL UNIQUE,
-			display_name TEXT,
-			revision INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE person_participants (
-			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-			PRIMARY KEY (person_id, participant_id),
-			UNIQUE(participant_id)
-		);
-	`)
-	require.NoError(err, "create cache fixture schema")
-	require.NoError(db.Close(), "close SQLite fixture")
+	initCacheTestSchema(t, dbPath)
 
 	result, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache on empty db")
@@ -3359,146 +3128,16 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 	tmpDir := t.TempDir()
 
 	dbPath := filepath.Join(tmpDir, "test.db")
-	db, err := sql.Open("sqlite3", dbPath)
-	require.NoError(t, err, "open sqlite")
-	defer func() { _ = db.Close() }()
-
-	schema := cacheMeetingTablesSchema + `
-		CREATE TABLE source_merge_archive_only_messages (message_id INTEGER PRIMARY KEY);
-		CREATE TABLE imap_message_memberships (message_id INTEGER, source_id INTEGER, flags TEXT);
-		CREATE TABLE imap_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE gmail_drafts (current_message_id INTEGER, pending_original_message_id INTEGER);
-		CREATE TABLE sources (
-			id INTEGER PRIMARY KEY,
-			source_type TEXT NOT NULL DEFAULT 'gmail',
-			identifier TEXT NOT NULL UNIQUE,
-			display_name TEXT
-		);
-		CREATE TABLE messages (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_message_id TEXT NOT NULL,
-			rfc822_message_id TEXT,
-			conversation_id INTEGER,
-			subject TEXT,
-			snippet TEXT,
-			sent_at TIMESTAMP,
-			received_at TIMESTAMP,
-			size_estimate INTEGER,
-			has_attachments BOOLEAN DEFAULT FALSE,
-			hidden_text_present BOOLEAN NOT NULL DEFAULT FALSE,
-			attachment_count INTEGER DEFAULT 0,
-			deleted_from_source_at TIMESTAMP,
-			list_id TEXT,
-			sender_id INTEGER,
-			message_type TEXT NOT NULL DEFAULT 'email',
-			is_from_me BOOLEAN DEFAULT FALSE,
-			is_sent BOOLEAN DEFAULT TRUE,
-			metadata TEXT,
-			deleted_at DATETIME,
-			UNIQUE(source_id, source_message_id)
-		);
-		CREATE TABLE participants (
-			id INTEGER PRIMARY KEY,
-			email_address TEXT NOT NULL UNIQUE,
-			domain TEXT,
-			display_name TEXT,
-			phone_number TEXT
-		);
-		CREATE TABLE participant_identifiers (
-			participant_id INTEGER, identifier_type TEXT, identifier_value TEXT,
-			display_value TEXT, is_primary BOOLEAN
-		);
-		CREATE TABLE message_recipients (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			recipient_type TEXT NOT NULL,
-			display_name TEXT,
-			email_address TEXT
-		);
-		CREATE TABLE labels (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_label_id TEXT,
-			name TEXT NOT NULL,
-			label_type TEXT,
-			system_role TEXT
-		);
-		CREATE TABLE message_labels (
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			label_id INTEGER NOT NULL REFERENCES labels(id),
-			PRIMARY KEY (message_id, label_id)
-		);
-		CREATE INDEX idx_message_labels_label ON message_labels(label_id);
-		CREATE TABLE attachments (
-			id INTEGER PRIMARY KEY,
-			message_id INTEGER NOT NULL REFERENCES messages(id),
-			filename TEXT,
-			mime_type TEXT,
-			size INTEGER,
-			content_hash TEXT
-		);
-		CREATE TABLE conversations (
-			id INTEGER PRIMARY KEY,
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			source_conversation_id TEXT,
-			title TEXT,
-			conversation_type TEXT NOT NULL DEFAULT 'email'
-		);
-		CREATE TABLE conversation_participants (
-			conversation_id INTEGER NOT NULL REFERENCES conversations(id),
-			participant_id INTEGER NOT NULL REFERENCES participants(id),
-			PRIMARY KEY (conversation_id, participant_id)
-		);
-
-		CREATE TABLE archive_metadata (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		);
-
-		CREATE TABLE account_identities (
-			source_id INTEGER NOT NULL REFERENCES sources(id),
-			address TEXT NOT NULL,
-			source_signal TEXT NOT NULL DEFAULT '',
-			confirmed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (source_id, address)
-		);
-
-		CREATE TABLE participant_links (
-			participant_a INTEGER NOT NULL REFERENCES participants(id),
-			participant_b INTEGER NOT NULL REFERENCES participants(id),
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			PRIMARY KEY (participant_a, participant_b),
-			CHECK (participant_a < participant_b)
-		);
-
-		CREATE TABLE persons (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			vcard_uid TEXT NOT NULL UNIQUE,
-			display_name TEXT,
-			revision INTEGER NOT NULL DEFAULT 1,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-
-		CREATE TABLE person_participants (
-			person_id INTEGER NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-			participant_id INTEGER NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
-			PRIMARY KEY (person_id, participant_id),
-			UNIQUE(participant_id)
-		);
-	`
-	_, err = db.Exec(schema)
-	require.NoError(t, err, "create schema")
+	st := initCacheTestSchema(t, dbPath)
+	db := st.DB()
 
 	// Insert metadata but NO messages
 	metadata := `
-		INSERT INTO sources (id, identifier, display_name) VALUES (1, 'test@gmail.com', 'Test Account');
+		INSERT INTO sources (id, source_type, identifier, display_name) VALUES (1, 'gmail', 'test@gmail.com', 'Test Account');
 		INSERT INTO participants (id, email_address, domain, display_name) VALUES (1, 'alice@example.com', 'example.com', 'Alice');
 		INSERT INTO labels (id, source_id, name) VALUES (1, 1, 'INBOX');
 	`
-	_, err = db.Exec(metadata)
+	_, err := db.Exec(metadata)
 	require.NoError(t, err, "insert metadata")
 
 	return tmpDir
@@ -4879,7 +4518,7 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 					_, err = db.Exec(`UPDATE conversations SET title=CAST(? AS TEXT) WHERE id=101`, []byte(title))
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() {
-						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, false, false)
+						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, false)
 					})
 					require.NoError(err)
 					assert.True(result.IdentityOnly)

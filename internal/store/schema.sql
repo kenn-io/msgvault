@@ -4857,18 +4857,7 @@ OR OLD.end_date IS NOT NEW.end_date
 OR OLD.event_time_zone IS NOT NEW.event_time_zone
 OR OLD.calendar_time_zone IS NOT NEW.calendar_time_zone
 OR OLD.recurrence_json IS NOT NEW.recurrence_json
-OR OLD.recurrence_end_at IS NOT NEW.recurrence_end_at
-OR (OLD.provider_observation_order IS NOT NEW.provider_observation_order
-    AND NEW.kind = 'exception'
-    AND NEW.series_provider_id <> ''
-    AND (NEW.original_start_at IS NOT NULL OR NEW.original_start_date <> '')
-    AND EXISTS (SELECT 1 FROM calendar_events c
-                WHERE c.series_provider_id = NEW.series_provider_id
-                  AND c.kind = 'exception'
-                  AND c.message_id <> NEW.message_id
-                  AND (SELECT source_id FROM messages WHERE id = c.message_id) = (SELECT source_id FROM messages WHERE id = NEW.message_id)
-                  AND c.original_start_at IS NEW.original_start_at
-                  AND c.original_start_date = NEW.original_start_date)) BEGIN
+OR OLD.recurrence_end_at IS NOT NEW.recurrence_end_at BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', OLD.message_id);
     INSERT INTO cache_related_change_journal (dataset, message_id)
     SELECT 'meeting_links', NEW.message_id WHERE NEW.message_id <> OLD.message_id;

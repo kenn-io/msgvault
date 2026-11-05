@@ -8129,11 +8129,6 @@ components:
       type: object
     MeetingLinkDecisionResponse:
       properties:
-        cache_state:
-          enum:
-            - ready
-            - stale
-          type: string
         decision:
           type: string
         event:
@@ -8142,7 +8137,6 @@ components:
           format: int64
           type: integer
       required:
-        - cache_state
         - message_id
         - event
         - decision

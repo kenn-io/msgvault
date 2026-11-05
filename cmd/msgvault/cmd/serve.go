@@ -3917,21 +3917,6 @@ func (a *storeAPIAdapter) RefreshIdentityDatasets(ctx context.Context) (int64, e
 	return state.IdentityRevision, nil
 }
 
-func (a *storeAPIAdapter) CacheMessageBoundary(context.Context) (int64, error) {
-	state, err := query.ReadCacheSyncState(a.analyticsDir)
-	return state.LastMessageID, err
-}
-
-func (a *storeAPIAdapter) MeetingCachePending(ctx context.Context) (bool, error) {
-	state, err := query.ReadCacheSyncState(a.analyticsDir)
-	if err != nil {
-		return false, err
-	}
-	var pending bool
-	err = a.store.DB().QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM cache_related_change_journal WHERE dataset='meeting_links' AND seq > ? AND message_id <= ?)`, state.LastRelatedChangeSeq, state.LastMessageID).Scan(&pending)
-	return pending, err
-}
-
 func (a *storeAPIAdapter) GetActiveSyncReadOnly(ctx context.Context, sourceID int64) (*store.SyncRun, error) {
 	return a.store.GetActiveSyncReadOnly(ctx, sourceID)
 }

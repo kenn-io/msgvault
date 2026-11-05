@@ -134,18 +134,18 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	SELECT le.anchor_message_id AS entry_num, mp.canonical_id,
 	       mp.is_author, mp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeySQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_key
+	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeysSQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_keys
 	FROM logical_entries le
-	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = le.anchor_message_id
+	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = le.anchor_message_id
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
 	UNION ALL
 	SELECT -le.conversation_id AS entry_num, cp.canonical_id,
 	       cp.is_author, cp.is_owner,
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
-	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeySQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_key
+	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeysSQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_keys
 	FROM logical_entries le
-	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = le.anchor_message_id
+	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = le.anchor_message_id
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
 	WHERE le.entry_kind = 'conversation'
 ), owner_presence AS (
@@ -601,7 +601,7 @@ func (e *DuckDBEngine) filteredPeopleSQL(
 person_stats AS (
 	SELECT p.canonical_id, p.source_type,
 	       count(*)::BIGINT AS source_count,
-	       list(DISTINCT p.meeting_key) FILTER (WHERE p.meeting_key IS NOT NULL) AS meeting_keys,
+	       list_distinct(flatten(list(p.meeting_keys))) AS meeting_keys,
 	       coalesce(sum(p.attachment_count), 0)::BIGINT AS file_count,
 	       min(p.occurred_at)::TIMESTAMP AS first_at,
 	       max(p.occurred_at)::TIMESTAMP AS last_at

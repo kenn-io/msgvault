@@ -48,6 +48,41 @@ func TestMeetingCountsAcrossFilters(t *testing.T) {
 	}
 }
 
+func TestMeetingCountsOneTranscriptTwoOccurrences(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.org", "granola")
+	owner := b.AddParticipant("owner@example.org", "example.org", "Owner")
+	person := b.AddParticipant("person@example.org", "example.org", "Person")
+	b.AddOwnerParticipant(source, owner)
+	at := time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC)
+	id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 100, MessageType: "meeting_transcript", SentAt: at})
+	b.AddTo(id, owner, "Owner")
+	b.AddTo(id, person, "Person")
+	b.AddAttachment(id, 100, "notes.txt")
+	b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:series/first'),(%d, 'uid:series/second')", id, id))
+	engine := b.BuildEngine()
+	for _, scope := range []Context{{}, {SourceIDs: []int64{source}, ParticipantIDs: []int64{person}}} {
+		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "person@example.org", Explore: ExploreRequest{Context: scope}})
+		requirements.NoError(err)
+		requirements.Len(people.Rows, 1)
+		assertions.Equal(int64(2), people.Rows[0].MeetingCount)
+		assertions.Equal(int64(1), people.Rows[0].ActivityCount)
+		assertions.Equal(int64(1), people.Rows[0].FileCount)
+		result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: at.Add(time.Hour)})
+		requirements.NoError(err)
+		requirements.Len(result.Rows, 1)
+		assertions.Equal(int64(2), result.Rows[0].Signals.MeetingCount)
+	}
+	calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: 2026, Timezone: "UTC"})
+	requirements.NoError(err)
+	var meetings int64
+	for _, day := range calendar.Days {
+		meetings += day.Meetings
+	}
+	assertions.Equal(int64(2), meetings)
+}
+
 func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 	for _, unlinkedCalendar := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unlinkedCalendar=%t", unlinkedCalendar), func(t *testing.T) {
@@ -77,9 +112,6 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 			}
 			engine := b.BuildEngine()
 			want := int64(1)
-			if unlinkedCalendar {
-				want = 2
-			}
 			for _, scope := range []Context{{}, {SourceIDs: []int64{first, second}, ParticipantIDs: []int64{person}}} {
 				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: at.Add(time.Hour)})
 				require.NoError(err)
@@ -118,7 +150,7 @@ func TestRelationshipCalendarLinkedMeetingAcrossYears(t *testing.T) {
 	for _, tc := range []struct {
 		year int
 		want int64
-	}{{2024, 1}, {2025, 0}} {
+	}{{2024, 0}, {2025, 1}} {
 		calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: tc.year, Timezone: "UTC"})
 		requirements.NoError(err)
 		var meetings int64

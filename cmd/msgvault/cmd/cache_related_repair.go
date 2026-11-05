@@ -18,22 +18,6 @@ type relatedChangeKinds struct {
 	other       bool
 }
 
-func inspectMeetingRelatedDrift(ctx context.Context, dbPath string, after, lastMessageID int64) (meetings, other bool, err error) {
-	st, err := store.OpenReadOnlyContext(ctx, dbPath)
-	if err != nil {
-		return false, false, fmt.Errorf("open meeting refresh journal: %w", err)
-	}
-	defer func() { _ = st.Close() }()
-	if err := st.DB().QueryRowContext(ctx, `SELECT
-		count(*) FILTER (WHERE dataset = 'meeting_links') > 0,
-		count(*) FILTER (WHERE dataset <> 'meeting_links') > 0
-		FROM cache_related_change_journal WHERE seq > ? AND message_id <= ?`,
-		after, lastMessageID).Scan(&meetings, &other); err != nil {
-		return false, false, fmt.Errorf("inspect meeting refresh journal: %w", err)
-	}
-	return meetings, other, nil
-}
-
 func inspectRelatedChangeKinds(snapshot *cacheSourceSnapshot, after, through, lastMessageID int64) (relatedChangeKinds, error) {
 	var kinds relatedChangeKinds
 	err := snapshot.QueryRow(`SELECT

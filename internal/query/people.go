@@ -476,11 +476,11 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		` + overrideExpr + ` AS person_display_name,
 		` + sqlPersonIdentifierFallbackExpr("p") + ` AS fallback_label,
 		COUNT(pe.person_id)::BIGINT AS activity_count,
-		COUNT(DISTINCT ` + identityindex.MeetingKeySQL("mk", "pe.message_type", "pe.anchor_message_id") + `)::BIGINT AS meeting_count,
+		len(list_distinct(flatten(list(` + identityindex.MeetingKeysSQL("mk", "pe.message_type", "pe.anchor_message_id") + `))))::BIGINT AS meeting_count,
 		COALESCE(SUM(pe.attachment_count), 0)::BIGINT AS file_count,
 		MIN(pe.occurred_at) AS first_at, MAX(pe.occurred_at) AS last_at
 	` + populationFrom + `
-	LEFT JOIN read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') mk ON mk.message_id = pe.anchor_message_id
+	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = pe.anchor_message_id
 	GROUP BY p.id, p.display_name, p.email_address, p.phone_number
 ), filtered_people AS (
 	SELECT *, COALESCE(person_display_name, best_display_name, fallback_label) AS display_label,

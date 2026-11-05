@@ -569,27 +569,11 @@ func buildCacheDerivedOnly(
 		return nil, err
 	}
 	defer func() { _ = buildLock.Unlock() }()
-	staleness := cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)
-	repairRelated := false
-	deferRelated := false
-	if staleness.HasRelatedRowDrift {
-		state, err := query.ReadCacheSyncState(analyticsDir)
-		if err != nil {
-			return nil, fmt.Errorf("read meeting refresh boundary: %w", err)
-		}
-		meetings, other, err := inspectMeetingRelatedDrift(context.Background(), dbPath, state.LastRelatedChangeSeq, state.LastMessageID)
-		if err != nil {
-			return nil, err
-		}
-		deferRelated = meetings && (other || staleness.HasNew)
-		repairRelated = meetings && !deferRelated
-	}
 	return refreshDerivedDatasetsOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
-		repairRelated,
-		deferRelated,
+		false,
 		builderOverrides...,
 	)
 }
@@ -860,7 +844,7 @@ func buildCacheScheduled(
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				true, false, builderOverrides...)
+				true, builderOverrides...)
 		}
 		return buildCacheLockedAttempt(dbPath, analyticsDir, staleness.FullRebuild, false,
 			builderOverrides...)
@@ -1010,7 +994,6 @@ func refreshIdentityDatasetsOnly(
 		dbPath,
 		analyticsDir,
 		false,
-		false,
 		builderOverrides...,
 	)
 }
@@ -1072,7 +1055,7 @@ func buildCacheLockedAttempt(
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				true, false, builderOverrides...)
+				true, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -1311,7 +1294,7 @@ func buildCacheLockedAttempt(
 			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
 		}
 		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-			true, false, builderOverrides...)
+			true, builderOverrides...)
 	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
 		if err := sourceSnapshot.Close(); err != nil {

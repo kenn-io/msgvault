@@ -16,14 +16,14 @@ func buildRelationshipPeopleSQL(effectiveAt time.Time, keys string) string {
 	return `
 WITH logical_people AS (
 	SELECT l.entry_key, l.source_id, l.source_type, l.occurred_at, l.message_type, l.attachment_count,
-	       l.canonical_id, ` + MeetingKeySQL("mk", "l.message_type", "l.anchor_message_id") + ` AS meeting_key
+	       l.canonical_id, ` + MeetingKeysSQL("mk", "l.message_type", "l.anchor_message_id") + ` AS meeting_keys
 	FROM ` + logicalBuildRelation + ` l
-	LEFT JOIN read_parquet('` + quoteSQLString(keys) + `') mk ON mk.message_id = l.anchor_message_id
+	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteSQLString(keys) + `') GROUP BY message_id) mk ON mk.message_id = l.anchor_message_id
 	WHERE relation_kind = 1
 ), people_totals AS (
 	SELECT canonical_id,
 	       count(*)::BIGINT AS activity_count,
-	       count(DISTINCT meeting_key)::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_keys))))::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -32,7 +32,7 @@ WITH logical_people AS (
 ), source_rows AS (
 	SELECT canonical_id, source_id, source_type,
 	       count(*)::BIGINT AS activity_count,
-	       count(DISTINCT meeting_key)::BIGINT AS meeting_count,
+	       len(list_distinct(flatten(list(meeting_keys))))::BIGINT AS meeting_count,
 	       coalesce(sum(attachment_count), 0)::BIGINT AS file_count,
 	       min(occurred_at)::TIMESTAMP AS first_at,
 	       max(occurred_at)::TIMESTAMP AS last_at
@@ -154,10 +154,10 @@ WITH logical_people AS (
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
+	       CASE WHEN p.entry_kind = 'meeting' AND p.with_owner
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
-	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner THEN %d::UTINYINT
+	           WHEN p.entry_kind = 'meeting' AND p.with_owner THEN %d::UTINYINT
 	           WHEN p.entry_kind = 'conversation' THEN %d::UTINYINT
 	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
@@ -377,13 +377,17 @@ func MeetingKeySQL(keys, messageType, messageID string) string {
 	return "CASE WHEN " + messageType + " = 'meeting_transcript' THEN " + meetingIdentityKeySQL(keys, messageID) + " END"
 }
 
-// DeduplicateMeetingSQL keeps one linked occurrence per person. Unlinked
-// calendar entries and transcripts retain their existing individual counts.
+// MeetingKeysSQL collects each occurrence without multiplying activity rows.
+func MeetingKeysSQL(keys, messageType, messageID string) string {
+	return "CASE WHEN " + messageType + " = 'meeting_transcript' THEN coalesce(" + keys + ".meeting_keys, ['msg:' || CAST(" + messageID + " AS VARCHAR)]) ELSE []::VARCHAR[] END"
+}
+
+// DeduplicateMeetingSQL keeps one meeting row per person and occurrence.
 func DeduplicateMeetingSQL(relation, meetingKeys, messageID string) string {
 	return `SELECT p.* FROM ` + relation + ` p
 	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID + `
-	QUALIFY p.entry_kind NOT IN ('event','meeting') OR row_number() OVER (
-	    PARTITION BY p.canonical_id, ` + meetingIdentityKeySQL("mk", "p."+messageID) + `
+	QUALIFY p.entry_kind <> 'meeting' OR row_number() OVER (
+	    PARTITION BY p.canonical_id, p.entry_kind, ` + meetingIdentityKeySQL("mk", "p."+messageID) + `
 	    ORDER BY p.occurred_at, p.` + messageID + `) = 1`
 }
 
