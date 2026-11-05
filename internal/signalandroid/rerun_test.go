@@ -123,6 +123,39 @@ func TestImportVerifiesOwnerFromBackupEvidence(t *testing.T) {
 	}
 }
 
+func TestImportSendingSkipped(t *testing.T) {
+	for _, phone := range []string{signalfixture.OwnPhone, signalfixture.AlicePhone} {
+		t.Run(phone, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st, dir := testutil.NewTestStore(t), t.TempDir()
+			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
+			// A restored backup can contain only an outgoing message whose
+			// recipients were all skipped. It must still identify its owner.
+			changeFixture(t, dir, `DELETE FROM message WHERE _id <> 101`,
+				`UPDATE message SET type = `+ms(28|pushMessageBit|secureMessageBit))
+			opts := DefaultOptions()
+			opts.Phone = phone
+			opts.AttachmentsDir = t.TempDir()
+			summary, err := NewImporter(st, nil).Import(context.Background(), path, opts)
+			if phone != signalfixture.OwnPhone {
+				require.ErrorContains(err, "--phone does not match")
+				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources WHERE source_type = ?`, SourceType))
+				return
+			}
+			require.NoError(err)
+			assert.Equal(int64(1), summary.MessagesAdded)
+			assert.Zero(summary.MessagesSkipped)
+			id := "signal:aci:0f0f0f0f-0000-4000-8000-000000000002:" + signalfixture.OwnACI + ":" + ms(signalfixture.TReply)
+			assert.Equal(map[string]importedMessage{id: {
+				conversation: "signal:aci:" + signalfixture.AliceACI, body: "Replying", fromMe: true,
+			}}, importedMessages(t, st))
+			var sent bool
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_sent FROM messages WHERE source_message_id = ?`), id).Scan(&sent))
+			assert.False(sent, "Signal skipped sending this message")
+		})
+	}
+}
+
 func TestRerunRecordsUpdatedMessagesOnSyncRun(t *testing.T) {
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)

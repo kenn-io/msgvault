@@ -15,12 +15,13 @@ import (
 // Signal Android message type bits (MessageTypes in the Signal Android
 // source). The low five bits hold the base type; flags sit above them.
 const (
-	baseTypeMask       int64 = 0x1F
-	baseInboxType      int64 = 20
-	baseOutboxType     int64 = 21
-	baseSendingType    int64 = 22
-	baseSentType       int64 = 23
-	baseSentFailedType int64 = 24
+	baseTypeMask           int64 = 0x1F
+	baseInboxType          int64 = 20
+	baseOutboxType         int64 = 21
+	baseSendingType        int64 = 22
+	baseSentType           int64 = 23
+	baseSentFailedType     int64 = 24
+	baseSendingSkippedType int64 = 28
 
 	keyExchangeMask       int64 = 0xFF00
 	groupUpdateBit        int64 = 0x10000
@@ -41,7 +42,7 @@ func skipReason(m sigMessage) string {
 	base := m.Type & baseTypeMask
 	switch {
 	case base != baseInboxType && base != baseOutboxType && base != baseSendingType &&
-		base != baseSentType && base != baseSentFailedType:
+		base != baseSentType && base != baseSentFailedType && base != baseSendingSkippedType:
 		// Calls, profile and number changes, safety-number and other
 		// conversation events, and drafts.
 		return "event"
@@ -66,7 +67,7 @@ func skipReason(m sigMessage) string {
 // isOutgoing reports whether the message was sent by the account owner.
 func isOutgoing(messageType int64) bool {
 	switch messageType & baseTypeMask {
-	case baseOutboxType, baseSendingType, baseSentType, baseSentFailedType:
+	case baseOutboxType, baseSendingType, baseSentType, baseSentFailedType, baseSendingSkippedType:
 		return true
 	}
 	return false
@@ -76,7 +77,7 @@ func isOutgoing(messageType int64) bool {
 // and an own message only once Signal marked it sent.
 func isSent(messageType int64) bool {
 	switch messageType & baseTypeMask {
-	case baseOutboxType, baseSendingType, baseSentFailedType:
+	case baseOutboxType, baseSendingType, baseSentFailedType, baseSendingSkippedType:
 		return false
 	}
 	return true

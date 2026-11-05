@@ -279,7 +279,7 @@ func ownerEvidence(ctx context.Context, db *sql.DB) (map[int64]int64, error) {
 	rows, err := db.QueryContext(ctx, `
 		SELECT owner, COUNT(*) FROM (
 			SELECT from_recipient_id AS owner FROM message
-			WHERE (type & ?) IN (?, ?, ?, ?)
+			WHERE (type & ?) IN (?, ?, ?, ?, ?)
 			UNION ALL
 			SELECT m.to_recipient_id FROM message m
 			WHERE (m.type & ?) = ?
@@ -289,7 +289,7 @@ func ownerEvidence(ctx context.Context, db *sql.DB) (map[int64]int64, error) {
 				WHERE r._id = m.to_recipient_id AND COALESCE(r.group_id, '') <> '')
 		)
 		GROUP BY owner`,
-		baseTypeMask, baseOutboxType, baseSendingType, baseSentType, baseSentFailedType,
+		baseTypeMask, baseOutboxType, baseSendingType, baseSentType, baseSentFailedType, baseSendingSkippedType,
 		baseTypeMask, baseInboxType)
 	if err != nil {
 		return nil, fmt.Errorf("query backup owner: %w", err)
