@@ -543,6 +543,17 @@ func TestWithFolderFilter_NoConfigNoCLIIncludesAll(t *testing.T) {
 }
 
 func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
+	addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t,
+		map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1},
+		map[string][]imapv2.MailboxAttr{
+			"Trash": {imapv2.MailboxAttrTrash},
+			"Junk":  {imapv2.MailboxAttrJunk},
+		})
+	host, portStr, err := net.SplitHostPort(addr)
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+
 	after := time.Date(2026, time.January, 2, 0, 0, 0, 0, time.UTC)
 	before := time.Date(2026, time.February, 3, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
@@ -577,15 +588,22 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 			wantFiltered: true,
 		},
 		{
+			name:           "Trash and Junk exclusions with reconciliation",
+			cfg:            &Config{},
+			opts:           []Option{WithFolderFilter(nil, []string{"Trash", "Junk"}), WithFilteredDeletionReconciliation(true)},
+			wantFiltered:   true,
+			wantReconciles: true,
+		},
+		{
 			name:         "after filter",
 			cfg:          &Config{},
-			opts:         []Option{WithDateFilter(after, time.Time{}), WithFilteredDeletionReconciliation(true)},
+			opts:         []Option{WithFolderFilter(nil, []string{"Trash", "Junk"}), WithDateFilter(after, time.Time{}), WithFilteredDeletionReconciliation(true)},
 			wantFiltered: true,
 		},
 		{
 			name:         "before filter",
 			cfg:          &Config{},
-			opts:         []Option{WithDateFilter(time.Time{}, before), WithFilteredDeletionReconciliation(true)},
+			opts:         []Option{WithFolderFilter(nil, []string{"Trash", "Junk"}), WithDateFilter(time.Time{}, before), WithFilteredDeletionReconciliation(true)},
 			wantFiltered: true,
 		},
 	}
@@ -594,7 +612,12 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			client := NewClient(tt.cfg, "", tt.opts...)
+			tt.cfg.Host = host
+			tt.cfg.Port = port
+			tt.cfg.Username = testutil.IMAPTestUsername
+			client := NewClient(tt.cfg, testutil.IMAPTestPassword, tt.opts...)
+			t.Cleanup(func() { _ = client.Close() })
+			listAllMessages(t, client)
 			assert.Equal(tt.wantReconciles, client.ReconcilesFilteredDeletions())
 			completeness, ok := any(client).(interface {
 				LabelsSnapshotComplete() bool
