@@ -857,6 +857,8 @@ func TestReplyUnsubmittedDeletedDraftAllowsSourceMerge(t *testing.T) {
 	sender.Client = func(context.Context, store.LineReplyAttempt) (*line.Client, error) {
 		return nil, errors.New("synthetic revoked sending policy")
 	}
+	must.NotNil(receipt.RetryAfter)
+	f.now = receipt.RetryAfter.Add(time.Second)
 	_, err = sender.Send(t.Context(), f.draft.DraftID, 1)
 	must.ErrorContains(err, "synthetic revoked sending policy")
 	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))

@@ -8,8 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // PushTextRequest is one plain text message. QuoteToken belongs to its parent.
@@ -69,9 +67,6 @@ func validPushRecipient(id string) bool {
 // belong to the durable sender, within LINE's 24-hour deduplication window.
 func (c *Client) PushText(ctx context.Context, retryKey string, input PushTextRequest) (PushReceipt, error) {
 	var receipt PushReceipt
-	if len(retryKey) != 36 || uuid.Validate(retryKey) != nil {
-		return receipt, errors.New("line: invalid retry UUID")
-	}
 	type textMessage struct {
 		Type       string `json:"type"`
 		Text       string `json:"text"`
