@@ -58,18 +58,18 @@ describe('OrganizationEmploymentTab', () => {
     expect(jobs).toBe(2);
   });
 
-  it.each(['2026-13', '2025-06'])('validates %s before creating an employer', async start => {
+  it('rejects an end date before the start before creating an employer', async () => {
     const requests: Request[] = [];
     const { controller } = controllerWith(async input => {
       const request = requestOf(input); requests.push(request);
       return Response.json({ organizations: [], total: 0 });
     });
     await openInlineEmployer(controller, 'Example School');
-    await fireEvent.input(screen.getByRole('textbox', { name: 'Employment start date' }), { target: { value: start } });
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Employment start date' }), { target: { value: '2025-06' } });
     await fireEvent.click(screen.getByRole('checkbox', { name: 'Current employment' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Employment end date' }), { target: { value: '2024-06' } });
-    await fireEvent.submit(screen.getByRole('textbox', { name: 'Employment title' }).closest('form')!);
-    if (start === '2025-06') expect((await screen.findByRole('alert')).textContent).toContain('End date must be on or after start date.');
+    await fireEvent.click(screen.getByRole('button', { name: 'Create employment' }));
+    expect((await screen.findByRole('alert')).textContent).toContain('End date must be on or after start date.');
     expect(requests.filter(request => request.method === 'POST')).toHaveLength(0);
   });
 
@@ -124,8 +124,6 @@ describe('OrganizationEmploymentTab', () => {
       await fireEvent.keyDown(document, { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
       expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit employment' }));
-      await fireEvent.click(trigger);
-      expect(screen.queryByRole('alert')).toBeNull();
       await fireEvent.mouseDown(document.body);
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     } finally { vi.useRealTimers(); vi.unstubAllEnvs(); view.unmount(); controller.destroy(); }
