@@ -24,7 +24,7 @@ browser login, secure remote deployment, search states, and keyboard controls.
 | Follow background work | `/api/v1/operations/runs` and `/api/v1/operations/status` |
 | Integrate an AI assistant | [MCP server](usage/chat.md) |
 
-On unreleased `main`, connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
+Connect AI assistants through the [native MCP endpoints](usage/chat.md#native-daemon-endpoints).
 
 ### Filename suggestions
 
@@ -150,7 +150,7 @@ The serialized operation gate protects provider mutations and their archive
 writes, including delegated calls. Body decoding, authorization, availability,
 and dry runs do not hold the gate or wait for a sync to release it.
 
-[Calendar usage](usage/calendar.md#control-events-unreleased) owns setup,
+[Calendar usage](usage/calendar.md#control-events) owns setup,
 recurrence limits, notification behavior, and reconciliation instructions.
 `POST /api/v1/cli/add-calendar/plan` also accepts `write=true` to plan opt-in
 `calendar.events` consent while preserving existing Google scopes.
@@ -263,7 +263,7 @@ conflict when one UID resolves to multiple people. Person responses expose
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
 filter, and the virtual account catalog on `/cli/accounts`.
 
-Schema 3.1.0 adds unreleased [calendar event control](#calendar-control),
+Schema 3.1.0 adds [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
 
 Schema 3.2.0 adds `counts_pending` to `GET /api/v1/cli/accounts`. See
@@ -278,7 +278,7 @@ Schema 3.7.0 adds `GET /api/v1/media/search` for scoped lexical transcript searc
 Schema 3.14.0 adds `filename:` search filters, optional match snippets,
 attachment names and counts, and `hybrid_available` to CLI search responses.
 
-Schema 3.20.0 adds unreleased [contact route discovery](#contact-route-discovery).
+Schema 3.20.0 adds [contact route discovery](#contact-route-discovery).
 
 Schema 3.21.0 adds `GET /api/v1/embeddings/status` and MCP
 `get_embeddings_status`. See [message embedding status](#message-embedding-status).
@@ -580,7 +580,7 @@ is required. Three API-key authentication methods are supported:
 | API key header | `X-API-Key: <key>` | `X-API-Key: my-secret` |
 | Plain auth header | `Authorization: <key>` | `Authorization: my-secret` |
 
-If no effective API key is configured, authentication is not required. Secure startup requires a key for non-loopback addresses. On unreleased `main`, `serve` creates and persists one when no credential source is configured. See [server credentials](configuration.md#server) for file and environment sources, persistence, and explicit insecure mode.
+If no effective API key is configured, authentication is not required. Secure startup requires a key for non-loopback addresses. `serve` creates and persists one when no credential source is configured. See [server credentials](configuration.md#server) for file and environment sources, persistence, and explicit insecure mode.
 
 Keys listed under `[[server.remote_clients]]` authenticate the same way but reach only a fixed set of read operations; every other route returns 403. See [read-only remote clients](guides/remote-deployment.md#read-only-remote-clients).
 
@@ -1809,7 +1809,7 @@ The response includes the SHA-256 `content_hash` used by the content endpoint:
 
 `POST /api/v1/integrations/docbank/attachments/backfill` resets discovery and requeues failed deliveries as sending intents with attempts reset in one transaction. It returns 202 with `{"status":"scheduled"}`, including when the job is already running. It requires attachment upload consent and a scheduled mirror job. Missing consent returns 409; an unavailable store or scheduler returns 503. Both routes require the API key.
 
-Attachment metadata and message details include an optional `docbank` array of receipts with `endpoint`, `folder`, `node_id`, `version_id`, `blob_hash`. Duplicate stored content hashes share receipts. For hashless Slack or Discord rows, discovery and details recover the hash from a local storage path in the `<hash[:2]>/<hash>` format with lowercase SHA-256 hex and a matching prefix. The mirror uploads these aliases from loose files or retained pack entries, verifies their SHA-256, and uploads under `<first 12 hex of hash>-<sanitized basename>`. See [configuration](configuration.md#mirror-stored-attachments-to-docbank-unreleased) for consent and failure recovery.
+Attachment metadata and message details include an optional `docbank` array of receipts with `endpoint`, `folder`, `node_id`, `version_id`, `blob_hash`. Duplicate stored content hashes share receipts. For hashless Slack or Discord rows, discovery and details recover the hash from a local storage path in the `<hash[:2]>/<hash>` format with lowercase SHA-256 hex and a matching prefix. The mirror uploads these aliases from loose files or retained pack entries, verifies their SHA-256, and uploads under `<first 12 hex of hash>-<sanitized basename>`. See [configuration](configuration.md#mirror-stored-attachments-to-docbank) for consent and failure recovery.
 
 ---
 
@@ -1874,7 +1874,7 @@ Selected transcript completeness must be `complete`, `partial`, or `degraded_pro
 
 Recording search requires Docbank's source-selected search contract: `media_sources` selectors, a `media_source_selection` report marker and query-independent `media_selections`, including empty results. The daemon sends each source's current supplied-input set; generated transcripts stay eligible while supplied work is queued. Docbank selects each source's current transcript before ranking and returns build and exact source associations with each plain excerpt; source selections carry origin and supplied-input identity. Pending or missing transcripts leave coverage partial while ready matches remain searchable. Older servers and remote lookup failures report `media_search_unavailable` for recordings. Supplied text requires `supplied_input_id` to match the occurrence's saved delivery; mismatches count as unavailable attribution even when the query has no hits. The daemon validates supplied transcript revisions before search and rechecks visibility, recording identity, supplied text and person scope afterward.
 
-Unreleased schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted, ordered by Docbank rank. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`. Add a Person filter to narrow the version scope. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
+Schema 3.27.0 adds optional `attachments` with `results`, `truncated`, and optional `error` containing `error` and `message`. Each result has `message_id`, `conversation_id`, `attachment_id`, `filename`, `containing_title`, optional `occurred_at`, and a plain `excerpt`. It searches delivered mirror versions using text Docbank has extracted, ordered by Docbank rank. A scope with more than 4096 mirrored files excluding images, audio, and video returns `media_search_scope_limit` in `attachments.error`. Add a Person filter to narrow the version scope. A Docbank result limit or occurrence limit sets `truncated`, meaning more may match. Docbank may include filename-only candidates in its limit even when all extracted-text matches fit. Visibility and Person scope apply to both lists. The limit applies independently to each list. An empty attachment list without an error means no match in extracted text and says nothing about files whose text Docbank hasn't extracted.
 
 The attachment field is omitted when attachment mirroring is off. Attachment failures leave recording results intact and set `attachments.error`. Docbank-rejected recording queries return HTTP 400 with `invalid_media_search`. Other recording failures, including oversized scopes and remote timeouts, leave attachment results intact and set `recordings_error` with `error` and `message`. The request fails when both searches fail or its context ends. Recording-only responses retain their existing error behavior.
 
@@ -1992,7 +1992,7 @@ forwarded-address headers do not replace it.
 
 **Endpoint:** `GET /api/v1/conversations/search`
 
-Unreleased API schema 3.25.0 adds ranked chat discovery for owner clients.
+API schema 3.25.0 adds ranked chat discovery for owner clients.
 Delegated agent tokens are denied by the existing archive-read policy.
 
 | Parameter | Type | Default | Description |
@@ -2164,8 +2164,8 @@ hybrid setup.
 ### Contact route discovery {#contact-route-discovery}
 
 Find a saved person by name, then read the selected person's archived messaging
-routes. These owner-only GET routes are available in API schema 3.20.0 and are
-unreleased. Delegated agent tokens cannot use them. Discovery reads one archive
+routes. These owner-only GET routes are available in API schema 3.20.0 and later.
+Delegated agent tokens cannot use them. Discovery reads one archive
 snapshot per request and makes no provider calls or identity changes.
 
 `GET /api/v1/people/contact-candidates?query=Avery%20Example` searches saved names,
@@ -2382,8 +2382,7 @@ oversized scope must be narrowed. Neither case widens the request.
 **Endpoint:** `POST /api/v1/import/muesli`
 
 The native client uses this owner-authenticated endpoint for remote Muesli sync.
-Agent-delegated credentials and read-only remote client keys are denied. It is available on `main` and is not yet
-released. Prefer the native [Muesli commands](cli-reference.md#sync-muesli);
+Agent-delegated credentials and read-only remote client keys are denied. Prefer the native [Muesli commands](cli-reference.md#sync-muesli);
 applications do not need an export script.
 
 The strict JSON contract accepts `action` (`register`, `upsert`, or `refresh`),
@@ -3144,7 +3143,7 @@ The same HTTP server backs configured remote CLI access and the local background
 The server is designed for local use:
 
 - **Loopback-only by default.** The default bind address is `127.0.0.1`, restricting access to the local machine.
-- **API key required for non-loopback.** Binding to a non-loopback address requires an effective key. On unreleased `main`, `serve` creates a persisted key when no credential source is configured; a selected invalid source fails startup. See [server credentials](configuration.md#server).
+- **API key required for non-loopback.** Binding to a non-loopback address requires an effective key. `serve` creates a persisted key when no credential source is configured; a selected invalid source fails startup. See [server credentials](configuration.md#server).
 - **Opt-in for insecure binding.** To bind to a non-loopback address without an API key (not recommended), set `allow_insecure = true`.
 
 !!! warning

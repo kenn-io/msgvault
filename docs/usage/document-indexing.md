@@ -7,8 +7,8 @@ description: Find words and topics inside archived documents, with explicit cont
 Document indexing lets you search inside archived attachments and return to
 the message that contained them. Msgvault sends eligible files to your selected
 extraction provider, stores their text locally, and builds a keyword index.
-Mistral OCR is the hosted option. On `main` after v0.21.0, a self-hosted
-Docling service is also supported.
+Mistral OCR is the hosted option. A self-hosted Docling service is also
+supported.
 Optional document embeddings add search by meaning.
 
 What works today:
@@ -136,7 +136,7 @@ store_chunk_text = true
 enabled = true
 ```
 
-Document extraction includes standalone attachments by default. In v0.21.0, set
+Document extraction includes standalone attachments by default. Set
 `include_inline = true` when your mail client marks ordinary attached documents
 as inline. Only configured, authorized document formats with authoritative role
 provenance become eligible. Avatar, preview, sticker, and unknown roles stay out
@@ -171,7 +171,7 @@ the complete policy and run limits.
 
 ## Use a self-hosted Docling service
 
-Docling support is available on `main` after v0.21.0. Run Docling Serve on
+Run Docling Serve on
 hardware and a network you control. Msgvault uses its asynchronous conversion
 API; deploy a compatible service with `/v1/convert/file/async`,
 `/v1/status/poll/<id>`, and `/v1/result/<id>`.
@@ -490,10 +490,10 @@ ledger; later vector operations finish the cleanup.
 
 ## Diagnose extraction failures
 
-In v0.21.0, a failed build reports each document hash, reason code,
-and available local cause. For example, `invalid_local_source` can include
-`PDF structure is malformed`. Newer msgvault builds report
-`PDF structure could not be validated`. Size mismatches and spool capacity
+A failed build reports each document hash, reason code, and available local
+cause. For example, `invalid_local_source` can include
+`PDF structure could not be validated`; 0.21.0 reported
+`PDF structure is malformed`. Size mismatches and spool capacity
 failures have separate details. `documents status --capabilities <manifest>`
 shows those diagnostics later (omit `--capabilities` for Docling). `--json`
 includes `status.failures` and `status.failures_exhausted` (false when more than 20 failures remain).
