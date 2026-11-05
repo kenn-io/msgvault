@@ -128,10 +128,14 @@
   }: Props = $props();
 
   const compact = new MediaQuery(MEDIA.compact);
-  const soloReader = $derived(compact.current);
-  let soloPage: HTMLDivElement | undefined = $state();
+  let resultsSplit: HTMLDivElement | undefined = $state();
+  let readerWasOpen = false;
   $effect(() => {
-    if (soloReader && readingTargetKey) void tick().then(() => soloPage?.focus());
+    const open = Boolean(readingTargetKey);
+    if (open && !readerWasOpen && untrack(() => compact.current)) {
+      void tick().then(() => resultsSplit?.querySelector<HTMLButtonElement>('[aria-label="Back to results"]')?.focus());
+    }
+    readerWasOpen = open;
   });
 
   const api = createExploreAPI(untrack(() => client));
@@ -252,11 +256,9 @@
       if (loader.unavailable) {
         return { status: 'unavailable', message: loader.unavailable.message, unavailable: loader.unavailable };
       }
+      if (loader.error) return { status: 'error', message: loader.error };
       if (loader.loading || loader.restoring) return { status: 'loading', message: '' };
-      return {
-        status: loader.error ? 'error' : 'missing',
-        message: loader.error || 'The selected entry is no longer available in this context.',
-      };
+      return { status: 'missing', message: 'The selected entry is no longer available in this context.' };
     },
   );
 
@@ -636,31 +638,6 @@
   });
 </script>
 
-{#snippet reader()}
-  {#if readingTargetKey}
-    <ReadingPane
-      {client}
-      selection={readingSelection}
-      targetKey={readingTargetKey}
-      status={readingState.status}
-      statusMessage={readingState.message}
-      onRetry={recordingSelection && !recording.missing ? () => readingDetailRetryRevision += 1 : undefined}
-      unavailable={readingState.unavailable}
-      predicate={exploreState.predicate()}
-      onClose={closeReadingPane}
-      onBack={soloReader ? closeReadingPane : undefined}
-      {onOpenMeeting}
-      onReloadMeetings={reloadGroupMeetings}
-      onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
-      onOpenPerson={openRelationship}
-      {conversationStart}
-      {conversationEnd}
-      {conversationAnchorId}
-      onConversationAnchorChange={changeConversationAnchor}
-    />
-  {/if}
-{/snippet}
-
 <svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
   {#if !scope}<PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
@@ -755,11 +732,10 @@
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
+    class:results-split--solo={compact.current && Boolean(readingTargetKey)}
+    bind:this={resultsSplit}
     bind:clientWidth={resultsWidth}
   >
-    {#if soloReader && readingTargetKey}
-      <div class="results-solo" tabindex="-1" bind:this={soloPage}>{@render reader()}</div>
-    {:else}
     <SplitPane
       ariaLabel="Resize reading pane"
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
@@ -881,10 +857,30 @@
         </div>
       {/snippet}
       {#snippet secondary()}
-        {@render reader()}
+        {#if readingTargetKey}
+          <ReadingPane
+            {client}
+            selection={readingSelection}
+            targetKey={readingTargetKey}
+            status={readingState.status}
+            statusMessage={readingState.message}
+            onRetry={recordingSelection && !recording.missing ? () => readingDetailRetryRevision += 1 : loader.error ? loader.retry : undefined}
+            unavailable={readingState.unavailable}
+            predicate={exploreState.predicate()}
+            onClose={closeReadingPane}
+            onBack={compact.current ? closeReadingPane : undefined}
+            {onOpenMeeting}
+            onReloadMeetings={reloadGroupMeetings}
+            onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
+            onOpenPerson={openRelationship}
+            {conversationStart}
+            {conversationEnd}
+            {conversationAnchorId}
+            onConversationAnchorChange={changeConversationAnchor}
+          />
+        {/if}
       {/snippet}
     </SplitPane>
-    {/if}
   </div>
 
 </svelte:element>
@@ -945,14 +941,20 @@
     overflow: hidden;
   }
 
-  .results-solo {
-    width: 100%;
-    min-width: 0;
-    min-height: 0;
-    overflow: hidden;
+  .results-split--solo :global([data-split-pane]) { position: relative; }
+  .results-split--solo :global([data-pane='primary']) {
+    position: absolute;
+    inset: 0;
+    visibility: hidden;
+    pointer-events: none;
   }
-
-  .results-solo :global(.reading-pane) {
+  .results-split--solo :global(.handle-reset) { display: none; }
+  .results-split.results-split--solo :global([data-pane='secondary']) {
+    flex-grow: 1;
+    flex-shrink: 1;
+    border: 0;
+  }
+  .results-split--solo :global(.reading-pane) {
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
   }

@@ -1,3 +1,4 @@
+import { message } from '../src/lib/components/reader/conversation-fixtures.test-support';
 import { stubOperationStatus } from './kit-ui';
 import { recordingMessage, recordingTranscript, recordingSearchHit, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
 import { expect, test } from '@playwright/test';
@@ -307,28 +308,33 @@ test('phone reader replaces results and Back restores the focused row', async ({
     auth_mode: 'loopback', https: false, plain_http_warning: false
   } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: [{ ...entry(1), conversation_id: 7, anchor_message_id: 3 }, entry(2)], total_count: 2,
+    rows: Array.from({ length: 120 }, (_, index) => ({ ...entry(index + 1), conversation_id: 7, anchor_message_id: 3 })), total_count: 120,
     cache_revision: 'cache-phone', search_provenance: {}
   } }));
   await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: {
     id: 7, anchor_id: 3, has_before: false, has_after: false, total: 3,
     messages: [1, 2, 3].map(id => ({
-      id, conversation_id: 7, message_type: 'email',
-      from: 'Alexandria Example <alexandria@example.com>', to: ['reader@example.com'],
+      ...message(id), from: 'Alexandria Example <alexandria@example.com>', to: ['reader@example.com'],
       subject: 'Synthetic subject 1', sent_at: '2024-12-30T11:21:00Z',
       snippet: 'Synthetic excerpt', body: 'Synthetic body', body_html: '', attachments: []
     }))
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   const grid = page.getByRole('grid', { name: 'Messages results' });
-  await grid.getByText('Example Person').first().click();
-  const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+  await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
+  await grid.evaluate(element => { element.scrollTop = 1800; });
+  const row = grid.locator('.data-row:visible').nth(3);
+  const key = await row.getAttribute('data-row-key');
+  const index = Number(key?.split(':')[1]);
+  expect(index).toBeGreaterThan(1);
+  await row.getByText('Example Person').click();
+  const reading = page.getByRole('complementary', { name: `Reading pane: Synthetic subject ${index}` });
   await expect(reading).toBeVisible();
   await expect(grid).toBeHidden();
   const resultsBox = (await page.locator('.results-split').boundingBox())!;
   expect(Math.abs((await reading.boundingBox())!.width - resultsBox.width)).toBeLessThanOrEqual(1);
-  await expect(reading.locator('.pane-title')).toHaveText('Synthetic subject 1');
-  await expect(page.locator('.results-solo')).toBeFocused();
+  await expect(reading.locator('.pane-title')).toHaveText(`Synthetic subject ${index}`);
+  await expect(reading.getByRole('button', { name: 'Back to results' })).toBeFocused();
   const thread = reading.getByRole('region', { name: 'Conversation thread' });
   const collapsed = thread.getByRole('button', { name: /^Expand message/ });
   await expect(collapsed).toHaveCount(2);
@@ -355,10 +361,77 @@ test('phone reader replaces results and Back restores the focused row', async ({
   await reading.getByRole('button', { name: 'Back to results' }).click();
   await expect(grid).toBeVisible();
   await expect(grid).toBeFocused();
-  await expect(grid.getByText('Example Person').first()).toBeInViewport();
-  await grid.getByText('Example Person').first().click();
+  await expect(grid.locator(`[data-row-key="${key}"]`)).toBeInViewport();
+  await grid.locator(`[data-row-key="${key}"]`).getByText('Example Person').click();
   await page.goBack();
   await expect(grid).toBeVisible();
+});
+
+test('resizing an open reader preserves expanded messages and focus', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [{ ...entry(1), conversation_id: 7, anchor_message_id: 2 }, { ...entry(2), conversation_id: 7, anchor_message_id: 3 }],
+    total_count: 2, cache_revision: 'cache-resize', search_provenance: {}
+  } }));
+  let requests = 0;
+  await page.route('**/api/v1/conversations/7?*', route => {
+    requests += 1;
+    return route.fulfill({ json: { id: 7, anchor_id: 2, has_before: false, has_after: false, total: 3, messages: [message(1), message(2), message(3)] } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await grid.getByText('Synthetic subject 1', { exact: true }).click();
+  await page.getByRole('button', { name: /Expand message 1/ }).click();
+  const expanded = page.getByRole('article', { name: 'Message 1' });
+  await expect(expanded).toBeVisible();
+  const collapse = expanded.getByRole('button', { name: /Collapse message 1/ });
+  await collapse.focus();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(expanded).toBeVisible();
+  await expect(collapse).toBeFocused();
+  expect(requests).toBe(1);
+  await page.keyboard.press('l');
+  await expect(page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 2' })).toBeVisible();
+  await expect(collapse).toBeFocused();
+});
+
+test('phone recording Back keeps loaded hits and restores the opened link during an outage', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'recording', search_provenance: {} } }));
+  await page.route('**/api/v1/media/search/status', route => route.fulfill({ json: { configured: true } }));
+  let requests = 0;
+  await page.route('**/api/v1/media/search?*', route => {
+    requests += 1;
+    return requests === 1 ? route.fulfill({ json: recordingSearchReport() }) : route.fulfill({ status: 503, json: { message: 'Search unavailable' } });
+  });
+  await page.route('**/api/v1/messages/9', route => route.fulfill({ json: recordingMessage }));
+  await page.route('**/api/v1/conversations/2?*', route => route.fulfill({ json: { id: 2, messages: [recordingMessage], anchor_id: 9, has_before: false, has_after: false, total: 1 } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'quarterly' })))}`);
+  const link = page.getByRole('link', { name: 'Team chat' });
+  await link.click();
+  await page.getByRole('complementary', { name: 'Reading pane: Team chat' }).getByRole('button', { name: 'Back to results' }).click();
+  await expect(link).toBeVisible();
+  await expect(link).toBeFocused();
+  expect(requests).toBe(1);
+});
+
+test('phone reader shows an invalid query and lets the user retry restoration', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  let requests = 0;
+  await page.route('**/api/v1/explore', route => {
+    requests += 1;
+    return requests === 1
+      ? route.fulfill({ status: 400, json: { error: 'invalid_query', message: 'invalid OR query: every pipe must separate two non-empty searches' } })
+      : route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'retry', search_provenance: {} } });
+  });
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ query: 'alpha |', selectedRow: 'message:1' })))}`);
+  await expect(page.getByRole('alert').filter({ hasText: 'invalid OR query' })).toBeVisible();
+  await page.getByRole('button', { name: /Retry/ }).click();
+  await expect(page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeVisible();
+  expect(requests).toBe(2);
 });
 
 test('right preview resizes, restores its width, and falls back below on narrow windows', async ({ page }) => {
