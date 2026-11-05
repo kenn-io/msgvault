@@ -30,7 +30,6 @@ type localEmbeddingsController struct {
 	openers   []visual.StreamOpener
 	inspect   func(context.Context, embedlocal.Options) (embedlocal.Status, error)
 	install   func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
-	endpoint  func(context.Context, embedlocal.Options) (string, error)
 }
 
 func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbeddingsStatus, error) {
@@ -107,7 +106,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	useOllama := !builtin && available.OllamaAvailable && !loaded.Vector.Embeddings.LocalOnly
 	detection := setupDetection{backend: backend, backendUnavailable: unavailable, configKeys: configKeys, localEmbeddings: !useOllama}
 	if useOllama {
-		detection.embeddingEndpoint, err = c.endpoint(ctx, embedlocal.Options{DataDir: dir})
+		detection.embeddingEndpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
 		if err != nil {
 			return err
 		}
@@ -140,7 +139,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		if err != nil {
 			return err
 		}
-		if _, err := c.endpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true}); err != nil {
+		if _, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true}); err != nil {
 			return err
 		}
 	}
@@ -232,6 +231,5 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if err := run(args...); err != nil {
 		return err
 	}
-	publishTextVectorFeatures(nextCtx, c.store, c.server, c.scheduler, vf, &state)
 	return nil
 }

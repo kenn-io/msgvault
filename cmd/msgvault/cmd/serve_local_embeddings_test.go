@@ -169,7 +169,6 @@ func TestLocalEmbeddingsActivatesAndPreservesMatchingMessageIndex(t *testing.T) 
 					opts.Progress(5, 10)
 					return embedlocal.Installation{DataDir: dir}, nil
 				},
-				endpoint: localEmbeddingEndpoint,
 			}
 			srv.SetLocalEmbeddings(controller)
 			response := httptest.NewRecorder()
@@ -224,6 +223,9 @@ func TestLocalEmbeddingsDownloadFailureAndConfigConflictKeepSavedSettings(t *tes
 	for _, conflict := range []bool{false, true} {
 		t.Run(strconv.FormatBool(conflict), func(t *testing.T) {
 			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig)
+			oldEndpoint := localEmbeddingEndpoint
+			localEmbeddingEndpoint = func(context.Context, embedlocal.Options) (string, error) { return "http://127.0.0.1:9999/v1", nil }
+			t.Cleanup(func() { localEmbeddingEndpoint = oldEndpoint })
 			cfg := fixture.load(t)
 			before, err := os.ReadFile(fixture.path)
 			require.NoError(t, err)
@@ -238,7 +240,6 @@ func TestLocalEmbeddingsDownloadFailureAndConfigConflictKeepSavedSettings(t *tes
 					require.NoError(t, os.WriteFile(fixture.path, append(slices.Clone(before), []byte("\n[web]\ntheme = \"dark\"\n")...), 0o600))
 					return embedlocal.Installation{DataDir: fixture.dir}, nil
 				},
-				endpoint: func(context.Context, embedlocal.Options) (string, error) { return "http://127.0.0.1:9999/v1", nil },
 			}
 			err = controller.Enable(t.Context(), true, func(api.LocalEmbeddingsStatus) {})
 			require.Error(t, err)

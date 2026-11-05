@@ -125,8 +125,6 @@ func startVectorInit(
 			}
 			defer release()
 		}
-		h.mu.Lock()
-		defer h.mu.Unlock()
 		vf, err := setupVectorFeaturesForRun(ctx, s, dbPath, false, openers...)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -146,7 +144,9 @@ func startVectorInit(
 			logger.Warn("vector init returned no components despite no error; leaving vector search uninitialized")
 			return
 		}
+		h.mu.Lock()
 		h.vf = vf
+		h.mu.Unlock()
 		if cfg.Vector.Enabled {
 			publishTextVectorFeatures(ctx, s, apiServer, sched, vf, state)
 		}
