@@ -2,19 +2,25 @@ package store
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 func TestSearchMetadataSnippetQueryPlan(t *testing.T) {
+	dbtest.SkipIfPostgres(t, "match excerpts use SQLite FTS5")
 	assert := assert.New(t)
 	req := require.New(t)
-	db := newFTSProbeDB(t, false)
+	st, err := OpenForTest(filepath.Join(t.TempDir(), "snippet-plan.db"))
+	req.NoError(err)
+	t.Cleanup(func() { req.NoError(st.Close()) })
+	req.NoError(st.InitSchema())
 	query := fmt.Sprintf(searchMetadataSnippetSQL, "?, ?, ?")
-	rows, err := db.Query("EXPLAIN QUERY PLAN "+query, `"project"* "meeting"*`, 1, 3, 1, 2, 3)
+	rows, err := st.DB().Query("EXPLAIN QUERY PLAN "+query, `"project"* "meeting"*`, 1, 3, 1, 2, 3)
 	req.NoError(err)
 	defer func() { req.NoError(rows.Close()) }()
 	var ftsScans int
