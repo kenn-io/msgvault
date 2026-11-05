@@ -620,6 +620,36 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 	})
 }
 
+func TestProcessorGCPurgesMergedInboxPayloads(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	if f.st.IsPostgreSQL() {
+		t.Skip("archive GC is SQLite-only")
+	}
+	ctx := t.Context()
+	message := f.message("gc-merged", "text to purge after merge", f.now.UnixMilli())
+	f.enqueue(t, message, time.Time{})
+	f.run(t)
+	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-merged-unsend", Timestamp: message.Timestamp + 1, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
+	f.run(t)
+	must.True(f.archived(t, message.Message.ID).deleted)
+	into, err := f.st.GetOrCreateSource("line", "2000000002")
+	must.NoError(err)
+	_, err = f.st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: f.source.ID, IntoSourceID: into.ID})
+	must.NoError(err)
+	plan, err := f.st.PlanGCContext(ctx)
+	must.NoError(err)
+	deleted, err := f.st.ExecuteGCContext(ctx, plan)
+	must.NoError(err)
+	must.Equal(int64(1), deleted)
+	for _, eventID := range []string{message.WebhookEventID, "gc-merged-unsend"} {
+		var raw string
+		must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
+		checks.Equal("{}", raw)
+	}
+}
+
 func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
