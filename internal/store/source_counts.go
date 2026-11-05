@@ -21,9 +21,9 @@ func (s *Store) CountMessagesBySourceContext(ctx context.Context) (map[int64]Sou
 		SELECT source_id,
 			SUM(CASE WHEN %s THEN 1 ELSE 0 END),
 			SUM(CASE WHEN %s THEN 1 ELSE 0 END)
-		FROM messages WHERE %s
+		FROM messages
 		GROUP BY source_id`,
-		LiveMessagesWhere("", true), SourceDeletedMessagesWhere(""), SourceNativeMessagesWhere("messages", "sources")))
+		LiveMessagesWhere("", true), SourceDeletedMessagesWhere("")))
 	if err != nil {
 		return nil, fmt.Errorf("count messages by source: %w", err)
 	}
