@@ -34,10 +34,24 @@ type CalDAVMetadata struct {
 	AccountEmail string `json:"account_email,omitempty"`
 	TimeZone     string `json:"time_zone,omitempty"`
 	Status       string `json:"status,omitempty"`
-	AllDay       bool   `json:"all_day,omitempty"`
+	Start        string `json:"start,omitempty"`
+	End          string `json:"end,omitempty"`
+	AllDay       bool   `json:"all_day"`
 	// OverrideRemoved survives resource deletion to distinguish stale overrides
 	// from exceptions that belonged to the last archived snapshot.
 	OverrideRemoved bool `json:"override_removed,omitempty"`
+}
+
+// SetEventTimes keeps message details aligned with the decoded calendar event.
+func (m *CalDAVMetadata) SetEventTimes(e Event) {
+	m.Start, m.End = e.StartDate, e.EndDate
+	if !e.AllDay && e.Start != nil {
+		m.Start = e.Start.Format(time.RFC3339)
+	}
+	if !e.AllDay && e.End != nil {
+		m.End = e.End.Format(time.RFC3339)
+	}
+	m.AllDay, m.TimeZone = e.AllDay, e.CalendarTimeZone
 }
 
 type CalDAVEvent struct {

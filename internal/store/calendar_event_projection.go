@@ -105,6 +105,20 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if !ok {
 		return clearProjection()
 	}
+	if format.String == calevent.CalDAVRawFormat && event.Status != calendarEventDecodeFailureStatus {
+		var meta calevent.CalDAVMetadata
+		if err := json.Unmarshal([]byte(metadata.String), &meta); err != nil {
+			return fmt.Errorf("read CalDAV message metadata: %w", err)
+		}
+		meta.SetEventTimes(event)
+		encoded, err := json.Marshal(meta)
+		if err != nil {
+			return fmt.Errorf("encode CalDAV message metadata: %w", err)
+		}
+		if _, err := q.Exec(fmt.Sprintf(`UPDATE messages SET metadata = %s WHERE id = ?`, s.dialect.JSONBindExpr()), string(encoded), messageID); err != nil {
+			return fmt.Errorf("refresh CalDAV message metadata: %w", err)
+		}
+	}
 	// Keep timed CalDAV message times aligned with the event decoded from its
 	// raw snapshot, including when a source configuration refresh reprojects it.
 	if format.String == calevent.CalDAVRawFormat && !event.AllDay && event.Status != calendarEventDecodeFailureStatus {

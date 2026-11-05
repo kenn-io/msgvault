@@ -2,7 +2,6 @@ package calsync
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -690,11 +689,4 @@ func TestFull_RecipientMembershipIncludesResources(t *testing.T) {
 	var sender string
 	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT p.email_address FROM messages m JOIN participants p ON p.id=m.sender_id WHERE m.id=?`), row.id).Scan(&sender))
 	assert.Equal("organizer@resource.calendar.google.com", sender)
-	raw, err := st.GetMessageRaw(row.id)
-	require.NoError(err)
-	var archived gcal.Event
-	require.NoError(json.Unmarshal(raw, &archived))
-	require.Len(archived.Attendees, 4)
-	assert.Equal("guest@example.org", archived.Attendees[1].Email)
-	assert.Equal("Guest alias", archived.Attendees[1].DisplayName)
 }

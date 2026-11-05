@@ -233,7 +233,8 @@ func TestSyncTimeZoneChangeRewritesUnchangedInstants(t *testing.T) {
 	opts.TimeZone = "America/New_York"
 	changed, err := c.Sync(t.Context(), st, opts)
 	requirements.NoError(err)
-	assertions.Equal(1, changed.Events)
+	// Updating the source zone already refreshed the archived metadata.
+	assertions.Zero(changed.Events)
 	var zone, metadata string
 	requirements.NoError(st.DB().QueryRow(`SELECT e.calendar_time_zone, m.metadata FROM calendar_events e JOIN messages m ON m.id=e.message_id`).Scan(&zone, &metadata))
 	assertions.Equal("America/New_York", zone)
@@ -243,6 +244,55 @@ func TestSyncTimeZoneChangeRewritesUnchangedInstants(t *testing.T) {
 	unchanged, err := c.Sync(t.Context(), st, opts)
 	requirements.NoError(err)
 	assertions.Zero(unchanged.Events)
+}
+
+func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, duration, wantStart, wantEnd, changedStart, changedEnd string
+		allDay                                                              bool
+	}{
+		{"UTC", "DTSTART:20270314T130000Z", "DURATION:PT1H", "2027-03-14T13:00:00Z", "2027-03-14T14:00:00Z", "2027-03-14T13:00:00Z", "2027-03-14T14:00:00Z", false},
+		{"floating", "DTSTART:20270314T090000", "DURATION:PT1H", "2027-03-14T09:00:00Z", "2027-03-14T10:00:00Z", "2027-03-14T13:00:00Z", "2027-03-14T14:00:00Z", false},
+		{"all day", "DTSTART;VALUE=DATE:20270314", "DURATION:P1D", "2027-03-14", "2027-03-15", "2027-03-14", "2027-03-15", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			f.raw["a.ics"] = strings.NewReplacer("DTSTART:20270314T130000Z", tc.start, "DURATION:PT1H", tc.duration).Replace(calendarBody)
+			st := testutil.NewTestStore(t)
+			opts := syncOpts()
+			_, err := c.Sync(t.Context(), st, opts)
+			require.NoError(err)
+			var id int64
+			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
+			for _, step := range []struct {
+				zone, start, end string
+				failFetch        bool
+			}{
+				{"UTC", tc.wantStart, tc.wantEnd, false},
+				{"America/New_York", tc.changedStart, tc.changedEnd, true},
+				{"America/New_York", tc.changedStart, tc.changedEnd, false},
+			} {
+				opts.TimeZone = step.zone
+				f.Lock()
+				f.failFetch = step.failFetch
+				f.Unlock()
+				_, err = c.Sync(t.Context(), st, opts)
+				if step.failFetch {
+					require.Error(err)
+				} else {
+					require.NoError(err)
+				}
+				msg, err := st.GetMessageContext(t.Context(), id)
+				require.NoError(err)
+				require.NotNil(msg.Calendar)
+				assert.Equal(new(step.start), msg.Calendar.Start)
+				assert.Equal(new(step.end), msg.Calendar.End)
+				assert.Equal(new(tc.allDay), msg.Calendar.AllDay)
+				assert.Equal(new(step.zone), msg.Calendar.TimeZone)
+			}
+		})
+	}
 }
 
 func TestSyncSkippedDateRecurrenceListsOccurrences(t *testing.T) {
@@ -1839,5 +1889,13 @@ func TestSyncDeletedFloatingEventMessageTimeZoneChange(t *testing.T) {
 	}
 	var after string
 	require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&after))
-	require.Equal(before, after)
+	var updated calevent.CalDAVMetadata
+	require.NoError(json.Unmarshal([]byte(after), &updated))
+	require.True(updated.OverrideRemoved)
+	require.Equal(meta.EventID, updated.EventID)
+	require.Equal(meta.Href, updated.Href)
+	require.Equal(meta.ETag, updated.ETag)
+	require.Equal("2027-03-21T15:00:00Z", updated.Start)
+	require.Equal("2027-03-21T16:00:00Z", updated.End)
+	require.Equal("America/New_York", updated.TimeZone)
 }
