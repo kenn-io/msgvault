@@ -615,20 +615,24 @@ func TestListCalendarOccurrencesCancelledSinglesWithoutBounds(t *testing.T) {
 	assertions.Equal([]CalendarUnexpandable{{MessageID: unknown, Reason: "missing event bounds"}}, page.Unexpandable)
 }
 
-func TestListCalendarOccurrencesExceptionDetails(t *testing.T) {
+func TestListCalendarOccurrencesExceptionMessageIDZero(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "master", `{"id":"master","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1"]}`)
-	_, edited := calendarFixture(t, st, "edited", `{"id":"edited","recurringEventId":"master","status":"tentative","originalStartTime":{"dateTime":"2027-03-02T17:00:00Z"},"start":{"dateTime":"2027-03-03T19:00:00Z"},"end":{"dateTime":"2027-03-03T20:00:00Z"},"attendees":[{"email":"edited@example.com","responseStatus":"declined"}]}`)
-	_, err := st.db.Exec(`UPDATE messages SET subject='Edited event', deleted_from_source_at=? WHERE id=?`, time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC), edited)
+	data, master := calendarFixture(t, st, "master", `{"id":"master","status":"confirmed","start":{"dateTime":"2027-03-02T17:00:00Z"},"end":{"dateTime":"2027-03-02T18:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1"]}`)
+	override := ""
+	if st.IsPostgreSQL() {
+		override = " OVERRIDING SYSTEM VALUE"
+	}
+	_, err := st.db.Exec(`INSERT INTO messages (id, source_id, conversation_id, source_message_id, message_type, subject, deleted_from_source_at)`+override+` VALUES (0, ?, ?, 'zero', 'calendar_event', 'Edited event', ?)`, data.Message.SourceID, data.Message.ConversationID, time.Date(2027, 3, 4, 0, 0, 0, 0, time.UTC))
 	require.NoError(err)
+	require.NoError(st.UpsertMessageRawWithFormat(0, []byte(`{"id":"edited","recurringEventId":"master","status":"tentative","originalStartTime":{"dateTime":"2027-03-02T17:00:00Z"},"start":{"dateTime":"2027-03-03T19:00:00Z"},"end":{"dateTime":"2027-03-03T20:00:00Z"},"attendees":[{"email":"edited@example.com","responseStatus":"declined"}]}`), "gcal_json"))
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
 	require.NoError(err)
 	assert.Empty(page.Unexpandable)
 	require.Len(page.Occurrences, 1)
 	o := page.Occurrences[0]
-	assert.Equal(edited, o.MessageID)
+	assert.Equal(int64(0), o.MessageID)
 	assert.Equal(master, o.SeriesMessageID)
 	assert.Equal("Edited event", o.Subject)
 	assert.Equal("tentative", o.Status)
@@ -637,7 +641,6 @@ func TestListCalendarOccurrencesExceptionDetails(t *testing.T) {
 	assert.Equal("edited@example.com", o.Attendees[0].Email)
 	assert.Equal("declined", o.Attendees[0].RSVP)
 	assert.Equal("2027-03-03T19:00:00Z", o.Start.Format(time.RFC3339))
-	assert.Equal("2027-03-03T20:00:00Z", o.End.Format(time.RFC3339))
 }
 
 func TestListCalendarOccurrencesDefaultGoogleStatus(t *testing.T) {

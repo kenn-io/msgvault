@@ -144,11 +144,11 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 		terms := make([]string, 0, len(chunk))
 		args := []any{}
 		// Scope before LIMIT so hidden copies cannot exhaust candidate bounds.
-		scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+		from, scopeArgs := calendarEventFromContext(ctx)
 		for i, q := range chunk {
-			terms = append(terms, fmt.Sprintf("SELECT %d,message_id FROM (SELECT e.message_id ", i)+calendarEventFrom+"("+q.predicate+")"+scope+" LIMIT ?) candidates")
-			args = append(args, q.args...)
+			terms = append(terms, fmt.Sprintf("SELECT %d,message_id FROM (SELECT e.message_id ", i)+from+"("+q.predicate+") LIMIT ?) candidates")
 			args = append(args, scopeArgs...)
+			args = append(args, q.args...)
 			args = append(args, min(200, *budget)+1)
 		}
 		byQuery := make([][]int64, len(chunk))
@@ -176,8 +176,7 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 		if len(ids) > *budget {
 			return calendarRecurrenceBudgetError()
 		}
-		// The probe selected these IDs within the source scope and snapshot.
-		// Hydrate only missing rows without applying that scope a second time.
+		// Hydrate each missing row once within the same scope and snapshot.
 		slices.Sort(ids)
 		ids = slices.Compact(ids)
 		missing := []any{}

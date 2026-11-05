@@ -34,12 +34,16 @@ var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject,
  %s, e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
  e.event_time_zone, e.calendar_time_zone, e.recurrence_json
- ` + calendarEventFrom
+ `
 
-var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
+func calendarEventFromContext(ctx context.Context) (string, []any) {
+	competingScope, args := sourceScopeClause(ctx, "om.source_id")
+	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
+	return `FROM calendar_events e JOIN messages m ON m.id = e.message_id
  WHERE m.deleted_at IS NULL
- AND ` + calendarEventVisibility("e", "m") + `
- AND `
+ AND ` + calendarEventVisibility("e", "m", competingScope) + scope + `
+ AND `, append(args, scopeArgs...)
+}
 
 func calendarUIDExpression(d Dialect, column string) string {
 	if d.DriverName() == postgresDriverName {
@@ -50,28 +54,27 @@ func calendarUIDExpression(d Dialect, column string) string {
 
 // Keep unique archived events. A live copy wins over archived copies; among
 // archived copies, the lowest message ID wins within the merged source.
-func calendarEventVisibility(event, message string) string {
+func calendarEventVisibility(event, message, competingScope string) string {
 	return fmt.Sprintf(`NOT EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages am
  WHERE am.message_id = %[2]s.id AND am.original_source_message_id <> '' AND EXISTS (
   SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
   WHERE other.provider_event_id = %[1]s.provider_event_id
-  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
+  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL %[3]s
   AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id AND oa.original_source_message_id <> '')
-   OR other.message_id < %[1]s.message_id)))`, event, message)
+   OR other.message_id < %[1]s.message_id)))`, event, message, competingScope)
 }
 
 func queryCalendarEventRowsWithinBudget(ctx context.Context, r reboundReader, predicate string, args []any, budget int) ([]CalendarEventRow, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
-	predicate = "(" + predicate + ")" + scope
-	args = append(slices.Clone(args), scopeArgs...)
+	from, scopeArgs := calendarEventFromContext(ctx)
 	// Public callers supply a snapshot: probe only IDs before decoding event
 	// payloads or loading attendees, and stop once the budget is exceeded.
-	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + calendarEventFrom + "(" + predicate + ") LIMIT ?) AS candidates"
-	probeArgs := append([]any(nil), args...)
+	probe := `SELECT COUNT(*) FROM (SELECT e.message_id ` + from + "(" + predicate + ") LIMIT ?) AS candidates"
+	probeArgs := scopeArgs
+	probeArgs = append(probeArgs, args...)
 	probeArgs = append(probeArgs, budget+1)
 	var count int
 	if err := r.QueryRowContext(ctx, probe, probeArgs...).Scan(&count); err != nil {
@@ -87,8 +90,10 @@ func queryCalendarEventRows(ctx context.Context, r reboundReader, predicate stri
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	from, scopeArgs := calendarEventFromContext(ctx)
 	query := fmt.Sprintf(calendarEventSelect,
-		calendarUIDExpression(r.dialect, "m.metadata")) + "(" + predicate + ") ORDER BY e.message_id"
+		calendarUIDExpression(r.dialect, "m.metadata")) + from + "(" + predicate + ") ORDER BY e.message_id"
+	args = append(scopeArgs, args...)
 	if limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, limit)
@@ -293,7 +298,7 @@ func calendarExceptionWindow(dialect Dialect, lower, upper time.Time) (string, [
    EXISTS (SELECT 1 FROM calendar_events p
     WHERE p.kind IN ('series', 'single') AND p.provider_event_id = e.series_provider_id
     AND (SELECT pm.source_id FROM messages pm WHERE pm.id = p.message_id AND pm.deleted_at IS NULL
-     AND ` + calendarEventVisibility("p", "pm") + `) = m.source_id
+     AND ` + calendarEventVisibility("p", "pm", "") + `) = m.source_id
     AND ((e.original_start_at < ? AND ` + timedEnd + `) OR
     (e.original_start_date < ? AND ` + dateEnd + `))) OR
    (e.original_start_at IS NULL AND e.original_start_date = ''))`

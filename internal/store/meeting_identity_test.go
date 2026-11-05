@@ -145,6 +145,29 @@ func TestMeetingIdentityHiddenEvidenceIgnored(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityScopedInviteSurvivesHiddenNativeCopy(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, source := persistInviteEmail(t, st, "invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H")))
+	inviteIDs := emailEvents(t, st, source)
+	require.Len(inviteIDs, 1)
+	ref := formatMeetingOccurrence(OccurrenceRef{MessageID: inviteIDs[0]})
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{source})
+	req := MeetingIdentityRequest{OccurrenceRefs: []string{ref}}
+	before, err := st.ResolveMeetingIdentitiesContext(ctx, req)
+	require.NoError(err)
+	require.Len(before.ByOccurrence, 1)
+	assert.Equal("occ:"+ref, before.ByOccurrence[ref].Key)
+	calendarFixture(t, st, "synced", singleLinkRaw("synced", "family@example.com"), "hidden@example.com")
+	after, err := st.ResolveMeetingIdentitiesContext(ctx, req)
+	require.NoError(err)
+	assert.Equal(before, after, "a hidden native copy leaves the visible invitation unchanged")
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(ctx, from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	assert.Len(page.Occurrences, 1)
+}
+
 func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

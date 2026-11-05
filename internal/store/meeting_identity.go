@@ -132,12 +132,8 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 	processed := map[int64]bool{}
 	for {
 		groupCount := len(groups)
-		requestedGroups := map[*timelineMeetingGroup]bool{}
-		for _, g := range groups {
-			requestedGroups[g] = true
-		}
 		aliasQueries := []meetingEventQuery{}
-		for g := range requestedGroups {
+		for _, g := range groups {
 			if discovered[g] {
 				continue
 			}
@@ -151,7 +147,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			return result, err
 		}
 		memberQueries := []meetingEventQuery{}
-		for g := range requestedGroups {
+		for _, g := range groups {
 			if discovered[g] {
 				continue
 			}
@@ -264,11 +260,9 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			}
 			if !explicit[id] {
 				relevant := false
-				if len(candidates) > 0 {
-					for _, candidate := range candidates {
-						if g := groups[candidate.Identity]; g != nil && requestedGroups[g] {
-							relevant = true
-						}
+				for _, candidate := range candidates {
+					if groups[candidate.Identity] != nil {
+						relevant = true
 					}
 				}
 				if !relevant {
@@ -277,11 +271,9 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				}
 			}
 			resolvedMembers[id] = candidates
-			if len(candidates) > 0 {
-				for _, candidate := range candidates {
-					predicate, args := s.meetingIdentityPredicate(candidate.Identity)
-					memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
-				}
+			for _, candidate := range candidates {
+				predicate, args := s.meetingIdentityPredicate(candidate.Identity)
+				memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
 			}
 		}
 		if err := s.preloadMeetingQueries(ctx, r, memberCopies, &budget); err != nil {
