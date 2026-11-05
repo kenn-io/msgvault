@@ -4,7 +4,6 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import type { DirectoryReadBundle } from '../../directory/models';
-import type { AttributeDefinition } from '../../api/generated/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PersonRecordActions from './PersonRecordActions.svelte';
 
@@ -31,37 +30,6 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
-  it('keeps embedded field labels available while the registry is pending or unavailable', async () => {
-    let resolveDefinitions!: (response: Response) => void;
-    const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
-    const controller = renderActions(vi.fn<typeof fetch>(async (input) => {
-      const path = new URL((input instanceof Request ? input : new Request(input)).url).pathname;
-      if (path.endsWith('/attribute-definitions')) return pendingDefinitions;
-      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: true, tracked_at: null });
-      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
-    }));
-    const definition: AttributeDefinition = {
-      id: 8, universal_id: '00000000-0000-4000-8000-000000000008',
-      object_type: 'person', slug: 'favorites_food', label: 'Favorite foods',
-      value_type: 'text', field_type: 'text', cardinality: 'multi', display_order: 10,
-      is_required: false, ownership: 'user', ui_creatable: true, ui_editable: true,
-      api_mutable: true, is_searchable: true, is_sensitive: false, is_audited: true,
-      is_deletable: true, history_exempt: false, is_active: true, revision: 1,
-      created_at: when, updated_at: when,
-    };
-    controller.attributes = { person_id: 7, attributes: [{ definition, current: [], history: [] }] };
-
-    await choose('Keep this profile updated');
-    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
-    expect(await within(dialog).findByText('Favorite foods')).toBeDefined();
-    resolveDefinitions(Response.json({ message: 'Registry unavailable' }, { status: 503 }));
-    expect(within(dialog).getByText('Updates run while People sweep is on in Settings.')).toBeDefined();
-    await waitFor(() => expect(within(dialog).getByText('Favorite foods')).toBeDefined());
-
-    controller.definitions = [{ ...definition, label: 'Favorite meals' }];
-    expect(await within(dialog).findByText('Favorite meals')).toBeDefined();
-  });
-
   it('opens named profile updates before labels load and closes with the footer button', async () => {
     let resolveDefinitions!: (response: Response) => void;
     const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);

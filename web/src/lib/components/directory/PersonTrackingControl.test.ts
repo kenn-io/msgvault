@@ -65,19 +65,26 @@ describe('PersonTrackingControl', () => {
       if (path.endsWith('/attribute-definitions')) return definitions.promise;
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: true, tracked_at: null });
       const target = catalog(false).targets[0]!;
-      return Response.json({ targets: [target, { ...target, slug: 'favorite_foods' }, { ...target, slug: 'conversation_topics' }, { ...target, kind: 'employment', slug: 'employment' }] });
+      return Response.json({ targets: [target, { ...target, slug: 'favorites_food' }, { ...target, slug: 'interests_fun_growing_up' }, { ...target, slug: 'favorites_place' }, { ...target, kind: 'employment', slug: 'employment' }] });
     });
     const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
     expect(await screen.findByText('Time zone')).toBeDefined();
-    expect(screen.getByText('Favorite foods')).toBeDefined();
-    expect(screen.getByText('Conversation topics')).toBeDefined();
+    expect(screen.getByText('Favorites food')).toBeDefined();
+    expect(screen.getByText('Interests fun growing up')).toBeDefined();
+    expect(screen.getByText('Favorites place')).toBeDefined();
     expect(screen.getByText('Work history')).toBeDefined();
     expect(screen.getByText('Employer, title, and dates')).toBeDefined();
     expect(screen.getByRole('switch', { name: 'Update automatically — On' })).toBeDefined();
     expect(screen.getByText('Updates run while People sweep is on in Settings.')).toBeDefined();
     expect(document.querySelector('.tracked-time')).toBeNull();
-    definitions.resolve(Response.json({ definitions: [{ slug: 'conversation_topics', label: 'Conversation starters' }] }));
-    expect(await screen.findByText('Conversation starters')).toBeDefined();
+    definitions.resolve(Response.json({ definitions: [
+      { slug: 'favorites_food', label: 'Favorite food' },
+      { slug: 'interests_fun_growing_up', label: 'Fun growing up' },
+      { slug: 'favorites_place', label: 'Favorite place' }
+    ] }));
+    expect(await screen.findByText('Favorite food')).toBeDefined();
+    expect(screen.getByText('Fun growing up')).toBeDefined();
+    expect(screen.getByText('Favorite place')).toBeDefined();
 
     view.unmount();
     render(PersonTrackingControl, { client: createAPIClient(vi.fn<typeof fetch>(async input => {

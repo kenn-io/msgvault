@@ -12,11 +12,10 @@
   interface Props {
     client: APIClient;
     personID: number;
-    definitions?: AttributeDefinition[];
     onAnnounce?: (message: string) => void;
   }
 
-  let { client, personID, definitions = [], onAnnounce = () => undefined }: Props = $props();
+  let { client, personID, onAnnounce = () => undefined }: Props = $props();
   const controller = new PersonTrackingController(untrack(() => client));
   let root = $state<HTMLElement>();
   let catalogRetryIncludesSensitive = $state(false);
@@ -118,7 +117,7 @@
         {#each controller.targets as target}
           <li>
             <span class="value">
-              {target.kind === 'employment' ? 'Work history' : loadedDefinitions.find((definition) => definition.slug === target.slug)?.label ?? definitions.find((definition) => definition.slug === target.slug)?.label ?? sentenceCase(target.slug)}
+              {target.kind === 'employment' ? 'Work history' : loadedDefinitions.find((definition) => definition.slug === target.slug)?.label ?? sentenceCase(target.slug)}
               {#if target.kind === 'employment'}<small>Employer, title, and dates</small>{/if}
             </span>
             {#if target.sensitive}<span class="meta">Sensitive</span>{/if}
@@ -156,6 +155,5 @@
   .reveal:hover { text-decoration: underline; }
   @media (max-width: 640px) {
     .target-list li, .tracking-row, .notice { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
-    .tracked-time { margin-left: calc(36px + var(--space-4)); }
   }
 </style>
