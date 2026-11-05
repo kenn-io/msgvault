@@ -7,6 +7,7 @@
   import { entryKindPresentation } from '../../explore/labels';
   import type { ExploreFilter } from '../../explore/models';
   import AccountFilter from './AccountFilter.svelte';
+  import MailboxStateFilter from './MailboxStateFilter.svelte';
   import IdentityFilter from './IdentityFilter.svelte';
 
   interface KindOption {
@@ -162,6 +163,7 @@
       </fieldset>
     {/if}
     {#if kindsStatus}<p role="status">{kindsStatus}</p>{/if}
+    <MailboxStateFilter {filters} {onChange} />
     <AccountFilter {client} {filters} {onChange} showSingleMailbox />
     {#if !lockedFilter}<IdentityFilter {client} {filters} {onChange} />{/if}
     <fieldset class="field">

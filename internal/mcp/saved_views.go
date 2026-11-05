@@ -361,7 +361,7 @@ func savedViewStateArgument(
 
 func savedViewStateInputSchema() *jsonschema.Schema {
 	one := 1
-	filterValues := arraySchema(stringSchema("Exact filter value; numeric IDs use decimal strings"))
+	filterValues := arraySchema(stringSchema("Exact filter value; numeric IDs use decimal strings. inbox_state accepts inbox, outside, unknown; read_state accepts unread, read, unknown. Provider state is last observed by sync, separate from local read state; unknown means missing metadata"))
 	filterValues.MinItems = &one
 	return closedObject(map[string]*jsonschema.Schema{
 		"query":       stringSchema("Optional full-text, semantic, or hybrid query"),

@@ -109,3 +109,20 @@ it('Escape closes only the active Account picker, then Filter', async () => {
   expect(screen.queryByRole('dialog', { name: 'Filter' })).toBeNull();
   expect(document.activeElement).toBe(trigger);
 });
+
+it('filters by provider Inbox and read state with explicit Unknown', async () => {
+  const onChange = vi.fn();
+  render(FilterMenu, {
+    client: createAPIClient(async () => Response.json({ rows: [], accounts: [] })),
+    filters: [{ dimension: 'inbox_state', values: ['inbox'] }], onChange,
+  });
+  await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+  expect((screen.getByRole('checkbox', { name: 'In Inbox' }) as HTMLInputElement).checked).toBe(true);
+  await fireEvent.click(screen.getByRole('checkbox', { name: 'Unread at provider' }));
+  expect(onChange).toHaveBeenLastCalledWith([
+    { dimension: 'inbox_state', values: ['inbox'] },
+    { dimension: 'read_state', values: ['unread'] },
+  ]);
+  expect(screen.getByRole('checkbox', { name: 'Inbox unknown' })).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Read status unknown' })).toBeTruthy();
+});

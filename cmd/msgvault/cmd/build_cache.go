@@ -1280,7 +1280,7 @@ func buildCacheLockedAttempt(
 		// Export their complete population alongside the new message shards.
 		relatedKinds.recipients = true
 	}
-	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments
+	repairRelated := relatedKinds.recipients || relatedKinds.labels || relatedKinds.attachments || relatedKinds.mailboxState
 	if hasPreviousState && !fullRebuild && hasSyncRunsTable > 0 &&
 		syncCounters.additions != previousState.LastCacheAdditionCount &&
 		maxID <= previousState.LastMessageID && !repairRelated {
@@ -1375,7 +1375,7 @@ func buildCacheLockedAttempt(
 		}
 	}
 	afterMessageIDs := make(map[string]int64)
-	for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments, tableLabels} {
+	for _, dataset := range []string{"message_recipients", "message_labels", tableAttachments, tableLabels, "mailbox_state"} {
 		if publicationPlan.Append[dataset] {
 			afterMessageIDs[dataset] = lastMessageID
 		} else {
@@ -1902,6 +1902,7 @@ type cacheSourceSnapshot struct {
 	hasMessageSourceAttribution bool
 	hasAccountAttribution       bool
 	hasRecipientEnvelope        bool
+	hasMailboxObservations      bool
 	// csvSnapshot records that the sqlite_db tables are CSV views exported
 	// from SQLite, not the attached database itself. It is set once at
 	// construction: prepareTables closes the SQLite transaction before the
@@ -1955,7 +1956,7 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 				if err != nil {
 					return nil, fmt.Errorf("begin DuckDB cache snapshot: %w", err)
 				}
-				return &cacheSourceSnapshot{duckDB: duckDB, duckTx: duckTx}, nil
+				return initializeMailboxSnapshot(&cacheSourceSnapshot{duckDB: duckDB, duckTx: duckTx})
 			}
 		}
 	}
@@ -1978,10 +1979,10 @@ func openCacheSourceSnapshot(duckDB *sql.DB, dbPath string) (*cacheSourceSnapsho
 		_ = os.RemoveAll(tmpDir)
 		return nil, fmt.Errorf("begin SQLite cache snapshot: %w", err)
 	}
-	return &cacheSourceSnapshot{
+	return initializeMailboxSnapshot(&cacheSourceSnapshot{
 		duckDB: duckDB, sqliteDB: sqliteDB, sqliteTx: sqliteTx, tmpDir: tmpDir,
 		csvSnapshot: true,
-	}, nil
+	})
 }
 
 // QueryRow executes source metadata SQL inside the same snapshot used by the
@@ -2131,6 +2132,7 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 	// VARCHAR, which breaks downstream SQL that binds these columns against
 	// typed Parquet (e.g. COALESCE(BIGINT, VARCHAR) is a binder error).
 	return []cacheSnapshotTable{
+		{"mailbox_state", s.mailboxStateSelectSQL(""), "types={'message_id':'BIGINT','inbox_state':'VARCHAR','read_state':'VARCHAR'}", nil},
 		{"cache_unsent_messages", unsentMessagesSQL(through), "types={'message_id': 'BIGINT'}", nil},
 		// deleted_at is exported so the main COPY query can apply the
 		// `deleted_at IS NULL` filter on this path the same way it does

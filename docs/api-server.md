@@ -2755,7 +2755,7 @@ Web UI and run by the API:
 |-------|-----------------|
 | `query` | Free text. Empty means no text search. |
 | `search_mode` | `full_text`, `semantic`, `hybrid`. Defaults to `full_text` when a query is present. |
-| `filters[].field` | An Explore filter dimension: `source`, `identity`, `participant`, `domain`, `mailing_list`, `message_type`, `kind`, `after`, `before`, `deletion`. The legacy aliases `source_id` and `participant_id` are accepted and executed as `source` and `participant`. |
+| `filters[].field` | An Explore filter dimension: `source`, `identity`, `participant`, `domain`, `mailing_list`, `message_type`, `kind`, `after`, `before`, `deletion`, `account`, `inbox_state`, `read_state`. The legacy aliases `source_id` and `participant_id` are accepted and executed as `source` and `participant`. |
 | `filters[].operator` | `eq` or `in`. |
 | `filters[].values` | One or more non-empty strings. Numeric identifiers are decimal strings so they survive JavaScript clients unchanged. |
 | `grouping` | A drill-down chain of Explore grouping dimensions: `source`, `participant`, `domain`, `message_type`, `mailing_list`, `kind`, `year`, `month`. |
@@ -2773,6 +2773,17 @@ RFC3339 timestamp each and appear at most once, `deletion` takes `active` or
 next to a matching single-value `source` filter, and at most one `sort` entry
 is allowed. The same vocabulary is published as enums in the OpenAPI document,
 so generated clients validate it before a request is sent.
+
+Provider mailbox filters accept `inbox_state` values `inbox`, `outside`, or
+`unknown`, and `read_state` values `unread`, `read`, or `unknown`. Each dimension
+appears at most once, with no repeated values. These are the provider facts last
+observed by sync, separate from msgvault's local read state. Missing metadata
+stays Unknown. See [provider filters in the Web UI](web-ui.md#saved-views).
+For an Inbox Unread view across accounts, use:
+
+```json
+{"filters":[{"field":"inbox_state","operator":"eq","values":["inbox"]},{"field":"read_state","operator":"eq","values":["unread"]}]}
+```
 
 Read responses preserve `canonical_state` as the original JSON, including
 definitions from older or unsupported schema versions. Check

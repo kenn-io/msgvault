@@ -47,6 +47,8 @@ import {
 
 const STATE_PARAMETER = 'explore';
 const FILTER_DIMENSIONS = new Set([
+ 'inbox_state',
+ 'read_state',
   'account',
   'source',
   'identity',

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { providerMailboxStatus } from '../../explore/mailbox-state';
   import { Button, EmptyState, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
@@ -537,6 +538,7 @@
                       {/if}
                     {:else if column === 'title'}
                       <strong>{row.title || '(untitled)'}</strong>
+                      {#if providerMailboxStatus(row)}<span class="mailbox-status">{providerMailboxStatus(row)}</span>{/if}
                     {:else if column === 'excerpt'}
                       {row.match.strongest_excerpt || row.preview}
                       {#if row.match.lexical_match_count !== undefined}
@@ -741,6 +743,8 @@
     background: var(--selected-bg);
     box-shadow: inset 2px 0 0 var(--accent-blue);
   }
+
+  .mailbox-status { display: block; color: var(--text-muted); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 
   .cell--title strong {
     color: var(--text-primary);

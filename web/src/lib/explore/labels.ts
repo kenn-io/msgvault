@@ -1,3 +1,4 @@
+import { mailboxStateLabel } from './mailbox-state';
 import { groupingDimensionLabel, isGroupingDimension } from '../grouping/catalog';
 import type {
   ExploreColumn,
@@ -34,6 +35,8 @@ export const EXPLORE_COLUMNS: ReadonlyArray<{ id: ExploreColumn; label: string }
 // Where the grouping label reads wrongly as a filter chip (plural, or a different word),
 // name it here.
 const FILTER_DIMENSIONS: Partial<Record<string, string>> = {
+  inbox_state: 'Provider Inbox',
+  read_state: 'Provider read status',
   account: 'Account',
   participant: 'Person',
   identity: 'Identity',
@@ -123,6 +126,7 @@ export function filterDimensionLabel(
 // names a confirmed address (identity:<source>:<base64url address>) or a
 // source's unattributed mail; other values show as stored.
 export function filterValueLabel(dimension: string, value: string): string {
+  if (dimension === 'inbox_state' || dimension === 'read_state') return mailboxStateLabel(dimension, value);
   if (dimension !== 'account') return value;
   if (/^unattributed:\d+$/.test(value)) return 'Unattributed';
   const identity = /^identity:\d+:([A-Za-z0-9_-]+)$/.exec(value);

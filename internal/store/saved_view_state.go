@@ -136,6 +136,9 @@ func validateSavedViewState(state SavedViewStateEnvelope) error {
 }
 
 func validateSavedViewFilter(filter SavedViewFilter) error {
+	if err := explorecatalog.ValidateMailboxStates(filter.Field, filter.Values); err != nil {
+		return err
+	}
 	if !explorecatalog.IsFilterDimension(SavedViewFilterDimension(filter.Field)) {
 		return fmt.Errorf(".field %q is not a supported filter dimension", filter.Field)
 	}

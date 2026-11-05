@@ -334,6 +334,20 @@ Saved views persist useful analytical contexts in the daemon, so the same
 library is available from every authenticated browser connected to this
 single-user archive. A view records its query, explicit search mode, filters,
 grouping, presentation, sort, and visible columns.
+For an Inbox Unread view across accounts, open **Filter**, select **In Inbox**
+and **Unread at provider**, then choose **Save view…**. Provider filters also
+work in Saved Views run through the API or MCP. The result rows include the
+provider status as last observed by sync.
+
+Gmail, IMAP, and Microsoft mail record provider state separately from msgvault's
+local read state. Reading an item here does not mark it read at the provider.
+**Outside Inbox** includes sent mail, spam, trash, and other folders.
+**Unknown** means no applicable provider observation exists. Older messages stay
+Unknown until sync observes their metadata again; offline imports and chat
+sources have no provider mailbox observations. Unknown is never counted as read
+or outside the Inbox. These controls filter archived observations and do not
+contact or change the provider.
+
 Selection is intentionally not saved. The inspector stays pinned; the browser
 does not save or apply inspector pin preferences.
 

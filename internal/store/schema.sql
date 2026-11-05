@@ -4776,3 +4776,57 @@ CREATE TRIGGER IF NOT EXISTS trg_loop_evidence_message_bodies_delete
 AFTER DELETE ON message_bodies FOR EACH ROW BEGIN
  DELETE FROM loop_message_evidence WHERE message_id = OLD.message_id;
 END;
+
+-- Last provider observation, separate from msgvault's local read state.
+-- IMAP observations name exact copies; other providers use the empty mailbox.
+CREATE TABLE IF NOT EXISTS provider_mailbox_observations (
+    message_id INTEGER NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+    provider_id TEXT NOT NULL,
+    mailbox TEXT NOT NULL DEFAULT '',
+    uidvalidity INTEGER NOT NULL DEFAULT 0,
+    uid INTEGER NOT NULL DEFAULT 0,
+    is_inbox BOOLEAN,
+    provider_read BOOLEAN,
+    PRIMARY KEY (message_id, mailbox, uidvalidity, uid)
+);
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_provider_mailbox_observations_insert
+AFTER INSERT ON provider_mailbox_observations FOR EACH ROW
+BEGIN
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',NEW.message_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_provider_mailbox_observations_delete
+AFTER DELETE ON provider_mailbox_observations FOR EACH ROW
+BEGIN
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',OLD.message_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_provider_mailbox_observations_update
+AFTER UPDATE ON provider_mailbox_observations FOR EACH ROW
+WHEN OLD.message_id IS NOT NEW.message_id OR OLD.source_id IS NOT NEW.source_id OR OLD.mailbox IS NOT NEW.mailbox OR OLD.uidvalidity IS NOT NEW.uidvalidity OR OLD.uid IS NOT NEW.uid OR OLD.provider_id IS NOT NEW.provider_id OR OLD.is_inbox IS NOT NEW.is_inbox OR OLD.provider_read IS NOT NEW.provider_read
+BEGIN
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',OLD.message_id);
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',NEW.message_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_imap_message_memberships_insert
+AFTER INSERT ON imap_message_memberships FOR EACH ROW
+BEGIN
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',NEW.message_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_imap_message_memberships_delete
+AFTER DELETE ON imap_message_memberships FOR EACH ROW
+BEGIN
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',OLD.message_id);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_cache_imap_message_memberships_update
+AFTER UPDATE ON imap_message_memberships FOR EACH ROW
+WHEN OLD.message_id IS NOT NEW.message_id OR OLD.source_id IS NOT NEW.source_id OR OLD.mailbox IS NOT NEW.mailbox OR OLD.uidvalidity IS NOT NEW.uidvalidity OR OLD.uid IS NOT NEW.uid
+BEGIN
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',OLD.message_id);
+    INSERT INTO cache_related_change_journal(dataset,message_id) VALUES ('mailbox_state',NEW.message_id);
+END;

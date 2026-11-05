@@ -3313,7 +3313,7 @@ func (s *Store) reconcileMessageLabelsTxContext(
 			}
 		}
 		if !changed {
-			return false, nil
+			return false, observeGmailMailboxTx(boundQuerier{ctx: ctx, q: tx}, messageID, true)
 		}
 		if err := s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error {
 			return replaceMessageLabelsTx(boundQuerier{ctx: ctx, q: tx}, messageID, labelIDs)
@@ -3349,10 +3349,10 @@ func replaceMessageLabelsTx(tx querier, messageID int64, labelIDs []int64) error
 	}
 
 	if len(labelIDs) == 0 {
-		return nil
+		return observeGmailMailboxTx(tx, messageID, true)
 	}
 
-	return insertInChunks(tx, chunkInsert{
+	err = insertInChunks(tx, chunkInsert{
 		totalRows:    len(labelIDs),
 		valuesPerRow: 2,
 		prefix:       "INSERT INTO message_labels (message_id, label_id) VALUES ",
@@ -3365,6 +3365,10 @@ func replaceMessageLabelsTx(tx querier, messageID int64, labelIDs []int64) error
 		}
 		return values, args
 	})
+	if err != nil {
+		return err
+	}
+	return observeGmailMailboxTx(tx, messageID, true)
 }
 
 // AddMessageLabels adds labels to a message without removing existing ones.
@@ -3390,7 +3394,7 @@ func (s *Store) AddMessageLabels(messageID int64, labelIDs []int64) error {
 func (s *Store) addMessageLabelsTx(
 	tx querier, messageID int64, labelIDs []int64,
 ) error {
-	return insertInChunks(tx, chunkInsert{
+	err := insertInChunks(tx, chunkInsert{
 		totalRows:    len(labelIDs),
 		valuesPerRow: 2,
 		prefix:       s.dialect.InsertOrIgnorePrefix("INSERT OR IGNORE INTO message_labels (message_id, label_id) VALUES "),
@@ -3404,6 +3408,10 @@ func (s *Store) addMessageLabelsTx(
 		}
 		return values, args
 	})
+	if err != nil {
+		return err
+	}
+	return observeGmailMailboxTx(tx, messageID, false)
 }
 
 // LinkMessageLabel links a single label to a message.
@@ -3423,8 +3431,11 @@ func (s *Store) RemoveMessageLabels(messageID int64, labelIDs []int64) error {
 			return err
 		}
 		return s.refreshAccountAttributionIfOutboundChangedTx(ctx, tx, messageID, func() error {
-			return execInChunks(tx, labelIDs, []any{messageID},
-				`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`)
+			if err := execInChunks(tx, labelIDs, []any{messageID},
+				`DELETE FROM message_labels WHERE message_id = ? AND label_id IN (%s)`); err != nil {
+				return err
+			}
+			return observeGmailMailboxTx(boundQuerier{ctx: ctx, q: tx}, messageID, false)
 		})
 	})
 }

@@ -39,7 +39,7 @@ const (
 )
 
 type ExploreFilter struct {
-	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,kind,mailing_list,after,before,deletion,identity,account"`
+	Dimension string   `json:"dimension" enum:"source,participant,domain,message_type,kind,mailing_list,after,before,deletion,identity,account,inbox_state,read_state"`
 	Values    []string `json:"values" minItems:"1"`
 }
 
@@ -1017,6 +1017,15 @@ func exploreContext(filters []ExploreFilter) (query.Context, error) {
 			return result, fmt.Errorf("filter dimension %q requires at least one value", filter.Dimension)
 		}
 		switch filter.Dimension {
+		case explorecatalog.FilterInboxState, explorecatalog.FilterReadState:
+			if err := explorecatalog.ValidateMailboxStates(filter.Dimension, filter.Values); err != nil {
+				return result, err
+			}
+			if filter.Dimension == explorecatalog.FilterInboxState {
+				result.InboxStates = append([]string(nil), filter.Values...)
+			} else {
+				result.ReadStates = append([]string(nil), filter.Values...)
+			}
 		case exploreFilterAccount:
 			if len(filter.Values) != 1 {
 				return result, errors.New("account filter requires one virtual account key or email address")

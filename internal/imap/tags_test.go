@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strconv"
 	"testing"
 
 	imapapi "github.com/emersion/go-imap/v2"
@@ -125,6 +126,29 @@ func TestMessageKeywordsMailboxAccess(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, modes, 1)
 	assert.False(t, <-modes)
+}
+
+func TestSyncFetchPreservesFlagsPresence(t *testing.T) {
+	for _, omitted := range []bool{false, true} {
+		t.Run(strconv.FormatBool(omitted), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+
+			c, _ := newKeywordTestClientFor(t, keywordTestSession{omitFlags: omitted})
+			var set imapapi.UIDSet
+			set.AddNum(1)
+			c.mu.Lock()
+			rows, err := c.fetchCommand(t.Context(), set, &imapapi.FetchOptions{UID: true, Flags: true})
+			c.mu.Unlock()
+			requirements.NoError(err)
+			requirements.Len(rows, 1)
+			if omitted {
+				assertions.Nil(rows[0].Flags)
+			} else {
+				assertions.NotNil(rows[0].Flags, "FLAGS () is an authoritative empty snapshot")
+			}
+		})
+	}
 }
 
 func TestMessageKeywordsPreservesFlagsAndSync(t *testing.T) {

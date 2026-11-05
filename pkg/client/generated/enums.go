@@ -689,6 +689,44 @@ func (e EmploymentBodySource) Validate() error {
 	}
 }
 
+// EntryRowInboxState Provider Inbox membership last observed by sync; missing observations are unknown.
+type EntryRowInboxState string
+
+const (
+	EntryRowInboxStateInbox   EntryRowInboxState = "inbox"
+	EntryRowInboxStateOutside EntryRowInboxState = "outside"
+	EntryRowInboxStateUnknown EntryRowInboxState = "unknown"
+)
+
+// Validate checks if the EntryRowInboxState value is valid
+func (e EntryRowInboxState) Validate() error {
+	switch e {
+	case EntryRowInboxStateInbox, EntryRowInboxStateOutside, EntryRowInboxStateUnknown:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid EntryRowInboxState value, got: %v", e))
+	}
+}
+
+// EntryRowReadState Provider read status last observed by sync; separate from msgvault local read state.
+type EntryRowReadState string
+
+const (
+	EntryRowReadStateRead    EntryRowReadState = "read"
+	EntryRowReadStateUnknown EntryRowReadState = "unknown"
+	EntryRowReadStateUnread  EntryRowReadState = "unread"
+)
+
+// Validate checks if the EntryRowReadState value is valid
+func (e EntryRowReadState) Validate() error {
+	switch e {
+	case EntryRowReadStateRead, EntryRowReadStateUnknown, EntryRowReadStateUnread:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid EntryRowReadState value, got: %v", e))
+	}
+}
+
 type ExploreCacheUnavailableResponseReadiness string
 
 const (
@@ -718,17 +756,19 @@ const (
 	ExploreFilterDimensionDeletion    ExploreFilterDimension = "deletion"
 	ExploreFilterDimensionDomain      ExploreFilterDimension = "domain"
 	ExploreFilterDimensionIdentity    ExploreFilterDimension = "identity"
+	ExploreFilterDimensionInboxState  ExploreFilterDimension = "inbox_state"
 	ExploreFilterDimensionKind        ExploreFilterDimension = "kind"
 	ExploreFilterDimensionMailingList ExploreFilterDimension = "mailing_list"
 	ExploreFilterDimensionMessageType ExploreFilterDimension = "message_type"
 	ExploreFilterDimensionParticipant ExploreFilterDimension = "participant"
+	ExploreFilterDimensionReadState   ExploreFilterDimension = "read_state"
 	ExploreFilterDimensionSource      ExploreFilterDimension = "source"
 )
 
 // Validate checks if the ExploreFilterDimension value is valid
 func (e ExploreFilterDimension) Validate() error {
 	switch e {
-	case ExploreFilterDimensionAccount, ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionKind, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionSource:
+	case ExploreFilterDimensionAccount, ExploreFilterDimensionAfter, ExploreFilterDimensionBefore, ExploreFilterDimensionDeletion, ExploreFilterDimensionDomain, ExploreFilterDimensionIdentity, ExploreFilterDimensionInboxState, ExploreFilterDimensionKind, ExploreFilterDimensionMailingList, ExploreFilterDimensionMessageType, ExploreFilterDimensionParticipant, ExploreFilterDimensionReadState, ExploreFilterDimensionSource:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ExploreFilterDimension value, got: %v", e))
@@ -2532,11 +2572,13 @@ const (
 	SavedViewFilterFieldDeletion      SavedViewFilterField = "deletion"
 	SavedViewFilterFieldDomain        SavedViewFilterField = "domain"
 	SavedViewFilterFieldIdentity      SavedViewFilterField = "identity"
+	SavedViewFilterFieldInboxState    SavedViewFilterField = "inbox_state"
 	SavedViewFilterFieldKind          SavedViewFilterField = "kind"
 	SavedViewFilterFieldMailingList   SavedViewFilterField = "mailing_list"
 	SavedViewFilterFieldMessageType   SavedViewFilterField = "message_type"
 	SavedViewFilterFieldParticipant   SavedViewFilterField = "participant"
 	SavedViewFilterFieldParticipantID SavedViewFilterField = "participant_id"
+	SavedViewFilterFieldReadState     SavedViewFilterField = "read_state"
 	SavedViewFilterFieldSource        SavedViewFilterField = "source"
 	SavedViewFilterFieldSourceID      SavedViewFilterField = "source_id"
 )
@@ -2544,7 +2586,7 @@ const (
 // Validate checks if the SavedViewFilterField value is valid
 func (s SavedViewFilterField) Validate() error {
 	switch s {
-	case SavedViewFilterFieldAccount, SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldKind, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
+	case SavedViewFilterFieldAccount, SavedViewFilterFieldAfter, SavedViewFilterFieldBefore, SavedViewFilterFieldDeletion, SavedViewFilterFieldDomain, SavedViewFilterFieldIdentity, SavedViewFilterFieldInboxState, SavedViewFilterFieldKind, SavedViewFilterFieldMailingList, SavedViewFilterFieldMessageType, SavedViewFilterFieldParticipant, SavedViewFilterFieldParticipantID, SavedViewFilterFieldReadState, SavedViewFilterFieldSource, SavedViewFilterFieldSourceID:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid SavedViewFilterField value, got: %v", s))

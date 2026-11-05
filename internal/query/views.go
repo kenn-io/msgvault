@@ -181,6 +181,9 @@ func RegisterViewsWithColumns(ctx context.Context, db *sql.DB, analyticsDir stri
 // createBaseViews creates the raw Parquet-backed views using the
 // pre-computed optional column map so no additional Parquet probes occur.
 func createBaseViews(ctx context.Context, db *sql.DB, analyticsDir string, optCols map[string]map[string]bool) error {
+	if _, err := db.ExecContext(ctx, "CREATE OR REPLACE VIEW mailbox_state AS SELECT * FROM read_parquet('"+quoteIdentitySQLPath(filepath.Join(analyticsDir, "mailbox_state", "*.parquet"))+"')"); err != nil {
+		return fmt.Errorf("create mailbox state view: %w", err)
+	}
 	msgGlob := filepath.Join(
 		analyticsDir, datasetMessages, "**", "*.parquet",
 	)
@@ -589,6 +592,8 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		m.source_id,
 		COALESCE(s.source_type, '') AS source_type,
 		COALESCE(s.account_email, '') AS source_identifier,
+    COALESCE(mailbox.inbox_state,'unknown') AS inbox_state,
+    COALESCE(mailbox.read_state,'unknown') AS read_state,
 		m.source_message_id,
 		m.conversation_id,
 		COALESCE(c.source_conversation_id, '') AS source_conversation_id,
@@ -611,6 +616,7 @@ func buildScalarAnalyticalEntriesCTE(name string, includeAttachmentSummary bool)
 		COALESCE(m.has_attachments, false) AS has_attachments,` + attachmentColumns + `
 	FROM messages m
 	JOIN sources s ON s.id = m.source_id
+LEFT JOIN mailbox_state mailbox ON mailbox.message_id=m.id
 	LEFT JOIN conversations c ON c.id = m.conversation_id
 	LEFT JOIN participants sender ON sender.id = m.sender_id` + attachmentJoin + `
 )`
@@ -652,6 +658,8 @@ SELECT
     m.source_id,
     COALESCE(s.source_type, '') AS source_type,
     COALESCE(s.account_email, '') AS source_identifier,
+    COALESCE(mailbox.inbox_state,'unknown') AS inbox_state,
+    COALESCE(mailbox.read_state,'unknown') AS read_state,
     m.source_message_id,
     m.conversation_id,
     COALESCE(c.source_conversation_id, '') AS source_conversation_id,
@@ -682,6 +690,7 @@ SELECT
     COALESCE(conv_part.participant_domains, []::VARCHAR[]) AS conversation_participant_domains
 FROM messages m
 JOIN sources s ON s.id = m.source_id
+LEFT JOIN mailbox_state mailbox ON mailbox.message_id=m.id
 LEFT JOIN conversations c ON c.id = m.conversation_id
 LEFT JOIN participants sender ON sender.id = m.sender_id
 LEFT JOIN message_participant_facts recip ON recip.message_id = m.id

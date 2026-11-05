@@ -39,6 +39,7 @@ type fakeGraph struct {
 	gone       map[string]bool     // folder IDs whose every delta answers 410
 	version    map[string]int      // message ID -> content version
 	categories map[string][]string // present entries are authoritative category snapshots
+	read       map[string]bool
 
 	withAttachment map[string]bool   // message IDs whose MIME carries a file
 	shifted        map[string]bool   // message IDs whose file moves to another part
@@ -198,6 +199,9 @@ func (f *fakeGraph) serve(w http.ResponseWriter, r *http.Request) {
 		if categories, ok := f.categories[id]; ok {
 			item["categories"] = categories
 		}
+		if read, ok := f.read[id]; ok {
+			item["isRead"] = read
+		}
 		f.writeJSON(w, item)
 	default:
 		http.Error(w, "unexpected "+p, http.StatusBadRequest)
@@ -288,6 +292,9 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 				if categories, ok := f.categories[id]; ok {
 					item["categories"] = categories
 				}
+				if read, ok := f.read[id]; ok {
+					item["isRead"] = read
+				}
 				out = append(out, item)
 			} else {
 				out = append(out, map[string]any{"id": id, "@removed": map[string]any{"reason": "deleted"}})
@@ -320,6 +327,9 @@ func (f *fakeGraph) delta(w http.ResponseWriter, folder string, q map[string][]s
 		item := map[string]any{"id": id, "receivedDateTime": "2024-01-01T10:00:00Z"}
 		if categories, ok := f.categories[id]; ok {
 			item["categories"] = categories
+		}
+		if read, ok := f.read[id]; ok {
+			item["isRead"] = read
 		}
 		out = append(out, item)
 	}
@@ -1033,4 +1043,91 @@ func TestImportRetryDeletionErrorKeepsMarker(t *testing.T) {
 	var cursors map[string]string
 	require.NoError(json.Unmarshal([]byte(run.CursorBefore.String), &cursors))
 	assert.Equal(t, "inbox", cursors["retry:m1"])
+}
+
+func TestImportObservesProviderMailboxState(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.read = map[string]bool{"mail-unread": false, "mail-read": true}
+	f.put("mail-unread", "inbox")
+	f.put("mail-read", "archive")
+	f.put("mail-unknown", "inbox")
+	_, err := f.sync(t, st)
+	requirements.NoError(err)
+	var sourceID int64
+	requirements.NoError(st.DB().QueryRow("SELECT id FROM sources WHERE source_type='msmail'").Scan(&sourceID))
+	ids, err := st.MessageExistsBatch(sourceID, []string{"mail-unread", "mail-read", "mail-unknown"})
+	requirements.NoError(err)
+	for _, tc := range []struct{ id, inbox, read string }{{"mail-unread", "inbox", "unread"}, {"mail-read", "outside", "read"}, {"mail-unknown", "inbox", "unknown"}} {
+		got, err := st.ProviderMailboxStateContext(t.Context(), ids[tc.id])
+		requirements.NoError(err)
+		assertions.Equal(tc.inbox, got.InboxState)
+		assertions.Equal(tc.read, got.ReadState)
+	}
+	f.read["mail-unread"] = true
+	f.put("mail-unread", "inbox")
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	got, err := st.ProviderMailboxStateContext(t.Context(), ids["mail-unread"])
+	requirements.NoError(err)
+	assertions.Equal("read", got.ReadState)
+}
+
+func TestRelocateObservesCurrentProviderMailbox(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.read = map[string]bool{"relocated-mail": false}
+	f.put("relocated-mail", "inbox")
+	_, err := f.sync(t, st)
+	requirements.NoError(err)
+	src, err := st.GetOrCreateSource(SourceType, "me@example.com")
+	requirements.NoError(err)
+	ids, err := st.MessageExistsBatch(src.ID, []string{"relocated-mail"})
+	requirements.NoError(err)
+	archive, err := st.LabelIDContext(t.Context(), src.ID, "archive")
+	requirements.NoError(err)
+	f.put("relocated-mail", "archive")
+	f.read["relocated-mail"] = true
+	syncer := &syncer{st: st, c: NewClient(f.srv.URL, func(context.Context) (string, error) { return "tok", nil }, 1000), sourceID: src.ID, inbox: "inbox", labels: map[string]int64{"archive": archive}, sum: &Summary{}}
+	requirements.NoError(syncer.relocate(t.Context(), ids))
+	got, err := st.ProviderMailboxStateContext(t.Context(), ids["relocated-mail"])
+	requirements.NoError(err)
+	assertions.Equal("outside", got.InboxState)
+	assertions.Equal("read", got.ReadState)
+}
+
+func TestProviderMailboxUpgradeCategoryCursors(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+
+	st := testutil.NewTestStore(t)
+	f := newFakeGraph(t)
+	f.read = map[string]bool{"old-mail": false}
+	f.put("old-mail", "inbox")
+	initial, err := f.sync(t, st)
+	requirements.NoError(err)
+	run, err := st.GetLastSuccessfulSync(initial.SourceID)
+	requirements.NoError(err)
+	legacy := strings.ReplaceAll(run.CursorAfter.String, categoryDeltaPrefix, "categories-v1:")
+	syncID, err := st.StartSync(initial.SourceID, SourceType)
+	requirements.NoError(err)
+	requirements.NoError(st.ScopedToSync(initial.SourceID, syncID).CompleteSyncAndPreserveSourceCursorContext(t.Context(), syncID, initial.SourceID, legacy))
+	_, err = st.DB().Exec("DELETE FROM provider_mailbox_observations")
+	requirements.NoError(err)
+	downloads := f.mimeCalls.Load()
+	_, err = f.sync(t, st)
+	requirements.NoError(err)
+	assertions.Equal(downloads, f.mimeCalls.Load(), "metadata upgrade does not redownload MIME")
+	ids, err := st.MessageExistsBatch(initial.SourceID, []string{"old-mail"})
+	requirements.NoError(err)
+	got, err := st.ProviderMailboxStateContext(t.Context(), ids["old-mail"])
+	requirements.NoError(err)
+	assertions.Equal("inbox", got.InboxState)
+	assertions.Equal("unread", got.ReadState)
 }

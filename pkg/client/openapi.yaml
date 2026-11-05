@@ -5200,6 +5200,17 @@ components:
           type: boolean
         has_attachments:
           type: boolean
+        inbox_state:
+          description: Provider Inbox membership last observed by sync; missing observations are unknown.
+          enum:
+            - inbox
+            - outside
+            - unknown
+          type: string
+          x-enum-names:
+            - EntryRowInboxStateInbox
+            - EntryRowInboxStateOutside
+            - EntryRowInboxStateUnknown
         key:
           type: string
         kind:
@@ -5233,6 +5244,17 @@ components:
           type: array
         preview:
           type: string
+        read_state:
+          description: Provider read status last observed by sync; separate from msgvault local read state.
+          enum:
+            - unread
+            - read
+            - unknown
+          type: string
+          x-enum-names:
+            - EntryRowReadStateUnread
+            - EntryRowReadStateRead
+            - EntryRowReadStateUnknown
         source_id:
           format: int64
           type: integer
@@ -5479,6 +5501,8 @@ components:
             - deletion
             - identity
             - account
+            - inbox_state
+            - read_state
           type: string
           x-enum-names:
             - ExploreFilterDimensionSource
@@ -5492,6 +5516,8 @@ components:
             - ExploreFilterDimensionDeletion
             - ExploreFilterDimensionIdentity
             - ExploreFilterDimensionAccount
+            - ExploreFilterDimensionInboxState
+            - ExploreFilterDimensionReadState
         values:
           items:
             type: string
@@ -14520,6 +14546,8 @@ components:
       properties:
         field:
           enum:
+            - inbox_state
+            - read_state
             - source
             - identity
             - participant
@@ -14535,6 +14563,8 @@ components:
             - source_id
           type: string
           x-enum-names:
+            - SavedViewFilterFieldInboxState
+            - SavedViewFilterFieldReadState
             - SavedViewFilterFieldSource
             - SavedViewFilterFieldIdentity
             - SavedViewFilterFieldParticipant
@@ -16870,7 +16900,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.43.0
+  version: 3.44.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

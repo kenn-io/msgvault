@@ -398,7 +398,8 @@ import (
 // Older servers omit body_text; body keeps its HTML fallback.
 // 3.42.0 adds iMessage participant and attachment-size limits to settings.
 // 3.43.0 adds receiver-reported sender authentication to single-message reads.
-const APISchemaVersion = "3.43.0"
+// 3.44.0 adds provider mailbox filters and state on Explore and Saved View rows.
+const APISchemaVersion = "3.44.0"
 
 // OpenAPIDocument builds the API schema from the same Huma route registration
 // used by the daemon. It binds no socket and needs no database.
@@ -1457,11 +1458,15 @@ func applyClientCodegenExtensions(doc *huma.OpenAPI) {
 		"CardDAVPublicationPreviewResponse": {
 			"kind": {"CardDAVPublicationPreviewResponseKindCurrent", "CardDAVPublicationPreviewResponseKindPending", "CardDAVPublicationPreviewResponseKindConflict"},
 		},
+		"EntryRow": {
+			"inbox_state": {"EntryRowInboxStateInbox", "EntryRowInboxStateOutside", "EntryRowInboxStateUnknown"},
+			"read_state":  {"EntryRowReadStateUnread", "EntryRowReadStateRead", "EntryRowReadStateUnknown"},
+		},
 		"ExploreCacheUnavailableResponse": {
 			"readiness": {"ExploreCacheUnavailableResponseReadinessAbsent", "ExploreCacheUnavailableResponseReadinessBuilding", "ExploreCacheUnavailableResponseReadinessInterrupted", "ExploreCacheUnavailableResponseReadinessStaleSchema", "ExploreCacheUnavailableResponseReadinessDrifted"},
 		},
 		"ExploreFilter": {
-			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionKind", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount"},
+			"dimension": {"ExploreFilterDimensionSource", "ExploreFilterDimensionParticipant", "ExploreFilterDimensionDomain", "ExploreFilterDimensionMessageType", "ExploreFilterDimensionKind", "ExploreFilterDimensionMailingList", "ExploreFilterDimensionAfter", "ExploreFilterDimensionBefore", "ExploreFilterDimensionDeletion", "ExploreFilterDimensionIdentity", "ExploreFilterDimensionAccount", "ExploreFilterDimensionInboxState", "ExploreFilterDimensionReadState"},
 		},
 		"ExploreGroupRow": {"level": {"ExploreGroupRowLevelNone", "ExploreGroupRowLevelFirstQuartile", "ExploreGroupRowLevelSecondQuartile", "ExploreGroupRowLevelThirdQuartile", "ExploreGroupRowLevelFourthQuartile"}},
 		"ExploreGroupSort": {

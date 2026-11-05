@@ -115,7 +115,7 @@ func (s *Store) SaveEmailTagsContext(ctx context.Context, target EmailTagTarget,
 				if err != nil {
 					return fmt.Errorf("IMAP tag membership changed: %w", err)
 				}
-				return nil
+				return observeIMAPMailboxTx(boundQuerier{ctx: ctx, q: tx}, target.SourceID, target.ID, IMAPMembershipObservation{Mailbox: target.Mailbox, UIDValidity: target.UIDValidity, UID: target.UID, Flags: result.Flags})
 			})
 		}
 		if target.Provider == "msmail" {

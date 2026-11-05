@@ -140,6 +140,7 @@ func newRelationshipsDuckDBFixtureWithDir(t *testing.T, now time.Time) (*query.D
 		dir, file, columns, values string
 		empty                      bool
 	}{
+		{dir: "mailbox_state", file: "state.parquet", columns: "message_id, inbox_state, read_state", values: `(0::BIGINT,'unknown','unknown')`, empty: true},
 		{
 			dir: "messages/year=2026", file: "messages.parquet",
 			columns: "id, source_id, source_message_id, conversation_id, subject, snippet, sent_at, size_estimate, has_attachments, attachment_count, deleted_from_source_at, sender_id, owner_participant_id, message_type, is_from_me, year, month",

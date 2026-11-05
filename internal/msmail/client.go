@@ -41,6 +41,8 @@ type Folder struct {
 // DeltaMessage is one item of a folder's message delta. Removed is set when the
 // message left the folder: it moved, or it was deleted.
 type DeltaMessage struct {
+	IsRead           *bool `json:"isRead"`
+	folderID         string
 	ID               string    `json:"id"`
 	ReceivedDateTime time.Time `json:"receivedDateTime"`
 	Categories       *[]string `json:"categories"`
@@ -90,7 +92,7 @@ func (c *Client) WellKnownFolderID(ctx context.Context, name string) (string, er
 // DeltaStartURL is the first delta request for a folder with no saved cursor.
 // It returns every message in the folder and ends with a deltaLink.
 func DeltaStartURL(folderID string) string {
-	return "/me/mailFolders/" + url.PathEscape(folderID) + "/messages/delta?$select=receivedDateTime,categories"
+	return "/me/mailFolders/" + url.PathEscape(folderID) + "/messages/delta?$select=receivedDateTime,categories,isRead"
 }
 
 // DeltaPage fetches one page of a delta walk. The page carries a NextLink
@@ -110,6 +112,7 @@ func (c *Client) GetMIME(ctx context.Context, id string) ([]byte, error) {
 
 // MessageInfo is where a message is now and when it arrived.
 type MessageInfo struct {
+	IsRead           *bool     `json:"isRead"`
 	ParentFolderID   string    `json:"parentFolderId"`
 	ReceivedDateTime time.Time `json:"receivedDateTime"`
 	Categories       *[]string `json:"categories"`
@@ -119,7 +122,7 @@ type MessageInfo struct {
 // msgraph.ErrNotFound when the message no longer exists.
 func (c *Client) LookupMessage(ctx context.Context, id string) (MessageInfo, error) {
 	var m MessageInfo
-	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId,receivedDateTime,categories", &m)
+	err := c.GetJSON(ctx, "/me/messages/"+url.PathEscape(id)+"?$select=parentFolderId,receivedDateTime,categories,isRead", &m)
 	return m, err
 }
 

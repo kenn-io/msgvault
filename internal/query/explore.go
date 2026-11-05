@@ -116,7 +116,7 @@ func (e *DuckDBEngine) Explore(ctx context.Context, request ExploreRequest) (*Ex
 			&row.MessageType, &row.ConversationType, &row.Title, &row.Preview,
 			&participantIDsJSON, &participantLabelsJSON, &strongestMatchedMessageID, &row.MessageCount,
 			&row.HasAttachments, &row.AttachmentCount, &row.AttachmentSize,
-			&row.DeletedFromSource, &response.TotalCount, &counterpartParticipantID,
+			&row.InboxState, &row.ReadState, &row.DeletedFromSource, &response.TotalCount, &counterpartParticipantID,
 		); err != nil {
 			return nil, fmt.Errorf("scan analytical entry: %w", err)
 		}
@@ -329,6 +329,10 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
 	}
 	appendIntAnyOf(request.Context.SourceIDs, "source_id = ?")
+	mailboxConditions, mailboxArgs := mailboxStateConditions(request.Context, "")
+	conditions = append(conditions, mailboxConditions...)
+	args = append(args, mailboxArgs...)
+
 	if scopeConditions, scopeArgs := search.AccountScopeConditions(request.Context.AccountScopes, "account_m"); len(scopeConditions) > 0 {
 		conditions = append(conditions, "message_id IN (SELECT account_m.id FROM messages account_m WHERE "+strings.Join(scopeConditions, " AND ")+")")
 		args = append(args, scopeArgs...)
@@ -618,6 +622,8 @@ SELECT
     has_attachments,
     attachment_count,
     attachment_size,
+    COALESCE(mailbox.inbox_state,'unknown') AS inbox_state,
+    COALESCE(mailbox.read_state,'unknown') AS read_state,
     deleted_from_source,
     total_count,
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
@@ -631,6 +637,7 @@ SELECT
                 )))
     END AS counterpart_participant_id
 FROM counted
+LEFT JOIN mailbox_state mailbox ON mailbox.message_id=counted.anchor_message_id
 LEFT JOIN message_owner_canon message_owner
   ON message_owner.message_id = counted.anchor_message_id
 ORDER BY occurred_at DESC, source_id ASC, entry_key ASC
@@ -802,6 +809,8 @@ SELECT
     p.has_attachments,
     p.attachment_count,
     p.attachment_size,
+    COALESCE(mailbox.inbox_state,'unknown') AS inbox_state,
+    COALESCE(mailbox.read_state,'unknown') AS read_state,
     p.deleted_from_source,
     (SELECT total_count FROM total) AS total_count,
     CASE WHEN NOT EXISTS (SELECT 1 FROM owners)
@@ -815,6 +824,7 @@ SELECT
                 )))
     END AS counterpart_participant_id
 FROM page p
+LEFT JOIN mailbox_state mailbox ON mailbox.message_id=p.anchor_message_id
 LEFT JOIN page_participant_facts f ON f.entry_key = p.entry_key
 LEFT JOIN message_owner_canon message_owner ON message_owner.message_id = p.anchor_message_id
 ORDER BY p.occurred_at DESC, p.source_id ASC, p.entry_key ASC`,
