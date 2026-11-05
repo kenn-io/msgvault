@@ -301,6 +301,34 @@ test('global command and Escape shortcuts stay suspended in editable controls', 
   }
 });
 
+test('phone reader replaces results and Back restores the focused row', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/session', route => route.fulfill({ json: {
+    auth_mode: 'loopback', https: false, plain_http_warning: false
+  } }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [entry(1), entry(2)], total_count: 2,
+    cache_revision: 'cache-phone', search_provenance: {}
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
+  const grid = page.getByRole('grid', { name: 'Messages results' });
+  await grid.getByText('Example Person').first().click();
+  const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+  await expect(reading).toBeVisible();
+  await expect(grid).toBeHidden();
+  const resultsBox = (await page.locator('.results-split').boundingBox())!;
+  expect(Math.abs((await reading.boundingBox())!.width - resultsBox.width)).toBeLessThanOrEqual(1);
+  await expect(reading.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
+  await expect(page.locator('.results-solo')).toBeFocused();
+  await reading.getByRole('button', { name: 'Back to results' }).click();
+  await expect(grid).toBeVisible();
+  await expect(grid).toBeFocused();
+  await expect(grid.getByText('Example Person').first()).toBeInViewport();
+  await grid.getByText('Example Person').first().click();
+  await page.goBack();
+  await expect(grid).toBeVisible();
+});
+
 test('right preview resizes, restores its width, and falls back below on narrow windows', async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   await page.route('**/api/session', (route) =>

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tasksSettingsDestination } from './navigation';
-  import { Button, PageHeader } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { Button, MEDIA, PageHeader } from '@kenn-io/kit-ui';
+  import { onDestroy, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type { APIClient } from '../../api/client';
   import { mediaReadiness } from '../../search/media-ready.svelte';
@@ -125,6 +126,13 @@
     onSaveView,
     onStatusChange = () => undefined,
   }: Props = $props();
+
+  const compact = new MediaQuery(MEDIA.compact);
+  const soloReader = $derived(compact.current);
+  let soloPage: HTMLDivElement | undefined = $state();
+  $effect(() => {
+    if (soloReader && readingTargetKey) void tick().then(() => soloPage?.focus());
+  });
 
   const api = createExploreAPI(untrack(() => client));
   const recording = new ArchiveMessageLoader();
@@ -628,6 +636,31 @@
   });
 </script>
 
+{#snippet reader()}
+  {#if readingTargetKey}
+    <ReadingPane
+      {client}
+      selection={readingSelection}
+      targetKey={readingTargetKey}
+      status={readingState.status}
+      statusMessage={readingState.message}
+      onRetry={recordingSelection && !recording.missing ? () => readingDetailRetryRevision += 1 : undefined}
+      unavailable={readingState.unavailable}
+      predicate={exploreState.predicate()}
+      onClose={closeReadingPane}
+      onBack={soloReader ? closeReadingPane : undefined}
+      {onOpenMeeting}
+      onReloadMeetings={reloadGroupMeetings}
+      onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
+      onOpenPerson={openRelationship}
+      {conversationStart}
+      {conversationEnd}
+      {conversationAnchorId}
+      onConversationAnchorChange={changeConversationAnchor}
+    />
+  {/if}
+{/snippet}
+
 <svelte:element this={scope ? 'div' : 'main'} class="everything-workspace" aria-label={scope ? undefined : 'Messages'}>
   {#if !scope}<PageHeader title="Messages">
     {#snippet actions()}<Button surface="outline" label="Save view…" onclick={onSaveView} />{/snippet}
@@ -724,6 +757,9 @@
     class:results-split--right={previewRight}
     bind:clientWidth={resultsWidth}
   >
+    {#if soloReader && readingTargetKey}
+      <div class="results-solo" tabindex="-1" bind:this={soloPage}>{@render reader()}</div>
+    {:else}
     <SplitPane
       ariaLabel="Resize reading pane"
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
@@ -845,29 +881,10 @@
         </div>
       {/snippet}
       {#snippet secondary()}
-        {#if readingTargetKey}
-          <ReadingPane
-            {client}
-            selection={readingSelection}
-            targetKey={readingTargetKey}
-            status={readingState.status}
-            statusMessage={readingState.message}
-            onRetry={recordingSelection && !recording.missing ? () => readingDetailRetryRevision += 1 : undefined}
-            unavailable={readingState.unavailable}
-            predicate={exploreState.predicate()}
-            onClose={closeReadingPane}
-            {onOpenMeeting}
-            onReloadMeetings={reloadGroupMeetings}
-            onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
-            onOpenPerson={openRelationship}
-            {conversationStart}
-            {conversationEnd}
-            {conversationAnchorId}
-            onConversationAnchorChange={changeConversationAnchor}
-          />
-        {/if}
+        {@render reader()}
       {/snippet}
     </SplitPane>
+    {/if}
   </div>
 
 </svelte:element>
@@ -926,6 +943,18 @@
     min-height: 200px;
     flex: 1;
     overflow: hidden;
+  }
+
+  .results-solo {
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .results-solo :global(.reading-pane) {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
   }
 
   .results-primary {

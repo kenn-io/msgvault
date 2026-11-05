@@ -607,9 +607,10 @@ for (const close of ['Escape', 'Back to People']) {
     await page.keyboard.press('Enter');
     const reading = page.getByRole('complementary', { name: 'Reading pane: Team Chat' });
     if (close === 'Escape') {
-      await reading.getByRole('button', { name: 'Close reading pane', exact: true }).focus();
+      await reading.getByRole('button', { name: 'Back to results', exact: true }).focus();
       await page.keyboard.press('Enter');
       await expect(reading).toBeHidden();
+      await expect(messages).toBeFocused();
       await page.keyboard.press('Escape');
       await expect(list).toBeVisible();
       await expect(list).toBeFocused();
