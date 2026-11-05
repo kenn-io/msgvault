@@ -77,10 +77,12 @@ func TestInitSchema_PGLegacyMessagesGetsDeletedAt(t *testing.T) {
 	if !strings.HasPrefix(os.Getenv("MSGVAULT_TEST_DB"), "postgres") {
 		t.Skip("requires PostgreSQL")
 	}
+	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	_, err := st.DB().Exec(`ALTER TABLE messages DROP COLUMN deleted_at CASCADE`)
-	require.NoError(t, err)
-	require.NoError(t, st.InitSchemaContext(t.Context()))
+	require.NoError(err)
+	require.NoError(st.InitSchemaContext(t.Context()))
 	var count int
-	require.NoError(t, st.DB().QueryRow(`SELECT count(*) FROM messages WHERE deleted_at IS NULL`).Scan(&count))
+	require.NoError(st.DB().QueryRow(`SELECT count(*) FROM messages WHERE deleted_at IS NULL`).Scan(&count))
+	require.Zero(count)
 }

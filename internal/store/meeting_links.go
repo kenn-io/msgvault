@@ -419,6 +419,14 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	splits := map[meetingIdentity]bool{}
 	for _, d := range decisions {
 		if d.Decision == "split" {
+			resolved, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
+			if err == nil {
+				splits[resolved.Identity] = true
+				continue
+			}
+			if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				return nil, err
+			}
 			rows, err := meetingEventRows(ctx, r, "e.message_id = ?", []any{d.Ref.MessageID}, budget)
 			if err != nil {
 				return nil, err

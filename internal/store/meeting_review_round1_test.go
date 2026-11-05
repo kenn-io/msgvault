@@ -57,14 +57,25 @@ func TestMeetingManualLinkAddsAutomaticLink(t *testing.T) {
 	_, manual := calendarFixture(t, st, "manual", singleLinkRaw("manual", "manual@example.org"))
 	note := granolaLinkFixture(t, st, "automatic")
 	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: manual}))
-	links, err := st.MeetingLinksContext(t.Context(), note)
+	links, err := meetingLinksForTest(t, st, note)
 	require.NoError(err)
 	require.Len(links, 2)
 	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: automatic}), links[0].Ref)
 	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: manual}), links[1].Ref)
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: automatic}))
-	links, err = st.MeetingLinksContext(t.Context(), note)
+	links, err = meetingLinksForTest(t, st, note)
 	require.NoError(err)
 	require.Len(links, 1)
 	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: manual}), links[0].Ref)
+}
+
+func TestIndependentSplitBeforeMasterArrives(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, exception := calendarFixture(t, st, "exception", `{"id":"series_20270314T100000Z","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	note := granolaLinkFixture(t, st, "series_20270314T100000Z")
+	require.NoError(t, st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: exception}))
+	calendarFixture(t, st, "master", linkSeriesRaw)
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+	require.NoError(t, err)
+	assert.Empty(t, record.Links)
 }
