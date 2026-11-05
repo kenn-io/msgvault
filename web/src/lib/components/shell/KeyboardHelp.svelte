@@ -170,7 +170,6 @@
     }
 
     .keyboard-help-list > .keyboard-help-track + .keyboard-help-track {
-      grid-column: 2;
       margin-top: 0;
     }
 

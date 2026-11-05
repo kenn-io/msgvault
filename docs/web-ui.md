@@ -435,7 +435,8 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 Select **Help** in the sidebar, or press `?`, to search this list
 in the app. Destructive keys open a review; they never execute deletion
 immediately. Shortcuts are suspended while typing and inside message/file
-content.
+content. `Ctrl K` or `Command K` on Mac still opens the command palette while
+typing in Help's search.
 
 ## Settings and restart behavior
 

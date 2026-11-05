@@ -47,7 +47,8 @@ test('help keeps all shortcuts visible in two columns and stays put while filter
 
   await search.fill('deletion');
   expect(await help.boundingBox()).toEqual(bounds);
-  expect((await help.getByRole('heading', { name: 'Safety', exact: true }).boundingBox())!.x).toBe(selection!.x);
+  expect((await help.getByRole('heading', { name: 'Safety', exact: true }).boundingBox())!.x).toBe(navigate!.x);
+  await page.screenshot({ path: testInfo.outputPath('artifacts/keyboard-help-filtered.png') });
   await search.fill('zzzxxyy');
   await expect(help.getByText('No shortcuts match "zzzxxyy"')).toBeVisible();
   expect(await help.boundingBox()).toEqual(bounds);
