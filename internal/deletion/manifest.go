@@ -406,11 +406,15 @@ func writeManifestAtomic(manifest *Manifest, path string) error {
 	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("publish manifest: %w", err)
 	}
-	if err := os.Remove(journalPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Printf("WARNING: published manifest %s but could not remove checkpoint journal: %v",
-			manifest.ID, err)
-	}
+	removeCheckpointJournal(path, manifest.ID, "published")
 	return nil
+}
+
+func removeCheckpointJournal(path, id, action string) {
+	if err := os.Remove(journalPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("WARNING: %s manifest %s but could not remove checkpoint journal: %v",
+			action, id, err)
+	}
 }
 
 // WriteInProgressCheckpoint appends progress under the cancellation lock.
@@ -963,10 +967,7 @@ func (m *Manager) cancelManifestLocked(id string) error {
 		if err := manifest.Save(toPath); err != nil {
 			return fmt.Errorf("update inline status for %s: %w", id, err)
 		}
-		if err := os.Remove(journalPath(fromPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Printf("WARNING: cancelled manifest %s but could not remove checkpoint journal: %v",
-				id, err)
-		}
+		removeCheckpointJournal(fromPath, id, "cancelled")
 		return nil
 	}
 	return fmt.Errorf("manifest %s not found in pending or in_progress", id)
