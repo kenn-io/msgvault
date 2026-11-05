@@ -99,6 +99,27 @@ func TestPullBudgetChargesPartialBodiesOnResponseLimit(t *testing.T) {
 	assert.Equal(2, requests)
 }
 
+func TestAddressBookMultigetReturnsResponseLimit(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assertions.Equal("REPORT", r.Method)
+		w.WriteHeader(http.StatusMultiStatus)
+		_, _ = io.WriteString(w, strings.Repeat("x", 2048))
+	}))
+	t.Cleanup(server.Close)
+	collection := mustParseURL(t, server.URL+"/contacts/")
+	client, err := NewClient(ClientOptions{CredentialOrigin: collection, ResponseBytes: 1024})
+	requirements.NoError(err)
+	client.allowPrivateOrigin = true
+	remote := &davRemote{client: client, kind: AddressBookKind}
+	_, _, err = remote.fetchMembers(t.Context(), Collection{SupportsMultiget: true}, collection,
+		[]string{server.URL + "/contacts/a.vcf", server.URL + "/contacts/b.vcf"}, NewBudget(1<<20))
+	requirements.ErrorIs(err, ErrResponseLimit)
+	assertions.Equal(1, requests)
+}
+
 func TestCalendarMultigetSplitsOversizedResponses(t *testing.T) {
 	for _, tc := range []struct {
 		name          string

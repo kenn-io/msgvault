@@ -506,7 +506,7 @@ func (r *davRemote) fetchMultiget(
 	}
 	depth := 0
 	response, err := r.do(ctx, Request{Method: "REPORT", URL: collection.String(), Depth: &depth, Body: body}, budget)
-	if errors.Is(err, ErrResponseLimit) && len(hrefs) > 1 {
+	if r.kind.multiget == CalendarKind.multiget && errors.Is(err, ErrResponseLimit) && len(hrefs) > 1 {
 		mid := len(hrefs) / 2
 		left, leftMissing, err := r.fetchMultiget(ctx, collection, hrefs[:mid], budget)
 		if err != nil {

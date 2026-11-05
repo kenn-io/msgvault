@@ -306,6 +306,7 @@ func TestSyncMissingCollection(t *testing.T) {
 			require.NoError(st.DB().QueryRow(`SELECT id FROM sources WHERE source_type = 'caldav'`).Scan(&sourceID))
 			other := opts
 			other.Name = "other"
+			other.Username = "other@example.org"
 			_, err = c.Sync(t.Context(), st, other)
 			require.NoError(err)
 			f.missingCollection = true
@@ -538,7 +539,7 @@ func TestSyncPreservesDisplayNameOnSelectorConflict(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	_, err := st.GetOrCreateSourceContext(t.Context(), "gmail", "Example calendar")
 	requirements.NoError(err)
-	identifier, err := sourceIdentifier("personal", "http://203.0.113.1/home/cal/")
+	identifier, err := sourceIdentifier("owner@example.org", "http://203.0.113.1/home/cal/")
 	requirements.NoError(err)
 	src, err := st.GetOrCreateSourceContext(t.Context(), "caldav", identifier)
 	requirements.NoError(err)
@@ -552,6 +553,36 @@ func TestSyncPreservesDisplayNameOnSelectorConflict(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("Personal calendar", src.DisplayName.String)
 	assertions.Equal("t1", sourceToken(t, st))
+}
+
+func TestSyncConfigRenamePreservesSourceAndEvents(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	st := testutil.NewTestStore(t)
+	opts := syncOpts()
+	first, err := c.Sync(t.Context(), st, opts)
+	requirements.NoError(err)
+	requirements.Equal(1, first.Events)
+	sources, err := st.ListSourcesContext(t.Context(), "caldav")
+	requirements.NoError(err)
+	requirements.Len(sources, 1)
+	sourceID := sources[0].ID
+	f.Lock()
+	f.reported = map[string]bool{}
+	f.Unlock()
+	opts.Name = "renamed"
+	second, err := c.Sync(t.Context(), st, opts)
+	requirements.NoError(err)
+	assertions.Zero(second.Events)
+	sources, err = st.ListSourcesContext(t.Context(), "caldav")
+	requirements.NoError(err)
+	requirements.Len(sources, 1)
+	assertions.Equal(sourceID, sources[0].ID)
+	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
+	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_events`))
+	f.Lock()
+	assertions.Equal("t1", f.lastToken)
+	f.Unlock()
 }
 
 func TestSyncCanonicalizesDefaultPortForSourceIdentity(t *testing.T) {
@@ -1110,7 +1141,7 @@ func TestSyncConfirmsOwnerMailboxForActivityClassification(t *testing.T) {
 			f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "ORGANIZER:mailto:owner@example.org\r\nEND:VEVENT", 1)
 			collectionURL, err := url.Parse("http://203.0.113.1/home/cal/")
 			require.NoError(err)
-			identifier, err := sourceIdentifier("personal", collectionURL.String())
+			identifier, err := sourceIdentifier(username, collectionURL.String())
 			require.NoError(err)
 			src, err := st.GetOrCreateSourceContext(t.Context(), "caldav", identifier)
 			require.NoError(err)
@@ -1684,7 +1715,7 @@ func TestSyncBodyUsesEventClock(t *testing.T) {
 	}
 }
 
-func TestSyncUsernameChangeRefreshesUnreportedEvents(t *testing.T) {
+func TestSyncAccountsArchiveSharedCollectionSeparately(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
 	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "ATTENDEE:mailto:owner@example.org\r\nATTENDEE:mailto:other@example.org\r\nEND:VEVENT", 1)
@@ -1699,13 +1730,16 @@ func TestSyncUsernameChangeRefreshesUnreportedEvents(t *testing.T) {
 	result, err := c.Sync(t.Context(), st, opts)
 	requirements.NoError(err)
 	assertions.Equal(1, result.Events)
+	assertions.Equal(2, count(t, st, `SELECT COUNT(*) FROM sources WHERE source_type='caldav'`))
+	assertions.Equal(2, count(t, st, `SELECT COUNT(*) FROM calendar_events`))
+	assertions.Equal(2, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
 	var meta string
-	requirements.NoError(st.DB().QueryRow(`SELECT metadata FROM messages`).Scan(&meta))
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.metadata FROM messages m JOIN sources s ON s.id=m.source_id WHERE s.identifier=?`), `["other@example.org","http://203.0.113.1:80/home/cal/"]`).Scan(&meta))
 	var metadata calevent.CalDAVMetadata
 	requirements.NoError(json.Unmarshal([]byte(meta), &metadata))
 	assertions.Equal("other@example.org", metadata.AccountEmail)
 	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_event_attendees WHERE email='other@example.org' AND is_copy_self`))
-	assertions.Zero(count(t, st, `SELECT COUNT(*) FROM calendar_event_attendees WHERE email='owner@example.org' AND is_copy_self`))
+	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_event_attendees WHERE email='owner@example.org' AND is_copy_self`))
 }
 
 func TestSyncSeriesBecomesStandalone(t *testing.T) {
