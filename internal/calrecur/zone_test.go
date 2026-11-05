@@ -15,6 +15,7 @@ func TestLoadZone(t *testing.T) {
 		{"tzone://Microsoft/America/New_York", "America/New_York"},
 		{"/vendor:1/America/New_York", "America/New_York"},
 		{"/freeassociation.sourceforge.net/Europe/Berlin", "Europe/Berlin"},
+		{"/freeassociation.sourceforge.net/Tzfile/America/New_York", "America/New_York"},
 		{"/example.org/America/Argentina/Buenos_Aires", "America/Argentina/Buenos_Aires"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

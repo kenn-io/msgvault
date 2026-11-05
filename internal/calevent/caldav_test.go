@@ -39,6 +39,18 @@ func TestCalDAVCompoundProjection(t *testing.T) {
 	assertions.Equal("20270321T130000Z", events[1].Event.Original.Key())
 }
 
+func TestCalDAVLibicalTimeZone(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	raw := "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
+		"UID:libical@example.org\r\nDTSTART;TZID=/freeassociation.sourceforge.net/Tzfile/America/New_York:20270314T090000\r\n" +
+		"DTEND;TZID=/freeassociation.sourceforge.net/Tzfile/America/New_York:20270314T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	events, err := ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+	require.NoError(err)
+	require.Len(events, 1)
+	assert.Equal("2027-03-14T13:00:00Z", events[0].Event.Start.UTC().Format(time.RFC3339))
+	assert.Equal("2027-03-14T14:00:00Z", events[0].Event.End.UTC().Format(time.RFC3339))
+}
+
 func TestCalDAVWindowsPeriodTimeZone(t *testing.T) {
 	for _, tc := range []struct{ line, want string }{
 		{"RDATE;VALUE=PERIOD;TZID=\"Eastern Standard Time\":20270314T090000/PT1H", "RDATE;TZID=America/New_York;VALUE=PERIOD:20270314T090000/PT1H"},

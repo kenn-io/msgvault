@@ -1046,7 +1046,6 @@ func TestStore_GetAllRawMIMECandidatesExcludesCalDAVResources(t *testing.T) {
 		"SUMMARY:First event\r\nEND:VEVENT\r\n" +
 		"BEGIN:VEVENT\r\nUID:weekly@example.test\r\nRECURRENCE-ID:20270102T120000Z\r\nDTSTART:20270102T130000Z\r\n" +
 		"SUMMARY:Second event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	calendarIDs := make([]int64, 0, 2)
 	for _, eventID := range []string{`["weekly@example.test",""]`, `["weekly@example.test","20270102T120000Z"]`} {
 		id, err := f.Store.UpsertMessage(&store.Message{
 			ConversationID:  conversationID,
@@ -1058,7 +1057,6 @@ func TestStore_GetAllRawMIMECandidatesExcludesCalDAVResources(t *testing.T) {
 		require.NoError(err, "UpsertMessage CalDAV event")
 		require.NoError(f.Store.UpsertMessageRawWithFormat(id, []byte(resource), calevent.CalDAVRawFormat),
 			"UpsertMessageRawWithFormat CalDAV event")
-		calendarIDs = append(calendarIDs, id)
 	}
 
 	emailID := newRFC822Message(t, f, "mail-with-raw", "")
@@ -1082,9 +1080,6 @@ func TestStore_GetAllRawMIMECandidatesExcludesCalDAVResources(t *testing.T) {
 			assert.Empty(gotIDs)
 		} else {
 			assert.Equal(wantIDs, gotIDs)
-		}
-		for _, id := range calendarIDs {
-			assert.NotContains(gotIDs, id, "distinct VEVENTs sharing one resource must not become MIME hash candidates")
 		}
 	}
 }
