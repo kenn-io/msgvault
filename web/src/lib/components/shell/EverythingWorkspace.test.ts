@@ -150,6 +150,8 @@ describe('EverythingWorkspace', () => {
       messageStatus = 404;
       await fireEvent.click(await screen.findByRole('link', { name: 'Team chat' }));
       await screen.findByText('This message is no longer available.');
+      expect(screen.getByRole('complementary', { name: 'Reading pane: Message' })).toBeDefined();
+      expect(screen.getByRole('navigation', { name: 'Primary' })).toBeDefined();
       await waitFor(() => expect(telemetryEvents.filter(e => e.event === 'error_shown')).toEqual([
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
         { event: 'error_shown', properties: { surface: 'web', kind: 'message' } },
@@ -157,6 +159,10 @@ describe('EverythingWorkspace', () => {
       expect(screen.queryByRole('link', { name: 'Team chat' })).toBeNull();
       expect(screen.queryByText('Quarterly numbers')).toBeNull();
       await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
+      await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
+      expect(parseExploreURLState(location.search).selectedRow).toBeNull();
+      expect(screen.getByRole('main', { name: 'Messages' })).toBeDefined();
+      expect(location.pathname).toBe('/');
       expect(screen.queryByText('Quarterly numbers')).toBeNull();
       expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     } finally {
