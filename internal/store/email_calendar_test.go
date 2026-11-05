@@ -427,6 +427,22 @@ func TestEmailCalendarReplyAndCancellationPreserveInviteRSVP(t *testing.T) {
 }
 
 func TestEmailCalendarStaleRevisionDoesNotPinOrganizer(t *testing.T) {
+	t.Run("first applied revision pins organizer within one email", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		first := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Accepted\r\nORGANIZER:mailto:owner-a@example.com")
+		later := "BEGIN:VEVENT\r\nUID:family@example.com\r\nSEQUENCE:2\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Rejected\r\nORGANIZER:mailto:owner-b@example.com\r\nEND:VEVENT\r\n"
+		calendar := []byte(strings.Replace(string(first), "END:VCALENDAR\r\n", later+"END:VCALENDAR\r\n", 1))
+		_, source := persistInviteEmail(t, st, "revisions", inviteEmail(calendar))
+		ids := emailEvents(t, st, source)
+		requirements.Len(ids, 1)
+		rows := calendarRows(t, st, ids...)
+		requirements.Len(rows, 1)
+		assertions.Equal("Accepted", rows[0].Subject)
+		var organizer string
+		requirements.NoError(st.db.QueryRow(`SELECT metadata ->> 'invite_organizer' FROM messages WHERE id=?`, ids[0]).Scan(&organizer))
+		assertions.Equal("owner-a@example.com", organizer)
+	})
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, source := persistInviteEmail(t, st, "original", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Original")))
@@ -505,6 +521,31 @@ func TestEmailCalendarFamilyOrganizerAdoption(t *testing.T) {
 }
 
 func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
+	t.Run("master and exception retain renamed conversation", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, from := persistInviteEmail(t, st, "family", inviteEmail(calendarFamilyDocument()))
+		into, err := st.GetOrCreateSource("mbox", "destination@example.com")
+		requirements.NoError(err)
+		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: from, IntoSourceID: into.ID})
+		requirements.NoError(err)
+		ids := emailEvents(t, st, into.ID)
+		requirements.Len(ids, 2)
+		var conversationID int64
+		requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, ids[0]).Scan(&conversationID))
+		update := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2\r\nSUMMARY:Updated series")
+		persistInviteEmailForSource(t, st, into.ID, "update", inviteEmail(update))
+		for _, id := range ids {
+			var got int64
+			requirements.NoError(st.db.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, id).Scan(&got))
+			assertions.Equal(conversationID, got)
+		}
+		var count int
+		requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM conversations WHERE source_id=? AND conversation_type='calendar'`, into.ID).Scan(&count))
+		assertions.Equal(1, count)
+		requirements.NoError(st.db.QueryRow(`SELECT message_count FROM conversations WHERE id=?`, conversationID).Scan(&count))
+		assertions.Equal(2, count)
+	})
 	for _, tc := range []struct {
 		name, initialSequence, sequence, organizer, wantSubject string
 		cancel, reject                                          bool
