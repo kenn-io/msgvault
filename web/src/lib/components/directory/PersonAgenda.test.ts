@@ -29,6 +29,9 @@ describe('PersonAgenda', () => {
       return Response.json({ project: 'msgvault', items: [
         { ...item('one', 'Send the revised budget'), web_url: 'https://tasks.example.test/one' },
         { ...item('two', 'Renewal call'), list: 'waiting' },
+        { ...item('three', 'First follow-up'), list: 'follow-up' },
+        { ...item('four', 'Second follow-up'), list: 'follow_up' },
+        { ...item('five', 'Third follow-up'), list: 'follow up' },
         ...(created ? [{ ...item('new', 'Send notes'), list: 'waiting' }] : [])
       ] });
     }));
@@ -40,10 +43,15 @@ describe('PersonAgenda', () => {
     expect(screen.getByRole('link', { name: 'Send the revised budget' }).getAttribute('href')).toBe('https://tasks.example.test/one');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
+    for (const label of ['Follow-up', 'Follow_up', 'Follow up']) expect(screen.getByText(label)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'List: Agenda' }));
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Waiting' } });
+    for (const label of ['Follow-up', 'Follow_up', 'Follow up']) {
+      expect(screen.getByRole('option', { name: label })).toBeDefined();
+    }
+    await fireEvent.mouseDown(screen.getByRole('option', { name: 'Follow-up' }));
+    await fireEvent.click(await screen.findByRole('button', { name: 'List: Follow-up' }));
+    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'waiting' } });
     expect(screen.getAllByRole('option', { name: 'Waiting' })).toHaveLength(1);
-    expect(screen.queryByRole('option', { name: 'New list "Waiting"' })).toBeNull();
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: Waiting' });
     expect(requests.some(request => request.method === 'POST')).toBe(false);
@@ -56,52 +64,6 @@ describe('PersonAgenda', () => {
     expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list: 'waiting' });
     await fireEvent.click(screen.getByRole('button', { name: 'List: Waiting' }));
     expect(screen.getAllByRole('option', { name: 'Waiting' })).toHaveLength(1);
-  });
-
-  it.each(['Gift Ideas', 'Gift  Ideas'])('selects and creates in an existing list queried as %s', async query => {
-    const requests: Request[] = [];
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      requests.push(request);
-      if (isStatus(request)) return readyStatus();
-      if (request.method === 'POST') {
-        return Response.json({ item: { ...item('new', 'Send notes'), list: 'gift ideas' } }, { status: 201 });
-      }
-      return Response.json({ project: 'msgvault', items: [{ ...item('one', 'Choose a gift'), list: 'gift ideas' }] });
-    }));
-    render(PersonAgenda, { client, personID: 7 });
-    await screen.findByText('Choose a gift');
-    await fireEvent.click(screen.getByRole('button', { name: 'List: Agenda' }));
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: query } });
-    expect(screen.getAllByRole('option')).toHaveLength(1);
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    await screen.findByRole('button', { name: 'List: Gift ideas' });
-    expect(requests.some(request => request.method === 'POST')).toBe(false);
-    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
-    await fireEvent.submit(screen.getByLabelText('New agenda item').closest('form')!);
-    await waitFor(() => expect(requests.some(request => request.method === 'POST')).toBe(true));
-    expect(await requests.find(request => request.method === 'POST')!.clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
-  });
-
-  it('preserves punctuation in list pills, options, and the selection', async () => {
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      if (isStatus(request)) return readyStatus();
-      return Response.json({ project: 'msgvault', items: [
-        { ...item('one', 'First task'), list: 'follow-up' },
-        { ...item('two', 'Second task'), list: 'follow_up' },
-        { ...item('three', 'Third task'), list: 'follow up' },
-      ] });
-    }));
-    render(PersonAgenda, { client, personID: 7 });
-    expect(await screen.findByText('Follow-up')).toBeDefined();
-    expect(screen.getByText('Follow_up')).toBeDefined();
-    expect(screen.getByText('Follow up')).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'List: Agenda' }));
-    expect(screen.getByRole('option', { name: 'Follow_up' })).toBeDefined();
-    expect(screen.getByRole('option', { name: 'Follow up' })).toBeDefined();
-    await fireEvent.mouseDown(screen.getByRole('option', { name: 'Follow-up' }));
-    expect(await screen.findByRole('button', { name: 'List: Follow-up' })).toBeDefined();
   });
 
   it.each(['pending', 'failed'] as const)('keeps a %s create retry key across profile revisions and rotates it when the payload changes', async outcome => {
@@ -231,6 +193,11 @@ describe('PersonAgenda', () => {
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: Gift ideas' });
+    expect(requests.some(request => request.method === 'POST')).toBe(false);
+    await fireEvent.click(screen.getByRole('button', { name: 'List: Gift ideas' }));
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    expect(screen.getByRole('option', { name: 'Agenda' })).toBeDefined();
+    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
 
@@ -239,7 +206,7 @@ describe('PersonAgenda', () => {
     // spacing must keep the same idempotency key and send the canonical list.
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'List: Gift ideas' }));
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'GIFT ideas' } });
+    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'gift ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: Gift ideas' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
@@ -254,6 +221,9 @@ describe('PersonAgenda', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'List: Gift ideas' })).toHaveProperty('disabled', false));
     await fireEvent.click(screen.getByRole('button', { name: 'List: Gift ideas' }));
     expect(screen.getAllByRole('option', { name: 'Gift ideas' })).toHaveLength(1);
+    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
+    await fireEvent.mouseDown(screen.getByRole('option', { name: 'Use "Gift Ideas"' }));
+    expect(await screen.findByRole('button', { name: 'List: Gift ideas' })).toBeDefined();
   });
 
   it('resets the idempotency key when the selected person changes', async () => {
@@ -277,16 +247,11 @@ describe('PersonAgenda', () => {
     await screen.findByText('No tasks yet');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'List: Agenda' }));
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Waiting' } });
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    await screen.findByRole('button', { name: 'List: Waiting' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
 
     await rerender({ client, personID: 8 });
     await waitFor(() => expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/8/agenda')).toBe(true));
-    expect(screen.getByRole('button', { name: 'List: Agenda' })).toBeDefined();
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));

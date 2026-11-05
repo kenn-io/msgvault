@@ -30,9 +30,8 @@
   let truncated = $state(false);
   let title = $state('');
   let listName = $state('agenda');
-  let listQuery = $state('');
   const listOptions = $derived(
-    [...new Set(['agenda', ...items.map((item) => item.list), listName])]
+    [...new Set(['agenda', ...items.map((item) => item.list)])]
       .map((name) => ({ name, label: listLabel(name) })),
   );
   let generation = 0;
@@ -65,7 +64,6 @@
         selectedClient = nextClient;
         retryRequestID = '';
         retryFingerprint = '';
-        listName = 'agenda';
         // Release the new person's controls while the prior person's write
         // settles. Its token can no longer change this selection's state.
         mutationToken++;
@@ -234,9 +232,9 @@
       <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task…" block disabled={mutating}>
         {#snippet suffix()}
           <div class="list-picker">
-            <Typeahead options={listOptions} value={listName} fallbackLabel="Agenda" placeholder="List" allowCustom={!listOptions.some((option) => option.name === listQuery.trim().toLowerCase())} onquery={(query) => { listQuery = query; }} customLabel={'New list "{query}"'} disabled={mutating} onselect={(value) => { listName = canonicalList(value); }}>
+            <Typeahead options={listOptions} value={listName} fallbackLabel="Agenda" placeholder="List" allowCustom disabled={mutating} onselect={(value) => { listName = canonicalList(value); }}>
               {#snippet trigger({ attachment })}
-                <button {@attach attachment} type="button" class="list-trigger" aria-label={`List: ${listLabel(listName)}`} disabled={mutating}>{listLabel(listName)} ▾</button>
+                <button {@attach attachment} type="button" class="list-trigger" aria-label={`List: ${listLabel(listName)}`}>{listLabel(listName)} ▾</button>
               {/snippet}
             </Typeahead>
           </div>
@@ -260,7 +258,8 @@
   .task-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
   .task-row :global(.kit-chip) { box-sizing: border-box; max-width: 100%; margin-left: auto; }
   .list-label { white-space: normal; overflow-wrap: anywhere; }
-  .list-picker { max-width: 9rem; --typeahead-panel-min-width: 16rem; }
+  .list-picker { max-width: 9rem; --typeahead-min-width: 0; --typeahead-max-width: 9rem; --typeahead-panel-min-width: 16rem; }
+  .list-picker :global(.kit-typeahead) { min-width: var(--typeahead-min-width); max-width: var(--typeahead-max-width); }
   .list-trigger { max-width: 100%; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .list-trigger:disabled { cursor: not-allowed; }
   a { color: var(--link-ink); }
