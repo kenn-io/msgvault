@@ -100,7 +100,7 @@ type tierSignalRow struct {
 	Inbound         bool
 	Meeting         bool
 	List            bool
-	Call bool
+	Call            bool
 }
 
 // personTierRows reads up to personTierRowPage direct links in the long window,

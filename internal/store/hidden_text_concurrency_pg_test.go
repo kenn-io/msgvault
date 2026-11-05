@@ -31,7 +31,7 @@ func TestHiddenTextBackfillSerializesWithPostgreSQLBodyRewrite(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			st := newPGStoreInternal(t, dbURL)
+			st := newPGStoreInternal(t)
 			source, err := st.GetOrCreateSource("gmail", "backfill@example.test")
 			require.NoError(err)
 			conversation, err := st.EnsureConversation(source.ID, "hidden-text-race", "Synthetic conversation")

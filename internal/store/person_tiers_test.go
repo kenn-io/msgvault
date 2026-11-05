@@ -40,7 +40,12 @@ func TestPersonTiersExcludeGoogleResourceSubdomains(t *testing.T) {
 			explanation, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
 			require.NoError(err)
 			assert.Equal(tc.wantTier, explanation.Tier)
-			assert.Equal(tc.wantExclusion, explanation.Exclusion)
+			if tc.wantExclusion == "" {
+				assert.Nil(explanation.Exclusion)
+			} else {
+				require.NotNil(explanation.Exclusion)
+				assert.Equal(tc.wantExclusion, *explanation.Exclusion)
+			}
 			assert.Equal(3, explanation.Signals.ActiveDaysLong)
 			options := tierOptions()
 			options.Config.ExcludeDomainPatterns = nil

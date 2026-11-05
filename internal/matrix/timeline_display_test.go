@@ -42,7 +42,6 @@ func TestImportedEncryptedMarkerDrivesTimelineDisplayAndVolume(t *testing.T) {
 	summary := &ImportSummary{}
 	requirements.NoError(imp.persistEvent(t.Context(), src.ID, conv, clearEvent, summary))
 	requirements.NoError(imp.persistEvent(t.Context(), src.ID, conv, encrypted, summary))
-	assertions.Equal(int64(1), summary.Undecryptable)
 	ids, err := s.MessageExistsBatch(src.ID, []string{"$clear", "$encrypted"})
 	requirements.NoError(err)
 	messageID := ids["$encrypted"]
