@@ -29,7 +29,7 @@ JSON includes status, attendees, roles, RSVPs, and events that could not be expa
 
 Queries allow up to 2,000 recurring series and 500,000 candidate steps across the request, with 50,000 steps per series. When recurrence expansion reaches the request work limit, the response keeps completed series, standalone events, and archived exceptions, and lists the interrupted series and every remaining series under `unexpandable`. Long-running series count steps from their start, so a narrower window may not reduce the work. A narrower window will not reduce the number of open-ended series.
 
-Lists default to 100 occurrences, with a maximum of 500. Pass `next_cursor` as `--cursor` with the same window and offsets to continue. Each page re-runs the window's expansion within the request limits, and `unexpandable` is returned on the first page only. Table output labels the next cursor on its own line. Expansion warnings appear on the first page. Windows must be positive and at most 400 days.
+Without `--limit` or `--cursor`, the command prints the whole window. Either flag prints one page, default 100, maximum 500. Pass `next_cursor` as `--cursor` with the same window and offsets to continue. Each page re-runs expansion within request limits; only the first includes `unexpandable` and warnings. Tables print `next cursor:` on its own line. Windows must be positive and at most 400 days.
 
 Archived calendar reads require daemon API schema 3.43.0. Agents need `calendar.event.read` or `message.read` on each source. `calendar.read` grants live availability only. Use the live commands below for `--account`, `--dry-run`, `--read-only`, and `--send-updates`. See the [CLI reference](https://msgvault.io/docs/cli-reference/#calendar) for the command contract.
 

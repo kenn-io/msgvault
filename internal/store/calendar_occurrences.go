@@ -289,11 +289,15 @@ func (series *calendarSeries) exception(ctx context.Context, s *Store, row Calen
 	return calendarOccurrence(row, seriesID, calendarOccurrenceRef(row.MessageID, ""), o), evidence, nil
 }
 
+func (series *calendarSeries) generatesOccurrences() bool {
+	return series.row.Event.Kind != "single" && series.row.Event.Status != "cancelled"
+}
+
 func (series *calendarSeries) expand(ctx context.Context, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, bool, error) {
 	if series.err != nil {
 		return nil, 0, "unsupported recurrence", true, nil //nolint:nilerr // Report an unsupported series alongside readable rows.
 	}
-	if series.row.Event.Kind == "single" || series.row.Event.Status == "cancelled" {
+	if !series.generatesOccurrences() {
 		return nil, 0, "", false, nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"
@@ -505,6 +509,8 @@ func (s *Store) GetCalendarOccurrenceContext(ctx context.Context, ref string) (C
 		if len(related) > 0 {
 			row = related[0]
 			occurrence, cancellation, err = series.exception(ctx, s, row)
+		} else if !series.generatesOccurrences() {
+			err = ErrCalendarOccurrenceNotFound
 		} else if series.err != nil {
 			err = errors.Join(calrecur.ErrUnsupportedRecurrence, series.err)
 		} else {
