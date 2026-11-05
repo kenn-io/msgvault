@@ -447,6 +447,29 @@ func TestEmailCalendarReplyAndCancellationPreserveInviteRSVP(t *testing.T) {
 	assertions.Equal(raw, stored)
 }
 
+func TestEmailCalendarStaleRevisionDoesNotPinOrganizer(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, source := persistInviteEmail(t, st, "original", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Original")))
+	ids := emailEvents(t, st, source)
+	requirements.Len(ids, 1)
+
+	stale := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T110000Z\r\nSUMMARY:Stale\r\nORGANIZER:mailto:owner-a@example.com")
+	newer := "BEGIN:VEVENT\r\nUID:family@example.com\r\nSEQUENCE:3\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner-b@example.com\r\nEND:VEVENT\r\n"
+	calendar := []byte(strings.Replace(string(stale), "END:VCALENDAR\r\n", newer+"END:VCALENDAR\r\n", 1))
+	persistInviteEmail(t, st, "update", inviteEmail(calendar))
+
+	assertions.Equal(ids, emailEvents(t, st, source))
+	rows := calendarRows(t, st, ids...)
+	requirements.Len(rows, 1)
+	assertions.Equal("Updated", rows[0].Subject)
+	requirements.NotNil(rows[0].Event.Start)
+	assertions.Equal("2027-03-02T13:00:00Z", rows[0].Event.Start.Format(time.RFC3339))
+	var organizer string
+	requirements.NoError(st.db.QueryRow(`SELECT metadata ->> 'invite_organizer' FROM messages WHERE id=?`, ids[0]).Scan(&organizer))
+	assertions.Equal("owner-b@example.com", organizer)
+}
+
 func TestEmailCalendarFamilyOrganizerAdoption(t *testing.T) {
 	for _, tombstone := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tombstone=%t", tombstone), func(t *testing.T) {
