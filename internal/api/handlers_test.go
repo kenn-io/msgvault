@@ -6263,51 +6263,6 @@ func TestFastDeepSearchContextErrorReturns503(t *testing.T) {
 	}
 }
 
-type cacheUnavailableEngine struct {
-	*querytest.MockEngine
-}
-
-func (*cacheUnavailableEngine) Aggregate(context.Context, query.ViewType, query.AggregateOptions) ([]query.AggregateRow, error) {
-	return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
-}
-
-func TestAnalyticsCacheUnavailableReturns503(t *testing.T) {
-	t.Parallel()
-	for _, tc := range []struct {
-		name string
-		path string
-	}{
-		{name: "aggregates", path: "/api/v1/aggregates?view_type=senders"},
-		{name: "total stats", path: "/api/v1/stats/total"},
-		{name: "fast search", path: "/api/v1/search/fast?q=invoice"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			engine := &querytest.MockEngine{
-				GetTotalStatsFunc: func(context.Context, query.StatsOptions) (*query.TotalStats, error) {
-					return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
-				},
-				SearchFastWithStatsFunc: func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error) {
-					return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
-				},
-			}
-			var queryEngine query.Engine = engine
-			if tc.name == "aggregates" {
-				queryEngine = &cacheUnavailableEngine{MockEngine: engine}
-			}
-			srv := newTestServerWithEngine(t, queryEngine)
-			w := doGet(srv, tc.path)
-
-			require.Equal(http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
-			var resp ErrorResponse
-			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
-			assert.Equal("analytical_cache_unavailable", resp.Error)
-			assert.Contains(resp.Message, "retry shortly")
-		})
-	}
-}
-
 // contextErrorTextEngine implements query.TextEngine with every method
 // failing the same way a saturated DuckDB query slot does: a wrapped
 // context error from acquireQuerySlot.

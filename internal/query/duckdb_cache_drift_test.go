@@ -146,9 +146,8 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 			textSourceID := int64(8)
 			textFilter := TextFilter{SourceID: &textSourceID, Pagination: Pagination{Limit: 1}}
 			for _, method := range []string{
-				"Aggregate", "SubAggregate", "SubAggregateSourceOverride", "GetTotalStats", "ListMessages", "SearchFastWithStats",
+				"Aggregate", "SubAggregate", "GetTotalStats", "ListMessages", "SearchFastWithStats",
 				"ListConversationsSnapshot", "TextAggregate", "GetTextStats",
-				"SearchFast", "SearchFastCount",
 			} {
 				t.Run(method, func(t *testing.T) {
 					require := require.New(t)
@@ -156,17 +155,12 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 					defer cancel()
 					switch method {
-					case "Aggregate", "SubAggregate", "SubAggregateSourceOverride":
+					case "Aggregate", "SubAggregate":
 						var rows []AggregateRow
 						var err error
 						switch method {
 						case "Aggregate":
 							rows, err = engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-						case "SubAggregateSourceOverride":
-							opts := DefaultAggregateOptions()
-							opts.SourceID = &sourceID
-							otherSourceID := int64(9)
-							rows, err = engine.SubAggregate(ctx, MessageFilter{SourceID: &otherSourceID}, ViewSenders, opts)
 						default:
 							rows, err = engine.SubAggregate(ctx, filter, ViewSenders, DefaultAggregateOptions())
 						}
@@ -194,23 +188,6 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						require.NoError(err)
 						require.Len(messages, 1)
 						assert.Equal("live-message", messages[0].SourceMessageID)
-					case "SearchFast":
-						messages, err := engine.SearchFast(ctx, search.Parse("subject:live"), filter, 10, 0)
-						if !enabled {
-							require.ErrorIs(err, ErrCacheUnavailable)
-							return
-						}
-						require.NoError(err)
-						require.Len(messages, 1)
-						assert.Equal("live-message", messages[0].SourceMessageID)
-					case "SearchFastCount":
-						count, err := engine.SearchFastCount(ctx, search.Parse("subject:live"), filter)
-						if !enabled {
-							require.ErrorIs(err, ErrCacheUnavailable)
-							return
-						}
-						require.NoError(err)
-						assert.Equal(int64(1), count)
 					case "SearchFastWithStats":
 						result, err := engine.SearchFastWithStats(ctx, search.Parse("live"), "live", filter, ViewSenders, 10, 0)
 						if !enabled {

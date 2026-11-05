@@ -1728,6 +1728,11 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 	if strings.TrimSpace(opts.SearchQuery) != "" && e.sqliteEngine != nil {
 		return e.sqliteEngine.SubAggregate(ctx, filter, groupBy, opts)
 	}
+	if opts.SourceIDs != nil || opts.SourceID != nil {
+		filter.SourceID = nil
+		filter.SourceIDs = nil
+	}
+
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		if e.useLiveSQL(err) {
@@ -1736,11 +1741,6 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 		return nil, err
 	}
 	defer release()
-
-	if opts.SourceIDs != nil || opts.SourceID != nil {
-		filter.SourceID = nil
-		filter.SourceIDs = nil
-	}
 
 	def, err := getViewDef(groupBy, opts.TimeGranularity, "agg")
 	if err != nil {
@@ -2749,9 +2749,6 @@ var RequiredParquetDirs = []string{
 func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
-		if e.useLiveSQL(err) {
-			return e.sqliteEngine.SearchFast(ctx, q, filter, limit, offset)
-		}
 		return nil, err
 	}
 	defer release()
@@ -2882,9 +2879,6 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
-		if e.useLiveSQL(err) {
-			return e.sqliteEngine.SearchFastCount(ctx, q, filter)
-		}
 		return 0, err
 	}
 	defer release()
