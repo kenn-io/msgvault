@@ -205,6 +205,34 @@ func TestMeetingIdentityTwoLongRunningDailySeriesBatch(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityNotesOnlyFourDailySeries(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	refs := make([]string, 0, 124)
+	notes := make([]int64, 0, 124)
+	for _, name := range []string{"first", "second", "third", "fourth"} {
+		uid := name + "@example.org"
+		_, series := calendarFixture(t, st, name, fmt.Sprintf(`{"id":%q,"iCalUID":%q,"start":{"dateTime":"2000-01-01T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2000-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`, name, uid))
+		for day := 1; day <= 31; day++ {
+			at := time.Date(2027, 3, day, 10, 0, 0, 0, time.UTC)
+			_, note := projectionFixture(t, st, fmt.Sprintf("%s-note-%d", name, day), "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":%q}}`, uid, at.Format(time.RFC3339)))
+			refs = append(refs, fmt.Sprintf("evt:%d@%s", series, at.Format("20060102T150405Z")))
+			notes = append(notes, note)
+		}
+	}
+	for _, requested := range [][]string{refs, nil} {
+		got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: requested, TranscriptIDs: notes})
+		require.NoError(err)
+		require.Len(got.ByOccurrence, 124)
+		require.Len(got.ByTranscript, 124)
+		for i, ref := range refs {
+			assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
+			assert.Equal([]int64{notes[i]}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+			assert.Equal(ref, got.ByTranscript[notes[i]].OccurrenceRef)
+		}
+	}
+}
+
 func TestMeetingIdentityTwoLongRunningDailySeriesSavedDecisions(t *testing.T) {
 	for _, decision := range []string{"link", "split"} {
 		t.Run(decision, func(t *testing.T) {

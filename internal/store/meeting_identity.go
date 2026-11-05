@@ -228,16 +228,11 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if err != nil {
 				return result, err
 			}
-			_, instance, _ := calrecur.ParseInstanceID(key.Value)
 			for _, row := range r.batch.events[meetingQueryKey(predicate, args)] {
-				ref := OccurrenceRef{MessageID: row.MessageID}
-				if row.Event.Kind == meetingSeriesKind {
-					if key.Kind == "google_event_id" {
-						ref.Key = instance.Key()
-					} else if key.ScheduledAt != nil {
-						predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
-						candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
-					}
+				ref := automaticMeetingRef(row, key)
+				if row.Event.Kind == meetingSeriesKind && key.Kind != "google_event_id" && key.ScheduledAt != nil {
+					predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
+					candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
 				}
 				candidateRefs = append(candidateRefs, ref)
 			}

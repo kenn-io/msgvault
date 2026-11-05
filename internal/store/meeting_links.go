@@ -408,12 +408,24 @@ func meetingCalendarSources(ctx context.Context, r reboundReader) (map[string][]
 	return sources, nil
 }
 
+// Plan the original occurrence before resolving either a note or its reference.
+func automaticMeetingRef(row CalendarEventRow, key meetingLinkKey) OccurrenceRef {
+	ref := OccurrenceRef{MessageID: row.MessageID}
+	if key.Kind == "google_event_id" {
+		if base, instance, ok := calrecur.ParseInstanceID(key.Value); ok && row.Event.ProviderEventID == base {
+			ref.Key = instance.Key()
+		}
+	} else if row.Event.Kind == meetingSeriesKind && key.ScheduledAt != nil {
+		ref.Key = (calrecur.Identity{Instant: *key.ScheduledAt}).Key()
+	}
+	return ref
+}
+
 func (s *Store) automaticMeetingCandidates(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
 	predicate, args, err := s.automaticMeetingPredicate(ctx, r, key)
 	if err != nil {
 		return nil, err
 	}
-	base, instance, _ := calrecur.ParseInstanceID(key.Value)
 	rows, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return nil, err
@@ -442,11 +454,7 @@ candidatesLoop:
 		}
 		var candidates []linkOccurrence
 		if key.Kind == "google_event_id" {
-			ref := OccurrenceRef{MessageID: row.MessageID}
-			if base != "" && row.Event.ProviderEventID == base {
-				ref.Key = instance.Key()
-			}
-			o, err := resolvedMeetingOccurrence(ctx, r, ref, budget)
+			o, err := resolvedMeetingOccurrence(ctx, r, automaticMeetingRef(row, key), budget)
 			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				continue
 			}
