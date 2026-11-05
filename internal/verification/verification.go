@@ -16,7 +16,7 @@ const Masked = "[verification content masked]"
 const MaxFieldBytes = 1024 * 1024
 
 const localizedCodeCues = `bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드`
-const englishCodeCues = `\b(code|passcode|otp|(?:one[- ]time|temporary) password|verification number|pin)\b`
+const englishCodeCues = `\b(code|passcode|otp|2fa|(?:one[- ]time|temporary|verification|security|login|sign[ -]in|authentication) password|verification number|pin)\b`
 const englishQualifiedCodeCues = `\b(?:(?:verification|security|login|sign[ -]in|confirmation|authentication|one[- ]time) (?:code|pin|password|number)|temporary password|passcode|otp|2fa)\b`
 
 type Content struct {
