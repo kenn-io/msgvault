@@ -17,9 +17,13 @@
 
   const sourceName = $derived(controller.sourcePerson?.display_name?.trim() ||
     (controller.sourcePerson ? `Person ${controller.sourcePerson.id}` : 'current source profile'));
+  const labels = $derived(controller.labels?.for === controller.detail?.merge.id ? controller.labels : null);
+  function participantLabel(id: number): string {
+    return labels?.addresses.get(id)?.map(address => [address.title, address.detail].filter(Boolean).join(' · ')).join(', ') || `Participant ${id}`;
+  }
   const selectionLabel = $derived(controller.isZeroParticipantLineage
     ? 'the zero-participant lineage'
-    : controller.selectedParticipantIDs.map((id) => `Participant ${id}`).join(', ') || 'the selected lineage');
+    : controller.selectedParticipantIDs.map(participantLabel).join(', ') || 'the selected lineage');
   const confirmationLabel = $derived(`I confirm splitting ${selectionLabel} from ${sourceName}${controller.sourcePerson ? ` (Person ${controller.sourcePerson.id})` : ''}.`);
   const committed = $derived(controller.committedResult?.result ?? null);
   const partial = $derived(!!committed && (!committed.exact_reversal ||
@@ -123,7 +127,7 @@
           {#each controller.eligibleParticipantIDs as participantID}
             <Checkbox
               checked={controller.selectedParticipantIDs.includes(participantID)}
-              label={`Participant ${participantID}`}
+              label={participantLabel(participantID)}
               disabled={controller.splitBusy}
               onchange={(checked) => controller.setParticipantSelected(participantID, checked)}
             />
