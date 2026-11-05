@@ -17725,6 +17725,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
         "404":
           content:
             application/json:
@@ -19613,6 +19619,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
           description: Error
         "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
           content:
             application/json:
               schema:
