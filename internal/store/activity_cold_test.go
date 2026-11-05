@@ -392,7 +392,6 @@ func TestColdAdapterMatchesWarmAfterRetraction(t *testing.T) {
 	cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 	requirements.NoError(err)
 	for i := range warm.Bursts {
-		warm.Bursts[i].Cold = true
 		warm.Bursts[i].FirstAt = warm.Bursts[i].FirstAt.UTC()
 		warm.Bursts[i].LastAt = warm.Bursts[i].LastAt.UTC()
 	}
@@ -591,45 +590,47 @@ func TestColdAdapterIgnoresStaleProjection(t *testing.T) {
 func TestColdAdapterFiltersOffsetStoredTimestamps(t *testing.T) {
 	for _, offset := range []int{0, 8 * 60 * 60, -7 * 60 * 60, 9 * 60 * 60} {
 		t.Run(strconv.Itoa(offset), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			f := newColdTimelineActivityFixture(t)
 			room := coldTimelineRoom(t, f, f.Source.ID, "stored-offset-window")
 			start := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 			end := start.Add(time.Hour)
 			zone := time.FixedZone("stored", offset)
-			early := addColdTimelineMessage(t, f, room, f.Source.ID, start.Add(-8*time.Hour).In(zone), false)
-			justBefore := addColdTimelineMessage(t, f, room, f.Source.ID, start.Add(-time.Second).In(zone), false)
-			atStart := addColdTimelineMessage(t, f, room, f.Source.ID, start.In(zone), false)
-			inside := addColdTimelineMessage(t, f, room, f.Source.ID, start.Add(30*time.Minute).In(zone), false)
-			atEnd := addColdTimelineMessage(t, f, room, f.Source.ID, end.In(zone), false)
-			late := addColdTimelineMessage(t, f, room, f.Source.ID, start.Add(8*time.Hour).In(zone), false)
-			for _, tc := range []struct {
-				name          string
-				after, before *time.Time
-				want          []int64
-			}{
-				{"both bounds", &start, &end, []int64{inside, atStart}},
-				{"after only", &start, nil, []int64{late, atEnd, inside, atStart}},
-				{"before only", nil, &end, []int64{inside, atStart, justBefore, early}},
-			} {
-				t.Run(tc.name, func(t *testing.T) {
-					assertions, requirements := assert.New(t), require.New(t)
-					for _, boundOffset := range []int{0, -7 * 60 * 60, 9 * 60 * 60} {
-						boundZone := time.FixedZone("bounds", boundOffset)
-						q := timelineBurstQuery()
-						q.After, q.Before = tc.after, tc.before
-						if tc.after != nil {
-							q.After = new(tc.after.In(boundZone))
-						}
-						if tc.before != nil {
-							q.Before = new(tc.before.In(boundZone))
-						}
-						page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-						requirements.NoError(err)
-						requirements.Len(page.Bursts, 1)
-						assertions.Equal(tc.want, page.Bursts[0].LatestMessageIDs)
-					}
-				})
+			for _, at := range []time.Time{start.Add(-8 * time.Hour), start.Add(-time.Second), start, start.Add(30 * time.Minute), end, start.Add(8 * time.Hour)} {
+				addColdTimelineMessage(t, f, room, f.Source.ID, at.In(zone), false)
 			}
+			for _, bounds := range [][2]*time.Time{{&start, &end}, {&start, nil}, {nil, &end}} {
+				q := timelineBurstQuery()
+				q.After, q.Before = bounds[0], bounds[1]
+				page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+				requirements.NoError(err)
+				assertions.Len(page.Bursts, 1)
+				count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+				requirements.NoError(err)
+				assertions.Equal(6, count)
+			}
+			q := timelineBurstQuery()
+			q.After = new(start.Add(9 * time.Hour))
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Empty(page.Bursts)
 		})
 	}
+}
+
+func TestColdAdapterKiritimatiStoredOffset(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newColdTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "kiritimati-offset")
+	at, err := time.Parse("2006-01-02 15:04:05Z07:00", "2026-10-20 22:30:00-12:00")
+	requirements.NoError(err)
+	id := addColdTimelineMessage(t, f, room, f.Source.ID, at, false)
+	projectColdTimeline(t, f, "Pacific/Kiritimati")
+	q := timelineBurstQuery()
+	q.FromDate, q.ToDate = "2026-10-22", "2026-10-22"
+	page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+	requirements.NoError(err)
+	requirements.Len(page.Bursts, 1)
+	assertions.Equal("2026-10-22", page.Bursts[0].LocalDate)
+	assertions.Equal([]int64{id}, page.Bursts[0].LatestMessageIDs)
 }

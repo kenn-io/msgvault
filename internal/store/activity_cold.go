@@ -11,6 +11,8 @@ import (
 	"go.kenn.io/msgvault/internal/activitydate"
 )
 
+const coldWindowPad = 72 * time.Hour
+
 type coldActivityMessage struct {
 	activityReadMessage
 
@@ -128,10 +130,10 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 	}
 	var lower, upper *time.Time
 	if q.After != nil {
-		lower = new(q.After.UTC().Add(-24 * time.Hour))
+		lower = new(q.After.UTC().Add(-coldWindowPad))
 	}
 	if q.Before != nil {
-		upper = new(q.Before.UTC().Add(24 * time.Hour))
+		upper = new(q.Before.UTC().Add(coldWindowPad))
 	}
 	if q.FromDate != "" || q.ToDate != "" {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
@@ -141,7 +143,7 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 		// DateEvent below applies the exact archive-zone civil-date boundary.
 		from, _ := time.Parse(time.DateOnly, q.FromDate)
 		to, _ := time.Parse(time.DateOnly, q.ToDate)
-		dateLower, dateUpper := from.Add(-24*time.Hour), to.Add(48*time.Hour)
+		dateLower, dateUpper := from.Add(-coldWindowPad), to.Add(coldWindowPad)
 		if lower == nil || dateLower.After(*lower) {
 			lower = &dateLower
 		}
@@ -178,8 +180,8 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
  SELECT m.id FROM messages m WHERE `+where+`
  ) SELECT m.id,m.list_id IS NOT NULL,
- `+matrixPendingEncryptedSQL("cw")+`
- FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id
+ `+matrixPendingEncryptedSQL("cw")+`,`+countedMessageTypeSQL("m", "c")+`
+ FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id JOIN conversations c ON c.id=m.conversation_id
  WHERE `+s.activityLiveEligibleSQL()+subject+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read cold activity: %w", err)
@@ -188,7 +190,7 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 	ids := []int64{}
 	for rows.Next() {
 		var m coldActivityMessage
-		if err = rows.Scan(&m.ID, &m.List, &m.Encrypted); err != nil {
+		if err = rows.Scan(&m.ID, &m.List, &m.Encrypted, &m.ContactEligible); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan cold activity: %w", err)
 		}
@@ -218,12 +220,6 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 		if dateErr != nil {
 			continue
 		}
-		// SQL bounds include a day of padding for timestamps stored with offsets.
-		// Apply the exact half-open window to the dated instant.
-		if (q.After != nil && dating.OccurredAt.Before(*q.After)) ||
-			(q.Before != nil && !dating.OccurredAt.Before(*q.Before)) {
-			continue
-		}
 		if (q.FromDate != "" && dating.LocalDate < q.FromDate) || (q.ToDate != "" && dating.LocalDate > q.ToDate) {
 			continue
 		}
@@ -233,7 +229,7 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 		m.channel = classified.Channel
 		m.Direction = classified.Direction
 		m.Meeting = IsMeetingMessageType(c.MessageType)
-		m.ContactEligible = m.Meeting || countedMessageType(c.MessageType, c.ConversationType)
+		m.ContactEligible = m.Meeting || m.ContactEligible
 		classifiedMessages = append(classifiedMessages, m)
 	}
 	facts := make([]activityReadMessage, len(classifiedMessages))
@@ -244,6 +240,7 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 		return nil, err
 	}
 	groups := map[string]*coldActivityGroup{}
+	selectedDays := map[string]bool{}
 	for i, m := range classifiedMessages {
 		m.activityReadMessage = facts[i]
 		conv := int64(0)
@@ -251,6 +248,9 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 			conv = *m.candidate.ConversationID
 		}
 		key := fmt.Sprintf("burst:%d:%d:%s", m.candidate.SourceID, conv, m.dating.LocalDate)
+		if (q.After == nil || !m.dating.OccurredAt.Before(*q.After)) && (q.Before == nil || m.dating.OccurredAt.Before(*q.Before)) {
+			selectedDays[key] = true
+		}
 		g := groups[key]
 		if g == nil {
 			g = &coldActivityGroup{}
@@ -261,7 +261,7 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 			continue
 		}
 		if len(g.messages) == 0 {
-			g.burst = ActivityBurst{Key: key, SourceID: m.candidate.SourceID, ConversationID: conv, Channel: m.channel, LocalDate: m.dating.LocalDate, FirstAt: m.dating.OccurredAt, LastAt: m.dating.OccurredAt, Cold: true, LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{}, Counterparts: []ActivityMessageCounterpart{}}
+			g.burst = ActivityBurst{Key: key, SourceID: m.candidate.SourceID, ConversationID: conv, Channel: m.channel, LocalDate: m.dating.LocalDate, FirstAt: m.dating.OccurredAt, LastAt: m.dating.OccurredAt, LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{}, Counterparts: []ActivityMessageCounterpart{}}
 		}
 		if m.dating.OccurredAt.Before(g.burst.FirstAt) {
 			g.burst.FirstAt = m.dating.OccurredAt
@@ -283,7 +283,11 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 		}
 		g.messages = append(g.messages, m)
 	}
-	for _, g := range groups {
+	for key, g := range groups {
+		if !selectedDays[key] {
+			delete(groups, key)
+			continue
+		}
 		finishColdActivityGroup(g)
 	}
 	return groups, nil
