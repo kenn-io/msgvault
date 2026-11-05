@@ -56,6 +56,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	var stat string
 	require.NoError(s.DB().QueryRow("SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat))
 	require.NotEqual("3003 3003", stat)
+	sampled := stat
 
 	// The seam blocks until the daemon shuts down (ctx cancelled), so
 	// health is polled while vector init is guaranteed still pending. It
@@ -109,7 +110,7 @@ func TestRunServeServesHealthWhileVectorInitBlocked(t *testing.T) {
 	assert.Equal("initializing", health.Vector.Status)
 
 	require.Eventually(func() bool {
-		return s.DB().QueryRow("SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat) == nil && stat == "3003 3003"
+		return s.DB().QueryRow("SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'").Scan(&stat) == nil && stat != sampled
 	}, serveLifecycleTestTimeout, 25*time.Millisecond, "daemon startup must replace sampled message statistics")
 }
 

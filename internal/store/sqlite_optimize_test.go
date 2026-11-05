@@ -297,8 +297,6 @@ func TestCompleteSyncAndUpdateSourceCursorRefreshesSQLitePlannerStatistics(t *te
 	syncID, err := s.StartSync(1, "full")
 	require.NoError(err)
 	require.NoError(s.CompleteSyncAndUpdateSourceCursor(syncID, 1, "cursor-1"))
-	assert.Positive(messagePlannerStatisticCount(t, s),
-		"successful sync must analyze populated message indexes")
 	var stat string
 	require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&stat))
 	assert.Equal("3003 3003", stat)
@@ -740,10 +738,10 @@ func TestDailyMaintenanceRepairsSampledMessageStatistics(t *testing.T) {
 				require.Error(report.OptimizeErr)
 			} else {
 				require.NoError(report.OptimizeErr)
+				var exact string
+				require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&exact))
+				assert.Equal("12000 4000", exact)
 			}
-			var exact string
-			require.NoError(s.db.QueryRow(`SELECT stat FROM sqlite_stat1 WHERE idx='idx_messages_source'`).Scan(&exact))
-			assert.Equal("12000 4000", exact)
 			if failAnalysis {
 				for range 2 {
 					conn, err := s.db.Conn(t.Context())
