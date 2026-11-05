@@ -27,7 +27,11 @@ func newPersonDeliveryPolicyCommand(operation string) *cobra.Command {
 			"set":   "Set a person's delivery policy",
 			"clear": "Clear a person's delivery policy override",
 		}[operation],
-		Long: "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOmit --endpoint for the person default. Only the owner can manage policies.\nWrites use the revision from read-delivery-policy and return before/after states.",
+		Long: map[string]string{
+			"read":  "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\nWrites use the revision from read-delivery-policy.",
+			"set":   "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\nWrites return before/after states.",
+			"clear": "Use the canonical vcard_uid from 'person get' or 'person list --json'.\nOnly the owner can manage policies.\nWrites return before/after states.",
+		}[operation],
 		Args: cobra.ExactArgs(map[string]int{"read": 1, "set": 2, "clear": 1}[operation]),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if operation != "read" {
