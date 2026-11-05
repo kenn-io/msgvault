@@ -43,6 +43,9 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 		// Raw SQL leaves updated_at alone, as a retitle within the same second would.
 		{"chat retitle", exec(`UPDATE conversations SET title = 'Updated' WHERE id = 701`), false},
 		{"chat source ID repair", exec(`UPDATE conversations SET source_conversation_id = 'repaired-chat-701' WHERE id = 701`), false},
+		{"sender name repair", func(s *store.Store) error {
+			return s.RepairParticipantDisplayNames([]store.ParticipantDisplayNameRepair{{ParticipantID: 11, DisplayName: "Repaired"}})
+		}, false},
 		{"roster removal", func(s *store.Store) error { return s.ReplaceConversationParticipants(701, nil) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

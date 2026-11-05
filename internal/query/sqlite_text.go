@@ -67,7 +67,8 @@ const sqliteTimelineSnapshotProbe = `SELECT
 	COALESCE(julianday(MAX(content_changed_at)) BETWEEN julianday('now', '-0.002 seconds') AND julianday('now'), 0) AS recent,
 	COALESCE((SELECT updated_at FROM conversations WHERE id = ?), ''),
 	COALESCE((SELECT title FROM conversations WHERE id = ?), ''),
-	COALESCE((SELECT source_conversation_id FROM conversations WHERE id = ?), '')
+	COALESCE((SELECT source_conversation_id FROM conversations WHERE id = ?), ''),
+	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_display_name_revision'), '')
 FROM messages WHERE conversation_id = ?`
 
 func readSQLiteTimelineSnapshot(
@@ -81,13 +82,13 @@ func readSQLiteTimelineSnapshot(
 		var count int64
 		var recent bool
 		var changedAt sql.NullString
-		var conversationUpdatedAt, conversationTitle, sourceConversationID string
+		var conversationUpdatedAt, conversationTitle, sourceConversationID, senderNameRevision string
 		if err := tx.QueryRowContext(ctx, e.dialect.Rebind(sqliteTimelineSnapshotProbe), conversationID, conversationID, conversationID, conversationID).Scan(
-			&count, &changedAt, &recent, &conversationUpdatedAt, &conversationTitle, &sourceConversationID,
+			&count, &changedAt, &recent, &conversationUpdatedAt, &conversationTitle, &sourceConversationID, &senderNameRevision,
 		); err != nil {
 			return nil, fmt.Errorf("probe text timeline snapshot: %w", err)
 		}
-		for _, field := range []any{conversationID, count, changedAt.String, conversationUpdatedAt, conversationTitle, sourceConversationID} {
+		for _, field := range []any{conversationID, count, changedAt.String, conversationUpdatedAt, conversationTitle, sourceConversationID, senderNameRevision} {
 			writeSnapshotField(hasher, snapshotFieldBytes(field))
 		}
 		if len(scope.Filter.ParticipantIDs) > 0 {
