@@ -3,11 +3,48 @@ package query
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
+
+func TestSQLiteTextConversationPreviewRespectsDateFilter(t *testing.T) {
+	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+	_, err := tdb.DB.Exec(`
+		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'imessage', 'archive@example.com');
+		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+		VALUES (1, 1, 'chat-1', 'direct_chat');
+		INSERT INTO messages (id, source_id, conversation_id, source_message_id, message_type, sent_at, snippet)
+		VALUES (1, 1, 1, 'january', 'imessage', '2026-01-15 00:00:00', 'January preview'),
+		       (2, 1, 1, 'february', 'imessage', '2026-02-15 00:00:00', 'February preview');
+	`)
+	require.NoError(t, err)
+	engine := NewSQLiteEngine(tdb.DB)
+	before := time.Date(2026, time.February, 1, 0, 0, 0, 0, time.UTC)
+	filter := TextFilter{Before: &before, Pagination: Pagination{Limit: 1}}
+	for _, name := range []string{"list", "snapshot"} {
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			var rows []ConversationRow
+			var err error
+			if name == "snapshot" {
+				rows, _, err = engine.ListConversationsSnapshot(t.Context(), filter)
+			} else {
+				rows, err = engine.ListConversations(t.Context(), filter)
+			}
+			require.NoError(err)
+			require.Len(rows, 1)
+			assert.Equal(int64(1), rows[0].MessageCount)
+			assert.Equal(time.Date(2026, time.January, 15, 0, 0, 0, 0, time.UTC), rows[0].LastMessageAt)
+			assert.Equal("January preview", rows[0].LastPreview)
+		})
+	}
+}
 
 func TestSQLiteTextReadsExcludeHiddenDuplicates(t *testing.T) {
 	t.Parallel()

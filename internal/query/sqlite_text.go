@@ -382,6 +382,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 		orderBy = "last_message_at"
 	}
 	orderBy += " " + sqliteDirection(scope.Filter.SortDirection) + ", c.id DESC"
+	args = append(slices.Clone(args), args...)
 	return fmt.Sprintf(`
 		SELECT
 			c.id,
@@ -391,10 +392,10 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 			COUNT(DISTINCT COALESCE(m.sender_id, 0)) AS participant_count,
 			COALESCE(CAST(MAX(m.sent_at) AS TEXT), '') AS last_message_at,
 			COALESCE(
-				(SELECT m2.snippet FROM messages m2
-				 WHERE m2.conversation_id = c.id
+				(SELECT m.snippet FROM messages m
+				 WHERE m.conversation_id = c.id
 				   AND %s
-				 ORDER BY m2.sent_at DESC, m2.id DESC LIMIT 1),
+				 ORDER BY m.sent_at DESC, m.id DESC LIMIT 1),
 				''
 			) AS last_preview,
 			COALESCE(SUM(m.size_estimate), 0) AS total_size
@@ -404,7 +405,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 		WHERE %s
 		GROUP BY c.id, c.title, s.source_type
 		ORDER BY %s
-	`, textMsgTypeFilterAlias("m2")+" AND "+store.LiveMessagesWhere("m2", false), where, orderBy), args
+	`, where, where, orderBy), args
 }
 
 // sqliteTimestampLayouts lists the datetime string formats emitted by SQLite
@@ -439,12 +440,6 @@ func parseSQLiteTimestamp(s string) (time.Time, error) {
 // Uses the m. table alias used in text query methods.
 func textMsgTypeFilter() string {
 	return "m.message_type IN (" + TextMessageTypeSQLList + ")"
-}
-
-// textMsgTypeFilterAlias returns a SQL condition restricting to text message types
-// using the given table alias.
-func textMsgTypeFilterAlias(alias string) string {
-	return alias + ".message_type IN (" + TextMessageTypeSQLList + ")"
 }
 
 func sqliteDirection(d SortDirection) string {
@@ -634,10 +629,10 @@ func (e *SQLiteEngine) ListConversations(
 			COUNT(DISTINCT COALESCE(m.sender_id, 0)) AS participant_count,
 			MAX(m.sent_at) AS last_message_at,
 			COALESCE(
-				(SELECT m2.snippet FROM messages m2
-				 WHERE m2.conversation_id = c.id
+				(SELECT m.snippet FROM messages m
+				 WHERE m.conversation_id = c.id
 				   AND %s
-				 ORDER BY m2.sent_at DESC, m2.id DESC LIMIT 1),
+				 ORDER BY m.sent_at DESC, m.id DESC LIMIT 1),
 				''
 			) AS last_preview,
 			COALESCE(SUM(m.size_estimate), 0) AS total_size
@@ -648,8 +643,9 @@ func (e *SQLiteEngine) ListConversations(
 		GROUP BY c.id, c.title, s.source_type
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, textMsgTypeFilterAlias("m2")+" AND "+store.LiveMessagesWhere("m2", false), where, orderBy)
+	`, where, where, orderBy)
 
+	args = append(slices.Clone(args), args...)
 	args = append(args, limit, filter.Pagination.Offset)
 
 	rows, err := e.db.QueryContext(ctx, query, args...)
