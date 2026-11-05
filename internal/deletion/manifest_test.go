@@ -907,7 +907,7 @@ func TestManifestListIDsRoundTripAndOmitWhenEmpty(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(claimed.Execution)
 	claimed.Execution.LastProcessedIndex = 1
-	require.NoError(mgr.WriteInProgressCheckpoint(claimed, manifest.ID))
+	require.NoError(mgr.WriteInProgressCheckpoint(claimed, manifest.ID, 0))
 
 	loaded, status, err := mgr.GetManifestWithStatus(manifest.ID)
 	require.NoError(err)
@@ -1046,6 +1046,7 @@ func setupInProgress(t *testing.T, mgr *Manager, desc string) *Manifest {
 	require.NoError(t, mgr.MoveManifest(m.ID, StatusPending, StatusInProgress), "MoveManifest")
 	m.Status = StatusInProgress
 	m.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
+	require.NoError(t, m.Save(filepath.Join(mgr.InProgressDir(), m.ID+".json")))
 	return m
 }
 
@@ -1125,7 +1126,7 @@ func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
 	m := setupInProgress(t, mgr, "checkpoint happy")
 	m.Execution.LastProcessedIndex = 7
 
-	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID), "WriteInProgressCheckpoint")
+	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0), "WriteInProgressCheckpoint")
 
 	loaded, err := LoadManifest(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
 	require.NoError(err, "reload checkpoint")
@@ -1149,7 +1150,7 @@ func TestManager_WriteInProgressCheckpoint_Cancelled(t *testing.T) {
 	m := setupInProgress(t, mgr, "checkpoint cancelled")
 	require.NoError(mgr.CancelManifest(m.ID), "CancelManifest")
 
-	err := mgr.WriteInProgressCheckpoint(m, m.ID)
+	err := mgr.WriteInProgressCheckpoint(m, m.ID, 0)
 	require.ErrorIs(err, ErrManifestCancelled, "checkpoint after cancel")
 
 	_, statErr := os.Stat(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
@@ -1195,7 +1196,7 @@ func TestManager_CheckpointCancelStress(t *testing.T) {
 			defer wg.Done()
 			for i := range 20 {
 				cp.Execution.LastProcessedIndex = i
-				if err := mgr.WriteInProgressCheckpoint(&cp, id); err != nil {
+				if err := mgr.WriteInProgressCheckpoint(&cp, id, 0); err != nil {
 					// assert (not require) inside a goroutine: require's FailNow
 					// is illegal off the test's own goroutine.
 					assert.ErrorIs(t, err, ErrManifestCancelled, "checkpoint error")
