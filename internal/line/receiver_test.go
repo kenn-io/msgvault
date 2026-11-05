@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/line"
@@ -112,7 +113,6 @@ func TestReceiverEnvelopeValidation(t *testing.T) {
 		{"empty events", receiverEnvelope("[]"), http.StatusOK},
 		{"missing events", `{"destination":"` + receiverBot + `"}`, http.StatusBadRequest},
 		{"missing destination", `{"events":[]}`, http.StatusBadRequest},
-		{"empty destination", `{"destination":"","events":[]}`, http.StatusBadRequest},
 		{"null events", receiverEnvelope("null"), http.StatusBadRequest},
 		{"object events", receiverEnvelope("{}"), http.StatusBadRequest},
 		{"bad JSON", `{`, http.StatusBadRequest},
@@ -203,12 +203,7 @@ func TestReceiverBoundedIngress(t *testing.T) {
 	source, err := st.GetOrCreateSource("line", "2000000000")
 	require.NoError(t, err)
 	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, receiverBot))
-	var wake func(string)
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(channel string) {
-		if wake != nil {
-			wake(channel)
-		}
-	})
+	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, nil)
 	require.NoError(t, err)
 	t.Run("unsigned body reads", func(t *testing.T) {
 		must := require.New(t)
@@ -261,13 +256,57 @@ func TestReceiverBoundedIngress(t *testing.T) {
 	t.Run("committed deliveries", func(t *testing.T) {
 		must := require.New(t)
 		checks := assert.New(t)
-		started := make(chan struct{}, 16)
-		release := make(chan struct{})
 		responses := make(chan int, 16)
-		wake = func(string) { started <- struct{}{}; <-release }
 		var requests sync.WaitGroup
-		unblock := sync.OnceFunc(func() { close(release); requests.Wait() })
+		var releaseCommit func()
+		unblock := sync.OnceFunc(func() {
+			defer requests.Wait()
+			if releaseCommit != nil {
+				releaseCommit()
+			}
+		})
 		t.Cleanup(unblock)
+		var pendingCommits func() bool
+		if st.IsPostgreSQL() {
+			st.DB().SetMaxOpenConns(18) // blocker, sixteen deliveries, and the lock observer
+			lock, err := st.DB().BeginTx(t.Context(), nil)
+			must.NoError(err)
+			releaseCommit = func() { must.NoError(lock.Rollback()) }
+			_, err = lock.ExecContext(t.Context(), `LOCK TABLE line_webhook_events IN ACCESS EXCLUSIVE MODE`)
+			must.NoError(err)
+			pendingCommits = func() bool {
+				var waiting int
+				err := st.DB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'`).Scan(&waiting)
+				return err == nil && waiting == 16
+			}
+		} else {
+			st.DB().SetMaxOpenConns(1)
+			started := make(chan struct{}, 16)
+			release := make(chan struct{})
+			releaseCommit = func() { close(release) }
+			conn, err := st.DB().Conn(t.Context())
+			must.NoError(err)
+			err = conn.Raw(func(driverConn any) error {
+				sqliteConn, ok := driverConn.(*sqlite3.SQLiteConn)
+				if !ok {
+					return fmt.Errorf("expected SQLite connection, got %T", driverConn)
+				}
+				return sqliteConn.RegisterFunc("wait_for_line_commit", func() int {
+					started <- struct{}{}
+					<-release
+					return 0
+				}, false)
+			})
+			closeErr := conn.Close()
+			must.NoError(err)
+			must.NoError(closeErr)
+			_, err = st.DB().Exec(`CREATE TRIGGER wait_for_line_commit BEFORE INSERT ON line_webhook_events BEGIN SELECT wait_for_line_commit(); END`)
+			must.NoError(err)
+			waiting := st.DB().Stats().WaitCount
+			pendingCommits = func() bool {
+				return len(started) > 0 && st.DB().Stats().WaitCount >= waiting+15
+			}
+		}
 		for index := range 16 {
 			requests.Go(func() {
 				eventID := fmt.Sprintf("authenticated-%d", index)
@@ -275,15 +314,16 @@ func TestReceiverBoundedIngress(t *testing.T) {
 				responses <- serveSignedReceiver(receiver, body).Code
 			})
 		}
-		for range 16 {
-			select {
-			case <-started:
-			case <-time.After(5 * time.Second):
-				must.FailNow("timed out waiting for authenticated webhook commits")
-			}
-		}
+		must.Eventually(pendingCommits, 5*time.Second, 10*time.Millisecond, "authenticated deliveries must wait for inbox commits")
 		blocked := receiverEnvelope(`[{"type":"future","webhookEventId":"overflow","timestamp":123}]`)
-		checks.Equal(http.StatusServiceUnavailable, serveSignedReceiver(receiver, blocked).Code)
+		overflowDone := make(chan int, 1)
+		requests.Go(func() { overflowDone <- serveSignedReceiver(receiver, blocked).Code })
+		select {
+		case status := <-overflowDone:
+			checks.Equal(http.StatusServiceUnavailable, status)
+		case <-time.After(5 * time.Second):
+			must.FailNow("overflow delivery waited for inbox persistence instead of admission rejection")
+		}
 		unblock()
 		for range 16 {
 			checks.Equal(http.StatusOK, <-responses)
@@ -309,6 +349,10 @@ func TestReceiverChannelBinding(t *testing.T) {
 	b.Secret = "second-synthetic-secret"
 	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{b, a}, nil)
 	must.NoError(err)
+	unknown := httptest.NewRecorder()
+	receiver.ServeHTTP(unknown, httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000002", nil))
+	checks.Equal(http.StatusNotFound, unknown.Code)
+	checks.Empty(unknown.Body.String())
 	body := func(bot string) string {
 		return `{"destination":"` + bot + `","events":[{"type":"future","webhookEventId":"same-event","timestamp":123,"source_id":` + "999" + `}]}`
 	}

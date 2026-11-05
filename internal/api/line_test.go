@@ -124,10 +124,9 @@ func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
 		checks.Contains(response, "untrusted_host")
 	}
 	checks.Equal(int64(1), wakes.Load())
-	// The same exact route receives a body-free 404 for an unknown channel.
-	status, response = lineAPIRequest(t, base, "POST", "/webhooks/line/2000000001", body, lineSignedHeaders(body))
-	checks.Equal(404, status)
-	checks.Empty(response)
+	// Unknown channels also pass the host boundary.
+	_, response = lineAPIRequest(t, base, "POST", "/webhooks/line/2000000001", body, lineSignedHeaders(body))
+	checks.NotContains(response, "untrusted_host")
 }
 
 func TestLineWebhookBurstWithAPIKey(t *testing.T) {

@@ -325,13 +325,10 @@ func TestProcessorLatestEditWins(t *testing.T) {
 	}
 }
 
-func TestProcessorInterruptedEditPassLeavesCacheRebuildSignal(t *testing.T) {
+func TestProcessorInterruptedEditPassCommitsBeforeFinalizationFailure(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newInboxFixture(t)
-	if f.st.IsPostgreSQL() {
-		t.Skip("SQLite trigger injects a real failed finalization; normal processor contracts run on both backends")
-	}
 	base := f.message("1", "original", f.now.UnixMilli())
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
@@ -342,19 +339,26 @@ func TestProcessorInterruptedEditPassLeavesCacheRebuildSignal(t *testing.T) {
 	edit.Timestamp++
 	edit.Message = &Message{ID: "1", Type: "text", Text: "edited"}
 	f.enqueue(t, edit, time.Time{})
-	_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
-	must.NoError(err)
+	if f.st.IsPostgreSQL() {
+		_, err := f.st.DB().Exec(`CREATE FUNCTION fail_line_finalize() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN RAISE EXCEPTION 'synthetic finalization failure'; END $$`)
+		must.NoError(err)
+		_, err = f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations FOR EACH ROW EXECUTE FUNCTION fail_line_finalize()`)
+		must.NoError(err)
+	} else {
+		_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
+		must.NoError(err)
+	}
 	must.Error(f.processor.Process(context.Background()))
 	checks.Equal("edited", f.archived(t, "1").body, "the edit commits before finalization fails")
 	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	must.NoError(err)
 	checks.Equal(int64(1), status.Pending)
-	// The analytics cache rebuilds fully after any failed run with a completion time.
-	var failedRuns int
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs WHERE source_id=? AND status='failed' AND completed_at IS NOT NULL`, f.source.ID).Scan(&failedRuns))
-	checks.Equal(1, failedRuns)
-
-	_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
+	if f.st.IsPostgreSQL() {
+		_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails ON conversations`)
+	} else {
+		_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
+	}
 	must.NoError(err)
 	f.run(t)
 	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)

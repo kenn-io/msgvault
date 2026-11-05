@@ -1707,8 +1707,10 @@ func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
 		name       string
 		background string
 		override   string
+		line       bool
 	}{
 		{name: "foreground"},
+		{name: "LINE receiver", background: "1", line: true},
 		{name: "environment override", background: "1", override: "0s"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1716,6 +1718,9 @@ func TestNewDaemonIdleTrackerDisabled(t *testing.T) {
 			t.Setenv(daemonIdleTimeoutEnv, tt.override)
 			cfg := lifecycleTestConfig(t.TempDir())
 			cfg.Server.DaemonIdleTimeout = time.Second
+			if tt.line {
+				cfg.Line = []config.LineSource{{ChannelID: "2000000001", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true}}
+			}
 
 			assert.Nil(t, newDaemonIdleTracker(cfg, nil, testDiscardLogger()))
 		})
@@ -1928,21 +1933,4 @@ func TestWaitForDaemonExitWithProgressQuietOnFastExit(t *testing.T) {
 
 	require.True(t, exited, "wait must observe daemon exit")
 	assert.Empty(t, out.String(), "fast exits must stay quiet")
-}
-
-func TestLineReceiverKeepsBackgroundDaemonAlive(t *testing.T) {
-	t.Setenv(serveBackgroundChildEnv, "1")
-	t.Setenv(daemonIdleTimeoutEnv, "")
-	synctest.Test(t, func(t *testing.T) {
-		cfg := lifecycleTestConfig(t.TempDir())
-		cfg.Server.DaemonIdleTimeout = time.Second
-		cfg.Line = []config.LineSource{{ChannelID: "2000000001", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true}}
-		var stopped atomic.Bool
-		tracker := newDaemonIdleTracker(cfg, func() { stopped.Store(true) }, testDiscardLogger())
-		if tracker != nil {
-			go tracker.Run(t.Context())
-		}
-		time.Sleep(2 * time.Second)
-		assert.False(t, stopped.Load(), "a quiet webhook receiver must remain reachable")
-	})
 }
