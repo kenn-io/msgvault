@@ -42,15 +42,16 @@ var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.mess
 
 // Keep unique archived events. A live copy wins over archived copies; among
 // archived copies, the lowest message ID wins within the merged source.
+// Email-derived events yield to native calendar events with the same iCalendar UID.
 func calendarEventVisibility(event, message string) string {
 	return fmt.Sprintf(`NOT EXISTS (
  SELECT 1 FROM source_merge_archive_only_messages am
- WHERE am.message_id = %[2]s.id AND am.original_source_message_id <> '' AND EXISTS (
+ WHERE am.message_id = %[2]s.id AND EXISTS (
   SELECT 1 FROM calendar_events other JOIN messages om ON om.id = other.message_id
-  WHERE other.provider_event_id = %[1]s.provider_event_id
-  AND om.source_id = %[2]s.source_id AND om.deleted_at IS NULL
-  AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id AND oa.original_source_message_id <> '')
-   OR other.message_id < %[1]s.message_id)))`, event, message)
+  WHERE om.deleted_at IS NULL AND ((am.original_source_message_id <> '' AND other.provider_event_id = %[1]s.provider_event_id AND om.source_id = %[2]s.source_id)
+   OR (am.original_source_message_id = '' AND NULLIF(om.metadata ->> 'ical_uid', '') = NULLIF(%[2]s.metadata ->> 'ical_uid', '')))
+  AND (NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages oa WHERE oa.message_id = om.id AND (am.original_source_message_id = '' OR oa.original_source_message_id <> ''))
+   OR (am.original_source_message_id <> '' AND other.message_id < %[1]s.message_id))))`, event, message)
 }
 
 func queryCalendarEventRowsWithinBudget(ctx context.Context, r *loggedDB, predicate string, args []any, budget int) ([]CalendarEventRow, error) {

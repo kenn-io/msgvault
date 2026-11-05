@@ -33,6 +33,50 @@ func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
 	}
 }
 
+func TestEmailCalendarVisibilityPrefersNativeCalendar(t *testing.T) {
+	for _, status := range []string{"absent", "confirmed", "cancelled"} {
+		t.Run(status, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source, err := st.GetOrCreateSource("gmail", "owner@example.com")
+			requirements.NoError(err)
+			raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T170000Z\r\nDURATION:PT1H"))
+			emailID := persistInviteEmailForSource(t, st, source.ID, "invite", raw)
+			derived := emailEvents(t, st, source.ID)
+			requirements.Len(derived, 1)
+			ids, wantID := derived, derived[0]
+			if status != "absent" {
+				nativeRaw := strings.NewReplacer(`"confirmed"`, `"`+status+`"`, "event-uid@example.com", "family@example.com").Replace(calendarRaw)
+				data, id := calendarFixture(t, st, "native", nativeRaw)
+				// Calendar sync stores the shared UID in messages.metadata.
+				data.Metadata = &sql.NullString{String: `{"ical_uid":"family@example.com"}`, Valid: true}
+				_, err = st.PersistMessageContext(t.Context(), data)
+				requirements.NoError(err)
+				ids, wantID = append(ids, id), id
+			}
+			rows := calendarRows(t, st, ids...)
+			assertions.Len(rows, 1, "calendar listing must show one copy")
+			if len(rows) == 1 {
+				assertions.Equal(wantID, rows[0].MessageID)
+			}
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			assertions.Len(page.Occurrences, 1, "occurrences must show one copy")
+			if len(page.Occurrences) == 1 {
+				assertions.Equal(wantID, page.Occurrences[0].MessageID)
+				if status != "absent" {
+					assertions.Equal(status, page.Occurrences[0].Status)
+				}
+			}
+			assertions.Equal(derived, emailEvents(t, st, source.ID), "retain the email-derived event")
+			stored, err := st.GetMessageRaw(emailID)
+			requirements.NoError(err)
+			assertions.Equal(raw, stored, "retain the original email")
+		})
+	}
+}
+
 func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
