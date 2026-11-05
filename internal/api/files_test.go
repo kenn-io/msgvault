@@ -481,7 +481,7 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "metadata.txt"},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.txt", URL: "https://files.example/remote.txt"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32)},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/gone.wav"},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "bb/" + hash},
 	}}
 	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
@@ -1042,22 +1042,4 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	light := httptest.NewRecorder()
 	router.ServeHTTP(light, request)
 	require.Equal(http.StatusOK, light.Code, light.Body.String())
-}
-
-func TestRecordedFileWithoutBytesReportsMissing(t *testing.T) {
-	t.Parallel()
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
-	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
-		1: {ID: 1, Filename: "gone.wav", ContentHash: strings.Repeat("ab", 32), StoragePath: "legacy/gone.wav"},
-	}}
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: catalog, Engine: &querytest.MockEngine{}, Logger: testLogger()})
-	response := httptest.NewRecorder()
-	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/files/1", nil))
-	requirements.Equal(http.StatusOK, response.Code)
-	var metadata FileMetadataResponse
-	requirements.NoError(json.NewDecoder(response.Body).Decode(&metadata))
-	assertions.Equal(FileContentMissingBlob, metadata.ContentState)
-	assertions.False(metadata.ContentAvailable)
 }
