@@ -255,16 +255,10 @@ func buildExploreCandidateRank(search SearchSpec) (string, []any) {
 	if search.Mode != SearchSemantic && search.Mode != SearchHybrid {
 		return "NULL::BIGINT", nil
 	}
-	parts := make([]string, len(search.CandidateMessageIDs))
-	args := make([]any, len(search.CandidateMessageIDs))
-	for i, messageID := range search.CandidateMessageIDs {
-		parts[i] = fmt.Sprintf("WHEN ? THEN %d", i)
-		args[i] = messageID
-	}
-	if len(parts) == 0 {
+	if len(search.CandidateMessageIDs) == 0 {
 		return "NULL::BIGINT", nil
 	}
-	return "CASE message_id " + strings.Join(parts, " ") + " ELSE NULL END", args
+	return "(list_position(?::BIGINT[], message_id) - 1)", []any{search.CandidateMessageIDs}
 }
 
 func validateResolvedSearch(search SearchSpec) (SearchProvenance, error) {
@@ -450,12 +444,8 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		if len(request.Search.CandidateMessageIDs) == 0 {
 			conditions = append(conditions, "false")
 		} else {
-			parts := make([]string, len(request.Search.CandidateMessageIDs))
-			for i, id := range request.Search.CandidateMessageIDs {
-				parts[i] = "?"
-				args = append(args, id)
-			}
-			conditions = append(conditions, "message_id IN ("+strings.Join(parts, ",")+")")
+			conditions = append(conditions, "message_id IN (SELECT UNNEST(?::BIGINT[]))")
+			args = append(args, request.Search.CandidateMessageIDs)
 		}
 	}
 	if len(conditions) == 0 {
