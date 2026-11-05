@@ -66,7 +66,7 @@
   }
 
   async function saveOrganization(): Promise<void> {
-    if (loading || submitting || (initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations) return;
+    if (submitting || !name.trim() || controller.createBlocked.organizations) return;
     submitting = true;
     message = '';
     conflictCurrent = undefined;
@@ -119,7 +119,7 @@
   }
 
   async function remove(): Promise<void> {
-    if (!initialOrganization || submitting || checkingDelete || !holders || holders.count > 0) return;
+    if (!initialOrganization || submitting) return;
     submitting = true;
     message = '';
     try {
@@ -348,26 +348,22 @@
         {/if}
       </div>
     {/if}
-    {#if initialOrganization && !loading && !currentProfile}<Button label="Retry organization load" onclick={() => void loadCurrent()} />{/if}
     {#if controller.createBlocked.organizations}<Button label="Refresh organizations" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
   </div>
   {#snippet footer()}
-    <div class="footer-actions">
     {#if confirmDelete}
       <Button label="Cancel" ariaLabel="Cancel organization deletion" disabled={submitting} onclick={() => { confirmDelete = false; message = ''; }} />
       <Button tone="danger" surface="solid" label="Delete" ariaLabel="Confirm delete organization" busy={submitting} disabled={checkingDelete || !!deleteError || !holders || holders.count > 0} onclick={() => void remove()} />
     {:else}
       {#if initialOrganization && currentProfile}<Button class="delete-organization" tone="danger" label="Delete organization" disabled={submitting} onclick={() => void checkDeletion()} />{/if}
       <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-      <Button tone="info" surface="solid" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations} onclick={() => formElement?.requestSubmit()} />
+      <Button tone="info" surface="solid" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={loading || !name.trim() || controller.createBlocked.organizations} onclick={() => formElement?.requestSubmit()} />
     {/if}
-    </div>
   {/snippet}
 </Modal>
 
 <style>
   .editor, form { display: grid; gap: var(--field-gap); }
-  .footer-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: inherit; width: 100%; }
   .deletion { display: grid; gap: var(--space-2); }
   :global(.kit-button.kit-button--danger.delete-organization) { margin-right: auto; border-color: transparent; background: transparent; color: var(--text-danger); }
   label { display: grid; gap: var(--label-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
@@ -376,5 +372,4 @@
   .current-data { display: grid; gap: var(--space-2); margin-top: var(--space-2); max-height: 20rem; overflow: auto; }
   .current-data dl { display: grid; gap: var(--space-1); } .current-data dl div { display: grid; grid-template-columns: 8rem 1fr; gap: var(--space-2); }
   .current-data dt, .current-data h4 { font-weight: 600; } .current-data ul { padding-left: var(--space-4); }
-  @media (max-width: 640px) { :global(.kit-button.kit-button--danger.delete-organization) { flex-basis: 100%; justify-content: flex-start; } }
 </style>

@@ -204,9 +204,4 @@
   .org-link { padding: 0; border: 0; background: none; color: var(--link-ink); font: inherit; cursor: pointer; }
   .org-link:hover { text-decoration: underline; }
   [role="alert"] { color: var(--text-danger); }
-  @media (max-width: 640px) {
-    .records :global(.detail-row) { flex-wrap: wrap; }
-    .records :global(.detail-row > .value) { flex-basis: 100%; }
-    .records :global(.detail-row > .actions) { flex-wrap: wrap; max-width: 100%; }
-  }
 </style>

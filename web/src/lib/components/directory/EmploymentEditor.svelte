@@ -115,13 +115,6 @@
 
   async function submit(): Promise<void> {
     if (submitting || (!organizationID && !(creatingOrganization && organizationName.trim())) || startDateError || endDateError || controller.createBlocked.employments || (creatingOrganization && controller.createBlocked.organizations)) return;
-    if (isCurrent && endDate.trim()) { message = 'A current employment cannot have an end date.'; return; }
-    if (startDate.trim() && endDate.trim()) {
-      const start = startDate.trim().replaceAll('-', '');
-      const end = endDate.trim().replaceAll('-', '');
-      const precision = Math.min(start.length, end.length);
-      if (end.slice(0, precision) < start.slice(0, precision)) { message = 'End date must not precede start date.'; return; }
-    }
     submitting = true;
     message = '';
     conflictCurrent = undefined;
