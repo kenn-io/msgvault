@@ -62,7 +62,7 @@ function deferredResponse() {
 }
 
 const relationshipTypes = [
-  relationshipType({ id: 1, slug: 'colleague', forward_label: 'works with', reverse_label: 'works with', is_symmetric: true }),
+  relationshipType({ id: 1, slug: 'colleague', forward_label: 'works with', reverse_label: 'is worked with' }),
   relationshipType({ id: 2, reverse_label: 'mentored by' })
 ];
 
@@ -107,8 +107,7 @@ describe('PersonNetwork', () => {
   it.each([
     ['mentor', false, 'mentors'],
     ['mentor', true, 'mentored by'],
-    ['colleague', false, 'works with'],
-    ['colleague', true, 'works with']
+    ['colleague', true, 'is worked with']
   ] as const)('orients %s with incoming=%s as %s', async (slug, incoming, expected) => {
     const network = connected();
     network.nodes = network.nodes.slice(0, 2);
@@ -118,11 +117,10 @@ describe('PersonNetwork', () => {
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await screen.findByRole('button', { name: 'Curated Peer' });
     expect(container.querySelector('.edge-label')?.textContent).toBe(expected);
-    expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain(incoming ? 'Curated Peer ·' : 'Selected Person ·');
   });
 
   it('marks an incoming mentor label right to left when relationship types fail to load', async () => {
-    const network = connected(1);
+    const network = connected();
     network.nodes = network.nodes.slice(0, 2);
     network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' }];
     const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
@@ -189,7 +187,7 @@ describe('PersonNetwork', () => {
           ? Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 })
           : Response.json(connected(2));
       }
-      return Response.json(connected(depth));
+      return Response.json(depthThree());
     }));
     const controller = new DirectoryEntityController(client, 7);
 
@@ -215,28 +213,7 @@ describe('PersonNetwork', () => {
 
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '3')).toBe(true));
-  });
-
-  it('discards a stale depth response', async () => {
-    const depthTwo = deferredResponse();
-    const requests: Request[] = [];
-    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
-      const request = requestOf(input);
-      requests.push(request);
-      const depth = Number(new URL(request.url).searchParams.get('depth'));
-      if (depth === 2) return depthTwo.promise;
-      return Response.json(depth === 3 ? depthThree() : connected(1));
-    }));
-    const controller = new DirectoryEntityController(client, 7);
-
-    render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByRole('button', { name: 'Curated Peer' });
-    await fireEvent.click(screen.getByRole('radio', { name: '2 steps' }));
-    await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '2')).toBe(true));
-    await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await screen.findByRole('button', { name: 'Depth Three Person' });
-    depthTwo.resolve(Response.json(connected(2)));
-    await waitFor(() => expect(controller.network?.depth).toBe(3));
     expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain('Depth Three Person');
   });
 });

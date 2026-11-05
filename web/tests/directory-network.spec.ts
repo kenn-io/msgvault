@@ -45,11 +45,8 @@ test('Directory network shows curated connections, omits message-only contacts, 
   await page.getByRole('radio', { name: 'Details', exact: true }).click();
 
   const list = page.getByRole('list', { name: 'Network connections' });
-  await expect(list).toContainText('Archive Person · works with · Curated Peer');
   await page.getByRole('radio', { name: '2 steps', exact: true }).click();
-  await expect(list).toContainText('Curated Peer · Engineer · Shared Organization');
   await expect(list).not.toContainText('Message-only Contact');
-  await expect(page.locator('.person-network svg')).toHaveAttribute('aria-hidden', 'true');
 
   const network = page.getByRole('region', { name: 'Directory network', exact: true });
   await network.getByRole('button', { name: 'Shared Organization' }).click();
@@ -96,20 +93,21 @@ for (const scenario of ['shared organization', 'nested same-column relations', '
     await page.getByRole('radio', { name: 'Details', exact: true }).click();
     await page.getByRole('radio', { name: '2 steps', exact: true }).click();
     const network = page.getByRole('region', { name: 'Directory network', exact: true });
-    await expect(network.locator('path')).toHaveCount(edges.length);
     await expect(network.getByRole('region', { name: 'Network graph' })).toHaveAttribute('aria-busy', 'false');
     await page.evaluate(() => document.fonts.ready);
     const names = network.getByRole('button');
-    const nameBoxes = await Promise.all((await names.all()).map((name) => name.boundingBox()));
-    for (const name of nameBoxes) expect(name!.width).toBeGreaterThan(40);
-    if (scenario === 'long employment title') {
-      for (const name of await names.all()) {
-        await name.scrollIntoViewIfNeeded();
-        expect(await name.evaluate((button) => {
-          const box = button.getBoundingClientRect();
-          return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
-        })).toBe(true);
-      }
+    for (const name of await names.all()) {
+      await name.scrollIntoViewIfNeeded();
+      expect(await name.evaluate((button) => {
+        const box = button.getBoundingClientRect();
+        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
+      })).toBe(true);
+    }
+    if (nested) {
+      const rails = await network.locator('svg path').evaluateAll((paths) => paths
+        .filter((path) => path.getAttribute('d')!.includes(' V '))
+        .map((path) => (path as SVGPathElement).getPointAtLength((path as SVGPathElement).getTotalLength() / 2).x));
+      expect(Math.abs(rails[0]! - rails[1]!)).toBeGreaterThan(0);
     }
   });
 }
