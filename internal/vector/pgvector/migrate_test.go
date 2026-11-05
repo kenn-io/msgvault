@@ -30,7 +30,7 @@ func TestMigrate_ReclaimsRetiredDocumentVectors(t *testing.T) {
 		var remaining int
 		require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM pg_class
 			WHERE relnamespace = current_schema()::regnamespace
-			AND relname IN ('document_vector_embeddings', 'document_vector_backend_generations', 'idx_document_vector_embeddings_generation')`).Scan(&remaining))
-		assert.Zero(t, remaining, "retired vectors, generations, and their index are reclaimed")
+			AND relname IN ('document_vector_embeddings', 'document_vector_backend_generations', 'idx_document_vector_embeddings_generation', 'idx_document_vector_embeddings_hnsw_d4')`).Scan(&remaining))
+		assert.Zero(t, remaining, "retired vectors, generations, and their indexes are reclaimed")
 	}
 }

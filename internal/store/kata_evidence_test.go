@@ -50,6 +50,21 @@ func TestKataDocbankSourceEditBeforeReconciliation(t *testing.T) {
 }
 
 func TestKataCitationSourceMatchesLegacyDocumentCitation(t *testing.T) {
+	requirements := require.New(t)
+	f := storetest.New(t)
+	overriding := ""
+	if f.Store.IsPostgreSQL() {
+		overriding = " OVERRIDING SYSTEM VALUE"
+	}
+	_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+overriding+` VALUES (4101,?,?,'historical-document','email')`), f.Source.ID, f.ConvID)
+	requirements.NoError(err)
+	_, err = f.Store.DB().Exec(`INSERT INTO attachments (id,message_id,filename,storage_path)` + overriding + ` VALUES (4201,4101,'budget.pdf','')`)
+	requirements.NoError(err)
+	uid, err := f.Store.ArchiveUIDContext(t.Context())
+	requirements.NoError(err)
+	// A saved issue cites the file key produced before the document index was retired.
+	citation := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: uid, MessageID: 4101, SourceType: f.Source.SourceType, SourceIdentifier: f.Source.Identifier, SourceMessageID: "historical-document", AttachmentID: 4201, OccurrenceKey: "dococc_99373c3722401a27c9e5a6ce6a90774c733c01f1684fcbbb8b759bc989e320f4"}
+	other := f.CreateMessage("other-message")
 	for _, tc := range []struct {
 		name    string
 		partKey any
@@ -61,19 +76,10 @@ func TestKataCitationSourceMatchesLegacyDocumentCitation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			f := storetest.New(t)
-			overriding := ""
-			if f.Store.IsPostgreSQL() {
-				overriding = " OVERRIDING SYSTEM VALUE"
-			}
-			_, err := f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO messages (id,source_id,conversation_id,source_message_id,message_type)`+overriding+` VALUES (4101,?,?,'historical-document','email')`), f.Source.ID, f.ConvID)
+			_, err := f.Store.DB().Exec(f.Store.Rebind(`UPDATE attachments SET source_part_key=? WHERE id=4201`), tc.partKey)
 			require.NoError(err)
-			_, err = f.Store.DB().Exec(f.Store.Rebind(`INSERT INTO attachments (id,message_id,filename,storage_path,source_part_key)`+overriding+` VALUES (4201,4101,'budget.pdf','',?)`), tc.partKey)
-			require.NoError(err)
-			uid, err := f.Store.ArchiveUIDContext(t.Context())
-			require.NoError(err)
-			// A saved issue cites the file key produced before the document index was retired.
-			citation := kataevidence.Reference{Version: 1, Kind: "document_chunk", ArchiveUID: uid, MessageID: 4101, SourceType: f.Source.SourceType, SourceIdentifier: f.Source.Identifier, SourceMessageID: "historical-document", AttachmentID: 4201, OccurrenceKey: tc.key}
+			citation := citation
+			citation.OccurrenceKey = tc.key
 			savedKeys := kataevidence.SourceKeys(citation)
 			refs, err := f.Store.KataCitationSource(t.Context(), 4101, 4201)
 			require.NoError(err)
@@ -83,17 +89,12 @@ func TestKataCitationSourceMatchesLegacyDocumentCitation(t *testing.T) {
 				lookupKeys = append(lookupKeys, keys[len(keys)-1])
 			}
 			assert.Contains(lookupKeys, savedKeys[len(savedKeys)-1])
-			require.NotEmpty(refs)
-			_, err = f.Store.ReadKataEvidenceSource(t.Context(), refs[0])
+			_, err = f.Store.KataCitationSource(t.Context(), other, 4201)
 			require.ErrorIs(err, kataevidence.ErrUnavailable)
-
-			if tc.name == "stable" {
-				other := f.CreateMessage("other-message")
-				_, err = f.Store.KataCitationSource(t.Context(), other, 4201)
-				require.ErrorIs(err, kataevidence.ErrUnavailable)
-			}
 		})
 	}
+	_, err = f.Store.ReadKataEvidenceSource(t.Context(), citation)
+	requirements.ErrorIs(err, kataevidence.ErrUnavailable)
 }
 
 func TestKataEvidenceMessage(t *testing.T) {
@@ -213,15 +214,14 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 			case "content refresh", "revoked":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
-				found := false
+				var renditions []kataevidence.Reference
 				for _, source := range sources {
-					if source.Kind != "docbank_rendition" {
-						continue
+					if source.Kind == "docbank_rendition" {
+						renditions = append(renditions, source)
 					}
-					found = true
-					assert.Equal(kataevidence.SourceKeys(ref), kataevidence.SourceKeys(source))
 				}
-				assert.True(found)
+				require.Len(renditions, 1)
+				assert.Equal(kataevidence.SourceKeys(ref), kataevidence.SourceKeys(renditions[0]))
 			case "reused attachment":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)

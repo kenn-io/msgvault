@@ -313,7 +313,9 @@ func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
 	checks.Equal(fmt.Sprintf("%020d", first), window.NextReconcileKey)
 	checks.Equal(conversationThrough, window.NextSequence)
 	checks.Len(window.Changes, 1)
+}
 
+func TestLoadPersonSweepWindowOtherLaneChangesWithdrawOnlyDocumentEvidence(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		query  string
@@ -425,7 +427,7 @@ func TestLoadPersonSweepWindowBackstopContinuesCapturedRange(t *testing.T) {
 	checks.NotContains(sweepMessageIDs(second.Seeds), thirdID)
 }
 
-func TestPersonSweepEvidenceAppliesPolicyDateAndSourceBounds(t *testing.T) {
+func TestPersonSweepEvidenceAppliesPolicyDateBounds(t *testing.T) {
 	checks := assert.New(t)
 	requirements := require.New(t)
 	f := newPersonSweepJournalFixture(t, true, false)
@@ -435,9 +437,8 @@ func TestPersonSweepEvidenceAppliesPolicyDateAndSourceBounds(t *testing.T) {
 	addSweepBody(t, f, current, "needle current")
 	got, err := f.store.SearchPersonSweepMessages(t.Context(), peoplesweep.ContextRequest{
 		PersonID: f.alicePersonID, CandidateMessageIDs: []int64{old, current},
-		Target:        personfacts.TargetDescriptor{Description: "needle"},
-		SourceClasses: []peoplesweep.SourceClass{peoplesweep.SourceConversationText},
-		SourceSince:   "2026-01-01", SourceUntil: "2026-12-31", Limit: 10,
+		Target:      personfacts.TargetDescriptor{Description: "needle"},
+		SourceSince: "2026-01-01", SourceUntil: "2026-12-31", Limit: 10,
 	})
 	requirements.NoError(err)
 	checks.Equal([]int64{current}, sweepMessageIDs(got))

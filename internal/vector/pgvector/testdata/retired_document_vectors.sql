@@ -18,3 +18,7 @@ CREATE TABLE IF NOT EXISTS document_vector_embeddings (
 );
 CREATE INDEX IF NOT EXISTS idx_document_vector_embeddings_generation
     ON document_vector_embeddings(generation_id, dimension, token);
+CREATE INDEX IF NOT EXISTS idx_document_vector_embeddings_hnsw_d4
+    ON document_vector_embeddings
+    USING hnsw ((embedding::vector(4)) vector_cosine_ops)
+    WHERE dimension = 4;

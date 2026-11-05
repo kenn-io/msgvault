@@ -26,6 +26,9 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 		{name: "queued document deletion", queuedDeletion: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.interrupted && !store.IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+				t.Skip("PostgreSQL trigger function dependency")
+			}
 			requirements := require.New(t)
 			checks := assert.New(t)
 			f := storetest.New(t)
@@ -35,9 +38,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 			f.ConvID, err = f.Store.EnsureConversation(source.ID, "document-upgrade", "Document upgrade")
 			requirements.NoError(err)
 			ctx := t.Context()
-			if tc.interrupted && !f.Store.IsPostgreSQL() {
-				t.Skip("PostgreSQL trigger function dependency")
-			}
 			exec := func(statement string, args ...any) {
 				t.Helper()
 				_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(statement), args...)
@@ -178,9 +178,6 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 				requirements.NoError(err)
 				checks.Contains(changes, personfacts.EvidenceStatusChange{EvidenceKey: key, SourceVersion: input.SourceVersion, Supported: false, Reason: personfacts.EvidenceStatusSourceDeleted})
 			}
-
-			_, err = f.Store.GetAttachmentChangeConsumer(ctx, "document-index/v1")
-			requirements.ErrorIs(err, store.ErrAttachmentChangeConsumerMissing)
 
 			// The next open re-applies the schema; the dropped hook must stay dropped.
 			requirements.NoError(f.Store.InitSchemaContext(ctx))

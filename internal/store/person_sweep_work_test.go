@@ -483,105 +483,106 @@ func TestPersonSweepWorkCoalescesDirtyHighWater(t *testing.T) {
 	checks.Equal(1, rows)
 	checks.Equal(want, got)
 	checks.Equal(1, result.WorkCreated)
-	t.Run("queued document deletion", func(t *testing.T) {
-		checks := assert.New(t)
-		requirements := require.New(t)
-		f := newPersonSweepJournalFixture(t, true, false)
-		exec := func(statement string, args ...any) {
-			t.Helper()
-			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(statement), args...)
-			requirements.NoError(err)
-		}
-		// These historical tables and hooks produce the journal an upgraded archive retains.
-		suffix := "sqlite"
-		if f.store.IsPostgreSQL() {
-			suffix = "postgres"
-		}
-		for _, path := range []string{"testdata/retired_document_tables_" + suffix + ".sql", "testdata/person_sweep_document_triggers_" + suffix + ".sql"} {
-			schema, err := os.ReadFile(path)
-			requirements.NoError(err)
-			exec(string(schema))
-		}
-		config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "default"},
-			Providers: map[string]peoplesweep.ProviderConfig{"default": {
-				Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1",
-				Model: "synthetic", Auth: peoplesweep.AuthBearer, Credential: peoplesweep.CredentialEnv,
-				CredentialEnv: "TEST_KEY", OutputMode: peoplesweep.OutputModeNativeJSONSchema,
-				TokenLimitParameter: "max_completion_tokens", RetentionPosture: "zero_retention",
-				TrainingPosture: "no_training", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}, SourceSince: "2025-01-01",
-			}}}
-		config.ApplyDefaults()
-		profile, err := config.Profile()
-		requirements.NoError(err)
-		_, err = f.store.EnsurePersonInferenceProfile(t.Context(), profile)
-		requirements.NoError(err)
-		catalog, err := f.store.BuildPersonFactCatalogContext(t.Context(), profile.AllowSensitive)
-		requirements.NoError(err)
-		now := time.Now().UTC()
-		cursorKey := peoplesweep.CursorKey{PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceMeetingText,
-			ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint}
-		_, err = f.store.EnsurePersonSweepCursors(t.Context(), []peoplesweep.CursorKey{cursorKey})
-		requirements.NoError(err)
+}
 
-		var messageIDs []int64
-		for i := range 1002 {
-			messageBefore := latestPersonSweepSequence(t, f.store)
-			id := f.insertMessage(t, fmt.Sprintf("document-%d", i), "email", f.aliceID, now)
-			messageIDs = append(messageIDs, id)
-			addSweepBody(t, f, id, "Document message")
-			requirements.NoError(f.store.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "synthetic.pdf", SourceAttachmentID: fmt.Sprintf("attachment-%d", i)}))
-			var attachmentID int64
-			requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT id FROM attachments WHERE message_id=?`), id).Scan(&attachmentID))
-			occurrence := fmt.Sprintf("occurrence-%d", i)
-			exec(`INSERT INTO document_occurrences (occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source) VALUES (?,?,?,? ,?,'attachment','source')`, occurrence, attachmentID, id, f.sourceID, strings.Repeat("a", 64))
-			input := sweepEvidenceInput(t, sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, messageBefore).Seeds, id))
-			input.SourceRef, err = peoplesweep.EncodePersonSweepEvidenceRef(peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id, AttachmentID: attachmentID, OccurrenceKey: occurrence, ChunkKey: "chunk", SpanEnd: 4})
-			requirements.NoError(err)
-			input.SourceVersion = "document/v1:chunk"
-			key, err := personfacts.EvidenceKey(input)
-			requirements.NoError(err)
-			persistSweepEvidence(t, f.store, key, input)
-		}
-		before := latestPersonSweepSequence(t, f.store)
-		lease := claimPersonSweepFixture(t, f.store, "before-deletions")
-		requirements.NoError(f.store.AdvancePersonSweepReconciliation(t.Context(), *lease, peoplesweep.GenerationCursor{Key: cursorKey, Mode: peoplesweep.GenerationCursorOptimistic, CursorFrom: 0, CursorThrough: before}))
-		requirements.NoError(f.store.CompleteIdlePersonSweep(t.Context(), *lease, cursorKey.ProgramFingerprint, cursorKey.CatalogFingerprint, profile.AllowedSources))
-		// Keep gap recovery focused on the journal, rather than a due backstop.
-		exec(`UPDATE person_sweep_cursors SET last_backstop_at=? WHERE person_id=?`, now, f.alicePersonID)
-		for _, id := range messageIDs {
-			exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, id)
-			exec(`DELETE FROM document_occurrences WHERE message_id=?`, id)
-		}
-		runner := &noProviderSweepRunner{}
-		serial := 0
-		worker := peoplesweep.Worker{Config: config, Store: f.store, Source: f.store,
-			Context: peoplesweep.NewContextRetriever(f.store), Sink: f.store, Runner: runner, Catalog: f.store,
-			WorkerID: "upgrade-worker", Clock: func() time.Time { return now },
-			NewID: func() string { serial++; return fmt.Sprintf("upgrade-%d", serial) }}
-		runFreshnessSweep(t, worker, f.alicePersonID)
-		var workRows, withdrawn int
-		requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_sweep_work WHERE person_id=?`), f.alicePersonID).Scan(&workRows))
-		checks.Equal(1, workRows, "document deletions beyond the first 1,000 journal rows must keep the person queued")
-		requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(DISTINCT evidence_key) FROM person_fact_evidence_status_events WHERE person_id=? AND supported=FALSE AND reason='source-deleted'`), f.alicePersonID).Scan(&withdrawn))
-		checks.Equal(500, withdrawn, "the 1,000-row scan consumes one conversation and one document deletion per message")
-		checks.Equal(before+1000, loadPersonSweepCursor(t, f.store, cursorKey).OptimisticSequence)
-		// Simulate lost queue state to exercise the journal-gap recovery separately.
-		exec(`DELETE FROM person_sweep_work WHERE person_id=?`, f.alicePersonID)
-		gap, err := f.store.ReconcilePersonSweepWorkContext(t.Context(), peoplesweep.GapRequest{
-			ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint,
-			SourceLanes: []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}, Limit: 100,
-			Now: now, BackstopInterval: 24 * time.Hour,
-		})
+func TestPersonSweepRetiredDocumentDeletionsDrainPagingAndRecoverGaps(t *testing.T) {
+	checks := assert.New(t)
+	requirements := require.New(t)
+	f := newPersonSweepJournalFixture(t, true, false)
+	exec := func(statement string, args ...any) {
+		t.Helper()
+		_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(statement), args...)
 		requirements.NoError(err)
-		checks.Equal(1, gap.WorkCreated, "journal-gap recovery must see pending rows from the retired lane")
-		runFreshnessSweep(t, worker, f.alicePersonID)
-		runFreshnessSweep(t, worker, f.alicePersonID)
-		requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(DISTINCT evidence_key) FROM person_fact_evidence_status_events WHERE person_id=? AND supported=FALSE AND reason='source-deleted'`), f.alicePersonID).Scan(&withdrawn))
-		checks.Equal(1002, withdrawn, "every retained document reference must be withdrawn")
-		requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_sweep_work WHERE person_id=?`), f.alicePersonID).Scan(&workRows))
-		checks.Zero(workRows, "the queue must drain after all journal rows are processed")
-		checks.Zero(runner.calls)
+	}
+	// These historical tables and hooks produce the journal an upgraded archive retains.
+	suffix := "sqlite"
+	if f.store.IsPostgreSQL() {
+		suffix = "postgres"
+	}
+	for _, path := range []string{"testdata/retired_document_tables_" + suffix + ".sql", "testdata/person_sweep_document_triggers_" + suffix + ".sql"} {
+		schema, err := os.ReadFile(path)
+		requirements.NoError(err)
+		exec(string(schema))
+	}
+	config := peoplesweep.Config{Enabled: true, Provider: peoplesweep.ProviderSelection{Name: "default"},
+		Providers: map[string]peoplesweep.ProviderConfig{"default": {
+			Protocol: peoplesweep.ProtocolOpenAIChat, Endpoint: "https://api.example.test/v1",
+			Model: "synthetic", Auth: peoplesweep.AuthBearer, Credential: peoplesweep.CredentialEnv,
+			CredentialEnv: "TEST_KEY", OutputMode: peoplesweep.OutputModeNativeJSONSchema,
+			TokenLimitParameter: "max_completion_tokens", RetentionPosture: "zero_retention",
+			TrainingPosture: "no_training", AllowedSources: []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}, SourceSince: "2025-01-01",
+		}}}
+	config.ApplyDefaults()
+	profile, err := config.Profile()
+	requirements.NoError(err)
+	_, err = f.store.EnsurePersonInferenceProfile(t.Context(), profile)
+	requirements.NoError(err)
+	catalog, err := f.store.BuildPersonFactCatalogContext(t.Context(), profile.AllowSensitive)
+	requirements.NoError(err)
+	now := time.Now().UTC()
+	cursorKey := peoplesweep.CursorKey{PersonID: f.alicePersonID, SourceLane: peoplesweep.SourceMeetingText,
+		ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint}
+	_, err = f.store.EnsurePersonSweepCursors(t.Context(), []peoplesweep.CursorKey{cursorKey})
+	requirements.NoError(err)
+
+	var messageIDs []int64
+	for i := range 1002 {
+		messageBefore := latestPersonSweepSequence(t, f.store)
+		id := f.insertMessage(t, fmt.Sprintf("document-%d", i), "email", f.aliceID, now)
+		messageIDs = append(messageIDs, id)
+		addSweepBody(t, f, id, "Document message")
+		requirements.NoError(f.store.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "synthetic.pdf", SourceAttachmentID: fmt.Sprintf("attachment-%d", i)}))
+		var attachmentID int64
+		requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT id FROM attachments WHERE message_id=?`), id).Scan(&attachmentID))
+		occurrence := fmt.Sprintf("occurrence-%d", i)
+		exec(`INSERT INTO document_occurrences (occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source) VALUES (?,?,?,? ,?,'attachment','source')`, occurrence, attachmentID, id, f.sourceID, strings.Repeat("a", 64))
+		input := sweepEvidenceInput(t, sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, messageBefore).Seeds, id))
+		input.SourceRef, err = peoplesweep.EncodePersonSweepEvidenceRef(peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id, AttachmentID: attachmentID, OccurrenceKey: occurrence, ChunkKey: "chunk", SpanEnd: 4})
+		requirements.NoError(err)
+		input.SourceVersion = "document/v1:chunk"
+		key, err := personfacts.EvidenceKey(input)
+		requirements.NoError(err)
+		persistSweepEvidence(t, f.store, key, input)
+	}
+	before := latestPersonSweepSequence(t, f.store)
+	lease := claimPersonSweepFixture(t, f.store, "before-deletions")
+	requirements.NoError(f.store.AdvancePersonSweepReconciliation(t.Context(), *lease, peoplesweep.GenerationCursor{Key: cursorKey, Mode: peoplesweep.GenerationCursorOptimistic, CursorFrom: 0, CursorThrough: before}))
+	requirements.NoError(f.store.CompleteIdlePersonSweep(t.Context(), *lease, cursorKey.ProgramFingerprint, cursorKey.CatalogFingerprint, profile.AllowedSources))
+	// Keep gap recovery focused on the journal, rather than a due backstop.
+	exec(`UPDATE person_sweep_cursors SET last_backstop_at=? WHERE person_id=?`, now, f.alicePersonID)
+	for _, id := range messageIDs {
+		exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, id)
+		exec(`DELETE FROM document_occurrences WHERE message_id=?`, id)
+	}
+	runner := &noProviderSweepRunner{}
+	serial := 0
+	worker := peoplesweep.Worker{Config: config, Store: f.store, Source: f.store,
+		Context: peoplesweep.NewContextRetriever(f.store), Sink: f.store, Runner: runner, Catalog: f.store,
+		WorkerID: "upgrade-worker", Clock: func() time.Time { return now },
+		NewID: func() string { serial++; return fmt.Sprintf("upgrade-%d", serial) }}
+	runFreshnessSweep(t, worker, f.alicePersonID)
+	var workRows, withdrawn int
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_sweep_work WHERE person_id=?`), f.alicePersonID).Scan(&workRows))
+	checks.Equal(1, workRows, "document deletions beyond the first 1,000 journal rows must keep the person queued")
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(DISTINCT evidence_key) FROM person_fact_evidence_status_events WHERE person_id=? AND supported=FALSE AND reason='source-deleted'`), f.alicePersonID).Scan(&withdrawn))
+	checks.Equal(500, withdrawn, "the 1,000-row scan consumes one conversation and one document deletion per message")
+	checks.Equal(before+1000, loadPersonSweepCursor(t, f.store, cursorKey).OptimisticSequence)
+	// Simulate lost queue state to exercise the journal-gap recovery separately.
+	exec(`DELETE FROM person_sweep_work WHERE person_id=?`, f.alicePersonID)
+	gap, err := f.store.ReconcilePersonSweepWorkContext(t.Context(), peoplesweep.GapRequest{
+		ProgramFingerprint: peoplesweep.ProgramFingerprint(), CatalogFingerprint: catalog.Fingerprint,
+		SourceLanes: []peoplesweep.SourceClass{peoplesweep.SourceMeetingText}, Limit: 100,
+		Now: now, BackstopInterval: 24 * time.Hour,
 	})
+	requirements.NoError(err)
+	checks.Equal(1, gap.WorkCreated, "journal-gap recovery must see pending rows from the retired lane")
+	runFreshnessSweep(t, worker, f.alicePersonID)
+	runFreshnessSweep(t, worker, f.alicePersonID)
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(DISTINCT evidence_key) FROM person_fact_evidence_status_events WHERE person_id=? AND supported=FALSE AND reason='source-deleted'`), f.alicePersonID).Scan(&withdrawn))
+	checks.Equal(1002, withdrawn, "every retained document reference must be withdrawn")
+	requirements.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT COUNT(*) FROM person_sweep_work WHERE person_id=?`), f.alicePersonID).Scan(&workRows))
+	checks.Zero(workRows, "the queue must drain after all journal rows are processed")
+	checks.Zero(runner.calls)
 }
 
 func TestPersonSweepCursorCASRejectsStaleSequence(t *testing.T) {
