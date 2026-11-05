@@ -145,6 +145,7 @@
 {/if}
 
 {#if maintenance === 'tracking'}
+  <div class="tracking-dialog">
   <Modal
     title={controller.person?.display_name ? `Keep ${controller.person.display_name}'s profile updated` : 'Keep this profile updated'}
     closeLabel="Close profile updates"
@@ -157,6 +158,7 @@
     <PersonTrackingControl {client} {personID} definitions={trackingDefinitions} {onAnnounce} />
     {#snippet footer()}<Button label="Close" onclick={() => maintenance = undefined} />{/snippet}
   </Modal>
+  </div>
 {:else if maintenance === 'publication'}
   <Modal ariaLabel="Publish to address book" onclose={() => maintenance = undefined}>
     <CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />
@@ -164,6 +166,10 @@
 {/if}
 
 <style>
+  .tracking-dialog :global(.kit-modal-title) {
+    overflow-wrap: anywhere;
+  }
+
   /* Full width, so inside the person header's wrapping row each group drops below the actions. */
   .person-action {
     flex: 1 0 100%;

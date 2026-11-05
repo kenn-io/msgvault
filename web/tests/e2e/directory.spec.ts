@@ -3,6 +3,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { parseExploreURLState } from '../../src/lib/explore/state.svelte';
 import { installMixedArchive } from './fixtures/mixed-archive';
+import { person } from '../../src/lib/directory/person-fixtures.test-support';
 
 function directoryURL(personID?: number): string {
   return `/?explore=${encodeURIComponent(JSON.stringify({
@@ -208,6 +209,24 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   expect(Math.max(...geometry.heights)).toBeLessThanOrEqual(60);
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
   await expectNoAxeViolations(page, 'Directory profile maintenance narrow');
+});
+
+test('Directory profile maintenance wraps long names within a narrow dialog', async ({ page }) => {
+  await installMixedArchive(page);
+  const name = `${'long'.repeat(20)}@example.com`;
+  await page.route('**/api/v1/people/42', route => route.fulfill({ json: person(42, 1, [12], name) }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(directoryURL(42));
+  await page.getByRole('button', { name: 'More actions' }).click();
+  await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
+  const dialog = page.getByRole('dialog', { name: `Keep ${name}'s profile updated` });
+  await expect(dialog).toBeVisible();
+  const bounds = await dialog.evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
+  expect(bounds.content).toBeLessThanOrEqual(bounds.width + 1);
+  const close = dialog.getByRole('button', { name: 'Close profile updates' });
+  await expect(close).toBeInViewport();
+  await close.click();
+  await expect(dialog).toBeHidden();
 });
 
 test('Directory retains rows after an invalid cursor and reloads page one', async ({ page }) => {
