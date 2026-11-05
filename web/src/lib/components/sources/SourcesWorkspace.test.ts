@@ -548,6 +548,30 @@ describe('SourcesWorkspace', () => {
     expect(onOpenOperations).toHaveBeenCalledOnce();
   });
 
+  it('clears copy feedback when the command changes', async () => {
+    const writeText = vi.fn(async () => undefined);
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    try {
+      render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
+      await screen.findByText('No sources yet');
+      await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+      const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
+      await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
+      const email = dialog.getByLabelText('Email address');
+      await fireEvent.input(email, { target: { value: 'one@example.com' } });
+      await fireEvent.click(dialog.getByRole('button', { name: 'Copy msgvault add-account one@example.com' }));
+      await waitFor(() => expect(dialog.getByRole('button', { name: 'Copied' })).toBeDefined());
+      expect(writeText).toHaveBeenCalledWith('msgvault add-account one@example.com');
+      await fireEvent.input(email, { target: { value: 'two@example.com' } });
+      expect(dialog.getByRole('button', { name: 'Copy msgvault add-account two@example.com' })).toBeDefined();
+      await fireEvent.click(dialog.getByRole('button', { name: 'Copy msgvault add-account two@example.com' }));
+      await waitFor(() => expect(writeText).toHaveBeenLastCalledWith('msgvault add-account two@example.com'));
+    } finally {
+      Object.defineProperty(navigator, 'clipboard', { configurable: true, value: originalClipboard });
+    }
+  });
+
   it('requires both IMAP fields before showing commands', async () => {
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
     await screen.findByText('No sources yet');

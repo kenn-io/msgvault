@@ -7,7 +7,7 @@
 
 <span class="command">
   <code>{command}</code>
-  <CopyButton text={command} ariaLabel={`Copy ${command}`} />
+  {#key command}<CopyButton text={command} ariaLabel={`Copy ${command}`} />{/key}
 </span>
 
 <style>
