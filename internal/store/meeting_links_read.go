@@ -90,10 +90,11 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		values = append(values, target.Row.ICalUID)
 	}
 	targets := []any{target.Ref.MessageID, target.Row.MessageID}
-	starts, err := meetingCopyStarts(ctx, r, target, copies, budget)
+	starts, resolvedIDs, err := meetingCopyStarts(ctx, r, target, copies, budget)
 	if err != nil {
 		return membersOut, err
 	}
+	targets = append(targets, resolvedIDs...)
 	for _, row := range copies {
 		targets = append(targets, row.MessageID)
 		value := row.Event.ProviderEventID
@@ -146,18 +147,19 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 }
 
 // meetingCopyStarts lists the occurrence's effective and original starts plus
-// each calendar copy's start, resolving series copies in their own zones.
-func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurrence, copies []CalendarEventRow, budget *int) ([]any, error) {
+// each calendar copy's start and resolved exception ID, resolving series copies in their own zones.
+func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurrence, copies []CalendarEventRow, budget *int) ([]any, []any, error) {
 	starts := []any{target.Start}
+	var resolvedIDs []any
 	if _, original, ok := calrecur.ParseInstanceID("event_" + target.Identity.OccurrenceKey); ok {
 		if original.AllDay {
 			zone, err := calendarEventZone(target.Row.Event)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			original.Instant, _, err = calrecur.CivilDateBoundary(original.Date, zone)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 		}
 		starts = append(starts, original.Instant)
@@ -172,12 +174,15 @@ func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurren
 				continue
 			}
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			starts = append(starts, copied.Start)
+			if copied.Row.MessageID != row.MessageID {
+				resolvedIDs = append(resolvedIDs, copied.Row.MessageID)
+			}
 		}
 	}
-	return starts, nil
+	return starts, resolvedIDs, nil
 }
 
 // Gather only notes scheduled at the occurrence's original or copied starts,
