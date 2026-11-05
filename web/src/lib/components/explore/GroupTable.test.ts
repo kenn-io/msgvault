@@ -46,7 +46,6 @@ describe('GroupTable', () => {
     expect(document.activeElement).toBe(grid);
     expect(onDrill).toHaveBeenCalledWith(expect.objectContaining({ key: '8' }));
     expect(first.getAttribute('aria-rowindex')).toBe('2');
-    expect(screen.getByRole('button', { name: 'Show items in Example source' }).getAttribute('aria-label')).toBe('Show items in Example source');
   });
 
   it('does not let a focused drill control bubble Enter into grid navigation', async () => {
@@ -261,13 +260,21 @@ describe('GroupTable', () => {
 
   it('drills Entry kind by keyboard and chevron', async () => {
     const onDrill = vi.fn();
-    render(GroupTable, { rows, dimension: 'kind', drillable: groupingByDimension('kind').drillable, onDrill });
+    const view = render(GroupTable, { rows, dimension: 'kind', drillable: groupingByDimension('kind').drillable, onDrill });
     const grid = screen.getByRole('grid', { name: 'Messages grouped by kind' });
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'Enter' });
 
     expect(screen.getAllByRole('button', { name: /Show items in/ })).toHaveLength(2);
     expect(onDrill).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getAllByRole('button', { name: /Show items in/ })[0]!);
+    expect(onDrill).toHaveBeenCalledTimes(2);
+    onDrill.mockClear();
+    await view.rerender({ rows, dimension: 'kind', drillable: false, onDrill });
+    expect(screen.queryAllByRole('button', { name: /Show items in/ })).toHaveLength(0);
+    await fireEvent.keyDown(grid, { key: 'Enter' });
+    await fireEvent.dblClick(screen.getAllByRole('row')[1]!);
+    expect(onDrill).not.toHaveBeenCalled();
   });
 
   it('opens aggregate inspection from a focused pointer row without drilling', async () => {

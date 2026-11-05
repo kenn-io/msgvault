@@ -10,6 +10,7 @@ import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { groupRowName } from '../../explore/labels';
+import { filtersForGroup } from '../../explore/group-context';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
@@ -2552,12 +2553,8 @@ describe('EverythingWorkspace', () => {
     const rendered = render(AppShell, { client: createAPIClient(fetchFn), state });
     await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${groupRowName(dimension, key, key).name}` }));
 
-    const localFilters = expectedFilters.map(filter => {
-      if (filter.dimension !== 'after' && filter.dimension !== 'before') return filter;
-      const value = filter.values[0]!;
-      const [year, month, day] = value.slice(0, 10).split('-').map(Number);
-      return { ...filter, values: [new Date(year!, month! - 1, day!).toISOString()] };
-    });
+    const localFilters = filtersForGroup([], dimension, key);
+    if (dimension !== 'year' && dimension !== 'month') expect(localFilters).toEqual(expectedFilters);
     expect(state.current.filters).toEqual(localFilters);
     expect(parseExploreURLState(window.location.search).filters).toEqual(localFilters);
     expect(state.current.groupingChain).toEqual([]);

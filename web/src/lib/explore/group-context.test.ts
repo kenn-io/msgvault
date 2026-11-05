@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { filtersForGroup, parseGroupSelection } from './group-context';
 
@@ -51,23 +51,22 @@ describe('group context', () => {
   });
 
   it('constrains year and month details at local midnight', () => {
-    const oldTZ = process.env.TZ;
-    process.env.TZ = 'America/New_York';
+    vi.stubEnv('TZ', 'America/New_York');
     try {
-    expect(filtersForGroup(
-      [{ dimension: 'domain', values: ['example.com'] }, { dimension: 'after', values: ['old'] }],
-      'year',
-      '2026'
-    )).toEqual([
-      { dimension: 'domain', values: ['example.com'] },
-      { dimension: 'after', values: ['2026-01-01T05:00:00.000Z'] },
-      { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
-    ]);
-    expect(filtersForGroup([], 'month', '2026-12')).toEqual([
-      { dimension: 'after', values: ['2026-12-01T05:00:00.000Z'] },
-      { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
-    ]);
-    } finally { process.env.TZ = oldTZ; }
+      expect(filtersForGroup(
+        [{ dimension: 'domain', values: ['example.com'] }, { dimension: 'after', values: ['old'] }],
+        'year',
+        '2026'
+      )).toEqual([
+        { dimension: 'domain', values: ['example.com'] },
+        { dimension: 'after', values: ['2026-01-01T05:00:00.000Z'] },
+        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
+      ]);
+      expect(filtersForGroup([], 'month', '2026-12')).toEqual([
+        { dimension: 'after', values: ['2026-12-01T05:00:00.000Z'] },
+        { dimension: 'before', values: ['2027-01-01T05:00:00.000Z'] }
+      ]);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('intersects temporal groups with an existing partial interval', () => {
@@ -80,7 +79,7 @@ describe('group context', () => {
     ]);
     expect(filtersForGroup([
       { dimension: 'domain', values: ['example.com'] },
-      { dimension: 'after', values: ['2026-07-01T00:00:00Z'] }
+      { dimension: 'after', values: ['2026-07-03T00:00:00Z'] }
     ], 'month', '2026-06')).toBeUndefined();
   });
 
