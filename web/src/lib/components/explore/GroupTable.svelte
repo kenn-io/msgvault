@@ -70,7 +70,7 @@
   const OVERSCAN = 6;
   let width = $state(1000);
   const narrow = $derived(Boolean(inspectedKey) || width < 640);
-  const timeGroup = $derived(dimension === 'month' || dimension === 'year');
+  const timeGroup = $derived((dimension === 'month' || dimension === 'year') && rows.some((row) => row.total_items !== undefined));
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
     ? `minmax(0,1fr) 80px ${timeGroup ? '96px ' : ''}40px`

@@ -190,6 +190,56 @@ describe('EverythingWorkspace', () => {
     }
   });
 
+  it('does not offer an invalid Files entry kind drill', async () => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/files/groups')) return Response.json({ rows: [{ key: 'file', label: 'File', count: 2 }], total_count: 1 });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'files', groupingChain: ['kind'] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      const grid = await screen.findByRole('grid', { name: 'Files grouped by kind' });
+      await within(grid).findByText('File');
+      expect(within(grid).queryByRole('button', { name: 'Show items in File' })).toBeNull();
+      await fireEvent.pointerDown(within(grid).getByText('File'));
+      await fireEvent.keyDown(grid, { key: 'Enter' });
+      expect(state.current.groupingChain).toEqual(['kind']);
+      expect(state.current.filters).toEqual([]);
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
+  it.each([
+    ['year', '2026', '2026-01-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z'],
+    ['month', '2026-07', '2026-07-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'],
+    ['month', '2026-12', '2026-12-01T00:00:00.000Z', '2027-01-01T00:00:00.000Z']
+  ] as const)('drills Files %s groups using UTC boundaries', async (dimension, key, after, before) => {
+    window.history.replaceState(null, '', '/');
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      if (new URL(request.url).pathname.endsWith('/files/groups')) return Response.json({ rows: [{ key, label: key, count: 2 }], total_count: 1 });
+      return Response.json(exploreResponse());
+    });
+    const state = new ExploreState(window);
+    state.replaceTransient({ workspace: 'files', groupingChain: [dimension] });
+    const view = render(AppShell, { client: createAPIClient(fetchFn), state });
+    try {
+      await fireEvent.click(await screen.findByRole('button', { name: `Show items in ${groupRowName(dimension, key, key).name}` }));
+      expect(state.current.filters).toEqual([
+        { dimension: 'after', values: [after] },
+        { dimension: 'before', values: [before] }
+      ]);
+    } finally {
+      view.unmount();
+      state.destroy();
+    }
+  });
+
   it.each([
     { searchMode: 'semantic' }, { filters: [{ dimension: 'source', values: ['1'] }] },
     { groupingChain: ['kind'] },

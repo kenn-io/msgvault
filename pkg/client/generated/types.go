@@ -5218,7 +5218,7 @@ type ExploreGroupsHTTPRequest struct {
 	SentOnly *bool              `json:"sent_only,omitempty"`
 	Sort     []ExploreGroupSort `json:"sort,omitempty"`
 
-	// Timezone IANA timezone for day grouping; defaults to UTC
+	// Timezone IANA timezone for day, month, and year grouping; defaults to UTC
 	Timezone *string `json:"timezone,omitzero"`
 }
 

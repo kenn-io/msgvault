@@ -131,7 +131,7 @@ type ExploreGroupSort struct {
 }
 
 type ExploreGroupsHTTPRequest struct {
-	Timezone     string                  `json:"timezone,omitempty" doc:"IANA timezone for day grouping; defaults to UTC"`
+	Timezone     string                  `json:"timezone,omitempty" doc:"IANA timezone for day, month, and year grouping; defaults to UTC"`
 	SentOnly     bool                    `json:"sent_only,omitempty" doc:"Count sent messages only, excluding drafts and unsent items"`
 	Filters      []ExploreFilter         `json:"filters,omitempty"`
 	Query        string                  `json:"query,omitempty" doc:"Search query; full_text accepts standalone pipe-separated OR alternatives; other modes read pipes as text"`

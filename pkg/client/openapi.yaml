@@ -5686,7 +5686,7 @@ components:
           maxItems: 1
           type: array
         timezone:
-          description: IANA timezone for day grouping; defaults to UTC
+          description: IANA timezone for day, month, and year grouping; defaults to UTC
           type: string
       required:
         - grouping
