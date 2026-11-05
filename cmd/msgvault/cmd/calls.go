@@ -13,15 +13,16 @@ import (
 	"go.kenn.io/msgvault/internal/callhistory"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 const callsMinAPIVersion = "3.44.0"
 
 type callCommandClient interface {
 	APISchemaVersion(ctx context.Context) (string, error)
-	ImportCallObservation(ctx context.Context, data []byte) (daemonclient.CallImportResult, error)
-	ListCallObservations(ctx context.Context, q store.CallQuery) (daemonclient.CallEvidencePage, error)
-	SummarizeCalls(ctx context.Context, q store.CallQuery) (daemonclient.CallSummaryPage, error)
+	ImportCallObservation(ctx context.Context, data []byte) (*generated.CallImportResponse, error)
+	ListCallObservations(ctx context.Context, q store.CallQuery) (*generated.CallEvidenceResponse, error)
+	SummarizeCalls(ctx context.Context, q store.CallQuery) (*generated.CallSummaryResponse, error)
 }
 type callCommandDeps struct {
 	open func(context.Context) (callCommandClient, func(), error)
