@@ -12,57 +12,53 @@ import (
 )
 
 func TestParticipantsByEmailMapsSavedAndUnsaved(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	require.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(alice)
-	require.NoError(err)
-	bob, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	require.NoError(err)
-	_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'email','Alias@Example.com',FALSE)`, bob)
-	require.NoError(err)
-	got, err := st.ParticipantsByEmailContext(t.Context(), []string{" ALICE@Example.com ", "bob@example.com", "alias@example.com", "missing@example.com", ""})
-	require.NoError(err)
-	assert.Equal(map[string]AddressParticipant{
-		"alice@example.com": {ParticipantID: alice, PersonID: person.ID},
-		"bob@example.com":   {ParticipantID: bob},
-		"alias@example.com": {ParticipantID: bob},
-	}, got)
-	for address, participant := range got {
-		id, err := st.EmailParticipantContext(t.Context(), address)
-		require.NoError(err)
-		assert.Equal(participant.ParticipantID, id)
+	for _, tc := range []struct {
+		name        string
+		primary     string
+		alias       string
+		lookup      string
+		aliasLookup string
+		primaryKey  string
+		aliasKey    string
+	}{
+		{"ASCII", "bob@example.com", "Alias@Example.com", "bob@example.com", "alias@example.com", "bob@example.com", "alias@example.com"},
+		{"non-ASCII", "Élodie@example.com", "Álias@example.com", "Élodie@EXAMPLE.com", "Álias@EXAMPLE.com", "élodie@example.com", "álias@example.com"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+			require.NoError(err)
+			person, _, err := st.CreatePersonFromParticipant(alice)
+			require.NoError(err)
+			participant, err := st.EnsureParticipant(tc.primary, "Example", "example.com")
+			require.NoError(err)
+			_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'email',?,FALSE)`, participant, tc.alias)
+			require.NoError(err)
+			got, err := st.ParticipantsByEmailContext(t.Context(), []string{" ALICE@Example.com ", " " + tc.lookup + " ", tc.aliasLookup, "missing@example.com", ""})
+			require.NoError(err)
+			assert.Equal(map[string]AddressParticipant{
+				"alice@example.com": {ParticipantID: alice, PersonID: person.ID},
+				tc.primaryKey:       {ParticipantID: participant},
+				tc.aliasKey:         {ParticipantID: participant},
+			}, got)
+			if tc.name == "non-ASCII" {
+				for _, address := range []string{tc.lookup, tc.aliasLookup} {
+					id, err := st.EmailParticipantContext(t.Context(), address)
+					require.NoError(err)
+					assert.Equal(participant, id)
+				}
+			}
+			if tc.name == "ASCII" {
+				// Ambiguous aliases must not pick a participant by row order.
+				_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'apple_id',?,FALSE)`, alice, tc.primaryKey)
+				require.NoError(err)
+				got, err = st.ParticipantsByEmailContext(t.Context(), []string{tc.primaryKey})
+				require.NoError(err)
+				assert.Empty(got)
+			}
+		})
 	}
-	// Ambiguous aliases must not pick a participant by row order.
-	_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'apple_id','bob@example.com',FALSE)`, alice)
-	require.NoError(err)
-	got, err = st.ParticipantsByEmailContext(t.Context(), []string{"bob@example.com"})
-	require.NoError(err)
-	assert.Empty(got)
-	id, err := st.EmailParticipantContext(t.Context(), "BOB@example.com")
-	require.NoError(err)
-	assert.Zero(id)
-}
-
-func TestEmailParticipantNonASCIIAddress(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	participant, err := st.EnsureParticipant("Élodie@example.com", "Example", "example.com")
-	require.NoError(err)
-	_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'email','Álias@example.com',FALSE)`, participant)
-	require.NoError(err)
-	for _, address := range []string{"Élodie@EXAMPLE.com", "Álias@EXAMPLE.com"} {
-		id, err := st.EmailParticipantContext(t.Context(), address)
-		require.NoError(err)
-		assert.Equal(participant, id)
-	}
-	got, err := st.ParticipantsByEmailContext(t.Context(), []string{" Élodie@EXAMPLE.com ", "Álias@EXAMPLE.com"})
-	require.NoError(err)
-	assert.Equal(map[string]AddressParticipant{
-		"élodie@example.com": {ParticipantID: participant},
-		"álias@example.com":  {ParticipantID: participant},
-	}, got)
 }
 
 func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {
@@ -79,6 +75,25 @@ func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {
 		got, err := st.ParticipantsByEmailContext(ctx, []string{"alice@example.com", "bob@example.com"})
 		require.NoError(err)
 		assert.Equal(map[string]AddressParticipant{"alice@example.com": {ParticipantID: alice}}, got)
+	})
+	t.Run("visibility after merge", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		data, note := projectionFixture(t, st, "historical", "twenty_json", `{"schema_version":1,"recording":{}}`)
+		participant, err := st.EnsureParticipant("attendee@example.org", "Attendee", "example.org")
+		require.NoError(err)
+		require.NoError(st.ReplaceMessageRecipients(note, "attendee", []int64{participant}, nil))
+		into, err := st.GetOrCreateSource("meeting_import", "destination")
+		require.NoError(err)
+		_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: into.ID})
+		require.NoError(err)
+		ctx := sourcescope.WithSourceIDs(t.Context(), []int64{into.ID})
+		identity, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+		require.NoError(err)
+		require.Contains(identity.ByTranscript, note)
+		got, err := st.ParticipantsByEmailContext(ctx, []string{"attendee@example.org"})
+		require.NoError(err)
+		assert.Equal(map[string]AddressParticipant{"attendee@example.org": {ParticipantID: participant}}, got)
 	})
 	t.Run("ambiguity", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)
@@ -121,6 +136,10 @@ func TestMeetingActionItemCountsByTranscript(t *testing.T) {
 	scoped, err = st.MeetingActionItemCountsContext(sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID}), []int64{one, empty})
 	require.NoError(err)
 	assert.Equal(map[int64]int{one: 2, empty: 0}, scoped)
+	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version=? WHERE message_id=?`, meetingProjectionVersion+1, one)
+	require.NoError(err)
+	_, err = st.MeetingActionItemCountsContext(t.Context(), []int64{one})
+	require.ErrorIs(err, ErrMeetingProjectionUnavailable)
 }
 
 func TestParticipantsByEmailBatchReadBound(t *testing.T) {

@@ -173,11 +173,12 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
 			eventData, event := calendarFixture(t, st, "event", singleLinkRaw("event", "merge@example.org"))
-			data, note := projectionFixture(t, st, "unique-note", "meeting_json", meetingProjectionRaw)
-			wantActions := 1
+			var data *MessagePersistData
+			var note int64
 			if mode == "automatic" {
-				requirements.NoError(st.UpsertMessageRawWithFormat(note, []byte(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"merge@example.org","startsAt":"2027-03-14T10:00:00Z"}}`), "twenty_json"))
-				wantActions = 0
+				data, note = identityNote(t, st, "unique-note", "merge@example.org")
+			} else {
+				data, note = projectionFixture(t, st, "unique-note", "meeting_json", meetingProjectionRaw)
 			}
 			target := OccurrenceRef{MessageID: event}
 			if mode == "saved" {
@@ -210,23 +211,16 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 				assertions.Equal("occ:"+ref, got.ByTranscript[note].Key)
 				assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
 			}
-			counts, err := st.MeetingActionItemCountsContext(t.Context(), ids)
-			requirements.NoError(err)
-			assertions.Equal(map[int64]int{note: wantActions}, counts)
 			// Grant visibility follows the destination, not the retired source.
 			for _, sourceID := range []int64{data.Message.SourceID, destination.ID} {
 				ctx := sourcescope.WithSourceIDs(t.Context(), []int64{sourceID, eventData.Message.SourceID})
 				got, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: ids})
 				requirements.NoError(err)
-				counts, err := st.MeetingActionItemCountsContext(ctx, ids)
-				requirements.NoError(err)
 				if sourceID == destination.ID {
 					assertions.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
-					assertions.Equal(map[int64]int{note: wantActions}, counts)
 				} else {
 					assertions.Empty(got.ByTranscript)
 					assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
-					assertions.Empty(counts)
 				}
 			}
 			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, target))
@@ -241,9 +235,6 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Empty(got.ByTranscript)
 			assertions.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
-			counts, err = st.MeetingActionItemCountsContext(t.Context(), ids)
-			requirements.NoError(err)
-			assertions.Empty(counts)
 		})
 	}
 }

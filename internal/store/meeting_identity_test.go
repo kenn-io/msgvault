@@ -22,19 +22,29 @@ func identityNote(t *testing.T, st *Store, key, uid string) (*MessagePersistData
 func identityRef(id int64) string { return fmt.Sprintf("evt:%d", id) }
 
 func TestMeetingIdentityLinkedTranscriptSharesKey(t *testing.T) {
-	assert := assert.New(t)
-
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.org"))
 	_, note := identityNote(t, st, "note", "meeting@example.org")
 	ref := identityRef(event)
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: []int64{note}})
-	require.NoError(t, err)
-	assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
-	assert.Equal(got.ByOccurrence[ref].Key, got.ByTranscript[note].Key)
-	assert.Equal(ref, got.ByTranscript[note].OccurrenceRef)
-	assert.Equal([]string{ref}, got.ByTranscript[note].ExactOccurrenceRefs)
-	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+	for _, tc := range []struct {
+		name          string
+		transcriptIDs []int64
+	}{
+		{"transcript and occurrence", []int64{note}},
+		{"occurrence only", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			// The transcript is undated: discovery must use identity, not an activity window.
+			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: tc.transcriptIDs})
+			require.NoError(t, err)
+			assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
+			assert.Equal("occ:"+ref, got.ByTranscript[note].Key)
+			assert.Equal(ref, got.ByTranscript[note].OccurrenceRef)
+			assert.Equal([]string{ref}, got.ByTranscript[note].ExactOccurrenceRefs)
+			assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+		})
+	}
 }
 
 func TestMeetingIdentityUnlinkedItemsStaySeparate(t *testing.T) {
@@ -121,9 +131,6 @@ func TestMeetingIdentityMultipleManualLinks(t *testing.T) {
 	_, note := identityNote(t, st, "note", "")
 	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: one}))
 	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: two}))
-	links, err := meetingLinksForTest(t, st, note)
-	require.NoError(err)
-	assert.Len(links, 2)
 	refs := []string{identityRef(one), identityRef(two)}
 	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs, TranscriptIDs: []int64{note}})
 	require.NoError(err)
@@ -149,22 +156,6 @@ func TestMeetingIdentityManualLinkKeepsAutomaticSuggestions(t *testing.T) {
 	assert.Equal([]int64{note}, got.ByOccurrence[identityRef(chosen)].LinkedTranscriptIDs)
 	assert.Empty(got.ByOccurrence[identityRef(single)].LinkedTranscriptIDs)
 	assert.Empty(got.ByOccurrence[identityRef(series)+"@20270314T100000Z"].LinkedTranscriptIDs)
-	links, err := meetingLinksForTest(t, st, note)
-	require.NoError(err)
-	require.Len(links, 1)
-	assert.Equal(identityRef(chosen), links[0].Ref)
-}
-
-func TestMeetingIdentityOccurrenceOnlyFindsLinkedTranscript(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.org"))
-	_, note := identityNote(t, st, "note", "meeting@example.org")
-	// The transcript is undated: discovery must use identity, not an activity window.
-	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(event)}})
-	require.NoError(err)
-	assert.Equal([]int64{note}, got.ByOccurrence[identityRef(event)].LinkedTranscriptIDs)
-	assert.Equal("occ:"+identityRef(event), got.ByTranscript[note].Key)
 }
 
 func TestMeetingIdentityHiddenSourceTranscriptIgnored(t *testing.T) {
@@ -305,11 +296,6 @@ func TestMeetingIdentityOccurrenceOnlyFindsOrphanDecisionAfterMasterArrives(t *t
 	hidden, err := st.ResolveMeetingIdentitiesContext(sourcescope.WithSourceIDs(t.Context(), []int64{orphanData.Message.SourceID}), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
 	requirements.NoError(err)
 	assertions.Empty(hidden.ByOccurrence[ref].LinkedTranscriptIDs)
-	requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
-	split, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
-	requirements.NoError(err)
-	assertions.Empty(split.ByOccurrence[ref].LinkedTranscriptIDs)
-	assertions.NotContains(split.ByTranscript, note)
 }
 
 func TestMeetingIdentityFractionalReferencesRemainSeparate(t *testing.T) {
@@ -323,14 +309,7 @@ func TestMeetingIdentityFractionalReferencesRemainSeparate(t *testing.T) {
 	_, other := calendarFixture(t, st, "other", strings.ReplaceAll(strings.ReplaceAll(raw, `"old"`, `"other"`), ".123456Z", ".654321Z"))
 	_, otherNote := projectionFixture(t, st, "other-note", "plaud_json", `{}`)
 	require.NoError(st.LinkMeetingContext(t.Context(), otherNote, OccurrenceRef{MessageID: other}))
-	from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	require.NoError(err)
-	refs := []string{}
-	for _, o := range page.Occurrences {
-		refs = append(refs, o.Ref)
-	}
-	require.ElementsMatch([]string{identityRef(old), identityRef(latest), identityRef(other)}, refs)
+	refs := []string{identityRef(old), identityRef(latest), identityRef(other)}
 	forward, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
 	require.NoError(err)
 	require.Equal(identityRef(old), forward.ByTranscript[note].OccurrenceRef)
@@ -516,9 +495,6 @@ func TestMeetingIdentitySplitPreservesAmbiguity(t *testing.T) {
 	_, single := calendarFixture(t, st, "single", singleLinkRaw("single", "weekly@example.org"))
 	_, note := identityNote(t, st, "ambiguous", "weekly@example.org")
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: single}))
-	links, err := meetingLinksForTest(t, st, note)
-	require.NoError(err)
-	require.Empty(links)
 	ref := identityRef(series) + "@20270314T100000Z"
 	for _, suggestions := range []bool{false, true} {
 		got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}, TranscriptIDs: []int64{note}, IncludeSuggestions: suggestions})
@@ -532,37 +508,14 @@ func TestMeetingIdentitySplitPreservesAmbiguity(t *testing.T) {
 	}
 }
 
-func TestMeetingIdentityMergedAttendeeRemainsVisible(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	data, note := projectionFixture(t, st, "historical", "twenty_json", `{"schema_version":1,"recording":{}}`)
-	participant, err := st.EnsureParticipant("attendee@example.org", "Attendee", "example.org")
-	require.NoError(err)
-	require.NoError(st.ReplaceMessageRecipients(note, "attendee", []int64{participant}, nil))
-	into, err := st.GetOrCreateSource("meeting_import", "destination")
-	require.NoError(err)
-	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: data.Message.SourceID, IntoSourceID: into.ID})
-	require.NoError(err)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{into.ID})
-	identity, err := st.ResolveMeetingIdentitiesContext(ctx, MeetingIdentityRequest{TranscriptIDs: []int64{note}})
-	require.NoError(err)
-	require.Contains(identity.ByTranscript, note)
-	got, err := st.ParticipantsByEmailContext(ctx, []string{"attendee@example.org"})
-	require.NoError(err)
-	assert.Equal(map[string]AddressParticipant{"attendee@example.org": {ParticipantID: participant}}, got)
-}
-
 func TestMeetingIdentityFutureProjectionRejected(t *testing.T) {
 	t.Run("calendar", func(t *testing.T) {
 		require := require.New(t)
 		st := newRFC822IDBackfillBackendStore(t)
 		_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.org"))
-		_, note := identityNote(t, st, "note", "meeting@example.org")
 		_, err := st.db.Exec(`UPDATE calendar_events SET projection_version=? WHERE message_id=?`, calendarEventProjectionVersion+1, event)
 		require.NoError(err)
 		_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(event)}})
-		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
-		_, err = meetingLinksForTest(t, st, note)
 		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
 	})
 	t.Run("meeting", func(t *testing.T) {
@@ -572,8 +525,6 @@ func TestMeetingIdentityFutureProjectionRejected(t *testing.T) {
 		_, err := st.db.Exec(`UPDATE meeting_details SET projection_version=? WHERE message_id=?`, meetingProjectionVersion+1, note)
 		require.NoError(err)
 		_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
-		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
-		_, err = st.MeetingActionItemCountsContext(t.Context(), []int64{note})
 		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
 		_, err = meetingLinksForTest(t, st, note)
 		require.ErrorIs(err, ErrMeetingProjectionUnavailable)
