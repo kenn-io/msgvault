@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   readBoundedStream,
+  readStreamPrefix,
   validatedImageBlob,
   validatedThumbnailBlob
 } from './preview-bytes';
@@ -33,7 +34,7 @@ describe('preview byte validation', () => {
       new Headers({ 'Content-Length': '5' }),
       new AbortController().signal,
       4
-    )).rejects.toThrow(/byte limit/i);
+    )).rejects.toThrow('This file is too large to preview.');
 
     const stream = new ReadableStream<Uint8Array>({
       start(controller) {
@@ -43,7 +44,7 @@ describe('preview byte validation', () => {
       }
     });
     await expect(readBoundedStream(stream, new Headers(), new AbortController().signal, 4))
-      .rejects.toThrow(/byte limit/i);
+      .rejects.toThrow('This file is too large to preview.');
   });
 
   it('cancels an oversized declared response body exactly once before reporting the size error', async () => {
@@ -52,7 +53,7 @@ describe('preview byte validation', () => {
 
     await expect(readBoundedStream(
       stream, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4
-    )).rejects.toThrow(/byte limit/i);
+    )).rejects.toThrow('This file is too large to preview.');
 
     expect(cancel).toHaveBeenCalledOnce();
   });
@@ -60,13 +61,13 @@ describe('preview byte validation', () => {
   it('keeps the declared size error when the body is absent or cancellation rejects', async () => {
     await expect(readBoundedStream(
       null, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4
-    )).rejects.toThrow(/byte limit/i);
+    )).rejects.toThrow('This file is too large to preview.');
 
     const cancel = vi.fn(async () => { throw new Error('cancel failed'); });
     const stream = new ReadableStream<Uint8Array>({ cancel });
     await expect(readBoundedStream(
       stream, new Headers({ 'Content-Length': '5' }), new AbortController().signal, 4
-    )).rejects.toThrow(/byte limit/i);
+    )).rejects.toThrow('This file is too large to preview.');
     expect(cancel).toHaveBeenCalledOnce();
   });
 
@@ -131,3 +132,21 @@ function u16(value: number): number[] {
 function u32(value: number): number[] {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
+
+it('reads and cancels only the start of a large text stream', async () => {
+  const cancel = vi.fn();
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3, 4, 5])); }, cancel });
+  const result = await readStreamPrefix(stream, new AbortController().signal, 3);
+  expect([...result.bytes]).toEqual([1, 2, 3]);
+  expect(result.truncated).toBe(true);
+  expect(cancel).toHaveBeenCalledOnce();
+});
+
+it('reports a complete prefix at the exact limit, including across chunks', async () => {
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2])); controller.enqueue(new Uint8Array([3])); controller.close(); } });
+  expect(await readStreamPrefix(stream, new AbortController().signal, 3)).toEqual({ bytes: new Uint8Array([1, 2, 3]), truncated: false });
+});
+it('detects bytes after a chunk that exactly fills the prefix', async () => {
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); controller.enqueue(new Uint8Array([4])); controller.close(); } });
+  expect((await readStreamPrefix(stream, new AbortController().signal, 3)).truncated).toBe(true);
+});

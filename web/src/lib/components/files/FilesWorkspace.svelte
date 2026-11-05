@@ -130,7 +130,7 @@
     restorationEpoch?: number;
     onSortChange?: (sort: FileSearchSort) => void;
     onActiveKey?: (key: string) => void;
-    onSelectedKey?: (key: string | null) => void;
+    onSelectedKey?: (key: string | null, options?: { replace?: boolean }) => void;
     onFilenameQueryChange?: (query: string) => void;
     onMIMEFamiliesChange?: (families: FileMIMEFamily[]) => void;
     onPersonPresentationChange?: (presentation: 'media' | 'files') => void;
@@ -195,8 +195,11 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<WorkspaceFileRow>();
+  const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
+  let returningViewerKey: string | null = null;
+  let previousRestorationEpoch = untrack(() => restorationEpoch);
   let controller: AbortController | undefined;
   let cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -283,6 +286,8 @@
     if (signature === requestSignature && !submitted) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
+    const restoring = restorationEpoch !== previousRestorationEpoch;
+    previousRestorationEpoch = restorationEpoch;
     unacknowledgedRestorationEpoch = restorationEpoch;
     // The refreshed context may exclude the file the viewer is showing —
     // close it rather than let its download/open actions keep targeting a
@@ -292,6 +297,7 @@
     // The initial load is exempt: there is no stale viewer yet, and deep
     // restoration owns resolving a mount-time controlled selection.
     if (!isInitialLoad) {
+      if (restoring && !selectedKey) returningViewerKey = untrack(() => viewerFile?.key) ?? null;
       viewerFile = undefined;
       pendingViewerKey = untrack(() => selectedKey) ?? null;
     }
@@ -429,7 +435,12 @@
       if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
     });
   }
-  async function loadPage(
+  let pageLoad: Promise<boolean> | undefined;
+  function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
+    pageLoad = requestPage(currentGeneration, cursor, signal);
+    return pageLoad;
+  }
+  async function requestPage(
     currentGeneration: number,
     cursor: string | undefined,
     signal: AbortSignal,
@@ -588,7 +599,8 @@
     signal: AbortSignal | undefined,
   ): Promise<void> {
     if (epoch === undefined || !signal) return;
-    const targets = [providedActiveKey, selectedKey].filter((key): key is string => Boolean(key));
+    const focusKey = returningViewerKey ?? providedActiveKey;
+    const targets = [focusKey, selectedKey].filter((key): key is string => Boolean(key));
     while (
       currentGeneration === generation &&
       !signal.aborted &&
@@ -599,13 +611,13 @@
       if (!(await loadPage(currentGeneration, nextCursor, signal))) return;
     }
     if (currentGeneration !== generation || signal.aborted) return;
-    if (providedActiveKey && rows.some((row) => row.key === providedActiveKey)) {
-      activeKey = providedActiveKey;
+    if (focusKey && rows.some((row) => row.key === focusKey)) {
+      activeKey = focusKey;
     }
     pendingRestoration = {
       generation: currentGeneration,
       epoch,
-      activeKey: providedActiveKey,
+      activeKey: focusKey,
     };
   }
   async function completeDeepRestoration(
@@ -628,6 +640,11 @@
         if (!isCurrentRestoration(pending) || !renderedRows.some((row) => row.key === target.key)) return;
         if (!grid?.querySelector(`#${rowID(target)}`)) return;
       }
+      if (returningViewerKey && target) {
+        onActiveKey?.(target.key);
+        grid.focus();
+      }
+      returningViewerKey = null;
       pendingRestoration = undefined;
       if (unacknowledgedRestorationEpoch === pending.epoch) unacknowledgedRestorationEpoch = undefined;
       onRestorationComplete?.(pending.epoch);
@@ -643,15 +660,17 @@
     );
   }
   async function loadMore(): Promise<void> {
-    if (!nextCursor || loadingMore || !controller) return;
+    if (loadingMore) { await pageLoad; return; }
+    if (!nextCursor || !controller) return;
     pageError = '';
     // A transient cursor failure may have interrupted restoreDeepState. Resume
     // the restoration loop so later-page targets are still found, scrolled to,
     // and the epoch acknowledged only after focus completes. pendingRestoration
     // set means the loop already handed off; page normally in that case.
     if (unacknowledgedRestorationEpoch !== undefined && pendingRestoration === undefined) {
+      const loadedCount = rows.length;
       await restoreDeepState(generation, unacknowledgedRestorationEpoch, controller.signal);
-      return;
+      if (rows.length > loadedCount || pageError || error || !nextCursor) return;
     }
     loadingMore = true;
     await loadPage(generation, nextCursor, controller.signal);
@@ -680,13 +699,23 @@
   function rowID(row: WorkspaceFileRow): string {
     return `file-row-${row.id}`;
   }
-  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid): void {
+  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid, options: { replace?: boolean } | undefined = undefined): void {
     activeKey = row.key;
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
     viewerFile = row;
     pendingViewerKey = null;
-    onSelectedKey?.(row.key);
+    onSelectedKey?.(row.key, options);
+  }
+  async function step(delta: -1 | 1): Promise<void> {
+    const current = viewerFile;
+    if (!current || viewerIndex < 0) return;
+    const target = viewerIndex + delta;
+    if (target < 0 || target >= totalCount) return;
+    await moveAcrossLoadedBoundary(target);
+    if (viewerFile !== current || !rows[target]) return;
+    if (nextCursor && !pageError && target >= rows.length - OVERSCAN) void loadMore();
+    open(rows[target], viewerReturnFocus, { replace: true });
   }
   function move(index: number): void {
     const height = rowHeight;
@@ -727,7 +756,7 @@
     return Math.max(1, Math.floor(visibleHeight / height));
   }
   async function moveAcrossLoadedBoundary(index: number): Promise<void> {
-    if (index < rows.length || !nextCursor || loadingMore) {
+    if (index < rows.length || !nextCursor) {
       move(index);
       return;
     }
@@ -1084,6 +1113,10 @@
   <FileViewer
     {client}
     file={viewerFile}
+    position={viewerIndex >= 0 ? { index: viewerIndex, total: totalCount } : undefined}
+    onStep={viewerIndex >= 0 ? (delta) => { void step(delta); } : undefined}
+    canStepForward={viewerIndex + 1 < rows.length || !!nextCursor && !pageError && !error}
+    notice={viewerIndex + 1 >= rows.length && totalCount > rows.length ? pageError || error : ''}
     returnFocus={viewerReturnFocus ?? grid}
     onClose={() => {
       viewerFile = undefined;
@@ -1168,7 +1201,7 @@
     overflow: auto;
     outline: none;
   }
-  .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
+  .files-grid:focus-visible .data-row--active { box-shadow: inset 0 0 0 2px var(--accent-blue); }
   .table-header,
   .data-row {
     display: grid;

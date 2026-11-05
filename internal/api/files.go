@@ -944,12 +944,8 @@ func (s *Server) openFileContent(ctx context.Context, file store.FileMetadata) (
 	return content, length, err
 }
 
-// fileContentState classifies one authoritative attachment row. Packed
-// attachments legitimately carry only a content hash, so availability of a
-// row without a recorded storage path is determined through the blob
-// resolver — the packed CAS store first, then the loose content-addressed
-// fallback. Rows with a recorded storage path are reported as local without
-// probing, matching the legacy loose-file contract.
+// fileContentState uses the same content resolver for lists, suggestions, and
+// details, including packed blobs and recorded legacy paths.
 func (s *Server) fileContentState(ctx context.Context, file store.FileMetadata) (FileContentState, bool) {
 	if file.URL != "" {
 		return FileContentURLOnly, false
@@ -957,7 +953,7 @@ func (s *Server) fileContentState(ctx context.Context, file store.FileMetadata) 
 	if file.ContentHash == "" {
 		return FileContentMetadataOnly, false
 	}
-	if file.StoragePath == "" && !s.fileContentResolvable(ctx, file) {
+	if !s.fileContentResolvable(ctx, file) {
 		return FileContentMissingBlob, false
 	}
 	return FileContentLocal, true

@@ -11,11 +11,10 @@
   import Dialog from '../common/Dialog.svelte';
   import KataEvidenceDialog from './KataEvidenceDialog.svelte';
 
-  let { client, attachmentID, messageID, filename }: {
-    client: APIClient; attachmentID: number; messageID: number; filename: string;
+  let { client, attachmentID, messageID, filename, open = $bindable(false), showTrigger = true }: {
+    client: APIClient; attachmentID: number; messageID: number; filename: string; open?: boolean; showTrigger?: boolean;
   } = $props();
   const kata = kataReadiness();
-  let open = $state(false);
   let query = $state('');
   let hits = $state<DocumentSearchResult[]>([]);
   let selected = $state<EvidenceSelector>();
@@ -62,7 +61,7 @@
 
 <svelte:window onkeydowncapture={(event) => { if (open && !selected) pickerEscape(event); }} />
 
-{#if kata?.ready}<Button label="Add to task…" size="sm" surface="soft" onclick={() => open = true} />{/if}
+{#if showTrigger && kata?.ready}<Button label="Add to task…" size="sm" surface="soft" onclick={() => open = true} />{/if}
 {#if open && !selected}
   <Dialog title="Add to task" onclose={close}>
     <div class="passage-picker">
