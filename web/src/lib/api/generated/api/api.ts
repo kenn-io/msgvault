@@ -122,6 +122,7 @@ import type {
   DocumentSearchResponse,
   DocumentVectorOperationsResponse,
   DomainSummary,
+  EmailFamily,
   EmbeddingStatus,
   Employment,
   EmploymentBody,
@@ -160,6 +161,7 @@ import type {
   GetDocumentIndexStatusParams,
   GetDocumentVectorStatusParams,
   GetDomainPathParameters,
+  GetEmailFamilyPathParameters,
   GetEmbeddingStatusParams,
   GetEmploymentPathParameters,
   GetFileContentPathParameters,
@@ -2374,6 +2376,21 @@ export const getMessage = (
   return orvalFetch<MessageDetail>(
     {
       url: `/api/v1/messages/${encodeURIComponent(String(id))}`,
+      method: "GET",
+    },
+    options,
+  );
+};
+/**
+ * @summary Read the other archived copies, replies and forwards of an email
+ */
+export const getEmailFamily = (
+  { id }: GetEmailFamilyPathParameters,
+  options?: SecondParameter<typeof orvalFetch<EmailFamily>>,
+) => {
+  return orvalFetch<EmailFamily>(
+    {
+      url: `/api/v1/messages/${encodeURIComponent(String(id))}/family`,
       method: "GET",
     },
     options,

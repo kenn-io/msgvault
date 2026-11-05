@@ -4868,6 +4868,42 @@ Each message in `show-thread --json` includes `hidden_text_present`, using the
 same check as `show-message`. Text output prints the same stderr warning once
 when any message on the shown page is flagged.
 
+## family show
+
+Show the other archived copies of an email, and the replies and forwards that
+name it, across accounts and conversations.
+
+```bash
+msgvault family show <message-id> [--json]
+```
+
+Each row is a message ID, the account, whether that account sent or received the
+copy (or holds it as a draft), the date, and the header evidence that connects
+it to the email you gave: the same message, a reply, a reply it answers, a
+forward, a forwarded original, shared references, a relation through another
+copy, or only the same provider thread. Rows are in ascending message ID order;
+the row marked "this message" is the email you gave. Relations come from
+Message-ID, In-Reply-To, References and attached-original headers, plus the
+rest of the provider threads of a Gmail or Google Groups email and its exact
+copies, so a copy in another account that has none
+of them stays unlinked. Other sources derive conversations from headers, so
+their conversations are not evidence.
+
+A copy marked "not indexed yet" may have relations this output cannot show;
+sync or run [`repair-derived`](#repair-derived) to index it. A copy marked
+"headers not fully read" had an oversized payload, unreadable headers or too
+many identifiers, and may also have hidden relations; indexing again won't
+change that. A copy marked "original message not stored" or "stored format not
+readable" has no raw message to read; storing the message again clears it. While
+any email in the archive
+is still waiting to be indexed, a note on stderr says related emails may be
+missing, because that email could be one the lookup cannot see yet. The lookup stops at 500 emails
+or 5,000 identifiers and says which on stderr. JSON includes `anchor_message_id`,
+`members`, `truncated`, `truncated_reason` and `pending_linkage`; each member carries
+`linkage_outcome` and `evidence`. The command
+uses the selected daemon and needs API schema 3.45.0. Only the owner can read
+it; delegated grants cannot.
+
 ---
 
 ## list-accounts
@@ -5253,7 +5289,7 @@ MIME like any other source. Every source also derives account attribution for
 email and calendar rows still pending it, so `received:` and `account:` find
 them. Every source also indexes the Message-ID, In-Reply-To, References and
 attached-original identifiers of emails still pending it, which
-related-copy lookups read. Missing or unreadable payloads are recorded
+[`family show`](#family-show) reads. Missing or unreadable payloads are recorded
 as incomplete and do not block later messages. Source syncs and imports run the
 same work first, so use this command for on-demand repair, file imports you will
 not run again, or retrying an interrupted pass.
