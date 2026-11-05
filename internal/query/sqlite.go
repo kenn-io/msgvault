@@ -2375,8 +2375,8 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 		whereClause = "1=1"
 	}
 
-	// Filter conditions do not add outer joins, so they cannot multiply result
-	// rows. The sender join selects one row per message.
+	// Choose the page before joining display details. The sender join selects
+	// one row per message, preserving the page's size and order.
 	query := searchResultsSQL(ftsJoin, whereClause)
 	args = append(args, limit, offset)
 
@@ -2436,8 +2436,8 @@ func (e *SQLiteEngine) executeSearchQuery(ctx context.Context, conditions []stri
 	return results, nil
 }
 
-// searchResultsSQL is the statement executeSearchQuery runs; tests EXPLAIN
-// it to pin the plan.
+// searchResultsSQL selects the result page before loading sender and
+// conversation details. Tests EXPLAIN it to pin the plan.
 func searchResultsSQL(ftsJoin, whereClause string) string {
 	return fmt.Sprintf(`
 		SELECT
@@ -2459,14 +2459,18 @@ func searchResultsSQL(ftsJoin, whereClause string) string {
 			m.deleted_from_source_at,
 			COALESCE(m.message_type, ''),
 			COALESCE(conv.title, '')
-		FROM messages m
+		FROM (
+			SELECT m.id FROM messages m
+			%s
+			WHERE %s
+			ORDER BY m.sent_at DESC, m.id DESC
+			LIMIT ? OFFSET ?
+		) page
+		JOIN messages m ON m.id = page.id
 		%s
 		LEFT JOIN conversations conv ON conv.id = m.conversation_id
-		%s
-		WHERE %s
 		ORDER BY m.sent_at DESC, m.id DESC
-		LIMIT ? OFFSET ?
-	`, sqliteSenderNameExpr, sqliteSenderJoin, ftsJoin, whereClause)
+	`, sqliteSenderNameExpr, ftsJoin, whereClause, sqliteSenderJoin)
 }
 
 // MergeFilterIntoQuery combines a MessageFilter context with a search.Query.

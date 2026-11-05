@@ -94,7 +94,9 @@ func DistinctAttachments(parts []Attachment) []Attachment {
 	return out
 }
 
-// Parse parses raw MIME data into a Message.
+// Parse parses raw MIME data into textual projections and binary attachments.
+// NUL becomes U+FFFD in display/search text. Identity evidence, original bytes
+// and attachment contents are unchanged; new writes use OmitNULIdentities.
 func Parse(raw []byte) (*Message, error) {
 	return parse(raw, nil)
 }
@@ -168,6 +170,7 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	if inspect != nil {
 		inspect(root)
 	}
+	msg.normalizeText()
 	return msg, nil
 }
 
@@ -193,6 +196,7 @@ func parseWithRecovery(raw []byte, fallbackSubject string, inspect func(*enmime.
 		"[MIME parsing failed: %s]\n\nRaw MIME data is preserved in message_raw table.",
 		errMsg,
 	)
+	msg.normalizeText()
 	return msg, err
 }
 
@@ -320,7 +324,7 @@ func parseSalvagedAddressList(value string) []Address {
 
 	addresses := make([]Address, 0, len(list))
 	for _, addr := range list {
-		if addr.Address == "" {
+		if addr.Address == "" || strings.ContainsRune(addr.Address, 0) {
 			continue
 		}
 		email := strings.ToLower(addr.Address)
@@ -442,7 +446,7 @@ func parseAddressList(env *enmime.Envelope, header string) []Address {
 
 	addresses := make([]Address, 0, len(list))
 	for _, addr := range list {
-		if addr.Address == "" {
+		if addr.Address == "" || strings.ContainsRune(addr.Address, 0) {
 			continue
 		}
 		addresses = append(addresses, Address{
@@ -460,7 +464,11 @@ func parseAddressList(env *enmime.Envelope, header string) []Address {
 func fallbackAddressList(value string) []Address {
 	var addresses []Address
 	for _, token := range splitAddressTokens(value) {
-		for _, email := range emailAddressTokenRe.FindAllString(stripAddressDecorations(token), -1) {
+		token = stripAddressDecorations(token)
+		if strings.ContainsRune(token, 0) {
+			continue
+		}
+		for _, email := range emailAddressTokenRe.FindAllString(token, -1) {
 			email = strings.ToLower(email)
 			addresses = append(addresses, Address{
 				Email:  email,
