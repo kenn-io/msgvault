@@ -66,19 +66,6 @@ func TestSignalNativeStatuses(t *testing.T) {
 	}
 }
 
-func TestCalendarOffsetFreeTimeZone(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	o, err := (ImportRequest{
-		Format: "google_calendar", Account: "calendar@example.com",
-		Record: []byte(`{"id":"event-zone","start":{"dateTime":"2026-10-01T09:00:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-01T10:00:00","timeZone":"America/Los_Angeles"}}`),
-	}).Observation()
-	require.NoError(err)
-	assert.Equal("2026-10-01T16:00:00Z", o.OccurredAt.UTC().Format(time.RFC3339))
-	require.NotNil(o.EndedAt)
-	assert.Equal("2026-10-01T17:00:00Z", o.EndedAt.UTC().Format(time.RFC3339))
-}
-
 func TestCalendarPreservesDialSequence(t *testing.T) {
 	for _, field := range []string{"description", "location"} {
 		t.Run(field, func(t *testing.T) {
@@ -143,6 +130,18 @@ func TestCalendarSchedulingIsNeverAttendance(t *testing.T) {
 	assertions.Equal("cancelled", cancelled.Outcome)
 	assertions.True(cancelled.OccurredAt.IsZero())
 	assertions.Empty(cancelled.Participants)
+	t.Run("offset-free time zone", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		o, err := (ImportRequest{
+			Format: "google_calendar", Account: "calendar@example.com",
+			Record: []byte(`{"id":"event-zone","start":{"dateTime":"2026-10-01T09:00:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-01T10:00:00","timeZone":"America/Los_Angeles"}}`),
+		}).Observation()
+		require.NoError(err)
+		assert.Equal("2026-10-01T16:00:00Z", o.OccurredAt.UTC().Format(time.RFC3339))
+		require.NotNil(o.EndedAt)
+		assert.Equal("2026-10-01T17:00:00Z", o.EndedAt.UTC().Format(time.RFC3339))
+	})
 }
 
 func TestCalendarCancellationRejectsPresentInvalidStart(t *testing.T) {
@@ -177,11 +176,6 @@ func TestImportMissingAndUnsupportedFields(t *testing.T) {
 		requirements.NoError(err, "explicit epoch zero differs from a missing timestamp")
 		assertions.Equal(int64(0), got.OccurredAt.UnixMilli())
 	}
-	got, err := (ImportRequest{Format: "google_calendar", Account: "example", Record: []byte(`{"id":"x","status":"cancelled","start":{"date":"2026-10-01"}}`)}).Observation()
-	requirements.NoError(err)
-	assertions.Equal("day", got.Precision)
-	assertions.Equal("cancelled", got.Outcome)
-	assertions.Empty(got.Timezone)
 }
 
 func FuzzImportNeverInventsScheduledAttendance(f *testing.F) {
@@ -287,6 +281,7 @@ func FuzzValidCalendarImportPreservesEvidence(f *testing.F) {
 		assertions.Equal(outcome, o.Outcome)
 		assertions.Equal("unknown", o.OwnerParticipation)
 		assertions.Equal(precision, o.Precision)
+		assertions.Empty(o.Timezone)
 		assertions.True(at.Equal(o.OccurredAt))
 		assertions.Equal([]Participant{{ID: id, Participation: "invited"}}, o.Participants)
 		assertions.JSONEq(string(record), string(o.Raw))
@@ -294,7 +289,7 @@ func FuzzValidCalendarImportPreservesEvidence(f *testing.F) {
 	})
 }
 
-func TestSignalDeletedRetainsEarlierEnd(t *testing.T) {
+func TestSignalDeletedDropsEnd(t *testing.T) {
 	o, err := (ImportRequest{Format: "signal_desktop", Account: "a", Record: []byte(`{"callId":"7","mode":"Direct","status":"Deleted","timestamp":1790841720000,"endedTimestamp":1790841660000}`)}).Observation()
 	require.NoError(t, err)
 	assert.True(t, o.Withdrawn)
