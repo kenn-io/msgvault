@@ -37,7 +37,7 @@ func TestImportAppleCompletesWithFreshnessAndChatMarkers(t *testing.T) {
 	opts := appleTestOptions()
 	source, err := st.GetOrCreateSource("whatsapp", opts.Phone)
 	require.NoError(err)
-	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at = '2000-01-01 00:00:00' WHERE id = ?`, source.ID)
+	_, err = st.DB().Exec(st.Rebind(`UPDATE sources SET last_sync_at = '2000-01-01 00:00:00' WHERE id = ?`), source.ID)
 	require.NoError(err)
 	before, err := st.GetSourceByID(source.ID)
 	require.NoError(err)
