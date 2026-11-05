@@ -46,13 +46,15 @@
                 <dl>
                   {#each filtered.filter((command) => command.section === section) as command (command.id)}
                     <div>
-                      <dt>{command.label}</dt>
+                      <dt>
+                        {command.label}
+                        {#if command.destructive}<span class="review-note">opens review first</span>{/if}
+                      </dt>
                       <dd>
                         {#each command.keys as combo, index (combo)}
                           {#if index > 0}<span aria-hidden="true">or</span>{/if}
                           <KbdBadge keys={formatShortcutKeys(combo)} />
                         {/each}
-                        {#if command.destructive}<span class="review-note">opens review first</span>{/if}
                       </dd>
                     </div>
                   {/each}
@@ -64,7 +66,7 @@
       {/if}
     </div>
     {#snippet footer()}
-      <Button label="Open command palette" class="keyboard-help-commands" onclick={() => onOpenCommands('')}>
+      <Button label="Open command palette ·" class="keyboard-help-commands" onclick={() => onOpenCommands('')}>
         {#snippet trailing()}{#each palette?.keys ?? [] as combo (combo)}<KbdBadge keys={formatShortcutKeys(combo)} />{/each}{/snippet}
       </Button>
     {/snippet}
@@ -94,6 +96,7 @@
   }
 
   .keyboard-help-list {
+    position: relative;
     height: min(520px, calc(76svh - 160px));
     min-height: 0;
     overflow-y: auto;
@@ -101,6 +104,13 @@
 
   .keyboard-help-track:empty {
     display: none;
+  }
+
+  .keyboard-help-list > :global(.kit-empty-state) {
+    position: absolute;
+    top: 33.333%;
+    transform: translateY(-50%);
+    box-sizing: border-box;
   }
 
   .keyboard-help-list :global(.kit-empty-state__title) {
@@ -147,13 +157,29 @@
   }
 
   .review-note {
+    display: block;
     color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+
+  .keyboard-help :global(.kit-modal-footer) {
+    height: 36px;
+    box-sizing: border-box;
+    padding: 0 12px;
   }
 
   .keyboard-help :global(.keyboard-help-commands) {
+    min-height: 0;
+    padding: 0;
     border-color: transparent;
     background: transparent;
     box-shadow: none;
+  }
+
+  .keyboard-help :global(.keyboard-help-commands:hover) {
+    color: var(--accent-primary);
+    background: transparent;
+    text-decoration: underline;
   }
 
   /* kit-ui-check-ignore: two shortcut columns need room for labels and review notes. */
