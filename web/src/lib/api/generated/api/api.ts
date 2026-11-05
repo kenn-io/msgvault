@@ -1246,7 +1246,7 @@ export const getCLIMessageRaw = (
   );
 };
 /**
- * @summary List one conversation in chronological order for export
+ * @summary List one conversation in chronological order for export. SQLite compares instants to the millisecond, with ties in message-ID order.
  */
 export const getCLIMessageThread = (
   params?: GetCLIMessageThreadParams,
