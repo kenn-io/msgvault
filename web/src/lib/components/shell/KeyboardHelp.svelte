@@ -142,6 +142,10 @@
     gap: var(--space-4);
   }
 
+  dl div:has(.review-note) + div {
+    margin-top: var(--space-5);
+  }
+
   dt {
     color: var(--text-primary);
     font-size: var(--font-size-sm);
