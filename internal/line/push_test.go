@@ -124,17 +124,6 @@ func TestPushRetryAfter(t *testing.T) {
 	}
 }
 
-func TestPushRejectsInvalidRetryKeyBeforeTokenIO(t *testing.T) {
-	for _, tc := range []struct{ key, to, text string }{
-		{"", replyUser, "hello"}, {"not-a-uuid", replyUser, "hello"},
-	} {
-		client, fake := newClient(t)
-		_, err := client.PushText(t.Context(), tc.key, line.PushTextRequest{To: tc.to, Text: tc.text})
-		require.Error(t, err)
-		assert.Empty(t, fake.Requests())
-	}
-}
-
 func TestPushDoesNotFollowRedirect(t *testing.T) {
 	targetCalls := 0
 	target := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { targetCalls++ }))

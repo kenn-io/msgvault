@@ -184,7 +184,13 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	if a.RemoteMessageID != "" {
 		return s.complete(ctx, a)
 	}
-	if a.State == store.LineReplyAdmitted {
+	first := a.State == store.LineReplyAdmitted
+	var result PushReceipt
+	var pushErr error
+	if first {
+		if s.now().Before(a.NextRetryAt) {
+			return replyReceipt(a), nil
+		}
 		if client == nil {
 			if err = authorize(a); err != nil {
 				return replyReceipt(a), err
@@ -192,36 +198,31 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 		}
 		// Token acquisition cannot submit a push or start its retry-key window.
 		if _, err = client.accessToken(ctx, ""); err != nil {
-			return replyReceipt(a), errors.Join(ErrCredentialsUnavailable, err)
+			pushErr = errors.Join(ErrCredentialsUnavailable, err)
 		}
 	}
-	first := a.State == store.LineReplyAdmitted
-	now := s.now()
-	a, err = s.Store.StartLineReplyRequestContext(ctx, id, now, now.Add(30*time.Second))
-	if errors.Is(err, store.ErrLineReplyExpired) || errors.Is(err, store.ErrLineReplyRetryWait) {
-		return replyReceipt(a), nil
-	}
-	if err != nil {
-		return replyReceipt(a), err
-	}
-	// Admission already authorized its exact snapshot; recovery must recheck.
-	if client == nil {
-		if err = authorize(a); err != nil {
+	if pushErr == nil {
+		now := s.now()
+		a, err = s.Store.StartLineReplyRequestContext(ctx, id, now, now.Add(30*time.Second))
+		if errors.Is(err, store.ErrLineReplyExpired) || errors.Is(err, store.ErrLineReplyRetryWait) {
+			return replyReceipt(a), nil
+		}
+		if err != nil {
 			return replyReceipt(a), err
 		}
-	}
-	timeout := min(30*time.Second, a.RetryUntil.Sub(now))
-	requestCtx, cancel := context.WithTimeout(ctx, timeout)
-	result, pushErr := client.PushText(requestCtx, a.RetryKey, input)
-	cancel()
-	if errors.Is(pushErr, ErrCredentialsUnavailable) {
-		return replyReceipt(a), pushErr
-	}
-	status, retryAfter := result.StatusCode, result.RetryAfter
-	if apiErr, ok := errors.AsType[*APIError](pushErr); ok {
-		if status == 0 {
-			status = apiErr.StatusCode
+		// Admission already authorized its exact snapshot; recovery must recheck.
+		if client == nil {
+			if err = authorize(a); err != nil {
+				return replyReceipt(a), err
+			}
 		}
+		timeout := min(30*time.Second, a.RetryUntil.Sub(now))
+		requestCtx, cancel := context.WithTimeout(ctx, timeout)
+		result, pushErr = client.PushText(requestCtx, a.RetryKey, input)
+		cancel()
+	}
+	retryAfter := result.RetryAfter
+	if apiErr, ok := errors.AsType[*APIError](pushErr); ok {
 		if apiErr.RetryAfter.After(retryAfter) {
 			retryAfter = apiErr.RetryAfter
 		}
@@ -234,8 +235,8 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	defer cleanup()
 	beforeOutcome := a
 	a, err = s.Store.RecordLineReplyOutcomeContext(evidenceCtx, id, store.LineReplyOutcome{
-		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && status >= 400 && status < 500 && status != http.StatusConflict,
-		StatusCode: status, MessageID: result.MessageID, QuoteToken: result.QuoteToken, RequestID: result.RequestID, NextRetryAt: deadline})
+		Accepted: result.Accepted, DefiniteRejection: first && !result.Accepted && result.StatusCode >= 400 && result.StatusCode < 500 && result.StatusCode != http.StatusConflict,
+		StatusCode: result.StatusCode, MessageID: result.MessageID, QuoteToken: result.QuoteToken, RequestID: result.RequestID, NextRetryAt: deadline})
 	if err != nil {
 		// Preserve the admitted identity even if the Store could not read at all.
 		receipt = replyReceipt(beforeOutcome)
@@ -250,6 +251,9 @@ func (s *ReplySender) Send(ctx context.Context, id string, revision int64) (rece
 	}
 	if a.RemoteMessageID != "" {
 		return s.complete(evidenceCtx, a)
+	}
+	if errors.Is(pushErr, ErrCredentialsUnavailable) {
+		return replyReceipt(a), pushErr
 	}
 	return replyReceipt(a), nil
 }

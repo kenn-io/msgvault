@@ -162,13 +162,8 @@ func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, ou
 		} else if !known && outcome.DefiniteRejection && outcome.StatusCode >= 400 && outcome.StatusCode < 500 && outcome.StatusCode != http.StatusConflict {
 			a.State = LineReplyProviderRejected
 			a.StatusCode = outcome.StatusCode
-		} else {
-			if a.State == LineReplyAdmitted {
-				a.State = LineReplyRemoteUnknown
-			}
-			if !known {
-				a.StatusCode = outcome.StatusCode
-			}
+		} else if !known {
+			a.StatusCode = outcome.StatusCode
 		}
 		deadline := outcome.NextRetryAt.UTC().Truncate(time.Microsecond)
 		if deadline.After(a.NextRetryAt) {

@@ -642,6 +642,64 @@ func (h *replyLookupHandler) Handle(_ context.Context, record slog.Record) error
 func (h *replyLookupHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 func (h *replyLookupHandler) WithGroup(string) slog.Handler      { return h }
 
+func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
+	for _, phase := range []string{"initial", "recovery"} {
+		for _, status := range []int{400, 429, 503} {
+			t.Run(phase+"/"+http.StatusText(status), func(t *testing.T) {
+				must := require.New(t)
+				checks := assert.New(t)
+				f := newReplyFixture(t, "user", nil)
+				state := store.LineReplyAdmitted
+				pushes := 0
+				if phase == "recovery" {
+					f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+					_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+					must.NoError(err)
+					f.now = f.now.Add(31 * time.Second)
+					state = store.LineReplyRemoteUnknown
+					pushes = 1
+				}
+				f.resetClient()
+				before := f.fake.Count(http.MethodPost, "/oauth2/v3/token")
+				f.fake.Enqueue(http.MethodPost, "/oauth2/v3/token", lineapi.Response{Status: status, Header: http.Header{"Retry-After": {"180"}}})
+				wait := 3 * time.Minute
+				if status == http.StatusBadRequest {
+					wait = 30 * time.Second
+				}
+				receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				must.ErrorIs(err, line.ErrCredentialsUnavailable)
+				checks.Equal(state, receipt.Status)
+				must.NotNil(receipt.RetryAfter)
+				checks.Equal(f.now.Add(wait), *receipt.RetryAfter)
+				attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+				must.NoError(err)
+				checks.Equal(state, attempt.State)
+				checks.Equal(*receipt.RetryAfter, attempt.NextRetryAt)
+				waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				checks.Equal(receipt, waiting)
+				f.now = f.now.Add(wait - time.Second)
+				_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				checks.Equal(before+1, f.fake.Count(http.MethodPost, "/oauth2/v3/token"))
+				checks.Equal(pushes, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+				f.now = f.now.Add(time.Second)
+				sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				must.NoError(err)
+				checks.Equal(store.LineReplySent, sent.Status)
+				completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+				must.NoError(err)
+				checks.Equal(attempt.RetryKey, completed.RetryKey)
+				if phase == "initial" {
+					checks.Equal(f.now.Add(23*time.Hour), completed.RetryUntil)
+				} else {
+					checks.Equal(attempt.RetryUntil, completed.RetryUntil)
+				}
+			})
+		}
+	}
+}
+
 func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 	for _, tc := range []struct {
 		name, endpoint string
