@@ -537,7 +537,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	splits := map[meetingIdentity]bool{}
 	for _, d := range decisions {
 		if d.Decision == "split" {
-			resolved, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
+			resolved, err := resolvedMeetingOccurrence(ctx, r, d.Ref, budget)
 			if err == nil {
 				splits[resolved.Identity] = true
 				continue
@@ -554,7 +554,7 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			}
 			continue
 		}
-		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
+		o, err := resolvedMeetingOccurrence(ctx, r, d.Ref, budget)
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 			continue
 		}

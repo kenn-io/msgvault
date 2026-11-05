@@ -205,6 +205,55 @@ func TestMeetingIdentityTwoLongRunningDailySeriesBatch(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityTwoLongRunningDailySeriesSavedDecisions(t *testing.T) {
+	for _, decision := range []string{"link", "split"} {
+		t.Run(decision, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			refs := make([]string, 0, 62)
+			notes := make([]int64, 0, 62)
+			for _, name := range []string{"first", "second"} {
+				uid := name + "@example.org"
+				_, series := calendarFixture(t, st, name, fmt.Sprintf(`{"id":%q,"iCalUID":%q,"start":{"dateTime":"2000-01-01T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2000-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`, name, uid))
+				for day := 1; day <= 31; day++ {
+					at := time.Date(2027, 3, day, 10, 0, 0, 0, time.UTC)
+					ref := OccurrenceRef{MessageID: series, Key: at.Format("20060102T150405Z")}
+					noteUID := ""
+					if decision == "split" {
+						noteUID = uid
+					}
+					_, note := projectionFixture(t, st, fmt.Sprintf("%s-note-%d", name, day), "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":%q,"startsAt":%q}}`, noteUID, at.Format(time.RFC3339)))
+					if decision == "link" {
+						require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+					} else {
+						require.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
+					}
+					refs = append(refs, formatMeetingOccurrence(ref))
+					notes = append(notes, note)
+				}
+			}
+			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+			require.NoError(err)
+			require.Len(page.Occurrences, 62)
+			got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs, TranscriptIDs: notes})
+			require.NoError(err)
+			require.Len(got.ByOccurrence, 62)
+			require.Len(got.ByTranscript, 62)
+			for i, ref := range refs {
+				if decision == "link" {
+					assert.Equal([]int64{notes[i]}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+					assert.Equal(ref, got.ByTranscript[notes[i]].OccurrenceRef)
+				} else {
+					assert.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+					assert.Empty(got.ByTranscript[notes[i]].ExactOccurrenceRefs)
+					assert.Equal(fmt.Sprintf("msg:%d", notes[i]), got.ByTranscript[notes[i]].Key)
+				}
+			}
+		})
+	}
+}
+
 func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
