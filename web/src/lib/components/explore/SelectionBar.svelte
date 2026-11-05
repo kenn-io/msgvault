@@ -1,6 +1,6 @@
 <script lang="ts">
   import {
-    autoReposition, Button, dismissable, floatingPopoverStyle,
+    autoReposition, Button, dismissable,
     Tooltip,
   } from '@kenn-io/kit-ui';
   import type { Snippet } from 'svelte';
@@ -15,6 +15,7 @@
   import type { ExploreSelectionState } from '../../explore/state.svelte';
   import { formatBytes } from '../../util/format';
   import MeetingContextExport from '../meetings/MeetingContextExport.svelte';
+  import { popoverStyle } from './popover-position';
 
   type Preflight = GeneratedExplorePreflightResponse;
 
@@ -70,14 +71,7 @@
 
   function position(): void {
     if (!meetingTrigger || !meetingPanel) return;
-    meetingStyle = floatingPopoverStyle({
-      trigger: meetingTrigger.getBoundingClientRect(),
-      viewportWidth: window.innerWidth,
-      viewportHeight: window.innerHeight,
-      popoverWidth: meetingPanel.offsetWidth,
-      popoverHeight: meetingPanel.offsetHeight,
-      align: 'start',
-    });
+    meetingStyle = popoverStyle(meetingTrigger, meetingPanel);
   }
 
   function hideOnFocusOutside(event: FocusEvent): void {
