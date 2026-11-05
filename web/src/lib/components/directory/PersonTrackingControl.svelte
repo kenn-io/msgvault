@@ -1,8 +1,9 @@
 <script lang="ts">
   import { Button, EmptyState, Spinner, Toggle } from '@kenn-io/kit-ui';
-  import { onDestroy, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { AttributeDefinition } from '../../api/generated/models';
+  import { listAttributeDefinitions } from '../../api/generated/api/api';
   import { sentenceCase } from '../../explore/labels';
   import { formatDateTime } from '../../util/format';
   import type { APIClient } from '../../api/client';
@@ -19,6 +20,15 @@
   const controller = new PersonTrackingController(untrack(() => client));
   let root = $state<HTMLElement>();
   let catalogRetryIncludesSensitive = $state(false);
+  let loadedDefinitions = $state<AttributeDefinition[]>([]);
+
+  onMount(() => {
+    const abort = new AbortController();
+    void listAttributeDefinitions({ object_type: 'person', include_hidden: true }, { ...client, signal: abort.signal })
+      .then(response => { if (!abort.signal.aborted && response.data) loadedDefinitions = response.data.definitions ?? []; })
+      .catch(() => undefined);
+    return () => abort.abort();
+  });
 
   $effect.pre(() => {
     const nextPersonID = personID;
@@ -105,7 +115,7 @@
         {#each controller.targets as target}
           <li>
             <span class="value">
-              {target.kind === 'employment' ? 'Work history' : definitions.find((definition) => definition.slug === target.slug)?.label ?? sentenceCase(target.slug)}
+              {target.kind === 'employment' ? 'Work history' : (loadedDefinitions.find((definition) => definition.slug === target.slug) ?? definitions.find((definition) => definition.slug === target.slug))?.label ?? sentenceCase(target.slug)}
               {#if target.kind === 'employment'}<small>Employer, title, and dates</small>{/if}
             </span>
             {#if target.sensitive}<span class="meta">Sensitive</span>{/if}

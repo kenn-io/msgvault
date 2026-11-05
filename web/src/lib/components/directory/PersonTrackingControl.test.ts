@@ -135,6 +135,7 @@ describe('PersonTrackingControl', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
       const url = new URL(request.url);
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       if (url.pathname.endsWith('/tracking')) {
         const id = Number(url.pathname.split('/').at(-2));
         return Response.json({ person_id: id, tracked: false, tracked_at: null });

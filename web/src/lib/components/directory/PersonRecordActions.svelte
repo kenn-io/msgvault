@@ -9,7 +9,6 @@
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
   import { Modal } from '@kenn-io/kit-ui';
   import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
-  import { joinDefinitions } from './attribute-value';
 
   interface Props {
     client: APIClient;
@@ -28,7 +27,7 @@
   let renaming = $state(false);
   let renameValue = $state('');
   let confirmingDelete = $state(false);
-  const trackingDefinitions = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).map(field => field.definition));
+  const trackingDefinitions = $derived([...controller.definitions, ...(controller.attributes?.attributes ?? []).map(field => field.definition)]);
 
   function beginRename(): void {
     renameValue = controller.person?.display_name ?? '';
@@ -145,6 +144,7 @@
 {/if}
 
 {#if maintenance === 'tracking'}
+  <div class="profile-updates">
   <Modal
     title={controller.person?.display_name ? `Keep ${controller.person.display_name}'s profile updated` : 'Keep this profile updated'}
     closeLabel="Close profile updates"
@@ -157,6 +157,7 @@
     <PersonTrackingControl {client} {personID} definitions={trackingDefinitions} {onAnnounce} />
     {#snippet footer()}<Button label="Close" onclick={() => maintenance = undefined} />{/snippet}
   </Modal>
+  </div>
 {:else if maintenance === 'publication'}
   <Modal ariaLabel="Publish to address book" onclose={() => maintenance = undefined}>
     <CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />
@@ -164,7 +165,7 @@
 {/if}
 
 <style>
-  :global(.kit-modal-panel:has([aria-label='Profile maintenance']) .kit-modal-title) {
+  .profile-updates :global(.kit-modal-title) {
     overflow-wrap: anywhere;
     display: -webkit-box;
     -webkit-box-orient: vertical;

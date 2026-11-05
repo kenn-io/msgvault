@@ -32,6 +32,37 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
+  it('loads labels from Messages without delaying opening or replacing a newer dialog', async () => {
+    let resolveDefinitions!: (response: Response) => void;
+    const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
+    const fetchFn = vi.fn<typeof fetch>(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/attribute-definitions')) return pendingDefinitions;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [{ kind: 'attribute', slug: 'conversation_topics', sensitive: false }] });
+    });
+    renderActions(fetchFn);
+    await choose('Keep this profile updated');
+    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
+    expect(await within(dialog).findByText('Conversation topics')).toBeDefined();
+    await waitFor(() => expect(fetchFn.mock.calls.some(([input]) => new URL((input as Request).url).pathname.endsWith('/attribute-definitions'))).toBe(true));
+    resolveDefinitions(Response.json({ definitions: [definition({ slug: 'conversation_topics', label: 'Conversation starters' })] }));
+    expect(await within(dialog).findByText('Conversation starters')).toBeDefined();
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    const lateDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
+    fetchFn.mockImplementation(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path.endsWith('/attribute-definitions')) return lateDefinitions;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [] });
+    });
+    await choose('Keep this profile updated');
+    await fireEvent.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Close' }));
+    await choose('Publish to address book');
+    resolveDefinitions(Response.json({ definitions: [definition({ slug: 'conversation_topics', label: 'Conversation starters' })] }));
+    expect(await screen.findByRole('dialog', { name: 'Publish to address book' })).toBeDefined();
+  });
+
   it('opens named profile updates and returns focus after Close', async () => {
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
@@ -64,7 +95,7 @@ describe('PersonRecordActions', () => {
     const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
     expect(await within(dialog).findByText('Favorite food')).toBeDefined();
     expect(fetchFn.mock.calls.map(([input]) => new URL((input as Request).url).pathname).sort()).toEqual([
-      '/api/v1/people/7/tracking', '/api/v1/person-fact-targets'
+      '/api/v1/attribute-definitions', '/api/v1/people/7/tracking', '/api/v1/person-fact-targets'
     ]);
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     expect(screen.queryByRole('alert')).toBeNull();
@@ -91,7 +122,7 @@ describe('PersonRecordActions', () => {
     renderActions(vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition({ slug: 'favorites_food', label: 'Favorite food' })] });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 });
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
     }));
