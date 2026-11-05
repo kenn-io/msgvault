@@ -6572,25 +6572,6 @@ components:
       required:
         - reason
       type: object
-    GCalConferenceData:
-      additionalProperties: true
-      properties:
-        entryPoints:
-          items:
-            $ref: "#/components/schemas/GCalConferenceEntryPoint"
-          type: array
-      type: object
-    GCalConferenceEntryPoint:
-      additionalProperties: true
-      properties:
-        entryPointType:
-          type: string
-        uri:
-          type: string
-      required:
-        - entryPointType
-        - uri
-      type: object
     GCalEvent:
       additionalProperties: true
       properties:
@@ -6598,8 +6579,6 @@ components:
           items:
             $ref: "#/components/schemas/GCalAttendee"
           type: array
-        conferenceData:
-          $ref: "#/components/schemas/GCalConferenceData"
         created:
           format: date-time
           type: string

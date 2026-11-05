@@ -67,50 +67,40 @@ func (e EventDateTime) Instant() (time.Time, bool) {
 // Event is a single calendar event (a master, a recurring instance, or an
 // exception). The full original JSON is preserved separately in message_raw.
 type Event struct {
-	ETag              string         `json:"etag,omitempty"`
-	ID                string         `json:"id,omitempty"`
-	Status            string         `json:"status,omitempty"`
-	HTMLLink          string         `json:"htmlLink,omitempty"`
-	HangoutLink       string         `json:"hangoutLink,omitempty"`
-	ConferenceData    ConferenceData `json:"conferenceData,omitzero"`
-	Created           time.Time      `json:"created,omitzero"`
-	Updated           time.Time      `json:"updated,omitzero"`
-	Summary           string         `json:"summary,omitempty"`
-	Description       string         `json:"description,omitempty"`
-	Location          string         `json:"location,omitempty"`
-	Creator           Person         `json:"creator,omitzero"`
-	Organizer         Person         `json:"organizer,omitzero"`
-	Start             EventDateTime  `json:"start,omitzero"`
-	End               EventDateTime  `json:"end,omitzero"`
-	Recurrence        []string       `json:"recurrence,omitempty"`       // RRULE/RDATE/EXDATE lines (masters only)
-	RecurringEventID  string         `json:"recurringEventId,omitempty"` // set on instances/exceptions of a series
-	OriginalStartTime EventDateTime  `json:"originalStartTime,omitzero"`
-	ICalUID           string         `json:"iCalUID,omitempty"`
-	Sequence          int            `json:"sequence,omitzero"`
-	Attendees         []Attendee     `json:"attendees,omitempty"`
-	Transparency      string         `json:"transparency,omitempty"`
-	Visibility        string         `json:"visibility,omitempty"`
-	EventType         string         `json:"eventType,omitempty"`
-	Reminders         *Reminders     `json:"reminders,omitzero"`
+	ETag              string        `json:"etag,omitempty"`
+	ID                string        `json:"id,omitempty"`
+	Status            string        `json:"status,omitempty"`
+	HTMLLink          string        `json:"htmlLink,omitempty"`
+	HangoutLink       string        `json:"hangoutLink,omitempty"`
+	Created           time.Time     `json:"created,omitzero"`
+	Updated           time.Time     `json:"updated,omitzero"`
+	Summary           string        `json:"summary,omitempty"`
+	Description       string        `json:"description,omitempty"`
+	Location          string        `json:"location,omitempty"`
+	Creator           Person        `json:"creator,omitzero"`
+	Organizer         Person        `json:"organizer,omitzero"`
+	Start             EventDateTime `json:"start,omitzero"`
+	End               EventDateTime `json:"end,omitzero"`
+	Recurrence        []string      `json:"recurrence,omitempty"`       // RRULE/RDATE/EXDATE lines (masters only)
+	RecurringEventID  string        `json:"recurringEventId,omitempty"` // set on instances/exceptions of a series
+	OriginalStartTime EventDateTime `json:"originalStartTime,omitzero"`
+	ICalUID           string        `json:"iCalUID,omitempty"`
+	Sequence          int           `json:"sequence,omitzero"`
+	Attendees         []Attendee    `json:"attendees,omitempty"`
+	Transparency      string        `json:"transparency,omitempty"`
+	Visibility        string        `json:"visibility,omitempty"`
+	EventType         string        `json:"eventType,omitempty"`
+	Reminders         *Reminders    `json:"reminders,omitzero"`
 
 	// Raw is the original API JSON for this event, preserved verbatim for
 	// archival fidelity (stored in message_raw). It is not re-serialized from
-	// the mapped fields, so fields msgvault does not model (conference details,
+	// the mapped fields, so fields msgvault does not model (conferenceData,
 	// extendedProperties, ...) survive in the archive.
 	Raw jsontext.Value `json:"-"`
 }
 
 // IsCancelled reports whether the event is a cancellation/tombstone.
 func (e Event) IsCancelled() bool { return e.Status == "cancelled" }
-
-type ConferenceData struct {
-	EntryPoints []ConferenceEntryPoint `json:"entryPoints,omitempty"`
-}
-
-type ConferenceEntryPoint struct {
-	EntryPointType string `json:"entryPointType"`
-	URI            string `json:"uri"`
-}
 
 type Reminder struct {
 	Method  string `json:"method"`

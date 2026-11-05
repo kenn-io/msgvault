@@ -6610,31 +6610,12 @@ components:
       required:
         - reason
       type: object
-    GCalConferenceData:
-      properties:
-        entryPoints:
-          items:
-            $ref: "#/components/schemas/GCalConferenceEntryPoint"
-          type: array
-      type: object
-    GCalConferenceEntryPoint:
-      properties:
-        entryPointType:
-          type: string
-        uri:
-          type: string
-      required:
-        - entryPointType
-        - uri
-      type: object
     GCalEvent:
       properties:
         attendees:
           items:
             $ref: "#/components/schemas/GCalAttendee"
           type: array
-        conferenceData:
-          $ref: "#/components/schemas/GCalConferenceData"
         created:
           format: date-time
           type: string

@@ -319,7 +319,6 @@ func calendarOccurrenceReadCases() []calendarOccurrenceReadCase {
 		{count: 2, name: "cancelled empty content", fields: `"status":"cancelled","location":"","description":"","hangoutLink":"","conferenceData":{}`, content: masterContent},
 		{count: 2, name: "cancelled own content", fields: `"status":"cancelled","location":"Other room","description":"Updated agenda","conferenceData":{"entryPoints":[{"entryPointType":"phone","uri":"tel:+12025550100"},{"entryPointType":"video","uri":"https://video.example.com/exception"}]}`, content: calevent.Content{Location: "Other room", Description: "Updated agenda", JoinURL: "https://video.example.com/exception"}},
 		{count: 2, name: "preferred hangout link", fields: `"status":"cancelled","hangoutLink":"https://meet.example.com/event","conferenceData":{"entryPoints":[{"entryPointType":"video","uri":"https://video.example.com/other"}]}`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/event"}},
-		{count: 2, name: "first video entry", fields: `"status":"cancelled","conferenceData":{"entryPoints":[{"entryPointType":"phone","uri":"tel:+12025550100"},{"entryPointType":"video","uri":"https://video.example.com/first"},{"entryPointType":"video","uri":"https://video.example.com/second"}]}`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://video.example.com/first"}},
 		{count: 1, name: "orphan", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, orphan: true},
 	}
 }

@@ -6239,60 +6239,31 @@ func (g GCalCalendarError) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 
-type GCalConferenceData struct {
-	EntryPoints []GCalConferenceEntryPoint `json:"entryPoints,omitempty"`
-}
-
-func (g GCalConferenceData) Validate() error {
-	var errors runtime.ValidationErrors
-	for i, item := range g.EntryPoints {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("EntryPoints[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
-type GCalConferenceEntryPoint struct {
-	EntryPointType string `json:"entryPointType" validate:"required"`
-	URI            string `json:"uri" validate:"required"`
-}
-
-func (g GCalConferenceEntryPoint) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(g))
-}
-
 type GCalEvent struct {
-	Attendees         []GCalAttendee      `json:"attendees,omitempty"`
-	ConferenceData    *GCalConferenceData `json:"conferenceData,omitempty"`
-	Created           *time.Time          `json:"created,omitempty"`
-	Creator           *GCalPerson         `json:"creator,omitempty"`
-	Description       *string             `json:"description,omitzero"`
-	End               *GCalEventDateTime  `json:"end,omitempty"`
-	Etag              *string             `json:"etag,omitzero"`
-	EventType         *string             `json:"eventType,omitzero"`
-	HangoutLink       *string             `json:"hangoutLink,omitzero"`
-	HTMLLink          *string             `json:"htmlLink,omitzero"`
-	ICalUID           *string             `json:"iCalUID,omitzero"`
-	ID                *string             `json:"id,omitzero"`
-	Location          *string             `json:"location,omitzero"`
-	Organizer         *GCalPerson         `json:"organizer,omitempty"`
-	OriginalStartTime *GCalEventDateTime  `json:"originalStartTime,omitempty"`
-	Recurrence        []string            `json:"recurrence,omitempty"`
-	RecurringEventID  *string             `json:"recurringEventId,omitzero"`
-	Reminders         *GCalReminders      `json:"reminders,omitempty"`
-	Sequence          *int64              `json:"sequence,omitempty"`
-	Start             *GCalEventDateTime  `json:"start,omitempty"`
-	Status            *string             `json:"status,omitzero"`
-	Summary           *string             `json:"summary,omitzero"`
-	Transparency      *string             `json:"transparency,omitzero"`
-	Updated           *time.Time          `json:"updated,omitempty"`
-	Visibility        *string             `json:"visibility,omitzero"`
+	Attendees         []GCalAttendee     `json:"attendees,omitempty"`
+	Created           *time.Time         `json:"created,omitempty"`
+	Creator           *GCalPerson        `json:"creator,omitempty"`
+	Description       *string            `json:"description,omitzero"`
+	End               *GCalEventDateTime `json:"end,omitempty"`
+	Etag              *string            `json:"etag,omitzero"`
+	EventType         *string            `json:"eventType,omitzero"`
+	HangoutLink       *string            `json:"hangoutLink,omitzero"`
+	HTMLLink          *string            `json:"htmlLink,omitzero"`
+	ICalUID           *string            `json:"iCalUID,omitzero"`
+	ID                *string            `json:"id,omitzero"`
+	Location          *string            `json:"location,omitzero"`
+	Organizer         *GCalPerson        `json:"organizer,omitempty"`
+	OriginalStartTime *GCalEventDateTime `json:"originalStartTime,omitempty"`
+	Recurrence        []string           `json:"recurrence,omitempty"`
+	RecurringEventID  *string            `json:"recurringEventId,omitzero"`
+	Reminders         *GCalReminders     `json:"reminders,omitempty"`
+	Sequence          *int64             `json:"sequence,omitempty"`
+	Start             *GCalEventDateTime `json:"start,omitempty"`
+	Status            *string            `json:"status,omitzero"`
+	Summary           *string            `json:"summary,omitzero"`
+	Transparency      *string            `json:"transparency,omitzero"`
+	Updated           *time.Time         `json:"updated,omitempty"`
+	Visibility        *string            `json:"visibility,omitzero"`
 }
 
 func (g GCalEvent) Validate() error {
@@ -6301,13 +6272,6 @@ func (g GCalEvent) Validate() error {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Attendees[%d]", i), err)
-			}
-		}
-	}
-	if g.ConferenceData != nil {
-		if v, ok := any(g.ConferenceData).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("ConferenceData", err)
 			}
 		}
 	}

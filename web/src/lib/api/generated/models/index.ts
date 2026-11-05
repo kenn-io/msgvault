@@ -348,8 +348,6 @@ export * from "./gCalAttendee";
 export * from "./gCalBusyPeriod";
 export * from "./gCalCalendarBusy";
 export * from "./gCalCalendarError";
-export * from "./gCalConferenceData";
-export * from "./gCalConferenceEntryPoint";
 export * from "./gCalEvent";
 export * from "./gCalEventDateTime";
 export * from "./gCalEventInput";
