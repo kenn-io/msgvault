@@ -451,26 +451,27 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 		return err
 	}
 	if hasActivity {
-		activity := "read_parquet('" + quoteIdentitySQLPath(filepath.Join(analyticsDir, identityindex.DatasetActivity, "**", "*.parquet")) + "', hive_partitioning=true, union_by_name=true)"
-		relation := expandedRelationshipActivity(analyticsDir, activity)
+		parquet := func(dataset string, hive bool) string {
+			glob := filepath.Join(analyticsDir, dataset, "*.parquet")
+			options := ""
+			if hive {
+				glob = filepath.Join(analyticsDir, dataset, "**", "*.parquet")
+				options = ", hive_partitioning=true, union_by_name=true"
+			}
+			return "read_parquet('" + quoteIdentitySQLPath(glob) + "'" + options + ")"
+		}
+		relation := identityindex.ExpandedActivityRelation(
+			parquet(identityindex.DatasetActivity, true),
+			parquet(datasetConversationParticipants, false),
+			parquet(datasetParticipants, false),
+			parquet(datasetParticipantClusters, false),
+			parquet(datasetOwnerParticipants, false),
+		)
 		if _, err := db.ExecContext(ctx, "CREATE OR REPLACE VIEW relationship_activity_expanded AS SELECT * FROM "+relation); err != nil {
 			return fmt.Errorf("create relationship activity view: %w", err)
 		}
 	}
 	return nil
-}
-
-func expandedRelationshipActivity(analyticsDir, activity string) string {
-	parquet := func(dataset string) string {
-		return "read_parquet('" + quoteIdentitySQLPath(filepath.Join(analyticsDir, dataset, "*.parquet")) + "')"
-	}
-	return identityindex.ExpandedActivityRelation(
-		activity,
-		parquet(datasetConversationParticipants),
-		parquet(datasetParticipants),
-		parquet(datasetParticipantClusters),
-		parquet(datasetOwnerParticipants),
-	)
 }
 
 // refreshRelationshipQuerySets loads unsent and owner event message IDs and owner canonicals once
@@ -515,8 +516,8 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	}
 	eventSQL := "SELECT NULL::BIGINT AS message_id WHERE false"
 	if hasActivity {
-		activity := "(SELECT * FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting'))"
-		eventSQL = "SELECT DISTINCT message_id FROM " + expandedRelationshipActivity(analyticsDir, activity) + " WHERE is_owner AND is_direct"
+		// Sparse direct rows' is_owner already includes roster owners.
+		eventSQL = "SELECT DISTINCT message_id FROM read_parquet('" + quoteIdentitySQLPath(path) + "', hive_partitioning=true, union_by_name=true) WHERE entry_kind IN ('event', 'meeting') AND canonical_id IS NOT NULL AND is_owner AND is_direct"
 	}
 	if _, err := tx.ExecContext(ctx, "CREATE OR REPLACE TEMP TABLE relationship_owner_event_messages AS "+eventSQL); err != nil {
 		return errors.Join(fmt.Errorf("load owner event message IDs: %w", err), tx.Rollback())
