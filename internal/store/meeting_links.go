@@ -553,12 +553,8 @@ func (s *Store) meetingReader(ctx context.Context) reboundReader {
 // Pick the freshest snapshot within each source series, then choose the lowest
 // canonical reference across calendar copies of the same occurrence.
 func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
-	type exceptionAliasIdentity struct {
-		sourceID int64
-		seriesID string
-		key      string
-	}
-	aliases := make(map[exceptionAliasIdentity]linkOccurrence)
+	var exceptions []CalendarEventRow
+	byID := make(map[int64]linkOccurrence)
 	filtered := make([]linkOccurrence, 0, len(out))
 	for _, occurrence := range out {
 		event := occurrence.Row.Event
@@ -566,18 +562,13 @@ func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
 			filtered = append(filtered, occurrence)
 			continue
 		}
-		key := exceptionAliasIdentity{
-			sourceID: occurrence.Row.SourceID,
-			seriesID: event.SeriesProviderID,
-			key:      calendarExceptionIdentityKey(*event.Original),
-		}
-		current, exists := aliases[key]
-		if !exists || calendarEventSnapshotNewer(occurrence.Row, current.Row) {
-			aliases[key] = occurrence
+		exceptions = append(exceptions, occurrence.Row)
+		if _, exists := byID[occurrence.Row.MessageID]; !exists {
+			byID[occurrence.Row.MessageID] = occurrence
 		}
 	}
-	for _, occurrence := range aliases {
-		filtered = append(filtered, occurrence)
+	for _, row := range calendarExceptionRows(exceptions) {
+		filtered = append(filtered, byID[row.MessageID])
 	}
 	out = filtered
 	slices.SortFunc(out, func(a, b linkOccurrence) int {
