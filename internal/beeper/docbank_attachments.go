@@ -678,7 +678,7 @@ func processingAnswer(job docbankmedia.JobStatus, err error) documentProcessingA
 
 func processingJobAnswer(job docbankmedia.JobStatus) documentProcessingAnswer {
 	switch {
-	case job.State == "completed" || job.State == "partial" || job.Phase == "embedding":
+	case job.State == "completed" || job.State == "partial" || job.Phase == "embedding" && slices.Contains([]string{"queued", "running", "retry_wait", "operator_required", "failed", "abandoned"}, job.State):
 		// Docbank publishes rendition text before starting embeddings, even if embeddings fail.
 		return documentProcessingAnswer{outcome: "extracted"}
 	case job.State == "queued" || job.State == "running" || job.State == "retry_wait":

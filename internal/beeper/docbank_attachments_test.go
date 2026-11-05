@@ -1470,6 +1470,7 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 		{"running", "rendition", "", "requested", false},
 		{"retry_wait", "rendition", "provider_timeout", "requested", false},
 		{"new_state", "rendition", "provider_code", "requested", true},
+		{"awaiting_review", "embedding", "", "requested", true},
 		{"operator_required", "failed", "operator_required", "operator_required", false},
 		{"failed", "rendition", "provider_timeout", "provider_timeout", false},
 		{"failed", "rendition", "", "failed", false},
