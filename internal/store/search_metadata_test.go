@@ -73,6 +73,34 @@ func TestSearchMetadataSkipsUnnamedAttachments(t *testing.T) {
 	assert.Equal(2, metadata[id].AttachmentCount)
 }
 
+func TestSearchMetadataPrefixExcerpts(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("match excerpts use SQLite FTS5")
+	}
+
+	var ids []int64
+	for _, body := range []string{
+		"The projection meeting starts tomorrow.",
+		"The project meetings start tomorrow.",
+		"The project budget is ready.",
+		"The meeting starts tomorrow.",
+	} {
+		id := f.NewMessage().WithSubject("Plan").WithSnippet("stored preview").Create(t, f.Store)
+		require.NoError(f.Store.UpsertFTS(id, "Plan", body, "", "", ""))
+		ids = append(ids, id)
+	}
+
+	metadata, err := f.Store.GetSearchMetadata(t.Context(), []int64{ids[0], ids[2], ids[3]}, search.Parse("project meeting"), true)
+	require.NoError(err)
+	require.Len(metadata, 3)
+	assert.Equal("The projection meeting starts tomorrow.", metadata[ids[0]].MatchSnippet)
+	assert.Empty(metadata[ids[2]].MatchSnippet)
+	assert.Empty(metadata[ids[3]].MatchSnippet)
+}
+
 func TestSearchMetadataORExcerpts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
