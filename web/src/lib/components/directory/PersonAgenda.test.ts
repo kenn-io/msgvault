@@ -105,7 +105,7 @@ describe('PersonAgenda', () => {
       expect(requests.filter(isStatus)).toHaveLength(1);
       releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
     } else {
-      expect(await screen.findByText("Couldn't add task")).toBeDefined();
+      expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
       await rerender({ client, personID: 7, refreshKey: '2' });
     }
     await waitFor(() => expect(requests.filter(request => request.method === 'GET' && new URL(request.url).pathname === '/api/v1/people/7/agenda')).toHaveLength(2));
@@ -201,7 +201,7 @@ describe('PersonAgenda', () => {
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: Gift ideas' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(await screen.findByText("Couldn't add task")).toBeDefined();
+    expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
 
     // Selecting either spelling canonicalizes the draft list before creation.
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
@@ -209,7 +209,7 @@ describe('PersonAgenda', () => {
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'gift ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: Gift ideas' });
-    await fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(requests.filter((request) => request.method === 'POST').length).toBe(2));
 
     const posts = requests.filter((request) => request.method === 'POST');
@@ -242,7 +242,7 @@ describe('PersonAgenda', () => {
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
-    expect(await screen.findByText("Couldn't add task")).toBeDefined();
+    expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
 
     await rerender({ client, personID: 8 });
     await waitFor(() => expect(requests.some((request) => new URL(request.url).pathname === '/api/v1/people/8/agenda')).toBe(true));
@@ -511,7 +511,7 @@ describe('PersonAgenda', () => {
     // mutex so B's form recovers.
     releasePost!(Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 }));
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    expect(screen.queryByText("Couldn't add task")).toBeNull();
+    expect(screen.queryByText('Unable to add agenda item')).toBeNull();
     expect((screen.getByLabelText('New agenda item') as HTMLInputElement).value).toBe('B note');
     expect(onAnnounce).not.toHaveBeenCalled();
   });

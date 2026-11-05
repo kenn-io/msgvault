@@ -25,7 +25,6 @@
   let loading = $state(true);
   let mutating = $state(false);
   let error = $state('');
-  let retryCreate = $state(false);
   let integrationState = $state('loading');
   let integrationMessage = $state('');
   let truncated = $state(false);
@@ -93,7 +92,6 @@
     controller = new AbortController();
     loading = true;
     error = '';
-    retryCreate = false;
     try {
       const status = await getKataIntegrationStatus({ ...client, signal: controller.signal });
       if (current !== generation) return;
@@ -158,22 +156,21 @@
     mutating = true;
     error = '';
     try {
-      const { data } = await createPersonAgendaItem(
+      const { data, error: responseError } = await createPersonAgendaItem(
         { id: personID },
         { title: trimmedTitle, list: effectiveList },
         { ...client, headers: { 'Idempotency-Key': retryRequestID } },
       );
       if (current !== generation) return;
-      if (!data) throw new Error("Couldn't add task");
+      if (!data) throw new Error(messageFor(responseError, 'Unable to add agenda item'));
       title = '';
       retryRequestID = '';
       retryFingerprint = '';
       onAnnounce('Agenda item added.');
       await load();
-    } catch {
+    } catch (cause) {
       if (current !== generation) return;
-      error = "Couldn't add task";
-      retryCreate = true;
+      error = cause instanceof Error ? cause.message : 'Unable to add agenda item';
     } finally {
       // Only the newest mutation owns the mutating flag: after a selection
       // change invalidated this token, the new person's state (possibly a
@@ -190,7 +187,6 @@
     const token = ++mutationToken;
     mutating = true;
     error = '';
-    retryCreate = false;
     try {
       const { data, error: responseError } = await unlinkPersonAgendaItem(
         { id: personID, ref },
@@ -218,7 +214,7 @@
 
 <section class="person-agenda" aria-labelledby={`person-${personID}-agenda-heading`}>
   <div class="heading"><h3 id={`person-${personID}-agenda-heading`}>Tasks</h3>{#if integrationState === 'disabled' && onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Tasks" onclick={onSetUp} />{/if}{#if loading}<span role="status">Loading…</span>{/if}</div>
-  {#if error}<p class="notice error" role="alert">{error}<Button size="sm" label={retryCreate ? 'Retry' : 'Retry tasks'} disabled={mutating} onclick={() => void (retryCreate ? createItem() : load())} /></p>{/if}
+  {#if error}<p class="notice error" role="alert">{error}<Button size="sm" label="Retry tasks" onclick={() => void load()} /></p>{/if}
   {#if stateMessage && !(integrationState === 'disabled' && onSetUp)}<div class="heading"><span class="notice" role="status">{stateMessage}</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
   {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No tasks yet</p>{/if}
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
@@ -262,15 +258,12 @@
   .task-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
   .task-row :global(.kit-chip) { box-sizing: border-box; max-width: min(12rem, 100%); flex: none; margin-left: auto; }
   .list-label { white-space: nowrap; }
-  .list-picker { max-width: 9rem; anchor-scope: --task-list; --typeahead-min-width: 0; --typeahead-max-width: 9rem; --typeahead-panel-min-width: 16rem; }
+  .list-picker { max-width: 9rem; --typeahead-min-width: 0; --typeahead-max-width: 9rem; --typeahead-panel-min-width: 16rem; }
   .list-picker :global(.kit-typeahead) { min-width: var(--typeahead-min-width); max-width: var(--typeahead-max-width); }
-  .list-picker :global(.kit-typeahead__panel) { left: auto !important; right: anchor(--task-list right); }
-  .list-trigger { display: flex; align-items: center; gap: var(--space-1); max-width: 100%; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; anchor-name: --task-list; }
+  .list-trigger { display: flex; align-items: center; gap: var(--space-1); max-width: 100%; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
   .trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .list-trigger:focus { outline: none; box-shadow: none; }
   .list-trigger:disabled { cursor: not-allowed; }
   a { color: var(--link-ink); }
   .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
-  .heading [role='status'] { color: var(--text-muted); }
-  .error { display: flex; align-items: center; gap: var(--field-gap); }
 </style>
