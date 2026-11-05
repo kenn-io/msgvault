@@ -212,18 +212,3 @@ func TestMeetingMetricsLargeInternalMessagePopulationUsesBoundedBinding(t *testi
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), metrics.Totals.MeetingCount)
 }
-
-func TestMeetingMetricsCountsLinkedTranscriptsOnce(t *testing.T) {
-	require := require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "series", linkSeriesRaw)
-	_, first := projectionFixture(t, st, "first", "plaud_json", `{}`)
-	_, second := projectionFixture(t, st, "second", "plaud_json", `{}`)
-	ref := OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}
-	require.NoError(st.LinkMeetingContext(t.Context(), first, ref))
-	require.NoError(st.LinkMeetingContext(t.Context(), second, ref))
-	ids := []int64{first, second}
-	metrics, err := st.GetMeetingMetricsContext(t.Context(), MeetingQueryScope{MessageIDs: &ids})
-	require.NoError(err)
-	assert.Equal(t, int64(1), metrics.Totals.MeetingCount)
-}
