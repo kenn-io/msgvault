@@ -37,8 +37,8 @@ func TestCalDAVCompoundProjection(t *testing.T) {
 
 func TestCalDAVWindowsPeriodTimeZone(t *testing.T) {
 	for _, tc := range []struct{ line, want string }{
-		{"RDATE;VALUE=PERIOD;TZID=\"Eastern Standard Time\":20270314T090000/PT1H", "RDATE;TZID=Eastern Standard Time;VALUE=PERIOD:20270314T090000/PT1H"},
-		{"RDATE;TZID=Eastern Standard Time:invalid", "RDATE;TZID=Eastern Standard Time:INVALID"},
+		{"RDATE;VALUE=PERIOD;TZID=\"Eastern Standard Time\":20270314T090000/PT1H", "RDATE;TZID=America/New_York;VALUE=PERIOD:20270314T090000/PT1H"},
+		{"RDATE;TZID=Eastern Standard Time:invalid", "RDATE;TZID=America/New_York:INVALID"},
 		{"EXDATE;TZID=Invalid/Zone:20270314T090000", "EXDATE;TZID=Invalid/Zone:20270314T090000"},
 	} {
 		t.Run(tc.line, func(t *testing.T) {

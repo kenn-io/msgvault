@@ -316,18 +316,18 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 	}
 	for _, name := range []string{"RRULE", "RDATE", "EXDATE", "EXRULE"} {
 		for _, v := range p[name] {
-			v.Value = strings.ToUpper(v.Value)
 			var line strings.Builder
 			line.WriteString(name)
-			for _, param := range []string{"TZID", "VALUE"} {
-				if value := v.Params.Get(param); value != "" {
-					if param == "VALUE" {
-						value = strings.ToUpper(value)
-					}
-					line.WriteString(";" + param + "=" + value)
+			if value := v.Params.Get("TZID"); value != "" {
+				if resolved, err := calrecur.LoadZone(value); err == nil {
+					value = resolved.String()
 				}
+				line.WriteString(";TZID=" + value)
 			}
-			e.Recurrence = append(e.Recurrence, line.String()+":"+v.Value)
+			if value := v.Params.Get("VALUE"); value != "" {
+				line.WriteString(";VALUE=" + value)
+			}
+			e.Recurrence = append(e.Recurrence, line.String()+":"+strings.ToUpper(v.Value))
 		}
 	}
 	if len(e.Recurrence) > 0 {

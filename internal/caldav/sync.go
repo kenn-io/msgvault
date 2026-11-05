@@ -14,7 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calsync"
 	"go.kenn.io/msgvault/internal/carddav"
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -312,9 +311,6 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 		return result, err
 	}
 	limit := opts.MaxEvents
-	if limit == 0 {
-		limit = config.DefaultCalDAVMaxEvents
-	}
 	if len(b.live) > limit {
 		return result, fmt.Errorf("CalDAV calendar %q has %d live events; increase max_events (currently %d)", cal.DisplayName, len(b.live), limit)
 	}
