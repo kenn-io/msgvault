@@ -63,11 +63,30 @@ func TestIs(t *testing.T) {
 		{"help line", Content{Text: "Sign in help line 1800555"}, false},
 		{"article", Content{Text: "Sign in to read more https://example.test/articles/interesting-article-title"}, false},
 		{"coupon", Content{Text: "Use code SAVE20"}, false},
+		{"promo sale", Content{Subject: "Sale", Text: "Use promo code SAVE2024 for 20% off. Order 55512345"}, false},
+		{"promo code", Content{Text: "Use promo code SAVE2024"}, false},
+		{"postal code", Content{Text: "Postal code 90210-1234"}, false},
+		{"project code", Content{Text: "project code 887766"}, false},
 		{"unsubscribe", Content{Text: "Sign in https://example.test/unsubscribe?token=abcDEF1234567890"}, false},
 		{"long number", Content{Text: "Your code is 12345678901"}, false},
 		{"oversized", Content{Text: strings.Repeat("x", MaxFieldBytes)}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, Is(tc.content)) })
+	}
+}
+
+func TestIsCodeContext(t *testing.T) {
+	for _, prefix := range []string{"promo", "coupon", "discount", "voucher", "referral", "gift", "Zip", "postal", "area", "tracking", "order", "invoice", "product", "project"} {
+		t.Run(prefix, func(t *testing.T) {
+			assert.False(t, Is(Content{Text: prefix + " code is 482913"}))
+			assert.False(t, Is(Content{Text: prefix + " code is 2024"}))
+			assert.True(t, Is(Content{Text: prefix + " code 887766. Your verification code is 482913"}))
+		})
+	}
+	for _, prefix := range []string{"Your", "verification", "security", "login"} {
+		t.Run(prefix, func(t *testing.T) {
+			assert.True(t, Is(Content{Text: prefix + " code is 482913"}))
+		})
 	}
 }
 
