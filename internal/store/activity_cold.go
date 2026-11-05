@@ -151,7 +151,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		timestampWindows = append(timestampWindows, "("+strings.Join(bounds, " AND ")+")")
 	}
 	where += " AND (" + strings.Join(timestampWindows, " OR ") + ")"
-	channel := `CASE WHEN c.conversation_type='email_thread' AND COALESCE(m.message_type,'') NOT IN ('calendar_event','meeting_transcript') THEN 'email' ELSE 'other' END`
+	copyKey := s.activityCopyKeySQL(`CASE WHEN c.conversation_type='email_thread' AND COALESCE(m.message_type,'') NOT IN ('calendar_event','meeting_transcript') THEN 'email' ELSE 'other' END`, "m.rfc822_message_id", "m.id")
 	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")
 	if err != nil {
 		return nil, filters, err
@@ -159,14 +159,14 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	// Materialize the scoped cold window before live eligibility and counterpart
 	// classification. Otherwise SQLite can evaluate those correlated queries for
 	// every archived message, even when no cold conversation matches.
-	args = append(args, archivemarker.EncryptedMessagePlaceholder)
-	args = append(args, subjectArgs...)
+	warm, warmArgs := s.coldWarmCopyClause(ctx, copyKey)
+	args = slices.Concat(args, []any{archivemarker.EncryptedMessagePlaceholder}, subjectArgs, warmArgs)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
  SELECT m.id FROM messages m WHERE `+where+`
- ) SELECT m.id,`+s.activityCopyKeySQL(channel, "m.rfc822_message_id", "m.id")+`,m.list_id IS NOT NULL,
+ ) SELECT m.id,`+copyKey+`,m.list_id IS NOT NULL,
  (src.source_type='matrix' AND COALESCE(m.snippet,'')=?)
  FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id
- WHERE `+s.activityLiveEligibleSQL()+subject+` ORDER BY m.source_id,m.id`), args...)
+ WHERE `+s.activityLiveEligibleSQL()+subject+warm+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
 		return nil, filters, fmt.Errorf("read cold activity: %w", err)
 	}
@@ -288,6 +288,18 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		finishColdActivityGroup(g)
 	}
 	return groups, filters, nil
+}
+
+// coldWarmCopyClause leaves out a cold copy whose copy key also has a projected
+// copy the warm reader shows within the same source scope. The derived table
+// keeps the warm message's m and src aliases apart from the outer cold copy m.
+// Matching canonical Message-IDs first lets each probe use the expression index.
+func (s *Store) coldWarmCopyClause(ctx context.Context, copyKey string) (string, []any) {
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	return ` AND NOT EXISTS (SELECT 1 FROM (SELECT m.id,m.rfc822_message_id FROM messages m JOIN sources src ON src.id=m.source_id
+ WHERE ` + s.activityLiveEligibleSQL() + scope + `) warm JOIN activity_events ae ON ae.message_id=warm.id
+ WHERE ` + s.dialect.RFC822CanonicalIDExpr("warm.rfc822_message_id") + `=` + s.dialect.RFC822CanonicalIDExpr("m.rfc822_message_id") + `
+ AND ` + FullActivityEventWhere("ae") + ` AND ` + s.activityCopyKeySQL("ae.channel", "warm.rfc822_message_id", "warm.id") + `=` + copyKey + `)`, args
 }
 
 func coldActivityNonNoise(m coldActivityMessage, filters ActivityFilters) bool {
