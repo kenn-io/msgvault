@@ -961,7 +961,7 @@ func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 	require.NoError(<-lockDone)
 }
 
-func TestRemoveAccountCmd_LiveSQLDuringCacheRebuild(t *testing.T) {
+func TestRemoveAccountCmd_LiveSQLWhileRemovalPausedAfterCascade(t *testing.T) {
 	cfg := testConfigValue()
 	require := require.New(t)
 	assert := assert.New(t)

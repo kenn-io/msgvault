@@ -145,25 +145,17 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 			filter := MessageFilter{SourceID: &sourceID}
 			textSourceID := int64(8)
 			textFilter := TextFilter{SourceID: &textSourceID, Pagination: Pagination{Limit: 1}}
-			for _, method := range []string{
-				"Aggregate", "SubAggregate", "GetTotalStats", "ListMessages", "SearchFastWithStats",
-				"ListConversationsSnapshot", "TextAggregate", "GetTextStats",
-			} {
-				t.Run(method, func(t *testing.T) {
-					require := require.New(t)
-					assert := assert.New(t)
-					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-					defer cancel()
-					switch method {
-					case "Aggregate", "SubAggregate":
-						var rows []AggregateRow
-						var err error
-						switch method {
-						case "Aggregate":
-							rows, err = engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-						default:
-							rows, err = engine.SubAggregate(ctx, filter, ViewSenders, DefaultAggregateOptions())
-						}
+			for _, tc := range []struct {
+				name string
+				call func(t *testing.T, ctx context.Context)
+			}{
+				{
+					name: "Aggregate",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
+						rows, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
 							return
@@ -171,7 +163,30 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						require.NoError(err)
 						require.Len(rows, 1)
 						assert.Equal("live@example.com", rows[0].Key)
-					case "GetTotalStats":
+					},
+				},
+				{
+					name: "SubAggregate",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
+						rows, err := engine.SubAggregate(ctx, filter, ViewSenders, DefaultAggregateOptions())
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						require.Len(rows, 1)
+						assert.Equal("live@example.com", rows[0].Key)
+					},
+				},
+				{
+					name: "GetTotalStats",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
 						stats, err := engine.GetTotalStats(ctx, StatsOptions{})
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
@@ -179,7 +194,14 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						}
 						require.NoError(err)
 						assert.Equal(int64(1), stats.MessageCount)
-					case "ListMessages":
+					},
+				},
+				{
+					name: "ListMessages",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
 						messages, err := engine.ListMessages(ctx, filter)
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
@@ -188,7 +210,14 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						require.NoError(err)
 						require.Len(messages, 1)
 						assert.Equal("live-message", messages[0].SourceMessageID)
-					case "SearchFastWithStats":
+					},
+				},
+				{
+					name: "SearchFastWithStats",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
 						result, err := engine.SearchFastWithStats(ctx, search.Parse("live"), "live", filter, ViewSenders, 10, 0)
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
@@ -200,7 +229,14 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						assert.Equal(int64(1), result.TotalCount)
 						require.NotNil(result.Stats)
 						assert.Equal(int64(1), result.Stats.MessageCount)
-					case "ListConversationsSnapshot":
+					},
+				},
+				{
+					name: "ListConversationsSnapshot",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
 						rows, revision, err := engine.ListConversationsSnapshot(ctx, textFilter)
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
@@ -214,7 +250,14 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						require.NoError(err)
 						assert.NotEmpty(revision)
 						assert.Equal(want, revision)
-					case "TextAggregate":
+					},
+				},
+				{
+					name: "TextAggregate",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
 						rows, err := engine.TextAggregate(ctx, TextViewContactNames, TextAggregateOptions{SourceID: &textSourceID})
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
@@ -224,7 +267,14 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						require.Len(rows, 1)
 						assert.Equal("Live", rows[0].Key)
 						assert.Equal(int64(1), rows[0].Count)
-					case "GetTextStats":
+					},
+				},
+				{
+					name: "GetTextStats",
+					call: func(t *testing.T, ctx context.Context) {
+						t.Helper()
+						require := require.New(t)
+						assert := assert.New(t)
 						stats, err := engine.GetTextStats(ctx, TextStatsOptions{SourceID: &textSourceID})
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
@@ -232,7 +282,13 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						}
 						require.NoError(err)
 						assert.Equal(int64(1), stats.MessageCount)
-					}
+					},
+				},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					defer cancel()
+					tc.call(t, ctx)
 				})
 			}
 		})
