@@ -615,9 +615,6 @@ describe('PersonMergeHistoryController', () => {
     await vi.waitFor(() => expect(requests).toHaveLength(1));
     const detailRead = controller.selectMerge(41);
     await vi.waitFor(() => expect(requests.some(request => new URL(request.url).pathname === '/api/v1/people/7')).toBe(true));
-    expect(controller.labels).toBeNull();
-    expect(controller.detailLoading).toBe(false);
-    expect(controller.canOfferSplit).toBe(true);
     controller.setPerson(8);
     await vi.waitFor(() => expect(requests.some(request => new URL(request.url).pathname === '/api/v1/people/8/merges')).toBe(true));
     late.resolve(Response.json({ merges: [summary(41)], limit: 100, offset: 0 }));

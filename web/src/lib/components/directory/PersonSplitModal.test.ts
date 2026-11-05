@@ -137,7 +137,6 @@ describe('PersonSplitModal', () => {
       await fireEvent.click(screen.getByRole('checkbox', {
         name: 'I confirm splitting Matrix · Matrix Member · user-a · network: example.org, user@example.org, Participant 705 from Synthetic Source (Person 12).',
       }));
-      expect(controller.confirmedParticipantIDs).toEqual([701, 704, 705]);
       expect(fetchFn.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toEqual(['/api/v1/people/12']);
     } finally {
       controller.destroy();

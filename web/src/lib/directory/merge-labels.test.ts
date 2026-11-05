@@ -2,46 +2,52 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../api/client';
 import type { PersonMergeDetail } from '../api/generated/models';
 import { loadMergeLabels } from './merge-labels';
+import { mergeResult, person } from './person-fixtures.test-support';
 
 const detail: PersonMergeDetail = {
   rows: [], review_candidates: [],
-  merge: { id: 41, survivor_person_id: 7 } as PersonMergeDetail['merge'],
+  merge: mergeResult(person(7)).merge,
   participants: [701, 702, 703, 704, 705, 706].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' })),
-  splits: [{ new_person_id: 19 } as NonNullable<PersonMergeDetail['splits']>[number]],
+  splits: [{
+    id: 55, merge_id: 41, source_person_id: 7, new_person_id: 19, new_person_uid: 'synthetic-19',
+    source_revision_before: 4, source_revision_after: 5, exact_reversal: false,
+    actor: 'web', created_at: '2026-08-04T00:00:00Z',
+  }],
 };
 
 describe('loadMergeLabels', () => {
-  it('distinguishes same-named linked participants without addresses', async () => {
+  it.each([
+    {
+      source: 'cluster member',
+      participant: () => ({ identifiers: [], cluster: { members: [701, 702].map(participant_id => ({ participant_id, display_name: 'Alex Example' })) } }),
+      expected: [
+        { title: 'Alex Example', subtitle: 'linked', detail: 'Participant 701' },
+        { title: 'Alex Example', subtitle: 'linked', detail: 'Participant 702' },
+      ],
+    },
+    {
+      source: 'display name',
+      participant: () => ({ display_name: 'Alex Example', identifiers: [] }),
+      expected: [
+        { title: 'Alex Example', subtitle: '', detail: 'Participant 701' },
+        { title: 'Alex Example', subtitle: '', detail: 'Participant 702' },
+      ],
+    },
+    {
+      source: 'identifier',
+      participant: (id: number) => ({ identifiers: [{ participant_id: id, type: 'handle', value: 'alex', scope_kind: 'workspace', scope_value: 'example.org' }] }),
+      expected: [
+        { title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 701' },
+        { title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 702' },
+      ],
+    },
+  ])('disambiguates identical $source labels while preserving their detail', async ({ participant, expected }) => {
     const labels = await loadMergeLabels(createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
-      return Response.json(path.includes('/participants/')
-        ? { identifiers: [], cluster: { members: [701, 702].map(participant_id => ({ participant_id, display_name: 'Alex Example' })) } }
-        : {});
+      return Response.json(path.includes('/participants/') ? participant(Number(path.split('/').pop())) : {});
     }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
-    expect(labels.addresses.get(701)).toEqual([{ title: 'Alex Example', subtitle: 'linked', detail: 'Participant 701' }]);
-    expect(labels.addresses.get(702)).toEqual([{ title: 'Alex Example', subtitle: 'linked', detail: 'Participant 702' }]);
-  });
-
-  it('distinguishes same-named participants without addresses', async () => {
-    const labels = await loadMergeLabels(createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      return Response.json(path.includes('/participants/')
-        ? { display_name: 'Alex Example', identifiers: [] }
-        : {});
-    }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
-    expect(labels.addresses.get(701)).toEqual([{ title: 'Alex Example', subtitle: '', detail: 'Participant 701' }]);
-    expect(labels.addresses.get(702)).toEqual([{ title: 'Alex Example', subtitle: '', detail: 'Participant 702' }]);
-  });
-
-  it('preserves existing detail when disambiguating identical identifier labels', async () => {
-    const labels = await loadMergeLabels(createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      return Response.json(path.includes('/participants/')
-        ? { identifiers: [{ participant_id: Number(path.split('/').pop()), type: 'handle', value: 'alex', scope_kind: 'workspace', scope_value: 'example.org' }] }
-        : {});
-    }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
-    expect(labels.addresses.get(701)).toEqual([{ title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 701' }]);
-    expect(labels.addresses.get(702)).toEqual([{ title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 702' }]);
+    expect(labels.addresses.get(701)).toEqual([expected[0]]);
+    expect(labels.addresses.get(702)).toEqual([expected[1]]);
   });
 
   it('keeps each participant’s own identifiers, all addresses, and member fallbacks', async () => {
@@ -69,33 +75,30 @@ describe('loadMergeLabels', () => {
     expect(labels.incomplete).toBe(false);
   });
 
-  it.each(['503', 'throw'])('keeps successful results and treats each profile 404 independently of a %s failure', async failure => {
+  it.each([
+    { failure: 'participant 503', destinationStatus: 200, incomplete: true, participants: detail.participants },
+    { failure: 'participant throw', destinationStatus: 200, incomplete: true, participants: detail.participants },
+    { failure: 'destination 404', destinationStatus: 404, incomplete: false, participants: [] },
+    { failure: 'destination 503', destinationStatus: 503, incomplete: true, participants: [] },
+  ])('keeps successful results and marks only non-404 failures incomplete: $failure', async ({ failure, destinationStatus, incomplete, participants }) => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;
       if (path.endsWith('/7')) return Response.json({}, { status: 404 });
-      if (path.endsWith('/19')) return Response.json({ display_name: 'Alex Restored' });
+      if (path.endsWith('/19')) return Response.json(destinationStatus === 200 ? { display_name: 'Alex Restored' } : {}, { status: destinationStatus });
       if (path.endsWith('/701')) {
-        if (failure === 'throw') throw new Error('offline');
+        if (failure === 'participant throw') throw new Error('offline');
         return Response.json({}, { status: 503 });
       }
       return Response.json({ identifiers: [{ participant_id: 702, type: 'email', value: 'other@example.org' }] });
     });
-    const labels = await loadMergeLabels(createAPIClient(fetchFn), detail, new AbortController().signal);
+    const labels = await loadMergeLabels(createAPIClient(fetchFn), { ...detail, participants }, new AbortController().signal);
     expect(labels.names.has(7)).toBe(false);
-    expect(labels.names.get(19)).toBe('Alex Restored');
-    expect(labels.addresses.get(702)?.[0]?.title).toBe('other@example.org');
-    expect(labels.incomplete).toBe(true);
-  });
-
-  it.each([
-    [404, false],
-    [503, true],
-  ])('marks profile lookup incomplete only for non-404 failures, destination status %s', async (destinationStatus, incomplete) => {
-    const labels = await loadMergeLabels(createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      return Response.json({}, { status: path.endsWith('/7') ? 404 : destinationStatus });
-    }), { ...detail, participants: [] }, new AbortController().signal);
-    expect(labels.names.size).toBe(0);
+    if (destinationStatus === 200) {
+      expect(labels.names.get(19)).toBe('Alex Restored');
+      expect(labels.addresses.get(702)?.[0]?.title).toBe('other@example.org');
+    } else {
+      expect(labels.names.size).toBe(0);
+    }
     expect(labels.incomplete).toBe(incomplete);
   });
 });
