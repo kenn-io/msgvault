@@ -1757,12 +1757,13 @@ func daemonDuckDBOptions(c *config.Config) (query.DuckDBOptions, error) {
 	// Keep DuckDB's bundled SQLite library away from the live database;
 	// detail queries use the daemon's shared go-sqlite3 connection.
 	return query.DuckDBOptions{
-		DisableSQLiteScanner: true,
-		TempDirectory:        tempDirectory,
-		OwnTempDirectory:     true,
-		MemoryLimit:          c.Analytics.QueryMemoryLimit,
-		Threads:              c.Analytics.QueryThreads,
-		MaxTempDirectorySize: c.Analytics.QueryTempLimit,
+		DisableSQLiteScanner:        true,
+		LiveSQLWhenCacheUnavailable: c.Analytics.Engine != config.AnalyticsEngineDuckDB,
+		TempDirectory:               tempDirectory,
+		OwnTempDirectory:            true,
+		MemoryLimit:                 c.Analytics.QueryMemoryLimit,
+		Threads:                     c.Analytics.QueryThreads,
+		MaxTempDirectorySize:        c.Analytics.QueryTempLimit,
 	}, nil
 }
 

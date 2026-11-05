@@ -189,6 +189,9 @@ func (e *DuckDBEngine) ListConversationsSnapshot(
 ) ([]ConversationRow, string, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.ListConversationsSnapshot(ctx, filter)
+		}
 		return nil, "", err
 	}
 	defer release()
@@ -347,6 +350,9 @@ func (e *DuckDBEngine) TextAggregate(
 	// SubAggregate already hold a slot when they reach it.
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.TextAggregate(ctx, viewType, opts)
+		}
 		return nil, err
 	}
 	defer release()
@@ -562,6 +568,9 @@ func (e *DuckDBEngine) GetTextStats(
 ) (*TotalStats, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.GetTextStats(ctx, opts)
+		}
 		return nil, err
 	}
 	defer release()

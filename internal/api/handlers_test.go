@@ -5302,6 +5302,27 @@ func TestHandleAggregatesListsView(t *testing.T) {
 	assert.Equal(t, "lists", resp.ViewType)
 }
 
+func TestHandleAggregatesCacheUnavailable(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	engine := &querytest.MockEngine{
+		AggregateFunc: func(_ context.Context, viewType query.ViewType, _ query.AggregateOptions) ([]query.AggregateRow, error) {
+			assert.Equal(query.ViewSenders, viewType)
+			return nil, fmt.Errorf("aggregate: %w", query.ErrCacheUnavailable)
+		},
+	}
+	srv := newTestServerWithEngine(t, engine)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w,
+		httptest.NewRequest(http.MethodGet, "/api/v1/aggregates?view_type=senders", nil))
+
+	assert.Equal(http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
+	var resp ErrorResponse
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	assert.Equal("analytical_cache_unavailable", resp.Error)
+	assert.Equal("The committed analytical cache is unavailable", resp.Message)
+}
+
 func TestHandleAggregatesNoEngine(t *testing.T) {
 	t.Parallel()
 	// Server without engine
