@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -33,6 +34,19 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 		conv, _ := addCacheExportParityMessage(t, st, sourceID, sender, alice+bob-sender, i)
 		conversations = append(conversations, conv)
 	}
+	event, err := st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"},
+		RawFormat:    "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2025-04-01T12:00:00Z"},"end":{"dateTime":"2025-04-01T13:00:00Z"}}`),
+	})
+	require.NoError(err)
+	note, err := st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: "note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2025, 4, 1, 12, 0, 0, 0, time.UTC), Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"},
+		RawFormat:    "plaud_json", RawMIME: []byte(`{}`),
+	})
+	require.NoError(err)
+	require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
 	person, _, err := st.CreatePersonFromParticipant(bob)
 	require.NoError(err)
 	require.NoError(st.Close())
@@ -67,7 +81,7 @@ func TestCacheExportParityFullVersusDerived(t *testing.T) {
 
 	assertCacheExportParity(t, tmp, derivedDir, fullDir, []string{
 		tableParticipants, tableParticipantIdentifiers, tablePersonDisplayNames, tableOwnerParticipants,
-		tableParticipantClusters, tableConversations, tableConversationParticipants,
+		tableParticipantClusters, tableConversations, tableConversationParticipants, "meeting_keys",
 	})
 }
 
@@ -105,7 +119,7 @@ func addCacheExportParityMessage(t *testing.T, st *store.Store, sourceID, sender
 	return conv, id
 }
 
-func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string) {
+func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datasets []string, allowEmpty ...string) {
 	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	duckDB, err := duckdbutil.Open(context.Background(), duckdbutil.BuilderPolicy(filepath.Join(tmp, "parity-duckdb-tmp")))
@@ -139,8 +153,7 @@ func assertCacheExportParity(t *testing.T, tmp, actualDir, fullDir string, datas
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true))),
 			(SELECT count(*) FROM (SELECT %[1]s FROM read_parquet(?, hive_partitioning=true) EXCEPT ALL SELECT %[1]s FROM read_parquet(?, hive_partitioning=true)))`, columns),
 			full, full, actual, actual, full).Scan(&rows, &missing, &extra), dataset)
-		// Email-only fixtures legitimately have no linked meeting keys.
-		if dataset != "meeting_keys" {
+		if !slices.Contains(allowEmpty, dataset) {
 			require.Positive(rows, "%s must hold rows for the comparison to mean anything", dataset)
 		}
 		assert.Zero(missing, "%s: rows the derived refresh did not write", dataset)
@@ -173,7 +186,7 @@ type participantClusterInsertRecorder struct {
 }
 
 func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	if strings.HasPrefix(query, `INSERT INTO tmp_participant_clusters VALUES `) || strings.HasPrefix(query, `INSERT INTO tmp_meeting_keys VALUES `) {
+	if strings.HasPrefix(query, `INSERT INTO tmp_participant_clusters VALUES `) {
 		r.batchRows = append(r.batchRows, strings.Count(query, "("))
 		if len(r.batchRows) == r.failAt {
 			return nil, r.insertErr
@@ -182,7 +195,7 @@ func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, quer
 	return r.DB.ExecContext(ctx, query, args...)
 }
 
-func TestStageMeetingKeysBatchesAndHonorsBoundary(t *testing.T) {
+func TestStageMeetingKeysHonorsBoundary(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	recorder := newParticipantClusterInsertRecorder(t)
 	keys := make(map[int64][]string)
@@ -190,7 +203,6 @@ func TestStageMeetingKeysBatchesAndHonorsBoundary(t *testing.T) {
 		keys[id] = []string{"uid:example'o@example.test/"}
 	}
 	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1025))
-	assert.Equal([]int{1024, 1}, recorder.batchRows)
 	var count int
 	var key string
 	require.NoError(recorder.DB.QueryRow(`SELECT count(*), min(meeting_key) FROM tmp_meeting_keys`).Scan(&count, &key))

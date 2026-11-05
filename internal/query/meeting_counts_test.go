@@ -106,12 +106,12 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 				id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: kind, SentAt: at})
 				b.AddTo(id, owner, "Owner")
 				b.AddTo(id, person, "Person")
-				if i < 4 {
+				if kind == "meeting_transcript" {
 					b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
 				}
 			}
 			engine := b.BuildEngine()
-			want := int64(1)
+			want := int64(3)
 			if unlinkedCalendar {
 				want++
 			}
@@ -135,7 +135,7 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 	}
 }
 
-func TestRelationshipCalendarLinkedMeetingAcrossYears(t *testing.T) {
+func TestRelationshipCalendarEventAndTranscriptAcrossYears(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	b := NewTestDataBuilder(t)
 	source := b.AddSourceWithType("owner@example.org", "gcal")
@@ -147,13 +147,15 @@ func TestRelationshipCalendarLinkedMeetingAcrossYears(t *testing.T) {
 		id := b.AddMessage(MessageOpt{SourceID: source, ConversationID: int64(100 + i), MessageType: kind, SentAt: at})
 		b.AddTo(id, owner, "Owner")
 		b.AddTo(id, person, "Person")
-		b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
+		if kind == "meeting_transcript" {
+			b.meetingKeys = append(b.meetingKeys, fmt.Sprintf("(%d, 'uid:shared@example.org/')", id))
+		}
 	}
 	engine := b.BuildEngine()
 	for _, tc := range []struct {
 		year int
 		want int64
-	}{{2024, 1}, {2025, 0}} {
+	}{{2024, 1}, {2025, 1}} {
 		calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: tc.year, Timezone: "UTC"})
 		requirements.NoError(err)
 		var meetings int64
@@ -164,5 +166,5 @@ func TestRelationshipCalendarLinkedMeetingAcrossYears(t *testing.T) {
 	}
 	var temperatureMeetings int64
 	requirements.NoError(engine.db.QueryRow(`SELECT sum(meeting_count) FROM read_parquet(?) WHERE canonical_id = ?`, engine.parquetPath(identityindex.DatasetTemperatureContributions), person).Scan(&temperatureMeetings))
-	assertions.Equal(int64(1), temperatureMeetings)
+	assertions.Equal(int64(2), temperatureMeetings)
 }

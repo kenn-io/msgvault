@@ -19,5 +19,5 @@ func TestMeetingCountKeysRejectsFutureArchive(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.Close())
 	_, err = readMeetingCountKeys(t.Context(), path)
-	require.Error(err)
+	require.ErrorContains(err, "does not match")
 }

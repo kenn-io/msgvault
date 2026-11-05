@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMeetingCountsMultipleOccurrencesAndCalendarOnly(t *testing.T) {
+func TestMeetingCountsMultipleOccurrences(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
@@ -149,7 +149,7 @@ func TestMeetingKeyChangesControlTemperatureReuse(t *testing.T) {
 	}{
 		{"unchanged", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR)`, true},
 		{"late link", `(100::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false},
-		{"split", `(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false},
+		{"key removed", `(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, false},
 		{"new unrelated meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:second@example.org/'::VARCHAR)`, true},
 		{"new copy of cached meeting", `(100::BIGINT, 'uid:first@example.org/'::VARCHAR),(101::BIGINT, 'uid:first@example.org/'::VARCHAR)`, false},
 	} {

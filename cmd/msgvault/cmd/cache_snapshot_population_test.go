@@ -221,7 +221,7 @@ func TestCSVIncrementalBuildExportsOnlyNewChildRows(t *testing.T) {
 			assert.Equal(int64(1), built.StagedCount)
 			_, err = buildCache(dbPath, fullDir, true)
 			require.NoError(err)
-			assertCacheExportParity(t, tmp, incDir, fullDir, query.RequiredParquetDirs)
+			assertCacheExportParity(t, tmp, incDir, fullDir, query.RequiredParquetDirs, "meeting_keys")
 		})
 	}
 }
