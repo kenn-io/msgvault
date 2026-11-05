@@ -469,13 +469,15 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 
 // Keep the old store fingerprint unchanged: legacy migrations must not stamp
 // pre-coverage checkpoints as safe to resume with the wider acquisition scope.
-// The membership version also restarts older recovery scans: their processed
-// prefix may still carry stale labels, even if they reached catch-up.
+// Restart older scans whose processed prefix may still carry stale labels,
+// including scans that skipped label refresh after a file-repair failure.
 const gmailHistoryRecoveryPresenceFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
-const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
+const gmailHistoryRecoveryLabelFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
+const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryLabelFingerprint + ":files:v1"
 
 func isPinnedHistoryRecovery(run *store.SyncRun) bool {
 	return (checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
+		checkpointMatchesRequest(run, gmailHistoryRecoveryLabelFingerprint) ||
 		checkpointMatchesRequest(run, gmailHistoryRecoveryPresenceFingerprint) ||
 		checkpointMatchesRequest(run, store.GmailHistoryRecoveryRequestFingerprint)) &&
 		run.CursorAfter.Valid && run.CursorAfter.String != ""

@@ -314,3 +314,46 @@ func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 		}
 	}
 }
+
+func TestAttachmentReviewLegacyRecoveryCheckpointRestartsLabels(t *testing.T) {
+	for _, phase := range []string{recoveryEnumerate, recoveryCatchup} {
+		t.Run(phase, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			e, f, ids := recoveryLabelsEnv(t)
+			api := e.Syncer.client
+			source := gmailCoverageSource(t, e)
+			runID, err := e.Store.StartSync(source.ID, "full")
+			require.NoError(err)
+			_, err = e.Store.DB().Exec(e.Store.Rebind("UPDATE sync_runs SET request_fingerprint = ? WHERE id = ?"),
+				store.GmailHistoryRecoveryRequestFingerprint+":spam-trash:v1:labels:v1", runID)
+			require.NoError(err)
+			state := &syncState{recoveryPhase: phase, handoffCursor: "1500", checkpoint: &store.Checkpoint{}}
+			if phase == recoveryEnumerate {
+				state.checkpoint.PageToken = "p2"
+			}
+			require.NoError(e.Store.ScopedToSync(source.ID, runID).UpdateSyncCheckpoint(runID, state.durableCheckpoint()))
+			require.NoError(e.Store.RecordSyncRunItem(store.SyncRunItem{SyncRunID: runID, SourceMessageID: "normal1", Phase: syncItemPhaseIngest,
+				Status: store.SyncRunItemStatusError, ErrorKind: syncItemKindAttachmentError, ErrorMessage: "older recovery skipped labels with these unfinished files"}))
+			require.NoError(e.Store.FailSync(runID, "synthetic interruption after skipped labels"))
+			reopenAcquisitionStore(t, e)
+			dir := filepath.Join(t.TempDir(), "blocked")
+			require.NoError(os.WriteFile(dir, []byte("blocked"), 0600))
+			f.expire = false
+			summary, err := New(api, e.Store, &Options{AttachmentsDir: dir}).Full(t.Context(), testEmail)
+			require.NoError(err)
+			assert.Positive(summary.Errors)
+			reopenAcquisitionStore(t, e)
+			labelID, err := e.Store.LabelIDContext(t.Context(), source.ID, "TRASH")
+			require.NoError(err)
+			labels, err := e.Store.MessageLabelIDsContext(t.Context(), ids["normal1"])
+			require.NoError(err)
+			assert.Equal([]int64{labelID}, labels, "the skipped first page needs authoritative labels too")
+			assert.Equal([]string{"1500"}, f.historyStarts, "retain the old safe History boundary")
+			assert.Equal("2001", gmailCoverageSource(t, e).SyncCursor.String)
+			assert.Equal(4, f.rawGets)
+			debt, err := e.Store.ListUnresolvedSyncItemErrors(t.Context(), source.ID)
+			require.NoError(err)
+			assert.Len(debt, 1)
+		})
+	}
+}
