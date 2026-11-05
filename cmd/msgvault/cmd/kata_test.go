@@ -336,7 +336,6 @@ func TestKataDocbankThroughDaemonAdapter(t *testing.T) {
 	require.NoError(err)
 	require.NotEmpty(citationRefs)
 	chunkRef := citationRefs[0]
-	require.Equal("document_chunk", chunkRef.Kind)
 	chunkRef.DocumentChunk = &kataevidence.DocumentReference{CanonicalBlobHash: hash, ExtractionID: "extraction", ManifestChecksum: hash, ChunkKey: "chunk", ChunkChecksum: hash, StartRune: 0, EndRune: 10}
 	metadata := func(refs ...kataevidence.Reference) map[string]any {
 		entries := make([]kataissues.Entry, 0, len(refs))

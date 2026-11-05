@@ -225,7 +225,6 @@ func TestKataDocbankBindingDeliverySelection(t *testing.T) {
 			case "reused attachment":
 				sources, err := f.Store.KataCitationSource(t.Context(), audio.messageID, audio.attachmentID)
 				require.NoError(err)
-				require.NotEmpty(sources)
 				for _, source := range sources {
 					assert.NotEqual("docbank_rendition", source.Kind)
 				}

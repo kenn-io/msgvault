@@ -332,6 +332,19 @@ func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
 			key, err := personfacts.EvidenceKey(input)
 			require.NoError(err)
 			persistSweepEvidence(t, f.store, key, input)
+			require.NoError(f.store.UpsertAttachmentRecord(t.Context(), id, store.AttachmentWrite{Filename: "synthetic.pdf", SourceAttachmentID: "document"}))
+			var attachmentID int64
+			require.NoError(f.store.DB().QueryRowContext(t.Context(), f.store.Rebind(`SELECT id FROM attachments WHERE message_id=?`), id).Scan(&attachmentID))
+			document := input
+			document.SourceVersion = "document/v1:chunk"
+			document.SourceRef, err = peoplesweep.EncodePersonSweepEvidenceRef(peoplesweep.EvidenceRef{
+				SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id,
+				AttachmentID: attachmentID, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4,
+			})
+			require.NoError(err)
+			documentKey, err := personfacts.EvidenceKey(document)
+			require.NoError(err)
+			persistSweepEvidence(t, f.store, documentKey, document)
 			before := latestPersonSweepSequence(t, f.store)
 			args := []any{id}
 			if tc.reason == personfacts.EvidenceStatusIdentityReassigned {
@@ -344,6 +357,13 @@ func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
 				PersonID: f.alicePersonID, Lane: peoplesweep.SourceMeetingText, AfterSequence: before, Limit: 100,
 			})
 			require.NoError(err)
+			require.NotEmpty(window.Changes)
+			for _, change := range window.Changes {
+				assert.Equal(peoplesweep.SourceDocumentText, change.SourceLane)
+			}
+			changes, err := f.store.BuildPersonSweepEvidenceStatusChanges(t.Context(), f.alicePersonID, window.Changes)
+			require.NoError(err)
+			assert.Equal([]personfacts.EvidenceStatusChange{{EvidenceKey: documentKey, SourceVersion: document.SourceVersion, Supported: false, Reason: tc.reason}}, changes, "the other lane withdraws only document evidence")
 			assert.Empty(window.Seeds, "meeting windows must skip conversation changes and their tombstones")
 			assert.Equal(latestPersonSweepSequence(t, f.store), window.NextSequence)
 		})

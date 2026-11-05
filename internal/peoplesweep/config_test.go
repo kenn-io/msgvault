@@ -912,10 +912,10 @@ func TestRemovedDocumentSourceIsIgnored(t *testing.T) {
 			cfg.ApplyDefaults()
 			if documentOnly {
 				assert.Contains(warnings.String(), "people sweep disabled because allowed_sources contains only retired sources")
-			} else {
-				original.ApplyDefaults()
-				assert.Equal(1, strings.Count(warnings.String(), "document_text was removed; drop it from allowed_sources"))
 			}
+			assert.Contains(warnings.String(), "document_text was removed; drop it from allowed_sources")
+			original.ApplyDefaults()
+			assert.Equal(1, strings.Count(warnings.String(), "document_text was removed; drop it from allowed_sources"))
 			require.NoError(cfg.Validate())
 			assert.Equal(!documentOnly, cfg.Enabled)
 			for _, provider := range cfg.Providers {
