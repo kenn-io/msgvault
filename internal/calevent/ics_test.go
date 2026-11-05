@@ -53,6 +53,24 @@ func TestICSOutlookTZID(t *testing.T) {
 	assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
 }
 
+func TestParseICSCustomizedTimeZone(t *testing.T) {
+	raw, err := os.ReadFile("testdata/customized.ics")
+	require.NoError(t, err)
+	t.Run("weekly invite", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		components, err := ParseICS(raw, "", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		e := components[0].Event
+		assertions.Equal("2026-07-15T14:00:00Z", e.Start.Format(time.RFC3339))
+		assertions.Contains(e.Recurrence, "EXDATE:20260722T140000Z")
+	})
+	t.Run("missing offset", func(t *testing.T) {
+		_, err := ParseICS([]byte(strings.Replace(string(raw), "TZOFFSETTO:-0500\n", "", 1)), "", "")
+		require.Error(t, err)
+	})
+}
+
 func TestICSLibicalTZID(t *testing.T) {
 	for _, prefix := range []string{"/freeassociation.sourceforge.net/", "/freeassociation.sourceforge.net/Tzfile/"} {
 		t.Run(prefix, func(t *testing.T) {
