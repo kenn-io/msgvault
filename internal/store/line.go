@@ -39,7 +39,7 @@ type LineInboxStatus struct {
 }
 
 // EnqueueLineEventsContext acknowledges a batch only after all its events commit.
-// The mounted receiver's channel and bot identities are checked under the same
+// The mounted receiver's channel identity is checked under the same
 // source lock as receipt so a stale receiver cannot target a reused source ID.
 // Event IDs deduplicate deliveries.
 func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, channelID, botUserID string, events []LineWebhookEvent) error {
@@ -60,19 +60,11 @@ func (s *Store) EnqueueLineEventsContext(ctx context.Context, sourceID int64, ch
 			return err
 		}
 		var kind, identifier string
-		var raw sql.NullString
-		if err := tx.QueryRowContext(ctx, `SELECT source_type,identifier,sync_config FROM sources WHERE id=?`, sourceID).Scan(&kind, &identifier, &raw); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT source_type,identifier FROM sources WHERE id=?`, sourceID).Scan(&kind, &identifier); err != nil {
 			return fmt.Errorf("load LINE inbox source: %w", err)
 		}
 		if kind != "line" || identifier != channelID {
 			return errors.New("LINE inbox source binding changed")
-		}
-		registeredBotID, err := lineBotUserIDFromConfig(raw)
-		if err != nil {
-			return err
-		}
-		if registeredBotID == "" || registeredBotID != botUserID {
-			return errors.New("LINE inbox bot binding changed")
 		}
 		for _, e := range events {
 			received := e.ReceivedAt

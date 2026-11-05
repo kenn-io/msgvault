@@ -179,7 +179,7 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 }
 
 func (p *Processor) edit(ctx context.Context, e Event) error {
-	if e.Source.Type != "group" || e.Message == nil || e.Message.Type != "text" || e.Message.ID == "" {
+	if e.Source.Type != "group" || e.Message.Type != "text" {
 		return invalidEvent("invalid LINE text edit")
 	}
 	key, _, err := e.Source.ConversationID()
@@ -208,20 +208,12 @@ func (p *Processor) edit(ctx context.Context, e Event) error {
 	if e.Timestamp < watermark.Timestamp || e.Timestamp == watermark.Timestamp && e.WebhookEventID <= watermark.EventID {
 		return nil
 	}
-	stored, err := p.store.StoredMessagesContext(ctx, p.sourceID, "line_webhook_json", []string{e.Message.ID})
-	if err != nil {
-		return err
-	}
-	row, ok := stored[e.Message.ID]
-	if !ok {
-		return errTargetMissing
-	}
 	metadata, err := metadataFor(e, prior.Metadata)
 	if err != nil {
 		return err
 	}
 	text := e.Message.Text
-	_, err = p.store.PersistMessageContext(ctx, &store.MessagePersistData{Message: &store.Message{ID: row.ID, SourceID: p.sourceID, SourceMessageID: e.Message.ID, ConversationID: row.ConversationID, MessageType: SourceType, SentAt: row.SentAt, InternalDate: row.InternalDate, SenderID: row.SenderID, Subject: row.Subject, Snippet: sql.NullString{String: meetingarchive.Snippet(text), Valid: text != ""}, SizeEstimate: int64(len(text)), PreserveAttachmentStats: true}, Edited: true, Metadata: &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: e.Raw, RawFormat: "line_webhook_json", PreserveLabels: true, FTS: &store.FTSDoc{Body: text, Subject: row.Subject.String}})
+	err = p.store.ReplaceMessageTextContext(ctx, prior.ID, text, meetingarchive.Snippet(text), true, metadata)
 	if err != nil {
 		return err
 	}

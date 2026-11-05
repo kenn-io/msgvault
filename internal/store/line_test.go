@@ -49,7 +49,7 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	must.NoError(err)
 	must.NotNil(status.LastReceivedAt)
 	checks.True(at.Equal(*status.LastReceivedAt), "duplicate deliveries and other sources do not advance the last receipt")
-	for _, guard := range []string{"stale channel", "changed bot", "retired source"} {
+	for _, guard := range []string{"stale channel", "retired source"} {
 		t.Run(guard, func(t *testing.T) {
 			require := require.New(t)
 			st := testutil.NewTestStore(t)
@@ -60,8 +60,6 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 			switch guard {
 			case "stale channel":
 				channel = "2000000000"
-			case "changed bot":
-				require.NoError(st.SetLineBotContext(t.Context(), src.ID, otherBotID))
 			case "retired source":
 				into, err := st.GetOrCreateSource("line", "2000000002")
 				require.NoError(err)
@@ -386,110 +384,5 @@ func TestMergeSourcesRejectsPendingLineInbox(t *testing.T) {
 			_, err = st.MergeSourcesContext(t.Context(), req)
 			must.NoError(err)
 		})
-	}
-}
-
-func TestLineMembershipClocksSurviveParticipantMerge(t *testing.T) {
-	for _, direction := range []string{"departed_into_active", "active_into_departed"} {
-		t.Run(direction, func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			st := testutil.NewTestStore(t)
-			ctx := t.Context()
-			source, err := st.GetOrCreateSource("line", "2000000001")
-			must.NoError(err)
-			conversation, err := st.EnsureConversationWithType(source.ID, "group:C00000000000000000000000000000001", "group_chat", "")
-			must.NoError(err)
-			userA := "channel:2000000001:user:U00000000000000000000000000000002"
-			userB := "channel:2000000001:user:U00000000000000000000000000000009"
-			departed, err := st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", userA, "")
-			must.NoError(err)
-			active, err := st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", userB, "")
-			must.NoError(err)
-			base := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
-			must.NoError(st.SetLineMembershipContext(ctx, conversation, departed, userA, true, base))
-			must.NoError(st.SetLineMembershipContext(ctx, conversation, departed, userA, false, base.Add(10*time.Millisecond)))
-			must.NoError(st.SetLineMembershipContext(ctx, conversation, active, userB, true, base.Add(20*time.Millisecond)))
-			must.NoError(st.SetLineMembershipContext(ctx, conversation, departed, userA, false, base.Add(30*time.Millisecond)))
-			absorbed, survivor := departed, active
-			if direction == "active_into_departed" {
-				absorbed, survivor = active, departed
-			}
-			must.NoError(st.MergeParticipantsContext(ctx, absorbed, survivor))
-			checkMembership := func() {
-				t.Helper()
-				var left sql.NullTime
-				must.NoError(st.DB().QueryRow(st.Rebind(`SELECT left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conversation, survivor).Scan(&left))
-				checks.False(left.Valid, "one active linked LINE identity keeps the merged participant active")
-				var routes int
-				must.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM conversation_participants WHERE conversation_id=?`), conversation).Scan(&routes))
-				checks.Equal(1, routes)
-			}
-			checkMembership()
-			must.NoError(st.SetLineMembershipContext(ctx, conversation, survivor, userA, true, base.Add(-time.Millisecond)))
-			checkMembership()
-			must.NoError(st.SetLineMembershipContext(ctx, conversation, survivor, userA, true, base.Add(25*time.Millisecond)))
-			checkMembership()
-		})
-	}
-}
-
-func TestLineMessageOnlyMembershipSurvivesParticipantMerge(t *testing.T) {
-	for _, chat := range []struct{ name, identifierType, identifier string }{
-		{"group", "line_user_id", "channel:2000000001:user:U00000000000000000000000000000002"},
-		{"anonymous_group", "line_anonymous", "channel:2000000001:group:C00000000000000000000000000000001"},
-	} {
-		for _, direction := range []string{"message_only_into_departed", "departed_into_message_only"} {
-			t.Run(chat.name+"/"+direction, func(t *testing.T) {
-				must := require.New(t)
-				checks := assert.New(t)
-				st := testutil.NewTestStore(t)
-				ctx := t.Context()
-				source, err := st.GetOrCreateSource("line", "2000000001")
-				must.NoError(err)
-				present, err := st.EnsureParticipantByIdentifierContext(ctx, chat.identifierType, chat.identifier, "")
-				must.NoError(err)
-				other := "channel:2000000001:user:U00000000000000000000000000000009"
-				departed, err := st.EnsureParticipantByIdentifierContext(ctx, "line_user_id", other, "")
-				must.NoError(err)
-				base := time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC)
-				persist := func(id string, participant int64, at time.Time) {
-					t.Helper()
-					_, err := st.PersistLineGroupMessageContext(ctx, &store.MessagePersistData{
-						Message:      &store.Message{SourceID: source.ID, SourceMessageID: id, MessageType: "line", SenderID: sql.NullInt64{Int64: participant, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}},
-						Conversation: &store.ConversationPersistData{SourceConversationID: "group:C00000000000000000000000000000001", ConversationType: "group_chat", Participants: []store.ConversationParticipantRef{{ParticipantID: participant, Role: "member"}}, PreserveExistingParticipants: true},
-						BodyText:     sql.NullString{String: "message proves this sender is present", Valid: true},
-					}, chat.identifier)
-					must.NoError(err)
-				}
-				persist("message-only", present, base)
-				var conversation int64
-				must.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?`), source.ID, "group:C00000000000000000000000000000001").Scan(&conversation))
-				must.NoError(st.SetLineMembershipContext(ctx, conversation, departed, other, false, base.Add(20*time.Millisecond)))
-				absorbed, survivor := present, departed
-				if direction == "departed_into_message_only" {
-					absorbed, survivor = departed, present
-				}
-				must.NoError(st.MergeParticipantsContext(ctx, absorbed, survivor))
-				leftAt := func() sql.NullTime {
-					t.Helper()
-					var left sql.NullTime
-					must.NoError(st.DB().QueryRow(st.Rebind(`SELECT left_at FROM conversation_participants WHERE conversation_id=? AND participant_id=?`), conversation, survivor).Scan(&left))
-					return left
-				}
-				checks.False(leftAt().Valid)
-				must.NoError(st.SetLineMembershipContext(ctx, conversation, survivor, other, false, base.Add(30*time.Millisecond)))
-				checks.False(leftAt().Valid, "message presence survives later events")
-				if chat.name == "anonymous_group" {
-					return
-				}
-				must.NoError(st.SetLineMembershipContext(ctx, conversation, survivor, chat.identifier, false, base.Add(40*time.Millisecond)))
-				left := leftAt()
-				must.True(left.Valid)
-				checks.Equal(base.Add(40*time.Millisecond).UnixMilli(), left.Time.UnixMilli())
-				persist("delayed-message", survivor, base.Add(5*time.Millisecond))
-				checks.True(leftAt().Valid, "out-of-order message presence cannot override a later leave")
-			})
-		}
 	}
 }

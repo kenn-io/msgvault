@@ -457,6 +457,29 @@ func TestProcessorLateOriginalReconcilesExpiredRetryInSamePass(t *testing.T) {
 	checks.Equal("processed", state)
 }
 
+func TestProcessorEditPreservesOriginalRaw(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	message := f.message("original-raw", "original text", f.now.UnixMilli())
+	f.enqueue(t, message, time.Time{})
+	f.run(t)
+	id := f.archived(t, message.Message.ID).id
+	original, err := f.st.GetMessageRawContext(t.Context(), id)
+	must.NoError(err)
+	must.Contains(string(original), `"text":"original text"`)
+
+	edit := f.message(message.Message.ID, "edited text", message.Timestamp+1)
+	edit.Type = "messageEdited"
+	edit.WebhookEventID = "edit-original-raw"
+	f.enqueue(t, edit, time.Time{})
+	f.run(t)
+	checks.Equal("edited text", f.archived(t, message.Message.ID).body)
+	raw, err := f.st.GetMessageRawContext(t.Context(), id)
+	must.NoError(err)
+	checks.Equal(original, raw)
+}
+
 func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
