@@ -50,6 +50,7 @@ import (
 	"go.kenn.io/msgvault/internal/pocket"
 	"go.kenn.io/msgvault/internal/provideridentity"
 	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -4400,7 +4401,7 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 }
 
 // scheduledSyncPreemptible disables scheduler-job preemption when an account
-// dispatch includes a full IMAP pass, whose offset-based paging cannot resume
+// dispatch includes archive repair or a full IMAP pass, whose paging cannot resume
 // after the syncer stops. An unavailable source lookup also takes the safe
 // path and lets the current pass finish.
 func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Logger) bool {
@@ -4414,6 +4415,20 @@ func scheduledSyncPreemptible(s *store.Store, identifier string, logger *slog.Lo
 	}
 	for _, source := range sources {
 		if source.SourceType == sourceTypeIMAP {
+			return false
+		}
+		switch source.SourceType {
+		case sourceTypeGmail, sourceTypeMSMail, sourceTypeDiscord:
+			// These scheduled sync paths execute re-derivation passes.
+		default:
+			continue
+		}
+		pending, err := rederive.Pending(context.Background(), s, source.SourceType, source.Identifier)
+		if err != nil {
+			logger.Warn("could not determine archive repair state; allowing current pass to finish", "source_id", source.ID, "error", err)
+			return false
+		}
+		if pending {
 			return false
 		}
 	}
