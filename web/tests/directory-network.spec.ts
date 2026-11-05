@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 
+import type { NetworkEdge } from '../src/lib/api/generated/models';
 import { installMixedArchive } from './e2e/fixtures/mixed-archive';
 
 function directoryURL(personID: number): string {
@@ -60,3 +61,70 @@ test('Directory network shows curated connections, omits message-only contacts, 
   await expect(page).toHaveURL(/directoryPersonID%22%3A43/);
   await expect(page.getByRole('heading', { name: 'Curated Peer' })).toBeVisible();
 });
+
+for (const scenario of ['shared organization', 'nested same-column relations', 'long employment title']) {
+  test(`Directory network keeps labels and names apart: ${scenario}`, async ({ page }) => {
+    await installMixedArchive(page);
+    const types = [
+      { slug: 'knows', forward_label: 'knows', reverse_label: 'knows', is_symmetric: true },
+      { slug: 'mentor', forward_label: 'mentors', reverse_label: 'mentored by', is_symmetric: false }
+    ].map((type, index) => ({ ...type, id: index + 1, revision: 1, ownership: 'system', is_canonical: true, is_deletable: false, universal_id: `urn:example:${type.slug}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }));
+    await page.route('**/api/v1/relationship-types', (route) => route.fulfill({ json: { relationship_types: types } }));
+    const nested = scenario === 'nested same-column relations';
+    const count = nested ? 4 : scenario === 'shared organization' ? 3 : 1;
+    const nodes = [
+      { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person', hop: 0 },
+      ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: `Curated Peer ${index + 1}`, hop: 1 })),
+      ...nested ? [] : [{ id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }]
+    ];
+    const edges: NetworkEdge[] = Array.from({ length: count }, (_, index) => ({
+      id: `root:${index}`, kind: 'relationship', source_node_id: 'person:42', target_node_id: `person:${43 + index}`, relationship_type_slug: 'knows', label: 'knows'
+    }));
+    if (nested) {
+      edges.push(
+        { id: 'outer', kind: 'relationship', source_node_id: 'person:46', target_node_id: 'person:43', relationship_type_slug: 'mentor', label: 'mentors' },
+        { id: 'inner', kind: 'relationship', source_node_id: 'person:44', target_node_id: 'person:45', relationship_type_slug: 'knows', label: 'knows' }
+      );
+    } else {
+      for (let index = 0; index < count; index++) edges.push({
+        id: `employment:${index}`, kind: 'employment', source_node_id: `person:${43 + index}`, target_node_id: 'organization:21',
+        label: scenario === 'long employment title' ? 'Senior principal engineer of distributed computing systems' : 'Engineer'
+      });
+    }
+    await page.route('**/api/v1/people/42/network*', (route) => {
+      const depth = Number(new URL(route.request().url()).searchParams.get('depth'));
+      const visible = nodes.filter((node) => node.hop <= depth);
+      const ids = new Set(visible.map((node) => node.id));
+      return route.fulfill({ json: { root_person_id: 42, depth, truncated: false, nodes: visible, edges: edges.filter((edge) => ids.has(edge.source_node_id) && ids.has(edge.target_node_id)) } });
+    });
+    await page.goto(directoryURL(42));
+    await page.getByRole('radio', { name: 'Details', exact: true }).click();
+    await page.getByRole('radio', { name: '2 steps', exact: true }).click();
+    const network = page.getByRole('region', { name: 'Directory network', exact: true });
+    await expect(network.locator('path')).toHaveCount(edges.length);
+    await expect(network.getByRole('region', { name: 'Network graph' })).toHaveAttribute('aria-busy', 'false');
+    await page.evaluate(() => document.fonts.ready);
+    const names = network.getByRole('button');
+    const chips = network.locator('.edge-label');
+    const nameBoxes = await Promise.all((await names.all()).map((name) => name.boundingBox()));
+    const chipBoxes = await Promise.all((await chips.all()).map((chip) => chip.boundingBox()));
+    for (const name of nameBoxes) expect(name!.width).toBeGreaterThan(40);
+    for (let index = 0; index < chipBoxes.length; index++) {
+      const a = chipBoxes[index]!;
+      for (const b of [...chipBoxes.slice(index + 1), ...nameBoxes]) {
+        const overlap = Math.min(a.x + a.width, b!.x + b!.width) > Math.max(a.x, b!.x) && Math.min(a.y + a.height, b!.y + b!.height) > Math.max(a.y, b!.y);
+        expect(overlap, `chip ${index} overlaps another label or name in ${scenario}`).toBe(false);
+      }
+    }
+    if (nested) {
+      await expect(chips.filter({ hasText: 'mentored by' })).toHaveCount(1);
+      const paths = await network.locator('path').evaluateAll((paths) => paths.slice(-2).map((path) => path.getAttribute('d')));
+      expect(paths).toEqual(['M 280 14 H 272 V 182 H 280', 'M 280 70 H 264 V 126 H 280']);
+    }
+    if (scenario === 'long employment title') {
+      const chip = chips.filter({ hasText: 'Senior principal engineer' });
+      await expect(chip).toHaveAttribute('title', 'Senior principal engineer of distributed computing systems');
+      expect(await chip.locator('span').evaluate((row) => row.scrollWidth > row.clientWidth)).toBe(true);
+    }
+  });
+}
