@@ -404,6 +404,53 @@ func TestMeetingIdentityLongRunningDailySeriesBatch(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentityLongRunningDailySeriesWithNotes(t *testing.T) {
+	for _, format := range []string{"granola_json", "twenty_json"} {
+		t.Run(format, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, series := calendarFixture(t, st, "daily", `{"id":"daily","iCalUID":"daily@example.org","start":{"dateTime":"2000-01-01T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2000-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+			refs := make([]string, 0, 31)
+			notes := make([]int64, 0, 31)
+			for day := 1; day <= 31; day++ {
+				at := time.Date(2027, 3, day, 10, 0, 0, 0, time.UTC)
+				ref := fmt.Sprintf("evt:%d@%s", series, at.Format("20060102T150405Z"))
+				raw := fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"daily@example.org","startsAt":%q}}`, at.Format(time.RFC3339))
+				if format == "granola_json" {
+					raw = fmt.Sprintf(`{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":%q,"scheduled_start_time":%q}}`, "daily_"+at.Format("20060102T150405Z"), at.Format(time.RFC3339))
+				}
+				_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", day), format, raw)
+				refs = append(refs, ref)
+				notes = append(notes, note)
+			}
+			for _, requested := range [][]string{refs, nil} {
+				got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: requested, TranscriptIDs: notes})
+				require.NoError(err)
+				require.Len(got.ByOccurrence, 31)
+				require.Len(got.ByTranscript, 31)
+				for i, ref := range refs {
+					assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
+					assert.Equal([]int64{notes[i]}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+					assert.Equal(ref, got.ByTranscript[notes[i]].OccurrenceRef)
+				}
+			}
+		})
+	}
+}
+
+func TestMeetingIdentityUIDOverlappingOccurrencesStayAmbiguous(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "series", linkSeriesRaw)
+	calendarFixture(t, st, "moved", `{"id":"moved","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-21T10:00:00Z"},"start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	_, note := identityNote(t, st, "note", "weekly@example.org")
+	refs := []string{fmt.Sprintf("evt:%d@20270314T100000Z", series), fmt.Sprintf("evt:%d@20270321T100000Z", series)}
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs, TranscriptIDs: []int64{note}})
+	require.NoError(err)
+	assert.Equal(fmt.Sprintf("msg:%d", note), got.ByTranscript[note].Key)
+	assert.Empty(got.ByTranscript[note].ExactOccurrenceRefs)
+}
+
 func TestMeetingIdentityCompletesNewManualGroups(t *testing.T) {
 	for _, mode := range []string{"manual chain", "transcript only with split"} {
 		t.Run(mode, func(t *testing.T) {

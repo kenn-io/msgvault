@@ -446,7 +446,7 @@ candidatesLoop:
 			if base != "" && row.Event.ProviderEventID == base {
 				ref.Key = instance.Key()
 			}
-			o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
+			o, err := resolvedMeetingOccurrence(ctx, r, ref, budget)
 			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				continue
 			}
@@ -458,13 +458,34 @@ candidatesLoop:
 			if key.ScheduledAt == nil {
 				continue
 			}
-			// PostgreSQL rounds a nanosecond window to zero; compare exact starts below.
-			candidates, err = expandMeetingSeries(ctx, r, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second), budget)
-			if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-				return nil, err
+			cached := false
+			if r.batch != nil {
+				// A moved exception can put another occurrence at the same start.
+				predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
+				related, loaded := r.batch.events[meetingQueryKey(predicate, args)]
+				ref := OccurrenceRef{MessageID: row.MessageID, Key: (calrecur.Identity{Instant: *key.ScheduledAt}).Key()}
+				if o, ok := r.batch.occurrences[ref]; loaded && len(related) == 0 && ok && o.Start.Equal(*key.ScheduledAt) {
+					candidates = append(candidates, o)
+					cached = true
+				}
+			}
+			if !cached {
+				// PostgreSQL rounds a nanosecond window to zero; compare exact starts below.
+				candidates, err = expandMeetingSeries(ctx, r, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second), budget)
+				if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+					return nil, err
+				}
+				if err == nil && r.batch != nil {
+					if r.batch.occurrences == nil {
+						r.batch.occurrences = map[OccurrenceRef]linkOccurrence{}
+					}
+					for _, o := range candidates {
+						r.batch.occurrences[o.Ref] = o
+					}
+				}
 			}
 		} else {
-			o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID}, budget)
+			o, err := resolvedMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID}, budget)
 			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 				continue
 			}
