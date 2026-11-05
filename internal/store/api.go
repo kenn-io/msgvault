@@ -556,6 +556,7 @@ type messageSearchSQL struct {
 	join       string
 	where      string
 	orderBy    string
+	rank       string
 	args       []any
 	orderArgs  []any
 	fts        bool
@@ -863,7 +864,9 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 
 	orderBy := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
 	var orderArgs []any
+	var rank string
 	if ftsEnabled {
+		rank = ftsOrder
 		orderBy = ftsOrder + ", " + orderBy
 		for range ftsOrderArgCount {
 			orderArgs = append(orderArgs, ftsExpr)
@@ -871,7 +874,7 @@ func (s *Store) buildMessageSearchCriteria(q *search.Query, ftsAvailable, rowIDs
 	}
 	return messageSearchSQL{
 		operators: operators, conditions: conditions, join: ftsJoin, where: strings.Join(conditions, " AND "), orderBy: orderBy,
-		args: args, orderArgs: orderArgs, fts: ftsEnabled,
+		args: args, orderArgs: orderArgs, rank: rank, fts: ftsEnabled,
 	}
 }
 
@@ -906,22 +909,13 @@ func (s *Store) preferOperatorLookups(ctx context.Context, plan *messageSearchSQ
 	}
 }
 
-// searchMessagesQueryImpl runs the actual query. The ftsAvailable flag lets
-// the existing runtime FTS-error fallback retry through subject and snippet.
-func (s *Store) searchMessagesQueryImpl(
-	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
-) ([]APIMessage, int64, error) {
-	plan := s.buildMessageSearchSQL(ctx, q, ftsAvailable)
-
-	// Count query.
-	countSQL := fmt.Sprintf(`
-		SELECT COUNT(*)
-		FROM messages m
-		%s
-		WHERE %s
-	`, plan.join, plan.where)
-
-	// Results query.
+func messageSearchPageSQL(plan messageSearchSQL, offset, limit int) (string, []any) {
+	rankColumn := ""
+	outerOrder := "COALESCE(m.sent_at, m.received_at, m.internal_date) DESC, m.id DESC"
+	if plan.rank != "" {
+		rankColumn = ", " + plan.rank + " AS search_rank"
+		outerOrder = "page.search_rank, " + outerOrder
+	}
 	searchSQL := fmt.Sprintf(`
 		SELECT
 			m.id,
@@ -937,8 +931,14 @@ func (s *Store) searchMessagesQueryImpl(
 			m.has_attachments,
 			m.hidden_text_present,
 			m.size_estimate
-		FROM messages m
-		%s
+		FROM (
+			SELECT m.id%s FROM messages m
+			%s
+			WHERE %s
+			ORDER BY %s
+			LIMIT ? OFFSET ?
+		) page
+		JOIN messages m ON m.id = page.id
 		LEFT JOIN message_recipients mr ON mr.id = (
 			SELECT mr2.id FROM message_recipients mr2
 			WHERE mr2.message_id = m.id AND mr2.recipient_type = 'from'
@@ -946,18 +946,34 @@ func (s *Store) searchMessagesQueryImpl(
 		)
 		LEFT JOIN participants p ON p.id = COALESCE(m.sender_id, mr.participant_id)
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		WHERE %s
 		ORDER BY %s
-		LIMIT ? OFFSET ?
-	`, participantSummarySenderSQL, plan.join, plan.where, plan.orderBy)
+	`, participantSummarySenderSQL, rankColumn, plan.join, plan.where, plan.orderBy, outerOrder)
 
-	// If the dialect's order-by fragment has ? placeholders, bind the FTS
-	// expression that many extra times — right after the WHERE args and
-	// before LIMIT/OFFSET so Rebind assigns them the correct positions.
-	resultArgs := make([]any, 0, len(plan.args)+len(plan.orderArgs)+2)
-	resultArgs = append(resultArgs, plan.args...)
-	resultArgs = append(resultArgs, plan.orderArgs...)
-	resultArgs = append(resultArgs, limit, offset)
+	// Bind rank in the SELECT list before WHERE, then again in ORDER BY.
+	args := make([]any, 0, len(plan.args)+2*len(plan.orderArgs)+2)
+	args = append(args, plan.orderArgs...)
+	args = append(args, plan.args...)
+	args = append(args, plan.orderArgs...)
+	args = append(args, limit, offset)
+	return searchSQL, args
+}
+
+// searchMessagesQueryImpl runs the actual query. The ftsAvailable flag lets
+// the existing runtime FTS-error fallback retry through subject and snippet.
+func (s *Store) searchMessagesQueryImpl(
+	ctx context.Context, q *search.Query, offset, limit int, ftsAvailable bool,
+) ([]APIMessage, int64, error) {
+	plan := s.buildMessageSearchSQL(ctx, q, ftsAvailable)
+
+	// Count query.
+	countSQL := fmt.Sprintf(`
+		SELECT COUNT(*)
+		FROM messages m
+		%s
+		WHERE %s
+	`, plan.join, plan.where)
+
+	searchSQL, resultArgs := messageSearchPageSQL(plan, offset, limit)
 
 	var (
 		total              int64

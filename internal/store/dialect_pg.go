@@ -506,7 +506,7 @@ func pgFTSVector(doc FTSDoc) (string, []any) {
 func (d *PostgreSQLDialect) FTSSearchClause(rowIDs bool) (join, where, orderBy string, orderArgCount int) {
 	return "",
 		"m.search_fts @@ to_tsquery('simple', ?)",
-		"ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?)) DESC",
+		"-ts_rank(ARRAY[0.1, 0.1, 0.4, 1.0]::real[], m.search_fts, to_tsquery('simple', ?))",
 		1
 }
 
