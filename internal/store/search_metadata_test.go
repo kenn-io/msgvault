@@ -73,34 +73,6 @@ func TestSearchMetadataSkipsUnnamedAttachments(t *testing.T) {
 	assert.Equal(2, metadata[id].AttachmentCount)
 }
 
-func TestSearchMetadataPrefixExcerpts(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := storetest.New(t)
-	if f.Store.IsPostgreSQL() {
-		t.Skip("match excerpts use SQLite FTS5")
-	}
-
-	var ids []int64
-	for _, body := range []string{
-		"The projection meeting starts tomorrow.",
-		"The project meetings start tomorrow.",
-		"The project budget is ready.",
-		"The meeting starts tomorrow.",
-	} {
-		id := f.NewMessage().WithSubject("Plan").WithSnippet("stored preview").Create(t, f.Store)
-		require.NoError(f.Store.UpsertFTS(id, "Plan", body, "", "", ""))
-		ids = append(ids, id)
-	}
-
-	metadata, err := f.Store.GetSearchMetadata(t.Context(), []int64{ids[0], ids[2], ids[3]}, search.Parse("project meeting"), true)
-	require.NoError(err)
-	require.Len(metadata, 3)
-	assert.Equal("The projection meeting starts tomorrow.", metadata[ids[0]].MatchSnippet)
-	assert.Empty(metadata[ids[2]].MatchSnippet)
-	assert.Empty(metadata[ids[3]].MatchSnippet)
-}
-
 func TestSearchMetadataORExcerpts(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -113,19 +85,21 @@ func TestSearchMetadataORExcerpts(t *testing.T) {
 		{"First", "alpha beta evidence"},
 		{"Second", "gamma delta evidence"},
 		{"Partial", "alpha unrelated"},
+		{"Prefix", "projection meeting evidence"},
 	} {
 		id := f.NewMessage().WithSubject(fixture.subject).WithSnippet("stored preview").Create(t, f.Store)
 		require.NoError(f.Store.UpsertFTS(id, fixture.subject, strings.Repeat("padding ", 50)+fixture.body, "", "", ""))
 		ids = append(ids, id)
 	}
-	q := search.ParseOR("alpha beta | gamma delta | subject:Partial")
+	q := search.ParseOR("alpha beta | gamma delta | subject:Partial | project meeting")
 	messages, total, err := f.Store.SearchMessagesQueryContext(t.Context(), q, 0, 10)
 	require.NoError(err)
-	require.EqualValues(3, total)
-	require.Len(messages, 3)
+	require.EqualValues(4, total)
+	require.Len(messages, 4)
 	metadata, err := f.Store.GetSearchMetadata(t.Context(), ids, q, true)
 	require.NoError(err)
 	assert.Contains(metadata[ids[0]].MatchSnippet, "alpha beta")
 	assert.Contains(metadata[ids[1]].MatchSnippet, "gamma delta")
 	assert.Empty(metadata[ids[2]].MatchSnippet, "matching one term of a conjunction is not a text match")
+	assert.Contains(metadata[ids[3]].MatchSnippet, "projection meeting")
 }
