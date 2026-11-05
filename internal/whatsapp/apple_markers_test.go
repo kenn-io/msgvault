@@ -31,6 +31,7 @@ const appleMarkerSchema = `
 `
 
 func TestImportAppleCompletesWithFreshnessAndChatMarkers(t *testing.T) {
+	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
 	opts := appleTestOptions()
@@ -47,16 +48,16 @@ func TestImportAppleCompletesWithFreshnessAndChatMarkers(t *testing.T) {
 	after, err := st.GetSourceByID(source.ID)
 	require.NoError(err)
 	require.True(after.LastSyncAt.Valid)
-	assert.True(t, after.LastSyncAt.Time.After(before.LastSyncAt.Time))
+	assert.True(after.LastSyncAt.Time.After(before.LastSyncAt.Time))
 	run, err := st.GetLatestSync(source.ID)
 	require.NoError(err)
-	assert.Equal(t, "completed", run.Status)
+	assert.Equal("completed", run.Status)
 	var markers appleChatMarkerState
 	require.NoError(json.Unmarshal([]byte(after.SyncCursor.String), &markers))
-	assert.Equal(t, run.ID, markers.SyncID)
+	assert.Equal(run.ID, markers.SyncID)
 	require.Len(markers.Chats, 3)
 	for _, chatID := range []int64{1, 2, 3} {
-		assert.NotEmpty(t, markers.Chats[chatID])
+		assert.NotEmpty(markers.Chats[chatID])
 	}
 }
 
