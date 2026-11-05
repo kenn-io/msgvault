@@ -140,19 +140,32 @@ test.describe('phone width', () => {
           expect.soft(Math.abs(check!.x - first!.x - 12), 'checkbox aligns with rows').toBeLessThanOrEqual(1);
           expect.soft(Math.abs(first!.y - head!.y - head!.height), 'no gap after selection strip').toBeLessThanOrEqual(1);
           expect.soft(await header.evaluate(el => getComputedStyle(el).boxShadow), 'single header divider').toBe('none');
-          const [hit, time] = await Promise.all([row.locator('.attachment').boundingBox(), row.locator('.cell--time').boundingBox()]);
-          expect.soft(Math.abs(time!.x - (hit!.x + hit!.width)), 'attachment mark sits next to date').toBeLessThanOrEqual(8);
+          const size = row.getByText('2 KB', { exact: true });
+          await expect.soft(size, 'attachment size is visible').toBeVisible();
+          const [hit, sizeBox, time] = await Promise.all([row.locator('.attachment').boundingBox(), size.boundingBox(), row.locator('.cell--time').boundingBox()]);
+          if (sizeBox) {
+            expect.soft(Math.abs(sizeBox.x - (hit!.x + hit!.width)), 'attachment size sits next to its mark').toBeLessThanOrEqual(8);
+            expect.soft(Math.abs(time!.x - (sizeBox.x + sizeBox.width)), 'date sits next to attachment size').toBeLessThanOrEqual(8);
+          }
           expect.soft(Math.abs((hit!.y + hit!.height / 2) - (time!.y + time!.height / 2)), 'attachment mark aligns with date').toBeLessThanOrEqual(2);
         } else {
           if (workspace === 'files') {
-            await expect.soft(grid.locator('.header--filename')).toBeHidden();
-            await expect.soft(grid.locator('.header--size')).toBeHidden();
+            for (const field of ['date', 'filename', 'size']) {
+              const button = grid.getByRole('button', { name: `Sort by ${field}` });
+              await expect.soft(button).toBeVisible();
+            }
           }
           const separators = await row.evaluate((el, workspace) => {
             const selectors = workspace === 'files' ? ['.cell--size', '.cell--people'] : [':scope > :nth-child(3)', ':scope > :nth-child(4)'];
             return selectors.map(selector => getComputedStyle(el.querySelector(selector)!, '::before').content);
           }, workspace);
           expect.soft(separators).toEqual(['" · "', '" · "']);
+          if (workspace === 'files') {
+            for (const field of ['filename', 'size', 'date']) {
+              await grid.getByRole('button', { name: `Sort by ${field}` }).tap();
+              await expect(grid.getByRole('columnheader', { name: `Sort by ${field}` })).toHaveAttribute('aria-sort', /ascending|descending/);
+            }
+          }
         }
       });
     }

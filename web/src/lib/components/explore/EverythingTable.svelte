@@ -546,6 +546,7 @@
                     {:else if column === 'attachments'}
                       {#if row.has_attachments}
                         <span class="attachment" aria-label={`${row.attachment_count} attachments`}>⌕</span>
+                        {#if !visibleColumns.includes('size')}<span class="phone-attachment-size" data-mono>{formatBytes(row.attachment_size)}</span>{/if}
                       {:else}
                         <span class="no-attachments" aria-label="No attachments">—</span>
                       {/if}
@@ -865,7 +866,7 @@
       scroll-behavior: auto !important;
     }
   }
-  .phone-sender { display: none; }
+  .phone-sender, .phone-attachment-size { display: none; }
   @media (max-width: 640px) {
     .virtual-spacer { min-width: 0; }
     .data-row {
@@ -890,6 +891,7 @@
     .cell--people { grid-area: people; font-weight: 500; }
     .cell--time { grid-area: time; font-size: var(--font-size-xs); }
     .cell--attachments { grid-area: att; }
+    .phone-attachment-size { display: inline; margin-left: var(--space-1); font-size: var(--font-size-xs); }
     .no-attachments { display: none; }
     .cell--size { grid-area: size; font-size: var(--font-size-xs); }
     .cell--title { grid-area: title; }

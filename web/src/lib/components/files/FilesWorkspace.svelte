@@ -1280,8 +1280,10 @@
   .file-kind, .phone-sender { display: none; }
   @media (max-width: 640px) {
     .table-header, .data-row { min-width: 0; }
-    .table-header { grid-template-columns: minmax(0, 1fr); }
-    .table-header > span:not(.header--occurred_at) { display: none; }
+    .table-header { display: flex; gap: var(--space-2); padding: 0 var(--pane-pad-x); }
+    .table-header > span:not(.header--occurred_at):not(.header--filename):not(.header--size) { display: none; }
+    .table-header > span { padding: 0; }
+    .table-header button { width: auto; height: 26px; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
     .data-row {
       grid-template-columns: auto auto minmax(0, 1fr) 16px auto;
       grid-template-areas: 'name name name icon avail' 'date size people people avail';
