@@ -3,10 +3,10 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
-	"strconv"
 	"testing"
 	"time"
 
@@ -112,6 +112,9 @@ func TestMeetingLinkCommands(t *testing.T) {
 			case "suggest":
 				assertions.Equal(tc.args[1], fake.ref)
 				assertions.Contains(out.String(), tc.want)
+				if tc.args[1] == "msg:42" {
+					assertions.Contains(out.String(), "TITLE WORDS")
+				}
 				if tc.warning {
 					assertions.Contains(errOut.String(), "some calendar entries could not be fully expanded")
 					assertions.Contains(errOut.String(), "event 99: unsupported recurrence")
@@ -167,5 +170,13 @@ func TestMeetingLinksCLIEventRecord(t *testing.T) {
 	command.SetOut(&out)
 	command.SetArgs([]string{fmt.Sprintf("evt:%d", event)})
 	requirements.NoError(command.Execute())
-	assertions.Contains(out.String(), strconv.FormatInt(note, 10))
+	assertions.Contains(out.String(), fmt.Sprintf("Notes: %d\n", note))
+	out.Reset()
+	command.SetArgs([]string{fmt.Sprintf("evt:%d", event), "--json"})
+	requirements.NoError(command.Execute())
+	var record store.MeetingRecord
+	requirements.NoError(json.Unmarshal(out.Bytes(), &record))
+	assertions.Equal([]int64{note}, record.MessageIDs)
+	requirements.Len(record.Links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d", event), record.Links[0].Ref)
 }
