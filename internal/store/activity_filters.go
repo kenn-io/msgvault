@@ -14,6 +14,7 @@ type activityReadWindow struct {
 	FromDate, ToDate string
 	After, Before    *time.Time
 	ConversationID   int64
+	MessageIDs       []int64
 	Subject          ActivitySubject
 }
 
@@ -153,6 +154,11 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 		windowWhere = append(windowWhere, `ae.message_id IN (SELECT id FROM messages WHERE conversation_id=?)`)
 		windowArgs = append(windowArgs, w.ConversationID)
 	}
+	if len(w.MessageIDs) > 0 {
+		predicate, ids := messageExportInClause("ae.message_id", w.MessageIDs)
+		windowWhere = append(windowWhere, predicate)
+		windowArgs = append(windowArgs, ids...)
+	}
 	if w.After != nil {
 		windowWhere = append(windowWhere, `ae.occurred_at>=?`)
 		windowArgs = append(windowArgs, w.After.UTC())
@@ -187,26 +193,12 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	}
 	where += subject
 	args = append(args, subjectArgs...)
-	maxDirect := f.directLimit()
-	maxSQL := strconv.Itoa(maxDirect)
-	addressCTE, addressArgs := s.activityAddressExclusionsCTE(ctx, `SELECT participant_id,person_id FROM population GROUP BY participant_id,person_id`, f)
+	classification, addressArgs := s.activityClassificationCTE(ctx, f)
 	args = append(args, addressArgs...)
-	exclusion := `CASE WHEN cp.link_owner=1 THEN 'owner' ELSE ax.excluded END`
-	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
-	// Persisted person links carry the projector's strongest saved-person role.
-	// Explicit limits recompute evidence before the same strongest-link arbitration.
-	if f.MaxDirect == 0 {
-		role = `COALESCE(aep.role,` + role + `)`
-	}
-	evidence := `CASE WHEN e.direction='outbound' AND cp.audience_n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END`
-	if f.MaxDirect == 0 {
-		evidence = `COALESCE(aep.evidence,` + evidence + `)`
-	}
 	listExcluded := "0"
 	if f.Exclusions.ExcludeListMessages {
 		listExcluded = `CASE WHEN f.list_id IS NOT NULL THEN 1 ELSE 0 END`
 	}
-	large := `CASE WHEN e.direction='inbound' AND COALESCE(cp.audience_n,0)>` + maxSQL + ` THEN 1 ELSE 0 END`
 	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "f.direction", RefKind: "f.ref_kind", ListExcluded: listExcluded, LargeInbound: "f.large_inbound"})
 	countedSubject := ""
 	if w.Subject.PersonID != 0 || len(w.Subject.ParticipantIDs) > 0 {
@@ -230,25 +222,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  CASE WHEN ` + matrixPendingEncryptedSQL("m") + ` THEN 1 ELSE 0 END AS encrypted,
  CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
- ), population AS MATERIALIZED (` + s.activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), owner_population AS (
- SELECT *,MAX(is_owner) OVER person_link AS link_owner,ROW_NUMBER() OVER person_link AS link_rank
- FROM population WINDOW person_link AS (PARTITION BY message_id,person_id,CASE WHEN person_id IS NULL THEN participant_id ELSE 0 END)
- ), ` + addressCTE + `, exclusions AS (
- SELECT cp.*,` + exclusion + ` AS excluded FROM owner_population cp JOIN address_exclusions ax ON ax.participant_id=cp.participant_id
- ), audience_facts AS (
- SELECT *,SUM(CASE WHEN excluded<>'owner' AND link_rank=1 THEN 1 ELSE 0 END) OVER (PARTITION BY message_id) AS audience_n FROM exclusions
- ), raw_facts AS MATERIALIZED (
- SELECT e.*,cp.participant_id,cp.person_id,cp.recipient_type,cp.excluded,
- ` + large + ` AS large_inbound,` + role + ` AS raw_role,` + evidence + ` AS raw_evidence
- FROM eligible e LEFT JOIN audience_facts cp ON cp.message_id=e.message_id
- LEFT JOIN activity_event_persons aep ON aep.message_id=e.message_id AND aep.person_id=cp.person_id
- ), facts AS MATERIALIZED (
- SELECT cp.*,FIRST_VALUE(raw_role) OVER strongest_link AS role,FIRST_VALUE(raw_evidence) OVER strongest_link AS evidence
- FROM raw_facts cp WINDOW strongest_link AS (
- PARTITION BY message_id,person_id,CASE WHEN person_id IS NULL THEN participant_id ELSE 0 END
- ORDER BY CASE WHEN raw_evidence='direct' THEN 0 ELSE 1 END,
- CASE raw_role WHEN 'sender' THEN 0 WHEN 'organizer' THEN 1 WHEN 'addressed' THEN 2 WHEN 'attendee' THEN 3 WHEN 'member' THEN 4 ELSE 5 END)
- ), scored AS (
+ ), ` + classification + `, scored AS (
  SELECT f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
  f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,
  MAX(f.large_inbound) AS large_inbound,
@@ -270,12 +244,52 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	return query, args, nil
 }
 
+// activityClassificationCTE owns the counterpart facts used by totals and flags.
+// The caller supplies eligible messages before applying copy or page selection.
+func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters) (string, []any) {
+	maxDirect := f.directLimit()
+	maxSQL := strconv.Itoa(maxDirect)
+	addressCTE, addressArgs := s.activityAddressExclusionsCTE(ctx, `SELECT participant_id,person_id FROM population GROUP BY participant_id,person_id`, f)
+	exclusion := `CASE WHEN cp.link_owner=1 THEN 'owner' ELSE ax.excluded END`
+	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
+	// Persisted person links carry the projector's strongest saved-person role.
+	// Explicit limits recompute evidence before the same strongest-link arbitration.
+	if f.MaxDirect == 0 {
+		role = `COALESCE(aep.role,` + role + `)`
+	}
+	evidence := `CASE WHEN e.direction='outbound' AND cp.audience_n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END`
+	if f.MaxDirect == 0 {
+		evidence = `COALESCE(aep.evidence,` + evidence + `)`
+	}
+	large := `CASE WHEN e.direction='inbound' AND COALESCE(cp.audience_n,0)>` + maxSQL + ` THEN 1 ELSE 0 END`
+	return `population AS MATERIALIZED (` + s.activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), owner_population AS (
+ SELECT *,MAX(is_owner) OVER person_link AS link_owner,ROW_NUMBER() OVER person_link AS link_rank
+ FROM population WINDOW person_link AS (PARTITION BY message_id,person_id,CASE WHEN person_id IS NULL THEN participant_id ELSE 0 END)
+ ), ` + addressCTE + `, exclusions AS (
+ SELECT cp.*,` + exclusion + ` AS excluded FROM owner_population cp JOIN address_exclusions ax ON ax.participant_id=cp.participant_id
+ ), audience_facts AS (
+ SELECT *,SUM(CASE WHEN excluded<>'owner' AND link_rank=1 THEN 1 ELSE 0 END) OVER (PARTITION BY message_id) AS audience_n FROM exclusions
+ ), raw_facts AS MATERIALIZED (
+ SELECT e.*,cp.participant_id,cp.person_id,cp.recipient_type,cp.excluded,
+ ` + large + ` AS large_inbound,` + role + ` AS raw_role,` + evidence + ` AS raw_evidence
+ FROM eligible e LEFT JOIN audience_facts cp ON cp.message_id=e.message_id
+ LEFT JOIN activity_event_persons aep ON aep.message_id=e.message_id AND aep.person_id=cp.person_id
+ ), facts AS MATERIALIZED (
+ SELECT cp.*,FIRST_VALUE(raw_role) OVER strongest_link AS role,FIRST_VALUE(raw_evidence) OVER strongest_link AS evidence
+ FROM raw_facts cp WINDOW strongest_link AS (
+ PARTITION BY message_id,person_id,CASE WHEN person_id IS NULL THEN participant_id ELSE 0 END
+ ORDER BY CASE WHEN raw_evidence='direct' THEN 0 ELSE 1 END,
+ CASE raw_role WHEN 'sender' THEN 0 WHEN 'organizer' THEN 1 WHEN 'addressed' THEN 2 WHEN 'attendee' THEN 3 WHEN 'member' THEN 4 ELSE 5 END)
+ )`, addressArgs
+}
+
 const activityBurstGroupsCTE = `, burst_groups AS (
  SELECT source_id,COALESCE(conversation_id,0) AS conversation_id,local_date,MIN(channel) AS channel,
  'burst:'||CAST(source_id AS TEXT)||':'||CAST(COALESCE(conversation_id,0) AS TEXT)||':'||local_date AS key,
  MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
  SUM(CASE WHEN direction='inbound' THEN counted ELSE 0 END) AS inbound,
  SUM(CASE WHEN direction='outbound' THEN counted ELSE 0 END) AS outbound,
- COUNT(*) AS message_count,CASE WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
+ COUNT(*) AS message_count,CASE WHEN MAX(CASE WHEN ref_kind='meeting' THEN 1 ELSE 0 END)=1 THEN 0
+ WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
  FROM representatives GROUP BY source_id,conversation_id,local_date
 )`

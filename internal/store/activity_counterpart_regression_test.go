@@ -1,0 +1,88 @@
+package store_test
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
+	"go.kenn.io/msgvault/internal/store"
+)
+
+func TestSavedCounterpartMatchesBurstCountWithOtherAccountOwner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+	require.NoError(err)
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(other.ID, "other@example.com", "manual"))
+	otherOwner := f.EnsureParticipant("other@example.com", "Other owner", "example.com")
+	id := f.add(t, f.ConvID, f.Source.ID, tierAsOf, true, "")
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, otherOwner}, nil))
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", MaxDirectCounterparts: 1})
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	tier, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
+	require.NoError(err)
+	assert.Zero(tier.Signals.OutboundLong)
+	q := timelineBurstQuery()
+	q.Subject = store.ActivitySubject{PersonID: person.ID}
+	q.Filters.IncludeNoise = true
+	page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+	require.NoError(err)
+	require.Len(page.Bursts, 1)
+	assert.Zero(page.Bursts[0].Outbound)
+	found := false
+	for _, cp := range page.Bursts[0].Counterparts {
+		if cp.ParticipantID == f.peer {
+			found = true
+			assert.Equal(store.EvidenceCoPresence, cp.Evidence)
+			assert.False(cp.Counted)
+		}
+	}
+	assert.True(found)
+	messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: q.Filters})
+	require.NoError(err)
+	require.Len(messages, 1)
+	for _, cp := range messages[0].Counterparts {
+		if cp.ParticipantID == f.peer {
+			assert.Equal(store.EvidenceCoPresence, cp.Evidence)
+			assert.False(cp.Counted)
+		}
+	}
+}
+
+func TestInvitationFromExcludedAutomatedSenderRemainsVisible(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	f.peer = f.EnsureParticipant("noreply@example.com", "Calendar sender", "example.com")
+	id := f.add(t, f.ConvID, f.Source.ID, tierAsOf, false, "")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='calendar_event' WHERE id=?`), id)
+	require.NoError(err)
+	projectTimelineActivity(t, f, "UTC")
+	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+	require.NoError(err)
+	assert.Zero(page.NoiseOmitted)
+	require.Len(page.Bursts, 1)
+	assert.Equal(id, page.Bursts[0].AnchorMessageID)
+	assert.Zero(page.Bursts[0].Inbound)
+	for _, cp := range page.Bursts[0].Counterparts {
+		if cp.ParticipantID == f.peer {
+			assert.Equal("automated_address", cp.Excluded)
+			assert.False(cp.Counted)
+		}
+	}
+	messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10})
+	require.NoError(err)
+	require.Len(messages, 1)
+	assert.Equal(id, messages[0].MessageID)
+	contact := timelineContactQuery(f)
+	contact.Now = tierAsOf
+	aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
+	require.NoError(err)
+	assert.Zero(aggregate.Count)
+}

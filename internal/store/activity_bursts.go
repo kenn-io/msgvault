@@ -182,133 +182,60 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	return page, nil
 }
 
-// hydrateActivityCounterpartsContext uses the projector's population and the
-// SQL readers' address exclusions.
+// hydrateActivityCounterpartsContext reads the same classified facts as totals.
 func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages []activityReadMessage, f ActivityFilters) error {
-	ids := make([]int64, len(messages))
+	indices := make(map[int64]int, len(messages))
 	for i := range messages {
-		ids[i] = messages[i].ID
+		messages[i].Counterparts = []ActivityMessageCounterpart{}
+		indices[messages[i].ID] = i
 	}
-	population, err := s.loadActivityCounterpartsContext(ctx, s.db, ids)
-	if err != nil {
-		return err
+	ids := make([]int64, 0, len(indices))
+	for id := range indices {
+		ids = append(ids, id)
 	}
-	type participant struct {
-		name, address string
-		excluded      string
-	}
-	participants := map[int64]participant{}
-	wanted := map[int64]bool{}
-	for _, list := range population {
-		for _, cp := range list {
-			wanted[cp.ParticipantID] = true
-		}
-	}
-	participantIDs := make([]int64, 0, len(wanted))
-	for id := range wanted {
-		participantIDs = append(participantIDs, id)
-	}
-	for start := 0; start < len(participantIDs); start += activityCandidateIDChunk {
-		batch := participantIDs[start:min(start+activityCandidateIDChunk, len(participantIDs))]
-		predicate, args := messageExportInClause("p.id", batch)
-		exclusionCTE, exclusionArgs := s.activityAddressExclusionsCTE(ctx, `SELECT p.id AS participant_id,pp.person_id FROM participants p LEFT JOIN person_participants pp ON pp.participant_id=p.id WHERE `+predicate, f)
-		args = append(args, exclusionArgs...)
-		rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH RECURSIVE `+exclusionCTE+` SELECT p.id,COALESCE(p.display_name,''),COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),p.phone_number,''),ax.excluded
- FROM participants p JOIN address_exclusions ax ON ax.participant_id=p.id`), args...)
+	for start := 0; start < len(ids); start += activityCandidateIDChunk {
+		batch := ids[start:min(start+activityCandidateIDChunk, len(ids))]
+		cte, args, err := s.activityReadCTE(ctx, activityReadWindow{MessageIDs: batch}, f)
 		if err != nil {
-			return fmt.Errorf("read activity participant display: %w", err)
+			return err
+		}
+		listExcluded := "0"
+		if f.Exclusions.ExcludeListMessages {
+			listExcluded = `CASE WHEN f.list_id IS NOT NULL THEN 1 ELSE 0 END`
+		}
+		counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "f.direction", RefKind: "f.ref_kind", ListExcluded: listExcluded, LargeInbound: "f.large_inbound"})
+		rows, err := s.db.QueryContext(ctx, s.Rebind(cte+`, counterpart_flags AS (
+ SELECT f.*,CASE WHEN f.contact_eligible=1 AND f.encrypted=0 AND f.excluded='' AND `+counted+` THEN 1 ELSE 0 END AS counterpart_counted
+ FROM facts f WHERE f.participant_id IS NOT NULL
+ ), ranked_counterparts AS (
+ SELECT *,ROW_NUMBER() OVER (PARTITION BY message_id,participant_id ORDER BY counterpart_counted DESC,
+ CASE role WHEN 'sender' THEN 0 WHEN 'organizer' THEN 1 WHEN 'addressed' THEN 2 WHEN 'attendee' THEN 3 WHEN 'member' THEN 4 ELSE 5 END) AS counterpart_rank
+ FROM counterpart_flags
+ ) SELECT f.message_id,p.id,COALESCE(f.person_id,0),COALESCE(p.display_name,''),
+ COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),p.phone_number,''),
+ f.role,f.evidence,f.excluded,f.counterpart_counted
+ FROM ranked_counterparts f JOIN participants p ON p.id=f.participant_id
+ WHERE counterpart_rank=1 ORDER BY f.message_id,p.id`), args...)
+		if err != nil {
+			return fmt.Errorf("read activity counterparts: %w", err)
 		}
 		for rows.Next() {
 			var id int64
-			var p participant
-			if err = rows.Scan(&id, &p.name, &p.address, &p.excluded); err != nil {
+			var cp ActivityMessageCounterpart
+			var counted int
+			if err = rows.Scan(&id, &cp.ParticipantID, &cp.PersonID, &cp.DisplayName, &cp.Address, &cp.Role, &cp.Evidence, &cp.Excluded, &counted); err != nil {
 				_ = rows.Close()
-				return fmt.Errorf("scan activity participant: %w", err)
+				return fmt.Errorf("scan activity counterpart: %w", err)
 			}
-			participants[id] = p
+			cp.Counted = counted != 0
+			i := indices[id]
+			messages[i].Counterparts = append(messages[i].Counterparts, cp)
 		}
 		err = rows.Err()
 		_ = rows.Close()
 		if err != nil {
-			return fmt.Errorf("iterate activity participants: %w", err)
+			return fmt.Errorf("iterate activity counterparts: %w", err)
 		}
-	}
-	maxDirect := f.directLimit()
-	for i := range messages {
-		m := &messages[i]
-		raw := collapseActivityCounterparts(population[m.ID])
-		owner := activityOwnerLinked(raw)
-		audience := map[string]bool{}
-		for _, cp := range raw {
-			if owner(cp) || participants[cp.ParticipantID].excluded == "owner" {
-				continue
-			}
-			key := fmt.Sprint("participant:", cp.ParticipantID)
-			if cp.PersonID != nil {
-				key = fmt.Sprint("person:", *cp.PersonID)
-			}
-			audience[key] = true
-		}
-		// Match the projector's evidence-first, then role arbitration. Saved
-		// aliases share one person link; unsaved rows share a participant link.
-		type linkKey struct {
-			person bool
-			id     int64
-		}
-		keyFor := func(cp ActivityCounterpart) linkKey {
-			if cp.PersonID != nil {
-				return linkKey{person: true, id: *cp.PersonID}
-			}
-			return linkKey{id: cp.ParticipantID}
-		}
-		strongest := map[linkKey]ActivityEventPerson{}
-		for _, cp := range raw {
-			link := ActivityEventPerson{
-				Role:     classifiedActivityRole(cp.RecipientType, cp.RecipientType == meetingSenderRole, m.Meeting),
-				Evidence: classifiedActivityEvidence(m.Direction, cp.RecipientType == meetingSenderRole, len(audience) > maxDirect),
-			}
-			key := keyFor(cp)
-			if old, found := strongest[key]; !found || strongerClassifiedActivityLink(link, old) {
-				strongest[key] = link
-			}
-		}
-		byParticipant := map[int64]ActivityMessageCounterpart{}
-		for _, cp := range raw {
-			p := participants[cp.ParticipantID]
-			link := strongest[keyFor(cp)]
-			role, evidence := link.Role, link.Evidence
-			var excluded string
-			if owner(cp) {
-				excluded = "owner"
-			} else {
-				excluded = p.excluded
-			}
-			refKind := "message"
-			if m.Meeting {
-				refKind = "meeting"
-			}
-			c := ActivityMessageCounterpart{ParticipantID: cp.ParticipantID, DisplayName: p.name, Address: p.address, Role: role, Evidence: evidence, Excluded: excluded, Counted: m.ContactEligible && excluded == "" && !m.Encrypted && CountedEvent(evidence, role, m.Direction, refKind, m.List && f.Exclusions.ExcludeListMessages, m.LargeInbound)}
-			if cp.PersonID != nil {
-				c.PersonID = *cp.PersonID
-			}
-			old, found := byParticipant[cp.ParticipantID]
-			if !found || (!old.Counted && c.Counted) || (old.Counted == c.Counted && classifiedActivityRolePriority(c.Role) < classifiedActivityRolePriority(old.Role)) {
-				byParticipant[cp.ParticipantID] = c
-			}
-		}
-		m.Counterparts = []ActivityMessageCounterpart{}
-		for _, c := range byParticipant {
-			m.Counterparts = append(m.Counterparts, c)
-		}
-		slices.SortFunc(m.Counterparts, func(a, b ActivityMessageCounterpart) int {
-			if a.ParticipantID < b.ParticipantID {
-				return -1
-			}
-			if a.ParticipantID > b.ParticipantID {
-				return 1
-			}
-			return 0
-		})
 	}
 	return nil
 }
