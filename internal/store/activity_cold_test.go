@@ -162,8 +162,11 @@ func TestColdAdapterShowsDefaultThresholdBroadcast(t *testing.T) {
 	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
 	q := timelineBurstQuery()
 	q.Filters.IncludeNoise = true
-	for _, limit := range []int{0, 30} {
-		q.Filters.MaxDirect = limit
+	for _, limit := range []int{25, 30} {
+		projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
+		requirements.NoError(err)
+		_, err = projector.RunOnce(t.Context())
+		requirements.NoError(err)
 		cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 		requirements.NoError(err)
 		requirements.Len(cold.Bursts, 1)
@@ -172,10 +175,10 @@ func TestColdAdapterShowsDefaultThresholdBroadcast(t *testing.T) {
 		assertions.Equal(store.ChannelChat, b.Channel)
 		assertions.Equal(id, b.AnchorMessageID)
 		assertions.Len(b.Counterparts, 30)
-		if limit == 0 {
+		if limit == 25 {
 			assertions.Zero(b.Inbound, "large inbound room contributes no direct contact")
 		} else {
-			assertions.Equal(1, b.Inbound, "explicit limit admits the room as direct contact")
+			assertions.Equal(1, b.Inbound, "stored limit admits the room as direct contact")
 		}
 	}
 }
@@ -421,16 +424,16 @@ func TestColdAdapterAggregatesCompleteLargeBurst(t *testing.T) {
 // configured default limit as warm activity, even after spine rows are gone.
 func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {
 	for _, tc := range []struct {
-		name                                               string
-		outgoing, saved, aliases, chat, envelope, explicit bool
-		want                                               int
+		name                                     string
+		outgoing, saved, aliases, chat, envelope bool
+		want                                     int
 	}{
-		{name: "sender-plus-recipient", explicit: true},
-		{name: "saved-aliases", aliases: true, explicit: true, want: 1},
+		{name: "sender-plus-recipient"},
+		{name: "saved-aliases", aliases: true, want: 1},
 		{name: "default-unsaved", outgoing: true},
 		{name: "default-saved", outgoing: true, saved: true},
-		{name: "chat-envelope", chat: true, envelope: true, explicit: true, want: 1},
-		{name: "chat-roster", chat: true, explicit: true},
+		{name: "chat-envelope", chat: true, envelope: true, want: 1},
+		{name: "chat-roster", chat: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -474,9 +477,6 @@ func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {
 			requirements.NoError(err)
 			q := timelineBurstQuery()
 			q.Filters.IncludeNoise = true
-			if tc.explicit {
-				q.Filters.MaxDirect = 1
-			}
 			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
 			retractTimelineActivity(t, f, id)
 			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)

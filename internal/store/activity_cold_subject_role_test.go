@@ -7,11 +7,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // A coauthor who is also addressed retains the stronger sender
-// role, including unsaved participants and explicit effective-limit overrides.
+// role for saved and unsaved participants under the stored audience limit.
 func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
@@ -36,13 +37,17 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 				to = append(to, alias)
 			}
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", to, nil))
-			for _, limit := range []int{0, 25, 1} {
+			for _, limit := range []int{25, 1} {
 				t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
 					assertions := assert.New(t)
 					requirements := require.New(t)
 					burstQuery := timelineBurstQuery()
 					burstQuery.Subject = subject
-					burstQuery.Filters = store.ActivityFilters{IncludeNoise: true, MaxDirect: limit}
+					projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
+					requirements.NoError(err)
+					_, err = projector.RunOnce(t.Context())
+					requirements.NoError(err)
+					burstQuery.Filters = store.ActivityFilters{IncludeNoise: true}
 					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), burstQuery)
 					requirements.NoError(err)
 					requirements.Len(page.Bursts, 1)

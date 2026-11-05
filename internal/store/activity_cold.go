@@ -96,6 +96,9 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	if err != nil {
 		return nil, filters, err
 	}
+	if filters.maxDirect == 0 {
+		filters.maxDirect = DefaultMaxDirectActivityCounterparts
+	}
 	if q.ConversationID < 0 || (q.After != nil && q.Before != nil && !q.After.Before(*q.Before)) {
 		return nil, filters, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
 	}
@@ -274,9 +277,6 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 // Cold messages have no projection rows. Supply their live classification to
 // the shared counterpart query instead of reading eligible activity_events.
 func (s *Store) hydrateColdActivityCounterpartsContext(ctx context.Context, messages []activityReadMessage, filters ActivityFilters) error {
-	// Recompute roles and evidence at the effective limit, even while stale
-	// projection rows await retraction.
-	filters.MaxDirect = filters.directLimit()
 	byID := make(map[int64]activityReadMessage, len(messages))
 	for _, m := range messages {
 		byID[m.ID] = m
@@ -300,7 +300,7 @@ func (s *Store) hydrateColdActivityCounterpartsContext(ctx context.Context, mess
 			values = append(values, `(CAST(? AS BIGINT),CAST(? AS TEXT),CAST(? AS TEXT),CAST(? AS INTEGER),CAST(? AS INTEGER))`)
 			args = append(args, id, m.Direction, refKind, eligible, encrypted)
 		}
-		classification, addressArgs := s.activityClassificationCTE(ctx, filters)
+		classification, addressArgs := s.activityClassificationCTE(ctx, filters, false)
 		return `WITH RECURSIVE cold_facts(message_id,direction,ref_kind,contact_eligible,encrypted) AS (VALUES ` + strings.Join(values, ",") + `), eligible AS (
  SELECT f.*,m.list_id FROM cold_facts f JOIN messages m ON m.id=f.message_id
  ), ` + classification, append(args, addressArgs...), nil

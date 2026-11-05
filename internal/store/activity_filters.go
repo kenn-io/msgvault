@@ -212,7 +212,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  SELECT m.* FROM day_messages m JOIN selected_days d ON d.source_id=m.source_id AND d.conversation_id=m.conversation_id AND d.local_date=m.local_date
  )`
 	}
-	classification, addressArgs := s.activityClassificationCTE(ctx, f)
+	classification, addressArgs := s.activityClassificationCTE(ctx, f, true)
 	args = append(args, addressArgs...)
 	listExcluded := "0"
 	if f.Exclusions.ExcludeListMessages {
@@ -272,15 +272,20 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 
 // activityClassificationCTE owns the counterpart facts used by totals and flags.
 // The caller supplies eligible messages before applying copy or page selection.
-func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters) (string, []any) {
+func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters, projected bool) (string, []any) {
 	maxDirect := f.directLimit()
 	maxSQL := strconv.Itoa(maxDirect)
 	addressCTE, addressArgs := s.activityAddressExclusionsCTE(ctx, `SELECT participant_id,person_id FROM population GROUP BY participant_id,person_id`, f)
 	exclusion := `CASE WHEN cp.link_owner=1 THEN 'owner' ELSE ax.excluded END`
 	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
-	// Persisted person links carry the projector's strongest saved-person role.
-	role = `COALESCE(aep.role,` + role + `)`
-	evidence := `COALESCE(aep.evidence,CASE WHEN e.direction='outbound' AND cp.audience_n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END)`
+	evidence := `CASE WHEN e.direction='outbound' AND cp.audience_n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END`
+	projectionJoin := ""
+	if projected {
+		// Persisted person links carry the projector's strongest saved-person role.
+		role = `COALESCE(aep.role,` + role + `)`
+		evidence = `COALESCE(aep.evidence,` + evidence + `)`
+		projectionJoin = ` LEFT JOIN activity_event_persons aep ON aep.message_id=e.message_id AND aep.person_id=cp.person_id`
+	}
 	large := `CASE WHEN e.direction='inbound' AND COALESCE(cp.audience_n,0)>` + maxSQL + ` THEN 1 ELSE 0 END`
 	return `population AS MATERIALIZED (` + s.activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), owner_population AS (
  SELECT *,MAX(is_owner) OVER person_link AS link_owner,ROW_NUMBER() OVER person_link AS link_rank
@@ -293,7 +298,7 @@ func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters
  SELECT e.*,cp.participant_id,cp.person_id,cp.recipient_type,cp.excluded,
  ` + large + ` AS large_inbound,` + role + ` AS raw_role,` + evidence + ` AS raw_evidence
  FROM eligible e LEFT JOIN audience_facts cp ON cp.message_id=e.message_id
- LEFT JOIN activity_event_persons aep ON aep.message_id=e.message_id AND aep.person_id=cp.person_id
+ ` + projectionJoin + `
  ), facts AS MATERIALIZED (
  SELECT cp.*,FIRST_VALUE(raw_role) OVER strongest_link AS role,FIRST_VALUE(raw_evidence) OVER strongest_link AS evidence
  FROM raw_facts cp WINDOW strongest_link AS (
