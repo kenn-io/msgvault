@@ -9,14 +9,22 @@ function commandKind(id: string): CommandSourceKind {
 }
 
 const gmail = commandKind('gmail');
+const microsoft = commandKind('microsoft');
 const imap = commandKind('imap');
 const mbox = commandKind('mbox');
 
 describe('addSourceCommand', () => {
   it('trims safe Gmail values in both shells and waits for a value', () => {
     for (const shell of ['posix', 'cmd'] as const) {
-      expect(addSourceCommand(gmail, { email: ' you@gmail.com ' }, shell)).toBe('msgvault add-account you@gmail.com');
+      expect(addSourceCommand(gmail, { email: ' you@gmail.com ' }, shell)).toBe('msgvault add-account -- you@gmail.com');
       expect(addSourceCommand(gmail, { email: '  ' }, shell)).toBeUndefined();
+    }
+  });
+
+  it('places an option terminator before hyphen-prefixed mailbox addresses', () => {
+    for (const shell of ['posix', 'cmd'] as const) {
+      expect(addSourceCommand(gmail, { email: '-reader@example.com' }, shell)).toBe('msgvault add-account -- -reader@example.com');
+      expect(addSourceCommand(microsoft, { email: '-reader@example.com' }, shell)).toBe('msgvault add-o365 -- -reader@example.com');
     }
   });
 

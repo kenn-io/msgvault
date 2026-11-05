@@ -23,7 +23,7 @@
       <CommandLine command={cmd} />
     </div>
   {/if}
-  <p>Run this in a terminal where msgvault is installed. Then return to Sources{kind.id === 'mbox' ? '.' : ' and open the source for its first sync command.'}</p>
+  <p>Run this in a terminal where msgvault is installed. When it finishes, reload Sources to see the new source{kind.id === 'mbox' ? '.' : ', then open it for its first sync command.'}</p>
   <a href={kind.docs} target="_blank" rel="noreferrer">Learn more</a>
 </div>
 

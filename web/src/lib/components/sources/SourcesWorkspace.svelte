@@ -103,11 +103,9 @@
       }
     };
     document.addEventListener('visibilitychange', visibilityChanged);
-    window.addEventListener('focus', visibilityChanged);
     refresh();
     return () => {
       document.removeEventListener('visibilitychange', visibilityChanged);
-      window.removeEventListener('focus', visibilityChanged);
     };
   });
   onDestroy(() => {
