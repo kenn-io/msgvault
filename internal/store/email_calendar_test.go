@@ -326,7 +326,7 @@ func TestEmailCalendarCancellationPreemptsOlderInvite(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	cancel := inviteEmail(calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nORGANIZER:mailto:organizer@example.com"))
+	cancel := inviteEmail(calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nORGANIZER:mailto:organizer@example.com\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Cancelled meeting"))
 	cancelID, source := persistInviteEmail(t, st, "cancel-first", cancel)
 	assertions.Len(emailEvents(t, st, source), 1)
 	metadata, err := st.GetMessageMetadata(cancelID)
@@ -341,11 +341,11 @@ func TestEmailCalendarCancellationPreemptsOlderInvite(t *testing.T) {
 	row := calendarRows(t, st, ids...)[0]
 	assertions.Equal("cancelled", row.Event.Status)
 	requirements.NotNil(row.Event.Start)
-	assertions.Equal("2027-03-02T12:00:00Z", row.Event.Start.Format(time.RFC3339))
-	assertions.Equal("Older title", row.Subject)
+	assertions.Equal("2027-03-02T14:00:00Z", row.Event.Start.Format(time.RFC3339))
+	assertions.Equal("Cancelled meeting", row.Subject)
 	raw, err := st.GetMessageRaw(ids[0])
 	requirements.NoError(err)
-	assertions.Equal(calendarDocument("REQUEST", "SEQUENCE:0\r\nORGANIZER:mailto:organizer@example.com\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Older title"), raw)
+	assertions.Equal(calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:2\r\nORGANIZER:mailto:organizer@example.com\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Cancelled meeting"), raw)
 }
 
 func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
@@ -479,7 +479,7 @@ func TestEmailCalendarFamilyOrganizerAdoption(t *testing.T) {
 			st := newRFC822IDBackfillBackendStore(t)
 			first := calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nRRULE:FREQ=DAILY;COUNT=2")
 			if tc.tombstone {
-				first = calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED")
+				first = calendarDocument("CANCEL", "SEQUENCE:0\r\nSTATUS:CANCELLED\r\nDTSTART:20270302T120000Z")
 			}
 			if tc.single {
 				first = calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original")
