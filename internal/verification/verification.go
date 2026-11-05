@@ -30,6 +30,7 @@ var (
 	linkCue                 = regexp.MustCompile(`(?i)\b(sign[ -]in|log in|login link|magic link|reset (your )?password|password reset|verif(y|ication)( your email| link)|confirm (your )?(email|account|subscription)|activate your account)\b`)
 	qualifiedCodeCue        = regexp.MustCompile(`(?i)` + localizedCodeCues + `|` + englishQualifiedCodeCues)
 	englishQualifiedCodeCue = regexp.MustCompile(`(?i)` + englishQualifiedCodeCues)
+	credentialCodeCue       = regexp.MustCompile(`(?i)\b(?:(?:verification|security|login|sign[ -]in|authentication|one[- ]time) (?:code|pin|password)|otp|passcode|2fa)\b`)
 	ordinaryCodePrefix      = regexp.MustCompile(`(?i)\b(?:promo|coupon|discount|voucher|referral|gift|zip|postal|area|tracking|order|invoice|product|project)\s+$`)
 
 	compactCode = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\n", "")
@@ -79,7 +80,7 @@ func Is(c Content) bool {
 			return unicode.ToLower(r)
 		}, field)
 		localizedFields[i] = containsAny(lower, strings.Split(localizedCodeCues, "|")...)
-		codeFields[i] = containsAny(lower, "code", "password", "number", "pin", "otp") || localizedFields[i]
+		codeFields[i] = containsAny(lower, "code", "password", "number", "pin", "otp", "2fa") || localizedFields[i]
 		useFields[i] = containsAny(lower, "use", "enter", "type")
 		qualified := englishQualifiedCodeCue
 		if localizedFields[i] {
@@ -115,7 +116,7 @@ func Is(c Content) bool {
 					digits++
 				}
 			}
-			if len(value) < 4 || len(value) > 10 || (digits != len(value) && (len(value) < 6 || digits < 3)) {
+			if len(value) < 4 || len(value) > 10 || digits == 0 || (digits != len(value) && len(value) < 5) {
 				continue
 			}
 			left, right := start, end
@@ -137,7 +138,7 @@ func Is(c Content) bool {
 				if codeFields[i] && nearCue(field[left:start], true, cue) {
 					return true
 				}
-			} else if separateCue || codeFields[i] && (nearCue(field[left:start], true, cue) || nearCue(field[end:right], false, cue)) || useFields[i] && useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right]) {
+			} else if digits != len(value) && nearCue(field[left:start], true, credentialCodeCue) || (digits == len(value) || len(value) >= 6 && digits >= 3) && (separateCue || codeFields[i] && (nearCue(field[left:start], true, cue) || nearCue(field[end:right], false, cue)) || useFields[i] && useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right])) {
 				return true
 			}
 		}
