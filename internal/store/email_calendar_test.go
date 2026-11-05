@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEmailCalendarCustomizedTimeZone(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw, err := os.ReadFile("../calevent/testdata/customized.ics")
+	requirements.NoError(err)
+	_, source := persistInviteEmail(t, st, "custom-zone", inviteEmail(raw))
+	requirements.Len(emailEvents(t, st, source), 1)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC))
+	requirements.NoError(err)
+	requirements.Empty(page.Unexpandable)
+	requirements.Len(page.Occurrences, 2)
+	assertions.Equal("2026-10-28T14:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	assertions.Equal("2026-11-04T15:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
+}
 
 // emailFrom wraps a calendar part in an email with a plain-text alternative.
 func emailFrom(from string, calendar []byte) []byte {
