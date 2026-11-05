@@ -747,7 +747,10 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 		return fmt.Errorf("load classification metadata: %w", err)
 	}
 	for i := range messages {
-		msg := metadata[messages[i].ID]
+		msg, ok := metadata[messages[i].ID]
+		if !ok {
+			return fmt.Errorf("classification message %d not found", messages[i].ID)
+		}
 		messages[i].Subject, messages[i].Snippet, messages[i].ConversationTitle = msg.Subject, msg.Snippet, msg.ConversationTitle
 	}
 	if err := s.batchPopulateAttachments(ctx, messages, ids); err != nil {

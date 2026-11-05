@@ -3590,7 +3590,10 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
-	refuse := s.withholdsVerification(r)
+	refuse, withheld, ok := s.attachmentWithheld(w, r, attachments)
+	if !ok {
+		return
+	}
 	releaseReadSnapshot(r)
 
 	var content io.ReadCloser
@@ -3613,7 +3616,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	reader, apiErr := textAttachmentReader(content, attachments, refuse)
+	reader, apiErr := textAttachmentReader(content, attachments, refuse, withheld)
 	if apiErr != nil {
 		_ = content.Close()
 		writeAPIHTTPError(w, apiErr)

@@ -2,12 +2,15 @@ package api
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
+	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
 	"go.kenn.io/msgvault/internal/query"
@@ -35,9 +38,17 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 		writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
 		return nil, false
 	}
+	results := make([]bool, len(messages))
+	var wg sync.WaitGroup
+	for i, msg := range messages {
+		wg.Go(func() {
+			results[i] = verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename }))
+		})
+	}
+	wg.Wait()
 	withheld := make(map[int64]bool, len(ids))
-	for _, msg := range messages {
-		withheld[msg.ID] = verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename }))
+	for i, msg := range messages {
+		withheld[msg.ID] = results[i]
 	}
 	return withheld, true
 }
@@ -123,26 +134,55 @@ func (s *Server) maskStoreMessage(r *http.Request, msg *store.APIMessage) {
 	}
 }
 
+func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, candidates []query.AttachmentInfo) (refuse, withheld, ok bool) {
+	if !s.withholdsVerification(r) {
+		return false, false, true
+	}
+	ids := make([]int64, len(candidates))
+	for i, att := range candidates {
+		ids[i] = att.MessageID
+	}
+	parents, ok := s.verificationWithheld(w, r, ids)
+	for _, masked := range parents {
+		withheld = withheld || masked
+	}
+	return true, withheld, ok
+}
+
 // The caller owns content. Sniffing preserves the original download bytes.
-func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, refuse bool) (io.Reader, *apiHTTPError) {
+func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, refuse, withheld bool) (io.Reader, *apiHTTPError) {
 	if !refuse {
 		return content, nil
 	}
 	denied := newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
-	for _, att := range candidates {
+	text := false
+	names := make([]string, len(candidates))
+	for i, att := range candidates {
+		names[i] = att.Filename
 		declared := strings.ToLower(att.MimeType)
-		if strings.HasPrefix(declared, "text/") || strings.HasPrefix(declared, "message/") || strings.EqualFold(filepath.Ext(att.Filename), ".eml") {
+		if strings.HasPrefix(declared, "message/") || strings.EqualFold(filepath.Ext(att.Filename), ".eml") {
 			return nil, denied
 		}
+		text = text || strings.HasPrefix(declared, "text/")
 	}
 	reader := bufio.NewReaderSize(content, 512)
 	prefix, err := reader.Peek(512)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
-	detected := http.DetectContentType(prefix)
-	if strings.HasPrefix(detected, "text/") {
+	if !text && !strings.HasPrefix(http.DetectContentType(prefix), "text/") {
+		return reader, nil
+	}
+	if withheld {
 		return nil, denied
 	}
-	return reader, nil
+	data, err := io.ReadAll(io.LimitReader(reader, verification.MaxFieldBytes))
+	if err != nil {
+		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
+	}
+	s := string(data)
+	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || strings.Contains(strings.ToLower(s), "content-transfer-encoding") || verification.Is(verification.Content{Text: s, HTML: s, Filenames: names}) {
+		return nil, denied
+	}
+	return bytes.NewReader(data), nil
 }
