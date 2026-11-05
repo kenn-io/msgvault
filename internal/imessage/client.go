@@ -275,6 +275,14 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 		if err != nil {
 			return summary, fmt.Errorf("load stored messages: %w", err)
 		}
+		storedIDs := make([]int64, 0, len(stored))
+		for _, message := range stored {
+			storedIDs = append(storedIDs, message.ID)
+		}
+		labels, err := s.MessageLabelIDsBatchContext(ctx, storedIDs)
+		if err != nil {
+			return summary, err
+		}
 
 		for i, msg := range rows {
 			// Rows are ordered by message ID. Keep the last chat placement once.
@@ -290,7 +298,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 
 			lastROWID = msg.ROWID
 			if err := c.importMessage(
-				ctx, s, sourceID, &msg, stored,
+				ctx, s, sourceID, &msg, stored, labels,
 				imessageLabelID, smsLabelID,
 				phoneCache, emailCache, convCache,
 				ownerPID, summary,
@@ -424,6 +432,7 @@ func (c *Client) importMessage(
 	sourceID int64,
 	msg *messageRow,
 	stored map[string]store.StoredMessage,
+	storedLabels map[int64][]int64,
 	imessageLabelID, smsLabelID int64,
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
@@ -527,27 +536,25 @@ func (c *Client) importMessage(
 	}
 	recipients := c.messageRecipients(s, msg, senderID, ownerPID, phoneCache, emailCache, summary)
 	existing, exists := stored[sourceMessageID]
-	if exists && existing.Matches(message, raw) {
-		matches, err := s.MessageRecipientsMatchContext(ctx, existing.ID, recipients)
-		if err != nil {
-			return fmt.Errorf("compare message recipients: %w", err)
-		}
-		if matches {
-			if err := s.IndexStoredMessageContext(ctx, existing.ID); err != nil {
-				c.logger.Warn("failed to index message for search", "message_id", existing.ID, "error", err)
-			}
-			return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true)
-		}
-	}
 	labelID := imessageLabelID
 	if msgType == "sms" {
 		labelID = smsLabelID
 	}
-	var labels []int64
-	if exists {
-		labels, err = s.MessageLabelIDsContext(ctx, existing.ID)
+	labels := storedLabels[existing.ID]
+	if exists && existing.Matches(message, raw) && slices.Contains(labels, labelID) {
+		storedBody, err := s.GetMessageBodyTextContext(ctx, existing.ID)
 		if err != nil {
-			return fmt.Errorf("load message labels: %w", err)
+			return fmt.Errorf("compare message body: %w", err)
+		}
+		matches, err := s.MessageRecipientsMatchContext(ctx, existing.ID, recipients)
+		if err != nil {
+			return fmt.Errorf("compare message recipients: %w", err)
+		}
+		if matches && storedBody == body {
+			if err := s.IndexStoredMessageContext(ctx, existing.ID); err != nil {
+				c.logger.Warn("failed to index message for search", "message_id", existing.ID, "error", err)
+			}
+			return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true)
 		}
 	}
 	if !slices.Contains(labels, labelID) {

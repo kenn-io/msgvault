@@ -408,6 +408,71 @@ func TestImportRerunWritesOnlyChanges(t *testing.T) {
 	assert.Equal("edited", body)
 }
 
+func TestImportClearsHistoricallyRetainedBody(t *testing.T) {
+	require := require.New(t)
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'')`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+	client, err := NewClient(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	_, err = client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+	// Older imports could commit empty raw JSON while retaining the previous body.
+	_, err = st.DB().Exec(st.Rebind(`UPDATE message_bodies SET body_text = 'orchard' WHERE message_id = ?`), id)
+	require.NoError(err)
+	summary, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	body, err := st.GetMessageBodyText(id)
+	require.NoError(err)
+	assert.Empty(t, body)
+	assert.Equal(t, 1, summary.MessagesUpdated)
+}
+
+func TestImportRepairsMissingProviderLabel(t *testing.T) {
+	for _, service := range []string{"iMessage", "SMS"} {
+		t.Run(service, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			path, db := testutil.NewIMessageChatDB(t)
+			_, err := db.Exec(`INSERT INTO message (date,text,service) VALUES (725760000,'hello',?)`, service)
+			require.NoError(err)
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource("apple_messages", "local")
+			require.NoError(err)
+			client, err := NewClient(path)
+			require.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			_, err = client.Import(t.Context(), st, src.ID)
+			require.NoError(err)
+			var id int64
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT id FROM messages WHERE source_id = ?`), src.ID).Scan(&id))
+			provider, err := st.EnsureLabel(src.ID, service, service, "user")
+			require.NoError(err)
+			custom, err := st.EnsureLabel(src.ID, "custom", "custom", "user")
+			require.NoError(err)
+			require.NoError(st.LinkMessageLabel(id, custom))
+			// Older imports committed body and raw data before linking the provider label.
+			_, err = st.DB().Exec(st.Rebind(`DELETE FROM message_labels WHERE message_id = ? AND label_id = ?`), id, provider)
+			require.NoError(err)
+			summary, err := client.Import(t.Context(), st, src.ID)
+			require.NoError(err)
+			labels, err := st.MessageLabelIDsContext(t.Context(), id)
+			require.NoError(err)
+			assert.ElementsMatch([]int64{custom, provider}, labels)
+			assert.Equal(1, summary.MessagesUpdated)
+			idle, err := client.Import(t.Context(), st, src.ID)
+			require.NoError(err)
+			assert.Zero(idle.MessagesUpdated)
+		})
+	}
+}
+
 func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

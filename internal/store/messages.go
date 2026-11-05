@@ -3250,6 +3250,25 @@ func (s *Store) MessageLabelIDsContext(ctx context.Context, messageID int64) ([]
 	return ids, rows.Err()
 }
 
+// MessageLabelIDsBatchContext returns the label IDs assigned to each requested message.
+func (s *Store) MessageLabelIDsBatchContext(ctx context.Context, messageIDs []int64) (map[int64][]int64, error) {
+	labels := make(map[int64][]int64, len(messageIDs))
+	err := queryInChunksContext(ctx, s.db, messageIDs, nil,
+		`SELECT message_id, label_id FROM message_labels WHERE message_id IN (%s)`,
+		func(rows *loggedRows) error {
+			var messageID, labelID int64
+			if err := rows.Scan(&messageID, &labelID); err != nil {
+				return err
+			}
+			labels[messageID] = append(labels[messageID], labelID)
+			return nil
+		})
+	if err != nil {
+		return nil, fmt.Errorf("load message labels: %w", err)
+	}
+	return labels, nil
+}
+
 // ReplaceMessageLabels replaces all labels for a message atomically.
 func (s *Store) ReplaceMessageLabels(messageID int64, labelIDs []int64) error {
 	ctx := context.Background()
