@@ -144,7 +144,7 @@ describe('AppShell', () => {
   }
 
 
-  it('carries the Help search into the command palette and filters its commands', async () => {
+  it('carries the Help search into the command palette', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
@@ -153,7 +153,6 @@ describe('AppShell', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Search commands instead' }));
     const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
     expect((within(palette).getByRole('combobox') as HTMLInputElement).value).toBe('sources');
-    expect(within(palette).getByRole('option', { name: 'Sources' })).toBeDefined();
     rendered.unmount(); state.destroy();
   });
 

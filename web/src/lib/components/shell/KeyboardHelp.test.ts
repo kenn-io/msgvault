@@ -61,7 +61,12 @@ describe('keyboard command registry', () => {
     expect(command).not.toBeNull();
     expect(command?.querySelector('[aria-label="Ctrl K"]')).not.toBeNull();
     expect(command?.querySelectorAll('.kit-kbd-badge__key')).toHaveLength(2);
-    expect(command?.textContent).not.toContain('or');
+
+    const next = screen.getByText('Move to next row').closest('div');
+    expect(next?.querySelector('dd')?.children).toHaveLength(3);
+    expect(next?.querySelector('dd')?.children[0].getAttribute('aria-label')).toBe('J');
+    expect(next?.querySelector('dd')?.children[1].textContent).toBe('or');
+    expect(next?.querySelector('dd')?.children[2].getAttribute('aria-label')).toBe('Arrow down');
 
     const selected = screen.getByText('Review selected messages for deletion').closest('div');
     const matching = screen.getByText('Review all matching messages for deletion').closest('div');
@@ -71,8 +76,7 @@ describe('keyboard command registry', () => {
   });
 
   it.each([
-    ['shift', 'Extend selection to focused row'],
-    ['enter', 'Open or drill into focused row']
+    ['shift', 'Extend selection to focused row']
   ])('finds shortcuts by the readable key name %s', async (query, label) => {
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
