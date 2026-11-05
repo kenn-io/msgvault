@@ -518,7 +518,7 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 		{name: "incoming", isFromMe: 0, recipientType: "from"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			require := require.New(t)
+			assert, require := assert.New(t), require.New(t)
 			path, db := testutil.NewIMessageChatDB(t)
 			_, err := db.Exec(`INSERT INTO message (date,text,is_from_me) VALUES (725760000,'message',?);
  INSERT INTO chat VALUES ('any;-;synthetic', '', 'peer@example.test');
@@ -543,17 +543,17 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 			require.NoError(err)
 			summary, err := client.Import(t.Context(), st, src.ID)
 			require.NoError(err)
-			assert.Equal(t, 1, summary.Skipped)
+			assert.Equal(1, summary.Skipped)
 			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
-			assert.Equal(t, "peer@example.test", recipient)
+			assert.Equal("peer@example.test", recipient)
 			_, err = st.DB().Exec(`DROP TRIGGER fail_participant`)
 			require.NoError(err)
 			retried, err := client.Import(t.Context(), st, src.ID)
 			require.NoError(err)
-			assert.Zero(t, retried.Skipped)
-			assert.Equal(t, 1, retried.MessagesUpdated)
+			assert.Zero(retried.Skipped)
+			assert.Equal(1, retried.MessagesUpdated)
 			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
-			assert.Equal(t, "new-peer@example.test", recipient)
+			assert.Equal("new-peer@example.test", recipient)
 		})
 	}
 }
