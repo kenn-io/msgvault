@@ -19,41 +19,40 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	if m.timelineState.reader == timelineReaderMeeting && m.timelineState.meeting.detailSearchActive {
 		return m.handleTimelineMeetingKey(msg)
 	}
-	// These keys are local to Timeline, before the global dispatcher.
-	switch msg.String() {
-	case "a":
-		if entry := m.highlightedTimelineEntry(); entry != nil && entry.AnchorRef != "" {
-			return m.requestTimeline(timeline.Request{Mode: timeline.ModeAnchor, Around: entry.AnchorRef}, true)
-		}
-		return m, nil
-	case "w":
-		if entry := m.highlightedTimelineEntry(); entry != nil {
-			if ref := timelineFirstPerson(*entry); ref != "" {
-				return m.requestTimeline(timeline.Request{Mode: timeline.ModeRelationship, With: ref}, true)
+	// These keys navigate the timeline list. Readers keep their own keys.
+	if m.timelineState.reader == timelineReaderNone {
+		switch msg.String() {
+		case "a":
+			if entry := m.highlightedTimelineEntry(); entry != nil && entry.AnchorRef != "" {
+				return m.requestTimeline(timeline.Request{Mode: timeline.ModeAnchor, Around: entry.AnchorRef}, true)
 			}
-		}
-		return m, nil
-	case "[", "]":
-		if m.timelineState.result == nil {
 			return m, nil
-		}
-		loc, err := time.LoadLocation(m.timelineState.result.Timezone)
-		if err != nil {
-			loc = time.UTC
-		}
-		date := m.timelineState.result.Window.From
-		if entry := m.highlightedTimelineEntry(); entry != nil && !entry.Time.IsZero() {
-			date = entry.Time.In(loc).Format(time.DateOnly)
-		}
-		day, err := time.ParseInLocation(time.DateOnly, date, loc)
-		if err != nil {
+		case "w":
+			if entry := m.highlightedTimelineEntry(); entry != nil {
+				if ref := timelineFirstPerson(*entry); ref != "" {
+					return m.requestTimeline(timeline.Request{Mode: timeline.ModeRelationship, With: ref}, true)
+				}
+			}
 			return m, nil
+		case "[", "]":
+			if m.timelineState.result == nil {
+				return m, nil
+			}
+			loc, err := time.LoadLocation(m.timelineState.result.Timezone)
+			if err != nil {
+				loc = time.UTC
+			}
+			date := m.timelineState.result.Window.From
+			day, err := time.ParseInLocation(time.DateOnly, date, loc)
+			if err != nil {
+				return m, nil
+			}
+			delta := 1
+			if msg.String() == "[" {
+				delta = -1
+			}
+			return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: day.AddDate(0, 0, delta).Format(time.DateOnly)}, true)
 		}
-		delta := 1
-		if msg.String() == "[" {
-			delta = -1
-		}
-		return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: day.AddDate(0, 0, delta).Format(time.DateOnly)}, true)
 	}
 	if msg.String() == keyNameCtrlC {
 		m.cancelTimelineRequest()
@@ -187,9 +186,6 @@ func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 }
 
 func (m Model) openTimelineEntry(entry timeline.Entry) (tea.Model, tea.Cmd) {
-	if entry.HiddenText {
-		return m, nil
-	}
 	// A burst's exact anchor can fall beyond the bounded thread prefix.
 	if entry.Kind == "burst" {
 		for _, open := range entry.Open {

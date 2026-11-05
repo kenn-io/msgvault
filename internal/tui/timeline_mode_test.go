@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/jsontext"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -187,8 +188,9 @@ func TestTimelineOpenUsesEmittedTargets(t *testing.T) {
 	m.timelineState.result.Days[0].Bursts[0].HiddenText = true
 	m.rebuildTimelineRows()
 	hidden, cmd := sendKey(t, m, keyEnter())
-	assert.Nil(cmd)
-	assert.Equal(timelineReaderNone, hidden.timelineState.reader)
+	require.NotNil(cmd)
+	assert.Equal(timelineReaderThread, hidden.timelineState.reader)
+	assert.Equal(int64(9007199254740993), hidden.timelineState.readerID)
 }
 
 func TestTimelineMeetingReaderSearchAndBackPreserveMeetings(t *testing.T) {
@@ -625,4 +627,42 @@ func TestTimelineCalendarAllDayAndDeletedStatus(t *testing.T) {
 	assert.Contains(view, "All day: 2027-03-14 to 2027-03-15 (end date exclusive)")
 	assert.Contains(view, "Status: cancelled")
 	assert.Contains(view, "Deleted from source; showing the archived occurrence")
+}
+
+func TestTimelineDayKeysUseViewedWindow(t *testing.T) {
+	for _, offset := range []int{-4, 2} {
+		for _, tc := range []struct {
+			key  rune
+			date string
+		}{{'[', "2027-03-13"}, {']', "2027-03-15"}} {
+			t.Run(fmt.Sprintf("%c/%d", tc.key, offset), func(t *testing.T) {
+				m := timelineModeModel()
+				entry := m.timelineState.result.Days[0].Bursts[0]
+				entry.Time = entry.Time.AddDate(0, 0, offset)
+				m.timelineState.result.Days = nil
+				m.timelineState.result.Upcoming = []timeline.Entry{entry}
+				m.rebuildTimelineRows()
+				updated, cmd := sendKey(t, m, key(tc.key))
+				require.NotNil(t, cmd)
+				defer updated.cancelTimelineRequest()
+				assert.Equal(t, tc.date, updated.timelineState.request.Date)
+			})
+		}
+	}
+}
+
+func TestTimelineReaderKeepsLocalNavigationKeys(t *testing.T) {
+	for _, reader := range []timelineReader{timelineReaderMessage, timelineReaderThread, timelineReaderCalendar, timelineReaderMeeting} {
+		for _, k := range []rune{'a', 'w', '[', ']'} {
+			t.Run(fmt.Sprintf("%d/%c", reader, k), func(t *testing.T) {
+				m := timelineModeModel()
+				m.timelineState.reader = reader
+				updated, cmd := sendKey(t, m, key(k))
+				defer updated.cancelTimelineRequest()
+				assert.Nil(t, cmd)
+				assert.Equal(t, reader, updated.timelineState.reader)
+				assert.Equal(t, m.timelineState.request, updated.timelineState.request)
+			})
+		}
+	}
 }

@@ -147,13 +147,16 @@ func TestFitForwardProgressStub(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	v := budgetTimeline(2)
-	v.History[0].Open[0].Args["enormous"] = strings.Repeat("x", 20000)
+	v.History[0].Message.People = []Person{
+		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+	}
 	out, err := Fit(v, "json", 2048)
 	requirements.NoError(err)
 	requirements.NotEmpty(out.History)
 	assertions.Equal("msg:1", out.History[0].Ref)
 	requirements.NoError(out.History[0].Validate())
-	assertions.Empty(out.History[0].Open)
+	assertions.Equal(v.History[0].Open, out.History[0].Open)
 	assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
 }
 func TestFitReportsCountsOrMore(t *testing.T) {
@@ -223,7 +226,10 @@ func TestFitExistingMoreStillContinues(t *testing.T) {
 }
 func TestFitStubRendersKind(t *testing.T) {
 	v := budgetTimeline(2)
-	v.History[0].Open[0].Args["enormous"] = strings.Repeat("x", 20000)
+	v.History[0].Message.People = []Person{
+		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+	}
 	out, err := Fit(v, "json", 2048)
 	require.NoError(t, err)
 	assert.Contains(t, Markdown(out), "13:30 message · #1")
@@ -327,4 +333,18 @@ func TestFitSameEntryUsesSectionSortKeys(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("day-order", cursor.Positions["days"])
 	assertions.Equal("upcoming-order", cursor.Positions["upcoming"])
+}
+
+func TestFitUpcomingStubKeepsOpenTarget(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	v := budgetTimeline(0)
+	v.Upcoming = []Entry{{Kind: "meeting", Key: "evt:7", Ref: "evt:7", AnchorRef: "evt:7", Time: v.Now,
+		Open:    []Open{{Tool: "get_calendar_event", Args: map[string]any{"ref": "evt:7"}}},
+		Meeting: &MeetingEntry{Title: UntrustedText{Text: "Synthetic planning"}, Attendees: []Person{{Name: strings.Repeat("A", 80)}, {Name: strings.Repeat("B", 80)}, {Name: strings.Repeat("C", 80)}, {Name: strings.Repeat("D", 80)}}},
+	}}
+	out, err := Fit(v, "json", 2048)
+	requirements.NoError(err)
+	requirements.Len(out.Upcoming, 1)
+	assertions.Empty(out.Upcoming[0].Meeting.Title.Text)
+	assertions.Equal(v.Upcoming[0].Open, out.Upcoming[0].Open)
 }

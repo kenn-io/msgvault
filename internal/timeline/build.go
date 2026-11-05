@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -216,22 +217,13 @@ func (c *composer) unavailable(section string) {
 func (c *composer) finishGaps() {
 	slices.SortFunc(c.t.Gaps, func(a, b Gap) int {
 		if a.Section != b.Section {
-			return compare(a.Section, b.Section)
+			return cmp.Compare(a.Section, b.Section)
 		}
-		return compare(a.Code, b.Code)
+		return cmp.Compare(a.Code, b.Code)
 	})
 	c.t.Gaps = slices.CompactFunc(c.t.Gaps, func(a, b Gap) bool {
 		return a.Section == b.Section && a.Code == b.Code && slices.Equal(a.Items, b.Items)
 	})
-}
-func compare(a, b string) int {
-	if a < b {
-		return -1
-	}
-	if a > b {
-		return 1
-	}
-	return 0
 }
 
 type readResult[T any] struct {

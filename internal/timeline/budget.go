@@ -190,7 +190,6 @@ func appendItem(t *Timeline, item pageItem, stub bool) {
 	}
 }
 func entryStub(e Entry) Entry {
-	e.Open = nil
 	e.Meeting = nil
 	e.Burst = nil
 	e.Message = nil

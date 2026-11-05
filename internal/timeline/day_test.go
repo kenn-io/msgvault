@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/loops"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -540,4 +541,41 @@ func TestBuildLoopsRetainsSettlementFromSourceDeletedReply(t *testing.T) {
 			assertions.NotContains(entry.Burst.LatestMessageIDs, reply)
 		}
 	}
+}
+
+func TestBuildDayReadsBeyondBurstPage(t *testing.T) {
+	testutil.SkipIfPostgres(t, "large burst query exceeds the timeline read deadline on PostgreSQL")
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	var newest int64
+	for i := range maxBursts + 1 {
+		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("page-%d", i), "Synthetic conversation")
+		requirements.NoError(err)
+		newest = f.add(f.now.Add(time.Duration(i)*time.Second), false, func(m *store.Message) { m.ConversationID = conv })
+	}
+	f.project()
+	f.src.Loops, f.src.Inventory = nil, nil
+	got, err := Build(t.Context(), f.src, dayRequest())
+	requirements.NoError(err)
+	entries := allDayEntries(got)
+	requirements.NotEmpty(entries)
+	assertions.Equal([]int64{newest}, entries[0].Burst.LatestMessageIDs)
+	assertions.NotEmpty(got.Cursor)
+}
+
+func TestReadActivityConsumesDayPages(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	for i := range 3 {
+		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("page-%d", i), "Synthetic conversation")
+		requirements.NoError(err)
+		f.add(f.now.Add(time.Duration(i)*time.Second), false, func(m *store.Message) { m.ConversationID = conv })
+	}
+	f.project()
+	c := composer{ctx: t.Context(), src: f.src, t: &Timeline{Window: Window{From: "2026-10-22", To: "2026-10-22"}}, loc: time.UTC}
+	got, err := c.readActivity(store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: 2})
+	requirements.NoError(err)
+	requirements.Len(got.bursts, 3)
+	assertions.Equal([]int64{3}, got.bursts[2].LatestMessageIDs)
+	assertions.False(got.more)
 }

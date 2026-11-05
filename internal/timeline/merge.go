@@ -44,7 +44,7 @@ func mergeBursts(full, cold []store.ActivityBurst) []store.ActivityBurst {
 		if n := a.FirstAt.Compare(b.FirstAt); n != 0 {
 			return n
 		}
-		return compare(a.Key, b.Key)
+		return cmp.Compare(a.Key, b.Key)
 	})
 	return out
 }
@@ -475,7 +475,7 @@ func (c *composer) sortAndContinue(section string, entries []Entry, descending b
 		}
 		c.keys[section+"|"+e.Key] = key
 	}
-	slices.SortFunc(entries, func(a, b Entry) int { return compare(c.keys[section+"|"+a.Key], c.keys[section+"|"+b.Key]) })
+	slices.SortFunc(entries, func(a, b Entry) int { return cmp.Compare(c.keys[section+"|"+a.Key], c.keys[section+"|"+b.Key]) })
 }
 func (c *composer) afterPosition(section string, entries []Entry) []Entry {
 	result := entries[:0]
@@ -525,7 +525,7 @@ func (c *composer) groupDays(entries []Entry) {
 				summary.People = append(summary.People, p)
 			}
 			slices.SortFunc(summary.People, func(a, b Person) int {
-				if n := compare(a.Name, b.Name); n != 0 {
+				if n := cmp.Compare(a.Name, b.Name); n != 0 {
 					return n
 				}
 				if n := cmp.Compare(a.PersonID, b.PersonID); n != 0 {
@@ -544,7 +544,7 @@ func (c *composer) groupDays(entries []Entry) {
 			for _, e := range items {
 				c.keys["days|"+e.Key] = c.dayKey(e)
 			}
-			slices.SortFunc(items, func(a, b Entry) int { return compare(c.keys["days|"+a.Key], c.keys["days|"+b.Key]) })
+			slices.SortFunc(items, func(a, b Entry) int { return cmp.Compare(c.keys["days|"+a.Key], c.keys["days|"+b.Key]) })
 			items = c.afterPosition("days", items)
 			for _, e := range items {
 				switch e.Kind {

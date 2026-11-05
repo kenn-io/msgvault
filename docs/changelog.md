@@ -15,6 +15,7 @@ All notable changes to msgvault, grouped by release.
   `reopen` manage them, and the HTTP API has matching routes. Each request
   computes evidence for up to 1,000 uncached messages; repeated requests
   continue using retained evidence. They need HTTP API schema 3.44.0.
+- Browse the [timeline in the TUI](usage/tui.md#timeline). Move between days, open entry details, and switch to relationship or anchor views.
 
 - Read [day activity, relationship history, and anchor context](usage/timeline.md) through `msgvault timeline`, the HTTP API, and MCP. Results include bounded Markdown or JSON, freshness, missing-section gaps, and detail targets. Delegated day and anchor reads preserve source grants; relationship views are owner-only. API schema 3.44.0.
 

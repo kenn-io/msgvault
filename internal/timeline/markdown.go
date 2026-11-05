@@ -12,10 +12,27 @@ import (
 
 // Markdown renders compact rows. Sender-controlled text is flattened and escaped.
 func Markdown(t *Timeline) string {
+	text, _ := MarkdownWithEntries(t)
+	return text
+}
+
+// RenderedEntry locates a selectable entry in the rendered Markdown.
+// Several entries can share one zero-based line, such as missed calls.
+type RenderedEntry struct {
+	Entry Entry
+	Line  int
+}
+
+// MarkdownWithEntries renders Markdown and records each entry's line.
+func MarkdownWithEntries(t *Timeline) (string, []RenderedEntry) {
 	if t == nil {
-		return ""
+		return "", nil
 	}
 	var b strings.Builder
+	var entries []RenderedEntry
+	record := func(e Entry) {
+		entries = append(entries, RenderedEntry{Entry: e, Line: b.Len()})
+	}
 	loc, err := time.LoadLocation(t.Timezone)
 	if err != nil {
 		loc = time.UTC
@@ -79,6 +96,7 @@ func Markdown(t *Timeline) string {
 	count := 0
 	rows := func(entries []Entry) {
 		for _, e := range entries {
+			record(e)
 			fmt.Fprintf(&b, "- %s\n", entryRow(e, loc))
 			count++
 		}
@@ -108,15 +126,20 @@ func Markdown(t *Timeline) string {
 		rows(d.Meetings)
 		rows(d.Bursts)
 		var other []string
+		var otherEntries []Entry
 		for _, e := range d.Calls {
 			if e.Call != nil && e.Call.Outcome != "answered" {
 				other = append(other, entryRow(e, loc))
+				otherEntries = append(otherEntries, e)
 				count++
 			} else {
 				rows([]Entry{e})
 			}
 		}
 		if len(other) > 0 {
+			for _, e := range otherEntries {
+				record(e)
+			}
 			fmt.Fprintf(&b, "- %s\n", strings.Join(other, " · "))
 		}
 		rows(d.Notes)
@@ -128,6 +151,7 @@ func Markdown(t *Timeline) string {
 	if len(t.Upcoming) > 0 {
 		b.WriteString("\nUpcoming\n")
 		for _, e := range t.Upcoming {
+			record(e)
 			fmt.Fprintf(&b, "- %s %s\n", e.Time.In(loc).Format("Mon"), entryRow(e, loc))
 			count++
 		}
@@ -173,7 +197,15 @@ func Markdown(t *Timeline) string {
 	if t.Cursor != "" {
 		fmt.Fprintf(&b, "\ncursor: %s\n", t.Cursor)
 	}
-	return b.String()
+	text := b.String()
+	offset, line := 0, 0
+	for i := range entries {
+		end := entries[i].Line
+		line += strings.Count(text[offset:end], "\n")
+		entries[i].Line = line
+		offset = end
+	}
+	return text, entries
 }
 func entryRow(e Entry, loc *time.Location) string {
 	ref := FormatShortRef(e.Ref)

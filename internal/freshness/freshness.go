@@ -23,7 +23,7 @@ func Build(ctx context.Context, in Inputs) (Report, error) {
 		return Report{}, errors.New("freshness: as-of time is required")
 	}
 	r := Report{AsOf: in.Now.UTC(), StaleAfterSeconds: int64(in.StaleAfter / time.Second),
-		StaleReasons: []string{}, Warnings: []string{}, Sources: []SourceFreshness{}, Projections: map[string]*ProjectionFreshness{}}
+		StaleReasons: []string{}, Warnings: []string{}, Sources: []SourceFreshness{}}
 	sources := slices.Clone(in.Sources)
 	slices.SortStableFunc(sources, func(a, b SourceInventoryItem) int {
 		if c := cmp.Compare(a.SourceType, b.SourceType); c != 0 {
@@ -71,37 +71,6 @@ func Build(ctx context.Context, in Inputs) (Report, error) {
 			}
 		}
 		r.Sources = append(r.Sources, s)
-	}
-	names := make([]string, 0, len(in.Projections))
-	for name := range in.Projections {
-		names = append(names, name)
-	}
-	slices.Sort(names)
-	for _, name := range names {
-		if err := ctx.Err(); err != nil {
-			return Report{}, err
-		}
-		state := in.Projections[name]
-		p := &ProjectionFreshness{ComputedAt: state.ComputedAt, LastSuccessAt: state.LastSuccessAt,
-			AgeSeconds: age(in.Now, state.ComputedAt), BackfillComplete: state.BackfillComplete, Extra: state.Extra}
-		switch {
-		case state.ComputedAt == nil:
-			p.Stale = true
-			r.StaleReasons = append(r.StaleReasons, "projection_missing:"+name)
-		case in.Now.Sub(*state.ComputedAt) > in.StaleAfter:
-			p.Stale = true
-			r.StaleReasons = append(r.StaleReasons, "projection_stale:"+name)
-		}
-		if p.Stale {
-			r.Stale = true
-		}
-		if state.BackfillComplete != nil && !*state.BackfillComplete {
-			r.Warnings = append(r.Warnings, fmt.Sprintf("The %s projection is still backfilling archive evidence.", name))
-		}
-		if reason, _ := state.Extra["rescan_reason"].(string); reason != "" {
-			r.Warnings = append(r.Warnings, fmt.Sprintf("The %s projection is reconciling archive changes.", name))
-		}
-		r.Projections[name] = p
 	}
 	return r, nil
 }

@@ -9,8 +9,8 @@ sender, list, or date; open a conversation; find an attachment; or review a
 person before your next conversation.
 
 1. Run `msgvault tui`.
-2. Press `m` to cycle through Email, Texts, Meetings, and People. Unavailable
-   Texts and People modes are skipped.
+2. Press `m` to cycle through Email, Texts, Meetings, People, and Timeline. Unavailable
+   modes are skipped.
 3. Use `j`/`k` or the arrow keys to move, `Enter` to open a row, and `Esc` to go
    back. Press `?` for the shortcuts available in the current mode.
 
@@ -295,6 +295,25 @@ saved. This requires raw email content in the archive.
 When connected to a remote server, the file is saved on the machine running the
 TUI. In message lists and aggregate views, `s` continues to cycle the sort field.
 
+## Timeline
+
+Timeline is unreleased and requires daemon API schema `3.44.0` or newer.
+Press `m` to reach it. It combines archived messages, meetings, calls, open
+loops, and notes, using the day boundaries in `[activity].timezone`.
+See [Timeline](timeline.md) for filters, freshness, and continuation.
+
+| Key | Action |
+|---|---|
+| `[` / `]` | Previous / next day from the start of the viewed window |
+| `a` | Show activity around the selected entry |
+| `w` | Show the relationship with the entry's first person |
+| `n` | Load the next page when available |
+| `Enter` | Open the selected entry's details |
+| `Esc` | Return from details or to the previous timeline request |
+
+Day, relationship, anchor, and page shortcuts apply while the timeline list is
+visible. Use `j`/`k` to select an entry and `r` to refresh or retry.
+
 ## Keyboard Shortcuts
 
 | Key | Action |
@@ -303,7 +322,7 @@ TUI. In message lists and aggregate views, `s` continues to cycle the sort field
 | `Enter` | Drill down into selection |
 | `T` | View full email thread |
 | `Esc` / `Backspace` | Go back |
-| `m` | Cycle Email, Texts, Meetings, and People; skip unavailable modes |
+| `m` | Cycle Email, Texts, Meetings, People, and Timeline; skip unavailable modes |
 | `g` / `Tab` | Cycle aggregate views; `Tab` cycles search modes while typing in a message-list search |
 | `s` | Save email as `.eml` in message detail; cycle sort field in lists |
 | `v` / `r` | Reverse sort direction in Email and Texts |

@@ -20,6 +20,11 @@ msgvault timeline --brief
 msgvault timeline --json --budget 4096
 ```
 
+In `msgvault tui`, press `m` to reach Timeline mode. Use `[` and `]` to move
+between days, `a` for activity around the selected entry, `w` for its first
+person's relationship, `n` for the next page, and `Enter` for details.
+See [Interactive TUI](tui.md#timeline).
+
 Without a date filter, the day view covers today and yesterday. `--days N`
 selects up to 31 days ending today. `--date` selects one local date; `--from`
 and `--to` select an inclusive range. Set `[activity].timezone` in the daemon

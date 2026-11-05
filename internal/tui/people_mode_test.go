@@ -199,13 +199,13 @@ func leaveAndReenterPeople(t *testing.T, model Model) (Model, tea.Cmd) {
 
 func TestNextModeIncludesPeople(t *testing.T) {
 	assert := assert.New(t)
-	assert.Equal(modeTexts, nextMode(modeEmail, true, true))
-	assert.Equal(modeMeetings, nextMode(modeTexts, true, true))
-	assert.Equal(modePeople, nextMode(modeMeetings, true, true))
-	assert.Equal(modeEmail, nextMode(modePeople, true, true))
-	assert.Equal(modeMeetings, nextMode(modeEmail, false, true))
-	assert.Equal(modePeople, nextMode(modeMeetings, false, true))
-	assert.Equal(modeEmail, nextMode(modeMeetings, false, false))
+	assert.Equal(modeTexts, nextMode(modeEmail, true, true, false))
+	assert.Equal(modeMeetings, nextMode(modeTexts, true, true, false))
+	assert.Equal(modePeople, nextMode(modeMeetings, true, true, false))
+	assert.Equal(modeEmail, nextMode(modePeople, true, true, false))
+	assert.Equal(modeMeetings, nextMode(modeEmail, false, true, false))
+	assert.Equal(modePeople, nextMode(modeMeetings, false, true, false))
+	assert.Equal(modeEmail, nextMode(modeMeetings, false, false, false))
 }
 
 func TestEnteringPeopleLoadsFirstDirectoryPage(t *testing.T) {

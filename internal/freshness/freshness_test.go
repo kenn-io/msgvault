@@ -2,7 +2,6 @@ package freshness
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -55,33 +54,6 @@ func TestSourceFreshnessPolicy(t *testing.T) {
 	}
 }
 
-func TestProjectionFreshnessAndWireShape(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	old := now.Add(-25 * time.Hour)
-	fresh := now.Add(-time.Minute)
-	complete := false
-	got, err := Build(t.Context(), Inputs{Now: now, StaleAfter: 24 * time.Hour, Projections: map[string]ProjectionState{
-		"open_loops": {ComputedAt: &old, BackfillComplete: &complete, Extra: map[string]any{"queue_depth": 2}},
-		"activity":   {}, "other": {ComputedAt: &fresh},
-	}})
-	requirements.NoError(err)
-	assertions.True(got.Stale)
-	assertions.Equal([]string{"projection_missing:activity", "projection_stale:open_loops"}, got.StaleReasons)
-	assertions.Equal(int64(90000), *got.Projections["open_loops"].AgeSeconds)
-	assertions.False(*got.Projections["open_loops"].BackfillComplete)
-	assertions.False(got.Projections["other"].Stale)
-	encoded, err := json.Marshal(got)
-	requirements.NoError(err)
-	var fields map[string]any
-	requirements.NoError(json.Unmarshal(encoded, &fields))
-	assertions.Equal([]any{}, fields["sources"])
-	assertions.InDelta(float64(86400), fields["stale_after_seconds"], 0)
-	assertions.Contains(fields, "as_of")
-	assertions.Contains(fields, "warnings")
-}
-
 func TestBuildCanceledOrInvalidThreshold(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -103,14 +75,4 @@ func TestFreshnessWarningsAndClockSkew(t *testing.T) {
 	assertions.False(got.Stale)
 	assertions.Equal(int64(0), *got.Sources[0].AgeSeconds)
 	assertions.Equal([]string{"Sync is disabled for gmail source owner@example.test.", "The latest sync failed for gmail source owner@example.test."}, got.Warnings)
-}
-
-func TestRescanWarnsWithoutInvalidatingCertifiedProgress(t *testing.T) {
-	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
-	computed := now.Add(-time.Minute)
-	got, err := Build(t.Context(), Inputs{Now: now, StaleAfter: 24 * time.Hour,
-		Projections: map[string]ProjectionState{"open_loops": {ComputedAt: &computed, Extra: map[string]any{"rescan_reason": "identity"}}}})
-	require.NoError(t, err)
-	assert.False(t, got.Stale)
-	assert.Equal(t, []string{"The open_loops projection is reconciling archive changes."}, got.Warnings)
 }

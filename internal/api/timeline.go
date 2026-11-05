@@ -131,10 +131,6 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	grant := s.requestAuthentication(r).Grant
 	req.Scope.Owner = grant == nil
 	if grant != nil {
-		if req.With != "" {
-			writeAPIHTTPError(w, agentReadDenied(agentgrant.PermissionMessageRead))
-			return
-		}
 		ids := agentReadSourceIDs(r)
 		admitted := false
 		for _, id := range ids {

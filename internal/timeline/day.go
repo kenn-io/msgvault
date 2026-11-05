@@ -19,14 +19,23 @@ type activityWindow struct {
 }
 
 func (c *composer) readActivity(q store.BurstQuery) (activityWindow, error) {
-	page, err := c.src.Activity.ListActivityBurstsContext(c.ctx, q)
-	result := activityWindow{bursts: page.Bursts, noise: page.NoiseOmitted, more: page.NextKey != nil}
-	if err != nil {
-		return result, err
+	var result activityWindow
+	for {
+		page, err := c.src.Activity.ListActivityBurstsContext(c.ctx, q)
+		result.bursts = append(result.bursts, page.Bursts...)
+		result.noise = page.NoiseOmitted
+		result.more = page.NextKey != nil
+		if err != nil {
+			return result, err
+		}
+		if q.FromDate == "" || page.NextKey == nil {
+			break
+		}
+		q.AfterKey = page.NextKey
 	}
 	seen := map[int64]bool{}
 	from, to := c.bounds()
-	for _, burst := range page.Bursts {
+	for _, burst := range result.bursts {
 		if burst.Channel != store.ChannelMeeting || seen[burst.ConversationID] || burst.ConversationID <= 0 {
 			continue
 		}
@@ -82,7 +91,17 @@ func (c *composer) collectDay() dayRead {
 			if c.src.Cold != nil {
 				if c.req.IncludeCold && c.src.Activity == nil {
 					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
+						var result store.BurstPage
+						query := query
+						for {
+							page, err := c.src.Cold.ListColdActivityBurstsContext(ctx, query)
+							result.Bursts = append(result.Bursts, page.Bursts...)
+							result.NoiseOmitted, result.NextKey = page.NoiseOmitted, page.NextKey
+							if err != nil || page.NextKey == nil {
+								return result, err
+							}
+							query.AfterKey = page.NextKey
+						}
 					})
 				} else if !c.req.IncludeCold {
 					r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
@@ -220,10 +239,6 @@ func (c *composer) buildDay() {
 		c.ownerGaps()
 	}
 	bursts := mergeBursts(r.activity.value.bursts, r.cold.value.Bursts)
-	if len(bursts) > maxBursts {
-		bursts = bursts[:maxBursts]
-		c.t.Gaps = append(c.t.Gaps, Gap{Section: "days", Code: "partial"})
-	}
 	occurrences := append(slices.Clone(r.calendar.value.Occurrences), r.upcoming.value.Occurrences...)
 	entries, upcoming := c.mergeEntries(bursts, r.activity.value.meetings, occurrences, r.calls.value, r.notes.value)
 	c.t.Upcoming = c.filterSubject(upcoming)
