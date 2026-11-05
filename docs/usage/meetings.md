@@ -977,7 +977,7 @@ time beyond retention can lose calls that have never synced.
 
 You can register before the first recording. A missing meetings folder is an
 empty scan; msgvault does not create it or write to Hex storage. Dot-prefixed
-folders are ignored, as they are in Hex.
+folders are ignored.
 
 Scans revisit stopped meetings so edits update the archive:
 
