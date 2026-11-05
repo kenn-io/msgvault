@@ -138,10 +138,11 @@ export async function readBoundedStream(
   stream: ReadableStream<Uint8Array> | null,
   headers: Headers,
   signal: AbortSignal,
-  maxBytes: number
+  maxBytes: number,
+  truncate = false
 ): Promise<Uint8Array> {
   const declared = headers.get('Content-Length');
-  if (declared !== null) {
+  if (!truncate && declared !== null) {
     const length = Number(declared);
     if (Number.isFinite(length) && length > maxBytes) {
       if (stream) {
@@ -165,6 +166,12 @@ export async function readBoundedStream(
       if (signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
       const { done, value } = await reader.read();
       if (done) break;
+      if (truncate && length + value.byteLength >= maxBytes) {
+        chunks.push(value.subarray(0, maxBytes - length));
+        length = maxBytes;
+        await reader.cancel();
+        break;
+      }
       length += value.byteLength;
       if (length > maxBytes) {
         await reader.cancel();

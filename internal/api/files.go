@@ -858,6 +858,9 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, available := s.fileContentState(r.Context(), *file)
+	if state == FileContentLocal && file.StoragePath != "" && !s.fileContentResolvable(r.Context(), *file) {
+		state, available = FileContentMissingBlob, false
+	}
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
 		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
@@ -907,7 +910,12 @@ func (s *Server) handleGetFileContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", contentDisposition(file.Filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, copyErr := io.Copy(w, content)
+	var copyErr error
+	if seeker, ok := content.(io.ReadSeeker); ok {
+		http.ServeContent(w, r, file.Filename, time.Time{}, seeker)
+	} else {
+		_, copyErr = io.Copy(w, content)
+	}
 	if err := errors.Join(copyErr, content.Close()); err != nil {
 		s.logger.Error("failed to stream file", "error", err, "file_id", id)
 	}

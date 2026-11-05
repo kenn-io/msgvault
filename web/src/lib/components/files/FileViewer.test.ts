@@ -193,12 +193,13 @@ describe('FileViewer', () => {
     expect(await screen.findByRole('region', { name: 'PDF preview fixture.pdf' })).toBeDefined();
     await waitFor(() => expect(renderPDF).toHaveBeenCalledOnce());
     expect(document.querySelector('iframe, embed, object')).toBeNull();
+    await screen.findByText("PDF · 32 B · 1 page");
   });
 
   it.each([
-    ['missing_blob', 'Archived bytes are missing.'],
-    ['metadata_only', 'This attachment has metadata only.'],
-    ['url_only', 'This attachment is URL-only and is not fetched as local content.']
+    ['missing_blob', "The archive has this file's record, but its bytes are missing from storage."],
+    ['metadata_only', "The import saved this file's name and size, not its contents."],
+    ['url_only', "This file is a link, and msgvault didn't download it."]
   ] as const)('names %s without fetching content bytes', async (contentState, message) => {
     const fetchFn = viewerFetch({
       id: 7, message_id: 11, conversation_id: 21, filename: 'unavailable.bin', mime_type: '',
@@ -207,6 +208,8 @@ describe('FileViewer', () => {
     render(FileViewer, { client: createAPIClient(fetchFn), file: file({ content_state: contentState, content_available: false }) });
     expect(await screen.findByText(message)).toBeDefined();
     expect(fetchFn).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('button', { name: /Download/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Open message' }).className).toContain('solid');
   });
 
   it('falls back to the attachment ID heading when the filename is empty or whitespace-only', async () => {
@@ -256,7 +259,7 @@ describe('FileViewer', () => {
       content_state: 'metadata_only', content_available: false
     });
     render(FileViewer, { client: createAPIClient(fetchFn), file: { id: 7 }, onOpenItem, onOpenConversation });
-    await screen.findByText('This attachment has metadata only.');
+    await screen.findByText("The import saved this file's name and size, not its contents.");
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11');
@@ -278,7 +281,7 @@ describe('FileViewer', () => {
       file: file({ content_state: 'metadata_only', content_available: false }),
       onOpenItem
     });
-    await screen.findByText('This attachment has metadata only.');
+    await screen.findByText("The import saved this file's name and size, not its contents.");
 
     await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:conversation:21');
@@ -314,7 +317,7 @@ describe('FileViewer', () => {
     });
     rejectStale!(new TypeError('stale network failure'));
 
-    expect(await screen.findByText('Archived bytes are missing.')).toBeDefined();
+    expect(await screen.findByText("The archive has this file's record, but its bytes are missing from storage.")).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByText('stale network failure')).toBeNull();
   });
@@ -328,7 +331,7 @@ describe('FileViewer', () => {
       client: createAPIClient(fetchFn),
       file: file({ filename: 'archive.zip', mime_type: 'application/zip', mime_family: 'archive' })
     });
-    expect(await screen.findByText('Preview is not supported for this file type.')).toBeDefined();
+    expect(await screen.findByText('No preview for this file type')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Download archive.zip' })).toBeDefined();
     expect(fetchFn).toHaveBeenCalledOnce();
   });
@@ -360,4 +363,73 @@ describe('FileViewer', () => {
     }
     expect(fetchFn).toHaveBeenCalledOnce();
   });
+});
+
+it('shows context and steps with buttons and arrows, including from the preview', async () => {
+  const onStep = vi.fn();
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'application/zip' })), file: file({ participant_labels: ['Alex Example', 'Jordan Example'] }), position: { index: 2, total: 1038 }, onStep });
+  await screen.findByText('3 of 1,038');
+  expect(screen.getByText(/Containing item · Alex Example, Jordan Example/)).toBeDefined();
+  await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
+  await fireEvent.click(screen.getByRole('button', { name: 'Previous file' }));
+  await fireEvent.keyDown(screen.getByRole('region', { name: 'File preview preview.png' }), { key: 'ArrowRight' });
+  await fireEvent.keyDown(window, { key: 'ArrowLeft' });
+  expect(onStep.mock.calls).toEqual([[1], [-1], [1], [-1]]);
+});
+
+it.each([
+  ['text/plain', 'notes.txt', 'Synthetic text', 'pre'],
+  ['text/csv', 'table.csv', 'Name,Value\nExample,42', 'table'],
+  ['text/tab-separated-values', 'table.tsv', 'Name\tValue\nExample\t42', 'table'],
+])('previews %s', async (mime_type, filename, content, tag) => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type, filename }, new TextEncoder().encode(content))), file: file({ filename, mime_type }) });
+  await waitFor(() => expect(document.querySelector(tag)?.textContent).toContain(tag === 'pre' ? 'Synthetic text' : 'Example'));
+});
+
+it('bounds large CSV previews to 200 rows', async () => {
+  const content = 'Name,Value\n' + Array.from({ length: 205 }, (_, index) => `Row ${index},${index}`).join('\n');
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'text/csv', size_bytes: 5 * 1024 * 1024 }, new TextEncoder().encode(content))), file: file() });
+  await screen.findByText('Showing the first 200 rows.');
+  expect(screen.getAllByRole('row')).toHaveLength(201);
+  expect(screen.queryByText('Row 200')).toBeNull();
+});
+
+it('streams audio directly and leaves seeking keys with the player', async () => {
+  const onStep = vi.fn();
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'audio/wav' })), file: file(), position: { index: 0, total: 2 }, onStep });
+  await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('/api/v1/files/7/content'));
+  await fireEvent.keyDown(document.querySelector('audio')!, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+});
+
+it('names spreadsheets and keeps Download in the footer', async () => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })), file: file() });
+  await screen.findByText('No preview for this file type');
+  expect(screen.getByText(/Excel spreadsheet.*Download it/)).toBeDefined();
+  expect(screen.getAllByRole('button', { name: /Download/ })).toHaveLength(1);
+});
+
+it('leaves arrows with a horizontally scrollable text view and editable controls', async () => {
+  const onStep = vi.fn();
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'text/plain' }, new TextEncoder().encode('Example text'))), file: file(), position: { index: 0, total: 2 }, onStep });
+  await screen.findByText('Example text');
+  const preview = screen.getByRole('region', { name: 'File preview preview.png' });
+  Object.defineProperty(preview, 'scrollWidth', { configurable: true, value: 400 });
+  Object.defineProperty(preview, 'clientWidth', { configurable: true, value: 200 });
+  await fireEvent.keyDown(preview, { key: 'ArrowRight' });
+  const input = document.createElement('input');
+  preview.append(input);
+  await fireEvent.keyDown(input, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+  Object.defineProperty(preview, 'scrollWidth', { value: 200 });
+  await fireEvent.keyDown(preview, { key: 'ArrowRight' });
+  expect(onStep).toHaveBeenCalledExactlyOnceWith(1);
+});
+
+it('renders the start of a text file beyond the byte limit', async () => {
+  const content = new Uint8Array(2 * 1024 * 1024 + 50).fill(65);
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'text/plain', size_bytes: content.length }, content)), file: file() });
+  await screen.findByText('Showing the start of this file.');
+  expect(document.querySelector('pre')?.textContent?.length).toBe(2 * 1024 * 1024);
+  expect(screen.queryByRole('alert')).toBeNull();
 });

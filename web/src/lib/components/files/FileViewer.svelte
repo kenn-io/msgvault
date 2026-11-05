@@ -1,17 +1,27 @@
 <script lang="ts">
   import { getFile as generatedGetFile, getFileContent as generatedGetFileContent } from '../../api/generated/api/api';
-  import { Button, Modal, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, IconButton, Modal, Table, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { FileMetadata, FileViewerTarget } from '../../explore/models';
   import type { PDFRenderHandle } from './FileViewer.browser.svelte';
   import { isSupportedImageMIME, readBoundedStream, validatedImageBlob } from './preview-bytes';
-  import { formatBytes } from '../../util/format';
+  import ChevronLeft from '@lucide/svelte/icons/chevron-left';
+  import ChevronRight from '@lucide/svelte/icons/chevron-right';
+  import FileIcon from '@lucide/svelte/icons/file';
+  import FileX from '@lucide/svelte/icons/file-x';
+  import FileVolume from '@lucide/svelte/icons/file-volume';
+  import { decodeText, parseDelimited } from './text-preview';
+  import { fileTypeLabel } from '../../explore/labels';
+  import { formatShortDate, formatBytes } from '../../util/format';
   import KataFileIssueAction from '../kata/KataFileIssueAction.svelte';
   interface Props {
     client: APIClient;
     file: FileViewerTarget;
     returnFocus?: HTMLElement;
+    position?: { index: number; total: number };
+    onStep?: (delta: -1 | 1) => void;
+    stepping?: boolean;
     onClose?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
@@ -20,12 +30,21 @@
     client,
     file,
     returnFocus = undefined,
+    position = undefined,
+    onStep = undefined,
+    stepping = false,
     onClose = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
   }: Props = $props();
   const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
   const MAX_PDF_BYTES = 25 * 1024 * 1024;
+  const MAX_TEXT_BYTES = 2 * 1024 * 1024;
+  let text = $state<string>();
+  let delimited = $state<Awaited<ReturnType<typeof parseDelimited>>>();
+  let textTruncated = $state(false);
+  let imageSize = $state('');
+  let pdfPages = $state(0);
   let metadata = $state<FileMetadata>();
   let loading = $state(true);
   let error = $state('');
@@ -96,17 +115,20 @@
     loading = false;
     if (data.content_state === 'local_content' && isImage(data)) {
       void loadImage(data, currentGeneration, signal);
+    } else if (data.content_state === 'local_content' && ['csv', 'tsv', 'text'].includes(previewKind(data))) {
+      void loadText(data, currentGeneration, signal);
     }
   }
   async function loadBytes(
     value: FileMetadata,
     signal: AbortSignal,
     maxBytes: number,
+    truncate = false,
   ): Promise<{
     bytes: Uint8Array;
     contentType: string | null;
   }> {
-    if (value.size_bytes > maxBytes) throw new Error('File exceeds the preview byte limit.');
+    if (!truncate && value.size_bytes > maxBytes) throw new Error('File exceeds the preview byte limit.');
     const { data, response } = await generatedGetFileContent(
       { id: value.id },
       {
@@ -116,9 +138,23 @@
     );
     if (!response.ok || !(data instanceof ReadableStream)) throw new Error('Archived content could not be loaded.');
     return {
-      bytes: await readBoundedStream(data, response.headers, signal, maxBytes),
+      bytes: await readBoundedStream(data, response.headers, signal, maxBytes, truncate),
       contentType: response.headers.get('Content-Type'),
     };
+  }
+  async function loadText(value: FileMetadata, currentGeneration: number, signal: AbortSignal): Promise<void> {
+    try {
+      const { bytes } = await loadBytes(value, signal, MAX_TEXT_BYTES, true);
+      const decoded = decodeText(bytes);
+      const kind = previewKind(value);
+      const parsed = kind === 'text' ? undefined : await parseDelimited(decoded, kind === 'tsv' ? '\t' : ',');
+      if (signal.aborted || currentGeneration !== generation) return;
+      text = decoded;
+      delimited = parsed;
+      textTruncated = bytes.length === MAX_TEXT_BYTES;
+    } catch (loadError) {
+      if (!signal.aborted && currentGeneration === generation) error = errorMessage(loadError);
+    }
   }
   async function loadImage(value: FileMetadata, currentGeneration: number, signal: AbortSignal): Promise<void> {
     try {
@@ -142,7 +178,10 @@
       }
       const { renderPDF } = await import('./FileViewer.browser.svelte');
       if (signal.aborted || currentGeneration !== generation || host !== pdfHost) return;
-      renderHandle = await renderPDF(bytes, host, signal);
+      const handle = await renderPDF(bytes, host, signal);
+      if (signal.aborted || currentGeneration !== generation) { handle.destroy(); return; }
+      renderHandle = handle;
+      pdfPages = handle.pages;
     } catch (loadError) {
       if (!signal.aborted && currentGeneration === generation) error = errorMessage(loadError);
     }
@@ -177,6 +216,11 @@
     renderHandle?.destroy();
     renderHandle = undefined;
     revokeImageURL();
+    text = undefined;
+    delimited = undefined;
+    textTruncated = false;
+    imageSize = '';
+    pdfPages = 0;
   }
   function revokeImageURL(): void {
     if (activeObjectURL) URL.revokeObjectURL(activeObjectURL);
@@ -213,13 +257,38 @@
     const entryKey = metadata?.entry_key ?? file.entry_key;
     if (entryKey && messageID && conversationID) onOpenConversation?.(entryKey, messageID, conversationID);
   }
-  function stateMessage(value: FileMetadata): string | undefined {
-    if (value.content_state === 'missing_blob') return 'Archived bytes are missing.';
-    if (value.content_state === 'metadata_only') return 'This attachment has metadata only.';
-    if (value.content_state === 'url_only') return 'This attachment is URL-only and is not fetched as local content.';
-    if (!isImage(value) && !isPDF(value)) return 'Preview is not supported for this file type.';
-    return undefined;
+  function previewKind(value: FileMetadata): string {
+    const mime = value.mime_type.split(';', 1)[0]!.trim().toLowerCase();
+    if (isImage(value)) return 'image';
+    if (isPDF(value)) return 'pdf';
+    if (mime === 'text/csv' || mime === 'application/csv') return 'csv';
+    if (mime === 'text/tab-separated-values') return 'tsv';
+    if (mime.startsWith('text/')) return 'text';
+    if (mime.startsWith('audio/')) return 'audio';
+    return 'none';
   }
+  function unavailableDescription(value: FileMetadata): string {
+    if (value.content_state === 'missing_blob') return "The archive has this file's record, but its bytes are missing from storage.";
+    if (value.content_state === 'url_only') return "This file is a link, and msgvault didn't download it.";
+    return "The import saved this file's name and size, not its contents.";
+  }
+  function handleKeydown(event: KeyboardEvent): void {
+    if (!onStep || !position || appShortcuts.activeScope() !== 'file-viewer' || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    const target = event.target;
+    if (target instanceof HTMLElement) {
+      if (target.closest('audio, input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return;
+      const preview = target.closest<HTMLElement>('.preview');
+      if (preview?.querySelector('pre, table') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
+    }
+    const delta = event.key === 'ArrowLeft' ? -1 : 1;
+    if (stepping || position.index + delta < 0 || position.index + delta >= position.total) return;
+    event.preventDefault();
+    onStep(delta);
+  }
+  const context = $derived([file.occurred_at ? formatShortDate(file.occurred_at) : '', file.containing_title, file.participant_labels?.join(', ')].filter(Boolean).join(' · '));
+  const typeLabel = $derived(fileTypeLabel(metadata?.mime_type ?? file.mime_type ?? '', file.mime_family ?? 'other'));
+  const footerMeta = $derived([typeLabel, formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0), pdfPages ? `${pdfPages} ${pdfPages === 1 ? 'page' : 'pages'}` : imageSize].filter(Boolean).join(' · '));
   function namedFilename(value: string | undefined): string | undefined {
     return value?.trim() ? value : undefined;
   }
@@ -228,12 +297,14 @@
   );
 </script>
 
+<svelte:window onkeydown={handleKeydown} />
+
 <Modal
   title={displayFilename}
   ariaLabel={`View ${displayFilename}`}
   closeOnOverlayClick={false}
-  width="min(960px, 94vw)"
-  maxWidth="min(960px, 94vw)"
+  width="min(1280px, calc(100vw - 32px))"
+  maxWidth="min(1280px, calc(100vw - 32px))"
   closeLabel="Close file viewer"
   closable
   onclose={() => {
@@ -241,46 +312,68 @@
   }}
 >
   <div class="file-viewer">
+    {#if context || position}
+      <div class="context-bar">
+        <span class="context" title={context}>{context}</span>
+        {#if position}
+          <div class="navigation">
+            <IconButton size="sm" ariaLabel="Previous file" disabled={position.index === 0 || stepping} onclick={() => onStep?.(-1)}><ChevronLeft size={14} /></IconButton>
+            <span class="data-mono">{(position.index + 1).toLocaleString()} of {position.total.toLocaleString()}</span>
+            <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || stepping} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
+          </div>
+        {/if}
+      </div>
+    {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
-    <div class="preview" role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
+    <div class="preview" class:tabular={!!delimited}
+      class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
       {#if loading}
         <p role="status">Loading file metadata…</p>
       {:else if metadata}
-        {#if stateMessage(metadata)}
-          <p class="state-message">{stateMessage(metadata)}</p>
+        {#if metadata.content_state !== 'local_content'}
+          <EmptyState title="This file's contents aren't in the archive" description={unavailableDescription(metadata)}>
+            {#snippet icon()}<FileX size={48} />{/snippet}
+          </EmptyState>
+        {:else if error || previewKind(metadata) === 'none'}
+          <div role={error ? 'alert' : undefined}>
+            <EmptyState title={error || 'No preview for this file type'} description={`${typeLabel} · ${formatBytes(metadata.size_bytes)}. Download it to open in another app.`}>
+              {#snippet icon()}<FileIcon size={48} />{/snippet}
+            </EmptyState>
+          </div>
         {:else if isImage(metadata)}
           {#if imageURL}
-            <img src={imageURL} alt={`Preview ${displayFilename}`} onerror={imageFailed} />
-          {:else}
-            <p role="status">Loading image preview…</p>
-          {/if}
+            <img src={imageURL} alt={`Preview ${displayFilename}`} onerror={imageFailed} onload={(event) => { imageSize = `${(event.currentTarget as HTMLImageElement).naturalWidth} × ${(event.currentTarget as HTMLImageElement).naturalHeight}`; }} />
+          {:else}<p role="status">Loading preview…</p>{/if}
         {:else if isPDF(metadata)}
-          <div
-            class="pdf-preview"
-            role="region"
-            aria-label={`PDF preview ${displayFilename}`}
-            bind:this={pdfHost}
-          ></div>
+          {#if !pdfPages}<p role="status">Loading preview…</p>{/if}
+          <div class="pdf-preview" role="region" aria-label={`PDF preview ${displayFilename}`} bind:this={pdfHost}></div>
+        {:else if previewKind(metadata) === 'audio'}
+          <div class="audio-preview">
+            <FileVolume size={48} />
+            <audio controls preload="metadata" src={`/api/v1/files/${metadata.id}/content`} onerror={() => { error = "This browser can't play this audio."; }}></audio>
+          </div>
+        {:else if text === undefined}
+          <p role="status">Loading preview…</p>
+        {:else if delimited}
+          <Table unsorted stickyHeader zebra ariaLabel="File contents">
+            {#snippet header()}{#each delimited?.header ?? [] as cell}<th title={cell}>{cell}</th>{/each}{/snippet}
+            {#each delimited.rows as row}<tr>{#each row as cell}<td title={cell}>{cell}</td>{/each}</tr>{/each}
+          </Table>
+          {#if delimited.truncated || textTruncated}<p class="truncated">Showing the first 200 rows.</p>{/if}
+        {:else}
+          <pre>{text}</pre>
+          {#if textTruncated}<p class="truncated">Showing the start of this file.</p>{/if}
         {/if}
-      {/if}
-      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      {:else if error}<p class="error" role="alert">{error}</p>{/if}
     </div>
   </div>
   {#snippet footer()}
     <div class="viewer-footer">
-      <div class="metadata">
-        <span>{metadata?.mime_type || file.mime_type || 'Unknown type'}</span>
-        <span>{formatBytes(metadata?.size_bytes ?? file.size_bytes ?? 0)}</span>
-      </div>
+      <div class="metadata" title={metadata?.mime_type ?? file.mime_type}>{footerMeta}</div>
       <div class="actions">
         {#if metadata}<KataFileIssueAction {client} attachmentID={metadata.id} messageID={metadata.message_id} filename={metadata.filename || 'File'} />{/if}
-        <Button size="sm" label="Open message" disabled={!metadata && !file.entry_key} onclick={openItem} />
-        <Button
-          size="sm"
-          label="Open conversation"
-          disabled={!metadata && !file.entry_key}
-          onclick={openConversation}
-        />
+        <Button size="sm" surface="soft" label="Open conversation" disabled={!metadata && !file.entry_key} onclick={openConversation} />
+        <Button size="sm" tone={metadata?.content_state === 'local_content' ? 'neutral' : 'info'} surface={metadata?.content_state === 'local_content' ? 'outline' : 'solid'} label="Open message" disabled={!metadata && !file.entry_key} onclick={openItem} />
         {#if metadata?.content_state === 'local_content'}
           <Button
             size="sm"
@@ -300,7 +393,8 @@
   .file-viewer {
     display: flex;
     width: 100%;
-    height: min(640px, calc(100vh - 160px));
+    height: 100%;
+    min-height: 0;
     flex-direction: column;
     overflow: hidden;
     background: var(--bg-surface);
@@ -318,10 +412,16 @@
     padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }
+  .preview > p[role='status'] {
+    display: grid;
+    height: 100%;
+    place-items: center;
+  }
   .preview img {
     display: block;
     max-width: 100%;
     max-height: 100%;
+    min-height: 0;
     margin: auto;
     object-fit: contain;
   }
@@ -342,13 +442,6 @@
     max-width: 100%;
     height: auto;
   }
-  .pdf-preview :global(.pdf-text) {
-    max-width: 70ch;
-    padding-top: var(--space-3);
-    font-size: var(--font-size-xs);
-    line-height: 1.5;
-  }
-  .state-message,
   .error {
     padding: var(--pane-pad-y) var(--pane-pad-x);
     border: 1px solid var(--border-muted);
@@ -368,6 +461,7 @@
   }
   .viewer-footer {
     width: 100%;
+    flex-wrap: wrap;
     justify-content: space-between;
   }
   .metadata {
@@ -375,6 +469,80 @@
     font-size: var(--font-size-xs);
   }
   .actions {
+    flex-wrap: wrap;
     justify-content: flex-end;
+  }
+  :global(.kit-modal-panel:has(.file-viewer)) {
+    height: calc(100svh - 64px);
+  }
+  :global(.kit-modal-body:has(.file-viewer)) {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .context-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+    min-height: 28px;
+  }
+  .context {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+  .navigation {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-left: auto;
+    flex-shrink: 0;
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .tabular {
+    display: flex;
+    flex-direction: column;
+  }
+  .centered {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    place-items: center;
+  }
+  pre {
+    margin: 0;
+    padding: var(--space-3);
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    color: var(--text-primary);
+  }
+  th, td {
+    max-width: 32ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .truncated {
+    margin-top: var(--space-3);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
+  }
+  .audio-preview {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-4);
+    width: 100%;
+    color: var(--text-muted);
+  }
+  audio {
+    width: min(480px, 100%);
   }
 </style>

@@ -480,11 +480,14 @@ func TestFileMetadataNamesEveryContentStateAndContainingAuthorities(t *testing.T
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "metadata.txt"},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.txt", URL: "https://files.example/remote.txt"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: hash},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.pdf", MimeType: "application/pdf", ContentHash: strings.Repeat("cc", 32)},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "bb/" + hash},
 	}}
+	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
+	requirements.NoError(os.MkdirAll(filepath.Join(cfg.AttachmentsDir(), "bb"), 0o700))
+	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "bb", hash), []byte("png"), 0o600))
 	srv := NewServerWithOptions(ServerOptions{
-		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}}, Store: catalog,
+		Config: cfg, Store: catalog,
 		Engine: &querytest.MockEngine{}, Logger: testLogger(),
 	})
 
@@ -696,6 +699,13 @@ func TestLegacyLooseFileWithRecordedPathStillDownloads(t *testing.T) {
 	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
 	assertions.Equal("application/pdf", download.Header().Get("Content-Type"))
 	assertions.Equal(string(loose), download.Body.String())
+	rangeRequest := httptest.NewRequest(http.MethodGet, "/api/v1/files/9/content", nil)
+	rangeRequest.Header.Set("Range", "bytes=2-5")
+	partial := httptest.NewRecorder()
+	srv.Router().ServeHTTP(partial, rangeRequest)
+	requirements.Equal(http.StatusPartialContent, partial.Code)
+	assertions.Equal(string(loose[2:6]), partial.Body.String())
+	assertions.Equal("bytes 2-5/18", partial.Header().Get("Content-Range"))
 
 	metadata := httptest.NewRecorder()
 	srv.Router().ServeHTTP(metadata, httptest.NewRequest(http.MethodGet, "/api/v1/files/9", nil))
@@ -1038,4 +1048,22 @@ func TestVisualCoverageScanGuardsCrossOriginAndRateLimit(t *testing.T) {
 	light := httptest.NewRecorder()
 	router.ServeHTTP(light, request)
 	require.Equal(http.StatusOK, light.Code, light.Body.String())
+}
+
+func TestRecordedFileWithoutBytesReportsMissing(t *testing.T) {
+	t.Parallel()
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	cfg := &config.Config{Server: config.ServerConfig{APIPort: 8080}, Data: config.DataConfig{DataDir: t.TempDir()}}
+	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+		1: {ID: 1, Filename: "gone.wav", ContentHash: strings.Repeat("ab", 32), StoragePath: "legacy/gone.wav"},
+	}}
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: catalog, Engine: &querytest.MockEngine{}, Logger: testLogger()})
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/files/1", nil))
+	requirements.Equal(http.StatusOK, response.Code)
+	var metadata FileMetadataResponse
+	requirements.NoError(json.NewDecoder(response.Body).Decode(&metadata))
+	assertions.Equal(FileContentMissingBlob, metadata.ContentState)
+	assertions.False(metadata.ContentAvailable)
 }

@@ -130,7 +130,7 @@
     restorationEpoch?: number;
     onSortChange?: (sort: FileSearchSort) => void;
     onActiveKey?: (key: string) => void;
-    onSelectedKey?: (key: string | null) => void;
+    onSelectedKey?: (key: string | null, options?: { replace?: boolean }) => void;
     onFilenameQueryChange?: (query: string) => void;
     onMIMEFamiliesChange?: (families: FileMIMEFamily[]) => void;
     onPersonPresentationChange?: (presentation: 'media' | 'files') => void;
@@ -680,13 +680,23 @@
   function rowID(row: WorkspaceFileRow): string {
     return `file-row-${row.id}`;
   }
-  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid): void {
+  function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid, options: { replace?: boolean } | undefined = undefined): void {
     activeKey = row.key;
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
     viewerFile = row;
     pendingViewerKey = null;
-    onSelectedKey?.(row.key);
+    onSelectedKey?.(row.key, options);
+  }
+  async function step(delta: -1 | 1): Promise<void> {
+    if (!viewerFile || loadingMore) return;
+    const current = viewerFile;
+    const target = rows.findIndex((row) => row.key === current.key) + delta;
+    if (target < 0 || target >= totalCount) return;
+    if (target >= rows.length && nextCursor) await loadMore();
+    if (viewerFile !== current || !rows[target]) return;
+    move(target);
+    open(rows[target], viewerReturnFocus, { replace: true });
   }
   function move(index: number): void {
     const height = rowHeight;
@@ -1084,6 +1094,9 @@
   <FileViewer
     {client}
     file={viewerFile}
+    position={{ index: rows.findIndex((row) => row.key === viewerFile?.key), total: totalCount }}
+    onStep={(delta) => { void step(delta); }}
+    stepping={loadingMore}
     returnFocus={viewerReturnFocus ?? grid}
     onClose={() => {
       viewerFile = undefined;

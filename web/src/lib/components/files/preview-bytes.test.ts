@@ -131,3 +131,11 @@ function u16(value: number): number[] {
 function u32(value: number): number[] {
   return [(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff];
 }
+
+it('reads and cancels only the start of a large text stream', async () => {
+  const cancel = vi.fn();
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3, 4, 5])); }, cancel });
+  const bytes = await readBoundedStream(stream, new Headers({ 'Content-Length': '100' }), new AbortController().signal, 3, true);
+  expect([...bytes]).toEqual([1, 2, 3]);
+  expect(cancel).toHaveBeenCalledOnce();
+});
