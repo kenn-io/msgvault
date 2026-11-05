@@ -108,6 +108,56 @@ test('Files restores a deep focused row when row CSS becomes ready late', async 
 test.describe('phone width', () => {
   test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
+  for (const theme of ['dark', 'light'] as const) {
+    for (const workspace of ['everything', 'files', 'groups'] as const) {
+      test(`${workspace} aligns phone rows and metadata in ${theme}`, async ({ page }) => {
+        await page.addInitScript(theme => sessionStorage.setItem('msgvault.appearance.override', JSON.stringify({ theme })), theme);
+        await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+          rows: [{ ...entry(1), has_attachments: true, attachment_count: 1, attachment_size: 2048 }], total_count: 1, cache_revision: 'alignment'
+        } }));
+        await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
+          files: [{ ...file(1), size_bytes: 2048, content_state: 'local_content' }], total_count: 1, cache_revision: 'alignment'
+        } }));
+        await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+          rows: [group(1)], total_count: 1, cache_revision: 'alignment'
+        } }));
+        const state = exploreState(workspace === 'groups' ? { groupingChain: ['source'] } : { workspace, columns: ['kind', 'people', 'title', 'excerpt', 'attachments', 'time'] });
+        await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
+        const grid = page.getByRole('grid', { name: workspace === 'everything' ? 'Messages results' : workspace === 'files' ? 'Files results' : 'Messages grouped by source' });
+        const row = grid.locator('[aria-rowindex="2"]');
+        await expect(row).toBeVisible();
+        const left = await row.evaluate((el, workspace) => {
+          const item = el.querySelector(workspace === 'everything' ? '.cell--title' : workspace === 'files' ? '.cell--name' : 'strong')!;
+          return Math.round(item.getBoundingClientRect().left - el.getBoundingClientRect().left);
+        }, workspace);
+        expect.soft(left, 'primary text shares a 12px inset').toBe(12);
+        if (workspace === 'everything') {
+          const header = grid.locator('.table-header');
+          const checkbox = header.getByRole('checkbox');
+          const [head, check, first] = await Promise.all([header.boundingBox(), checkbox.boundingBox(), row.boundingBox()]);
+          expect.soft(head!.height, 'selection strip has breathing room').toBeGreaterThanOrEqual(28);
+          expect.soft(check!.y - head!.y, 'checkbox has top padding').toBeGreaterThanOrEqual(5);
+          expect.soft(Math.abs(check!.x - first!.x - 12), 'checkbox aligns with rows').toBeLessThanOrEqual(1);
+          expect.soft(Math.abs(first!.y - head!.y - head!.height), 'no gap after selection strip').toBeLessThanOrEqual(1);
+          expect.soft(await header.evaluate(el => getComputedStyle(el).boxShadow), 'single header divider').toBe('none');
+          const [hit, time] = await Promise.all([row.locator('.attachment').boundingBox(), row.locator('.cell--time').boundingBox()]);
+          expect.soft(Math.abs(time!.x - (hit!.x + hit!.width)), 'attachment mark sits next to date').toBeLessThanOrEqual(8);
+          expect.soft(Math.abs((hit!.y + hit!.height / 2) - (time!.y + time!.height / 2)), 'attachment mark aligns with date').toBeLessThanOrEqual(2);
+        } else {
+          if (workspace === 'files') {
+            await expect.soft(grid.locator('.header--filename')).toBeHidden();
+            await expect.soft(grid.locator('.header--size')).toBeHidden();
+          }
+          const separators = await row.evaluate((el, workspace) => {
+            const selectors = workspace === 'files' ? ['.cell--size', '.cell--people'] : [':scope > :nth-child(3)', ':scope > :nth-child(4)'];
+            return selectors.map(selector => getComputedStyle(el.querySelector(selector)!, '::before').content);
+          }, workspace);
+          expect.soft(separators).toEqual(['" · "', '" · "']);
+        }
+      });
+    }
+  }
+
   for (const density of ['compact', 'comfortable'] as const) {
     for (const workspace of ['everything', 'files', 'groups'] as const) {
       test(`${workspace} fits stacked content at ${density} density`, async ({ page }) => {

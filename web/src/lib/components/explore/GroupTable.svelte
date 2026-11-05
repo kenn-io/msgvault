@@ -551,7 +551,7 @@
       grid-template-columns: auto auto minmax(0, 1fr) auto;
       grid-template-areas: 'label label label action' 'count size latest action';
       align-content: center;
-      gap: var(--space-1) var(--control-gap);
+      gap: var(--space-1) 0;
       padding: var(--pane-pad-y) var(--pane-pad-x);
     }
     .group-row > :global(*) { padding: 0; }
@@ -561,6 +561,7 @@
     .count-label { display: inline; }
     .group-row > :nth-child(3) { grid-area: size; }
     .group-row > :nth-child(4) { grid-area: latest; }
+    .group-row > :nth-child(3)::before, .group-row > :nth-child(4)::before { content: ' · '; white-space: pre; }
     .group-row > :nth-child(5) { grid-area: action; }
     .group-row .numeric, .group-row time { color: var(--text-muted); font-size: var(--font-size-xs); text-align: left; }
     .group-row :global(button) { min-height: var(--control-height); }

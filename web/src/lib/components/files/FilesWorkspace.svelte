@@ -1280,13 +1280,13 @@
   .file-kind, .phone-sender { display: none; }
   @media (max-width: 640px) {
     .table-header, .data-row { min-width: 0; }
-    .table-header { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-    .table-header > span:not(.header--occurred_at):not(.header--filename):not(.header--size) { display: none; }
+    .table-header { grid-template-columns: minmax(0, 1fr); }
+    .table-header > span:not(.header--occurred_at) { display: none; }
     .data-row {
-      grid-template-columns: 24px auto auto minmax(0, 1fr);
-      grid-template-areas: 'icon name name avail' 'icon date size people';
+      grid-template-columns: auto auto minmax(0, 1fr) 16px auto;
+      grid-template-areas: 'name name name icon avail' 'date size people people avail';
       align-content: center;
-      gap: var(--space-1) var(--control-gap);
+      gap: var(--space-1) 0;
       padding: var(--pane-pad-y) var(--pane-pad-x);
     }
     .data-row span { padding: 0; }
@@ -1295,10 +1295,10 @@
     .desktop-people { display: none; }
     .phone-sender { display: inline; }
     .cell--name { grid-area: name; color: var(--text-primary); font-size: var(--font-size-sm); }
-    .data-row:has(.local-content) .cell--name { grid-column: 2 / -1; }
     .cell--date { grid-area: date; }
     .cell--size { grid-area: size; }
     .cell--people { grid-area: people; }
+    .cell--size::before, .cell--people::before { content: ' · '; white-space: pre; }
     .data-row .cell--availability { grid-area: avail; color: var(--text-muted); text-align: right; }
     .cell--type, .cell--direction, .cell--source, .cell--message, .local-content { display: none; }
   }
