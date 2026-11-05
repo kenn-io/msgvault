@@ -2,8 +2,6 @@ package store_test
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/json/v2"
 	"log/slog"
 	"os"
 	"strings"
@@ -99,9 +97,8 @@ func TestDropDocumentIndexUpgrade(t *testing.T) {
 				requirements.NoError(err)
 				input = sweepEvidenceInput(t, sweepItem(t, window.Seeds, messageID))
 				ref := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.Source.ID, MessageID: messageID, AttachmentID: attachmentID, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
-				payload, err := json.Marshal(ref, json.Deterministic(true))
+				input.SourceRef, err = peoplesweep.EncodePersonSweepEvidenceRef(ref)
 				requirements.NoError(err)
-				input.SourceRef = "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString(payload)
 				input.SourceVersion = "document/v1:chunk"
 				key, err = personfacts.EvidenceKey(input)
 				requirements.NoError(err)

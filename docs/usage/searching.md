@@ -14,7 +14,7 @@ to read a message. On newer `main` builds, `show` is an alias; use
 |---|---|
 | Words in a message or its subject | `msgvault search "quarterly report"` |
 | A topic, even with different wording | [Vector or hybrid message search](/docs/usage/vector-search/) |
-| Text Docbank extracted from a mirrored attachment | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank) |
+| Text Docbank extracted from a mirrored attachment | [Docbank document search](https://msgvault.io/docs/configuration/#search-document-text-through-docbank-unreleased) |
 | An image or video by its visual content | [Visual attachment search](/docs/usage/vector-search/#visual-attachment-search) |
 | A person by their curated profile | [Semantic person search](/docs/usage/people/#find-a-person-by-what-you-remember) |
 | An attachment with a misspelled filename | [Opt-in filename suggestions](#filename-suggestions) |

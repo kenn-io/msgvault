@@ -1476,7 +1476,7 @@ Docbank file. List and search views omit these receipts. URL-only attachments ar
 
 Configure a Docbank rendition profile, such as a Docling profile, and set its name in `[integrations.docbank] document_profile`. Docbank's daemon must support the chosen processor. A Mistral profile needs a Docbank release newer than v0.16.0. Create the five seed files and run `docbank processing probe --profile <name> --seeds <dir>` to write its capability manifest, as [Docbank's Mistral OCR configuration](https://github.com/kenn-io/docbank/blob/main/docs/configuration.md#document-ocr-with-mistral) describes. It replaces `msgvault documents probe-mistral`.
 
-Follow the [attachment mirror setup](https://msgvault.io/docs/configuration/#mirror-stored-attachments-to-docbank-unreleased) to review the processing plan and grant consent in Docbank. Msgvault requests that profile for mirrored files. Docbank owns extraction, text, and embeddings. Check processing progress with `msgvault docbank attachments status`.
+Follow the [attachment mirror setup](https://msgvault.io/docs/configuration/#mirror-stored-attachments-to-docbank) to review the processing plan and grant consent in Docbank. Msgvault requests that profile for mirrored files. Docbank owns extraction, text, and embeddings. Check processing progress with `msgvault docbank attachments status`.
 
 Search with `msgvault media search "project proposal"`, `GET /api/v1/media/search`, MCP `search_media`, or the Web Everything panel. Add `--person <id>` and `--direction from_person` to the CLI search to scope results to a person.
 

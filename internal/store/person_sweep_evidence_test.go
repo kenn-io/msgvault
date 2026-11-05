@@ -2,9 +2,7 @@ package store_test
 
 import (
 	"database/sql"
-	"encoding/base64"
 	"encoding/csv"
-	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -763,13 +761,12 @@ func TestPersonSweepStoredDocumentEvidenceFollowsMessage(t *testing.T) {
 			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(`INSERT INTO document_occurrences (occurrence_key,attachment_id,message_id,source_id,canonical_blob_hash,attachment_role,role_source) VALUES ('occurrence',?,?,?,?,'attachment','source')`), attachmentID, id, f.sourceID, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 			require.NoError(err)
 			ref := peoplesweep.EvidenceRef{SourceLane: peoplesweep.SourceDocumentText, SourceID: f.sourceID, MessageID: id, AttachmentID: attachmentID, OccurrenceKey: "occurrence", ChunkKey: "chunk", SpanEnd: 4}
-			payload, err := json.Marshal(ref, json.Deterministic(true))
-			require.NoError(err)
 			document := input
 			document.SourceVersion = "document/v1:chunk"
 			document.ContentSHA256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			document.Excerpt = "Document evidence"
-			document.SourceRef = "person-sweep/v1:" + base64.RawURLEncoding.EncodeToString(payload)
+			document.SourceRef, err = peoplesweep.EncodePersonSweepEvidenceRef(ref)
+			require.NoError(err)
 			documentKey, err := personfacts.EvidenceKey(document)
 			require.NoError(err)
 			persistSweepEvidence(t, f.store, documentKey, document)
