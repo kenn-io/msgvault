@@ -256,6 +256,19 @@ describe('FilesWorkspace', () => {
     expect(await within(grid).findByRole('gridcell', { name: 'Slack' })).toBeDefined();
   });
 
+  it.each([
+    { scope: undefined, peopleColumn: '5', label: 'all files' },
+    { scope: { kind: 'person' as const, id: 1 }, peopleColumn: '6', label: 'person files' }
+  ])('keeps cell column positions for $label', async ({ scope, peopleColumn }) => {
+    render(FilesWorkspace, {
+      client: createAPIClient(async () => Response.json(response())), predicate: { filters: [], presentation: 'table' },
+      identityScope: scope, sort: { field: 'occurred_at', direction: 'desc' }
+    });
+    const row = await screen.findByRole('row', { name: /fixture.pdf/ });
+    expect(within(row).getByRole('gridcell', { name: '2 KB' }).getAttribute('aria-colindex')).toBe('4');
+    expect(row.querySelector('.cell--people')?.getAttribute('aria-colindex')).toBe(peopleColumn);
+  });
+
   it('keeps headers and virtual rows in one focusable grid', async () => {
     render(FilesWorkspace, {
       client: createAPIClient(async () => Response.json(response())), predicate: { filters: [], presentation: 'table' },

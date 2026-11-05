@@ -992,24 +992,25 @@
                     }}
                   >
                     <span class="file-kind" aria-hidden="true"><RowKind kind="file" messageType="" /></span>
-                    <span class="cell--date" role="gridcell"
+                    <span class="cell--date" role="gridcell" aria-colindex={1}
                       ><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span
                     >
                     <span
                       class="cell--name"
                       role="gridcell"
+                      aria-colindex={2}
                       title={row.search_explain ? `Match score ${row.search_explain.rrf.toFixed(4)}` : undefined}
                     >
                       <Tooltip text={row.filename || '(unnamed)'}><strong title={row.filename || '(unnamed)'}>{row.filename || '(unnamed)'}</strong></Tooltip>
                     </span>
-                    <span class="cell--type" role="gridcell" title={row.mime_type || row.mime_family}
+                    <span class="cell--type" role="gridcell" aria-colindex={3} title={row.mime_type || row.mime_family}
                       >{fileTypeLabel(row.mime_type, row.mime_family)}</span
                     >
-                    <span class="cell--size" role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
-                    {#if personScoped}<span class="cell--direction" role="gridcell">{relationship(row)}</span>{/if}
-                    <span class="cell--people" role="gridcell"><span class="desktop-people">{people(row)}</span><span class="phone-sender">{row.sender_label || people(row)}</span></span>
-                    <span class="cell--source" role="gridcell">{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
-                    <span class="cell--message" role="gridcell">
+                    <span class="cell--size" role="gridcell" aria-colindex={4} data-mono>{formatBytes(row.size_bytes)}</span>
+                    {#if personScoped}<span class="cell--direction" role="gridcell" aria-colindex={5}>{relationship(row)}</span>{/if}
+                    <span class="cell--people" role="gridcell" aria-colindex={personScoped ? 6 : 5}><span class="desktop-people">{people(row)}</span><span class="phone-sender">{row.sender_label || people(row)}</span></span>
+                    <span class="cell--source" role="gridcell" aria-colindex={personScoped ? 7 : 6}>{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
+                    <span class="cell--message" role="gridcell" aria-colindex={personScoped ? 8 : 7}>
                       {#if onOpenItem}
                         {@const openItem = onOpenItem}
                         <button
@@ -1022,7 +1023,7 @@
                         {row.containing_title || row.entry_key}
                       {/if}
                     </span>
-                    <span class="cell--availability" class:local-content={row.content_state === 'local_content'} role="gridcell">{availability(row)}</span>
+                    <span class="cell--availability" class:local-content={row.content_state === 'local_content'} role="gridcell" aria-colindex={personScoped ? 9 : 8}>{availability(row)}</span>
                   </div>
                 {/each}
               </div>
