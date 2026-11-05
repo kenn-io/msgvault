@@ -11,7 +11,7 @@ import (
 )
 
 func newImportICSCommand() *cobra.Command {
-	var identifier, timeZone string
+	var identifier string
 	cmd := &cobra.Command{
 		Use: "import-ics <file>", Short: "Import local ICS events", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -32,7 +32,7 @@ func newImportICSCommand() *cobra.Command {
 				return err
 			}
 			defer cleanup()
-			summary, importErr := importer.ImportICS(ctx, st, args[0], identifier, timeZone)
+			summary, importErr := importer.ImportICS(ctx, st, args[0], identifier)
 			if importErr != nil {
 				return errors.Join(importErr, rebuildCacheAfterWrite(state.cfg.DatabaseDSN(), state))
 			}
@@ -41,7 +41,6 @@ func newImportICSCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&identifier, "identifier", "", "Stable name for this calendar export (required)")
-	cmd.Flags().StringVar(&timeZone, "time-zone", "", "IANA time zone for floating times, saved on the calendar")
 	return cmd
 }
 func init() { rootCmd.AddCommand(newImportICSCommand()) }

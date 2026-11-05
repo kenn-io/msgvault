@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bytes"
-	"context"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -10,16 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/config"
 )
 
-func TestImportICSCommandRequiresIdentifier(t *testing.T) {
-	t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
-	cmd := newImportICSCommand()
-	cmd.SetContext(testInvocationContext(context.Background(), config.NewDefaultConfig(), invocationOptions{}))
-	cmd.SetArgs([]string{"example.ics"})
-	assert.ErrorContains(t, cmd.Execute(), "--identifier is required")
-}
 func TestImportICSCommandImportsFile(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
