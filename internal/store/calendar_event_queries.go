@@ -310,8 +310,9 @@ func calendarEventRowsInWindow(ctx context.Context, r *loggedDB, dialect Dialect
 	lower, upper := from.UTC().Add(-calendarCandidateMargin), to.UTC().Add(calendarCandidateMargin)
 	// RDATE can precede DTSTART by any amount. Retain those masters for exact
 	// expansion rather than treating their stored start as the earliest instance.
-	// A cancelled master generates nothing; its archived exceptions load it below.
-	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND e.status <> 'cancelled' AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
+	// Deleted provider masters retain only archived exceptions; ICS cancellations
+	// still expand the archived series to show the cancelled occurrences.
+	masters, err := queryCalendarSeriesWithinBudget(ctx, r, `e.kind = 'series' AND (e.status <> 'cancelled' OR r.raw_format = 'ics') AND (e.start_at IS NULL OR e.start_at < ? OR e.recurrence_json LIKE '%RDATE%') AND (e.recurrence_end_at IS NULL OR e.recurrence_end_at >= ?)`, []any{upper, lower})
 	if err != nil {
 		return nil, err
 	}
