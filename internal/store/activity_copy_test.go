@@ -46,6 +46,59 @@ func TestActivityEmailCopiesKeepCountedExchangeInOneMailbox(t *testing.T) {
 	assert.Equal(1, page.Bursts[0].Outbound)
 }
 
+func TestActivityEmailCopyWinnerStableWhenEndDateWidens(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineActivityFixture(t)
+	day1 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	workOwner := f.EnsureParticipant("work@example.com", "Work owner", "example.com")
+	work, err := f.Store.GetOrCreateSource("gmail", "work@example.com")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(work.ID, "work@example.com", "manual"))
+	workThread, err := f.Store.EnsureConversationWithType(work.ID, "exchange", "email_thread", "Exchange")
+	requirements.NoError(err)
+	for _, mailbox := range []struct {
+		source, conversation int64
+		work                 bool
+	}{{f.Source.ID, f.ConvID, false}, {work.ID, workThread, true}} {
+		sent := f.add(t, mailbox.conversation, mailbox.source, day1, mailbox.work, "<exchange-start@example.com>")
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), workOwner, sent)
+		requirements.NoError(err)
+		requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{workOwner}, nil))
+		requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.peer}, nil))
+		requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "cc", []int64{f.owner}, nil))
+		reply := f.add(t, mailbox.conversation, mailbox.source, day1.Add(time.Hour), false, "<exchange-reply@example.com>")
+		requirements.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{workOwner, f.owner}, nil))
+		// Both threads have four messages, but only the personal mailbox counts
+		// these later sent messages. They must not change the day-one winner.
+		for i := range 2 {
+			id := f.add(t, mailbox.conversation, mailbox.source, day1.AddDate(0, 0, 2).Add(time.Duration(i)*time.Hour), !mailbox.work, fmt.Sprintf("<personal-sent-%d@example.com>", i))
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), f.owner, id)
+			requirements.NoError(err)
+			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner}, nil))
+			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer}, nil))
+			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "cc", []int64{workOwner}, nil))
+		}
+	}
+	projectTierSignals(t, f.Fixture, "UTC", 0)
+	for _, to := range []string{"2026-10-22", "2026-10-24"} {
+		t.Run(to, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-22", ToDate: to, Limit: 10})
+			require.NoError(err)
+			var day1Sources []int64
+			for _, burst := range page.Bursts {
+				if burst.LocalDate == "2026-10-22" {
+					day1Sources = append(day1Sources, burst.SourceID)
+					assert.Equal(1, burst.Inbound)
+					assert.Equal(1, burst.Outbound)
+				}
+			}
+			assert.Equal([]int64{work.ID}, day1Sources)
+		})
+	}
+}
+
 // A lower-ID observed copy must not suppress the owned copy's real contact.
 func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 	for _, tc := range []struct {
