@@ -82,7 +82,7 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 				if report.Token != "" && f.reported != nil && !f.reported[name] {
 					continue
 				}
-				responses.WriteString(prop("/home/cal/"+name, `<D:getetag>"updated"</D:getetag>`))
+				responses.WriteString(testutil.DAVPropResponse("/home/cal/"+name, `<D:getetag>"updated"</D:getetag>`))
 			}
 			for _, name := range f.deleted {
 				responses.WriteString(`<D:response><D:href>/home/cal/` + name + `</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>`)
@@ -94,9 +94,9 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 		if r.Method == "PROPFIND" && f.forceSnapshot {
 			var responses strings.Builder
 			if !f.incompleteSnapshot {
-				responses.WriteString(prop("/home/cal/", `<D:getetag>"collection"</D:getetag><D:resourcetype><D:collection/></D:resourcetype>`))
+				responses.WriteString(testutil.DAVPropResponse("/home/cal/", `<D:getetag>"collection"</D:getetag><D:resourcetype><D:collection/></D:resourcetype>`))
 				for name := range f.raw {
-					responses.WriteString(prop("/home/cal/"+name, `<D:getetag>"updated"</D:getetag><D:resourcetype/>`))
+					responses.WriteString(testutil.DAVPropResponse("/home/cal/"+name, `<D:getetag>"updated"</D:getetag><D:resourcetype/>`))
 				}
 			}
 			w.WriteHeader(http.StatusMultiStatus)
@@ -540,7 +540,7 @@ func TestSyncFloatingTimeZoneChangeUpdatesMessageTimeForSkippedResource(t *testi
 	assert.Equal("t2", sourceToken(t, st))
 }
 
-func TestSyncCalDAVRecurrenceIdentitySurvivesTimeZoneUpdate(t *testing.T) {
+func TestReviewRunningDaemonZoneUpdate(t *testing.T) {
 	// A fresh process lets ZONEINFO take effect before time.LoadLocation's first call.
 	mode := os.Getenv("MSGVAULT_TEST_RECURRENCE_ZONE")
 	if mode == "" {
@@ -548,7 +548,7 @@ func TestSyncCalDAVRecurrenceIdentitySurvivesTimeZoneUpdate(t *testing.T) {
 		require.NoError(t, err)
 		for _, mode := range []string{"explicit", "floating"} {
 			t.Run(mode, func(t *testing.T) {
-				cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestSyncCalDAVRecurrenceIdentitySurvivesTimeZoneUpdate$")
+				cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestReviewRunningDaemonZoneUpdate$")
 				cmd.Env = append(os.Environ(), "MSGVAULT_TEST_RECURRENCE_ZONE="+mode, "ZONEINFO="+t.TempDir())
 				out, err := cmd.CombinedOutput()
 				require.NoError(t, err, "%s", out)
@@ -601,9 +601,6 @@ func TestSyncCalDAVRecurrenceIdentitySurvivesTimeZoneUpdate(t *testing.T) {
 	assertions.Equal("20270321T130000Z", before.Original.Key())
 
 	writeZone(-5 * 3600)
-	// Evict the one-resource decode cache, as reopening an archive would do.
-	_, _, err = calevent.Decode(calevent.CalDAVRawFormat, []byte(calendarBody), []byte(`{"event_id":"[\"example@example.org\",\"\"]"}`), "UTC")
-	requirements.NoError(err)
 	after, ok, err := calevent.Decode(calevent.CalDAVRawFormat, raw, []byte(metadata), opts.TimeZone)
 	if assertions.NoError(err) && assertions.True(ok) && assertions.NotNil(after.Original) {
 		assertions.Equal("20270321T140000Z", after.Original.Key())
@@ -833,9 +830,9 @@ func TestSyncContinuesAfterCalendarFailures(t *testing.T) {
 		w.Header().Set("Content-Type", "application/xml")
 		if r.Method == "PROPFIND" && r.URL.Path == "/home/" {
 			var calendars strings.Builder
-			calendars.WriteString(prop("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`))
+			calendars.WriteString(testutil.DAVPropResponse("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`))
 			for _, name := range []string{"A", "B", "C"} {
-				calendars.WriteString(prop("/home/"+name+"/", `<D:displayname>`+name+`</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:supported-report-set><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report></D:supported-report-set>`))
+				calendars.WriteString(testutil.DAVPropResponse("/home/"+name+"/", `<D:displayname>`+name+`</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:supported-report-set><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report></D:supported-report-set>`))
 			}
 			w.WriteHeader(http.StatusMultiStatus)
 			_, _ = io.WriteString(w, multi(calendars.String()))
@@ -864,7 +861,7 @@ func TestSyncContinuesAfterCalendarFailures(t *testing.T) {
 		}
 		var response string
 		if strings.Contains(string(req), "sync-collection") {
-			response = prop(collection+"a.ics", `<D:getetag>"v1"</D:getetag>`) + `<D:sync-token>t1</D:sync-token>`
+			response = testutil.DAVPropResponse(collection+"a.ics", `<D:getetag>"v1"</D:getetag>`) + `<D:sync-token>t1</D:sync-token>`
 		} else {
 			raw := compound()
 			if r.URL.Path == "/home/B/" {
@@ -959,7 +956,7 @@ func TestSyncSelectsRedirectedDiscoveryAlias(t *testing.T) {
 		}
 		if r.URL.Path == "/canonical/home/" {
 			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, multi(prop("./", `<D:resourcetype><D:collection/></D:resourcetype>`)+prop("cal/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:supported-report-set><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report></D:supported-report-set>`)))
+			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("./", `<D:resourcetype><D:collection/></D:resourcetype>`)+testutil.DAVPropResponse("cal/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:supported-report-set><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report></D:supported-report-set>`)))
 			return
 		}
 		if body, ok := discoveryResponse(r); ok {
@@ -977,7 +974,7 @@ func TestSyncSelectsRedirectedDiscoveryAlias(t *testing.T) {
 		}
 		w.WriteHeader(http.StatusMultiStatus)
 		if strings.Contains(string(body), "sync-collection") {
-			_, _ = io.WriteString(w, multi(prop("/canonical/home/cal/a.ics", `<D:getetag>"v1"</D:getetag>`)+`<D:sync-token>t1</D:sync-token>`))
+			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/canonical/home/cal/a.ics", `<D:getetag>"v1"</D:getetag>`)+`<D:sync-token>t1</D:sync-token>`))
 		} else {
 			assert.Contains(string(body), "calendar-multiget")
 			_, _ = io.WriteString(w, multi(data("/canonical/home/cal/a.ics", calendarBody)))
@@ -1892,46 +1889,6 @@ func TestSyncResourceFailureKeepsCommittedEventsAndRetries(t *testing.T) {
 	}
 }
 
-func TestSyncDeletedSeriesRecoversInterruptedOverrideRemoval(t *testing.T) {
-	require := require.New(t)
-	c, f := archiveFixture(t)
-	f.raw["a.ics"] = compound()
-	st := testutil.NewTestStore(t)
-	_, err := c.Sync(t.Context(), st, syncOpts())
-	require.NoError(err)
-	// Fail the progress write after the resource snapshot commits.
-	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`CREATE FUNCTION reject_caldav_progress() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.messages_processed > 0 THEN RAISE EXCEPTION 'progress blocked'; END IF; RETURN NEW; END $$; CREATE TRIGGER reject_caldav_progress BEFORE UPDATE ON sync_runs FOR EACH ROW EXECUTE FUNCTION reject_caldav_progress()`)
-	} else {
-		_, err = st.DB().Exec(`CREATE TRIGGER reject_caldav_progress BEFORE UPDATE ON sync_runs WHEN NEW.messages_processed > 0 BEGIN SELECT RAISE(ABORT,'progress blocked'); END`)
-	}
-	require.NoError(err)
-	f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "RRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT", 1)
-	f.token = "t2"
-	_, err = c.Sync(t.Context(), st, syncOpts())
-	require.ErrorContains(err, "progress blocked")
-	var masterID int64
-	require.NoError(st.DB().QueryRow(`SELECT message_id FROM calendar_events WHERE kind='series'`).Scan(&masterID))
-	raw, err := st.GetMessageRawContext(t.Context(), masterID)
-	require.NoError(err)
-	require.Equal(f.raw["a.ics"], string(raw))
-	if st.IsPostgreSQL() {
-		_, err = st.DB().Exec(`DROP TRIGGER reject_caldav_progress ON sync_runs; DROP FUNCTION reject_caldav_progress()`)
-	} else {
-		_, err = st.DB().Exec(`DROP TRIGGER reject_caldav_progress`)
-	}
-	require.NoError(err)
-	delete(f.raw, "a.ics")
-	f.deleted, f.token = []string{"a.ics"}, "t3"
-	_, err = c.Sync(t.Context(), st, syncOpts())
-	require.NoError(err)
-	got := occurrences(t, st, "2027-03-21T00:00:00Z", "2027-03-22T00:00:00Z")
-	require.Len(got, 1)
-	require.Equal("2027-03-21T13:00:00Z", got[0].Start.UTC().Format(time.RFC3339))
-	require.Equal(got[0].SeriesMessageID, got[0].MessageID)
-	require.True(got[0].DeletedFromSource)
-}
-
 func TestSyncDeletedFloatingEventMessageTimeZoneChange(t *testing.T) {
 	require := require.New(t)
 	c, f := archiveFixture(t)
@@ -1953,7 +1910,6 @@ func TestSyncDeletedFloatingEventMessageTimeZoneChange(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&before))
 	var meta calevent.CalDAVMetadata
 	require.NoError(json.Unmarshal([]byte(before), &meta))
-	require.True(meta.OverrideRemoved)
 	opts.TimeZone = "America/New_York"
 	_, err = c.Sync(t.Context(), st, opts)
 	require.NoError(err)
@@ -1969,7 +1925,6 @@ func TestSyncDeletedFloatingEventMessageTimeZoneChange(t *testing.T) {
 	require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&after))
 	var updated calevent.CalDAVMetadata
 	require.NoError(json.Unmarshal([]byte(after), &updated))
-	require.True(updated.OverrideRemoved)
 	require.Equal(meta.EventID, updated.EventID)
 	require.Equal(meta.Href, updated.Href)
 	require.Equal(meta.ETag, updated.ETag)

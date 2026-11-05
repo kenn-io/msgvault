@@ -1063,12 +1063,12 @@ func TestStore_GetAllRawMIMECandidatesExcludesCalDAVResources(t *testing.T) {
 	)
 	require.NoError(err, "EnsureConversationWithType")
 	const resource = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" +
-		"BEGIN:VEVENT\r\nUID:event-a@example.test\r\nDTSTART:20270101T120000Z\r\n" +
+		"BEGIN:VEVENT\r\nUID:weekly@example.test\r\nDTSTART:20270101T120000Z\r\nRRULE:FREQ=DAILY;COUNT=2\r\n" +
 		"SUMMARY:First event\r\nEND:VEVENT\r\n" +
-		"BEGIN:VEVENT\r\nUID:event-b@example.test\r\nDTSTART:20270102T120000Z\r\n" +
+		"BEGIN:VEVENT\r\nUID:weekly@example.test\r\nRECURRENCE-ID:20270102T120000Z\r\nDTSTART:20270102T130000Z\r\n" +
 		"SUMMARY:Second event\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 	calendarIDs := make([]int64, 0, 2)
-	for _, eventID := range []string{"event-a@example.test", "event-b@example.test"} {
+	for _, eventID := range []string{`["weekly@example.test",""]`, `["weekly@example.test","20270102T120000Z"]`} {
 		id, err := f.Store.UpsertMessage(&store.Message{
 			ConversationID:  conversationID,
 			SourceID:        calDAV.ID,

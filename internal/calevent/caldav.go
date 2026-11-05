@@ -3,17 +3,14 @@ package calevent
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"net/url"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -39,9 +36,6 @@ type CalDAVMetadata struct {
 	AllDay       bool   `json:"all_day"`
 	ICalUID      string `json:"ical_uid,omitempty"`
 	Sequence     int    `json:"sequence"`
-	// OverrideRemoved survives resource deletion to distinguish stale overrides
-	// from exceptions that belonged to the last archived snapshot.
-	OverrideRemoved bool `json:"override_removed,omitempty"`
 }
 
 // SetEventTimes keeps message details aligned with the decoded calendar event.
@@ -65,15 +59,6 @@ type CalDAVEvent struct {
 	Description, Location, OrganizerEmail string
 }
 
-// Keep one decoded resource while its components pass through the projection writer.
-var calDAVCache struct {
-	sync.Mutex
-
-	hash   [32]byte
-	zone   string
-	events map[string]CalDAVEvent
-}
-
 func decodeCalDAVItem(raw, metadata []byte, calendarZone string) (CalDAVEvent, bool, error) {
 	var meta CalDAVMetadata
 	if len(metadata) > 0 {
@@ -81,34 +66,15 @@ func decodeCalDAVItem(raw, metadata []byte, calendarZone string) (CalDAVEvent, b
 			return CalDAVEvent{}, false, fmt.Errorf("CalDAV metadata: %w", err)
 		}
 	}
-	calDAVCache.Lock()
-	defer calDAVCache.Unlock()
-	hash := sha256.Sum256(raw)
-	if calDAVCache.events == nil || calDAVCache.hash != hash || calDAVCache.zone != calendarZone {
-		events, err := ParseCalDAVResource(context.Background(), raw, calendarZone)
-		if err != nil {
-			return CalDAVEvent{}, false, err
-		}
-		calDAVCache.events = make(map[string]CalDAVEvent, len(events))
-		for _, item := range events {
-			calDAVCache.events[item.Event.ProviderEventID] = item
-		}
-		calDAVCache.hash, calDAVCache.zone = hash, calendarZone
+	events, err := ParseCalDAVResource(context.Background(), raw, calendarZone)
+	if err != nil {
+		return CalDAVEvent{}, false, err
 	}
-	item, ok := calDAVCache.events[meta.EventID]
-	if ok {
+	for _, item := range events {
+		if item.Event.ProviderEventID != meta.EventID {
+			continue
+		}
 		e := item.Event
-		e.Attendees = slices.Clone(e.Attendees)
-		e.Recurrence = slices.Clone(e.Recurrence)
-		if e.Start != nil {
-			e.Start = new(*e.Start)
-		}
-		if e.End != nil {
-			e.End = new(*e.End)
-		}
-		if e.Original != nil {
-			e.Original = new(*e.Original)
-		}
 		for i := range e.Attendees {
 			a := &e.Attendees[i]
 			a.IsCopySelf = a.Email != "" && a.Email == gcalmodel.NormalizeParticipantEmail(meta.AccountEmail)

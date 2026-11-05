@@ -23,11 +23,8 @@ const calendarBody = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:exam
 func multi(inner string) string {
 	return testutil.DAVMultiStatus(inner, "urn:ietf:params:xml:ns:caldav")
 }
-func prop(href, props string) string {
-	return `<D:response><D:href>` + href + `</D:href><D:propstat><D:prop>` + props + `</D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
-}
 func data(href, raw string) string {
-	return prop(href, `<D:getetag>"v1"</D:getetag><C:calendar-data><![CDATA[`+raw+`]]></C:calendar-data>`)
+	return testutil.DAVPropResponse(href, `<D:getetag>"v1"</D:getetag><C:calendar-data><![CDATA[`+raw+`]]></C:calendar-data>`)
 }
 
 // Route an allowed documentation IP to a real local HTTP server. This changes
@@ -54,11 +51,11 @@ func discoveryResponse(r *http.Request) (string, bool) {
 	}
 	switch r.URL.Path {
 	case "/dav":
-		return multi(prop("/dav", `<D:current-user-principal><D:href>/principal</D:href></D:current-user-principal>`)), true
+		return multi(testutil.DAVPropResponse("/dav", `<D:current-user-principal><D:href>/principal</D:href></D:current-user-principal>`)), true
 	case "/principal":
-		return multi(prop("/principal", `<C:calendar-home-set><D:href>/home/</D:href><D:href>/home/</D:href></C:calendar-home-set>`)), true
+		return multi(testutil.DAVPropResponse("/principal", `<C:calendar-home-set><D:href>/home/</D:href><D:href>/home/</D:href></C:calendar-home-set>`)), true
 	case "/home/":
-		return multi(prop("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`) + prop("/home/cal/", `<D:displayname>Example calendar</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:supported-report-set><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report></D:supported-report-set>`)), true
+		return multi(testutil.DAVPropResponse("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`) + testutil.DAVPropResponse("/home/cal/", `<D:displayname>Example calendar</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:supported-report-set><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report></D:supported-report-set>`)), true
 	}
 	return "", false
 }
@@ -86,7 +83,7 @@ func TestDiscoverAndPull(t *testing.T) {
 				return
 			}
 			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, multi(prop("/home/cal/a.ics", `<D:getetag>"v1"</D:getetag>`)+`<D:sync-token>t1</D:sync-token>`))
+			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/home/cal/a.ics", `<D:getetag>"v1"</D:getetag>`)+`<D:sync-token>t1</D:sync-token>`))
 			return
 		}
 		assertions.Contains(string(raw), "calendar-multiget")
@@ -113,7 +110,7 @@ func TestDiscoverSkipsUnavailableUnselectedCollection(t *testing.T) {
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/home/" {
 			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, multi(prop("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`)+prop("/home/cal/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`)+prop("/home/unavailable/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`)))
+			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`)+testutil.DAVPropResponse("/home/cal/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`)+testutil.DAVPropResponse("/home/unavailable/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`)))
 			return
 		}
 		if body, ok := discoveryResponse(r); ok {
@@ -123,7 +120,7 @@ func TestDiscoverSkipsUnavailableUnselectedCollection(t *testing.T) {
 		}
 		if r.URL.Path == "/home/cal/" {
 			w.WriteHeader(http.StatusMultiStatus)
-			_, _ = io.WriteString(w, multi(prop("/home/cal/", `<D:resourcetype><D:collection/></D:resourcetype>`)))
+			_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/home/cal/", `<D:resourcetype><D:collection/></D:resourcetype>`)))
 			return
 		}
 		if r.URL.Path == "/home/unavailable/" {
@@ -147,14 +144,14 @@ func TestDiscoverOnlyEventCalendars(t *testing.T) {
 	c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		body, ok := discoveryResponse(r)
 		if r.URL.Path == "/home/" {
-			body = multi(prop("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`))
+			body = multi(testutil.DAVPropResponse("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`))
 			var entries strings.Builder
 			for _, entry := range []struct{ name, components string }{
 				{"events", `<C:supported-calendar-component-set><C:comp name="VEVENT"/><C:comp name="VTODO"/></C:supported-calendar-component-set>`},
 				{"tasks", `<C:supported-calendar-component-set><C:comp name="VTODO"/></C:supported-calendar-component-set>`},
 				{"unspecified", ""},
 			} {
-				entries.WriteString(prop("/home/"+entry.name+"/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`+entry.components))
+				entries.WriteString(testutil.DAVPropResponse("/home/"+entry.name+"/", `<D:resourcetype><D:collection/><C:calendar/></D:resourcetype>`+entry.components))
 			}
 			body = strings.Replace(body, "</D:multistatus>", entries.String()+"</D:multistatus>", 1)
 		}
@@ -187,9 +184,9 @@ func TestCalendarDAVErrorMessages(t *testing.T) {
 		c := fixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusMultiStatus)
 			if strings.Contains(r.URL.Path, "principal") {
-				_, _ = io.WriteString(w, multi(prop("/principal/", "")))
+				_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/principal/", "")))
 			} else {
-				_, _ = io.WriteString(w, multi(prop("/dav", `<D:current-user-principal><D:href>/principal/</D:href></D:current-user-principal>`)))
+				_, _ = io.WriteString(w, multi(testutil.DAVPropResponse("/dav", `<D:current-user-principal><D:href>/principal/</D:href></D:current-user-principal>`)))
 			}
 		})
 		_, err := c.discover(t.Context(), "http://203.0.113.1/dav", carddav.NewBudget(1<<20))

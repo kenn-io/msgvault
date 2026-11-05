@@ -2,7 +2,6 @@ package caldav
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -115,26 +114,19 @@ type skippedResource struct {
 	href string
 	err  error
 }
-type metadataUpdate struct {
-	href      string
-	messageID int64
-	metadata  sql.NullString
-}
 
 // batch is one calendar read ready to persist. live holds every event that
 // stays live afterward: new and changed events, unchanged archived events, and
 // archived events of resources that could not be decoded.
 type batch struct {
-	items           []prepared
-	skipped         []skippedResource
-	metadataUpdates []metadataUpdate
-	live            map[string]struct{}
-	retryFull       bool
+	items     []prepared
+	skipped   []skippedResource
+	live      map[string]struct{}
+	retryFull bool
 }
 
-func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inventory, history map[string]store.MessageMetadataRecord, zone, account string) (batch, error) {
+func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inventory map[string]store.MessageMetadataRecord, zone, account string) (batch, error) {
 	b := batch{live: map[string]struct{}{}}
-	accepted := map[string]string{}
 	touched := map[string]bool{}
 	for _, href := range plan.RemovedHrefs {
 		touched[href] = true
@@ -186,7 +178,6 @@ func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inve
 		}
 		for _, event := range events {
 			key := event.Event.ProviderEventID
-			accepted[key] = member.Href
 			b.live[key] = struct{}{}
 			record, exists := inventory[key]
 			if exists {
@@ -215,74 +206,6 @@ func prepare(ctx context.Context, st *store.Store, plan carddav.MemberPlan, inve
 		if skipped[meta.Href] {
 			b.live[key] = struct{}{}
 		}
-	}
-	// A source conversation ID different from the message ID identifies an
-	// exception. Include historical exceptions when an accepted resource
-	// contains their master, but omits them.
-	storedMembers := map[string]map[string]bool{}
-	for key, record := range history {
-		if _, present := b.live[key]; present || !record.SourceConversationID.Valid || record.SourceConversationID.String == key {
-			continue
-		}
-		var meta calevent.CalDAVMetadata
-		if err := json.Unmarshal([]byte(record.Metadata.String), &meta); err != nil {
-			return b, fmt.Errorf("CalDAV archived resource metadata: %w", err)
-		}
-		if skipped[meta.Href] || !plan.ReplaceAll && !touched[meta.Href] || meta.OverrideRemoved {
-			continue
-		}
-		masterID := record.SourceConversationID.String
-		if _, masterPresent := accepted[masterID]; !masterPresent {
-			// A previous run may have committed the master snapshot before
-			// failing to mark its removed overrides. Recover from that snapshot
-			// even if the provider has since deleted the resource.
-			members, loaded := storedMembers[masterID]
-			if !loaded {
-				master, exists := history[masterID]
-				if !exists {
-					continue
-				}
-				raw, err := st.GetMessageRawContext(ctx, master.ID)
-				if err != nil {
-					return b, fmt.Errorf("read archived CalDAV master: %w", err)
-				}
-				events, err := calevent.ParseCalDAVResource(ctx, raw, zone)
-				if err != nil {
-					return b, fmt.Errorf("parse archived CalDAV master: %w", err)
-				}
-				members = map[string]bool{}
-				for _, event := range events {
-					members[event.Event.ProviderEventID] = true
-				}
-				storedMembers[masterID] = members
-			}
-			if !members[masterID] || members[key] {
-				continue
-			}
-		}
-		if masterRecord, exists := inventory[masterID]; exists {
-			var masterMeta calevent.CalDAVMetadata
-			if err := json.Unmarshal([]byte(masterRecord.Metadata.String), &masterMeta); err != nil {
-				return b, fmt.Errorf("CalDAV archived master metadata: %w", err)
-			}
-			if skipped[masterMeta.Href] {
-				continue
-			}
-		}
-		meta.OverrideRemoved = true
-		encoded, err := json.Marshal(meta)
-		if err != nil {
-			return b, fmt.Errorf("encode removed CalDAV override metadata: %w", err)
-		}
-		href := accepted[masterID]
-		if href == "" {
-			href = meta.Href
-		}
-		b.metadataUpdates = append(b.metadataUpdates, metadataUpdate{
-			href:      href,
-			messageID: record.ID,
-			metadata:  sql.NullString{String: string(encoded), Valid: true},
-		})
 	}
 	return b, nil
 }
@@ -385,11 +308,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	if err != nil {
 		return result, err
 	}
-	history, err := st.SourceMessageMetadataContext(ctx, src.ID, false)
-	if err != nil {
-		return result, err
-	}
-	b, err := prepare(ctx, st, plan, inventory, history, opts.TimeZone, ownerEmail)
+	b, err := prepare(ctx, st, plan, inventory, opts.TimeZone, ownerEmail)
 	if err != nil {
 		return result, err
 	}
@@ -422,11 +341,6 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 		r.items = append(r.items, p)
 		resources[p.member.Href] = r
 	}
-	for _, update := range b.metadataUpdates {
-		r := resources[update.href]
-		r.metadataUpdates = append(r.metadataUpdates, update)
-		resources[update.href] = r
-	}
 	for _, href := range slices.Sorted(maps.Keys(resources)) {
 		r := resources[href]
 		for _, p := range r.items {
@@ -444,12 +358,6 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 			if err := st.ClearMessageDeletedFromSourceContext(ctx, src.ID, p.event.Event.ProviderEventID); err != nil {
 				checkpoint.ErrorsCount++
 				return result, err
-			}
-		}
-		for _, update := range r.metadataUpdates {
-			if err := st.SetMessageMetadataContext(ctx, update.messageID, update.metadata); err != nil {
-				checkpoint.ErrorsCount++
-				return result, fmt.Errorf("mark removed CalDAV override: %w", err)
 			}
 		}
 		if err := st.UpdateSyncCheckpointContext(ctx, runID, checkpoint); err != nil {
