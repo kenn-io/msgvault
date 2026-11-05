@@ -197,9 +197,9 @@ func mustInspectCacheReadiness(t *testing.T, analyticsDir string) query.CacheRea
 	return readiness
 }
 
-// The builder lock excludes other builders while readers can acquire their
-// lock after maintenance invalidates the marker.
-func TestBuilderLockDoesNotBlockReaders(t *testing.T) {
+// Builders allow readers while staging. Maintenance invalidates the marker and
+// releases readers while keeping other builders excluded until maintenance ends.
+func TestCacheMaintenanceInvalidatesMarkerAndReleasesReadersWhileExcludingBuilders(t *testing.T) {
 	requirements := require.New(t)
 	analyticsDir := filepath.Join(t.TempDir(), "analytics")
 	requirements.NoError(os.MkdirAll(analyticsDir, 0o755))
@@ -214,7 +214,14 @@ func TestBuilderLockDoesNotBlockReaders(t *testing.T) {
 	release()
 	requirements.NoError(builderLock.Unlock(), "release builder lock")
 
-	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), []byte("marker"), 0o600))
+	state, err := json.Marshal(query.CacheSyncState{
+		LastMessageID: 1,
+		LastSyncAt:    time.Date(2026, 7, 15, 10, 0, 0, 0, time.UTC),
+		SchemaVersion: query.CacheSchemaVersion,
+		PublishedAt:   time.Date(2026, 7, 15, 10, 1, 0, 0, time.UTC),
+	})
+	requirements.NoError(err)
+	requirements.NoError(os.WriteFile(query.CacheStatePath(analyticsDir), state, 0o600))
 	unlockCache, err := lockCacheAndInvalidateSyncState(analyticsDir)
 	requirements.NoError(err, "destructive maintenance locks")
 	defer func() { requirements.NoError(unlockCache()) }()
