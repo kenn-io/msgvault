@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
@@ -136,25 +137,35 @@ func TestListMessagesBySourceUsesSourceTimelineIndex(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		filter MessageFilter
-		args   []any
 		index  string
+		scoped bool
 	}{
-		{"source", MessageFilter{}, []any{1, 100, 0}, "idx_messages_source_sent_at"},
-		{"conversation", MessageFilter{ConversationID: new(int64(1))}, []any{1, 1, 100, 0}, "idx_messages_conversation"},
-		{"date range", MessageFilter{After: new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))}, []any{1, "2024-01-01 00:00:00", 100, 0}, "idx_messages_source_sent_at"},
+		{"source", MessageFilter{}, "idx_messages_source_sent_at", true},
+		{"conversation", MessageFilter{ConversationID: new(int64(1))}, "idx_messages_conversation", false},
+		{"date range", MessageFilter{After: new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))}, "idx_messages_source_sent_at", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			dialect := &rebindRecordingDialect{Dialect: SQLiteQueryDialect{}}
 			engine := NewEngineWithDialect(env.DB, dialect)
-			tc.filter.SourceID = new(int64(1))
+			if !tc.scoped {
+				tc.filter.SourceID = new(int64(1))
+			}
 			tc.filter.Sorting = MessageSorting{Field: MessageSortByDate, Direction: SortDesc}
 			tc.filter.Pagination = Pagination{Limit: 100}
-			_, err := engine.ListMessages(env.Ctx, tc.filter)
+			ctx := env.Ctx
+			if tc.scoped {
+				ctx = sourcescope.WithSourceIDs(ctx, []int64{1})
+			}
+			_, err := engine.ListMessages(ctx, tc.filter)
 			require.NoError(err)
 			require.NotEmpty(dialect.queries)
-			rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+dialect.queries[0], tc.args...)
+			args := make([]any, strings.Count(dialect.queries[0], "?"))
+			for i := range args {
+				args[i] = 1
+			}
+			rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+dialect.queries[0], args...)
 			require.NoError(err)
 			defer func() { require.NoError(rows.Close()) }()
 			var plan []string
