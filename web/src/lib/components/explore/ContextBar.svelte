@@ -255,10 +255,16 @@
     width: 172px;
   }
 
-  .popover-extra :global(.file-controls > label:has(input[type="search"], input[type="file"])) {
-    display: grid;
-    width: 100%;
-    grid-template-columns: minmax(0, 1fr);
+  .popover-extra {
+    :global(.file-controls > label:has(input[type="search"], input[type="file"])) {
+      display: grid;
+      width: 100%;
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    :global(.file-controls > label > .kit-search-input) {
+      width: 100%;
+    }
   }
 
   .context-chips :global(.chip) {

@@ -99,6 +99,11 @@ test.describe('compact toolbar', () => {
     await expect(query).toBeVisible();
     await expect(page.getByLabel('Query image')).toBeVisible();
     await expect(page.getByText('The query is sent to the configured visual embedding provider.')).toBeVisible();
+    const visualControls = dialog.getByLabel('File filters');
+    const queryField = query.locator('..');
+    const controlsBox = await visualControls.boundingBox();
+    const queryBox = await queryField.boundingBox();
+    expect(queryBox!.width).toBeCloseTo(controlsBox!.width, 0);
     await expectOneRow(controls);
     await query.fill('blue sky');
     await expect(query).toHaveValue('blue sky');
