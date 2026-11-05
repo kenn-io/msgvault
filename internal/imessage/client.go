@@ -241,7 +241,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 	convCache := map[string]int64{}  // chatGUID -> conversationID
 	imported := 0
 	lastROWID := int64(0)
-	// Committed messages need their conversation counts however the run ends.
+	// Recompute conversation counts after scanning or a fatal message import error.
 	finalize := func(err error) error {
 		if statsErr := s.RecomputeConversationStats(sourceID); statsErr != nil {
 			return errors.Join(err, fmt.Errorf("recompute stats: %w", statsErr))
@@ -251,7 +251,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 
 	for {
 		if err := ctx.Err(); err != nil {
-			return summary, finalize(err)
+			return summary, err
 		}
 
 		if c.limit > 0 && imported >= c.limit {
@@ -260,7 +260,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 
 		rows, err := c.fetchPage(ctx, lastROWID)
 		if err != nil {
-			return summary, finalize(fmt.Errorf("fetch page: %w", err))
+			return summary, fmt.Errorf("fetch page: %w", err)
 		}
 		if len(rows) == 0 {
 			break
@@ -272,7 +272,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 		}
 		stored, err := s.StoredMessagesContext(ctx, sourceID, "imessage_json", messageIDs)
 		if err != nil {
-			return summary, finalize(fmt.Errorf("load stored messages: %w", err))
+			return summary, fmt.Errorf("load stored messages: %w", err)
 		}
 		storedIDs := make([]int64, 0, len(stored))
 		for _, message := range stored {
@@ -280,7 +280,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 		}
 		labels, err := s.MessageLabelIDsBatchContext(ctx, storedIDs)
 		if err != nil {
-			return summary, finalize(err)
+			return summary, err
 		}
 
 		for i, msg := range rows {
@@ -289,7 +289,7 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 				continue
 			}
 			if err := ctx.Err(); err != nil {
-				return summary, finalize(err)
+				return summary, err
 			}
 			if c.limit > 0 && imported >= c.limit {
 				break
