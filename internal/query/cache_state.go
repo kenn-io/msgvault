@@ -43,12 +43,11 @@ import (
 // only messages that can still be deleted from their source.
 // Version 33 flags unsent messages in the relationship activity dataset.
 // Version 34 carries hidden_text_present in message rows.
-// Version 35 excludes calendar rooms from derived people and domains.
-// Version 36 adds the calendar resource flag to participant rows.
-// Version 37 includes Google room domains in that flag.
+// Version 35 flags calendar rooms in participant rows and excludes them from
+// derived people and domains.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
-const CacheSchemaVersion = 37
+const CacheSchemaVersion = 35
 
 // CacheSyncState is the commit marker written after a complete analytics
 // cache publication. SQLite remains authoritative; these watermarks only
