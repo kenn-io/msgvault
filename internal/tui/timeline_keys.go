@@ -35,35 +35,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			}
 			return m, nil
 		case "[", "]":
-			if m.timelineState.result == nil {
-				return m, nil
-			}
-			loc, err := time.LoadLocation(m.timelineState.result.Timezone)
-			if err != nil {
-				loc = time.UTC
-			}
-			result := m.timelineState.result
-			day := result.Now.In(loc)
-			switch result.Mode {
-			case timeline.ModeAnchor:
-				if result.Anchor != nil {
-					day = result.Anchor.Time.In(loc)
-				}
-			case timeline.ModeRelationship:
-				if entry := m.highlightedTimelineEntry(); entry != nil {
-					day = entry.Time.In(loc)
-				}
-			default:
-				day, err = time.ParseInLocation(time.DateOnly, result.Window.From, loc)
-				if err != nil {
-					return m, nil
-				}
-			}
-			delta := 1
-			if msg.String() == "[" {
-				delta = -1
-			}
-			return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: day.AddDate(0, 0, delta).Format(time.DateOnly)}, true)
+			return m.stepTimelineDay(msg.String() == "[")
 		}
 	}
 	if msg.String() == keyNameCtrlC {
@@ -173,6 +145,40 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.timelineState.scroll = calculateScrollOffset(m.timelineState.entries[m.timelineState.cursor].line, m.timelineState.scroll, m.visibleRows())
 	}
 	return m, nil
+}
+
+// stepTimelineDay requests the previous or next day. Day views step from the
+// window edge in the direction of travel so multi-day windows are not revisited.
+func (m Model) stepTimelineDay(back bool) (tea.Model, tea.Cmd) {
+	result := m.timelineState.result
+	if result == nil {
+		return m, nil
+	}
+	loc, err := time.LoadLocation(result.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	delta, edge := 1, result.Window.To
+	if back {
+		delta, edge = -1, result.Window.From
+	}
+	day := result.Now.In(loc)
+	switch result.Mode {
+	case timeline.ModeAnchor:
+		if result.Anchor != nil {
+			day = result.Anchor.Time.In(loc)
+		}
+	case timeline.ModeRelationship:
+		if entry := m.highlightedTimelineEntry(); entry != nil {
+			day = entry.Time.In(loc)
+		}
+	default:
+		day, err = time.ParseInLocation(time.DateOnly, edge, loc)
+		if err != nil {
+			return m, nil
+		}
+	}
+	return m.requestTimeline(timeline.Request{Mode: timeline.ModeDay, Date: day.AddDate(0, 0, delta).Format(time.DateOnly)}, true)
 }
 
 func (m Model) handleTimelineMeetingKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

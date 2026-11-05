@@ -62,7 +62,6 @@ func TestBuildInvalidUTF8Snippet(t *testing.T) {
 }
 
 func TestAnchorColdConversationWithIncludeCold(t *testing.T) {
-	t.Skip("pending: cold conversation anchor needs a no-longer fix")
 	assert := assert.New(t)
 	require := require.New(t)
 	f := newTimelineFixture(t)

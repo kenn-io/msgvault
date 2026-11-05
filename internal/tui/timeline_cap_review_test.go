@@ -8,7 +8,6 @@ import (
 )
 
 func TestTimelineStepsOutsideDefaultWindow(t *testing.T) {
-	t.Skip("pending: forward day navigation needs a no-longer fix")
 	for _, tc := range []struct {
 		key  rune
 		date string

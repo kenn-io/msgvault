@@ -65,13 +65,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		}
 		return target, nil
 	case "conversation":
-		if c.src.Activity == nil {
-			c.unavailable("anchor")
-			return target, nil
-		}
-		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
-			return c.src.Activity.LatestEligibleMessageContext(ctx, ref.ID)
-		})
+		r := c.conversationAnchor(ref.ID)
 		if r.err != nil {
 			c.gap("anchor", r.err, false)
 			return target, nil //nolint:nilerr // Source failures are reported as anchor gaps while preserving the envelope.
@@ -81,10 +75,6 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	case entryKindMessage:
 		target.messageID = ref.ID
 	case entryKindBurst:
-		if c.src.Activity == nil {
-			c.unavailable("anchor")
-			return target, nil
-		}
 		q := store.BurstQuery{FromDate: ref.LocalDate, ToDate: ref.LocalDate, ConversationID: ref.ConversationID, Limit: 5000, Filters: c.filters()}
 		q.Filters.IncludeNoise = true
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
@@ -132,6 +122,28 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	target.conversationID = d.ConversationID
 	return target, nil
 }
+
+// conversationAnchor finds the latest eligible conversation message, falling
+// back to the cold reader when include_cold admits conversations kept out of
+// the live projection.
+func (c *composer) conversationAnchor(id int64) readResult[int64] {
+	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
+		return c.src.Activity.LatestEligibleMessageContext(ctx, id)
+	})
+	if r.err != nil || r.value > 0 || !c.req.IncludeCold || c.src.Cold == nil {
+		return r
+	}
+	q := store.MessageQuery{ConversationID: id, Descending: true, Limit: 1, Filters: c.filters()}
+	q.Filters.IncludeNoise = true
+	return readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
+		page, err := c.src.Cold.ListColdActivityMessagesContext(ctx, q)
+		if len(page) == 0 {
+			return 0, err
+		}
+		return page[0].MessageID, err
+	})
+}
+
 func anchorWindow(at time.Time, loc *time.Location) Window {
 	return Window{From: at.In(loc).AddDate(0, 0, -31).Format(time.DateOnly), To: at.In(loc).AddDate(0, 0, 31).Format(time.DateOnly)}
 }
