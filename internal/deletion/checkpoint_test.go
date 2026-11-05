@@ -81,13 +81,7 @@ func TestExecutor_JournalResume(t *testing.T) {
 	assert.Equal(2, loaded.Execution.Succeeded)
 	assert.Equal([]string{"msg1"}, loaded.Execution.FailedIDs)
 
-	// A torn tail must not hide the next record, and the retry pass's record
-	// replaces the failure list rather than extending it.
-	f, err := os.OpenFile(journalPath(path), os.O_APPEND|os.O_WRONLY, 0)
-	require.NoError(err)
-	_, err = f.WriteString(`{"last_processed_index":`)
-	require.NoError(err)
-	require.NoError(f.Close())
+	// The retry checkpoint replaces the previous failure list.
 	tc.MockAPI.BeforeTrash = func(id string) error {
 		switch id {
 		case "msg5":
@@ -174,7 +168,7 @@ func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 	assert.Equal([]string{"msg1", "msg2"}, tc.MockAPI.TrashCalls)
 }
 
-func TestExecutor_CancelFoldsJournal(t *testing.T) {
+func TestExecutor_CancelAfterCheckpoint(t *testing.T) {
 	for _, rewriteFails := range []bool{false, true} {
 		t.Run(fmt.Sprintf("rewriteFails=%v", rewriteFails), func(t *testing.T) {
 			if rewriteFails && (runtime.GOOS == "windows" || os.Getuid() == 0) {
@@ -203,50 +197,77 @@ func TestExecutor_CancelFoldsJournal(t *testing.T) {
 			cancelled, status, err := tc.Mgr.GetManifestWithStatus(m.ID)
 			require.NoError(err)
 			assert.Equal(StatusCancelled, status)
+			require.NotNil(cancelled.Execution)
 			assert.Equal(1, cancelled.Execution.Succeeded)
 			assert.Equal(1, cancelled.Execution.LastProcessedIndex)
-			_, err = os.Stat(journalPath(path))
-			if rewriteFails {
-				assert.NoError(err, "journal preserves progress when the rewrite fails")
-			} else {
-				assert.ErrorIs(err, os.ErrNotExist)
-			}
 		})
 	}
 }
 
 func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Getuid() == 0 {
-		t.Skip("requires Unix file permissions enforced for the current user")
-	}
-	require := require.New(t)
-	assert := assert.New(t)
-	mgr := testManager(t)
-	m := setupInProgress(t, mgr, "cancel cleanup failure")
-	m.Execution.LastProcessedIndex = 2
-	m.Execution.Succeeded = 1
-	m.Execution.Failed = 1
-	m.Execution.FailedIDs = []string{"msg1"}
-	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
-	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
-	t.Cleanup(func() { require.NoError(os.Chmod(mgr.baseDir, 0o700)) })
-	// Status directories stay writable, so only journal removal fails.
-	require.NoError(os.Chmod(mgr.baseDir, 0o500))
-	assert.NoError(mgr.CancelManifest(m.ID))
-	_, err := os.Stat(journalPath(path))
-	require.NoError(err, "cleanup failure leaves the journal in place")
+	for _, failure := range []string{"none", "rewrite", "cleanup"} {
+		t.Run(failure, func(t *testing.T) {
+			if failure != "none" && (runtime.GOOS == "windows" || os.Getuid() == 0) {
+				t.Skip("requires Unix file permissions enforced for the current user")
+			}
+			require := require.New(t)
+			assert := assert.New(t)
+			mgr := testManager(t)
+			m := setupInProgress(t, mgr, "cancel journal progress")
+			m.Execution.LastProcessedIndex = 2
+			m.Execution.Succeeded = 1
+			m.Execution.Failed = 1
+			m.Execution.FailedIDs = []string{"b"}
+			require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
+			path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
+			cancelledPath := filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json")
+			// Prove progress is journaled before exercising the fold.
+			_, err := os.Stat(journalPath(path))
+			require.NoError(err)
+			switch failure {
+			case "rewrite":
+				// The rename succeeds, but saving the moved file fails.
+				require.NoError(os.Chmod(path, 0o400))
+				t.Cleanup(func() { require.NoError(os.Chmod(cancelledPath, 0o600)) })
+			case "cleanup":
+				// Status directories stay writable, so only journal removal fails.
+				require.NoError(os.Chmod(mgr.baseDir, 0o500))
+				t.Cleanup(func() { require.NoError(os.Chmod(mgr.baseDir, 0o700)) })
+			}
 
-	// Read without the journal to prove the cancelled manifest saved progress.
-	require.NoError(os.Chmod(mgr.baseDir, 0o700))
-	require.NoError(os.Remove(journalPath(path)))
-	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
-	require.NoError(err)
-	assert.Equal(StatusCancelled, loaded.Status)
-	require.NotNil(loaded.Execution)
-	assert.Equal(2, loaded.Execution.LastProcessedIndex)
-	assert.Equal(1, loaded.Execution.Succeeded)
-	assert.Equal(1, loaded.Execution.Failed)
-	assert.Equal([]string{"msg1"}, loaded.Execution.FailedIDs)
+			err = mgr.CancelManifest(m.ID)
+			if failure == "rewrite" {
+				require.ErrorIs(err, os.ErrPermission)
+			} else {
+				require.NoError(err)
+			}
+			assert.True(mgr.ManifestCancelled(m.ID))
+			_, err = os.Stat(journalPath(path))
+			if failure == "none" {
+				require.ErrorIs(err, os.ErrNotExist)
+			} else {
+				require.NoError(err, "journal remains when saving or cleanup fails")
+			}
+			if failure == "cleanup" {
+				// Reload without the journal to prove the fold saved progress.
+				require.NoError(os.Chmod(mgr.baseDir, 0o700))
+				require.NoError(os.Remove(journalPath(path)))
+			}
+			loaded, status, err := mgr.GetManifestWithStatus(m.ID)
+			require.NoError(err)
+			assert.Equal(StatusCancelled, status)
+			if failure == "rewrite" {
+				assert.Equal(StatusInProgress, loaded.Status, "the failed rewrite leaves the old inline status")
+			} else {
+				assert.Equal(StatusCancelled, loaded.Status)
+			}
+			require.NotNil(loaded.Execution)
+			assert.Equal(2, loaded.Execution.LastProcessedIndex)
+			assert.Equal(1, loaded.Execution.Succeeded)
+			assert.Equal(1, loaded.Execution.Failed)
+			assert.Equal([]string{"b"}, loaded.Execution.FailedIDs)
+		})
+	}
 }
 
 func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
@@ -254,19 +275,29 @@ func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
 	assert := assert.New(t)
 	tc := NewTestContext(t)
 	m := tc.CreateManifest("tombstone restart", msgIDs(3))
-	m.Status = StatusInProgress
-	m.Execution = &Execution{
-		StartedAt: time.Now(), Method: MethodTrash, LastProcessedIndex: 2,
-		Failed: 1, FailedIDs: []string{"msg0"}, TombstoneIDs: []string{"msg1"},
+	// A provider failure followed by a local tombstone failure leaves both
+	// retry lists populated. Restarting without Resume must replace failures.
+	tc.MockAPI.BeforeTrash = func(id string) error {
+		if id == "msg0" {
+			return errors.New("provider failure")
+		}
+		require.NoError(tc.Store.Close())
+		return nil
 	}
-	require.NoError(tc.Mgr.SaveManifest(m))
+	require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), errLocalTombstone)
+	loaded, _, err := tc.Mgr.GetManifest(m.ID)
+	require.NoError(err)
+	require.NotNil(loaded.Execution)
+	assert.Equal(2, loaded.Execution.LastProcessedIndex)
+	assert.Equal([]string{"msg0"}, loaded.Execution.FailedIDs)
+	assert.Equal([]string{"msg1"}, loaded.Execution.TombstoneIDs)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	tc.Exec.WithProgress(&onStartProgress{hook: cancel})
 	opts := trashOpts(1)
 	opts.Resume = false
 	require.ErrorIs(tc.Exec.Execute(ctx, m.ID, opts), context.Canceled)
-	loaded, _, err := tc.Mgr.GetManifest(m.ID)
+	loaded, _, err = tc.Mgr.GetManifest(m.ID)
 	require.NoError(err)
 	assert.Equal([]string{"msg1"}, loaded.Execution.TombstoneIDs)
 	assert.Empty(loaded.Execution.FailedIDs)

@@ -1073,11 +1073,9 @@ func assertSingleValidManifest(t *testing.T, mgr *Manager, id string) {
 }
 
 // TestManager_CheckpointCancelSerialize deterministically drives the
-// rename-vs-write critical section: an in-flight checkpoint holds the
-// per-manifest lock while a cancel attempts to run. The cancel must block until
-// the checkpoint's atomic write completes and the lock is released, after which
-// the whole valid record moves to cancelled/ — never a torn or empty file, and
-// never a resurrected in_progress file.
+// rename-vs-write critical section: a manifest write holds the per-manifest
+// lock while a cancel attempts to run. The cancel waits for the atomic write
+// and lock release, then moves the complete record to cancelled/.
 func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1085,21 +1083,21 @@ func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	m := setupInProgress(t, mgr, "serialize")
 	inProgressPath := filepath.Join(mgr.InProgressDir(), m.ID+".json")
 
-	// Simulate an in-flight checkpoint write by holding the per-manifest lock.
+	// Hold the per-manifest lock during a manifest write.
 	held, err := mgr.acquireManifestLock(m.ID)
 	require.NoError(err, "acquireManifestLock")
 
 	cancelDone := make(chan error, 1)
 	go func() { cancelDone <- mgr.CancelManifest(m.ID) }()
 
-	// The cancel rename must not proceed while the checkpoint holds the lock.
+	// The cancel rename waits while the writer holds the lock.
 	select {
 	case <-cancelDone:
-		require.FailNow("cancel ran while checkpoint held the lock")
+		require.FailNow("cancel ran while the writer held the lock")
 	case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the held manifest lock keeps cancel waiting
 	}
 
-	// Complete the checkpoint's atomic write, then release the lock.
+	// Complete the manifest's atomic write, then release the lock.
 	m.Execution.LastProcessedIndex = 5
 	require.NoError(writeManifestAtomic(m, inProgressPath), "writeManifestAtomic")
 	require.NoError(held.Unlock(), "Unlock")
@@ -1112,8 +1110,8 @@ func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
 	require.NoError(err, "cancelled manifest must be fully parseable")
 	assert.Equal(StatusCancelled, loaded.Status)
-	require.NotNil(loaded.Execution, "checkpoint content preserved")
-	assert.Equal(5, loaded.Execution.LastProcessedIndex, "checkpoint content preserved in cancelled record")
+	require.NotNil(loaded.Execution, "manifest content preserved")
+	assert.Equal(5, loaded.Execution.LastProcessedIndex, "manifest content preserved in cancelled record")
 	assertSingleValidManifest(t, mgr, m.ID)
 }
 
@@ -1132,12 +1130,25 @@ func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
 	require.NoError(err, "reload checkpoint")
 	require.NotNil(loaded.Execution)
 	assert.Equal(7, loaded.Execution.LastProcessedIndex)
-	// No stray temp files left in the status directory.
-	entries, err := os.ReadDir(mgr.InProgressDir())
-	require.NoError(err, "ReadDir")
-	for _, e := range entries {
-		assert.False(strings.HasPrefix(e.Name(), "."), "leftover temp file %s", e.Name())
-	}
+	// A crash can leave an incomplete final record without a newline.
+	path := filepath.Join(mgr.InProgressDir(), m.ID+".json")
+	f, err := os.OpenFile(journalPath(path), os.O_APPEND|os.O_WRONLY, 0)
+	require.NoError(err)
+	_, err = f.WriteString(`{"last_processed_index":`)
+	require.NoError(err)
+	require.NoError(f.Close())
+
+	loaded, err = LoadManifest(path)
+	require.NoError(err)
+	require.NotNil(loaded.Execution)
+	assert.Equal(7, loaded.Execution.LastProcessedIndex, "ignore the torn tail")
+
+	m.Execution.LastProcessedIndex = 8
+	require.NoError(mgr.WriteInProgressCheckpoint(m, m.ID, 0))
+	loaded, err = LoadManifest(path)
+	require.NoError(err)
+	require.NotNil(loaded.Execution)
+	assert.Equal(8, loaded.Execution.LastProcessedIndex, "read the record appended after the torn tail")
 }
 
 // TestManager_WriteInProgressCheckpoint_Cancelled verifies that a checkpoint on
