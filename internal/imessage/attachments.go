@@ -257,10 +257,10 @@ func (c *Client) importAttachments(ctx context.Context, s *store.Store, messageI
 		if existing && sameAttachmentRef(old, ref) {
 			continue
 		}
-		changed = true
 		if err := s.UpsertAttachmentRecordWithStats(ctx, messageID, attachmentWrite(ref), existingMessage); err != nil {
 			return changed, errors.Join(append(captureErrs, fmt.Errorf("%w: %w", errAttachmentStore, err))...)
 		}
+		changed = true
 	}
 	return changed, errors.Join(captureErrs...)
 }

@@ -311,6 +311,25 @@ func TestImportAttachmentPolicy(t *testing.T) {
 }
 
 func TestImportAttachmentFailures(t *testing.T) {
+	t.Run("failed attachment insert does not count an update", func(t *testing.T) {
+		testutil.SkipIfPostgres(t, "SQLite trigger injection")
+		require := require.New(t)
+		c, db, st, source, _, _ := attachmentFixture(t, attachmentpolicy.Policy{})
+		_, err := db.Exec(`DELETE FROM message_attachment_join`)
+		require.NoError(err)
+		_, err = c.Import(t.Context(), st, source)
+		require.NoError(err)
+
+		_, err = db.Exec(`INSERT INTO message_attachment_join VALUES (1,1)`)
+		require.NoError(err)
+		_, err = st.DB().Exec(`CREATE TRIGGER synthetic_attachment_failure BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT,'synthetic failure'); END`)
+		require.NoError(err)
+		summary, err := c.Import(t.Context(), st, source)
+		require.ErrorContains(err, "synthetic failure")
+		require.ErrorIs(err, ErrAttachmentImport)
+		assert.Zero(t, summary.MessagesUpdated)
+	})
+
 	t.Run("archive write error stops the run", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
