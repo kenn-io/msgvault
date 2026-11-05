@@ -142,7 +142,9 @@ func (e *Executor) deleteOne(ctx context.Context, sourceID int64, gmailID string
 		if err != nil {
 			e.logger.Debug("message already deleted", "gmail_id", gmailID)
 		}
-		if markErr := e.store.MarkMessageDeletedBySourceMessageID(ctx, sourceID, method == MethodDelete, gmailID); markErr != nil {
+		// The provider already removed the message, so record that locally
+		// even when a cancel arrives now.
+		if markErr := e.store.MarkMessageDeletedBySourceMessageID(context.WithoutCancel(ctx), sourceID, method == MethodDelete, gmailID); markErr != nil {
 			e.logger.Warn("failed to mark deleted in DB", "gmail_id", gmailID, "error", markErr)
 			return resultFailed, fmt.Errorf("%w: %w", errLocalTombstone, markErr)
 		}
@@ -823,8 +825,9 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 				e.progress.OnProgress(i+j+1, succeeded, failed)
 			}
 		} else {
-			// Mark all as deleted in DB using batch update
-			if markErr := e.store.MarkMessagesDeletedBySourceMessageIDBatch(ctx, sourceID, batch); markErr != nil {
+			// Mark all as deleted in DB using batch update. The provider
+			// already removed them, so a cancel must not skip the record.
+			if markErr := e.store.MarkMessagesDeletedBySourceMessageIDBatch(context.WithoutCancel(ctx), sourceID, batch); markErr != nil {
 				e.logger.Warn("failed to mark batch as deleted in DB", "count", len(batch), "error", markErr)
 				// The remote batch is complete, so retry only its tombstones;
 				// later IDs must remain on the normal batch path.

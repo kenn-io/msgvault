@@ -1875,7 +1875,7 @@ func TestMarkedCLIProtectiveRouteCanReadBodyPastOrdinaryServerTimeout(t *testing
 					}},
 					Logger: testLogger(),
 				})
-				t.Cleanup(func() { require.NoError(t, srv.Shutdown(t.Context()), "shutdown") })
+				t.Cleanup(func() { require.NoError(t, srv.Shutdown(context.WithoutCancel(t.Context())), "shutdown") })
 				handlerEntered := make(chan struct{})
 				handler := srv.timeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					close(handlerEntered)
