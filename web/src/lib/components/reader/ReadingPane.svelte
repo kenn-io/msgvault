@@ -54,7 +54,7 @@
     unavailable = undefined,
     predicate,
     onClose = undefined,
-    onBack = undefined,
+    back = false,
     onRetry = undefined,
     conversationAnchorId = undefined,
     conversationStart = undefined,
@@ -74,7 +74,7 @@
     unavailable?: ExploreCacheUnavailable;
     predicate: ExplorePredicate;
     onClose?: () => void;
-    onBack?: () => void;
+    back?: boolean;
     onRetry?: () => void;
     /** Overrides the entry's own anchor when the reader navigated within the
      * thread (URL-carried, so Back/Forward restore the same message). */
@@ -192,10 +192,10 @@
 
 </script>
 
-<aside class="reading-pane" class:reading-pane--back={Boolean(onBack)} aria-label={`Reading pane: ${title}`}>
+<aside class="reading-pane" class:reading-pane--back={back} aria-label={`Reading pane: ${title}`}>
   <header class="pane-header">
-    {#if onBack}
-      <IconButton ariaLabel="Back to results" onclick={onBack}>
+    {#if back}
+      <IconButton ariaLabel="Back to results" onclick={() => onClose?.()}>
         <ArrowLeft size={16} />
       </IconButton>
     {/if}
@@ -213,7 +213,7 @@
       {#if onOpenPerson && counterpartParticipantId !== undefined}
         <Button size="sm" surface="outline" label="Open person" onclick={() => { if (counterpartParticipantId !== undefined) onOpenPerson?.(counterpartParticipantId); }} />
       {/if}
-      {#if !onBack}
+      {#if !back}
         <IconButton size="sm" ariaLabel="Close reading pane" onclick={() => onClose?.()}>
           <X size={14} />
         </IconButton>

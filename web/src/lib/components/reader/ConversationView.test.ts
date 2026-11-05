@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCaptureClient } from '../../telemetry/capture.test-support';
 import ConversationView from './ConversationView.svelte';
-import { message } from './conversation-fixtures.test-support';
 
 const telemetryEvents: unknown[] = [];
 const telemetryRequests: Promise<void>[] = [];
@@ -18,6 +17,24 @@ const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (in
   if (lookup) return Response.json(disabledTaskLookup(Number(lookup[1])));
   return fetchFn(input, init);
 }, telemetryEvents, telemetryRequests);
+function message(id: number, type = 'email') {
+  return {
+    id,
+    conversation_id: 7,
+    subject: `Message subject ${id}`,
+    message_type: type,
+    from: 'alice@example.com',
+    to: ['bob@example.com'],
+    sent_at: `2026-01-0${id}T12:00:00Z`,
+    snippet: `Preview ${id}`,
+    labels: [],
+    has_attachments: false,
+    size_bytes: 10,
+    body: `Body ${id}`,
+    body_html: `<p>Body ${id}</p>`,
+    attachments: []
+  };
+}
 
 function omittedMessage(id: number) {
   return { ...message(id), body: '', body_html: '', body_omitted: true };

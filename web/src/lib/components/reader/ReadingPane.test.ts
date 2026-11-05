@@ -42,13 +42,13 @@ function renderPane(row: EntryRow) {
 
 describe('ReadingPane header', () => {
   it('returns to results through Back instead of the close action', async () => {
-    const onBack = vi.fn();
+    const onClose = vi.fn();
     render(ReadingPane, {
       client: createAPIClient(vi.fn<typeof fetch>()),
-      predicate: {}, onBack
+      predicate: {}, back: true, onClose
     });
     await fireEvent.click(screen.getByRole('button', { name: 'Back to results' }));
-    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('button', { name: 'Close reading pane' })).toBeNull();
   });
 

@@ -128,14 +128,16 @@
   }: Props = $props();
 
   const compact = new MediaQuery(MEDIA.compact);
+  const solo = $derived(compact.current && Boolean(readingTargetKey) && !loader.error && !loader.unavailable);
   let resultsSplit: HTMLDivElement | undefined = $state();
-  let readerWasOpen = false;
   $effect(() => {
-    const open = Boolean(readingTargetKey);
-    if (open && !readerWasOpen && untrack(() => compact.current)) {
-      void tick().then(() => resultsSplit?.querySelector<HTMLButtonElement>('[aria-label="Back to results"]')?.focus());
-    }
-    readerWasOpen = open;
+    void solo;
+    if (!untrack(() => readingTargetKey)) return;
+    void tick().then(() => {
+      const focused = document.activeElement;
+      if (focused instanceof HTMLElement && focused !== document.body && focused.isConnected && focused.checkVisibility({ visibilityProperty: true })) return;
+      resultsSplit?.querySelector<HTMLButtonElement>('[aria-label="Back to results"], [aria-label="Close reading pane"]')?.focus();
+    });
   });
 
   const api = createExploreAPI(untrack(() => client));
@@ -256,9 +258,11 @@
       if (loader.unavailable) {
         return { status: 'unavailable', message: loader.unavailable.message, unavailable: loader.unavailable };
       }
-      if (loader.error) return { status: 'error', message: loader.error };
       if (loader.loading || loader.restoring) return { status: 'loading', message: '' };
-      return { status: 'missing', message: 'The selected entry is no longer available in this context.' };
+      return {
+        status: loader.error ? 'error' : 'missing',
+        message: loader.error || 'The selected entry is no longer available in this context.',
+      };
     },
   );
 
@@ -732,7 +736,7 @@
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
-    class:results-split--solo={compact.current && Boolean(readingTargetKey)}
+    class:results-split--solo={solo}
     bind:this={resultsSplit}
     bind:clientWidth={resultsWidth}
   >
@@ -864,11 +868,11 @@
             targetKey={readingTargetKey}
             status={readingState.status}
             statusMessage={readingState.message}
-            onRetry={recordingSelection && !recording.missing ? () => readingDetailRetryRevision += 1 : loader.error ? loader.retry : undefined}
+            onRetry={recordingSelection && !recording.missing ? () => readingDetailRetryRevision += 1 : undefined}
             unavailable={readingState.unavailable}
             predicate={exploreState.predicate()}
             onClose={closeReadingPane}
-            onBack={compact.current ? closeReadingPane : undefined}
+            back={solo}
             {onOpenMeeting}
             onReloadMeetings={reloadGroupMeetings}
             onOpenSettings={() => commitNavigation(tasksSettingsDestination())}
