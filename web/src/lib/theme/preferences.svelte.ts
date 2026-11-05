@@ -161,6 +161,11 @@ export function mergeSavedAppearance(current: AppearanceDefaults, saved: SavedAp
   };
 }
 
+export function scrollPositionAnchor(scrollTop: number, height: number, count: number): { index: number; offset: number } {
+  const index = Math.min(count - 1, Math.max(0, Math.floor(scrollTop / height)));
+  return { index, offset: scrollTop - index * height };
+}
+
 export function rebaseVirtualScroll(scrollTop: number, previousHeight: number, nextHeight: number, focusedIndex = -1, viewportHeight = 0, nextViewportHeight = viewportHeight): number {
   if (previousHeight <= 0 || nextHeight <= 0 || previousHeight === nextHeight) return scrollTop;
   const focusedOffset = focusedIndex * previousHeight - scrollTop;

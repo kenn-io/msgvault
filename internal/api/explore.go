@@ -369,8 +369,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		if s.writeIfContextError(w, err) {
 			return
 		}
-		writeError(w, http.StatusServiceUnavailable, "sender_labels_unavailable", "Message senders could not be resolved")
-		return
+		s.logger.Warn("message sender labels unavailable", "error", err)
 	}
 	for i := range result.Rows {
 		row := &result.Rows[i]
@@ -413,9 +412,6 @@ func (s *Server) pageSenderLabels(ctx context.Context, messageIDs []int64) (map[
 	labels := make(map[int64]string, len(messageIDs))
 	ids := make([]int64, 0, len(messageIDs))
 	for _, id := range messageIDs {
-		if id <= 0 {
-			continue
-		}
 		if _, seen := labels[id]; !seen {
 			ids = append(ids, id)
 			labels[id] = ""
@@ -424,10 +420,7 @@ func (s *Server) pageSenderLabels(ctx context.Context, messageIDs []int64) (map[
 	if len(ids) == 0 {
 		return labels, nil
 	}
-	labeler, ok := s.queryEngineForContext(ctx).(query.SenderLabeler)
-	if !ok {
-		return labels, nil
-	}
+	labeler := s.queryEngineForContext(ctx).(query.SenderLabeler)
 	return labeler.SenderLabels(ctx, ids)
 }
 

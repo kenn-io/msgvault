@@ -545,8 +545,7 @@ func (s *Server) handleSearchFilesRequest(
 		if s.writeIfContextError(w, err) {
 			return
 		}
-		writeError(w, http.StatusServiceUnavailable, "sender_labels_unavailable", "Message senders could not be resolved")
-		return
+		s.logger.Warn("message sender labels unavailable", "error", err)
 	}
 	response := FileSearchHTTPResponse{
 		Files: make([]FileSearchRow, 0, len(result.Files)), TotalCount: result.TotalCount,

@@ -361,3 +361,33 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 		assert.Equal(t, addresses{}, absent)
 	})
 }
+
+func TestReviewSenderUsesMessageEnvelope(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	first := b.AddMessage(MessageOpt{})
+	second := b.AddMessage(MessageOpt{})
+	b.AddFrom(first, alice, "Personal Alias")
+	b.AddFrom(second, alice, "Issue Desk")
+	e := b.BuildEngine()
+	t.Cleanup(func() { _ = e.Close() })
+	labels, err := e.SenderLabels(t.Context(), []int64{first, second})
+	require.NoError(t, err)
+	assert.Equal(t, "Personal Alias", labels[first])
+	assert.Equal(t, "Issue Desk", labels[second])
+}
+
+func TestReviewSenderPrefersFromRecipient(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
+	id := b.AddMessage(MessageOpt{SenderID: &bob})
+	b.AddFrom(id, alice, "Alice")
+	e := b.BuildEngine()
+	t.Cleanup(func() { _ = e.Close() })
+	labels, err := e.SenderLabels(t.Context(), []int64{id})
+	require.NoError(t, err)
+	assert.Equal(t, "Alice", labels[id])
+}

@@ -386,3 +386,53 @@ function file(index: number) {
     content_state: 'missing_blob', content_available: false
   };
 }
+
+test('review: Files anchor stays fixed across breakpoint and density', async ({ page }) => {
+  await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
+    files: Array.from({ length: total }, (_, i) => file(i + 1)), total_count: total, cache_revision: 'anchor-review'
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace: 'files' })))}`);
+  const grid = page.getByRole('grid', { name: 'Files results' });
+  await grid.locator('[aria-rowindex="2"]').waitFor();
+  await grid.evaluate(el => { el.scrollTop = 249 * 36; el.dispatchEvent(new Event('scroll')); });
+  const row = grid.locator('[aria-rowindex="251"]');
+  await expect(row).toBeInViewport();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(row).toHaveCSS('height', '58px');
+  await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 58);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(row).toHaveCSS('height', '36px');
+  await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 36);
+  await setTemporaryDensity(page, 'Comfortable');
+  await expect(row).toHaveCSS('height', '46px');
+  await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 46);
+});
+
+for (const workspace of ['everything', 'groups', 'files'] as const) {
+  test(`review: phone headers remain accessible in ${workspace}`, async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows: [entry(1)], total_count: 1, cache_revision: 'headers' } }));
+    await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: { rows: [group(1)], total_count: 1, cache_revision: 'headers' } }));
+    await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [file(1)], total_count: 1, cache_revision: 'headers' } }));
+    const state = exploreState(workspace === 'groups' ? { groupingChain: ['source'] } : { workspace });
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(state))}`);
+    const grid = page.getByRole('grid', { name: workspace === 'everything' ? 'Messages results' : workspace === 'groups' ? 'Messages grouped by source' : 'Files results' });
+    await expect(grid.locator('[aria-rowindex="2"]')).toBeVisible();
+    const header = workspace === 'everything' ? 'Subject / title' : workspace === 'groups' ? 'Items' : 'People';
+    await expect(grid.getByRole('columnheader', { name: header, exact: true })).toHaveCount(1);
+  });
+}
+
+test('review: Files desktop people text aligns with its cell', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [file(1)], total_count: 1, cache_revision: 'desktop' } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace: 'files' })))}`);
+  const cell = page.getByRole('grid', { name: 'Files results' }).locator('[aria-rowindex="2"] .cell--people');
+  await expect(cell).toBeVisible();
+  const inset = await cell.evaluate(el => {
+    const span = el.querySelector('.desktop-people')!;
+    const range = document.createRange(); range.selectNodeContents(span);
+    return Math.round(range.getBoundingClientRect().left - el.getBoundingClientRect().left);
+  });
+  expect(inset).toBe(6);
+});

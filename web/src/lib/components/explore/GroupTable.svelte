@@ -8,7 +8,7 @@
     ExploreGroupRow,
     ExploreScrollAnchor
   } from '../../explore/models';
-  import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
+  import { rebaseVirtualScroll, RowGeometry, scrollPositionAnchor, tableViewportHeight } from '../../theme/preferences.svelte';
 
   let {
     rows,
@@ -273,9 +273,9 @@
   }
 
   function persistAnchor(height: number): void {
-    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
-    const row = rows[first];
-    if (row) onScrollAnchor?.(stableKey(row), scrollTop - first * height);
+    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
+    if (row) onScrollAnchor?.(stableKey(row), offset);
   }
 </script>
 
@@ -553,7 +553,7 @@
   .count-label { display: none; }
   @media (max-width: 640px) {
     .group-spacer { min-width: 0; }
-    .group-header { display: none; }
+    .group-header { position: absolute; width: 1px; height: 0; min-height: 0; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
     .group-row {
       grid-template-columns: auto auto minmax(0, 1fr) auto;
       grid-template-areas: 'label label label action' 'count size latest action';

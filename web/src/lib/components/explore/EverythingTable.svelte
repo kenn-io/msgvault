@@ -11,7 +11,7 @@
   import { EXPLORE_COLUMNS } from '../../explore/labels';
   import { DEFAULT_EXPLORE_COLUMNS, isEmailMessageType } from '../../explore/models';
   import type { ExploreSelectionState } from '../../explore/state.svelte';
-  import { rebaseVirtualScroll, RowGeometry, tableViewportHeight } from '../../theme/preferences.svelte';
+  import { rebaseVirtualScroll, RowGeometry, scrollPositionAnchor, tableViewportHeight } from '../../theme/preferences.svelte';
   import { formatBytes, formatShortDate as formatTime } from '../../util/format';
   import SelectionCheckbox from '../common/SelectionCheckbox.svelte';
   import IdentityBadge from './IdentityBadge.svelte';
@@ -392,9 +392,9 @@
   }
 
   function persistAnchor(height: number): void {
-    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
-    const row = rows[first];
-    if (row) onScrollAnchor?.(row.key, scrollTop - first * height);
+    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
+    if (row) onScrollAnchor?.(row.key, offset);
   }
 
   function toggleLoadedSelection(): void {
@@ -902,7 +902,7 @@
     .cell--title { grid-area: title; }
     .cell--excerpt { grid-area: excerpt; color: var(--text-muted); font-size: var(--font-size-xs); }
     .table-header { grid-template-columns: 16px; padding: 0 var(--pane-pad-x); box-shadow: none; }
-    .table-header .header-cell { display: none; }
+    .table-header .header-cell { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
     .table-header .selection-header { padding: 0; }
     .skeleton-row { grid-template-columns: minmax(0, 1fr); }
     .skeleton-cell:not(:first-child) { display: none; }
