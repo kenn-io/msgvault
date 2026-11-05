@@ -64,7 +64,7 @@
     <MenuItem disabled={!controller.canWritePerson} textValue="Rename" onselect={beginRename}>
       Rename
     </MenuItem>
-    <MenuItem textValue="Keep this profile updated" onselect={async () => { await tick(); maintenance = 'tracking'; }}>Keep this profile updated</MenuItem>
+    <MenuItem textValue="Keep this profile updated" onselect={async () => { await tick(); maintenance = 'tracking'; if (!controller.definitions.length) void controller.reloadDefinitions(); }}>Keep this profile updated</MenuItem>
     <MenuItem textValue="Publish to address book" onselect={async () => { await tick(); maintenance = 'publication'; }}>Publish to address book</MenuItem>
     <MenuItem textValue="History" onselect={() => void openHistory()}>History</MenuItem>
     <MenuItem disabled={!controller.canWritePerson} tone="danger" textValue="Delete" onselect={beginDelete}>
@@ -145,7 +145,7 @@
 {/if}
 
 {#if maintenance === 'tracking'}
-  <div class="tracking-dialog">
+  <div class="tracking-dialog" title={controller.person?.display_name ?? ''}>
   <Modal
     title={controller.person?.display_name ? `Keep ${controller.person.display_name}'s profile updated` : 'Keep this profile updated'}
     closeLabel="Close profile updates"
@@ -168,6 +168,10 @@
 <style>
   .tracking-dialog :global(.kit-modal-title) {
     overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
   }
 
   /* Full width, so inside the person header's wrapping row each group drops below the actions. */

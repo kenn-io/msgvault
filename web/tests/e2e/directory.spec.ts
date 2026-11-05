@@ -213,9 +213,9 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
 
 test('Directory profile maintenance wraps long names within a narrow dialog', async ({ page }) => {
   await installMixedArchive(page);
-  const name = `${'long'.repeat(20)}@example.com`;
+  const name = 'long'.repeat(256);
   await page.route('**/api/v1/people/42', route => route.fulfill({ json: person(42, 1, [12], name) }));
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 390, height: 600 });
   await page.goto(directoryURL(42));
   await page.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
@@ -223,6 +223,10 @@ test('Directory profile maintenance wraps long names within a narrow dialog', as
   await expect(dialog).toBeVisible();
   const bounds = await dialog.evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
   expect(bounds.content).toBeLessThanOrEqual(bounds.width + 1);
+  await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
+  const toggle = dialog.getByRole('switch', { name: 'Update automatically' });
+  await toggle.check();
+  await expect(toggle).toBeChecked();
   const close = dialog.getByRole('button', { name: 'Close profile updates' });
   await expect(close).toBeInViewport();
   await close.click();

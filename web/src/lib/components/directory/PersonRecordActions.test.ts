@@ -109,6 +109,20 @@ describe('PersonRecordActions', () => {
     expect(screen.queryByText('Favorite food')).toBeNull();
   });
 
+  it('loads labels for catalog fields without embedded attribute definitions', async () => {
+    renderActions(vi.fn<typeof fetch>(async input => {
+      const request = input instanceof Request ? input : new Request(input);
+      const path = new URL(request.url).pathname;
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition({ slug: 'favorites_food', label: 'Favorite food' })] });
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
+    }));
+    await choose('Keep this profile updated');
+    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
+    expect(await within(dialog).findByText('Favorite food')).toBeDefined();
+    expect(within(dialog).queryByText('Favorites food')).toBeNull();
+  });
+
   it('renames the selected person with the current strong ETag', async () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {
