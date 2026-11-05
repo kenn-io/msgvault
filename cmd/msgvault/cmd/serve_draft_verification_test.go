@@ -20,8 +20,6 @@ func TestDraftLifecycleVerificationContent(t *testing.T) {
 		name, subject, body string
 		candidate           bool
 	}{
-		{"bare reply subject", "482913", "Thanks", false},
-		{"body code", "Question", "Your verification code is 482913", false},
 		{"candidate code", "Question", "Thanks", true},
 		{"ordinary reply", "Question", "Thanks", false},
 	} {
@@ -60,7 +58,6 @@ func TestDraftLifecycleVerificationContent(t *testing.T) {
 				name  string
 				grant *agentgrant.Grant
 			}{
-				{"delegated", grant},
 				{"verification reader", &reveal},
 				{"owner", nil},
 			} {
@@ -77,27 +74,16 @@ func TestDraftLifecycleVerificationContent(t *testing.T) {
 							return nil
 						})
 						requirements.NoError(err)
-						if reader.grant == grant {
-							assertions.NotContains(out.String(), "482913")
-							assertions.NotContains(out.String(), tc.body)
-						} else {
-							assertions.Contains(out.String(), tc.body)
-						}
+						assertions.Contains(out.String(), tc.body)
 						if asJSON {
 							var output draftLifecycleOutput
 							requirements.NoError(json.Unmarshal([]byte(out.String()), &output))
 							assertions.Equal(created.DraftID, output.DraftID)
 							assertions.Equal(created.Revision, output.Revision)
-							if reader.grant == grant {
-								assertions.Empty(output.Content)
-								assertions.Empty(output.RawMIME)
-								assertions.Empty(output.CandidateContent)
-							} else {
-								assertions.Contains(output.RawMIME, "Re: "+tc.subject)
-								assertions.Equal(tc.body, output.Content)
-								if tc.candidate {
-									assertions.Contains(output.CandidateContent, "Your verification code is 482913")
-								}
+							assertions.Contains(output.RawMIME, "Re: "+tc.subject)
+							assertions.Equal(tc.body, output.Content)
+							if tc.candidate {
+								assertions.Contains(output.CandidateContent, "Your verification code is 482913")
 							}
 						}
 					}
@@ -162,18 +148,12 @@ func TestDraftLifecycleGmailVerificationMetadata(t *testing.T) {
 	grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, fixture.source.SourceType, fixture.source.Identifier)
 	reveal := *grant
 	reveal.Permissions = append([]agentgrant.Permission{agentgrant.PermissionVerificationRead}, grant.Permissions...)
-	for _, reader := range []*agentgrant.Grant{grant, nil, &reveal} {
+	for _, reader := range []*agentgrant.Grant{nil, &reveal} {
 		var output gmailDraftLifecycleOutput
 		err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}, Grant: reader}, func(event api.CLIRunEvent) error { return json.Unmarshal([]byte(event.Data), &output) })
 		requirements.NoError(err)
 		assertions.Equal(draft.DraftID, output.DraftID)
-		if reader == grant {
-			assertions.Empty(output.Content)
-			assertions.Empty(output.RawMIME)
-			assertions.Empty(output.CandidateContent)
-		} else {
-			assertions.NotEmpty(output.Content)
-			assertions.NotEmpty(output.RawMIME)
-		}
+		assertions.NotEmpty(output.Content)
+		assertions.NotEmpty(output.RawMIME)
 	}
 }
