@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -22,9 +21,6 @@ func UserIdentifier(channelID, userID string) string {
 func Register(ctx context.Context, st *store.Store, client *Client, channelID string) (*store.Source, error) {
 	if st == nil || client == nil {
 		return nil, errors.New("LINE registration unavailable")
-	}
-	if !config.ValidLineChannelID(channelID) || client.channelID != channelID {
-		return nil, errors.New("invalid LINE channel ID")
 	}
 	service, _, err := st.EnsureCommunicationServiceContext(ctx, store.CommunicationServiceInput{Slug: "line", DisplayLabel: "LINE", ScopePolicy: store.ScopePolicyOptional, DefaultScopeKind: new("line_channel"), Normalization: store.NormalizationLower, NormalizationVersion: 1})
 	if err != nil {

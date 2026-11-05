@@ -224,6 +224,37 @@ func TestProcessorRejectsSourceBoundToAnotherChannel(t *testing.T) {
 	checks.Zero(count)
 }
 
+func TestProcessorEditMarkerFailureRollsBackBody(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	base := f.message("1", "original", f.now.UnixMilli())
+	f.enqueue(t, base, time.Time{})
+	f.run(t)
+	if f.st.IsPostgreSQL() {
+		_, err := f.st.DB().Exec(`CREATE FUNCTION fail_line_edit_marker() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN RAISE EXCEPTION 'synthetic edit marker failure'; END $$`)
+		must.NoError(err)
+		_, err = f.st.DB().Exec(`CREATE TRIGGER fail_line_edit_marker BEFORE UPDATE ON messages FOR EACH ROW
+ WHEN (NEW.is_edited AND NOT OLD.is_edited) EXECUTE FUNCTION fail_line_edit_marker()`)
+		must.NoError(err)
+	} else {
+		_, err := f.st.DB().Exec(`CREATE TRIGGER fail_line_edit_marker BEFORE UPDATE ON messages
+ WHEN NEW.is_edited AND NOT OLD.is_edited BEGIN SELECT RAISE(ABORT,'synthetic edit marker failure'); END`)
+		must.NoError(err)
+	}
+	edit := base
+	edit.Type = "messageEdited"
+	edit.WebhookEventID = "edit-marker-failure"
+	edit.Timestamp++
+	edit.Message = &Message{ID: "1", Type: "text", Text: "edited"}
+	f.enqueue(t, edit, time.Time{})
+	must.ErrorContains(f.processor.Process(t.Context()), "synthetic edit marker failure")
+	archived := f.archived(t, "1")
+	checks.Equal("original", archived.body)
+	checks.False(archived.edited)
+}
+
 func TestProcessorLatestEditWins(t *testing.T) {
 	checks := assert.New(t)
 	f := newInboxFixture(t)
@@ -769,6 +800,7 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 		checks.Equal("pending", state)
 		_, err = f.st.DB().Exec(`DROP TRIGGER fail_line_write`)
 		must.NoError(err)
+		must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&f.now))
 		f.run(t)
 		body := f.archived(t, "1").body
 		checks.Equal("text must survive a storage failure", body)
@@ -800,6 +832,7 @@ func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {
 		checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser))
 		_, err = f.st.DB().Exec(`DROP TRIGGER line_membership_write_fails`)
 		must.NoError(err)
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT next_attempt_at FROM line_webhook_events WHERE source_id=? AND webhook_event_id=?`), f.source.ID, message.WebhookEventID).Scan(&f.now))
 		f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }))
 		f.run(t)
 		checks.Equal(message.Message.Text, f.archived(t, message.Message.ID).body)
