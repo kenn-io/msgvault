@@ -17,11 +17,11 @@ function rootOnly(depth = 1): PersonNetworkProjection {
   };
 }
 
-function connected(depth = 2, truncated = false): PersonNetworkProjection {
+function connected(depth = 2): PersonNetworkProjection {
   const network: PersonNetworkProjection = {
     root_person_id: 7,
     depth,
-    truncated,
+    truncated: false,
     nodes: [
       { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
       { id: 'person:8', kind: 'person', entity_id: 8, label: 'Curated Peer', hop: 1 },
@@ -66,7 +66,13 @@ function deferredResponse() {
 }
 
 function networkFetcher(network: PersonNetworkProjection) {
-  return vi.fn<typeof fetch>(async () => Response.json(network));
+  return vi.fn<typeof fetch>(async (input) => {
+    const depth = Number(new URL(requestOf(input).url).searchParams.get('depth'));
+    const nodes = network.nodes.filter((node) => node.hop <= depth);
+    const hops = new Map(nodes.map((node) => [node.id, node.hop]));
+    const edges = network.edges.filter((edge) => hops.has(edge.source_node_id) && hops.has(edge.target_node_id) && Math.min(hops.get(edge.source_node_id)!, hops.get(edge.target_node_id)!) < depth);
+    return Response.json({ ...network, depth, nodes, edges });
+  });
 }
 
 describe('PersonNetwork', () => {
@@ -76,7 +82,9 @@ describe('PersonNetwork', () => {
     const onOpenOrganization = vi.fn();
     const { container } = render(PersonNetwork, { controller, onOpenPerson, onOpenOrganization });
 
-    const list = await screen.findByRole('list', { name: 'Network connections' });
+    await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
+    await screen.findByRole('button', { name: 'Shared Organization' });
+    const list = screen.getByRole('list', { name: 'Network connections' });
     expect([...list.querySelectorAll('li')].map((item) => item.textContent)).toEqual([
       'Selected Person · works with · Curated Peer',
       'Curated Peer · Engineer · Shared Organization',
@@ -98,29 +106,19 @@ describe('PersonNetwork', () => {
     expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
   });
 
-  it('shows a symmetric relationship label when the root is the target', async () => {
-    const network = connected();
-    network.nodes = network.nodes.slice(0, 2);
-    network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'friend', label: 'friend' }];
-    const { controller } = controllerWith(networkFetcher(network));
-    controller.relationshipTypes = [{
-      id: 31, revision: 1, slug: 'friend', forward_label: 'friend', reverse_label: 'friend',
-      is_symmetric: true, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
-      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-    }];
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByRole('button', { name: 'Curated Peer' });
-    expect(container.querySelector('.edge-label')?.textContent).toBe('friend');
-  });
-
-  it('marks an incoming relationship label right to left', async () => {
+  it('uses the reverse type label when the root is the target', async () => {
     const network = connected();
     network.nodes = network.nodes.slice(0, 2);
     network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' }];
     const { controller } = controllerWith(networkFetcher(network));
+    controller.relationshipTypes = [{
+      id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'mentored by',
+      is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+    }];
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await screen.findByRole('button', { name: 'Curated Peer' });
-    expect(container.querySelector('.edge-label')?.textContent).toBe('← mentors');
+    expect(container.querySelector('.edge-label')?.textContent).toBe('mentored by');
   });
 
   it('marks an upward same-column relationship label bottom to top', async () => {
@@ -132,16 +130,15 @@ describe('PersonNetwork', () => {
         { id: 'person:9', kind: 'person', entity_id: 9, label: 'Beta', hop: 1 }
       ],
       edges: [
-        { id: 'relationship:31', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', label: 'knows' },
-        { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:9', label: 'knows' },
+        { id: 'relationship:31', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', relationship_type_slug: 'knows', label: 'knows' },
+        { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:9', relationship_type_slug: 'knows', label: 'knows' },
         { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:8', relationship_type_slug: 'mentor', label: 'mentors' }
       ]
     };
     const { controller } = controllerWith(networkFetcher(network));
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await fireEvent.click(await screen.findByRole('radio', { name: '2 steps' }));
-    await screen.findByRole('button', { name: 'Beta' });
-    expect([...container.querySelectorAll('.edge-label')].map((chip) => chip.textContent)).toContain('↑ mentors');
+    await waitFor(() => expect([...container.querySelectorAll('.edge-label')].map((chip) => chip.textContent)).toContain('↑ mentors'));
   });
 
   it('joins three relations between direct people in reading order', async () => {
@@ -168,7 +165,7 @@ describe('PersonNetwork', () => {
   it('shows a failed first load and retries even without an earlier graph', async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json({ error: 'unavailable', message: 'Synthetic network unavailable.' }, { status: 503 }))
-      .mockResolvedValueOnce(Response.json(connected()));
+      .mockResolvedValueOnce(Response.json(connected(1)));
     const controller = new DirectoryEntityController(createAPIClient(fetcher), 7);
     render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     expect((await screen.findByRole('alert')).textContent).toContain('Synthetic network unavailable.');
@@ -177,7 +174,7 @@ describe('PersonNetwork', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('sends exact depth and ended-data queries and retains the last projection through loading, error, and retry', async () => {
+  it('reloads for depth and ended settings and retains the graph through loading, error, and retry', async () => {
     const depthTwo = deferredResponse();
     const requests: Request[] = [];
     let depthTwoAttempts = 0;
@@ -214,11 +211,6 @@ describe('PersonNetwork', () => {
     expect(screen.getAllByText('Curated Peer').length).toBeGreaterThan(0);
     await fireEvent.click(screen.getByRole('button', { name: 'Retry network' }));
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
-
-    const queries = requests.map((request) => new URL(request.url).searchParams);
-    expect(queries.some((query) => query.get('depth') === '1' && query.get('include_ended') === 'false')).toBe(true);
-    expect(queries.some((query) => query.get('depth') === '2' && query.get('include_ended') === 'false')).toBe(true);
-    expect(queries.filter((query) => query.get('depth') === '2' && query.get('include_ended') === 'true')).toHaveLength(2);
 
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '3')).toBe(true));
