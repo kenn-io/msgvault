@@ -188,7 +188,7 @@ func TestCalendarListingWithMalformedLegacyMetadata(t *testing.T) {
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
 	// JSONB rejects malformed input at storage time.
 	if st.IsPostgreSQL() {
-		return
+		t.Skip("PostgreSQL JSONB rejects malformed metadata at write time")
 	}
 	// Simulate malformed metadata archived before the UID index was introduced.
 	_, err := st.db.Exec(`DROP INDEX idx_messages_calendar_ical_uid`)
