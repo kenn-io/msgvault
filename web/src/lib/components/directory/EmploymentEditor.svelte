@@ -5,22 +5,22 @@
   import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment, EmploymentBody, Organization } from '../../directory/models';
-  import OrganizationEditor from './OrganizationEditor.svelte';
   import EmploymentCurrentData from './EmploymentCurrentData.svelte';
 
   interface Props {
     controller: DirectoryEntityController;
     personID: number;
     employment?: Employment;
-    action?: 'edit' | 'end';
     onDone?: () => void;
     onClose?: () => void;
   }
 
-  let { controller, personID, employment = undefined, action = 'edit', onDone = () => undefined, onClose = () => undefined }: Props = $props();
+  let { controller, personID, employment = undefined, onDone = () => undefined, onClose = () => undefined }: Props = $props();
   const initialEmployment = untrack(() => employment);
-  const initialAction = untrack(() => action);
+  let formElement = $state<HTMLFormElement>();
   let creatingOrganization = $state(false);
+  let organizationName = $state('');
+  let organizationDomain = $state('');
   let organizationID = $state(initialEmployment ? String(initialEmployment.organization_id) : '');
   let title = $state(initialEmployment?.title ?? '');
   let role = $state(initialEmployment?.role ?? '');
@@ -112,16 +112,24 @@
   }
 
   async function submit(): Promise<void> {
-    if (submitting || !organizationID || controller.createBlocked.employments) return;
+    if (submitting || (!organizationID && !(creatingOrganization && organizationName.trim())) || startDateError || endDateError || controller.createBlocked.employments || (creatingOrganization && controller.createBlocked.organizations)) return;
     submitting = true;
     message = '';
     conflictCurrent = undefined;
     conflictOrganization = undefined;
     try {
+      if (creatingOrganization) {
+        const created = await controller.createOrganization({ name: organizationName.trim(), kind: 'company', primary_domain: organizationDomain.trim() || null });
+        if (!created.ok) {
+          message = created.kind === 'unknown' || created.kind === 'blocked' ? `The create outcome is unknown. ${created.message}` : created.message;
+          return;
+        }
+        selectedOrganization = created.entity;
+        organizationID = String(created.entity!.id);
+        creatingOrganization = false;
+      }
       const result = initialEmployment
-        ? initialAction === 'end'
-          ? await controller.endEmployment(initialEmployment.id, { end_date: endDate.trim() })
-          : await controller.updateEmployment(initialEmployment.id, (freshEmployment) => body(freshEmployment))
+        ? await controller.updateEmployment(initialEmployment.id, (freshEmployment) => body(freshEmployment))
         : await controller.createEmployment({ ...body(), source: 'user' });
       if (result.ok) {
         onDone();
@@ -173,21 +181,29 @@
 </script>
 
 <Modal
-  title={initialAction === 'end' ? 'End employment' : initialEmployment ? 'Edit employment' : 'Add employment'}
-  ariaLabel={initialAction === 'end' ? 'End employment' : initialEmployment ? 'Edit employment' : 'Add employment'}
+  title={initialEmployment ? 'Edit employment' : 'Add employment'}
+  ariaLabel={initialEmployment ? 'Edit employment' : 'Add employment'}
+  closable={true}
   closeLabel="Close employment editor"
+  width="560px"
   maxWidth="min(560px, calc(100vw - 32px))"
   onclose={requestClose}
 >
-  <form class="editor" aria-busy={loading || submitting} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
+  <form bind:this={formElement} class="editor" aria-busy={loading || submitting} onsubmit={(event) => { event.preventDefault(); void submit(); }}>
     {#if loading}
       <p role="status">Loading current employment…</p>
-    {:else if initialAction === 'end'}
-      <label>End date<TextInput ariaLabel="Employment end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" required block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} /></label>
-      {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
     {:else}
-      <div class="field"><span class="label">Organization</span><div class="org"><Typeahead title="Organization" placeholder="Organization" fallbackLabel="Choose an organization" value={organizationID} options={organizationOptions} remote loading={controller.organizationsLoading} error={controller.errors.organizations} onquery={(query) => void controller.refreshOrganizations(query)} onselect={(value) => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value) ?? selectedOrganization; }} disabled={submitting || !!initialEmployment} />
-        {#if !initialEmployment}<Button size="sm" label="New organization" disabled={submitting} onclick={() => creatingOrganization = true} />{/if}</div></div>
+      <div class="field">
+        <div class="organization-heading"><span>Organization</span>
+          {#if !initialEmployment}<Button size="sm" label={creatingOrganization ? 'Choose existing' : 'New organization'} disabled={submitting} onclick={() => { creatingOrganization = !creatingOrganization; }} />{/if}
+        </div>
+        {#if creatingOrganization}
+          <div class="pair"><label>Name<TextInput ariaLabel="Organization name" bind:value={organizationName} required block disabled={submitting} /></label>
+          <label>Domain<TextInput ariaLabel="Organization domain" bind:value={organizationDomain} block disabled={submitting} /></label></div>
+        {:else}
+          <div class="org"><Typeahead title="Organization" placeholder="Organization" fallbackLabel="Choose an organization" value={organizationID} options={organizationOptions} remote loading={controller.organizationsLoading} error={controller.errors.organizations} onquery={(query) => void controller.refreshOrganizations(query)} onselect={(value) => { organizationID = value; selectedOrganization = controller.organizations.find(item => String(item.id) === value) ?? selectedOrganization; }} disabled={submitting || !!initialEmployment} /></div>
+        {/if}
+      </div>
       <div class="pair"><label>Title<TextInput ariaLabel="Employment title" bind:value={title} block disabled={submitting} /></label>
       <label>Role<TextInput ariaLabel="Employment role" bind:value={role} block disabled={submitting} /></label></div>
       <div class="pair"><label>Department<TextInput ariaLabel="Employment department" bind:value={department} block disabled={submitting} /></label>
@@ -208,26 +224,27 @@
       </div>
     {/if}
     {#if controller.createBlocked.employments}<Button label="Refresh employment records" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
-    <div class="actions">
-      <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-      <Button type="submit" tone="info" surface="solid"
-        label={initialAction === 'end' ? 'Confirm end employment' : initialEmployment ? 'Save employment' : 'Create employment'}
-        disabled={loading || submitting || !organizationID || (initialAction === 'end' && !endDate.trim()) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments} />
-    </div>
+    {#if controller.createBlocked.organizations}<Button label="Refresh organizations" disabled={submitting} onclick={() => void controller.refreshOrganizations()} />{/if}
   </form>
+  {#snippet footer()}
+    <Button label="Cancel" disabled={submitting} onclick={requestClose} />
+    <Button tone="info" surface="solid" busy={submitting}
+      label={initialEmployment ? 'Save employment' : 'Create employment'}
+      disabled={loading || (creatingOrganization ? !organizationName.trim() || controller.createBlocked.organizations : !organizationID) || Boolean(startDateError) || Boolean(endDateError) || controller.createBlocked.employments}
+      onclick={() => formElement?.requestSubmit()} />
+  {/snippet}
 </Modal>
-{#if creatingOrganization}<OrganizationEditor {controller} onDone={(organization) => { selectedOrganization = organization; organizationID = String(organization?.id ?? ''); creatingOrganization = false; }} onClose={() => { creatingOrganization = false; }} />{/if}
 
 
 <style>
   .editor { display: grid; gap: var(--field-gap); min-width: 0; }
   label, .field { display: grid; gap: var(--label-gap); align-content: start; color: var(--text-secondary); font-size: var(--font-size-sm); }
   .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--field-gap); }
-  .org { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--control-gap); align-items: center; }
+  .org { --typeahead-max-width: 100%; --typeahead-min-width: 100%; min-width: 0; }
+  .organization-heading { display: flex; justify-content: space-between; align-items: center; gap: var(--space-2); }
   textarea { min-height: 5rem; resize: vertical; padding: var(--space-2) var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); font: inherit; }
   .field-error { color: var(--text-danger); font-size: var(--font-size-xs); margin: 0; }
   p { margin: 0; } [role="alert"] { color: var(--text-danger); }
-  .checks, .actions { display: flex; gap: var(--space-5); flex-wrap: wrap; }
-  .actions { gap: var(--control-gap); justify-content: flex-end; padding-top: var(--space-2); }
+  .checks { display: flex; gap: var(--space-5); flex-wrap: wrap; }
   @media (max-width: 640px) { .pair { grid-template-columns: minmax(0, 1fr); } }
 </style>

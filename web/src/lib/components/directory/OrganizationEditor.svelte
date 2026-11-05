@@ -5,6 +5,8 @@
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { DirectoryEntityMutationResult, Organization, OrganizationProfile, OrganizationProfileBody } from '../../directory/models';
 
+  import DetailRow from '../people/DetailRow.svelte';
+
   interface Props {
     controller: DirectoryEntityController;
     organization?: Pick<Organization, 'id'> & Partial<Organization>;
@@ -14,6 +16,7 @@
 
   let { controller, organization = undefined, onDone = () => undefined, onClose = () => undefined }: Props = $props();
   const initialOrganization = untrack(() => organization);
+  let formElement = $state<HTMLFormElement>();
   let name = $state(initialOrganization?.name ?? '');
   let kind = $state(initialOrganization?.kind ?? 'company');
   let primaryDomain = $state(initialOrganization?.primary_domain ?? '');
@@ -28,6 +31,9 @@
   let message = $state('');
   let conflictCurrent = $state<OrganizationProfile>();
   let confirmDelete = $state(false);
+  let checkingDelete = $state(false);
+  let deleteError = $state('');
+  let holders = $state<Awaited<ReturnType<DirectoryEntityController['organizationEmploymentHolders']>>>();
   let releaseScope: (() => void) | undefined;
   const kindOptions = ['company', 'nonprofit', 'school', 'government', 'household', 'other'].map((value) => ({ value, label: value[0]!.toUpperCase() + value.slice(1) }));
 
@@ -60,43 +66,60 @@
   }
 
   async function saveOrganization(): Promise<void> {
-    if (submitting || !name.trim() || controller.createBlocked.organizations) return;
+    if (loading || submitting || (initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations) return;
     submitting = true;
     message = '';
     conflictCurrent = undefined;
     try {
       const body = { name: name.trim(), kind: kind as 'company', primary_domain: primaryDomain.trim() || null, description: description.trim() || null };
-      const result = initialOrganization
-        ? await controller.updateOrganization(initialOrganization.id, body)
-        : await controller.createOrganization(body);
-      if (result.ok) { onDone(result.entity); return; }
-      handleFailure(result);
+      let saved = currentProfile?.organization;
+      if (!initialOrganization || !saved || Object.entries(body).some(([key, value]) => value !== (saved?.[key as keyof Organization] ?? null))) {
+        const result = initialOrganization
+          ? await controller.updateOrganization(initialOrganization.id, body)
+          : await controller.createOrganization(body);
+        if (!result.ok) { handleFailure(result); return; }
+        saved = result.entity!;
+        if (!initialOrganization) { onDone(saved); return; }
+        currentProfile = { ...currentProfile!, organization: saved };
+      }
+      const aliasDraft = values(aliases);
+      const categoryDraft = values(categories);
+      const aliasDelta = valueDelta(baselineAliases, aliasDraft);
+      const categoryDelta = valueDelta(baselineCategories, categoryDraft);
+      if (aliasDelta.added.length || aliasDelta.removed.size || categoryDelta.added.length || categoryDelta.removed.size) {
+        const result = await controller.putOrganizationProfile(initialOrganization!.id, (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta));
+        if (!result.ok) {
+          handleFailure(result);
+          message = `Aliases and categories remain unsaved. ${message}`;
+          return;
+        }
+        baselineAliases = aliasDraft;
+        baselineCategories = categoryDraft;
+      }
+      onDone(saved);
     } finally {
       submitting = false;
     }
   }
 
-  async function saveProfile(): Promise<void> {
-    if (!initialOrganization || !currentProfile || submitting) return;
-    submitting = true;
+  async function checkDeletion(): Promise<void> {
+    if (!initialOrganization) return;
+    confirmDelete = true;
+    checkingDelete = true;
+    deleteError = '';
+    holders = undefined;
     message = '';
-    conflictCurrent = undefined;
     try {
-      const aliasDelta = valueDelta(baselineAliases, values(aliases));
-      const categoryDelta = valueDelta(baselineCategories, values(categories));
-      const result = await controller.putOrganizationProfile(
-        initialOrganization.id,
-        (freshProfile) => profileBody(freshProfile, aliasDelta, categoryDelta)
-      );
-      if (result.ok) { onDone(); return; }
-      handleFailure(result);
+      holders = await controller.organizationEmploymentHolders(initialOrganization.id);
+    } catch (cause) {
+      deleteError = cause instanceof Error ? cause.message : 'Unable to check employment records.';
     } finally {
-      submitting = false;
+      checkingDelete = false;
     }
   }
 
   async function remove(): Promise<void> {
-    if (!initialOrganization || submitting) return;
+    if (!initialOrganization || submitting || checkingDelete || !holders || holders.count > 0) return;
     submitting = true;
     message = '';
     try {
@@ -105,7 +128,6 @@
       handleFailure(result);
     } finally {
       submitting = false;
-      confirmDelete = false;
     }
   }
 
@@ -266,31 +288,34 @@
 <Modal
   title={initialOrganization ? `Edit ${currentProfile?.organization.name ?? initialOrganization.name ?? 'organization'}` : 'Create organization'}
   ariaLabel={initialOrganization ? `Edit ${currentProfile?.organization.name ?? initialOrganization.name ?? 'organization'}` : 'Create organization'}
+  closable={true}
   closeLabel="Close organization editor"
   onclose={requestClose}
+  width="640px"
   maxWidth="min(640px, calc(100vw - 32px))"
 >
   <div class="editor" aria-busy={loading || submitting}>
-    {#if loading}<p role="status">Loading current organization…</p>{:else}
-      <form onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
+    {#if confirmDelete}
+      <section class="deletion" aria-label="Delete organization confirmation">
+        <h3>Delete {currentProfile?.organization.name}?</h3>
+        {#if checkingDelete}<p role="status">Checking employment records…</p>
+        {:else if deleteError}<p role="alert">{deleteError}</p><Button label="Retry employment check" onclick={() => void checkDeletion()} />
+        {:else if holders && holders.count > 0}
+          <p>{currentProfile?.organization.name} has {holders.atLeast ? 'at least ' : ''}{holders.count} employment {holders.count === 1 ? 'record' : 'records'}. Remove {holders.count === 1 ? 'it' : 'them'} first.</p>
+          {#each holders.people as person}<DetailRow description="Employment record">{person}</DetailRow>{/each}
+        {:else}<p>This permanently removes the organization.</p>{/if}
+      </section>
+    {:else if loading}<p role="status">Loading current organization…</p>{:else}
+      <form bind:this={formElement} onsubmit={(event) => { event.preventDefault(); void saveOrganization(); }}>
         <label>Name<TextInput ariaLabel="Organization name" bind:value={name} required block disabled={submitting} /></label>
         <label>Kind<SelectDropdown title="Organization kind" value={kind} options={kindOptions} onchange={(value) => { kind = value; }} disabled={submitting} /></label>
         <label>Primary domain<TextInput ariaLabel="Organization primary domain" bind:value={primaryDomain} block disabled={submitting} /></label>
-        <label>Description<textarea aria-label="Organization description" bind:value={description} disabled={submitting}></textarea></label>
-        <Button type="submit" tone="info" surface="solid" label={initialOrganization ? 'Save organization' : 'Create organization'} disabled={submitting || !name.trim() || controller.createBlocked.organizations} />
-      </form>
-      {#if initialOrganization && currentProfile}
-        <form onsubmit={(event) => { event.preventDefault(); void saveProfile(); }}>
-          <h3>Structured profile</h3>
+        {#if initialOrganization && currentProfile}
           <label>Aliases<TextInput ariaLabel="Organization aliases" bind:value={aliases} block disabled={submitting} /></label>
           <label>Categories<TextInput ariaLabel="Organization categories" bind:value={categories} block disabled={submitting} /></label>
-          <p class="hint">Existing contact points, addresses, identifiers, and media references are preserved.</p>
-          <Button type="submit" label="Save organization profile" disabled={submitting} />
-        </form>
-        {#if confirmDelete}
-          <div role="group" aria-label="Delete organization confirmation"><p>Delete this organization if it has no employment records?</p><Button label="Cancel organization deletion" disabled={submitting} onclick={() => { confirmDelete = false; }} /><Button tone="danger" surface="solid" label="Confirm delete organization" disabled={submitting} onclick={() => void remove()} /></div>
-        {:else}<Button tone="danger" label="Delete organization" disabled={submitting} onclick={() => { confirmDelete = true; }} />{/if}
-      {/if}
+        {/if}
+        <label>Description<textarea aria-label="Organization description" bind:value={description} disabled={submitting}></textarea></label>
+      </form>
     {/if}
     {#if message}
       <div role="alert">
@@ -321,19 +346,33 @@
         {/if}
       </div>
     {/if}
+    {#if initialOrganization && !loading && !currentProfile}<Button label="Retry organization load" onclick={() => void loadCurrent()} />{/if}
     {#if controller.createBlocked.organizations}<Button label="Refresh organizations" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
-    <div class="actions"><Button label="Cancel" disabled={submitting} onclick={requestClose} /></div>
   </div>
+  {#snippet footer()}
+    <div class="footer-actions">
+    {#if confirmDelete}
+      <Button label="Cancel" ariaLabel="Cancel organization deletion" disabled={submitting} onclick={() => { confirmDelete = false; message = ''; }} />
+      <Button tone="danger" surface="solid" label="Delete" ariaLabel="Confirm delete organization" busy={submitting} disabled={checkingDelete || !!deleteError || !holders || holders.count > 0} onclick={() => void remove()} />
+    {:else}
+      {#if initialOrganization && currentProfile}<Button class="delete-organization" tone="danger" label="Delete organization" disabled={submitting} onclick={() => void checkDeletion()} />{/if}
+      <Button label="Cancel" disabled={submitting} onclick={requestClose} />
+      <Button tone="info" surface="solid" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={loading || (!!initialOrganization && !currentProfile) || !name.trim() || controller.createBlocked.organizations} onclick={() => formElement?.requestSubmit()} />
+    {/if}
+    </div>
+  {/snippet}
 </Modal>
 
 <style>
-  .editor, form { display: grid; gap: var(--space-3); }
-  form + form { padding-top: var(--space-3); border-top: 1px solid var(--border-default); }
-  label { display: grid; gap: var(--space-1); color: var(--text-muted); font-size: var(--font-size-xs); }
+  .editor, form { display: grid; gap: var(--field-gap); }
+  .footer-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: inherit; width: 100%; }
+  .deletion { display: grid; gap: var(--space-2); }
+  :global(.kit-button.kit-button--danger.delete-organization) { margin-right: auto; border-color: transparent; background: transparent; color: var(--text-danger); }
+  label { display: grid; gap: var(--label-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
   textarea { min-height: 5rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }
-  h3, h4, p, dl, dd, ul { margin: 0; } .hint { color: var(--text-muted); font-size: var(--font-size-xs); } [role="alert"] { color: var(--text-danger); }
+  h3, h4, p, dl, dd, ul { margin: 0; } [role="alert"] { color: var(--text-danger); }
   .current-data { display: grid; gap: var(--space-2); margin-top: var(--space-2); max-height: 20rem; overflow: auto; }
   .current-data dl { display: grid; gap: var(--space-1); } .current-data dl div { display: grid; grid-template-columns: 8rem 1fr; gap: var(--space-2); }
   .current-data dt, .current-data h4 { font-weight: 600; } .current-data ul { padding-left: var(--space-4); }
-  .actions { display: flex; justify-content: flex-end; }
+  @media (max-width: 640px) { :global(.kit-button.kit-button--danger.delete-organization) { flex-basis: 100%; justify-content: flex-start; } }
 </style>

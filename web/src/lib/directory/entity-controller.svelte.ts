@@ -48,6 +48,7 @@ import type {
   PersonRelationshipView,
   RelationshipType,
 } from './models';
+import { listOrganizationEmployments, getPersonProfile } from '../api/generated/api/api';
 type RequestResult<T> = {
   data?: T;
   error?: unknown;
@@ -279,6 +280,25 @@ export class DirectoryEntityController {
     if (!owner || !this.organizationRecords.has(id)) { this.organizationRecords.set(id, response.data); this.organizationETags.set(id, response.etag); }
     return response.data;
   }
+  async organizationEmploymentHolders(id: number): Promise<{ count: number; atLeast: boolean; people: string[] }> {
+    const abort = this.beginEntityRequest();
+    try {
+      const response = await listOrganizationEmployments({ id }, { limit: 200 }, { ...this.client, signal: abort.signal });
+      if (!this.isActive(abort)) throw new Error('Request was cancelled.');
+      if (!response.data) throw new Error(failureMessage(response.error, response.response.status));
+      const records = response.data.employments;
+      const ids = [...new Set(records.map(record => record.person_id))].slice(0, 3);
+      const people = await Promise.all(ids.map(async personID => {
+        try {
+          const person = await getPersonProfile({ id: personID }, { ...this.client, signal: abort.signal });
+          return person.data?.display_name;
+        } catch { return undefined; }
+      }));
+      if (!this.isActive(abort)) throw new Error('Request was cancelled.');
+      return { count: records.length, atLeast: records.length === 200, people: people.filter((name): name is string => !!name) };
+    } finally { this.entityRequests.delete(abort); }
+  }
+
   async prepareEmploymentMutation(id: number): Promise<Employment> {
     const response = await this.getMutable((signal) =>
       generatedGetEmployment(
