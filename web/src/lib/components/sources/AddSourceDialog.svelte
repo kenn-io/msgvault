@@ -1,18 +1,29 @@
 <script lang="ts">
   import { Button } from '@kenn-io/kit-ui';
+  import { tick } from 'svelte';
   import { ADD_SOURCE_KINDS, type CommandSourceKind } from '../../sources/add-source';
   import Dialog from '../common/Dialog.svelte';
   import AddSourceSteps from './AddSourceSteps.svelte';
 
   let { onclose, onOpenSettings }: { onclose: () => void; onOpenSettings: (category: string) => void } = $props();
   let kind = $state<CommandSourceKind>();
+  let picker = $state<HTMLDivElement>();
+
+  async function back() {
+    const label = `Set up ${kind?.name}`;
+    kind = undefined;
+    await tick();
+    picker?.querySelectorAll('button').forEach(button => {
+      if (button.getAttribute('aria-label') === label) button.focus();
+    });
+  }
 </script>
 
 <Dialog title="Add source" {onclose}>
   {#if kind}
-    <AddSourceSteps {kind} onback={() => (kind = undefined)} />
+    <AddSourceSteps {kind} onback={back} />
   {:else}
-    <div class="picker">
+    <div class="picker" bind:this={picker}>
       <ul class="overview" aria-label="Source kinds">
         {#each ADD_SOURCE_KINDS as source (source.id)}
           <li class="row">

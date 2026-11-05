@@ -17,7 +17,11 @@
   {#if posix && cmd}
     {#if kind.id === 'imap'}<p>You'll be prompted for your password.</p>{/if}
     {#if posix === cmd}
-      <CommandLine command={posix} />
+      <div class="terminal">
+        <p>POSIX shell and Command Prompt</p>
+        <p>Start Command Prompt with <code>cmd /d /v:off</code>, then paste:</p>
+        <CommandLine command={posix} />
+      </div>
     {:else}
       <div class="terminal"><p>POSIX shell</p><CommandLine command={posix} /></div>
       <div class="terminal">

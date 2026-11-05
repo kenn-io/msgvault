@@ -534,11 +534,12 @@ describe('SourcesWorkspace', () => {
     await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
     expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
     expect(dialog.getAllByRole('button', { name: 'Copy msgvault add-account you@gmail.com' })).toHaveLength(1);
-    expect(dialog.queryByText('POSIX shell')).toBeNull();
-    expect(dialog.queryByText('Command Prompt')).toBeNull();
-    expect(dialog.queryByText(/Start Command Prompt with/)).toBeNull();
+    expect(dialog.getByText('POSIX shell and Command Prompt')).toBeDefined();
+    expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();
+    dialog.getByRole('button', { name: 'Back' }).focus();
     await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
     expect(dialog.getByRole('list', { name: 'Source kinds' })).toBeDefined();
+    expect(document.activeElement).toBe(dialog.getByRole('button', { name: 'Set up Gmail' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
     expect((dialog.getByLabelText('Email address') as HTMLInputElement).value).toBe('');
     await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
@@ -567,6 +568,9 @@ describe('SourcesWorkspace', () => {
     expect(copies[0].getAttribute('aria-label')).not.toBe(copies[1].getAttribute('aria-label'));
     await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: '' } });
     expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
+    dialog.getByRole('button', { name: 'Back' }).focus();
+    await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
+    expect(document.activeElement).toBe(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
   });
 
   it('opens existing CardDAV setup and closes the picker', async () => {
