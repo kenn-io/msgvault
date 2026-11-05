@@ -44,7 +44,7 @@ func TestSanitizeEventRemovesCapabilities(t *testing.T) {
 	}
 }
 
-func TestOfficialEventShapes(t *testing.T) {
+func TestSourceConversationID(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 

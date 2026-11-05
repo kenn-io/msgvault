@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/line"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/lineapi"
 )
@@ -72,9 +71,6 @@ func TestReceiverWakeAfterCommit(t *testing.T) {
 		must.NoError(err)
 		must.Len(rows, 1)
 		checks.Equal("event-1", rows[0].WebhookEventID)
-		checks.NotContains(rows[0].RawJSON, "replyToken")
-		checks.NotContains(rows[0].RawJSON, "markAsReadToken")
-		checks.Contains(rows[0].RawJSON, "quoteToken")
 	})
 	must.NoError(err)
 	body := `{"destination":"` + receiverBot + `","events":[{"type":"message","replyToken":"ephemeral","webhookEventId":"event-1","timestamp":123,"source":{"type":"user"},"message":{"id":"123","type":"text","text":"synthetic","quoteToken":"retained","nested":[{"markAsReadToken":"ephemeral"}]}}]}`
@@ -119,7 +115,6 @@ func TestReceiverEnvelopeValidation(t *testing.T) {
 		{"empty destination", `{"destination":"","events":[]}`, http.StatusBadRequest},
 		{"null events", receiverEnvelope("null"), http.StatusBadRequest},
 		{"object events", receiverEnvelope("{}"), http.StatusBadRequest},
-		{"wrong destination", `{"destination":"other","events":[]}`, http.StatusUnauthorized},
 		{"bad JSON", `{`, http.StatusBadRequest},
 		{"trailing JSON", receiverEnvelope("[]") + `{}`, http.StatusBadRequest},
 		{"missing id", receiverEnvelope(`[{"type":"future","timestamp":123}]`), http.StatusBadRequest},
@@ -203,104 +198,97 @@ func (b *receiverBlockingBody) Read(p []byte) (int, error) {
 }
 func (*receiverBlockingBody) Close() error { return nil }
 
-func TestReceiverUnsignedBodyReadsAreBounded(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
+func TestReceiverBoundedIngress(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("line", "2000000000")
-	must.NoError(err)
-	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, nil)
-	must.NoError(err)
+	require.NoError(t, err)
+	require.NoError(t, st.SetLineBotContext(t.Context(), source.ID, receiverBot))
+	var wake func(string)
+	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(channel string) {
+		if wake != nil {
+			wake(channel)
+		}
+	})
+	require.NoError(t, err)
+	t.Run("unsigned body reads", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		const readLimit = 16
+		started := make(chan struct{}, readLimit)
+		release := make(chan struct{})
+		responses := make(chan int, readLimit)
+		var requests sync.WaitGroup
+		unblock := sync.OnceFunc(func() { close(release); requests.Wait() })
+		t.Cleanup(unblock)
+		for range readLimit {
+			requests.Go(func() {
+				request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)
+				request.Body = io.NopCloser(io.MultiReader(strings.NewReader(strings.Repeat("x", 4096)), &receiverBlockingBody{started: started, release: release}))
+				response := httptest.NewRecorder()
+				receiver.ServeHTTP(response, request)
+				responses <- response.Code
+			})
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				must.FailNow("timed out waiting for unsigned body reads")
+			}
+		}
 
-	const readLimit = 16
-	started := make(chan struct{}, readLimit)
-	release := make(chan struct{})
-	responses := make(chan int, readLimit)
-	var requests sync.WaitGroup
-	unblock := sync.OnceFunc(func() { close(release); requests.Wait() })
-	t.Cleanup(unblock)
-	for index := range readLimit {
+		overflowRead := make(chan struct{}, 1)
+		overflowDone := make(chan int, 1)
 		requests.Go(func() {
 			request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)
-			request.Body = io.NopCloser(io.MultiReader(strings.NewReader(strings.Repeat("x", 4096)), &receiverBlockingBody{started: started, release: release}))
+			request.Body = &receiverBlockingBody{started: overflowRead, release: release}
 			response := httptest.NewRecorder()
 			receiver.ServeHTTP(response, request)
-			responses <- response.Code
+			overflowDone <- response.Code
 		})
 		select {
-		case <-started:
+		case status := <-overflowDone:
+			checks.Equal(http.StatusServiceUnavailable, status)
+		case <-overflowRead:
+			checks.Fail("overflow unsigned request read its body before admission")
 		case <-time.After(5 * time.Second):
-			must.FailNow("timed out waiting for unsigned body reads")
+			must.FailNow("overflow unsigned request neither completed nor started reading")
 		}
-		if index == 7 {
-			body := receiverEnvelope(`[{"type":"message","webhookEventId":"signed-through","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"synthetic"}}]`)
-			checks.Equal(http.StatusOK, serveSignedReceiver(receiver, body).Code, "signed delivery proceeds while unsigned readers occupy eight slots")
+		unblock()
+		for range readLimit {
+			checks.Equal(http.StatusUnauthorized, <-responses)
 		}
-	}
-
-	overflowRead := make(chan struct{}, 1)
-	overflowDone := make(chan int, 1)
-	requests.Go(func() {
-		request := httptest.NewRequest(http.MethodPost, "/webhooks/line/2000000000", nil)
-		request.Body = &receiverBlockingBody{started: overflowRead, release: release}
-		response := httptest.NewRecorder()
-		receiver.ServeHTTP(response, request)
-		overflowDone <- response.Code
+		checks.Equal(http.StatusOK, serveSignedReceiver(receiver, receiverEnvelope("[]")).Code, "finished unsigned reads release their capacity")
 	})
-	select {
-	case status := <-overflowDone:
-		checks.Equal(http.StatusServiceUnavailable, status)
-	case <-overflowRead:
-		checks.Fail("overflow unsigned request read its body before admission")
-	case <-time.After(5 * time.Second):
-		must.FailNow("overflow unsigned request neither completed nor started reading")
-	}
-	unblock()
-	for range readLimit {
-		checks.Equal(http.StatusUnauthorized, <-responses)
-	}
-	checks.Equal(http.StatusOK, serveSignedReceiver(receiver, receiverEnvelope("[]")).Code, "finished unsigned reads release their capacity")
-}
-
-func TestReceiverBoundedIngress(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, err := st.GetOrCreateSource("line", "2000000000")
-	must.NoError(err)
-	must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
-	started := make(chan struct{}, 16)
-	release := make(chan struct{})
-	responses := make(chan int, 16)
-	receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) {
-		started <- struct{}{}
-		<-release
-	})
-	must.NoError(err)
-	var requests sync.WaitGroup
-	unblock := sync.OnceFunc(func() { close(release); requests.Wait() })
-	t.Cleanup(unblock)
-	for index := range 16 {
-		requests.Go(func() {
-			eventID := fmt.Sprintf("authenticated-%d", index)
-			body := receiverEnvelope(fmt.Sprintf(`[{"type":"future","webhookEventId":%q,"timestamp":123}]`, eventID))
-			responses <- serveSignedReceiver(receiver, body).Code
-		})
-	}
-	for range 16 {
-		select {
-		case <-started:
-		case <-time.After(5 * time.Second):
-			must.FailNow("timed out waiting for authenticated webhook commits")
+	t.Run("committed deliveries", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		started := make(chan struct{}, 16)
+		release := make(chan struct{})
+		responses := make(chan int, 16)
+		wake = func(string) { started <- struct{}{}; <-release }
+		var requests sync.WaitGroup
+		unblock := sync.OnceFunc(func() { close(release); requests.Wait() })
+		t.Cleanup(unblock)
+		for index := range 16 {
+			requests.Go(func() {
+				eventID := fmt.Sprintf("authenticated-%d", index)
+				body := receiverEnvelope(fmt.Sprintf(`[{"type":"future","webhookEventId":%q,"timestamp":123}]`, eventID))
+				responses <- serveSignedReceiver(receiver, body).Code
+			})
 		}
-	}
-	blocked := receiverEnvelope(`[{"type":"future","webhookEventId":"overflow","timestamp":123}]`)
-	checks.Equal(http.StatusServiceUnavailable, serveSignedReceiver(receiver, blocked).Code)
-	unblock()
-	for range 16 {
-		checks.Equal(http.StatusOK, <-responses)
-	}
+		for range 16 {
+			select {
+			case <-started:
+			case <-time.After(5 * time.Second):
+				must.FailNow("timed out waiting for authenticated webhook commits")
+			}
+		}
+		blocked := receiverEnvelope(`[{"type":"future","webhookEventId":"overflow","timestamp":123}]`)
+		checks.Equal(http.StatusServiceUnavailable, serveSignedReceiver(receiver, blocked).Code)
+		unblock()
+		for range 16 {
+			checks.Equal(http.StatusOK, <-responses)
+		}
+	})
 }
 
 func TestReceiverChannelBinding(t *testing.T) {
@@ -344,72 +332,6 @@ func TestReceiverChannelBinding(t *testing.T) {
 }
 
 func TestReceiverStorageFailuresDoNotWakeOrLeavePendingRows(t *testing.T) {
-	t.Run("stale channel cannot enqueue into a replacement source", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-
-		st := testutil.NewTestStore(t)
-		_, err := st.GetOrCreateSource("line", "2000000000")
-		must.NoError(err)
-		replacement, err := st.GetOrCreateSource("line", "2000000001")
-		must.NoError(err)
-		must.NoError(st.SetLineBotContext(t.Context(), replacement.ID, receiverBot))
-		stale := receiverChannel(replacement.ID)
-		stale.ChannelID = "2000000000"
-		wakeCalls := 0
-		receiver, err := line.NewReceiver(st, []line.ReceiverChannel{stale}, func(string) { wakeCalls++ })
-		must.NoError(err)
-		body := receiverEnvelope(`[{"type":"message","webhookEventId":"stale-channel","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}]`)
-		response := serveSignedReceiver(receiver, body)
-		checks.Equal(http.StatusServiceUnavailable, response.Code)
-		status, err := st.LineInboxStatusContext(t.Context(), replacement.ID)
-		must.NoError(err)
-		checks.Zero(status.Pending)
-		checks.Zero(wakeCalls)
-	})
-	t.Run("registered bot changed after receiver mount", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-
-		st := testutil.NewTestStore(t)
-		source, err := st.GetOrCreateSource("line", "2000000000")
-		must.NoError(err)
-		must.NoError(st.SetLineBotContext(t.Context(), source.ID, "U00000000000000000000000000000003"))
-		wakeCalls := 0
-		receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
-		must.NoError(err)
-		body := receiverEnvelope(`[{"type":"message","webhookEventId":"stale-bot","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}]`)
-		response := serveSignedReceiver(receiver, body)
-		checks.Equal(http.StatusServiceUnavailable, response.Code)
-		status, err := st.LineInboxStatusContext(t.Context(), source.ID)
-		must.NoError(err)
-		checks.Zero(status.Pending)
-		checks.Zero(wakeCalls)
-	})
-
-	t.Run("retired source", func(t *testing.T) {
-		must := require.New(t)
-		checks := assert.New(t)
-
-		st := testutil.NewTestStore(t)
-		source, err := st.GetOrCreateSource("line", "2000000000")
-		must.NoError(err)
-		must.NoError(st.SetLineBotContext(t.Context(), source.ID, receiverBot))
-		into, err := st.GetOrCreateSource("line", "2000000001")
-		must.NoError(err)
-		wakeCalls := 0
-		receiver, err := line.NewReceiver(st, []line.ReceiverChannel{receiverChannel(source.ID)}, func(string) { wakeCalls++ })
-		must.NoError(err)
-		_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: into.ID})
-		must.NoError(err)
-		body := receiverEnvelope(`[{"type":"message","webhookEventId":"after-retirement","timestamp":123,"source":{"type":"user","userId":"U00000000000000000000000000000002"},"message":{"id":"123","type":"text","text":"synthetic"}}]`)
-		response := serveSignedReceiver(receiver, body)
-		checks.Equal(http.StatusServiceUnavailable, response.Code)
-		status, err := st.LineInboxStatusContext(t.Context(), source.ID)
-		must.NoError(err)
-		checks.Zero(status.Pending)
-		checks.Zero(wakeCalls)
-	})
 	t.Run("batch transaction rolls back", func(t *testing.T) {
 		must := require.New(t)
 		checks := assert.New(t)

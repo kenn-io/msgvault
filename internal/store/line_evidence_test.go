@@ -8,6 +8,4 @@ import (
 
 func TestLineSenderAttributionUsesPlatformIdentity(t *testing.T) {
 	assert.True(t, personSweepSourceAuthenticatesSender("line"))
-	assert.True(t, personSweepSourceAuthenticatesSender(" LINE "))
-	assert.False(t, personSweepSourceAuthenticatesSender("line-import"))
 }

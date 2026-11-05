@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -260,37 +261,42 @@ func TestClientCancellationDuringResponse(t *testing.T) {
 }
 
 func TestClientTokenWaitCancellation(t *testing.T) {
-	started := make(chan struct{})
-	release := make(chan struct{})
-	api := lineapi.New()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/oauth2/v3/token" {
-			close(started)
-			<-release
+	synctest.Test(t, func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		api := lineapi.New()
+		client := line.NewClient("2000000000", "synthetic-secret", line.WithHTTPClient(&http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path == "/oauth2/v3/token" {
+				close(started)
+				<-release
+			}
+			response := httptest.NewRecorder()
+			api.ServeHTTP(response, r)
+			return response.Result(), nil
+		})}))
+		firstDone := make(chan struct{})
+		defer func() { close(release); <-firstDone }()
+		go func() { defer close(firstDone); _, _ = client.BotInfo(t.Context()) }()
+		<-started
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { _, err := client.BotInfo(ctx); done <- err }()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			require.FailNow(t, "token waiter returned before cancellation", "%v", err)
+		default:
 		}
-		api.ServeHTTP(w, r)
-	}))
-	defer server.Close()
-	defer close(release)
-	client := line.NewClient("2000000000", "synthetic-secret", line.WithBaseURLs(server.URL, server.URL))
-	firstCtx, firstCancel := context.WithCancel(context.Background())
-	defer firstCancel()
-	go func() { _, _ = client.BotInfo(firstCtx) }()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "token request did not start")
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { _, err := client.BotInfo(ctx); done <- err }()
-	cancel()
-	select {
-	case err := <-done:
-		require.ErrorIs(t, err, context.Canceled)
-	case <-time.After(5 * time.Second):
-		require.FailNow(t, "token waiter did not cancel")
-	}
+		cancel()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			require.ErrorIs(t, err, context.Canceled)
+		default:
+			require.FailNow(t, "token waiter did not cancel")
+		}
+	})
 }
 
 func TestClientTokenValidationAndRateLimit(t *testing.T) {

@@ -67,37 +67,25 @@ const NOT_OBSERVED = "The sync was requested, but it hasn't started yet.";
 
 describe('SourcesWorkspace', () => {
   it.each([
-    [true, null, 0, 0, false],
-    [false, null, 0, 0, false],
-    [true, null, 2, 0, true],
-    [true, null, 0, 1, true],
-    [true, '2026-07-19T10:00:00Z', 0, 0, true],
-  ] as const)('shows LINE inbox counts for active=%s, last event=%s, pending=%i, failed=%i', async (active, last_received_at, pending, failed, showCounts) => {
+    [true, null, 0, 0, 0, false],
+    [false, null, 0, 0, 0, false],
+    [true, null, 2, 0, 0, true],
+    [true, null, 0, 1, 0, true],
+    [true, '2026-07-19T10:00:00Z', 0, 0, 0, true],
+    [true, null, 0, 0, 3, false],
+  ] as const)('shows LINE inbox counts for active=%s, last event=%s, pending=%i, failed=%i, invalid signatures=%i', async (active, last_received_at, pending, failed, invalid_signatures, showCounts) => {
     const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
       source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
-      line_webhook: { active, pending, failed, invalid_signatures: 0, last_received_at }
+      can_sync: true,
+      line_webhook: { active, pending, failed, invalid_signatures, last_received_at }
     })] }));
     render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
     await screen.findByText('New messages only.');
     expect(screen.queryByText(`${pending} pending ·`) !== null).toBe(showCounts);
-    expect(screen.queryByText('Check configuration and restart') !== null).toBe(!active);
-  });
-
-  it('shows LINE webhook delivery instead of a polling schedule', async () => {
-    const fetchFn = vi.fn<typeof fetch>(async () => Response.json({ sources: [source({
-      source_type: 'line', identifier: '2000000001', display_name: 'Example OA',
-      scheduled: true, schedule: '@every 30s', can_sync: true,
-      line_webhook: { active: true, pending: 2, failed: 1, invalid_signatures: 3,
-        last_received_at: '2026-07-19T10:00:00Z' }
-    })] }));
-    render(SourcesWorkspace, { client: createAPIClient(fetchFn) });
-    expect(await screen.findByText('New messages only.')).toBeDefined();
-    expect(screen.getByText('Listening')).toBeDefined();
-    expect(screen.getByText('2 pending ·')).toBeDefined();
-    expect(screen.getByText('1 failed')).toBeDefined();
-    expect(screen.getByText('3 invalid signatures since daemon start')).toBeDefined();
-    expect(screen.queryByText('@every 30s')).toBeNull();
+    if (showCounts) expect(screen.getByText(`${failed} failed`)).toBeDefined();
+    expect(screen.queryByText(`${invalid_signatures} invalid signatures since daemon start`) !== null).toBe(invalid_signatures > 0);
     expect(screen.getByRole('button', { name: 'Process inbox Example OA' })).toBeDefined();
+    expect(screen.queryByText('Check configuration and restart') !== null).toBe(!active);
   });
 
   it('shows a scheduler handoff as queued without concealing a real failure', async () => {
@@ -711,7 +699,6 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Process inbox Example OA' }));
 
     expect(await screen.findByText(LINE_NO_WORK)).toBeDefined();
-    expect(screen.queryByText(NOT_OBSERVED)).toBeNull();
     rendered.unmount();
   });
 

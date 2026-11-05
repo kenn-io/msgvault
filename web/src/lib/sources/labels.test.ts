@@ -66,13 +66,10 @@ it.each([
 
 
 it.each([
-  [true, 0, 0, 'Listening', 'success'],
-  [true, 2, 0, 'Listening', 'success'],
-  [true, 2, 1, 'Listening', 'success'],
-  [false, 0, 0, 'Receiver inactive', 'warning'],
-  [false, 2, 1, 'Receiver inactive', 'warning'],
-] as const)('shows receiver state when active=%s, pending=%i, failed=%i', (active, pending, failed, label, tone) => {
+  [true, 'Listening', 'success'],
+  [false, 'Receiver inactive', 'warning'],
+] as const)('shows receiver state when active=%s', (active, label, tone) => {
   expect(syncStatusChip({ active_sync: null, latest_sync: null, scheduler_queued: false,
-    line_webhook: { active, pending, failed, invalid_signatures: 0 }
+    line_webhook: { active, pending: 0, failed: 0, invalid_signatures: 0 }
   })).toEqual({ label, tone });
 });

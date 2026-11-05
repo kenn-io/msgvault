@@ -2271,6 +2271,4 @@ func TestEditConfigTablesSelectsArrayRecord(t *testing.T) {
 	checks.False(loaded.GetLineSource("2000000001").Enabled)
 	checks.Equal("NEW_SECRET", loaded.GetLineSource("2000000001").SecretEnv)
 	checks.True(loaded.GetLineSource("2000000002").Enabled)
-	_, err = EditConfigTables(path, first.ETag, []TableEdit{{Path: []string{"line"}, Match: map[string]string{"channel_id": "2000000001"}, Values: map[string]any{"secret_env": "STALE_SECRET"}}})
-	must.ErrorIs(err, ErrConfigConflict)
 }

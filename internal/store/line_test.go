@@ -37,6 +37,30 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	checks.Equal("event-1", rows[0].WebhookEventID)
 	checks.Equal("1", rows[0].TargetMessageID)
 	checks.Equal(src.ID, rows[0].SourceID)
+	for _, guard := range []string{"stale channel", "changed bot", "retired source"} {
+		t.Run(guard, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource("line", "2000000001")
+			require.NoError(t, err)
+			require.NoError(t, st.SetLineBotContext(t.Context(), src.ID, botID))
+			channel, bot := "2000000001", botID
+			switch guard {
+			case "stale channel":
+				channel = "2000000000"
+			case "changed bot":
+				require.NoError(t, st.SetLineBotContext(t.Context(), src.ID, otherBotID))
+			case "retired source":
+				into, err := st.GetOrCreateSource("line", "2000000002")
+				require.NoError(t, err)
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: into.ID})
+				require.NoError(t, err)
+			}
+			require.Error(t, st.EnqueueLineEventsContext(t.Context(), src.ID, channel, bot, []store.LineWebhookEvent{event}))
+			status, err := st.LineInboxStatusContext(t.Context(), src.ID)
+			require.NoError(t, err)
+			assert.Zero(t, status.Pending)
+		})
+	}
 }
 
 func TestLineInboxRetryDeadlineIgnoresCallerZone(t *testing.T) {
@@ -291,19 +315,22 @@ func TestLineQuotesStayInConversation(t *testing.T) {
 		require.NoError(t, err)
 		return id
 	}
+	crossConversation := persist("cross-conversation", conv, `{"quotedMessageId":"other-parent"}`)
 	child := persist("child", conv, `{"quotedMessageId":"parent"}`)
 	unrelated := persist("unrelated-child", conv, `{"quotedMessageId":"unrelated-parent"}`)
 	persist("unrelated-parent", conv, "")
-	persist("parent", other, "")
-	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"child"}))
+	persist("other-parent", other, "")
+	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"child", "cross-conversation"}))
 	var reply sql.NullInt64
 	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
 	checks.False(reply.Valid)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET conversation_id=? WHERE source_id=? AND source_message_id='parent'`), conv, src.ID)
-	must.NoError(err)
+	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), crossConversation).Scan(&reply))
+	checks.False(reply.Valid, "quotes stay within their conversation")
+	parent := persist("parent", conv, "")
 	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"parent"}))
 	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), child).Scan(&reply))
 	checks.True(reply.Valid)
+	checks.Equal(parent, reply.Int64)
 	must.NoError(st.DB().QueryRow(st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), unrelated).Scan(&reply))
 	checks.False(reply.Valid, "settling a batch leaves unrelated messages alone")
 	must.NoError(st.ResolveLineQuotesForMessagesContext(ctx, src.ID, "group:synthetic-a", []string{"unrelated-child"}))

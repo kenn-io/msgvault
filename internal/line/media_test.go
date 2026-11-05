@@ -2,7 +2,6 @@ package line
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -55,64 +54,66 @@ func TestMediaTranscodingRetry(t *testing.T) {
 }
 
 func TestMediaPreparingAtRetryHorizonFinishesAttachment(t *testing.T) {
-	for _, tc := range []struct {
-		name                 string
-		receivedAge, advance time.Duration
-	}{
-		{"at receipt", retryHorizon, 0},
-		{"after retry", 0, 25 * time.Hour},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			must := require.New(t)
-			checks := assert.New(t)
-			f := newInboxFixture(t)
-			path := "/v2/bot/message/1/content"
-			f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
-			f.enqueue(t, f.fileEvent(), f.now.Add(-tc.receivedAge))
-			f.run(t)
-			if tc.advance > 0 {
-				checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
-				f.now = f.now.Add(tc.advance)
-				f.run(t)
-			}
-			var state string
-			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-			checks.Equal("failed", state)
-			checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
-			checks.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
-		})
-	}
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	path := "/v2/bot/message/1/content"
+	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
+	f.enqueue(t, f.fileEvent(), f.now)
+	f.run(t)
+	checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
+	f.now = f.now.Add(25 * time.Hour)
+	f.run(t)
+	var state string
+	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+	checks.Equal("failed", state)
+	checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
+	checks.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
 }
 
 func TestMediaFailureAtRetryHorizonWaitsForConversationFinalization(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-
-	f := newInboxFixture(t)
-	if f.st.IsPostgreSQL() {
-		t.Skip("SQLite trigger injects a real failed finalization; normal processor contracts run on both backends")
-	}
-	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202}, lineapi.Response{Status: 202})
-	f.enqueue(t, f.fileEvent(), f.now.Add(-retryHorizon))
-	_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
-	must.NoError(err)
-	must.Error(f.processor.Process(context.Background()))
-	eventState := func() string {
-		t.Helper()
+	t.Run("at receipt", func(t *testing.T) {
+		f := newInboxFixture(t)
+		path := "/v2/bot/message/1/content"
+		f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
+		f.enqueue(t, f.fileEvent(), f.now.Add(-retryHorizon))
+		f.run(t)
 		var state string
-		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-		return state
-	}
-	checks.Equal("pending", eventState(), "a failed event with a committed message waits for its conversation")
+		require.NoError(t, f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+		assert.Equal(t, "failed", state)
+		assert.Equal(t, attachmentpolicy.StateFailed, f.media(t).State)
+		assert.Equal(t, 1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
+	})
+	t.Run("finalization failure", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
 
-	_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
-	must.NoError(err)
-	f.run(t)
-	checks.Equal("failed", eventState())
-	checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
-	var messageCount int64
-	must.NoError(f.st.DB().QueryRow(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`, f.source.ID, "group:"+testGroup).Scan(&messageCount))
-	checks.Equal(int64(1), messageCount)
+		f := newInboxFixture(t)
+		if f.st.IsPostgreSQL() {
+			t.Skip("SQLite trigger injects a real failed finalization; normal processor contracts run on both backends")
+		}
+		f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202}, lineapi.Response{Status: 202})
+		f.enqueue(t, f.fileEvent(), f.now.Add(-retryHorizon))
+		_, err := f.st.DB().Exec(`CREATE TRIGGER line_finalize_fails BEFORE UPDATE OF message_count ON conversations BEGIN SELECT RAISE(ABORT,'synthetic finalization failure'); END`)
+		must.NoError(err)
+		must.Error(f.processor.Process(context.Background()))
+		eventState := func() string {
+			t.Helper()
+			var state string
+			must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+			return state
+		}
+		checks.Equal("pending", eventState(), "a failed event with a committed message waits for its conversation")
+
+		_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
+		must.NoError(err)
+		f.run(t)
+		checks.Equal("failed", eventState())
+		checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
+		var messageCount int64
+		must.NoError(f.st.DB().QueryRow(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`, f.source.ID, "group:"+testGroup).Scan(&messageCount))
+		checks.Equal(int64(1), messageCount)
+	})
 }
 
 func TestMediaLocalStorageFailureKeepsInboxWorkPending(t *testing.T) {
@@ -336,7 +337,6 @@ func TestMediaProfileFailureDoesNotDelayDownload(t *testing.T) {
 }
 
 func TestMediaReplayDoesNotDuplicateAttachment(t *testing.T) {
-	must := require.New(t)
 	checks := assert.New(t)
 
 	f := newInboxFixture(t)
@@ -350,13 +350,6 @@ func TestMediaReplayDoesNotDuplicateAttachment(t *testing.T) {
 	again := f.media(t)
 	checks.Equal(first.ContentHash, again.ContentHash)
 	checks.Equal(1, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
-	row, err := f.st.LineMessageContext(context.Background(), f.source.ID, "1")
-	must.NoError(err)
-	raw, err := f.st.GetMessageMetadataContext(context.Background(), row.ID)
-	must.NoError(err)
-	var metadata map[string]json.RawMessage
-	must.NoError(json.Unmarshal([]byte(raw.String), &metadata))
-	checks.Equal(`"file"`, string(metadata["type"]))
 }
 
 func TestMediaChannelPolicy(t *testing.T) {

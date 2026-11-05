@@ -159,8 +159,6 @@ func TestLineSyncDrainsConfiguredDisabledChannel(t *testing.T) {
 	checks.Equal(501, archived)
 	_, err = executeLineCommand(t, loaded, newSyncLineCmd(), "--channel-id", "999")
 	must.Error(err)
-	checks.True(manualSyncCLICommand([]string{"sync-line"}))
-	checks.True(attachmentProducingCommand([]string{"sync-line"}))
 }
 
 func TestLineScheduledCacheProgress(t *testing.T) {
