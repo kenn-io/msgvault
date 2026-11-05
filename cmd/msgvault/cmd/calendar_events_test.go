@@ -52,7 +52,43 @@ func TestCalendarEventsCommandUnexpandableCoverage(t *testing.T) {
 	cmd.SetErr(&stderr)
 	cmd.SetArgs([]string{"--from", "2027-03-01", "--to", "2027-04-01"})
 	require.NoError(t, cmd.Execute())
-	assert.Equal(t, "1 event could not be expanded: message 500 (unsupported recurrence)\n", stderr.String())
+	assert.Equal(t, "Coverage: An empty or incomplete result does not prove free time.\nWork: complete\n1 event could not be expanded: message 500 (unsupported recurrence)\n", stderr.String())
+}
+
+func TestCalendarEventsCommandNoSourcesCoverage(t *testing.T) {
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{
+		Coverage: store.CalendarCoverage{
+			Complete: false,
+			Notice:   "An empty or incomplete result does not prove free time.",
+			Sources:  []store.CalendarSourceCoverage{},
+		},
+	}}
+	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--from", "2027-03-01", "--to", "2027-04-01"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "Coverage: An empty or incomplete result does not prove free time.\n", stderr.String())
+}
+
+func TestCalendarEventsCommandCursorCoverage(t *testing.T) {
+	asOf := time.Date(2027, time.March, 1, 12, 0, 0, 0, time.UTC)
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{
+		Coverage: store.CalendarCoverage{
+			Complete: false,
+			Notice:   "An empty or incomplete result does not prove free time.",
+			Sources:  []store.CalendarSourceCoverage{{Name: "Work", Status: "complete", AsOf: &asOf}},
+		},
+	}}
+	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
+	var out, stderr bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"--from", "2027-03-01", "--to", "2027-04-01", "--cursor", "previous-page"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "previous-page", fake.query.Cursor)
+	assert.Equal(t, "Coverage: An empty or incomplete result does not prove free time.\nWork: complete (as of 2027-03-01T12:00:00Z)\n", stderr.String())
 }
 
 func TestCalendarEventsCommand(t *testing.T) {
