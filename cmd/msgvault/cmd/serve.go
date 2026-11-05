@@ -1055,6 +1055,14 @@ func runServe(cmd *cobra.Command, args []string) error {
 			state: state, store: s, dbPath: dbPath, handle: vectorInit, server: apiServer, scheduler: sched,
 			gate: operationGate, runner: storeAdapter, openers: []visual.StreamOpener{blobStore},
 			inspect: embedlocal.Inspect, install: embedlocal.Install,
+			refreshMCP: func(ctx context.Context, active *invocation) error {
+				select {
+				case <-mcpInitDone:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				return installServeMCP(ctx, cmd, apiServer, active)
+			},
 		})
 		mcpInitDone = startServeMCP(ctx, cmd, apiServer, state)
 		telemetryHeartbeatDone := make(chan struct{})

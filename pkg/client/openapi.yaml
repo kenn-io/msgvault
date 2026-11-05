@@ -7568,6 +7568,8 @@ components:
       properties:
         compatible:
           type: boolean
+        document_rebuild:
+          type: boolean
         done_bytes:
           format: int64
           type: integer
@@ -17035,7 +17037,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.44.0
+  version: 3.45.0
 openapi: 3.0.3
 paths:
   /api/daemon/identity:

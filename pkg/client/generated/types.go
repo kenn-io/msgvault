@@ -7345,6 +7345,7 @@ type LocalEmbeddingsRequest struct {
 
 type LocalEmbeddingsStatus struct {
 	Compatible      bool                       `json:"compatible"`
+	DocumentRebuild *bool                      `json:"document_rebuild,omitempty"`
 	DoneBytes       int64                      `json:"done_bytes"`
 	DownloadBytes   int64                      `json:"download_bytes"`
 	Enabled         bool                       `json:"enabled"`

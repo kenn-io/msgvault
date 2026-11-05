@@ -194,3 +194,16 @@ func TestNativeMCPShutdownDrainsBeforeCleanup(t *testing.T) {
 	require.NoError(s.Shutdown(context.Background()))
 	assert.Equal(1, cleanups)
 }
+
+func TestNativeMCPReplacementClosesPreviousHandlers(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Logger: slog.New(slog.DiscardHandler)})
+	closed := 0
+	handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
+	require.NoError(server.InstallMCPHandlers(handler, nil, func() { closed++ }))
+	require.NoError(server.InstallMCPHandlers(handler, nil, func() { closed++ }))
+	assert.Equal(1, closed)
+	require.NoError(server.Shutdown(t.Context()))
+	assert.Equal(2, closed)
+}

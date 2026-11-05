@@ -306,7 +306,7 @@ func detectSetupProviders(ctx context.Context, loaded *config.Config, deps setup
 		detection.ollama = deps.probeOllama(ctx, server)
 		detection.ollamaEndpoint = server + "/v1"
 		detection.ollamaLoopback = embeddingProviderName(server) == "local"
-		skipOllama = skipOllama || isOllamaEmbeddingEndpoint(server)
+		skipOllama = skipOllama || isOllamaEmbeddingEndpoint(server, "")
 	}
 	if needsLocalText && !detection.localEmbeddings && detection.ollamaLoopback && detection.ollama.Reachable && detection.ollama.hasModel(setupOllamaTextModel) {
 		detection.embeddingEndpoint = detection.ollamaEndpoint
@@ -578,7 +578,7 @@ func planTextSearch(loaded *config.Config, detection setupDetection) setupLanePl
 			lane.Action, lane.Reason = planActionPending, detection.embeddingError.Error()
 			return lane
 		}
-		localOnly := detection.localEmbeddings || (detection.embeddingEndpoint != detection.ollamaEndpoint && !isOllamaEmbeddingEndpoint(detection.embeddingEndpoint))
+		localOnly := detection.localEmbeddings || (detection.embeddingEndpoint != detection.ollamaEndpoint && !isOllamaEmbeddingEndpoint(detection.embeddingEndpoint, ""))
 		lane.local = localOnly
 		endpoint := detection.embeddingEndpoint
 		if localOnly {

@@ -7,7 +7,7 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
     kind: 'indexing', done: Number(embedding?.current) || 0, total: Number(embedding?.eligible) || 0,
     ...(embedding?.eta_seconds ? { etaMs: Number(embedding.eta_seconds) * 1000 } : {}),
   };
-  if (status.enabled && !status.error) {
+  if (status.enabled) {
     if (status.provider !== 'ollama') return { kind: 'on' };
     if (status.compatible) return { kind: 'ollama' };
     return { kind: 'ollama-other', itemCount: Number(embedding?.eligible) || 0, rebuildMs: Number(embedding?.eta_seconds) * 1000 || 0 };
@@ -20,6 +20,7 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): Partial<SearchByMeaningLabels> {
   return {
     ...(!status.enabled && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
-    ...(!embedding?.eta_seconds ? { rebuild: 'Switching rebuilds the index for {count} {items}' } : {}),
+    rebuild: ('Switching rebuilds the index for {count} {items}' + (embedding?.eta_seconds ? ', {time}' : '')) + (status.document_rebuild ? '. Document search also rebuilds on this computer' : ''),
+    ...(status.document_rebuild ? { keepsIndex: 'Switching keeps your message index and rebuilds document search on this computer' } : {}),
   };
 }

@@ -237,12 +237,18 @@ func EditConfigTables(path, ifMatch string, edits []TableEdit) (ConfigFile, erro
 // one retained snapshot without publishing it. Callers use this before an
 // irreversible side effect; EditConfigTables repeats the plan under ETag.
 func ValidateConfigTableEdits(snapshot ConfigFile, edits []TableEdit) error {
+	_, err := PreviewConfigTableEdits(snapshot, edits)
+	return err
+}
+
+// PreviewConfigTableEdits validates table edits and returns the resulting configuration without publishing it.
+func PreviewConfigTableEdits(snapshot ConfigFile, edits []TableEdit) (*Config, error) {
 	if snapshot.LogicalPath == "" || snapshot.Path == "" || snapshot.ETag != configETag(snapshot.Content) {
-		return errors.New("config edit snapshot is invalid")
+		return nil, errors.New("config edit snapshot is invalid")
 	}
 	candidate, err := applyTableEdits(snapshot.Content, edits)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	mode := snapshot.Mode.Perm()
 	if !snapshot.Exists {
@@ -257,12 +263,12 @@ func ValidateConfigTableEdits(snapshot ConfigFile, edits []TableEdit) error {
 		Exists:      true,
 	}, "")
 	if err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
 	}
 	if err := validateEditableCandidate(loaded); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidConfigCandidate, err)
 	}
-	return nil
+	return loaded, nil
 }
 
 // RestoreConfigFile restores before only while the live target is the exact

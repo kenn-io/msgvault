@@ -18,9 +18,9 @@ describe('local search row', () => {
     ['on', { ...off, enabled: true, provider: 'builtin' }, 'On', undefined],
     ['downloading', { ...off, phase: 'downloading', done_bytes: 1000000, total_bytes: 290000000 }, 'Turning on', undefined],
     ['indexing', { ...off, phase: 'indexing' }, 'Turning on', undefined],
-    ['retry', { ...off, enabled: true, error: 'Download interrupted' }, 'Off', 'Turn on'],
+    ['retry', { ...off, error: 'Download interrupted' }, 'Off', 'Turn on'],
   ] as const)('%s', (_name, status, chip, action) => {
-    render(SettingsOverview, { rows: [{ ...row, chip: { ...row.chip, text: status.enabled ? 'On' : 'Off' } }], localSearch: localSearchState(status, embeddingStatus, 'archive.example.test'), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
+    render(SettingsOverview, { rows: [{ ...row, chip: { ...row.chip, text: 'On' } }], localSearch: localSearchState(status, embeddingStatus, 'archive.example.test'), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();
     if (action) expect(screen.getByRole('button', { name: action })).toBeDefined();
     else expect(screen.queryByRole('button')).toBeNull();
@@ -34,8 +34,9 @@ describe('local search row', () => {
 for (const kind of ['on', 'ollama'] as const) {
   it(`keeps rebuild for a stale ${kind} index`, async () => {
     const calls: string[] = [];
-    render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: { kind }, onSetUp: () => {}, onSources: () => {}, onStart: () => calls.push('build') });
+    render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: localSearchState({ ...off, enabled: true, provider: kind === 'on' ? 'builtin' : 'ollama', compatible: true, error: 'Build interrupted' }), localError: 'Build interrupted', onSetUp: () => {}, onSources: () => {}, onStart: () => calls.push('build') });
     expect(screen.getByText('Stale')).toBeDefined();
+    expect(screen.getByRole('alert').textContent).toBe('Build interrupted');
     await fireEvent.click(screen.getByRole('button', { name: 'Build index, Message search' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
     expect(calls).toEqual(['build']);

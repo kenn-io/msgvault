@@ -16,20 +16,22 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/visual"
+	"time"
 )
 
 type localEmbeddingsController struct {
-	gate      api.OperationGate
-	state     *invocation
-	store     *store.Store
-	dbPath    string
-	handle    *vectorInitHandle
-	server    *api.Server
-	scheduler *scheduler.Scheduler
-	runner    api.CLIRunner
-	openers   []visual.StreamOpener
-	inspect   func(context.Context, embedlocal.Options) (embedlocal.Status, error)
-	install   func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
+	gate       api.OperationGate
+	state      *invocation
+	store      *store.Store
+	dbPath     string
+	handle     *vectorInitHandle
+	server     *api.Server
+	scheduler  *scheduler.Scheduler
+	runner     api.CLIRunner
+	refreshMCP func(context.Context, *invocation) error
+	openers    []visual.StreamOpener
+	inspect    func(context.Context, embedlocal.Options) (embedlocal.Status, error)
+	install    func(context.Context, embedlocal.InstallOptions) (embedlocal.Installation, error)
 }
 
 func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbeddingsStatus, error) {
@@ -52,21 +54,19 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 		switch {
 		case cfg.Embeddings.LocalOnly:
 			provider = "builtin"
-		case !cfg.Enabled:
-			provider = "configured"
-		case isOllamaEmbeddingEndpoint(cfg.Embeddings.Endpoint):
+		case isOllamaEmbeddingEndpoint(cfg.Embeddings.Endpoint, c.state.cfg.Chat.Server):
 			provider = "ollama"
 		default:
 			provider = "configured"
 		}
 	}
-	return api.LocalEmbeddingsStatus{Enabled: cfg.Enabled, Provider: provider, Compatible: cfg.Embeddings.LocalCompatible(),
+	return api.LocalEmbeddingsStatus{DocumentRebuild: provider == "ollama" && c.state.cfg.Attachments.Documents.Index.Embeddings.Enabled, Enabled: cfg.Enabled, Provider: provider, Compatible: cfg.Embeddings.LocalCompatible(),
 		OllamaAvailable: status.OllamaAvailable, DownloadBytes: status.DownloadBytes, Phase: "idle"}, nil
 }
 
-func isOllamaEmbeddingEndpoint(endpoint string) bool {
+func isOllamaEmbeddingEndpoint(endpoint, configuredServer string) bool {
 	server := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
-	return server == "http://127.0.0.1:11434" || server == "http://localhost:11434"
+	return server == "http://127.0.0.1:11434" || server == "http://localhost:11434" || (configuredServer != "" && server == strings.TrimRight(configuredServer, "/"))
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) error {
@@ -89,7 +89,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	// A configured lane changes provider only through Use built-in instead.
-	if !builtin && !loaded.Vector.Embeddings.LocalOnly && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
+	if !loaded.Vector.Embeddings.LocalOnly && !isOllamaEmbeddingEndpoint(loaded.Vector.Embeddings.Endpoint, loaded.Chat.Server) && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
 		return nil
 	}
 	dir, err := localEmbeddingsDir()
@@ -105,10 +105,11 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if err != nil {
 		return fmt.Errorf("read local search settings: %w", err)
 	}
-	backend, unavailable := setupVectorBackend(loaded)
-	useOllama := !builtin && available.OllamaAvailable && !loaded.Vector.Embeddings.LocalOnly
+	backend, unavailable := setupVectorBackend(c.state.cfg)
+	configured := loaded.Vector.Embeddings.LocalOnly || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != ""
+	useOllama := !builtin && !loaded.Vector.Embeddings.LocalOnly && (configured || available.OllamaAvailable)
 	detection := setupDetection{backend: backend, backendUnavailable: unavailable, configKeys: configKeys, localEmbeddings: !useOllama}
-	if useOllama {
+	if useOllama && !configured {
 		detection.embeddingEndpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: dir})
 		if err != nil {
 			return err
@@ -125,11 +126,19 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 			candidate.Vector.Embeddings = vector.EmbeddingsConfig{}
 		}
 	}
+	if configured && !builtin {
+		candidate.Vector.Embeddings = vector.EmbeddingsConfig{}
+	}
 	lane := planTextSearch(&candidate, detection)
 	if lane.Action != planActionEnable {
 		return errors.New(lane.Reason)
 	}
-	if err := config.ValidateConfigTableEdits(snapshot, lane.edits); err != nil {
+	if configured && !builtin {
+		lane.edits = lane.edits[:1]
+		delete(lane.edits[0].Values, "backend")
+	}
+	nextConfig, err := config.PreviewConfigTableEdits(snapshot, lane.edits)
+	if err != nil {
 		return err
 	}
 	var builtinEndpoint string
@@ -137,6 +146,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		installation, err := c.install(ctx, embedlocal.InstallOptions{DataDir: dir,
 			Confirm: func(context.Context, int64) (bool, error) { return true, nil },
 			Progress: func(done, total int64) {
+				if done == 0 {
+					return
+				}
 				report(api.LocalEmbeddingsStatus{Phase: "downloading", DoneBytes: done, TotalBytes: total})
 			},
 		})
@@ -148,14 +160,6 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 			return err
 		}
 	}
-	saved, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits)
-	if err != nil {
-		return err
-	}
-	nextConfig, err := loaded.ReloadConfigFile(saved)
-	if err != nil {
-		return err
-	}
 	// Apply only this lane to the running daemon; other saved changes remain pending.
 	runtimeConfig := *c.state.cfg
 	c.handle.mu.Lock()
@@ -163,6 +167,9 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		runtimeConfig.Vector = c.handle.vf.Cfg
 	}
 	c.handle.mu.Unlock()
+	previousConfig := runtimeConfig
+	previousState := *c.state
+	previousState.cfg = &previousConfig
 	runtimeConfig.Vector.Enabled = true
 	runtimeConfig.Vector.Backend = nextConfig.Vector.Backend
 	runtimeConfig.Vector.Embeddings = nextConfig.Vector.Embeddings
@@ -177,6 +184,10 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if !useOllama {
 		vecCfg.Embeddings.Endpoint = builtinEndpoint
 	}
+	rebuildDocuments, err := c.retainDocumentConsents(nextCtx, &previousState, &state)
+	if err != nil {
+		return err
+	}
 	var vf *vectorFeatures
 	if c.handle.vf == nil {
 		vf, err = setupVectorFeaturesForRun(nextCtx, c.store, c.dbPath, false, c.openers...)
@@ -189,10 +200,26 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if vf == nil {
 		return errors.New("local search is unavailable in this build")
 	}
+	if _, err := config.EditConfigTables(loaded.ConfigFilePath(), snapshot.ETag, lane.edits); err != nil {
+		if c.handle.vf == nil && vf.Close != nil {
+			_ = vf.Close()
+		}
+		return err
+	}
 	c.handle.mu.Lock()
 	c.handle.vf = vf
 	c.handle.mu.Unlock()
 	publishTextVectorFeatures(nextCtx, c.store, c.server, c.scheduler, vf, &state)
+	if rebuildDocuments {
+		if _, err := c.scheduler.StartJob("scheduled document indexing", false); err != nil {
+			return err
+		}
+	}
+	if c.refreshMCP != nil {
+		if err := c.refreshMCP(nextCtx, &state); err != nil {
+			return err
+		}
+	}
 	report(api.LocalEmbeddingsStatus{Phase: "indexing"})
 	fingerprint := vf.Cfg.GenerationFingerprint()
 	building, err := vf.Backend.BuildingGeneration(ctx)
@@ -205,10 +232,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	defer func() { _ = os.Remove(file.Name()) }()
-	encodeErr := toml.NewEncoder(file).Encode(struct {
-		Data   config.DataConfig `toml:"data"`
-		Vector vector.Config     `toml:"vector"`
-	}{runtimeConfig.Data, runtimeConfig.Vector})
+	encodeErr := toml.NewEncoder(file).Encode(&runtimeConfig)
 	if err := errors.Join(encodeErr, file.Close()); err != nil {
 		return err
 	}
@@ -236,4 +260,45 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	return nil
+}
+
+// Keep each previously authorized document purpose on the explicitly selected local provider.
+func (c *localEmbeddingsController) retainDocumentConsents(ctx context.Context, before, after *invocation) (bool, error) {
+	if !before.cfg.Attachments.Documents.Index.Embeddings.Enabled {
+		return false, nil
+	}
+	oldSpec, err := configuredDocumentVectorSpec(withInvocation(ctx, before), c.store)
+	if errors.Is(err, store.ErrDocumentVectorInvalidGenerationState) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	newSpec, err := configuredDocumentVectorSpec(ctx, c.store)
+	if err != nil {
+		return false, err
+	}
+	rebuild := false
+	for _, purpose := range []string{"document_embedding", "query_embedding"} {
+		oldConsent, err := configuredDocumentVectorConsentSpec(oldSpec, before, purpose)
+		if err != nil {
+			return false, err
+		}
+		consent, err := c.store.GetDocumentVectorConsent(ctx, oldConsent.EgressFingerprint)
+		if err != nil {
+			return false, err
+		}
+		if consent == nil || consent.DocumentVectorConsentSpec != oldConsent {
+			continue
+		}
+		next, err := configuredDocumentVectorConsentSpec(newSpec, after, purpose)
+		if err != nil {
+			return false, err
+		}
+		if _, _, err := c.store.RecordDocumentVectorConsent(ctx, next, time.Now()); err != nil {
+			return false, err
+		}
+		rebuild = rebuild || purpose == "document_embedding"
+	}
+	return rebuild, nil
 }

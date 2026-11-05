@@ -17,9 +17,10 @@ vi.mock('../../telemetry/screen-views', () => ({ startScreenViewReporting: () =>
 
 const telemetryEvents: Array<{ event: string; properties: { kind: string } }> = [];
 beforeEach(() => { telemetryEvents.length = 0; });
-const createAPIClient = (fetchFn: typeof fetch) => createCaptureClient(async (input, init) => {
+const createAPIClient = (fetchFn: typeof fetch, localFetch: typeof fetch = async () => Response.json({ enabled: true, phase: 'idle' })) => createCaptureClient(async (input, init) => {
   const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
   if (path === '/api/v1/deletions') return Response.json({ manifests: [] });
+  if (path === '/api/v1/embeddings/local') return localFetch(input, init);
   if (path === '/api/v1/saved-views') return Response.json({ saved_views: [] });
   if (path === '/api/v1/sources/status') return Response.json({ sources: [] });
   if (path === '/api/v1/operations/status') return Response.json({ lanes: lanes() });
@@ -2788,19 +2789,29 @@ function selectionStatus(): HTMLElement {
 }
 
 it('turns on semantic search from an empty full-text result and opens Settings overview', async () => {
-  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', query: 'orchard', searchMode: 'full_text' }))}`);
+  window.history.replaceState(null, '', `/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything', searchMode: 'full_text' }))}`);
   const posts: unknown[] = [];
-  const client = createAPIClient(async input => {
+  let availabilityRequests = 0;
+  const fetchFn: typeof fetch = async input => {
     const request = input as Request;
     const path = new URL(request.url).pathname;
     if (path === '/api/v1/embeddings/local') {
       if (request.method === 'POST') posts.push(await request.json());
+      else availabilityRequests += 1;
       return Response.json({ enabled: false, provider: '', compatible: false, ollama_available: false, phase: 'idle', download_bytes: 290000000, done_bytes: 0, total_bytes: 0 });
     }
     return Response.json(exploreResponse());
-  });
+  };
+  const client = createAPIClient(fetchFn, fetchFn);
   const state = new ExploreState(window);
   const view = render(AppShell, { client, state });
+  await waitFor(() => expect(availabilityRequests).toBe(1));
+  expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
+  state.replaceSearchDraft('orchard', 'full_text');
+  await screen.findByRole('button', { name: 'Turn on' });
+  state.replaceSearchDraft('pear', 'full_text');
+  await screen.findByRole('button', { name: 'Turn on' });
+  expect(availabilityRequests).toBe(1);
   await fireEvent.click(await screen.findByRole('button', { name: 'Turn on' }));
   await waitFor(() => expect(state.current.workspace).toBe('settings'));
   expect(posts).toEqual([{ use_builtin: false }]);

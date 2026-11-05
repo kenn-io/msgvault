@@ -220,8 +220,10 @@ func startVectorInit(
 				logger.Error("register multimodal job failed", "error", err)
 			}
 		}
-		if err := registerDocumentVectorJob(sched, vf, s, state); err != nil {
-			logger.Error("register document vector job failed", "error", err)
+		if !cfg.Vector.Enabled {
+			if err := registerDocumentVectorJob(sched, vf, s, state); err != nil {
+				logger.Error("register document vector job failed", "error", err)
+			}
 		}
 		logger.Info("daemon startup step complete", "step", "init_vector_backend")
 	}()
@@ -622,6 +624,10 @@ func publishTextVectorFeatures(ctx context.Context, s *store.Store, apiServer *a
 	apiServer.SetVectorScopeCheck(embedScopeDriftCheck(s, vf.Cfg.Embed.Scope.BuildScope(), state))
 	apiServer.SetVectorRestartFingerprint(restartVectorFingerprint(s, state))
 	checkVectorIndexFreshness(ctx, apiServer, vf, logger)
+	if err := registerDocumentVectorJob(sched, vf, s, state); err != nil {
+		logger.Error("register document vector job failed", "error", err)
+	}
+
 	if err := registerEmbedJob(sched, vf, s, apiServer, state.cfg, logger); err != nil {
 		// Cron was validated in precheckVectorFeatures, so this is an
 		// invariant violation, not user error; vector search still works.

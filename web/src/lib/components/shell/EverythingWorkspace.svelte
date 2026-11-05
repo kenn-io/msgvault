@@ -421,22 +421,15 @@
     readingDetailRetryRevision += 1;
   }
 
-  let localSearchOff = $state(false);
+  let localSetupOff = $state(false);
   let startingLocalSearch = $state(false);
-  let localSearchCache: { off: boolean; expires: number } | undefined;
+  const localSearchOff = $derived(localSetupOff && !loader.loading && Boolean(loader.result) && Boolean(exploreState.current.query.trim()));
   $effect(() => {
-    localSearchOff = false;
-    if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text' || !exploreState.current.query.trim() || loader.loading || !loader.result) return;
-    if (localSearchCache && localSearchCache.expires > Date.now()) {
-      localSearchOff = localSearchCache.off;
-      return;
-    }
+    localSetupOff = false;
+    if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text') return;
     const controller = new AbortController();
     void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
-      if (!controller.signal.aborted && response.ok) {
-        localSearchOff = Boolean(data && data.provider !== 'configured' && !data.enabled && !data.running && data.phase === 'idle');
-        localSearchCache = { off: localSearchOff, expires: Date.now() + 5000 };
-      }
+      if (!controller.signal.aborted && response.ok) localSetupOff = Boolean(data && data.provider !== 'configured' && !data.enabled && !data.running && data.phase === 'idle');
     }).catch(() => undefined);
     return () => controller.abort();
   });

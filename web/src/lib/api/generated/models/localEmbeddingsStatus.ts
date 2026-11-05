@@ -5,6 +5,7 @@ import type { LocalEmbeddingsStatusPhase } from "./localEmbeddingsStatusPhase";
 
 export interface LocalEmbeddingsStatus {
   compatible: boolean;
+  document_rebuild?: boolean;
   done_bytes: number;
   download_bytes: number;
   enabled: boolean;
