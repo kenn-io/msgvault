@@ -468,7 +468,10 @@ func (c *Client) importMessage(
 		pid, err := c.resolveParticipant(
 			s, *msg.HandleID, phoneCache, emailCache, summary,
 		)
-		if err == nil && pid > 0 {
+		if err != nil {
+			return fmt.Errorf("resolve message sender: %w", err)
+		}
+		if pid > 0 {
 			senderID = sql.NullInt64{Int64: pid, Valid: true}
 			_ = s.EnsureConversationParticipant(convID, pid, "member")
 		}

@@ -508,34 +508,53 @@ func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
 
 func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 	testutil.SkipIfPostgres(t, "SQLite trigger injection")
-	require := require.New(t)
-	path, db := testutil.NewIMessageChatDB(t)
-	_, err := db.Exec(`INSERT INTO message (date,text,is_from_me) VALUES (725760000,'outgoing',1);
+	for _, tt := range []struct {
+		name          string
+		isFromMe      int
+		recipientType string
+	}{
+		{name: "outgoing", isFromMe: 1, recipientType: "to"},
+		{name: "incoming", isFromMe: 0, recipientType: "from"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			require := require.New(t)
+			path, db := testutil.NewIMessageChatDB(t)
+			_, err := db.Exec(`INSERT INTO message (date,text,is_from_me) VALUES (725760000,'message',?);
  INSERT INTO chat VALUES ('any;-;synthetic', '', 'peer@example.test');
  INSERT INTO chat_message_join VALUES (1,1);
- INSERT INTO chat_handle_join VALUES (1,1)`)
-	require.NoError(err)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("apple_messages", "local")
-	require.NoError(err)
-	client, err := NewClient(path)
-	require.NoError(err)
-	t.Cleanup(func() { _ = client.Close() })
-	_, err = client.Import(t.Context(), st, src.ID)
-	require.NoError(err)
-	query := `SELECT p.email_address FROM message_recipients r JOIN participants p ON p.id = r.participant_id WHERE r.recipient_type = 'to'`
-	var recipient string
-	require.NoError(st.DB().QueryRow(query).Scan(&recipient))
-	require.Equal("peer@example.test", recipient)
-	_, err = db.Exec(`UPDATE handle SET id = 'new-peer@example.test'`)
-	require.NoError(err)
-	_, err = st.DB().Exec(`CREATE TRIGGER fail_participant BEFORE INSERT ON participants BEGIN SELECT RAISE(ABORT, 'synthetic recipient failure'); END`)
-	require.NoError(err)
-	summary, err := client.Import(t.Context(), st, src.ID)
-	require.NoError(err)
-	assert.Equal(t, 1, summary.Skipped)
-	require.NoError(st.DB().QueryRow(query).Scan(&recipient))
-	assert.Equal(t, "peer@example.test", recipient)
+ INSERT INTO chat_handle_join VALUES (1,1)`, tt.isFromMe)
+			require.NoError(err)
+			st := testutil.NewTestStore(t)
+			src, err := st.GetOrCreateSource("apple_messages", "local")
+			require.NoError(err)
+			client, err := NewClient(path)
+			require.NoError(err)
+			t.Cleanup(func() { _ = client.Close() })
+			_, err = client.Import(t.Context(), st, src.ID)
+			require.NoError(err)
+			query := `SELECT p.email_address FROM message_recipients r JOIN participants p ON p.id = r.participant_id WHERE r.recipient_type = ?`
+			var recipient string
+			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
+			require.Equal("peer@example.test", recipient)
+			_, err = db.Exec(`UPDATE handle SET id = 'new-peer@example.test'`)
+			require.NoError(err)
+			_, err = st.DB().Exec(`CREATE TRIGGER fail_participant BEFORE INSERT ON participants BEGIN SELECT RAISE(ABORT, 'synthetic recipient failure'); END`)
+			require.NoError(err)
+			summary, err := client.Import(t.Context(), st, src.ID)
+			require.NoError(err)
+			assert.Equal(t, 1, summary.Skipped)
+			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
+			assert.Equal(t, "peer@example.test", recipient)
+			_, err = st.DB().Exec(`DROP TRIGGER fail_participant`)
+			require.NoError(err)
+			retried, err := client.Import(t.Context(), st, src.ID)
+			require.NoError(err)
+			assert.Zero(t, retried.Skipped)
+			assert.Equal(t, 1, retried.MessagesUpdated)
+			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
+			assert.Equal(t, "new-peer@example.test", recipient)
+		})
+	}
 }
 
 func TestImportOwnerChangeRefreshesRecipients(t *testing.T) {
