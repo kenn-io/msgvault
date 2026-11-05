@@ -128,8 +128,8 @@ func TestAgentReadAuthorization(t *testing.T) {
 	storagePath, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(storagePath), 0700))
-	requirements.NoError(os.WriteFile(storagePath, []byte("\x00ynthetic attachment"), 0600))
-	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "sample.bin"), []byte("\x00ynthetic attachment"), 0600))
+	requirements.NoError(os.WriteFile(storagePath, []byte("synthetic attachment"), 0600))
+	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "sample.bin"), []byte("synthetic attachment"), 0600))
 	requirements.NoError(st.UpsertAttachment(t.Context(), ids[0], "sample.bin", "application/octet-stream", "sample.bin", hash, 20))
 	var attID int64
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id=?"), ids[0]).Scan(&attID))

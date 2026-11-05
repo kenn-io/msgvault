@@ -1329,7 +1329,7 @@ func (e *SQLiteEngine) GetAttachment(ctx context.Context, id int64) (*Attachment
 // hash in stable ID order.
 func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash string) ([]AttachmentInfo, error) {
 	rows, err := e.queryContext(ctx, `
-		SELECT a.id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, '')
+		SELECT a.id, a.message_id, COALESCE(m.source_id, 0), COALESCE(a.filename, ''), COALESCE(a.mime_type, ''), COALESCE(a.size, 0), COALESCE(a.content_hash, ''), COALESCE(a.storage_path, '')
 		FROM attachments a LEFT JOIN messages m ON m.id = a.message_id
 		WHERE a.content_hash = ? OR (COALESCE(a.content_hash, '') = '' AND a.storage_path = ?)
 		ORDER BY a.id
@@ -1342,7 +1342,7 @@ func (e *SQLiteEngine) GetAttachmentsByHash(ctx context.Context, contentHash str
 	var attachments []AttachmentInfo
 	for rows.Next() {
 		var att AttachmentInfo
-		if err := rows.Scan(&att.ID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath); err != nil {
+		if err := rows.Scan(&att.ID, &att.MessageID, &att.SourceID, &att.Filename, &att.MimeType, &att.Size, &att.ContentHash, &att.StoragePath); err != nil {
 			return nil, fmt.Errorf("scan attachment by hash: %w", err)
 		}
 		att.ContentHash = store.AttachmentContentHash(att.ContentHash, att.StoragePath)

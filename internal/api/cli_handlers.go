@@ -3659,7 +3659,10 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	refuse := s.withholdsVerification(r)
+	refuse, withheld, ok := s.attachmentWithheld(w, r, attachments)
+	if !ok {
+		return
+	}
 	releaseReadSnapshot(r)
 
 	if s.blobStore != nil {
@@ -3678,7 +3681,7 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusRequestEntityTooLarge, "remote_attachment_too_large", "Attachment exceeds the remote client byte limit")
 			return
 		}
-		reader, apiErr := textAttachmentReader(rc, attachments, refuse)
+		reader, apiErr := textAttachmentReader(rc, attachments, refuse, withheld)
 		if apiErr != nil {
 			_ = rc.Close()
 			writeAPIHTTPError(w, apiErr)
@@ -3729,7 +3732,7 @@ func (s *Server) handleCLIAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	reader, apiErr := textAttachmentReader(f, attachments, refuse)
+	reader, apiErr := textAttachmentReader(f, attachments, refuse, withheld)
 	if apiErr != nil {
 		writeAPIHTTPError(w, apiErr)
 		return

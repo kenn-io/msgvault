@@ -208,6 +208,13 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
 	assertions.NotContains(w.Body.String(), "482913")
+
+	// A real loader must also refuse a row that disappeared before hydration.
+	srv.store = st
+	w = httptest.NewRecorder()
+	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id + 1, Subject: "Your code is 482913"}}, nil))
+	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
+	assertions.NotContains(w.Body.String(), "482913")
 }
 
 func TestAgentVerificationFields(t *testing.T) {
@@ -288,13 +295,24 @@ func TestAgentVerificationAttachments(t *testing.T) {
 	for _, tc := range []struct {
 		name, mime, body string
 		blocked          bool
+		parent, shared   bool
 	}{
-		{"ordinary.txt", "text/plain", "\x00Ordinary attachment", true},
-		{"mail.bin", "message/rfc822", "\x00Ordinary mail", true},
-		{"x.eml", "application/octet-stream", "\x00Ordinary email", true},
-		{"data.bin", "application/octet-stream", "Ordinary text", true},
-		{"image.png", "image/png", "\x89PNG\r\n\x1a\n\x00Ordinary image", false},
-		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false},
+		{"ordinary.txt", "text/plain", "Ordinary attachment", false, false, false},
+		{"table.csv", "text/csv", "name,value\nexample,42\n", false, false, false},
+		{"mail.bin", "message/rfc822", "Ordinary mail", true, false, false},
+		{"x.eml", "application/octet-stream", "Ordinary email", true, false, false},
+		{"data.bin", "application/octet-stream", "Ordinary text", false, false, false},
+		{"code.txt", "text/plain", "Your verification code is 482913", true, false, false},
+		{"parent.txt", "text/plain", "482913", true, true, false},
+		{"shared.txt", "text/plain", "482914", true, false, true},
+		{"utf16-le.txt", "text/plain", "\xff\xfeY\x00o\x00u\x00r\x00", true, false, false},
+		{"utf16-be.txt", "text/plain", "\xfe\xff\x00Y\x00o\x00u\x00r", true, false, false},
+		{"nul.txt", "text/plain", "Y\x00o\x00u\x00r\x00", true, false, false},
+		{"nested.txt", "text/plain", "Content-Transfer-Encoding: base64\r\n\r\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
+		{"invalid.txt", "text/plain", "Your \xff attachment", true, false, false},
+		{"large.txt", "text/plain", strings.Repeat("x", 1024*1024+1), true, false, false},
+		{"image.png", "image/png", "\x89PNG\r\n\x1a\n\x00Ordinary image", false, false, false},
+		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -305,11 +323,16 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 			requirements.NoError(os.WriteFile(path, []byte(tc.body), 0600))
 			messageID := id
-			if tc.name == "x.eml" {
-				_, messageID, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", "withheld-eml", "Your verification code is 482913", "")
+			if tc.parent {
+				_, messageID, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", tc.name, "Your verification code is 482913", "")
 				requirements.NoError(err)
 			}
 			requirements.NoError(st.UpsertAttachment(messageID, tc.name, tc.mime, "", hash, len(tc.body)))
+			if tc.shared {
+				_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "shared-parent", "Your verification code is 482914", "")
+				requirements.NoError(err)
+				requirements.NoError(st.UpsertAttachment(parentID, tc.name, tc.mime, "", hash, len(tc.body)))
+			}
 			for _, blob := range []bool{false, true} {
 				srv.blobStore = nil
 				if blob {
