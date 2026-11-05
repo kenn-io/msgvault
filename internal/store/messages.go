@@ -270,15 +270,14 @@ func (s *Store) StreamGmailAuditEvidencePageContext(
 func (s *Store) gmailAuditPageIDsTx(
 	ctx context.Context, tx *loggedTx, sourceID, afterID int64, limit int,
 ) ([]int64, error) {
-	rows, err := tx.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := tx.QueryContext(ctx, `
 		SELECT m.id
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id AND src.source_type = 'gmail'
 		WHERE m.id > ? AND (? = 0 OR m.source_id = ?)
-		  AND %s
 		ORDER BY m.id
 		LIMIT ?
-	`, SourceNativeMessagesWhere("m", "sources")), afterID, sourceID, sourceID, limit)
+	`, afterID, sourceID, sourceID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list Gmail audit evidence: %w", err)
 	}
@@ -2560,7 +2559,7 @@ func (s *Store) persistMessageWith(
 		return 0, err
 	}
 	if len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == rawFormatMIME) {
-		if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, &data.RawMIME); err != nil {
+		if err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, data.RawMIME); err != nil {
 			return 0, err
 		}
 	}
@@ -3708,7 +3707,6 @@ func (s *Store) ReconcileSourceMessageSnapshot(
 			SELECT source_message_id
 			FROM messages
 			WHERE source_id = ?
-			  AND COALESCE(message_type, '') <> 'calendar_event'
 			  AND deleted_at IS NULL
 			  AND deleted_from_source_at IS NULL
 			  AND NOT EXISTS (
@@ -6313,7 +6311,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		if format == rawFormatMIME {
-			if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, &rawData); err != nil {
+			if err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, rawData); err != nil {
 				return err
 			}
 		}

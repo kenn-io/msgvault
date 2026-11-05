@@ -374,7 +374,21 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 					line.WriteString(";" + param + "=" + v)
 				}
 			}
-			line.WriteString(":" + prop.Value)
+			value := prop.Value
+			if (name == "RDATE" || name == "EXDATE") && prop.Params.Get("TZID") == "" && prop.ValueType() != ical.ValueDate {
+				values := strings.Split(value, ",")
+				for i, v := range values {
+					date := prop
+					date.Value = v
+					resolved, _, err := icsTime(&date, loc)
+					if err != nil {
+						return ICSComponent{}, fmt.Errorf("%s: %w", name, err)
+					}
+					values[i] = resolved.UTC().Format("20060102T150405Z")
+				}
+				value = strings.Join(values, ",")
+			}
+			line.WriteString(":" + value)
 			e.Recurrence = append(e.Recurrence, line.String())
 		}
 	}

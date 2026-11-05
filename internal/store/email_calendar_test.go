@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,17 @@ func emailFrom(from string, calendar []byte) []byte {
 
 func inviteEmail(calendar []byte) []byte {
 	return emailFrom("organizer@example.com", calendar)
+}
+
+func TestEmailCalendarLearnsMissingOrganizer(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, source := persistInviteEmail(t, st, "no-organizer", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original")))
+	persistInviteEmail(t, st, "update", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner@example.com")))
+	ids := emailEvents(t, st, source)
+	require.Len(t, ids, 1)
+	assert.Equal(t, "Updated", calendarRows(t, st, ids...)[0].Subject)
+	persistInviteEmail(t, st, "mismatch", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Rejected\r\nORGANIZER:mailto:other@example.org")))
+	assert.Equal(t, "Updated", calendarRows(t, st, ids...)[0].Subject)
 }
 
 func persistInviteEmail(t *testing.T, st *Store, key string, raw []byte) (int64, int64) {
@@ -187,79 +199,24 @@ func TestEmailCalendarMaterializesOnRawMIMEUpsert(t *testing.T) {
 	assertions.Len(emailEvents(t, st, source), 1)
 }
 
-func TestEmailCalendarRepair(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-
-	st := newRFC822IDBackfillBackendStore(t)
-	parent, source := persistInviteEmail(t, st, "old-email", []byte("Subject: Older email\r\n\r\nBody"))
-	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
-	// Exercise the real low-level writer to represent pre-upgrade stored MIME.
-	requirements.NoError(st.withAttributionTxContext(t.Context(), attributionLock{Sources: []int64{source}}, func(tx *loggedTx) error {
-		return upsertMessageRawWithFormat(boundQuerier{ctx: t.Context(), q: tx}, parent, raw, "mime")
-	}))
-	assertions.Empty(emailEvents(t, st, source))
-	requirements.NoError(st.withAttributionTxContext(t.Context(), attributionLock{Sources: []int64{source}}, func(tx *loggedTx) error {
-		q := boundQuerier{ctx: t.Context(), q: tx}
-		var conversationID int64
-		if err := q.QueryRow(`SELECT conversation_id FROM messages WHERE id=?`, parent).Scan(&conversationID); err != nil {
-			return err
-		}
-		for i := range 100 {
-			id, err := upsertMessageWith(q, st.dialect, &Message{SourceID: source, ConversationID: conversationID, SourceMessageID: fmt.Sprintf("ordinary-%d", i), MessageType: "email"})
-			if err != nil {
-				return err
-			}
-			if err := upsertMessageRawWithFormat(q, id, []byte("Subject: Ordinary\r\n\r\nBody"), "mime"); err != nil {
-				return err
-			}
-		}
-		return nil
-	}))
-	var reports []string
-	first, err := st.RepairEmailCalendarEventsContext(t.Context(), source, func(msg string) { reports = append(reports, msg) })
-	assertions.Equal([]string{"calendar invites: 100 emails scanned", "calendar invites: 101 emails scanned"}, reports)
-	requirements.NoError(err)
-	assertions.Equal(1, first.Changed)
-	assertions.Equal(101, first.Scanned)
-	var count int
-	var last time.Time
-	requirements.NoError(st.db.QueryRow(`SELECT c.message_count,c.last_message_at FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE m.message_type='calendar_event' AND m.source_id=?`, source).Scan(&count, &last))
-	assertions.Equal(1, count)
-	assertions.Equal(time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), last.UTC())
-	ids := emailEvents(t, st, source)
-	requirements.Len(ids, 1)
-	second, err := st.RepairEmailCalendarEventsContext(t.Context(), source, nil)
-	requirements.NoError(err)
-	assertions.Zero(second.Changed)
-	assertions.Equal(ids, emailEvents(t, st, source))
-}
-
-func TestEmailCalendarRepairAfterSourceMerge(t *testing.T) {
+func TestEmailCalendarInvalidPartPreservesEmail(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z"))
-	parent, source := persistInviteEmail(t, st, "merged-invite", raw)
-	dest, err := st.GetOrCreateSource("mbox", "destination@example.test")
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	raw := inviteEmail([]byte("invalid calendar"))
+	id, source := persistInviteEmail(t, st, "bad-calendar", raw)
+	assertions.Empty(emailEvents(t, st, source))
+	stored, err := st.GetMessageRaw(id)
 	requirements.NoError(err)
-	liveRaw := bytes.ReplaceAll(raw, []byte("family@example.com"), []byte("live@example.test"))
-	_, err = st.PersistMessageContext(t.Context(), &MessagePersistData{
-		Message:      &Message{SourceID: dest.ID, SourceMessageID: "live-invite", MessageType: "email"},
-		Conversation: &ConversationPersistData{SourceConversationID: "live-invite"},
-		RawMIME:      liveRaw,
-	})
+	assertions.Equal(raw, stored)
+	metadata, err := st.GetMessageMetadata(id)
 	requirements.NoError(err)
-	_, err = st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: source, IntoSourceID: dest.ID})
-	requirements.NoError(err)
-	before := emailEvents(t, st, dest.ID)
-	requirements.Len(before, 2)
-	summary, err := st.RepairEmailCalendarEventsContext(t.Context(), dest.ID, nil)
-	requirements.NoError(err)
-	assertions.Equal(1, summary.Scanned)
-	assertions.Zero(summary.Changed)
-	assertions.Equal(before, emailEvents(t, st, dest.ID))
-	requirements.NoError(st.UpsertMessageRawWithFormat(parent, raw, "mime"))
-	assertions.Equal(before, emailEvents(t, st, dest.ID))
+	assertions.False(metadata.Valid)
+	assertions.Contains(logs.String(), "level=WARN")
+	assertions.Contains(logs.String(), fmt.Sprintf("message_id=%d", id))
 }
 
 func TestEmailCalendarCancellationPreemptsOlderInvite(t *testing.T) {
@@ -295,13 +252,17 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 		forged                                              bool
 	}{
 		{"matching claimed organizer", "ORGANIZER;CN=Owner;SENT-BY=\"mailto:service@example.org\":mailto:OWNER@EXAMPLE.COM", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Different;SENT-BY=\"mailto:other@example.net\":mailto:owner@example.com", "cancelled", "", 1, false},
-		{"missing original organizer", "", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner@example.com", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 1, false},
+		{"missing original organizer", "", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner@example.com", "cancelled", "", 1, false},
 		{"missing incoming organizer", "ORGANIZER:mailto:owner@example.com", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 1, false},
 		{"forged", "", "attendee@example.net", "STATUS:CANCELLED\r\nSEQUENCE:999\r\nORGANIZER:mailto:attendee@example.net\r\nSUMMARY:Forged cancellation", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 2, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st := newRFC822IDBackfillBackendStore(t)
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
 			props := "DTSTART:20270302T120000Z\r\nSUMMARY:Original"
 			if tc.organizer != "" {
 				props += "\r\n" + tc.organizer
@@ -325,8 +286,8 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 			if tc.diagnostic == "" {
 				assertions.NotContains(metadata.String, "calendar_invite_errors")
 			} else {
-				assertions.Contains(metadata.String, "calendar_invite_errors")
-				assertions.Contains(metadata.String, tc.diagnostic)
+				assertions.False(metadata.Valid)
+				assertions.Contains(logs.String(), tc.diagnostic)
 				assertions.Equal(before, calendarRows(t, st, ids...))
 			}
 			retained, err := st.GetMessageRaw(cancel)
