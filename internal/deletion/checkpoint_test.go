@@ -17,6 +17,8 @@ import (
 func TestExecutor_CheckpointWritesGrowLinearly(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fail=%v", fail), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
 			ns := []int{10_000, 100_000}
 			if testing.Short() {
 				ns = ns[:1]
@@ -34,11 +36,11 @@ func TestExecutor_CheckpointWritesGrowLinearly(t *testing.T) {
 				var journalSize int64
 				tc.MockAPI.BeforeTrash = func(string) error {
 					info, err := os.Stat(path)
-					require.NoError(t, err)
+					require.NoError(err)
 					if claimed == nil {
 						claimed = info
 					}
-					assert.True(t, os.SameFile(claimed, info) && claimed.Size() == info.Size(), "checkpoint rewrote the manifest")
+					assert.True(os.SameFile(claimed, info) && claimed.Size() == info.Size(), "checkpoint rewrote the manifest")
 					if journal, err := os.Stat(journalPath(path)); err == nil {
 						journalSize = journal.Size()
 					}
@@ -47,13 +49,13 @@ func TestExecutor_CheckpointWritesGrowLinearly(t *testing.T) {
 					}
 					return nil
 				}
-				require.NoError(t, tc.ExecuteWithOpts(m.ID, trashOpts(100)))
-				require.Positive(t, journalSize)
+				require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(100)))
+				require.Positive(journalSize)
 				sizes = append(sizes, journalSize)
 			}
 			if len(sizes) == 2 {
-				assert.Greater(t, sizes[1], 9*sizes[0])
-				assert.Less(t, sizes[1], 11*sizes[0])
+				assert.Greater(sizes[1], 9*sizes[0])
+				assert.Less(sizes[1], 11*sizes[0])
 			}
 		})
 	}
@@ -235,6 +237,8 @@ func TestExecutor_CancelFoldsJournal(t *testing.T) {
 }
 
 func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	tc := NewTestContext(t)
 	m := tc.CreateManifest("tombstone restart", msgIDs(3))
 	m.Status = StatusInProgress
@@ -242,15 +246,15 @@ func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
 		StartedAt: time.Now(), Method: MethodTrash, LastProcessedIndex: 2,
 		Failed: 1, FailedIDs: []string{"msg0"}, TombstoneIDs: []string{"msg1"},
 	}
-	require.NoError(t, tc.Mgr.SaveManifest(m))
+	require.NoError(tc.Mgr.SaveManifest(m))
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	tc.Exec.WithProgress(&onStartProgress{hook: cancel})
 	opts := trashOpts(1)
 	opts.Resume = false
-	require.ErrorIs(t, tc.Exec.Execute(ctx, m.ID, opts), context.Canceled)
+	require.ErrorIs(tc.Exec.Execute(ctx, m.ID, opts), context.Canceled)
 	loaded, _, err := tc.Mgr.GetManifest(m.ID)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"msg1"}, loaded.Execution.TombstoneIDs)
-	assert.Empty(t, loaded.Execution.FailedIDs)
+	require.NoError(err)
+	assert.Equal([]string{"msg1"}, loaded.Execution.TombstoneIDs)
+	assert.Empty(loaded.Execution.FailedIDs)
 }

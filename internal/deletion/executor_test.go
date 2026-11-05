@@ -1598,27 +1598,29 @@ func TestExecutor_ExecuteBatch_CooperativeCancel(t *testing.T) {
 // TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest verifies that
 // a checkpoint rejected after cancellation leaves no journal behind.
 func TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	tc := NewTestContext(t)
 	manifest := tc.CreateManifest("checkpoint race", msgIDs(10))
 
 	// Claim into in_progress/ as prepareExecution would.
-	require.NoError(t, tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
+	require.NoError(tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
 	manifest.Status = StatusInProgress
 	manifest.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
 	path := tc.Mgr.InProgressDir() + "/" + manifest.ID + ".json"
 
 	// The daemon cancels right before the checkpoint write lands.
-	require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+	require.NoError(tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
 
 	// Invoke the checkpoint write directly at the race boundary.
-	assert.False(t, tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil, 0))
+	assert.False(tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil, 0))
 	_, err := os.Stat(journalPath(path))
-	assert.ErrorIs(t, err, os.ErrNotExist, "cancelled checkpoint must not create a journal")
+	assert.ErrorIs(err, os.ErrNotExist, "cancelled checkpoint must not create a journal")
 
 	// The in_progress file must not be resurrected; the manifest lives only
 	// in cancelled/.
 	_, statErr := os.Stat(path)
-	assert.True(t, os.IsNotExist(statErr), "in_progress file must not be recreated by checkpoint")
+	assert.True(os.IsNotExist(statErr), "in_progress file must not be recreated by checkpoint")
 	tc.AssertInProgressCount(0)
 	tc.AssertCompletedCount(0)
 	tc.AssertCancelledCount(1)
