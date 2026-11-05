@@ -60,6 +60,9 @@ withdrawn observations for inspection, but excludes archive/source-deleted
 messages. Original provider JSON remains in the archive's original-message
 storage, outside the list response.
 
+Undated Google Voice calls are left out of `calls list` and `calls summary`.
+Imported calls are searchable by their call text.
+
 `calls summary` ranks current durable people by answered count, then person ID.
 Unbound participants remain visible in evidence but have no guessed person.
 Multiple identities currently bound to one person count once per call.

@@ -39,6 +39,8 @@ func tierCall(day, callType, seconds int) string {
 	return fmt.Sprintf(`<call number="%s" duration="%d" date="%d" type="%d" presentation="1" />`, tierRemote, seconds, tierMillis(day), callType)
 }
 
+// importedTierSignals imports a backup through the real importer, projects
+// activity, and reads the tier counts of the person behind the remote phone.
 func importedTierSignals(t *testing.T, files map[string]string) persontiers.Signals {
 	t.Helper()
 	f := storetest.New(t)
