@@ -442,6 +442,22 @@ test('keeps group columns close at wide widths', async ({ page }) => {
   expect((await grid.getByRole('columnheader', { name: 'Group' }).boundingBox())!.width).toBeLessThanOrEqual(480);
 });
 
+test('keeps the month group column within 480 image pixels', async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
+  const page = await context.newPage();
+  await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
+  await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+    rows: [{ key: '2026-01', label: '2026-01', count: 3, total_items: 12, estimated_bytes: 512, latest_at: '2026-01-31T12:00:00Z' }],
+    total_count: 1, cache_revision: 'fixture', search_provenance: {}
+  } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ groupingChain: ['month'] })))}`);
+  const grid = page.getByRole('grid', { name: 'Messages grouped by month' });
+  await expect(grid.getByRole('row', { name: /Jan 2026/ })).toBeVisible();
+  const group = await grid.getByRole('columnheader', { name: 'Group' }).boundingBox();
+  expect(group!.width * await page.evaluate(() => window.devicePixelRatio)).toBeLessThanOrEqual(480);
+  await context.close();
+});
+
 test('aligns meeting content and separates people in a group inspector', async ({ page }) => {
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {

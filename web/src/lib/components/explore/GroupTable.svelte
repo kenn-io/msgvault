@@ -74,7 +74,7 @@
   const columnCount = $derived((narrow ? 3 : 5) + (timeGroup ? 1 : 0));
   const template = $derived(narrow
     ? `minmax(0,480px) 80px ${timeGroup ? 'minmax(96px,1fr) ' : ''}40px`
-    : `minmax(200px,480px) 88px 96px 128px ${timeGroup ? 'minmax(96px,1fr) ' : ''}40px`);
+    : `minmax(200px,240px) 88px 96px 128px ${timeGroup ? 'minmax(96px,1fr) ' : ''}40px`);
   let gridElement = $state<HTMLDivElement>();
   let headerElement = $state<HTMLDivElement>();
   let scrollTop = $state(0);
