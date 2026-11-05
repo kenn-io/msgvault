@@ -71,6 +71,35 @@ func TestAggregations(t *testing.T) {
 	}
 }
 
+func TestAggregateByLabel_AttachmentFields(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+
+	// Message 2 has two attachments and both INBOX and IMPORTANT labels.
+	for _, filtered := range []bool{false, true} {
+		opts := DefaultAggregateOptions()
+		if filtered {
+			opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
+			opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
+		}
+		rows, err := env.Engine.Aggregate(env.Ctx, ViewLabels, opts)
+		require.NoError(t, err)
+		want := map[string][2]int64{
+			"INBOX":     {35000, 3},
+			"IMPORTANT": {15000, 2},
+			"Work":      {20000, 1},
+		}
+		if filtered {
+			want = map[string][2]int64{"INBOX": {15000, 2}, "IMPORTANT": {15000, 2}}
+		}
+		got := make(map[string][2]int64, len(rows))
+		for _, row := range rows {
+			got[row.Key] = [2]int64{row.AttachmentSize, row.AttachmentCount}
+		}
+		assert.Equal(t, want, got, "filtered=%t", filtered)
+	}
+}
+
 func TestAggregateDefaultExcludesCalendarEvents(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)

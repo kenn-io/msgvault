@@ -244,16 +244,11 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string,
 				%s as key,
 				COUNT(*) as count,
 				COALESCE(SUM(m.size_estimate), 0) as total_size,
-				COALESCE(SUM(att.att_size), 0) as attachment_size,
-				COALESCE(SUM(att.att_count), 0) as attachment_count,
+				COALESCE(SUM((SELECT SUM(a.size) FROM attachments a WHERE a.message_id = m.id)), 0) as attachment_size,
+				COALESCE(SUM((SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id)), 0) as attachment_count,
 				COUNT(*) OVER() as total_unique
 			FROM messages m
 			%s
-			LEFT JOIN (
-				SELECT message_id, SUM(size) as att_size, COUNT(*) as att_count
-				FROM attachments
-				GROUP BY message_id
-			) att ON att.message_id = m.id
 			WHERE %s
 		GROUP BY %s
 	) AS agg
