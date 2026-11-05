@@ -50,12 +50,12 @@ type BurstPage struct {
 }
 
 type activityReadMessage struct {
-	ID                                     int64
-	Direction                              ActivityDirection
-	Meeting, List, Encrypted, LargeInbound bool
-	ContactEligible                        bool
-	ExcludedSender                         bool
-	Counterparts                           []ActivityMessageCounterpart
+	ID                       int64
+	Direction                ActivityDirection
+	Meeting, List, Encrypted bool
+	ContactEligible          bool
+	ExcludedSender           bool
+	Counterparts             []ActivityMessageCounterpart
 }
 
 func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
