@@ -220,6 +220,31 @@ func TestEmailCalendarNULSummaryPreservesEmail(t *testing.T) {
 	assertions.Equal("Before\uFFFDafter", rows[0].Subject)
 }
 
+func TestEmailCalendarNULAttendeePreservesEmail(t *testing.T) {
+	for _, tc := range []struct{ name, property, wantName, wantEmail string }{
+		{"attendee name", "ATTENDEE;CN=Before\x00after:mailto:guest@example.org", "Before\uFFFDafter", "guest@example.org"},
+		{"organizer name", "ORGANIZER;CN=Before\x00after:mailto:organizer@example.com", "Before\uFFFDafter", "organizer@example.com"},
+		{"address", "ATTENDEE:mailto:before\x00after@example.org", "", "before\uFFFDafter@example.org"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			raw := inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\n"+tc.property))
+			id, source := persistInviteEmail(t, st, "nul-attendee", raw)
+			stored, err := st.GetMessageRaw(id)
+			requirements.NoError(err)
+			assertions.Equal(raw, stored)
+			ids := emailEvents(t, st, source)
+			requirements.Len(ids, 1)
+			rows := calendarRows(t, st, ids...)
+			requirements.Len(rows, 1)
+			requirements.Len(rows[0].Event.Attendees, 1)
+			assertions.Equal(tc.wantName, rows[0].Event.Attendees[0].DisplayName)
+			assertions.Equal(tc.wantEmail, rows[0].Event.Attendees[0].Email)
+		})
+	}
+}
+
 func TestEmailCalendarRejectsRevisionAfterSourceMerge(t *testing.T) {
 	for _, tc := range []struct{ name, organizer, sequence string }{
 		{"different organizer", "other@example.org", "3"},

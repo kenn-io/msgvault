@@ -53,6 +53,21 @@ func TestICSOutlookTZID(t *testing.T) {
 	assertions.Equal([]string{"RDATE;TZID=America/New_York:20270707T090000"}, e.Recurrence)
 }
 
+func TestICSLibicalTZID(t *testing.T) {
+	for _, prefix := range []string{"/freeassociation.sourceforge.net/", "/freeassociation.sourceforge.net/Tzfile/"} {
+		t.Run(prefix, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			raw := strings.ReplaceAll(icsExample, "TZID=America/New_York", "TZID="+prefix+"America/New_York")
+			components, err := ParseICS([]byte(raw), "", "")
+			requirements.NoError(err)
+			requirements.Len(components, 1)
+			assertions.Equal("2027-03-14T13:00:00Z", components[0].Event.Start.Format(time.RFC3339))
+			assertions.Equal("2027-03-14T14:00:00Z", components[0].Event.End.Format(time.RFC3339))
+			assertions.Equal("America/New_York", components[0].Event.EventTimeZone)
+		})
+	}
+}
+
 const icsExample = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.com\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART;TZID=America/New_York:20270314T090000\r\nDTEND;TZID=America/New_York:20270314T100000\r\nSUMMARY:Example\\, meeting\r\nDESCRIPTION:First line\\nSecond\r\n line\r\nORGANIZER:mailto:ORGANIZER@EXAMPLE.COM\r\nATTENDEE;CN=Guest;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:room@example.com\r\nLOCATION:https://meet.google.com/abc-defg-hij\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 
 func TestICSDecode(t *testing.T) {
