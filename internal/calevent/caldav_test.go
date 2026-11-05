@@ -1,8 +1,12 @@
 package calevent
 
 import (
+	"encoding/binary"
 	"encoding/json/v2"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -294,6 +298,49 @@ func TestCalDAVFloatingRecurrenceIdentityIgnoresFallbackZone(t *testing.T) {
 		require.Len(events, 1)
 		assert.Equal(`["floating@example.org","FLOATING:20270321T090000"]`, events[0].Event.ProviderEventID)
 	}
+	// Isolate time.LoadLocation's first ZONEINFO lookup in a fresh process.
+	if os.Getenv("MSGVAULT_TEST_DECODE_ZONE") == "" {
+		executable, err := os.Executable()
+		require.NoError(err)
+		cmd := exec.CommandContext(t.Context(), executable, "-test.run=^TestCalDAVFloatingRecurrenceIdentityIgnoresFallbackZone$", "-test.timeout=25m")
+		cmd.Env = append(os.Environ(), "MSGVAULT_TEST_DECODE_ZONE=1", "ZONEINFO="+t.TempDir())
+		out, err := cmd.CombinedOutput()
+		require.NoError(err, "%s", out)
+		return
+	}
+	zoneDir := filepath.Join(os.Getenv("ZONEINFO"), "Test")
+	require.NoError(os.MkdirAll(zoneDir, 0o700))
+	for _, explicit := range []bool{false, true} {
+		input := strings.Replace(string(raw), "BEGIN:VEVENT", "BEGIN:VEVENT\r\nUID:floating@example.org\r\nDTSTART:20270314T090000\r\nDURATION:PT1H\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\nBEGIN:VEVENT", 1)
+		key := `["floating@example.org","FLOATING:20270321T090000"]`
+		if explicit {
+			input = strings.NewReplacer("RECURRENCE-ID:", "RECURRENCE-ID;TZID=Test/Calendar:", "DTSTART:", "DTSTART;TZID=Test/Calendar:").Replace(input)
+			key = `["floating@example.org","TZID=Test/Calendar:20270321T090000"]`
+		}
+		meta, err := json.Marshal(CalDAVMetadata{EventID: key})
+		require.NoError(err)
+		for _, tc := range []struct {
+			offset int32
+			want   string
+		}{
+			{-4 * 3600, "20270321T130000Z"},
+			{-5 * 3600, "20270321T140000Z"},
+		} {
+			// Minimal TZif v1 file with one fixed-offset local time type.
+			data := make([]byte, 54)
+			copy(data, "TZif")
+			binary.BigEndian.PutUint32(data[36:40], 1)
+			binary.BigEndian.PutUint32(data[40:44], 4)
+			binary.BigEndian.PutUint32(data[44:48], uint32(tc.offset))
+			copy(data[50:], "TST\x00")
+			require.NoError(os.WriteFile(filepath.Join(zoneDir, "Calendar"), data, 0o600))
+			event, ok, err := Decode(CalDAVRawFormat, []byte(input), meta, "Test/Calendar")
+			require.NoError(err)
+			require.True(ok)
+			require.NotNil(event.Original)
+			assert.Equal(tc.want, event.Original.Key())
+		}
+	}
 }
 
 func TestCalDAVLocalTimesInGapAndFold(t *testing.T) {
@@ -306,7 +353,11 @@ func TestCalDAVLocalTimesInGapAndFold(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:clock@example.org\r\nDTSTART;TZID=" + tc.zone + ":" + tc.start + "\r\nDTEND;TZID=" + tc.zone + ":" + tc.start + "\r\n" + tc.original + "END:VEVENT\r\nEND:VCALENDAR\r\n")
 			// Both explicit TZID and the configured calendar zone follow the same rule.
-			for _, input := range [][]byte{raw, []byte(strings.ReplaceAll(string(raw), ";TZID="+tc.zone, ""))} {
+			inputs := [][]byte{[]byte(strings.ReplaceAll(string(raw), ";TZID="+tc.zone, ""))}
+			if tc.name != "UTC overrides zone" {
+				inputs = append(inputs, raw)
+			}
+			for _, input := range inputs {
 				events, err := ParseCalDAVResource(t.Context(), input, tc.zone)
 				requirements.NoError(err)
 				requirements.Len(events, 1)
