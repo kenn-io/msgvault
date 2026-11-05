@@ -529,7 +529,7 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
-    expect(dialog.getByText(/open the source for its first sync command/)).toBeDefined();
+    expect(dialog.getByText('Run this in a terminal where msgvault is installed. Then return to Sources and open the source for its first sync command.')).toBeDefined();
     const email = dialog.getByLabelText('Email address');
     expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
     await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
@@ -558,7 +558,7 @@ describe('SourcesWorkspace', () => {
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
     expect(dialog.getByText("You'll be prompted for your password.")).toBeDefined();
-    expect(dialog.getByText(/open the source for its first sync command/)).toBeDefined();
+    expect(dialog.getByText('Run this in a terminal where msgvault is installed. Then return to Sources and open the source for its first sync command.')).toBeDefined();
     expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
     await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: 'imap.example.com' } });
     expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
