@@ -18,6 +18,8 @@ import (
 )
 
 func TestImportedCallReadableAndSearchable(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := storetest.New(t).Store
 	duration := 600.0
 	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
@@ -26,57 +28,59 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 		DurationSeconds: &duration, Raw: []byte(`{}`),
 	}
 	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(t, err)
+	require.NoError(err)
 	for _, tc := range []struct{ direction, text, stale string }{
 		{"incoming", "Call incoming, 600 seconds", "outgoing"},
 		{"outgoing", "Call outgoing, 600 seconds", "incoming"},
 	} {
 		o.Direction = tc.direction
 		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-		require.NoError(t, err)
+		require.NoError(err)
 		var subject, title string
 		var snippet sql.NullString
-		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
-		assert.Equal(t, tc.text, subject)
-		assert.Equal(t, tc.text, snippet.String)
-		assert.Equal(t, tc.text, title)
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
+		assert.Equal(tc.text, subject)
+		assert.Equal(tc.text, snippet.String)
+		assert.Equal(tc.text, title)
 		body, err := st.GetMessageBodyTextContext(t.Context(), id)
-		require.NoError(t, err)
-		assert.Equal(t, tc.text, body)
+		require.NoError(err)
+		assert.Equal(tc.text, body)
 		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(tc.direction+" seconds"), 0, 10)
-		require.NoError(t, err)
-		assert.EqualValues(t, 1, total)
-		if assert.Len(t, matches, 1) {
-			assert.Equal(t, id, matches[0].ID)
+		require.NoError(err)
+		assert.EqualValues(1, total)
+		if assert.Len(matches, 1) {
+			assert.Equal(id, matches[0].ID)
 		}
 		for _, term := range []string{tc.stale, "evidence"} {
 			_, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse(term), 0, 10)
-			require.NoError(t, err)
-			assert.Zero(t, total, term)
+			require.NoError(err)
+			assert.Zero(total, term)
 		}
 	}
 }
 
 func TestCallReimportPreservesLabels(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := storetest.New(t).Store
 	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
 		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
 	}
 	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(t, err)
+	require.NoError(err)
 	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	require.NoError(t, err)
+	require.NoError(err)
 	labelID, err := st.EnsureLabel(src.ID, "important", "Important", "user")
-	require.NoError(t, err)
-	require.NoError(t, st.AddMessageLabels(id, []int64{labelID}))
+	require.NoError(err)
+	require.NoError(st.AddMessageLabels(id, []int64{labelID}))
 
 	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	require.NoError(t, err)
-	assert.Equal(t, id, again)
+	require.NoError(err)
+	assert.Equal(id, again)
 	labels, err := st.MessageLabelIDsContext(t.Context(), again)
-	require.NoError(t, err)
-	assert.Equal(t, []int64{labelID}, labels)
+	require.NoError(err)
+	assert.Equal([]int64{labelID}, labels)
 }
 
 func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
@@ -166,58 +170,62 @@ func TestImportedCallMessageDirection(t *testing.T) {
 }
 
 func TestImportedCallConversationStats(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := storetest.New(t).Store
 	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
 		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
 	}
 	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(t, err)
+	require.NoError(err)
 	for range 2 {
 		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-		require.NoError(t, err)
+		require.NoError(err)
 		var count int
 		var latest sql.NullTime
-		require.NoError(t, st.DB().QueryRow(st.Rebind(`SELECT c.message_count, c.last_message_at FROM conversations c JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), id).Scan(&count, &latest))
-		assert.Equal(t, 1, count)
-		assert.True(t, latest.Valid)
-		assert.True(t, o.OccurredAt.Equal(latest.Time))
+		require.NoError(st.DB().QueryRow(st.Rebind(`SELECT c.message_count, c.last_message_at FROM conversations c JOIN messages m ON m.conversation_id = c.id WHERE m.id = ?`), id).Scan(&count, &latest))
+		assert.Equal(1, count)
+		assert.True(latest.Valid)
+		assert.True(o.OccurredAt.Equal(latest.Time))
 		o.OccurredAt = o.OccurredAt.Add(time.Hour)
 	}
 }
 
 func TestCompleteCalendarCancellationReplacesEvent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
 	st := storetest.New(t).Store
 	peer, err := st.EnsureParticipant("peer@example.com", "Peer", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	person, _, err := st.CreatePersonFromParticipant(peer)
-	require.NoError(t, err)
+	require.NoError(err)
 	o, err := (callhistory.ImportRequest{Format: "google_calendar", Account: "example",
 		Record: []byte(`{"id":"e1","start":{"date":"2026-10-01"},"attendees":[{"email":"peer@example.com"}]}`), Bindings: map[string]int64{"peer@example.com": peer},
 	}).Observation()
-	require.NoError(t, err)
+	require.NoError(err)
 	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(t, err)
+	require.NoError(err)
 	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	require.NoError(t, err)
+	require.NoError(err)
 	cancelled, err := (callhistory.ImportRequest{Format: "google_calendar", Account: "example",
 		Record: []byte(`{"id":"e1","status":"cancelled","start":{"date":"2026-10-02"}}`),
 	}).Observation()
-	require.NoError(t, err)
+	require.NoError(err)
 	again, err := st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-	require.NoError(t, err)
-	assert.Equal(t, id, again)
+	require.NoError(err)
+	assert.Equal(id, again)
 	items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-	assert.True(t, cancelled.OccurredAt.Equal(items[0].OccurredAt))
-	assert.Empty(t, items[0].Participants)
+	require.NoError(err)
+	require.Len(items, 1)
+	assert.True(cancelled.OccurredAt.Equal(items[0].OccurredAt))
+	assert.Empty(items[0].Participants)
 	raw, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(t, err)
-	assert.JSONEq(t, string(cancelled.Raw), string(raw))
+	require.NoError(err)
+	assert.JSONEq(string(cancelled.Raw), string(raw))
 	summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{PersonID: person.ID})
-	require.NoError(t, err)
-	assert.Empty(t, summary)
+	require.NoError(err)
+	assert.Empty(summary)
 }
 
 func TestNormalizedCancelledObservationWithdrawal(t *testing.T) {
