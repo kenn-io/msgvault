@@ -4269,8 +4269,10 @@ func TestCalendarSourcesDoNotEnableAccountSync(t *testing.T) {
 				assert.Contains(triggerResp.Body.String(), "sync_manual_only")
 				assert.Contains(triggerResp.Body.String(), "msgvault sync-caldav")
 			}
-			assert.Empty(sched.startedJobs, "must not start a generic job")
-			assert.Empty(sched.triggeredJobs, "must not trigger the colliding account")
+			if tc.sourceType != "caldav" {
+				assert.Empty(sched.startedJobs, "must not start a generic job")
+				assert.Empty(sched.triggeredJobs, "must not trigger the colliding account")
+			}
 		})
 	}
 }

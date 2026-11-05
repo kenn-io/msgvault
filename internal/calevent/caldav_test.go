@@ -431,7 +431,7 @@ func TestCalDAVParameterEscaping(t *testing.T) {
 
 func TestCalDAVAttendeeRolesAndRSVP(t *testing.T) {
 	raw := []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:roles@example.org\r\nDTSTART:20270314T130000Z\r\n" +
-		"ORGANIZER;CN=Alice:mailto:alice@example.org\r\nATTENDEE;ROLE=CHAIR:mailto:bob@example.org\r\nATTENDEE:mailto:carol@example.org\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:dave@example.org\r\nATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;ROLE=NON-PARTICIPANT:mailto:info@example.org\r\nATTENDEE:urn:uuid:00000000-0000-0000-0000-000000000000\r\nATTENDEE;CUTYPE=ROOM;ROLE=OPT-PARTICIPANT:mailto:room@example.org\r\nATTENDEE;CUTYPE=room:mailto:lower-room@example.org\r\nATTENDEE;CUTYPE=resource:mailto:resource@example.org\r\nATTENDEE;ROLE=opt-participant:mailto:optional@example.org\r\nATTENDEE;CN=Guest Two;PARTSTAT=DECLINED:urn:uuid:two\r\nATTENDEE;CN=Guest Three;EMAIL=three@example.org;PARTSTAT=TENTATIVE:urn:uuid:three\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+		"ORGANIZER;CN=Alice:mailto:alice@example.org\r\nATTENDEE;ROLE=CHAIR:mailto:bob@example.org\r\nATTENDEE:mailto:carol@example.org\r\nATTENDEE;PARTSTAT=NEEDS-ACTION:mailto:dave@example.org\r\nATTENDEE;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;ROLE=NON-PARTICIPANT:mailto:info@example.org\r\nATTENDEE:urn:uuid:00000000-0000-0000-0000-000000000000\r\nATTENDEE;CUTYPE=ROOM;ROLE=OPT-PARTICIPANT:mailto:room@example.org\r\nATTENDEE;CUTYPE=room:mailto:lower-room@example.org\r\nATTENDEE;CUTYPE=resource:mailto:resource@example.org\r\nATTENDEE;ROLE=opt-participant:mailto:optional@example.org\r\nATTENDEE;PARTSTAT=DELEGATED:mailto:delegate@example.org\r\nATTENDEE;CN=Guest Two;PARTSTAT=DECLINED:urn:uuid:two\r\nATTENDEE;CN=Guest Three;EMAIL=three@example.org;PARTSTAT=TENTATIVE:urn:uuid:three\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
 	event, ok, err := Decode(CalDAVRawFormat, raw, []byte(`{"event_id":"[\"roles@example.org\",\"\"]","account_email":"carol@example.org"}`), "UTC")
 	require.NoError(t, err)
 	require.True(t, ok)
@@ -446,6 +446,7 @@ func TestCalDAVAttendeeRolesAndRSVP(t *testing.T) {
 		{Email: "lower-room@example.org", Role: "room", RSVP: "needs_action"},
 		{Email: "resource@example.org", Role: "room", RSVP: "needs_action"},
 		{Email: "optional@example.org", Role: "optional", RSVP: "needs_action"},
+		{Email: "delegate@example.org", Role: "required", RSVP: "delegated"},
 		{DisplayName: "Guest Two", Role: "required", RSVP: "declined"},
 		{Email: "three@example.org", DisplayName: "Guest Three", Role: "required", RSVP: "tentative"},
 		{Email: "alice@example.org", DisplayName: "Alice", Role: "organizer", RSVP: "unknown"},

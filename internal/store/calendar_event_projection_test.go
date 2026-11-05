@@ -112,11 +112,11 @@ func TestCalDAVProjectionWindowsTimeZone(t *testing.T) {
 		Metadata: &sql.NullString{String: `{"event_id":"[\"outlook@example.org\",\"\"]","account_email":"guest@example.org"}`, Valid: true},
 	})
 	require.NoError(err)
-	for i, tc := range []struct{ raw, start, body string }{
-		{raw, "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00"},
-		{strings.ReplaceAll(raw, "Eastern Standard Time", "tzone://Microsoft/Eastern Standard Time"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00"},
-		{strings.ReplaceAll(raw, "Eastern Standard Time", "/freeassociation.sourceforge.net/America/New_York"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00"},
-		{strings.ReplaceAll(raw, "20270307", "20270314"), "2027-03-14T13:00:00Z", "2027-03-14 09:00 - 2027-03-14 10:00"},
+	for i, tc := range []struct{ raw, start, body, zone string }{
+		{raw, "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00", "Eastern Standard Time"},
+		{strings.ReplaceAll(raw, "Eastern Standard Time", "tzone://Microsoft/Eastern Standard Time"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00", "tzone://Microsoft/Eastern Standard Time"},
+		{strings.ReplaceAll(raw, "Eastern Standard Time", "/freeassociation.sourceforge.net/America/New_York"), "2027-03-07T14:00:00Z", "2027-03-07 09:00 - 2027-03-07 10:00", "/freeassociation.sourceforge.net/America/New_York"},
+		{strings.ReplaceAll(raw, "20270307", "20270314"), "2027-03-14T13:00:00Z", "2027-03-14 09:00 - 2027-03-14 10:00", "Eastern Standard Time"},
 	} {
 		if i > 0 {
 			require.NoError(st.UpsertMessageRawWithFormat(id, []byte(tc.raw), calevent.CalDAVRawFormat))
@@ -124,6 +124,7 @@ func TestCalDAVProjectionWindowsTimeZone(t *testing.T) {
 		rows := calendarRows(t, st, id)
 		require.Len(rows, 1)
 		assert.Equal(tc.start, rows[0].Event.Start.UTC().Format(time.RFC3339))
+		assert.Equal(tc.zone, rows[0].Event.EventTimeZone)
 		require.Len(rows[0].Event.Attendees, 1)
 		assert.True(rows[0].Event.Attendees[0].IsCopySelf)
 		var body string
@@ -387,6 +388,15 @@ func TestCalDAVSubsetIncludesEventsAndGoogle(t *testing.T) {
 	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE source_id = ?`, source.ID).Scan(&calDAVMessages))
 	assertions.Equal(2, calDAVMessages)
 	assertions.Len(calendarRows(t, copied, wantIDs...), 3)
+	for _, id := range wantIDs {
+		raw, err := copied.GetMessageRawContext(t.Context(), id)
+		requirements.NoError(err)
+		want := resource
+		if id == googleID {
+			want = calendarRaw
+		}
+		assertions.Equal(want, string(raw))
+	}
 }
 
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {
