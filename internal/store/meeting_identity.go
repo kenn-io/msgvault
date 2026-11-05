@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -70,6 +71,9 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 	if err := s.preloadMeetingQueries(ctx, r, eventQueries, &budget); err != nil {
 		return result, err
 	}
+	if err := s.preloadMeetingOccurrences(ctx, r, refs, &budget); err != nil {
+		return result, err
+	}
 	groups := map[meetingIdentity]*timelineMeetingGroup{}
 	aliases := map[string]*timelineMeetingGroup{}
 	// Resolve copies through the same representative selection as meeting links.
@@ -113,6 +117,14 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 	if err := s.preloadMeetingQueries(ctx, r, copyQueries, &budget); err != nil {
 		return result, err
 	}
+	copyRefs := []OccurrenceRef{}
+	for _, o := range requested {
+		predicate, args := s.meetingIdentityPredicate(o.Identity)
+		copyRefs = append(copyRefs, meetingIdentityCopyRefs(o.Identity, r.batch.events[meetingQueryKey(predicate, args)])...)
+	}
+	if err := s.preloadMeetingOccurrences(ctx, r, copyRefs, &budget); err != nil {
+		return result, err
+	}
 	for value, o := range requested {
 		g, err := groupFor(o)
 		if err != nil {
@@ -132,6 +144,20 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		requestedGroups := map[*timelineMeetingGroup]bool{}
 		for _, g := range groups {
 			requestedGroups[g] = true
+		}
+		aliasQueries := []meetingEventQuery{}
+		for g := range requestedGroups {
+			if discovered[g] {
+				continue
+			}
+			predicate, args := s.meetingIdentityPredicate(g.occurrence.Identity)
+			predicate, args = meetingIdentityAliasPredicate(g.occurrence, r.batch.events[meetingQueryKey(predicate, args)])
+			if predicate != "" {
+				aliasQueries = append(aliasQueries, meetingEventQuery{predicate, args})
+			}
+		}
+		if err := s.preloadMeetingQueries(ctx, r, aliasQueries, &budget); err != nil {
+			return result, err
 		}
 		memberQueries := []meetingEventQuery{}
 		for g := range requestedGroups {
@@ -202,6 +228,39 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		if err := s.preloadMeetingQueries(ctx, r, candidateQueries, &budget); err != nil {
 			return result, err
 		}
+		candidateRefs := []OccurrenceRef{}
+		for _, id := range ids {
+			if !r.batch.visible[id] {
+				continue
+			}
+			for _, d := range r.batch.decisions[id] {
+				candidateRefs = append(candidateRefs, d.Ref)
+			}
+			key := r.batch.keys[id]
+			predicate, args, err := s.automaticMeetingPredicate(ctx, r, key)
+			if err != nil {
+				return result, err
+			}
+			_, instance, _ := calrecur.ParseInstanceID(key.Value)
+			for _, row := range r.batch.events[meetingQueryKey(predicate, args)] {
+				ref := OccurrenceRef{MessageID: row.MessageID}
+				if row.Event.Kind == meetingSeriesKind {
+					if key.Kind == "google_event_id" {
+						ref.Key = instance.Key()
+					} else if key.ScheduledAt != nil {
+						predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
+						candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
+					}
+				}
+				candidateRefs = append(candidateRefs, ref)
+			}
+		}
+		if err := s.preloadMeetingQueries(ctx, r, candidateQueries, &budget); err != nil {
+			return result, err
+		}
+		if err := s.preloadMeetingOccurrences(ctx, r, candidateRefs, &budget); err != nil {
+			return result, err
+		}
 		resolvedMembers := map[int64][]meetingMemberCandidate{}
 		memberCopies := []meetingEventQuery{}
 		for _, id := range ids {
@@ -241,6 +300,19 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			}
 		}
 		if err := s.preloadMeetingQueries(ctx, r, memberCopies, &budget); err != nil {
+			return result, err
+		}
+		copyRefs = nil
+		for _, candidates := range resolvedMembers {
+			for _, candidate := range candidates {
+				if !includeCandidate(candidate) {
+					continue
+				}
+				predicate, args := s.meetingIdentityPredicate(candidate.Identity)
+				copyRefs = append(copyRefs, meetingIdentityCopyRefs(candidate.Identity, r.batch.events[meetingQueryKey(predicate, args)])...)
+			}
+		}
+		if err := s.preloadMeetingOccurrences(ctx, r, copyRefs, &budget); err != nil {
 			return result, err
 		}
 		for _, id := range ids {

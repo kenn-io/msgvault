@@ -473,6 +473,42 @@ func TestMeetingIdentityBatchReadBound(t *testing.T) {
 	}
 }
 
+func TestReviewRecurringBatchReadBound(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "series", strings.Replace(linkSeriesRaw, "COUNT=6", "COUNT=24", 1))
+	req := MeetingIdentityRequest{}
+	for i := range 20 {
+		at := time.Date(2027, 3, 7, 10, 0, 0, 0, time.UTC).AddDate(0, 0, i*7)
+		key := at.Format("20060102T150405Z")
+		_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "granola_json", fmt.Sprintf(`{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":%q}}`, "series_"+key))
+		req.OccurrenceRefs = append(req.OccurrenceRefs, formatMeetingOccurrence(OccurrenceRef{MessageID: series, Key: key}))
+		req.TranscriptIDs = append(req.TranscriptIDs, note)
+	}
+	for _, mode := range []string{"both", "events", "notes"} {
+		t.Run(mode, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			request := req
+			if mode == "events" {
+				request.TranscriptIDs = nil
+			}
+			if mode == "notes" {
+				request.OccurrenceRefs = nil
+			}
+			reads := 0
+			observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, _ string, _ []driver.NamedValue) error { reads++; return nil }})
+			got, err := observed.ResolveMeetingIdentitiesContext(t.Context(), request)
+			require.NoError(err)
+			require.Len(got.ByTranscript, 20)
+			for i, ref := range req.OccurrenceRefs {
+				assert.Equal([]int64{req.TranscriptIDs[i]}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+				assert.Equal(ref, got.ByTranscript[req.TranscriptIDs[i]].OccurrenceRef)
+			}
+			t.Logf("20 recurring occurrences: %d reads", reads)
+			assert.LessOrEqual(reads, 35)
+		})
+	}
+}
+
 func TestMeetingIdentityZonedReverseDiscovery(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

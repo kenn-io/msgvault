@@ -107,16 +107,8 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 	return membersOut, nil
 }
 
-// Discover only keys or decisions that could resolve to this occurrence. The
-// forward resolver applies splits, ambiguity and provider ordering afterwards.
-func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader, o linkOccurrence, budget *int) (string, []any, error) {
-	copies, err := s.meetingIdentityRows(ctx, r, o.Identity, budget)
-	if err != nil {
-		return "", nil, err
-	}
-	// A manual decision may retain the ID of a UID-less orphan saved before
-	// its master arrived. Include source-local exception targets, then let the
-	// forward resolver validate their current identity, splits and visibility.
+// Include source-local orphan targets saved before their master arrived.
+func meetingIdentityAliasPredicate(o linkOccurrence, copies []CalendarEventRow) (string, []any) {
 	if o.Identity.OccurrenceKey != "" {
 		_, original, ok := calrecur.ParseInstanceID("event_" + o.Identity.OccurrenceKey)
 		if o.Row.Event.Original != nil {
@@ -142,13 +134,27 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 			}
 			if len(terms) > 0 {
 				aliasArgs = append(aliasArgs, value)
-				aliases, err := meetingEventRows(ctx, r, `e.kind='exception' AND (`+strings.Join(terms, " OR ")+`) AND `+column+`=?`, aliasArgs, budget)
-				if err != nil {
-					return "", nil, err
-				}
-				copies = append(copies, aliases...)
+				return `e.kind='exception' AND (` + strings.Join(terms, " OR ") + `) AND ` + column + `=?`, aliasArgs
 			}
 		}
+	}
+	return "", nil
+}
+
+// Discover only keys or decisions that could resolve to this occurrence. The
+// forward resolver applies splits, ambiguity and provider ordering afterwards.
+func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader, o linkOccurrence, budget *int) (string, []any, error) {
+	copies, err := s.meetingIdentityRows(ctx, r, o.Identity, budget)
+	if err != nil {
+		return "", nil, err
+	}
+	predicate, aliasArgs := meetingIdentityAliasPredicate(o, copies)
+	if predicate != "" {
+		aliases, err := meetingEventRows(ctx, r, predicate, aliasArgs, budget)
+		if err != nil {
+			return "", nil, err
+		}
+		copies = append(copies, aliases...)
 	}
 	clauses := []string{"1=0"}
 	args := []any{}

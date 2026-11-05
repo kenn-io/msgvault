@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 // Each cache belongs to the request's read snapshot. The scalar meeting-link
@@ -26,6 +28,77 @@ type meetingEventQuery struct {
 
 func meetingQueryKey(predicate string, args []any) string {
 	return fmt.Sprintf("%s:%#v", predicate, args)
+}
+
+// Load the scalar resolver's master, moved-exception, and expansion reads together.
+func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, refs []OccurrenceRef, budget *int) error {
+	queries := []meetingEventQuery{}
+	for _, ref := range refs {
+		for _, row := range r.batch.events[meetingQueryKey("e.message_id = ?", []any{ref.MessageID})] {
+			if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
+				predicate, args := meetingMasterPredicate(row)
+				queries = append(queries, meetingEventQuery{predicate, args})
+			}
+		}
+	}
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	type recurringRef struct {
+		row CalendarEventRow
+		id  calrecur.Identity
+	}
+	recurring := []recurringRef{}
+	queries = nil
+	for _, ref := range refs {
+		rows := r.batch.events[meetingQueryKey("e.message_id = ?", []any{ref.MessageID})]
+		if len(rows) != 1 {
+			continue
+		}
+		row := rows[0]
+		if row.Event.Kind == meetingExceptionKind && ref.Key == "" && row.Event.Original != nil {
+			predicate, args := meetingMasterPredicate(row)
+			masters := r.batch.events[meetingQueryKey(predicate, args)]
+			if len(masters) == 1 {
+				ref.Key = row.Event.Original.Key()
+				row = masters[0]
+			}
+		}
+		if ref.Key == "" || row.Event.Kind != meetingSeriesKind && row.Event.Kind != "single" {
+			continue
+		}
+		_, id, ok := calrecur.ParseInstanceID("event_" + ref.Key)
+		if !ok {
+			continue
+		}
+		recurring = append(recurring, recurringRef{row, id})
+		predicate, args := meetingMovedExceptionPredicate(row, id)
+		queries = append(queries, meetingEventQuery{predicate, args})
+	}
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	queries = nil
+	for _, ref := range recurring {
+		at, err := meetingOccurrenceStart(ref.row, ref.id)
+		if err != nil {
+			return err
+		}
+		predicate, args := meetingMovedExceptionPredicate(ref.row, ref.id)
+		moved := r.batch.events[meetingQueryKey(predicate, args)]
+		if len(moved) > 0 {
+			x := moved[len(moved)-1]
+			if x.Event.Start != nil && x.Event.End != nil {
+				continue
+			}
+			if x.Event.Start != nil {
+				at = *x.Event.Start
+			}
+		}
+		predicate, args = meetingSeriesExceptionsPredicate(r.dialect, ref.row, at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin))
+		queries = append(queries, meetingEventQuery{predicate, args})
+	}
+	return s.preloadMeetingQueries(ctx, r, queries, budget)
 }
 
 // Find IDs for many predicates together, then hydrate each calendar row once.

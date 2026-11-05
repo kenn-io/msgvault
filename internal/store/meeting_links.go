@@ -119,10 +119,37 @@ func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	return o
 }
 
+func meetingSeriesExceptionsPredicate(dialect Dialect, master CalendarEventRow, from, to time.Time) (string, []any) {
+	predicate, args := calendarExceptionWindow(dialect, from, to)
+	return predicate + ` AND m.source_id = ? AND e.series_provider_id = ?`, append(args, master.SourceID, master.Event.ProviderEventID)
+}
+
+func meetingMasterPredicate(row CalendarEventRow) (string, []any) {
+	return `e.kind IN ('series', 'single') AND m.source_id = ? AND e.provider_event_id = ?`, []any{row.SourceID, row.Event.SeriesProviderID}
+}
+
+func meetingMovedExceptionPredicate(row CalendarEventRow, id calrecur.Identity) (string, []any) {
+	column, value := "e.original_start_at", any(id.Instant)
+	if id.AllDay {
+		column, value = "e.original_start_date", id.Date
+	}
+	return `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND ` + column + ` = ?`, []any{row.SourceID, row.Event.ProviderEventID, value}
+}
+
+func meetingOccurrenceStart(row CalendarEventRow, id calrecur.Identity) (time.Time, error) {
+	if !id.AllDay {
+		return id.Instant, nil
+	}
+	zone, err := calendarEventZone(row.Event)
+	if err != nil {
+		return time.Time{}, err
+	}
+	at, _, err := calrecur.CivilDateBoundary(id.Date, zone)
+	return at, err
+}
+
 func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEventRow, from, to time.Time, budget *int) ([]linkOccurrence, error) {
-	predicate, args := calendarExceptionWindow(r.dialect, from, to)
-	predicate += ` AND m.source_id = ? AND e.series_provider_id = ?`
-	args = append(args, master.SourceID, master.Event.ProviderEventID)
+	predicate, args := meetingSeriesExceptionsPredicate(r.dialect, master, from, to)
 	related, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return nil, err
@@ -171,7 +198,8 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	}
 	row := rows[0]
 	if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
-		masters, err := meetingEventRows(ctx, r, `e.kind IN ('series', 'single') AND m.source_id = ? AND e.provider_event_id = ?`, []any{row.SourceID, row.Event.SeriesProviderID}, budget)
+		predicate, args := meetingMasterPredicate(row)
+		masters, err := meetingEventRows(ctx, r, predicate, args, budget)
 		if err != nil {
 			return linkOccurrence{}, err
 		}
@@ -205,23 +233,13 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if !ok {
 		return linkOccurrence{}, fmt.Errorf("invalid occurrence key %q", ref.Key)
 	}
-	at := id.Instant
-	if id.AllDay {
-		zone, err := calendarEventZone(row.Event)
-		if err != nil {
-			return linkOccurrence{}, err
-		}
-		at, _, err = calrecur.CivilDateBoundary(id.Date, zone)
-		if err != nil {
-			return linkOccurrence{}, err
-		}
+	at, err := meetingOccurrenceStart(row, id)
+	if err != nil {
+		return linkOccurrence{}, err
 	}
 	// A moved exception is expanded at its effective start, retaining Original.
-	originalColumn, originalValue := "e.original_start_at", any(id.Instant)
-	if id.AllDay {
-		originalColumn, originalValue = "e.original_start_date", id.Date
-	}
-	moved, err := meetingEventRows(ctx, r, `e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND `+originalColumn+` = ?`, []any{row.SourceID, row.Event.ProviderEventID, originalValue}, budget)
+	predicate, args := meetingMovedExceptionPredicate(row, id)
+	moved, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return linkOccurrence{}, err
 	}
@@ -642,13 +660,21 @@ func (s *Store) resolveMeetingIdentity(ctx context.Context, r reboundReader, ide
 	return uniqueMeetingOccurrences(out), err
 }
 
-func meetingIdentityCopyOccurrences(ctx context.Context, r reboundReader, identity meetingIdentity, rows []CalendarEventRow, budget *int) ([]linkOccurrence, error) {
-	var out []linkOccurrence
+func meetingIdentityCopyRefs(identity meetingIdentity, rows []CalendarEventRow) []OccurrenceRef {
+	refs := make([]OccurrenceRef, 0, len(rows))
 	for _, row := range rows {
 		ref := OccurrenceRef{MessageID: row.MessageID, Key: identity.OccurrenceKey}
 		if row.Event.Kind == meetingExceptionKind {
 			ref.Key = ""
 		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func meetingIdentityCopyOccurrences(ctx context.Context, r reboundReader, identity meetingIdentity, rows []CalendarEventRow, budget *int) ([]linkOccurrence, error) {
+	var out []linkOccurrence
+	for _, ref := range meetingIdentityCopyRefs(identity, rows) {
 		o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 			continue
