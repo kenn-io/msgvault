@@ -57,6 +57,6 @@ func newSyncCalDAVCmd() *cobra.Command {
 		}
 		return recordSyncAttempt(cmd.Context(), calevent.CalDAVSourceType, source.Name, syncErr)
 	}
-	cmd.Flags().BoolVar(&full, "full", false, "Resync all events.")
+	cmd.Flags().BoolVar(&full, "full", false, "resync all events")
 	return addManualSyncCacheFlags(cmd)
 }
