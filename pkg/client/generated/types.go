@@ -8027,28 +8027,6 @@ func (m MeetingLinkDecisionResponse) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
 }
 
-type MeetingLinksResponse struct {
-	Links []MeetingLink `json:"links" validate:"required"`
-}
-
-func (m MeetingLinksResponse) Validate() error {
-	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(m.Links, "required"); err != nil {
-		errors = errors.Append("Links", err)
-	}
-	for i, item := range m.Links {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("Links[%d]", i), err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-	return errors
-}
-
 type MeetingMetricsRequest struct {
 	Explore *MeetingExploreScope `json:"explore,omitempty"`
 	Scope   *MeetingScopeRequest `json:"scope,omitempty"`
@@ -8089,6 +8067,32 @@ type MeetingPerson struct {
 
 func (m MeetingPerson) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(m))
+}
+
+type MeetingRecord struct {
+	Links      []MeetingLink `json:"links" validate:"required"`
+	MessageIds []int64       `json:"message_ids" validate:"required"`
+}
+
+func (m MeetingRecord) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(m.Links, "required"); err != nil {
+		errors = errors.Append("Links", err)
+	}
+	for i, item := range m.Links {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Links[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(m.MessageIds, "required"); err != nil {
+		errors = errors.Append("MessageIds", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type MeetingRef struct {

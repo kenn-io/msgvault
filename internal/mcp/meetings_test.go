@@ -2,7 +2,9 @@ package mcp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -17,11 +19,12 @@ import (
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 	"go.kenn.io/msgvault/internal/query/querytest"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
-func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result) {
+func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.Result, *store.Store) {
 	t.Helper()
 	st := testutil.NewTestStore(t)
 	importer := meetingimport.NewImporter(st, meetingimport.Hooks{})
@@ -68,13 +71,13 @@ func newMeetingMCPBackend(t *testing.T) (*daemonclient.Client, []meetingimport.R
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, client.Close()) })
-	return client, results
+	return client, results, st
 }
 
 func TestMeetingToolsRoundTripThroughOfficialSDKAndStoreBackedDaemon(t *testing.T) {
 	checks := assert.New(t)
 	must := require.New(t)
-	backend, imported := newMeetingMCPBackend(t)
+	backend, imported, _ := newMeetingMCPBackend(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	t.Cleanup(cancel)
 
@@ -261,4 +264,63 @@ func (meetingBackendFixture) ListMeetingActionItems(context.Context, generated.L
 
 func (meetingBackendFixture) GetMeetingMetrics(context.Context, generated.GetMeetingMetricsBody) (*meetingcontent.Metrics, error) {
 	return &meetingcontent.Metrics{}, nil
+}
+
+func (meetingBackendFixture) MeetingRecord(context.Context, string) (store.MeetingRecord, error) {
+	return store.MeetingRecord{}, nil
+}
+func (meetingBackendFixture) SuggestMeetingLinks(context.Context, string) (store.MeetingSuggestionPage, error) {
+	return store.MeetingSuggestionPage{}, nil
+}
+func (meetingBackendFixture) DecideMeetingLink(context.Context, int64, string, string) error {
+	return nil
+}
+
+func TestMeetingLinkToolsRoundTrip(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
+	backend, imported, st := newMeetingMCPBackend(t)
+	source, err := st.GetOrCreateSource("gcal", "calendar@example.com")
+	require.NoError(err)
+	event, err := st.PersistMessage(&store.MessagePersistData{
+		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", Subject: sql.NullString{String: "MCP planning", Valid: true}},
+		Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar", Title: "MCP planning"},
+		RawMIME:      []byte(`{"id":"event","start":{"dateTime":"2026-05-01T10:00:00Z"},"end":{"dateTime":"2026-05-01T10:20:00Z"}}`), RawFormat: "gcal_json",
+	})
+	require.NoError(err)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	t.Cleanup(cancel)
+	clientTransport, serverTransport := sdkmcp.NewInMemoryTransports()
+	serverSession, err := newMCPServer(ServeOptions{Engine: &querytest.MockEngine{}, Meetings: backend}, true).Connect(ctx, serverTransport, nil)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(serverSession.Close()) })
+	client := sdkmcp.NewClient(&sdkmcp.Implementation{Name: "meeting-links-test", Version: "1.0.0"}, nil)
+	session, err := client.Connect(ctx, clientTransport, nil)
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(session.Close()) })
+	eventRef := fmt.Sprintf("evt:%d", event)
+	noteRef := fmt.Sprintf("msg:%d", imported[0].MessageID)
+	result, err := session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolSuggestMeetingLinks, Arguments: map[string]any{"ref": noteRef}})
+	require.NoError(err)
+	require.False(result.IsError)
+	suggestions, ok := meetingStructuredContent(t, result)["suggestions"].([]any)
+	require.True(ok)
+	require.NotEmpty(suggestions)
+	suggestion, ok := suggestions[0].(map[string]any)
+	require.True(ok)
+	assert.Equal(eventRef, suggestion["ref"])
+	for _, tool := range []string{ToolLinkMeeting, ToolUnlinkMeeting} {
+		result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: tool, Arguments: map[string]any{"message_id": float64(imported[0].MessageID), "event": eventRef}})
+		require.NoError(err)
+		require.False(result.IsError)
+		result, err = session.CallTool(ctx, &sdkmcp.CallToolParams{Name: ToolGetMeetingRecord, Arguments: map[string]any{"ref": eventRef}})
+		require.NoError(err)
+		require.False(result.IsError)
+		ids, ok := meetingStructuredContent(t, result)["message_ids"].([]any)
+		require.True(ok)
+		if tool == ToolLinkMeeting {
+			assert.Equal([]any{float64(imported[0].MessageID)}, ids)
+		} else {
+			assert.Empty(ids)
+		}
+	}
 }

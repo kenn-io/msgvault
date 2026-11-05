@@ -3,7 +3,8 @@
  */
 import type { MeetingLink } from "./meetingLink";
 
-export interface MeetingLinksResponse {
+export interface MeetingRecord {
   links: MeetingLink[];
+  message_ids: number[];
   [key: string]: unknown;
 }

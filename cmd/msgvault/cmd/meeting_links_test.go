@@ -36,10 +36,10 @@ func (f *meetingLinkFakeClient) SuggestMeetingLinks(_ context.Context, ref strin
 	return page, nil
 }
 
-func (f *meetingLinkFakeClient) MeetingLinks(_ context.Context, id int64) ([]store.MeetingLink, error) {
+func (f *meetingLinkFakeClient) MeetingRecord(_ context.Context, ref string) (store.MeetingRecord, error) {
 	f.calls++
-	f.id = id
-	return []store.MeetingLink{{Ref: "evt:81", Subject: "Planning", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), End: time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC)}}, nil
+	f.ref = ref
+	return store.MeetingRecord{MessageIDs: []int64{42}, Links: []store.MeetingLink{{Ref: "evt:81", Subject: "Planning", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), End: time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC)}}}, nil
 }
 
 func TestMeetingLinkCommands(t *testing.T) {
@@ -110,7 +110,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 					assertions.Empty(errOut.String())
 				}
 			case "links":
-				assertions.Equal(int64(42), fake.id)
+				assertions.Equal("msg:42", fake.ref)
 				assertions.Contains(out.String(), tc.want)
 				assertions.Contains(out.String(), "evt:81")
 				assertions.Contains(out.String(), "2027-03-14T10:00:00Z")

@@ -678,11 +678,11 @@ func (s SearchMediaQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
-type GetMeetingLinksQuery struct {
-	MessageID int64 `json:"message_id" validate:"gte=1,lte=9007199254740991"`
+type GetMeetingRecordQuery struct {
+	Ref string `json:"ref" validate:"required"`
 }
 
-func (g GetMeetingLinksQuery) Validate() error {
+func (g GetMeetingRecordQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(g))
 }
 

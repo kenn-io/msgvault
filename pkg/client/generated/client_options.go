@@ -6102,50 +6102,6 @@ func (o *GetMeetingContextRequestOptions) GetHeader() (map[string]string, error)
 	return nil, nil
 }
 
-// GetMeetingLinksRequestOptions is the options needed to make a request to GetMeetingLinks.
-type GetMeetingLinksRequestOptions struct {
-	Query *GetMeetingLinksQuery
-}
-
-// Validate validates all the fields in the options.
-// Use it if fields validation was not run.
-func (o *GetMeetingLinksRequestOptions) Validate() error {
-	var errors runtime.ValidationErrors
-
-	if o.Query != nil {
-		if v, ok := any(o.Query).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append("Query", err)
-			}
-		}
-	}
-	if len(errors) == 0 {
-		return nil
-	}
-
-	return errors
-}
-
-// GetPathParams returns the path params as a map.
-func (o *GetMeetingLinksRequestOptions) GetPathParams() (map[string]any, error) {
-	return nil, nil
-}
-
-// GetQuery returns the query params as a map.
-func (o *GetMeetingLinksRequestOptions) GetQuery() (map[string]any, error) {
-	return runtime.AsMap[any](o.Query)
-}
-
-// GetBody returns the payload in any type that can be marshalled to JSON by the client.
-func (o *GetMeetingLinksRequestOptions) GetBody() any {
-	return nil
-}
-
-// GetHeader returns the headers as a map.
-func (o *GetMeetingLinksRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
-}
-
 // DecideMeetingLinkRequestOptions is the options needed to make a request to DecideMeetingLink.
 type DecideMeetingLinkRequestOptions struct {
 	Body *DecideMeetingLinkBody
@@ -6231,6 +6187,50 @@ func (o *GetMeetingMetricsRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetMeetingMetricsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
+// GetMeetingRecordRequestOptions is the options needed to make a request to GetMeetingRecord.
+type GetMeetingRecordRequestOptions struct {
+	Query *GetMeetingRecordQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *GetMeetingRecordRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *GetMeetingRecordRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *GetMeetingRecordRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *GetMeetingRecordRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *GetMeetingRecordRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 

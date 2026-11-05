@@ -37,16 +37,16 @@ func TestMeetingLinksClient(t *testing.T) {
 			assertions.NoError(json.MarshalWrite(w, body))
 			return
 		}
-		if r.URL.Path == "/api/v1/meetings/links" {
+		if r.URL.Path == "/api/v1/meetings/record" {
 			assertions.Equal(http.MethodGet, r.Method)
 			w.Header().Set("Content-Type", "application/json")
-			if r.URL.Query().Get("message_id") == "43" {
-				_, err := w.Write([]byte(`{"links":[]}`))
+			if r.URL.Query().Get("ref") == "msg:43" {
+				_, err := w.Write([]byte(`{"message_ids":[43],"links":[]}`))
 				assertions.NoError(err)
 				return
 			}
-			assertions.Equal("42", r.URL.Query().Get("message_id"))
-			_, err := w.Write([]byte(`{"links":[{"ref":"evt:81","subject":"Planning","start":"2027-03-14T10:00:00Z","end":"2027-03-14T11:00:00Z"}]}`))
+			assertions.Equal("msg:42", r.URL.Query().Get("ref"))
+			_, err := w.Write([]byte(`{"message_ids":[42],"links":[{"ref":"evt:81","subject":"Planning","start":"2027-03-14T10:00:00Z","end":"2027-03-14T11:00:00Z"}]}`))
 			assertions.NoError(err)
 			return
 		}
@@ -82,13 +82,15 @@ func TestMeetingLinksClient(t *testing.T) {
 	var apiError *daemonclient.APIError
 	requirements.ErrorAs(err, &apiError)
 	assertions.Equal(404, apiError.Status)
-	links, err := client.MeetingLinks(t.Context(), 42)
+	record, err := client.MeetingRecord(t.Context(), "msg:42")
+	links := record.Links
 	requirements.NoError(err)
 	requirements.Len(links, 1)
 	assertions.Equal("evt:81", links[0].Ref)
 	assertions.Equal("Planning", links[0].Subject)
 	assertions.Equal("2027-03-14T10:00:00Z", links[0].Start.Format(time.RFC3339))
-	links, err = client.MeetingLinks(t.Context(), 43)
+	record, err = client.MeetingRecord(t.Context(), "msg:43")
+	links = record.Links
 	requirements.NoError(err)
 	assertions.Empty(links)
 }

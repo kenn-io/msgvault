@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -46,10 +47,11 @@ func (s *meetingLinksTestStore) SuggestMeetingLinksContext(_ context.Context, re
 		Unexpandable: []store.CalendarUnexpandable{{MessageID: 99, Reason: "unsupported recurrence"}},
 	}, s.err
 }
-func (s *meetingLinksTestStore) MeetingLinksContext(_ context.Context, id int64) ([]store.MeetingLink, error) {
+func (s *meetingLinksTestStore) MeetingRecordContext(_ context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error) {
 	s.calls++
-	s.member = id
-	return []store.MeetingLink{{Ref: "evt:81", Subject: "Planning", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), End: time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC)}}, s.err
+	s.member = ref.MessageID
+	s.ref = ref
+	return store.MeetingRecord{MessageIDs: []int64{42}, Links: []store.MeetingLink{{Ref: "evt:81", Subject: "Planning", Start: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), End: time.Date(2027, 3, 14, 11, 0, 0, 0, time.UTC)}}}, s.err
 }
 
 func TestMeetingLinkRoutes(t *testing.T) {
@@ -60,19 +62,20 @@ func TestMeetingLinkRoutes(t *testing.T) {
 	srv.agentGrants = agentgrant.NewRegistry()
 	_, secret, _, err := srv.agentGrants.Issue("calendar", []agentgrant.Permission{agentgrant.PermissionCalendarWrite}, []agentgrant.SourceRef{{ID: 1, Type: "gcal", Identifier: "calendar@example.com"}}, time.Time{})
 	requirements.NoError(err)
-	for _, tc := range []struct {
+	for i, tc := range []struct {
 		name, method, path, body, token string
 		status                          int
 		err                             error
 	}{
 		{"link", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270314T100000Z","decision":"link"}`, "", 200, nil},
 		{"unlink", "POST", "/meetings/links/decisions", `{"message_id":42,"event":"evt:81@20270314T100000Z","decision":"unlink"}`, "", 200, nil},
-		{"links", "GET", "/meetings/links?message_id=42", "", "", 200, nil},
-		{"invalid links ID", "GET", "/meetings/links?message_id=0", "", "", 400, nil},
-		{"missing links ID", "GET", "/meetings/links", "", "", 400, nil},
-		{"missing links", "GET", "/meetings/links?message_id=42", "", "", 404, sql.ErrNoRows},
-		{"delegated links", "GET", "/meetings/links?message_id=42", "", secret, 401, nil},
-		{"remote links", "GET", "/meetings/links?message_id=42", "", "synthetic-reader-key", 403, nil},
+		{"links", "GET", "/meetings/record?ref=msg:42", "", "", 200, nil},
+		{"event record", "GET", "/meetings/record?ref=evt:81@20270314T100000Z", "", "", 200, nil},
+		{"invalid links ID", "GET", "/meetings/record?ref=msg:0", "", "", 400, nil},
+		{"missing links ID", "GET", "/meetings/record", "", "", 400, nil},
+		{"missing links", "GET", "/meetings/record?ref=msg:42", "", "", 404, sql.ErrNoRows},
+		{"delegated links", "GET", "/meetings/record?ref=msg:42", "", secret, 401, nil},
+		{"remote links", "GET", "/meetings/record?ref=msg:42", "", "synthetic-reader-key", 403, nil},
 		{"note suggestions", "GET", "/meetings/suggestions?ref=msg:42", "", "", 200, nil},
 		{"event suggestions", "GET", "/meetings/suggestions?ref=evt:81@20270314T100000Z", "", "", 200, nil},
 		{"invalid ref", "GET", "/meetings/suggestions?ref=msg:42@20270314", "", "", 400, nil},
@@ -92,6 +95,7 @@ func TestMeetingLinkRoutes(t *testing.T) {
 			backend.err = tc.err
 			before := backend.calls
 			r := httptest.NewRequest(tc.method, "/api/v1"+tc.path, strings.NewReader(tc.body))
+			r.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", i+1)
 			r.Header.Set("Content-Type", "application/json")
 			if tc.token == secret {
 				r.Header.Set(apiprotocol.AgentTokenHeader, secret)
@@ -114,9 +118,13 @@ func TestMeetingLinkRoutes(t *testing.T) {
 				assertions.Equal(store.OccurrenceRef{MessageID: 81, Key: "20270314T100000Z"}, backend.event)
 				assertions.Equal(tc.name, backend.decision)
 				assertions.JSONEq(tc.body, w.Body.String())
-			} else if tc.name == "links" {
-				assertions.Equal(int64(42), backend.member)
-				assertions.JSONEq(`{"links":[{"ref":"evt:81","subject":"Planning","start":"2027-03-14T10:00:00Z","end":"2027-03-14T11:00:00Z"}]}`, w.Body.String())
+			} else if tc.name == "links" || tc.name == "event record" {
+				want := store.MeetingLinkRef{Kind: "msg", MessageID: 42}
+				if tc.name == "event record" {
+					want = store.MeetingLinkRef{Kind: "evt", MessageID: 81, Key: "20270314T100000Z"}
+				}
+				assertions.Equal(want, backend.ref)
+				assertions.JSONEq(`{"message_ids":[42],"links":[{"ref":"evt:81","subject":"Planning","start":"2027-03-14T10:00:00Z","end":"2027-03-14T11:00:00Z"}]}`, w.Body.String())
 			} else {
 				want := store.MeetingLinkRef{Kind: "msg", MessageID: 42}
 				if strings.Contains(tc.path, "ref=evt:") {
