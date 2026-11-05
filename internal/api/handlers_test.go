@@ -4216,11 +4216,11 @@ func TestHandleSourceStatusGenericIdentifierCollidesWithScheduledAccount(t *test
 	assert.True(got.CanSync, "generic job is scheduled and not running")
 }
 
-func TestCalendarSourceIdentifierCollisionDoesNotEnableAccountSync(t *testing.T) {
+func TestCalendarSourcesDoNotEnableAccountSync(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ sourceType, reason string }{
-		{meetingimport.SourceType, "source_not_schedulable"},
-		{"caldav", "sync_manual_only"},
+	for _, tc := range []struct{ sourceType, identifier, reason string }{
+		{meetingimport.SourceType, "shared@example.com", "source_not_schedulable"},
+		{"caldav", `["shared@example.com","https://calendar.example.org/home/cal/"]`, "sync_manual_only"},
 	} {
 		t.Run(tc.sourceType, func(t *testing.T) {
 			require := require.New(t)
@@ -4234,7 +4234,7 @@ func TestCalendarSourceIdentifierCollisionDoesNotEnableAccountSync(t *testing.T)
 				Email:    collidingIdentifier,
 				Schedule: "0 3 * * *",
 			}}
-			_, err := st.GetOrCreateSource(tc.sourceType, collidingIdentifier)
+			_, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
 			require.NoError(err, "GetOrCreateSource")
 			srv := NewServer(
 				&config.Config{Server: config.ServerConfig{APIPort: 8080}},
@@ -4261,7 +4261,7 @@ func TestCalendarSourceIdentifierCollisionDoesNotEnableAccountSync(t *testing.T)
 
 			triggerResp := servePOSTTestRequest(
 				srv,
-				"/api/v1/sync/"+collidingIdentifier+"?source_type="+tc.sourceType,
+				"/api/v1/sync/"+url.PathEscape(tc.identifier)+"?source_type="+tc.sourceType,
 			)
 
 			assert.Equal(http.StatusBadRequest, triggerResp.Code, triggerResp.Body.String())

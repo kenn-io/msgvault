@@ -371,6 +371,8 @@ func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
 		requirements.NoError(err)
 	}
 	requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], []byte(masterRaw), calevent.CalDAVRawFormat))
+	_, err = st.db.Exec(`UPDATE messages SET deleted_from_source_at = CURRENT_TIMESTAMP WHERE id = ?`, ids[1])
+	requirements.NoError(err)
 
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))

@@ -16,23 +16,6 @@ import (
 )
 
 func TestListCalendarOccurrences(t *testing.T) {
-	t.Run("zero duration bounds", func(t *testing.T) {
-		start := time.Date(2027, 3, 14, 13, 0, 0, 0, time.UTC)
-		o := calrecur.Occurrence{Start: start, End: start}
-		for _, tc := range []struct {
-			name     string
-			from, to time.Time
-			want     bool
-		}{
-			{"at start", start, start.Add(time.Second), true},
-			{"at end", start.Add(-time.Second), start, false},
-		} {
-			t.Run(tc.name, func(t *testing.T) {
-				assert.Equal(t, tc.want, calendarOccurrenceOverlaps(o, tc.from, tc.to))
-			})
-		}
-	})
-
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -63,6 +46,16 @@ func TestListCalendarOccurrences(t *testing.T) {
 	assertions.Equal(master, page.Occurrences[0].SeriesMessageID)
 	assertions.Equal(moved, page.Occurrences[0].MessageID)
 	assertions.Equal("2027-04-02T19:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+
+	_, zero := calendarFixture(t, st, "zero", `{"id":"zero","start":{"dateTime":"2027-03-14T13:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`)
+	start := time.Date(2027, 3, 14, 13, 0, 0, 0, time.UTC)
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), start, start.Add(time.Second))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal(zero, page.Occurrences[0].MessageID)
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), start.Add(-time.Second), start)
+	requirements.NoError(err)
+	assertions.Empty(page.Occurrences)
 }
 func TestListCalendarOccurrencesStandaloneMovedToRetainedOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
