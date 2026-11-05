@@ -121,6 +121,21 @@ describe('PersonNetwork', () => {
     expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain(incoming ? 'Curated Peer ·' : 'Selected Person ·');
   });
 
+  it('marks an incoming mentor label right to left when relationship types fail to load', async () => {
+    const network = connected(1);
+    network.nodes = network.nodes.slice(0, 2);
+    network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' }];
+    const { controller } = controllerWith(vi.fn<typeof fetch>(async (input) => {
+      return new URL(requestOf(input).url).pathname === '/api/v1/relationship-types'
+        ? Response.json({ error: 'unavailable', message: 'Synthetic types unavailable.' }, { status: 503 })
+        : Response.json(network);
+    }));
+    await controller.refreshRelationshipTypes();
+    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByRole('button', { name: 'Curated Peer' });
+    expect(container.querySelector('.edge-label')?.textContent).toBe('← mentors');
+  });
+
   it('joins three relations between direct people in reading order', async () => {
     const network = connected();
     network.nodes = network.nodes.slice(0, 2);

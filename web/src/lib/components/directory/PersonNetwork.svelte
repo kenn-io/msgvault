@@ -56,7 +56,7 @@
     });
     const place = new Map<string, { x: number; y: number }>();
     for (const node of nodes) place.set(node.id, { x: node.hop * COLUMN + AVATAR / 2, y: (row.get(node.id) ?? 0) * ROW + AVATAR / 2 });
-    return { nodes, edges, place, width: columns.length * COLUMN, height: (tallest - 1) * ROW + AVATAR };
+    return { place, width: columns.length * COLUMN, height: (tallest - 1) * ROW + AVATAR };
   });
 
   // Each node's drawn width, so a line starts where its name ends.
@@ -67,11 +67,11 @@
   }
 
   function readingLabel(edge: NetworkEdge): string {
-    const type = edge.kind === 'relationship' ? controller.relationshipTypes.find((type) => type.slug === edge.relationship_type_slug) : undefined;
-    const source = layout.place.get(edge.source_node_id)!;
-    const target = layout.place.get(edge.target_node_id)!;
-    if (!type) return edge.label;
-    const flipped = source.x > target.x || (source.x === target.x && source.y > target.y);
+    const type = controller.relationshipTypes.find(({ slug }) => slug === edge.relationship_type_slug);
+    const from = layout.place.get(edge.source_node_id)!;
+    const to = layout.place.get(edge.target_node_id)!;
+    const flipped = from.x > to.x || (from.x === to.x && from.y > to.y);
+    if (!type) return flipped && edge.relationship_type_slug ? `← ${edge.label}` : edge.label;
     return flipped ? type.reverse_label : type.forward_label;
   }
 
