@@ -498,7 +498,6 @@ func writeError(w http.ResponseWriter, status int, err string, message string) {
 // the client surfaces here as context.DeadlineExceeded/Canceled; without this
 // mapping those bubble up as a misleading 400/500 with a raw driver message.
 func (s *Server) writeIfContextError(w http.ResponseWriter, err error) bool {
-	var unavailable *query.CacheUnavailableError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusServiceUnavailable, "query_timeout",
@@ -508,7 +507,7 @@ func (s *Server) writeIfContextError(w http.ResponseWriter, err error) bool {
 		writeError(w, http.StatusServiceUnavailable, "query_canceled",
 			"the query was canceled before it completed")
 		return true
-	case errors.As(err, &unavailable) || errors.Is(err, query.ErrCacheUnavailable):
+	case errors.Is(err, query.ErrCacheUnavailable):
 		writeError(w, http.StatusServiceUnavailable, "analytical_cache_unavailable",
 			"the analytics cache is being rebuilt or is unavailable; retry shortly")
 		return true

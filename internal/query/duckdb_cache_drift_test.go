@@ -148,6 +148,7 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 			for _, method := range []string{
 				"Aggregate", "SubAggregate", "SubAggregateSourceOverride", "GetTotalStats", "ListMessages", "SearchFastWithStats",
 				"ListConversationsSnapshot", "TextAggregate", "GetTextStats",
+				"Search", "GetDeletionTargetsByFilter", "GetDeletionTargetsByMessageIDs", "SearchFast", "SearchFastCount",
 			} {
 				t.Run(method, func(t *testing.T) {
 					require := require.New(t)
@@ -193,6 +194,42 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						require.NoError(err)
 						require.Len(messages, 1)
 						assert.Equal("live-message", messages[0].SourceMessageID)
+					case "Search", "SearchFast":
+						var messages []MessageSummary
+						var err error
+						if method == "Search" {
+							messages, err = engine.Search(ctx, search.Parse("subject:live"), 10, 0)
+						} else {
+							messages, err = engine.SearchFast(ctx, search.Parse("subject:live"), filter, 10, 0)
+						}
+						// Search always uses the direct SQLite engine when available.
+						if !enabled && method == "SearchFast" {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						require.Len(messages, 1)
+						assert.Equal("live-message", messages[0].SourceMessageID)
+					case "SearchFastCount":
+						count, err := engine.SearchFastCount(ctx, search.Parse("subject:live"), filter)
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						assert.Equal(int64(1), count)
+					case "GetDeletionTargetsByFilter", "GetDeletionTargetsByMessageIDs":
+						// Deletion targets also always use the direct SQLite engine.
+						var targets []DeletionTarget
+						var err error
+						if method == "GetDeletionTargetsByFilter" {
+							targets, err = engine.GetDeletionTargetsByFilter(ctx, filter)
+						} else {
+							targets, err = engine.GetDeletionTargetsByMessageIDs(ctx, []int64{801})
+						}
+						require.NoError(err)
+						require.Len(targets, 1)
+						assert.Equal("live-message", targets[0].SourceMessageID)
 					case "SearchFastWithStats":
 						result, err := engine.SearchFastWithStats(ctx, search.Parse("live"), "live", filter, ViewSenders, 10, 0)
 						if !enabled {

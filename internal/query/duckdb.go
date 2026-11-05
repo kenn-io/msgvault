@@ -2322,6 +2322,9 @@ func (e *DuckDBEngine) Search(ctx context.Context, q *search.Query, limit, offse
 	// This fallback fetches labels from Parquet for its results.
 	release, err := e.acquireCacheRead(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.Search(ctx, q, limit, offset)
+		}
 		return nil, err
 	}
 	defer release()
@@ -2594,6 +2597,9 @@ func (e *DuckDBEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	}
 	release, err := e.acquireCacheRead(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.GetDeletionTargetsByFilter(ctx, filter)
+		}
 		return nil, err
 	}
 	defer release()
@@ -2690,6 +2696,9 @@ func (e *DuckDBEngine) GetDeletionTargetsByMessageIDs(ctx context.Context, ids [
 	}
 	release, err := e.acquireCacheRead(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.GetDeletionTargetsByMessageIDs(ctx, ids)
+		}
 		return nil, err
 	}
 	defer release()
@@ -2749,6 +2758,9 @@ var RequiredParquetDirs = []string{
 func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter MessageFilter, limit, offset int) ([]MessageSummary, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.SearchFast(ctx, q, filter, limit, offset)
+		}
 		return nil, err
 	}
 	defer release()
@@ -2879,6 +2891,9 @@ func (e *DuckDBEngine) SearchFast(ctx context.Context, q *search.Query, filter M
 func (e *DuckDBEngine) SearchFastCount(ctx context.Context, q *search.Query, filter MessageFilter) (int64, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
+		if e.useLiveSQL(err) {
+			return e.sqliteEngine.SearchFastCount(ctx, q, filter)
+		}
 		return 0, err
 	}
 	defer release()

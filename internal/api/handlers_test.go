@@ -6271,14 +6271,6 @@ func (*cacheUnavailableEngine) Aggregate(context.Context, query.ViewType, query.
 	return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
 }
 
-func (*cacheUnavailableEngine) GetTotalStats(context.Context, query.StatsOptions) (*query.TotalStats, error) {
-	return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
-}
-
-func (*cacheUnavailableEngine) SearchFastWithStats(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error) {
-	return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
-}
-
 func TestAnalyticsCacheUnavailableReturns503(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -6292,7 +6284,19 @@ func TestAnalyticsCacheUnavailableReturns503(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
-			srv := newTestServerWithEngine(t, &cacheUnavailableEngine{MockEngine: &querytest.MockEngine{}})
+			engine := &querytest.MockEngine{
+				GetTotalStatsFunc: func(context.Context, query.StatsOptions) (*query.TotalStats, error) {
+					return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
+				},
+				SearchFastWithStatsFunc: func(context.Context, *search.Query, string, query.MessageFilter, query.ViewType, int, int) (*query.SearchFastResult, error) {
+					return nil, &query.CacheUnavailableError{Readiness: query.CacheAbsent}
+				},
+			}
+			var queryEngine query.Engine = engine
+			if tc.name == "aggregates" {
+				queryEngine = &cacheUnavailableEngine{MockEngine: engine}
+			}
+			srv := newTestServerWithEngine(t, queryEngine)
 			w := doGet(srv, tc.path)
 
 			require.Equal(http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
