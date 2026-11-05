@@ -542,14 +542,9 @@ func TestGmailDraftLifecycleDelegatedGrantManagesDraft(t *testing.T) {
 			require.Len(events, 1)
 			var output gmailDraftLifecycleOutput
 			require.NoError(json.Unmarshal([]byte(events[0].Data), &output))
-			if tc.permission == agentgrant.PermissionDraftDelete {
-				assert.Empty(output.Content)
-				assert.Empty(output.RawMIME)
-				assert.Empty(output.CandidateContent)
-			} else {
-				assert.NotEmpty(output.Content)
-				assert.NotEmpty(output.RawMIME)
-			}
+			assert.Empty(output.Content)
+			assert.Empty(output.RawMIME)
+			assert.Empty(output.CandidateContent)
 			switch tc.operation {
 			case api.CLIRunDraftGetCommand:
 				assert.Equal("gmail", output.Provider)
@@ -729,7 +724,7 @@ func TestGmailDraftDelegatedUncertainEditStaysPending(t *testing.T) {
 	var pendingOutput gmailDraftLifecycleOutput
 	require.NoError(json.Unmarshal([]byte(events[0].Data), &pendingOutput))
 	assert.Equal("edit", pendingOutput.PendingOperation)
-	assert.Contains(pendingOutput.CandidateContent, "candidate")
+	assert.Empty(pendingOutput.CandidateContent)
 
 	latest, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)
 	require.NoError(err)
@@ -747,7 +742,7 @@ func TestGmailDraftDelegatedUncertainEditStaysPending(t *testing.T) {
 	var getOutput gmailDraftLifecycleOutput
 	require.NoError(json.Unmarshal([]byte(events[0].Data), &getOutput))
 	assert.Equal("edit", getOutput.PendingOperation)
-	assert.Contains(getOutput.CandidateContent, "candidate")
+	assert.Empty(getOutput.CandidateContent)
 	assert.Equal(updateCalls, fixture.client.updateCalls)
 
 	grant.Permissions = []agentgrant.Permission{agentgrant.PermissionDraftDelete}
@@ -1033,7 +1028,7 @@ func TestGmailDraftDelegatedExternalAdoptionChecksSender(t *testing.T) {
 				} else {
 					assert.Equal("changed_externally", err.Error())
 					require.Len(events, 1)
-					assert.Contains(events[0].Data, "external body")
+					assert.NotContains(events[0].Data, "external body")
 				}
 				assert.Zero(fixture.client.updateCalls + fixture.client.deleteCalls)
 				adopted, err := fixture.store.GetGmailDraftContext(t.Context(), draft.DraftID)

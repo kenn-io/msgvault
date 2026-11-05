@@ -765,7 +765,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
 	}
-	if !s.maskMessageSummaries(w, r, summaries, nil) {
+	if !s.maskMessageSummaries(w, r, summaries) {
 		return
 	}
 	writeJSON(w, http.StatusOK, MessageListResponse{
@@ -1051,8 +1051,11 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummary(m)
 	}
 
-	if !s.maskMessageSummaries(w, r, summaries, nil) {
+	if !s.filterSearchSummaries(w, r, &summaries, nil) {
 		return
+	}
+	if s.withholdsVerification(r) {
+		total = int64(len(summaries))
 	}
 	writeJSON(w, http.StatusOK, SearchResult{
 		Warnings:   search.LiteralORWarnings(searchText),
@@ -2983,6 +2986,9 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.withholdsVerification(r) && opts.SearchQuery != "" {
+		rows = nil
+	}
 	jsonRows := make([]AggregateRowJSON, len(rows))
 	for i, row := range rows {
 		jsonRows[i] = toAggregateRowJSON(row)
@@ -3047,6 +3053,9 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.withholdsVerification(r) && opts.SearchQuery != "" {
+		rows = nil
+	}
 	jsonRows := make([]AggregateRowJSON, len(rows))
 	for i, row := range rows {
 		jsonRows[i] = toAggregateRowJSON(row)
@@ -3108,7 +3117,7 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	if !s.maskMessageSummaries(w, r, summaries, nil) {
+	if !s.maskMessageSummaries(w, r, summaries) {
 		return
 	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
@@ -3748,7 +3757,7 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	if !s.maskMessageSummaries(w, r, summaries, nil) {
+	if !s.maskMessageSummaries(w, r, summaries) {
 		return
 	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
@@ -3860,6 +3869,9 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.withholdsVerification(r) && opts.SearchQuery != "" {
+		stats = &query.TotalStats{}
+	}
 	response := toTotalStatsResponse(stats)
 	if response != nil {
 		response.IndexState = agentIndexState(r)
@@ -3951,8 +3963,11 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	if !s.maskMessageSummaries(w, r, summaries, nil) {
+	if !s.filterSearchSummaries(w, r, &summaries, nil) {
 		return
+	}
+	if s.withholdsVerification(r) {
+		result.TotalCount, result.Stats = int64(len(summaries)), nil
 	}
 	writeJSON(w, http.StatusOK, SearchFastResponse{
 		Warnings:         search.LiteralORWarnings(queryStr),
@@ -4123,8 +4138,11 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	if scope != bodyScope {
 		warnings = search.LiteralORWarnings(queryStr)
 	}
-	if !s.maskMessageSummaries(w, r, summaries, bodyContexts) {
+	if !s.filterSearchSummaries(w, r, &summaries, &bodyContexts) {
 		return
+	}
+	if s.withholdsVerification(r) {
+		totalCount, stats, hasMore = int64(len(summaries)), nil, false
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
 		Warnings:     warnings,

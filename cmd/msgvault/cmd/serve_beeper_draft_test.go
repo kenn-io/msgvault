@@ -222,7 +222,7 @@ func TestBeeperDraftDelegatedLifecycle(t *testing.T) {
 	f := newBeeperDraftFixture(t)
 	grant := &agentgrant.Grant{
 		ID:          "beeper-grant",
-		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete},
+		Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete, agentgrant.PermissionVerificationRead},
 		Sources:     []agentgrant.SourceRef{{Type: "beeper", Identifier: f.source.Identifier}},
 	}
 	created, err := f.create(t, grant, "hello")
@@ -289,7 +289,7 @@ func TestBeeperDraftDeleteOnlyResponses(t *testing.T) {
 
 			// Redaction must leave the stored text available to an editor.
 			editor := *grant
-			editor.Permissions = []agentgrant.Permission{agentgrant.PermissionDraftEdit}
+			editor.Permissions = []agentgrant.Permission{agentgrant.PermissionDraftEdit, agentgrant.PermissionVerificationRead}
 			visible, err := f.run(t, &editor, api.CLIRunDraftGetCommand, created.DraftID)
 			require.NoError(err)
 			require.NotNil(visible.Content)
