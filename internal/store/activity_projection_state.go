@@ -23,7 +23,8 @@ func (s *Store) ActivityProjectionStateContext(ctx context.Context) (ActivityPro
 	// Roster markers have no timestamp until expansion queues their messages.
 	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*),MIN(queued_at) FROM (
  SELECT q.queued_at FROM activity_projection_queue q JOIN messages m ON m.id=q.message_id WHERE m.message_type<>'call_record' AND q.revision>q.processed_revision`+scope+`
- UNION ALL SELECT NULL AS queued_at FROM activity_projection_conversation_queue q JOIN conversations c ON c.id=q.conversation_id WHERE TRUE`+conversationScope+`
+ UNION ALL SELECT NULL AS queued_at FROM activity_projection_conversation_queue q JOIN conversations c ON c.id=q.conversation_id
+ WHERE EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id=q.conversation_id AND m.id>q.after_message_id AND m.message_type<>'call_record')`+conversationScope+`
  ) pending`), queueArgs...).Scan(&result.Queued, &oldest)
 	if err != nil {
 		return result, fmt.Errorf("read activity projection queue state: %w", err)

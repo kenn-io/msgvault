@@ -112,7 +112,7 @@ Bad input returns 400, including `cursor_expired` for invalid continuation.
 Ambiguous references return 409 `ambiguous_reference` with typed `candidates`.
 Owner requests share the open-loop mutation gate because loop reads can cache
 evidence. No archive schema or cache format changes are needed. The route
-requires API schema 3.44.0. See [Timeline](usage/timeline.md) for views,
+requires API schema 3.45.0. See [Timeline](usage/timeline.md) for views,
 freshness, gaps, and continuation.
 
 ### Archived calendar occurrences, unreleased

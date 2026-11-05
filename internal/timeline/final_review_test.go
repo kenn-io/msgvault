@@ -13,7 +13,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/archivemarker"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -92,11 +91,12 @@ func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {
 	requirements.NoError(err)
 	conv, err := f.Store.EnsureConversation(source.ID, "encrypted", "Encrypted room")
 	requirements.NoError(err)
-	id := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
-		m.SourceID, m.ConversationID, m.MessageType = source.ID, conv, "matrix"
-		m.Snippet = sql.NullString{String: archivemarker.EncryptedMessagePlaceholder, Valid: true}
-		m.Subject = sql.NullString{String: "Suppressed subject", Valid: true}
-	})
+	m := f.NewMessage().WithSentAt(f.now.Add(-time.Hour)).Build()
+	m.SourceID, m.ConversationID, m.MessageType = source.ID, conv, "matrix"
+	m.Snippet = sql.NullString{String: store.MatrixEncryptedPlaceholder, Valid: true}
+	m.Subject = sql.NullString{String: "Suppressed subject", Valid: true}
+	id, err := f.Store.PersistMatrixMessageContext(t.Context(), &store.MessagePersistData{Message: m}, store.MatrixPersist{SessionID: "synthetic-session"})
+	requirements.NoError(err)
 	f.project()
 	day := dayRequest()
 	day.IncludeNoise = true

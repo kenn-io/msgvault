@@ -66,7 +66,7 @@ answered, fails with `<id> isn't an open loop.`
 
 Read day activity, relationship history, or the context around an archived
 message or meeting through the selected daemon. This is unreleased and requires
-API schema 3.44.0 or newer. See [Timeline](usage/timeline.md) for the workflow
+API schema 3.45.0 or newer. See [Timeline](usage/timeline.md) for the workflow
 and output conventions.
 
 ```bash

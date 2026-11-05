@@ -61,7 +61,7 @@ func (f *timelineFixture) project() {
 	f.T.Helper()
 	p, err := activity.NewProjector(f.Store, activity.Options{Timezone: f.src.Location.String(), BatchSize: 10000})
 	require.NoError(f.T, err)
-	_, err = p.RunBackstop(f.T.Context())
+	_, err = p.RunOnce(f.T.Context())
 	require.NoError(f.T, err)
 }
 func (f *timelineFixture) calendar(key, raw string) int64 {
