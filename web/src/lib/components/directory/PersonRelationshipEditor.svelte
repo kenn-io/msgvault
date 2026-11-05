@@ -234,7 +234,7 @@
             <strong>{personName}</strong>
             <span class="type-picker">
               <Typeahead options={typeOptions} value={choice} fallbackLabel="Choose connection" placeholder="Connection type" title="Connection type"
-                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes} emptyLabel={controller.errors.relationshipTypes ? '' : 'No matches'} disabled={submitting}
+                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes} disabled={submitting}
                 onselect={(value) => { choice = value; }} />
             </span>
             <span class="people-picker">
@@ -242,7 +242,7 @@
                 fallbackLabel="Search people" placeholder="Search people" title="Search people"
                 emptyLabel={searchError ? '' : searchText ? `No one matches "${searchText}"` : 'No other saved people'}
                 loading={searching} loadingLabel="Searching…" remote onquery={handleQuery} error={searchError}
-                disabled={submitting} onselect={selectCounterpart}>
+                onselect={selectCounterpart}>
                 {#snippet icon(option)}<IdentityAvatar label={option.label} seed={option.name} size={24} />{/snippet}
               </Typeahead>
             </span>

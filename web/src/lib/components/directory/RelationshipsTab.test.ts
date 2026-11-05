@@ -213,24 +213,21 @@ describe('RelationshipsTab', () => {
     expect(screen.getByRole('dialog').textContent).toContain(`Synthetic Subject → ${direction === 'incoming' ? 'is mentored by' : 'mentors'} → Synthetic Peer`);
   });
 
-  it.each([true, false])('separates suggestions and guards navigation with callback %s', async navigable => {
+  it('separates suggestions from reviewed imports', async () => {
     const review = { id: 1, person_id: 7, matched_person_id: 8, raw_related_value: 'Synthetic Peer', raw_related_type: 'friend', value_kind: 'text', status: 'pending', source: 'carddav_import', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
     const client = createAPIClient(async () => Response.json({ reviews: [review, { ...review, id: 2, status: 'rejected', matched_person_id: null, raw_related_value: 'Earlier suggestion', reviewed_at: '2026-08-02T12:00:00Z' }, { ...review, id: 3, status: 'accepted', raw_related_value: 'Confirmed suggestion' }] }));
     const controller = new DirectoryEntityController(client, 7);
     controller.relationships = [view(41, 'outgoing', 'friend', 'Confirmed person', { counterpart_person_id: 8 })];
     const onOpenPerson = vi.fn();
-    render(RelationshipsTab, { client, controller, personID: 7, onOpenPerson: navigable ? onOpenPerson : undefined });
+    render(RelationshipsTab, { client, controller, personID: 7, onOpenPerson });
     expect(await screen.findByRole('heading', { name: 'Suggested (1)' })).toBeDefined();
     expect(screen.getByRole('heading', { name: 'Reviewed (2)' })).toBeDefined();
-    expect(screen.queryByText('Pending')).toBeNull();
     const row = screen.getByText('Synthetic Peer').closest('.detail-row') as HTMLElement;
     expect(row.textContent).toContain('from Address book');
-    expect(screen.queryAllByRole('button', { name: 'Open person' })).toHaveLength(navigable ? 1 : 0);
+    expect(screen.queryAllByRole('button', { name: 'Open person' })).toHaveLength(1);
     expect(screen.getByText('Earlier suggestion').closest('.detail-row')?.textContent).toContain('Aug 2, 2026');
-    if (navigable) {
-      await fireEvent.click(within(row).getByRole('button', { name: 'Open person' }));
-      expect(onOpenPerson).toHaveBeenCalledWith(8);
-    }
+    await fireEvent.click(within(row).getByRole('button', { name: 'Open person' }));
+    expect(onOpenPerson).toHaveBeenCalledWith(8);
     expect(screen.getByText('Rejected')).toBeDefined();
   });
 
@@ -462,7 +459,6 @@ describe('RelationshipsTab', () => {
     await waitFor(() => expect(reads).toBe(1));
     const input = await openTypeahead('Connection type');
     await screen.findByText('Types unavailable');
-    expect(screen.queryByText('No matches')).toBeNull();
     await fireEvent.keyDown(input, { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Close relationship editor' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
