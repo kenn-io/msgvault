@@ -4812,7 +4812,7 @@ msgvault show-thread <message-id> [--limit N] [--offset N] [--json] [--strip-quo
 ```
 
 The default limit is 100; the maximum is 500. Messages are ordered by timestamp
-instant and ID, with undated messages last. Use `--offset` for later pages.
+instant and ID, with undated messages last. SQLite compares instants to the millisecond, with ties in message-ID order. Use `--offset` for later pages.
 Archived source-deleted messages remain included; dedup-hidden rows are excluded.
 A notice goes to stderr when more messages remain. The command uses the selected
 daemon; unsupported older daemons return an upgrade error.

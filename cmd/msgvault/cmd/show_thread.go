@@ -22,6 +22,7 @@ func newShowThreadCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "show-thread <id>", Short: "Show a message's thread in chronological order",
 		Long: `Show the thread containing an internal message ID or provider message ID.
+SQLite compares instants to the millisecond, with ties in message-ID order.
 Messages appear oldest first, with undated messages last. Quoted lines, complete
 single-line dated reply headers above them, and "-- " signatures are removed.
 Inline replies, uncertain wrapped headers, and complete URLs are preserved.

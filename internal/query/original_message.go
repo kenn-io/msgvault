@@ -316,6 +316,7 @@ type ThreadPage struct {
 // ListThread lists the live messages of one conversation ordered by
 // sent_at (undated last), then ID. Source-deleted messages are included
 // because they remain archive data. HasRaw reports stored original MIME.
+// SQLite compares instants to the millisecond, with ties in message-ID order.
 func (e *SQLiteEngine) ListThread(ctx context.Context, q ThreadQuery) (*ThreadPage, error) {
 	anchors := 0
 	for _, set := range []bool{q.ID != 0, q.SourceMessageID != "", q.ThreadID != ""} {
