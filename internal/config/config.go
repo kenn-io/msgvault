@@ -2295,6 +2295,20 @@ func (c *Config) applyMeetingSourceDefaults() {
 	}
 }
 
+// checkSafeIdentifier rejects identifiers that would key the source row,
+// receipts and remote identity differently once a request trims them.
+func checkSafeIdentifier(kind, id string) error {
+	if strings.TrimSpace(id) != id {
+		return fmt.Errorf("[[%s]]: unsafe identifier %q; use a label without surrounding whitespace", kind, id)
+	}
+	for _, r := range id {
+		if r < 32 || r == 127 {
+			return fmt.Errorf("[[%s]]: unsafe identifier %q", kind, id)
+		}
+	}
+	return nil
+}
+
 // validateMeetingSources rejects native meeting-source lists with empty
 // or duplicate identifiers — the identifier keys the source row and token
 // file, so a collision would silently merge two accounts.
@@ -2413,14 +2427,8 @@ func (c *Config) validateMeetingSources() error {
 		return err
 	}
 	for i := range c.Plaud {
-		id := c.Plaud[i].Identifier
-		if strings.TrimSpace(id) != id {
-			return fmt.Errorf("[[plaud]]: unsafe identifier %q; use a label without surrounding whitespace", id)
-		}
-		for _, r := range id {
-			if r < 32 || r == 127 {
-				return fmt.Errorf("[[plaud]]: unsafe identifier %q", id)
-			}
+		if err := checkSafeIdentifier("plaud", c.Plaud[i].Identifier); err != nil {
+			return err
 		}
 		email, err := c.Plaud[i].EffectiveAccountEmail()
 		if err != nil {
@@ -2457,6 +2465,9 @@ func (c *Config) validateMeetingSources() error {
 	for i := range c.Hex {
 		if c.Hex[i].RecordingMaxBytes < 0 || c.Hex[i].RecordingMaxBytes == int64(^uint64(0)>>1) {
 			return errors.New("hex recording_max_bytes must be nonnegative and below MaxInt64")
+		}
+		if err := checkSafeIdentifier("hex", c.Hex[i].Identifier); err != nil {
+			return err
 		}
 		email, err := c.Hex[i].EffectiveAccountEmail()
 		if err != nil {
