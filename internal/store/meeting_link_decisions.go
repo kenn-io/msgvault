@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -45,7 +46,7 @@ func (s *Store) writeMeetingLinkDecision(ctx context.Context, memberID int64, oc
 		for _, id := range []int64{first, second} {
 			if s.IsPostgreSQL() {
 				var found int64
-				if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? FOR NO KEY UPDATE`, id).Scan(&found); err != nil {
+				if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE id = ? FOR NO KEY UPDATE`, id).Scan(&found); err != nil && !errors.Is(err, sql.ErrNoRows) {
 					return err
 				}
 			} else if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
@@ -126,18 +127,18 @@ func resolveMeetingDecisionTarget(ctx context.Context, r reboundReader, memberID
 	if decision != "split" || !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) && !errors.Is(err, ErrQueryTooBroad) {
 		return target, err
 	}
-	// A series edit can remove an occurrence while its saved link still
-	// suppresses automatic matches. Only supersede a saved identity here.
+	// A series edit or source removal can drop a target while its saved link still
+	// suppresses automatic matches. Only supersede a saved (or sole absent) identity.
 	rows, err := meetingEventRows(ctx, r, `e.message_id = ?`, []any{ref.MessageID}, &budget)
-	if err != nil {
-		return linkOccurrence{}, err
+	if err != nil || len(rows) > 1 {
+		return linkOccurrence{}, cmp.Or(err, sql.ErrNoRows)
 	}
-	if len(rows) != 1 {
-		return linkOccurrence{}, sql.ErrNoRows
+	target = linkOccurrence{Identity: meetingIdentity{OccurrenceKey: ref.Key}}
+	if len(rows) == 1 {
+		target = occurrenceFromRow(rows[0], ref.Key)
 	}
-	target = occurrenceFromRow(rows[0], ref.Key)
-	var found int
-	err = r.QueryRowContext(ctx, `SELECT 1 FROM meeting_link_decisions WHERE member_message_id = ? AND target_ical_uid = ? AND COALESCE(target_message_id,0) = ? AND occurrence_key = ?`, memberID, target.Identity.ICalUID, target.Identity.EventMessageID, target.Identity.OccurrenceKey).Scan(&found)
+	err = r.QueryRowContext(ctx, `SELECT MIN(d.target_ical_uid) FROM meeting_link_decisions d WHERE d.member_message_id = ? AND d.occurrence_key = ? AND ((d.target_ical_uid = ? AND COALESCE(d.target_message_id,0) = ?) OR (? AND d.decision = 'link' AND d.target_ical_uid <> '' AND NOT EXISTS (SELECT 1 FROM calendar_events e JOIN messages m ON m.id = e.message_id WHERE m.deleted_at IS NULL AND `+calendarUIDExpression(r.dialect, "m.metadata")+` = d.target_ical_uid))) HAVING COUNT(*) = 1`,
+		memberID, target.Identity.OccurrenceKey, target.Identity.ICalUID, target.Identity.EventMessageID, len(rows) == 0).Scan(&target.Identity.ICalUID)
 	return target, err
 }
 
