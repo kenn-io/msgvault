@@ -163,3 +163,37 @@ func TestLoopEvidenceSurvivesUnchangedImports(t *testing.T) {
 	require.NoError(err)
 	assert.True(hit, "message metadata timestamps do not version body/MIME facts")
 }
+
+func TestCachedLoopMessageEvidenceReadsWithoutReserving(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	id := f.PersistEmail(storetest.EmailSpec{From: "alex@example.test", To: []string{storetest.OwnerAddress}, Body: "Can you send the report?", SentAt: time.Now().Add(-48 * time.Hour)})
+	ctx := t.Context()
+	rows := func() int {
+		var count int
+		require.NoError(f.Store.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM loop_message_evidence`).Scan(&count))
+		return count
+	}
+
+	_, hit, err := f.Store.CachedLoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	assert.False(hit)
+	assert.Zero(rows(), "a cached read reserves nothing")
+
+	_, token, _, err := f.Store.LoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	_, hit, err = f.Store.CachedLoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	assert.False(hit, "a reserved computation without saved facts is not a hit")
+
+	saved := store.LoopMessageEvidence{Asks: true}
+	require.NoError(f.Store.SaveLoopMessageEvidenceContext(ctx, id, 1, token, saved))
+	got, hit, err := f.Store.CachedLoopMessageEvidenceContext(ctx, id, 1)
+	require.NoError(err)
+	assert.True(hit)
+	assert.Equal(saved, got)
+	_, hit, err = f.Store.CachedLoopMessageEvidenceContext(ctx, id, 2)
+	require.NoError(err)
+	assert.False(hit, "facts saved under other rules are not reused")
+}

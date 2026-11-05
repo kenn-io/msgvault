@@ -3,6 +3,8 @@ package loops_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"iter"
 	"strconv"
 	"testing"
 	"time"
@@ -52,6 +54,74 @@ func TestListReplyOwedAndAwaiting(t *testing.T) {
 	assert.Equal(owed, result.Loops[1].Anchor.ID)
 	assert.Equal(loops.ReplyOwed, result.Loops[1].Kind)
 	assert.Equal(store.ChannelEmail, result.Loops[1].Channel)
+}
+
+// endingContext ends with a chosen error when end is called, so a test can
+// stop a request between conversations without racing a timer.
+type endingContext struct {
+	context.Context
+
+	done chan struct{}
+	err  error
+}
+
+func (c *endingContext) Done() <-chan struct{} { return c.done }
+
+func (c *endingContext) Err() error {
+	select {
+	case <-c.done:
+		return c.err
+	default:
+		return nil
+	}
+}
+
+// endAfterFirstConversation hands List one conversation, then ends the request.
+type endAfterFirstConversation struct {
+	*store.Store
+
+	ctx *endingContext
+}
+
+func (s endAfterFirstConversation) LoopConversationsContext(ctx context.Context, q store.LoopQuery) iter.Seq2[store.LoopConversation, error] {
+	return func(yield func(store.LoopConversation, error) bool) {
+		for conv, err := range s.Store.LoopConversationsContext(ctx, q) {
+			if !yield(conv, err) || err != nil {
+				return
+			}
+			close(s.ctx.done)
+			yield(store.LoopConversation{}, s.ctx.Err())
+			return
+		}
+	}
+}
+
+func TestListReturnsCheckedConversationsWhenTheRequestDeadlinePasses(t *testing.T) {
+	f := storetest.New(t)
+	waiting := f.PersistEmail(storetest.EmailSpec{Thread: "waiting", From: me, To: []string{"sam@example.test"}, Subject: "Lunch Friday?", Body: "Are you free?", SentAt: ago(5 * day)})
+	f.PersistEmail(storetest.EmailSpec{Thread: "owed", From: alex, To: []string{me}, Subject: "Contract draft", Body: "Can you send the contract?", SentAt: ago(3 * day)})
+	for _, tt := range []struct {
+		name string
+		err  error
+	}{
+		{"deadline", context.DeadlineExceeded},
+		{"caller left", context.Canceled},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			ctx := &endingContext{Context: t.Context(), done: make(chan struct{}), err: tt.err}
+			result, err := loops.List(ctx, endAfterFirstConversation{Store: f.Store, ctx: ctx}, loops.Options{}, now)
+			if errors.Is(tt.err, context.Canceled) {
+				require.ErrorIs(err, context.Canceled)
+				return
+			}
+			require.NoError(err)
+			assert.True(result.CoverageIncomplete, "a deadline reports incomplete coverage")
+			require.Len(result.Loops, 1, "only the conversation checked in full is returned")
+			assert.Equal(waiting, result.Loops[0].Anchor.ID)
+		})
+	}
 }
 
 func TestListRecomputesEvidenceFromBeforeLoopTextRulesWereVersioned(t *testing.T) {
