@@ -468,3 +468,22 @@ it('keeps Download disabled while availability is unknown', async () => {
   expect(screen.getByText('Loading file…')).toBeDefined();
   expect(screen.getByRole('button', { name: 'Open message' }).className).toContain('outline');
 });
+
+it('labels a byte-limited CSV and omits its incomplete amount', async () => {
+  const prefix = 'Name,Note,Amount\nComplete,Ready,99\nPartial,';
+  const content = new TextEncoder().encode(prefix + 'x'.repeat(2 * 1024 * 1024 - prefix.length - 3) + ',123456');
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'cut.csv', mime_type: 'text/csv', size_bytes: content.length }, content)), file: file() });
+  expect(await screen.findByText('Preview stops at the 2 MiB size limit.')).toBeDefined();
+  expect(screen.getByRole('table').textContent).toContain('Complete');
+  expect(screen.getByRole('table').textContent).not.toContain('Partial');
+  expect(screen.queryByText('Showing the first 200 rows.')).toBeNull();
+});
+it('warns when malformed CSV rows could not be read', async () => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'malformed.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name,Amount\nExample,"42\nOther,73'))), file: file() });
+  expect(await screen.findByText("Some rows couldn't be read.")).toBeDefined();
+});
+it('detects semicolon columns in the CSV viewer', async () => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'regional.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name;Amount\nExample;42\nOther;73'))), file: file() });
+  expect(await screen.findByRole('columnheader', { name: 'Amount' })).toBeDefined();
+  expect(screen.getByRole('cell', { name: '42' })).toBeDefined();
+});

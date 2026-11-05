@@ -195,6 +195,7 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<WorkspaceFileRow>();
+  let viewerStepError = $state('');
   const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
@@ -319,6 +320,7 @@
     if (controlledKey) {
       const file = rows.find((row) => row.key === controlledKey);
       if (file) {
+        if (untrack(() => viewerFile?.key) !== file.key) viewerStepError = '';
         viewerFile = file;
         pendingViewerKey = null;
       } else if (keyChanged) {
@@ -415,6 +417,7 @@
     seenCursors = new Set<string>();
     error = '';
     pageError = '';
+    viewerStepError = '';
     unavailable = undefined;
     pendingRestoration = undefined;
     completingRestoration = '';
@@ -682,6 +685,7 @@
     return `file-row-${row.id}`;
   }
   function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid, options: { replace?: boolean } | undefined = undefined): void {
+    viewerStepError = '';
     activeKey = row.key;
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
@@ -695,10 +699,24 @@
     if (viewerIndex < 0) return;
     const target = viewerIndex + delta;
     if (target < 0 || target >= totalCount) return;
-    if (target >= rows.length && nextCursor) await loadMore();
+    if (target >= rows.length && nextCursor) {
+      viewerStepError = '';
+      await loadMore();
+      if (viewerFile === current) viewerStepError = pageError || error;
+    }
     if (viewerFile !== current || !rows[target]) return;
     move(target);
     open(rows[target], viewerReturnFocus, { replace: true });
+  }
+  async function reloadViewer(): Promise<void> {
+    const key = viewerFile?.key;
+    const { generation: currentGeneration, signal } = restartListing();
+    let loaded = await loadPage(currentGeneration, undefined, signal);
+    while (loaded && viewerFile?.key === key && !rows.some((row) => row.key === key) && nextCursor) {
+      loadingMore = true;
+      loaded = await loadPage(currentGeneration, nextCursor, signal);
+    }
+    if (viewerFile?.key === key) viewerStepError = pageError || error;
   }
   function move(index: number): void {
     const height = rowHeight;
@@ -1098,8 +1116,10 @@
     file={viewerFile}
     position={viewerIndex >= 0 ? { index: viewerIndex, total: totalCount } : undefined}
     onStep={viewerIndex >= 0 ? (delta) => { void step(delta); } : undefined}
-    stepping={loadingMore}
-    stepError={pageError}
+    stepping={loading || loadingMore}
+    stepError={viewerStepError}
+    canStepForward={viewerIndex + 1 < rows.length || !!nextCursor}
+    onReload={viewerStepError && !nextCursor ? () => { void reloadViewer(); } : undefined}
     returnFocus={viewerReturnFocus ?? grid}
     onClose={() => {
       viewerFile = undefined;

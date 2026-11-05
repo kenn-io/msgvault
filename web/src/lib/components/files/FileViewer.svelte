@@ -23,6 +23,8 @@
     onStep?: (delta: -1 | 1) => void;
     stepping?: boolean;
     stepError?: string;
+    canStepForward?: boolean;
+    onReload?: () => void;
     onClose?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
@@ -35,6 +37,8 @@
     onStep = undefined,
     stepping = false,
     stepError = '',
+    canStepForward = true,
+    onReload = undefined,
     onClose = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
@@ -154,7 +158,7 @@
       const { bytes, contentType, truncated } = await loadBytes(value, signal, MAX_TEXT_BYTES, true);
       const decoded = decodeText(bytes, contentType ?? value.mime_type, truncated);
       const kind = previewKind(value);
-      const parsed = kind === 'text' ? undefined : await parseDelimited(decoded, kind === 'tsv' ? '\t' : ',');
+      const parsed = kind === 'text' ? undefined : await parseDelimited(decoded, kind === 'tsv' ? '\t' : '', 200, truncated);
       if (signal.aborted || currentGeneration !== generation) return;
       text = decoded;
       delimited = parsed;
@@ -304,7 +308,7 @@
       if (preview?.querySelector('pre, table') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
     }
     const delta = event.key === 'ArrowLeft' ? -1 : 1;
-    if (stepping || position.index + delta < 0 || position.index + delta >= position.total) return;
+    if (stepping || delta === 1 && !canStepForward || position.index + delta < 0 || position.index + delta >= position.total) return;
     event.preventDefault();
     onStep(delta);
   }
@@ -341,10 +345,12 @@
           <div class="navigation">
             <IconButton size="sm" ariaLabel="Previous file" disabled={position.index === 0 || stepping} onclick={() => onStep?.(-1)}><ChevronLeft size={14} /></IconButton>
             <span class="data-mono">{(position.index + 1).toLocaleString()} of {position.total.toLocaleString()}</span>
-            <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || stepping} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
+            <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || stepping || !canStepForward} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
           </div>
         {/if}
-        {#if stepError}<p class="step-error" role="alert">{stepError}</p>{/if}
+        {#if stepError}
+          <div class="step-error"><p role="alert">{stepError}</p>{#if onReload}<Button size="sm" surface="outline" label="Reload files" disabled={stepping} onclick={onReload} />{/if}</div>
+        {/if}
       </div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
@@ -384,7 +390,9 @@
             {#snippet header()}{#each delimited?.header ?? [] as cell}<TableHeaderCell><span title={cell}>{cell}</span></TableHeaderCell>{/each}{/snippet}
             {#each delimited.rows as row}<tr>{#each row as cell}<td title={cell}>{cell}</td>{/each}</tr>{/each}
           </Table>
-          {#if delimited.truncated || textTruncated}<p class="truncated">Showing the first 200 rows.</p>{/if}
+          {#if textTruncated}<p class="truncated">Preview stops at the 2 MiB size limit.</p>
+          {:else if delimited.truncated}<p class="truncated">Showing the first 200 rows.</p>{/if}
+          {#if delimited.hasErrors}<p class="truncated" role="status">Some rows couldn't be read.</p>{/if}
         {:else}
           <pre>{text}</pre>
           {#if textTruncated}<p class="truncated">Showing the start of this file.</p>{/if}
@@ -438,7 +446,7 @@
     padding: var(--pane-pad-y) var(--pane-pad-x);
     background: var(--bg-inset);
   }
-  .preview > p[role='status'] {
+  .preview > p[role='status']:not(.truncated) {
     display: grid;
     height: 100%;
     place-items: center;
@@ -561,6 +569,10 @@
     background: var(--bg-surface);
   }
   .step-error {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-3);
     flex-basis: 100%;
     color: var(--accent-red);
     font-size: var(--font-size-sm);
