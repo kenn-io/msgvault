@@ -72,6 +72,7 @@ func (p Person) Normalized() Person {
 	}
 	if calevent.IsRoomAttendee(out.Email, false) {
 		out.Email = ""
+		out.ParticipantID = 0
 	}
 	seenEmails := map[string]bool{out.Email: true}
 	for _, email := range p.OtherEmails {

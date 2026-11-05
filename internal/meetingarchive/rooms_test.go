@@ -35,6 +35,31 @@ func TestArchiverExcludesRooms(t *testing.T) {
 	assertions.Zero(count)
 }
 
+func TestArchiverExcludesResolvedRooms(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "rooms@example.org")
+	requirements.NoError(err)
+	roomID, err := st.EnsureParticipant("room@c.resource.calendar.google.com", "Room", "c.resource.calendar.google.com")
+	requirements.NoError(err)
+	humanID, err := st.EnsureParticipant("human@example.org", "Human", "example.org")
+	requirements.NoError(err)
+	snapshot := testSnapshot(source.ID)
+	snapshot.Organizer = &Person{ParticipantID: roomID, Email: "room@c.resource.calendar.google.com"}
+	snapshot.Attendees = []Person{{ParticipantID: roomID, Email: "room@c.resource.calendar.google.com"}, {ParticipantID: humanID, Email: "human@example.org"}}
+	result, err := New(st).Upsert(t.Context(), snapshot, UpsertOptions{})
+	requirements.NoError(err)
+	var count int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM message_recipients WHERE message_id = ? AND participant_id = ?`), result.MessageID, roomID).Scan(&count))
+	assertions.Zero(count, "room must not be a recipient")
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM conversation_participants WHERE participant_id = ?`), roomID).Scan(&count))
+	assertions.Zero(count, "room must not join the roster")
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM messages WHERE id = ? AND sender_id IS NOT NULL`), result.MessageID).Scan(&count))
+	assertions.Zero(count, "room must not be the sender")
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM message_recipients WHERE message_id = ? AND participant_id = ?`), result.MessageID, humanID).Scan(&count))
+	assertions.Equal(1, count)
+}
+
 func TestArchiverExcludesRoomsKeepsOtherIdentities(t *testing.T) {
 	room := "room@c.resource.calendar.google.com"
 	for _, tc := range []struct {
