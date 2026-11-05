@@ -581,7 +581,9 @@ func (s *Store) Close() error {
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
 			// Log maintenance errors here so expected deadlines do not also emit SQL warnings.
 			// Include 0x10 to bound ANALYZE even on a fresh connection without an analysis_limit.
-			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x10012")
+			// Leave the all-table refresh to optimizeSQLiteWithin: reanalyzing FTS
+			// data tables here then pruning their statistics can undo compaction.
+			_, err := s.db.DB.ExecContext(ctx, "PRAGMA optimize=0x12")
 			if err == nil {
 				err = dropFTSDataStatistics(ctx, s.db.DB)
 			}
