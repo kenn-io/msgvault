@@ -103,6 +103,9 @@ type Syncer struct {
 	// relocation targets that failed this run. It is set only on the scoped
 	// Syncer copy a single full() run uses and never persists.
 	failedRelocationGuards *failedRelocationGuards
+
+	// Recovery must refresh existing memberships before advancing its page.
+	requireLabelRefresh bool
 }
 
 // SuccessfulSyncHook runs after the durable sync run is marked complete.
@@ -465,10 +468,14 @@ func (s *Syncer) fullCheckpointMatchesRequest(
 
 // Keep the old store fingerprint unchanged: legacy migrations must not stamp
 // pre-coverage checkpoints as safe to resume with the wider acquisition scope.
-const gmailHistoryRecoveryCoverageFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
+// The membership version also restarts older recovery scans: their processed
+// prefix may still carry stale labels, even if they reached catch-up.
+const gmailHistoryRecoveryPresenceFingerprint = store.GmailHistoryRecoveryRequestFingerprint + ":spam-trash:v1"
+const gmailHistoryRecoveryCoverageFingerprint = gmailHistoryRecoveryPresenceFingerprint + ":labels:v1"
 
 func isPinnedHistoryRecovery(run *store.SyncRun) bool {
 	return (checkpointMatchesRequest(run, gmailHistoryRecoveryCoverageFingerprint) ||
+		checkpointMatchesRequest(run, gmailHistoryRecoveryPresenceFingerprint) ||
 		checkpointMatchesRequest(run, store.GmailHistoryRecoveryRequestFingerprint)) &&
 		run.CursorAfter.Valid && run.CursorAfter.String != ""
 }
@@ -709,6 +716,11 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	// for clients that cannot fetch labels separately.
 	snapshotComplete := s.labelsSnapshotComplete()
 	labelReader, canReadLabels := s.client.(messageLabelBatchReader)
+	// Ordinary Gmail full scans keep the existing-RAW shortcut. Recovery
+	// instead establishes a fresh membership snapshot after lost History.
+	if s.opts.SourceType != sourceTypeIMAP && !s.requireLabelRefresh {
+		canReadLabels = false
+	}
 	var fetchIDs []string
 	var labelRefreshIDs []string
 	var existingCount int
@@ -732,6 +744,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		existingCount++
+		if s.requireLabelRefresh && (!canReadLabels || !snapshotComplete) {
+			return nil, errors.New("gmail recovery requires complete message label metadata")
+		}
 		if canReadLabels {
 			labelRefreshIDs = append(labelRefreshIDs, id)
 			continue
@@ -748,6 +763,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 	if len(labelRefreshIDs) > 0 {
 		labelResults, err := labelReader.GetMessageLabelsBatch(ctx, labelRefreshIDs)
 		if err != nil {
+			if s.requireLabelRefresh {
+				return nil, fmt.Errorf("fetch recovery message labels: %w", err)
+			}
 			for _, id := range labelRefreshIDs {
 				s.recordSyncItem(syncID, id, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindBatchFetchError, err)
 			}
@@ -755,7 +773,18 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			return nil, fmt.Errorf("fetch message labels: %w", err)
 		}
 
+		if s.requireLabelRefresh && len(labelResults) != len(labelRefreshIDs) {
+			return nil, errors.New("incomplete recovery message label batch")
+		}
 		for i, sourceMessageID := range labelRefreshIDs {
+			if s.requireLabelRefresh {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				if labelResults[i].ID != sourceMessageID {
+					return nil, errors.New("unexpected recovery message label identity")
+				}
+			}
 			if i >= len(labelResults) {
 				err := errors.New("label metadata missing from batch response")
 				s.logger.Warn("failed to fetch message labels",
@@ -765,7 +794,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			labelResult := labelResults[i]
-			if errors.Is(labelResult.Err, gmail.ErrMessageGone) {
+			if _, gone := messageGoneKind(labelResult.Err); gone {
 				// The message left the mailbox mid-run. Deletion detection
 				// retires it; acknowledging here is what lets the folder keep
 				// its high water mark instead of re-enumerating next run.
@@ -775,6 +804,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				continue
 			}
 			if labelResult.Err != nil {
+				if s.requireLabelRefresh {
+					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, labelResult.Err)
+				}
 				s.logger.Warn("failed to fetch message labels",
 					"id", sourceMessageID, "error", labelResult.Err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseFetch, store.SyncRunItemStatusError, syncItemKindFetchError, labelResult.Err)
@@ -783,6 +815,16 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 
 			existing := existingMap[sourceMessageID]
+			if s.requireLabelRefresh {
+				if labelResult.LabelIDs == nil {
+					return nil, errors.New("missing recovery message label snapshot")
+				}
+				for _, id := range labelResult.LabelIDs {
+					if _, known := labelMap[id]; !known {
+						return nil, fmt.Errorf("recovery label %q is absent from the label catalogue", id)
+					}
+				}
+			}
 			labelIDs := labelIDsFor(labelResult.LabelIDs, labelMap)
 			if s.opts.SourceType == sourceTypeIMAP {
 				matcher, ok := s.client.(fetchedSourceMessageMatcher)
@@ -873,6 +915,9 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				snapshotComplete,
 			)
 			if err != nil {
+				if s.requireLabelRefresh {
+					return nil, fmt.Errorf("replace recovery labels for %s: %w", sourceMessageID, err)
+				}
 				s.logger.Warn("failed to refresh existing message labels",
 					"id", sourceMessageID, "error", err)
 				s.recordSyncItem(syncID, sourceMessageID, syncItemPhaseIngest, store.SyncRunItemStatusError, syncItemKindIngestError, err)
@@ -1342,6 +1387,7 @@ func (s *Syncer) full(
 	scoped := *s
 	scoped.store = s.store.ScopedToSync(source.ID, state.syncID)
 	scoped.failedRelocationGuards = newFailedRelocationGuards()
+	scoped.requireLabelRefresh = reconcilePresence
 	s = &scoped
 	summary.SyncRunID = state.syncID
 

@@ -20,7 +20,7 @@ func acquisitionDurabilityEnv(t *testing.T) *TestEnv {
 	st := testutil.NewTestStore(t)
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 1000}
-	return &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), Context: t.Context()}
+	return &TestEnv{Store: st, Mock: mock, Syncer: New(&gmailLabelSnapshotAPI{MockAPI: mock}, st, nil), Context: t.Context()}
 }
 
 func reopenAcquisitionStore(t *testing.T, e *TestEnv) {
@@ -45,7 +45,7 @@ func reopenAcquisitionStore(t *testing.T, e *TestEnv) {
 	st, err := store.OpenForTest(location)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, st.Close()) })
-	e.Store, e.Syncer = st, New(e.Mock, st, nil)
+	e.Store, e.Syncer = st, New(&gmailLabelSnapshotAPI{MockAPI: e.Mock}, st, nil)
 }
 
 // Reject only the selected write; checkpoints and cursor publication remain
@@ -81,7 +81,7 @@ func acquisitionWriteFault(t *testing.T, e *TestEnv, table, event, condition str
 }
 
 type acquisitionDurabilityAPI struct {
-	*gmail.MockAPI
+	gmailLabelSnapshotAPI
 
 	catchup       bool
 	historyPages  bool

@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"go.kenn.io/msgvault/internal/emailtags"
+	"golang.org/x/sync/errgroup"
 )
 
 // MessageTagClient is an optional capability of Gmail clients, outside the sync API.
@@ -25,6 +26,26 @@ func (c *Client) readTagIDs(ctx context.Context, id string) ([]string, error) {
 		return nil, err
 	}
 	return decodeTagIDs(data, id)
+}
+
+// GetMessageLabelsBatch reads current memberships without downloading MIME.
+// Results retain input order and individual errors; callers decide whether a
+// partial batch can be used.
+func (c *Client) GetMessageLabelsBatch(ctx context.Context, messageIDs []string) ([]MessageLabelsBatchResult, error) {
+	results := make([]MessageLabelsBatchResult, len(messageIDs))
+	var group errgroup.Group
+	group.SetLimit(c.concurrency)
+	for i, id := range messageIDs {
+		group.Go(func() error {
+			results[i].ID = id
+			results[i].LabelIDs, results[i].Err = c.readTagIDs(ctx, id)
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, fmt.Errorf("read message labels concurrently: %w", err)
+	}
+	return results, ctx.Err()
 }
 
 func decodeTagIDs(data []byte, id string) ([]string, error) {

@@ -801,7 +801,7 @@ func TestFullSyncResume(t *testing.T) {
 // cancelOnSecondListAPI surfaces a context cancellation on the second
 // ListMessages call, after the first page's checkpoint has been saved.
 type cancelOnSecondListAPI struct {
-	*gmail.MockAPI
+	gmailLabelSnapshotAPI
 
 	calls int
 }
@@ -2137,6 +2137,7 @@ func TestRecoverExpiredHistoryMarksOnlyMissingSourceMetadata(t *testing.T) {
 	env.Mock.Profile.HistoryID = 2000
 	env.Mock.HistoryID = 2000
 
+	env.Syncer = New(&gmailLabelSnapshotAPI{MockAPI: env.Mock}, env.Store, nil)
 	_, err = env.Syncer.RecoverExpiredHistory(env.Context, source)
 	require.NoError(t, err, "RecoverExpiredHistory")
 
@@ -2146,7 +2147,7 @@ func TestRecoverExpiredHistoryMarksOnlyMissingSourceMetadata(t *testing.T) {
 }
 
 type recoveryProfileSequenceAPI struct {
-	*gmail.MockAPI
+	gmailLabelSnapshotAPI
 
 	historyIDs  []uint64
 	calls       int
@@ -2322,7 +2323,7 @@ func TestRecoverExpiredHistoryRejectsPartialEnumerationOptions(t *testing.T) {
 			env.Mock.HistoryID = 2000
 			options := DefaultOptions()
 			test.modify(options)
-			syncer := New(env.Mock, env.Store, options)
+			syncer := New(&gmailLabelSnapshotAPI{MockAPI: env.Mock}, env.Store, options)
 
 			_, err = syncer.RecoverExpiredHistory(env.Context, source)
 			require.Error(t, err, "partial enumeration must not reconcile absence")
@@ -2332,7 +2333,7 @@ func TestRecoverExpiredHistoryRejectsPartialEnumerationOptions(t *testing.T) {
 }
 
 type interruptedRecoverySnapshotAPI struct {
-	*gmail.MockAPI
+	gmailLabelSnapshotAPI
 
 	calls int
 }
@@ -2401,7 +2402,7 @@ func TestIncrementalWithHistoryRecoveryResumesPinnedCursorBeforeIncremental(t *t
 	require := require.New(t)
 	assert := assert.New(t)
 	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
-	env.Syncer = New(env.Mock, env.Store, nil)
+	env.Syncer = New(&gmailLabelSnapshotAPI{MockAPI: env.Mock}, env.Store, nil)
 
 	var recoveryNotices []bool
 	summary, err := env.Syncer.IncrementalWithHistoryRecovery(env.Context, source, func(resumed bool) {
@@ -2447,7 +2448,7 @@ func TestIncrementalWithHistoryRecoveryRejectsPartialEnumerationOptions(t *testi
 			env.Mock.HistoryError = &gmail.NotFoundError{Path: "/history"}
 			options := DefaultOptions()
 			test.modify(options)
-			syncer := New(env.Mock, env.Store, options)
+			syncer := New(&gmailLabelSnapshotAPI{MockAPI: env.Mock}, env.Store, options)
 
 			_, err := syncer.IncrementalWithHistoryRecovery(env.Context, source, nil)
 			requirements.ErrorContains(err, "requires an unfiltered, unlimited full sync")
@@ -2462,7 +2463,7 @@ func TestFullRoutesPinnedHistoryRecoveryThroughCatchup(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	env, source, prior := setupInterruptedHistoryRecoveryWithPrefixChange(t)
-	env.Syncer = New(env.Mock, env.Store, nil)
+	env.Syncer = New(&gmailLabelSnapshotAPI{MockAPI: env.Mock}, env.Store, nil)
 
 	summary, err := env.Syncer.Full(env.Context, testEmail)
 	require.NoError(err, "Full")
@@ -5484,7 +5485,7 @@ func (a *labelMetadataSnapshotAPI) GetMessageLabelsBatch(_ context.Context, mess
 			results[i].Err = &gmail.NotFoundError{Path: "/messages/" + id}
 			continue
 		}
-		results[i].LabelIDs = append([]string(nil), msg.LabelIDs...)
+		results[i].LabelIDs = append([]string{}, msg.LabelIDs...)
 	}
 	return results, nil
 }
