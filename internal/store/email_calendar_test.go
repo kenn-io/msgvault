@@ -2,6 +2,7 @@ package store
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
@@ -13,6 +14,86 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
+	requirements.NoError(err)
+	id := persistInviteEmailForSource(t, st, source.ID, "audit-invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")))
+	requirements.Len(emailEvents(t, st, source.ID), 1)
+	for _, sourceID := range []int64{source.ID, 0} {
+		var ids []int64
+		count, err := st.StreamGmailAuditEvidencePageContext(t.Context(), sourceID, 0, 10, func(item GmailAuditEvidence) error {
+			ids = append(ids, item.ID)
+			return nil
+		})
+		requirements.NoError(err)
+		assertions.Equal(1, count)
+		assertions.Equal([]int64{id}, ids)
+	}
+}
+
+func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
+	requirements.NoError(err)
+	_, err = st.EnsureParticipant("existing@example.com", "Existing", "example.com")
+	requirements.NoError(err)
+	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
+	defer cancel()
+	var blocker *loggedTx
+	if st.IsPostgreSQL() {
+		blocker, err = st.db.BeginTx(ctx, nil)
+		requirements.NoError(err)
+		defer func() { _ = blocker.Rollback() }()
+		requirements.NoError(st.lockParticipantDirectoryMutationTxContext(ctx, blocker))
+	}
+	var id int64
+	done := make(chan error, 1)
+	go func() {
+		var persistErr error
+		id, persistErr = st.PersistMessageWithParticipantsContext(ctx, []ParticipantPersistData{
+			{EmailAddress: "organizer@example.com", DisplayName: "Organizer", Domain: "example.com"},
+		}, func(ids []int64) *MessagePersistData {
+			return &MessagePersistData{
+				Message:      &Message{SourceID: source.ID, SourceMessageID: "single-invite", MessageType: "email", SenderID: sql.NullInt64{Int64: ids[0], Valid: true}},
+				Conversation: &ConversationPersistData{SourceConversationID: "single-invite"},
+				RawMIME:      inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z")),
+			}
+		})
+		done <- persistErr
+	}()
+	// Release the blocker and join the writer even when a lock assertion fails.
+	joined := false
+	defer func() {
+		if blocker != nil {
+			_ = blocker.Rollback()
+		}
+		cancel()
+		if !joined {
+			<-done
+		}
+	}()
+	if blocker != nil {
+		var pid int
+		requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
+		requirements.Eventually(func() bool {
+			var waiting bool
+			return st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND ? = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
+		}, 5*time.Second, 10*time.Millisecond, "email writer must reach the directory lock")
+		// An ICS import holding the directory must still be able to update the revision.
+		_, err = blocker.ExecContext(ctx, `SELECT value FROM archive_metadata WHERE key='participant_display_name_revision' FOR UPDATE NOWAIT`)
+		assertions.NoError(err, "email writer must acquire the directory before the revision row")
+		requirements.NoError(blocker.Rollback())
+	}
+	err = <-done
+	joined = true
+	requirements.NoError(err)
+	assertions.Positive(id)
+	assertions.Len(emailEvents(t, st, source.ID), 1)
+}
 
 func TestEmailCalendarCustomizedTimeZone(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)

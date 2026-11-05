@@ -269,6 +269,7 @@ func (s *Store) gmailAuditPageIDsTx(
 		FROM messages m
 		JOIN sources src ON src.id = m.source_id AND src.source_type = 'gmail'
 		WHERE m.id > ? AND (? = 0 OR m.source_id = ?)
+		AND COALESCE(m.message_type, '') <> 'calendar_event'
 		ORDER BY m.id
 		LIMIT ?
 	`, afterID, sourceID, sourceID, limit)
@@ -2321,7 +2322,7 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, err
 		}
 	}
-	if len(participants) > 1 || hasPhoneParticipant {
+	if len(participants) > 0 {
 		// Participant merges take the directory lock before rewriting
 		// message rows. Keep the same order when a repair's preflight
 		// callback locks its target message for identity revalidation.
