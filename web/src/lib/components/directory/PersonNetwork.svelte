@@ -150,7 +150,7 @@
         </svg>
         {#each labelGroups as group (group.key)}
           {@const line = segment(group.edge)}
-          <span class="edge-label" aria-hidden="true" style:left={`${line.tx}px`} style:top={`${line.ty}px`}>{group.labels.join(' · ')}</span>
+          <span class="edge-label" aria-hidden="true" style:left={`${line.tx}px`} style:top={`${line.ty}px`} title={group.labels.join(' · ')}>{group.labels.join(' · ')}</span>
         {/each}
         {#each nodes as node (node.id)}
           {@const at = layout.place.get(node.id)}
@@ -188,12 +188,12 @@
   svg { position: absolute; inset: 0; overflow: visible; }
   path { fill: none; stroke: color-mix(in srgb, var(--text-muted) 55%, transparent); stroke-width: 1; }
   .node { position: absolute; display: flex; align-items: center; gap: var(--space-2); }
-  .name { max-width: 170px; overflow: hidden; font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
+  .name { max-width: 170px; overflow: hidden; background: var(--bg-surface); font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
   .node--root .name { font-weight: var(--font-weight-semibold, 600); }
   /* kit-ui-check-ignore: a text link inside the graph, matching record links in Connections and Work. */
-  .link { padding: 0; border: 0; background: none; color: var(--link-ink); cursor: pointer; font: inherit; font-size: var(--font-size-sm); }
+  .link { padding: 0; border: 0; color: var(--link-ink); cursor: pointer; font: inherit; font-size: var(--font-size-sm); }
   .link:hover { text-decoration: underline; }
-  .edge-label { position: absolute; transform: translate(-50%, -50%); box-sizing: border-box; padding: 0 var(--chip-pad-x); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-xs); line-height: 18px; white-space: nowrap; }
+  .edge-label { position: absolute; transform: translate(-50%, -50%); box-sizing: border-box; max-width: 160px; overflow: hidden; text-overflow: ellipsis; padding: 0 var(--chip-pad-x); border: 1px solid var(--border-strong); border-radius: var(--radius-md); background: var(--bg-surface); color: var(--text-muted); font-size: var(--font-size-xs); line-height: 18px; white-space: nowrap; }
   .loading { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg-surface) 72%, transparent); font-size: var(--font-size-sm); color: var(--text-muted); }
   .refresh-error { display: flex; align-items: center; gap: var(--space-2); color: var(--text-danger); font-size: var(--font-size-sm); }
   .truncated { color: var(--text-muted); font-size: var(--font-size-sm); }

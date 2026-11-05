@@ -102,5 +102,14 @@ for (const scenario of ['shared organization', 'nested same-column relations', '
     const names = network.getByRole('button');
     const nameBoxes = await Promise.all((await names.all()).map((name) => name.boundingBox()));
     for (const name of nameBoxes) expect(name!.width).toBeGreaterThan(40);
+    if (scenario === 'long employment title') {
+      for (const name of await names.all()) {
+        await name.scrollIntoViewIfNeeded();
+        expect(await name.evaluate((button) => {
+          const box = button.getBoundingClientRect();
+          return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
+        })).toBe(true);
+      }
+    }
   });
 }
