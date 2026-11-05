@@ -124,29 +124,66 @@ func TestICSMethods(t *testing.T) {
 	assertions.Equal("cancelled", components[0].Event.Status)
 }
 
+func TestICSStatus(t *testing.T) {
+	for _, tc := range []struct{ status, want string }{
+		{"", "confirmed"},
+		{"CONFIRMED", "confirmed"},
+		{"TENTATIVE", "tentative"},
+		{"CANCELLED", "cancelled"},
+		{"COMPLETED", ""},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			raw := strings.Replace(icsExample, "SUMMARY:", "STATUS:"+tc.status+"\r\nSUMMARY:", 1)
+			components, err := ParseICS([]byte(raw), "", "")
+			if tc.want == "" {
+				requirements.ErrorContains(err, "invalid VEVENT STATUS")
+				return
+			}
+			requirements.NoError(err)
+			requirements.Len(components, 1)
+			assertions.Equal(tc.want, components[0].Event.Status)
+		})
+	}
+}
+
 func TestICSDurationLimit(t *testing.T) {
 	for _, tc := range []struct {
 		duration string
 		withEnd  bool
 		want     string
+		wantEnd  string
 	}{
-		{"PT6000000H", false, "calendar DURATION exceeds limit"},
-		{"P36600DT1S", false, "calendar DURATION exceeds limit"},
-		{"P5229W", false, "calendar DURATION exceeds limit"},
-		{"garbage", true, "DURATION"},
-		{"PT6000000H", true, "DURATION"},
+		{"PT6000000H", false, "calendar DURATION exceeds limit", ""},
+		{"P36600DT1S", false, "calendar DURATION exceeds limit", ""},
+		{"P5229W", false, "calendar DURATION exceeds limit", ""},
+		{"garbage", true, "DURATION", ""},
+		{"PT6000000H", true, "DURATION", ""},
+		{"P", false, "invalid calendar DURATION", ""},
+		{"PT", false, "invalid calendar DURATION", ""},
+		{"P1DT", false, "invalid calendar DURATION", ""},
+		{"PT1H", false, "", "2027-03-14T14:00:00Z"},
+		{"P1D", false, "", "2027-03-15T13:00:00Z"},
 	} {
 		name := tc.duration
 		if tc.withEnd {
 			name += " with DTEND"
 		}
 		t.Run(name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:"+tc.duration, 1)
 			if tc.withEnd {
 				raw = strings.Replace(icsExample, "SUMMARY:", "DURATION:"+tc.duration+"\r\nSUMMARY:", 1)
 			}
-			_, err := ParseICS([]byte(raw), "", "")
-			require.ErrorContains(t, err, tc.want)
+			components, err := ParseICS([]byte(raw), "", "")
+			if tc.want != "" {
+				requirements.ErrorContains(err, tc.want)
+				return
+			}
+			requirements.NoError(err)
+			requirements.Len(components, 1)
+			requirements.NotNil(components[0].Event.End)
+			assertions.Equal(tc.wantEnd, components[0].Event.End.Format(time.RFC3339))
 		})
 	}
 }
