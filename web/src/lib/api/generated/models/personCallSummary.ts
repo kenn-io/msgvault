@@ -10,8 +10,6 @@ export interface PersonCallSummary {
   example_message_id: number;
   missed: number;
   person_id: number;
-  scheduled: number;
-  scheduled_cancelled: number;
   unknown: number;
   [key: string]: unknown;
 }

@@ -53,36 +53,6 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 		}
 		return nil
 	}
-	prepare := func(ctx context.Context, tx *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
-		if !o.Sparse {
-			return data, nil
-		}
-		var metadata string
-		err := tx.QueryRowContext(ctx, `
-			SELECT m.metadata, m.is_from_me FROM messages m JOIN call_details c ON c.message_id = m.id
-			WHERE m.source_id = ? AND m.source_message_id = ? AND c.kind = 'scheduled_meeting'`, sourceID, o.RecordID).Scan(&metadata, &data.Message.IsFromMe)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("%w: calendar event to cancel does not exist", callhistory.ErrInvalid)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("find calendar event to cancel: %w", err)
-		}
-		var evidence callhistory.Evidence
-		if err := json.Unmarshal([]byte(metadata), &evidence); err != nil {
-			return nil, fmt.Errorf("decode calendar evidence: %w", err)
-		}
-		evidence.Outcome = "cancelled"
-		encoded, err := json.Marshal(evidence)
-		if err != nil {
-			return nil, fmt.Errorf("encode calendar evidence: %w", err)
-		}
-		data.Message.SentAt = sql.NullTime{Time: evidence.OccurredAt, Valid: true}
-		data.Metadata = &sql.NullString{String: string(encoded), Valid: true}
-		// A delta has no replacement recipients or raw. Persistence keeps the
-		// stored rows when these fields are absent, inside this transaction.
-		data.Recipients, data.RawMIME = nil, nil
-		return data, nil
-	}
 	metadata, err := json.Marshal(o.Evidence)
 	if err != nil {
 		return 0, fmt.Errorf("encode call evidence: %w", err)
@@ -96,9 +66,6 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 		}
 	}
 	text := "Call " + o.Direction
-	if o.Kind == "scheduled_meeting" {
-		text = "Scheduled meeting"
-	}
 	if o.DurationSeconds != nil {
 		text += fmt.Sprintf(", %g seconds", *o.DurationSeconds)
 	}
@@ -120,7 +87,7 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
 				PreserveLabels: true,
 			}
-		}, prepare, s.refreshCallConversationStatsWith)
+		}, nil, s.refreshCallConversationStatsWith)
 }
 
 // Imported calls keep their conversation's denormalized stats current.

@@ -154,11 +154,11 @@ func TestCallHistoryCancelledWithdrawal(t *testing.T) {
 		server.Router().ServeHTTP(out, req)
 		return out
 	}
-	const scheduled = `{"format":"google_calendar","account":"example","record":{"id":"e1","start":{"date":"2026-10-01"}}}`
-	out := post(scheduled)
+	const supplied = `{"format":"signal_desktop","account":"example","record":{"callId":"e1","timestamp":1790841600000,"mode":"Direct","direction":"Incoming","status":"Accepted"}}`
+	out := post(supplied)
 	require.Equal(t, 200, out.Code, out.Body.String())
-	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"google_calendar","account":"example","record_id":"e1","kind":"scheduled_meeting","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","precision":"day","withdrawn":true,"raw":{"cancelled":true}}}`)
+	out = post(`{"format":"normalized","account":"example","record":{"version":1,"provider":"signal","account":"example","record_id":"e1","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","occurred_at":"2026-10-01T00:00:00Z","precision":"day","withdrawn":true,"raw":{"cancelled":true}}}`)
 	require.Equal(t, 200, out.Code, out.Body.String())
-	out = post(scheduled)
+	out = post(supplied)
 	assert.Equal(t, 409, out.Code, out.Body.String())
 }
