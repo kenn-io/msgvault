@@ -268,7 +268,7 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 
 	sourceID := strconv.FormatInt(fixture.source.ID, 10)
 	ownerSender := map[string][]string{sourceID: {"owner@example.test"}}
-	getCode, getEvents := run(issue([]string{"draft.create", "verification.read"}, fixture.source.ID, ownerSender), []string{
+	getCode, getEvents := run(issue([]string{"draft.create"}, fixture.source.ID, ownerSender), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
 	require.Equal(http.StatusOK, getCode)
