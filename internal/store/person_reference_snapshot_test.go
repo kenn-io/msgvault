@@ -11,6 +11,7 @@ import (
 )
 
 func TestResolvePersonReferenceKeepsMembershipAcrossPromotion(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
 	gate := newGmailAuditSnapshotGate(0)
 	gate.query = "WITH RECURSIVE visible_members AS"
 	var st *Store
@@ -20,12 +21,11 @@ func TestResolvePersonReferenceKeepsMembershipAcrossPromotion(t *testing.T) {
 		st = newGmailAuditSnapshotSQLiteStore(t, gate)
 	}
 	peer, err := st.EnsureParticipant("peer@example.com", "Peer", "example.com")
-	require.NoError(t, err)
+	require.NoError(err)
 	writer, err := OpenForTest(st.dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, writer.Close()) })
+	require.NoError(err)
+	t.Cleanup(func() { assert.NoError(writer.Close()) })
 	ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), gmailAuditSnapshotGateKey{}, gate), 30*time.Second)
-	defer cancel()
 	type result struct {
 		candidates []PersonCandidate
 		err        error
@@ -43,25 +43,25 @@ func TestResolvePersonReferenceKeepsMembershipAcrossPromotion(t *testing.T) {
 		select {
 		case <-finished:
 		case <-time.After(30 * time.Second):
-			assert.Fail(t, "reference reader did not finish")
+			assert.Fail("reference reader did not finish")
 		}
 	}()
 	select {
 	case <-gate.paused:
 	case <-ctx.Done():
-		require.FailNow(t, "reference membership query did not reach the gate")
+		require.FailNow("reference membership query did not reach the gate")
 	}
 	person, _, err := writer.CreatePersonFromParticipant(peer)
-	require.NoError(t, err)
+	require.NoError(err)
 	gate.resume()
 	got := <-done
-	require.NoError(t, got.err)
-	require.Len(t, got.candidates, 1)
-	assert.Zero(t, got.candidates[0].PersonID)
-	assert.Equal(t, []int64{peer}, got.candidates[0].ParticipantIDs)
+	require.NoError(got.err)
+	require.Len(got.candidates, 1)
+	assert.Zero(got.candidates[0].PersonID)
+	assert.Equal([]int64{peer}, got.candidates[0].ParticipantIDs)
 	fresh, err := st.ResolvePersonReferenceContext(t.Context(), "email", "peer@example.com", nil, 10)
-	require.NoError(t, err)
-	require.Len(t, fresh, 1)
-	assert.Equal(t, person.ID, fresh[0].PersonID)
-	assert.Equal(t, []int64{peer}, fresh[0].ParticipantIDs)
+	require.NoError(err)
+	require.Len(fresh, 1)
+	assert.Equal(person.ID, fresh[0].PersonID)
+	assert.Equal([]int64{peer}, fresh[0].ParticipantIDs)
 }

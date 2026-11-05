@@ -31,6 +31,17 @@ func activityParticipantMatchSQL(m, participant string) string {
 // ResolvePersonReferenceContext uses archive SQL only. Scope and person grants
 // are applied before ordering and limiting, including during cluster traversal.
 func (s *Store) ResolvePersonReferenceContext(ctx context.Context, kind PersonRefKind, value string, allowedPersonIDs []int64, limit int) ([]PersonCandidate, error) {
+	var result []PersonCandidate
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
+		var err error
+		result, err = s.resolvePersonReferenceContext(snapshotCtx, kind, value, allowedPersonIDs, limit)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) resolvePersonReferenceContext(ctx context.Context, kind PersonRefKind, value string, allowedPersonIDs []int64, limit int) ([]PersonCandidate, error) {
 	result := []PersonCandidate{}
 	if limit < 1 || limit > 11 {
 		return nil, fmt.Errorf("%w: candidate limit must be 1..11", ErrInvalidActivityRequest)

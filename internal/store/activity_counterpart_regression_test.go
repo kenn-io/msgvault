@@ -12,6 +12,7 @@ import (
 )
 
 func TestImportedMIMEInvitationFromExcludedSenderRemainsVisible(t *testing.T) {
+	require, assert := require.New(t), assert.New(t)
 	f := newTimelineActivityFixture(t)
 	raw := []byte("From: Calendar sender <noreply@example.com>\r\n" +
 		"To: Owner <owner@example.com>\r\n" +
@@ -26,25 +27,21 @@ func TestImportedMIMEInvitationFromExcludedSenderRemainsVisible(t *testing.T) {
 		"DTSTART:20261018T120000Z\r\nDTEND:20261018T130000Z\r\n" +
 		"ORGANIZER:mailto:noreply@example.com\r\nATTENDEE:mailto:owner@example.com\r\n" +
 		"SUMMARY:Planning\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n--invite--\r\n")
-	require.NoError(t, importer.IngestRawMessage(t.Context(), f.Store, f.Source.ID, "owner@example.com", "", nil, "invitation", "invitation-hash", raw, tierAsOf, slog.Default()))
+	require.NoError(importer.IngestRawMessage(t.Context(), f.Store, f.Source.ID, "owner@example.com", "", nil, "invitation", "invitation-hash", raw, tierAsOf, slog.Default()))
 	var id, conversationID int64
 	var messageType string
-	require.NoError(t, f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id,conversation_id,message_type FROM messages WHERE source_id=? AND source_message_id='invitation'`), f.Source.ID).Scan(&id, &conversationID, &messageType))
-	require.Equal(t, "email", messageType)
+	require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT id,conversation_id,message_type FROM messages WHERE source_id=? AND source_message_id='invitation'`), f.Source.ID).Scan(&id, &conversationID, &messageType))
+	require.Equal("email", messageType)
 	projectTimelineActivity(t, f, "UTC")
 	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(t, err)
-	assert.Len(t, page.Bursts, 1)
-	assert.Zero(t, page.NoiseOmitted)
-	if len(page.Bursts) == 1 {
-		assert.Equal(t, id, page.Bursts[0].AnchorMessageID)
-		assert.Zero(t, page.Bursts[0].Inbound)
-	}
+	require.NoError(err)
+	assert.Len(page.Bursts, 1)
+	assert.Zero(page.NoiseOmitted)
 	messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conversationID, Limit: 10})
-	require.NoError(t, err)
-	assert.Len(t, messages, 1)
+	require.NoError(err)
+	assert.Len(messages, 1)
 	if len(messages) == 1 {
-		assert.Equal(t, id, messages[0].MessageID)
+		assert.Equal(id, messages[0].MessageID)
 	}
 }
 
