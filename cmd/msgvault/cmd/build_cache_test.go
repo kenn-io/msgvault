@@ -65,7 +65,7 @@ func TestBuildCacheLockedAcceptsSQLiteFileURI(t *testing.T) {
 	dbURI := (&url.URL{Scheme: "file", Path: filepath.ToSlash(dbPath)}).String()
 
 	result, err := buildCacheLocked(
-		dbURI, filepath.Join(tmpDir, "analytics"), true, false, acquirePublishLock,
+		dbURI, filepath.Join(tmpDir, "analytics"), true, false,
 	)
 
 	require.NoError(t, err, "buildCacheLocked with file URI")
@@ -4821,7 +4821,7 @@ func TestBuildCacheWarningExportScope(t *testing.T) {
 					_, err = db.Exec(`UPDATE conversations SET title=CAST(? AS TEXT) WHERE id=101`, []byte(title))
 					require.NoError(err)
 					stderr = captureStderrDuring(t, func() {
-						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, acquirePublishLock, false)
+						result, err = refreshDerivedDatasetsOnly(context.Background(), dbPath, cache, false)
 					})
 					require.NoError(err)
 					assert.True(result.IdentityOnly)

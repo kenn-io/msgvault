@@ -31,7 +31,6 @@ var derivedRefreshBeforeSnapshotHook func()
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	repairRelated bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (result *buildResult, buildErr error) {
@@ -279,7 +278,7 @@ func refreshDerivedDatasetsOnly(
 			Append:  map[string]bool{},
 			Replace: relatedReplacements,
 		}
-		if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+		if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 			return nil, err
 		}
 		reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -401,7 +400,7 @@ func refreshDerivedDatasetsOnly(
 			plan.Replace[dataset] = true
 		}
 	}
-	if err := publishDerivedCache(staging, analyticsDir, plan, state, locking); err != nil {
+	if err := publishDerivedCache(staging, analyticsDir, plan, state); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)
@@ -580,7 +579,6 @@ func publishDerivedCache(
 	analyticsDir string,
 	plan cachePublishPlan,
 	state query.CacheSyncState,
-	locking cachePublishLocking,
 ) error {
 	data, err := json.Marshal(state, json.Deterministic(true))
 	if err != nil {
@@ -592,7 +590,6 @@ func publishDerivedCache(
 		plan,
 		data,
 		derivedPublishBeforeMarkerHook,
-		locking,
 	)
 }
 

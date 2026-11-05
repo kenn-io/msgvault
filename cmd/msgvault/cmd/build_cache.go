@@ -99,7 +99,7 @@ var buildCacheMu = newContextMutex()
 // query.CacheBuildLockPath): DuckDB readers hold it shared per query, and
 // cache writers hold it exclusively only while they actually mutate live
 // cache paths — the brief rename+marker publication step, and destructive
-// maintenance (lockCacheAndInvalidateSyncState) for its whole operation.
+// maintenance while draining readers and invalidating the marker.
 // Staging and index construction run under cacheBuilderFileLock instead, so
 // a multi-minute rebuild no longer blocks queries against the committed
 // generation. The lock file lives NEXT TO the analytics directory, not
@@ -148,14 +148,10 @@ func invalidateSyncStateFile(stateFile string) error {
 	return nil
 }
 
-// lockCacheAndInvalidateSyncState returns a release function with the cache
-// exclusively locked against builders AND readers and the commit marker
-// already invalidated. Callers must keep the locks through their database
-// mutation and the lock-held cache rebuild (buildCacheLocked with
-// publishLockHeld — the publication step must not re-acquire the
-// reader-coordination lock this function already holds, or it would
-// self-deadlock on a second file descriptor). A destructive mutation must
-// not proceed when any protection step fails.
+// lockCacheAndInvalidateSyncState drains readers and invalidates the cache marker
+// under the exclusive reader lock, then releases it. Callers keep the builder
+// lock through their database mutation and rebuild. A destructive mutation must
+// not proceed when invalidation or unlocking fails.
 func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) {
 	builderLock, err := acquireCacheBuildLock(context.Background(), analyticsDir)
 	if err != nil {
@@ -174,18 +170,16 @@ func lockCacheAndInvalidateSyncState(analyticsDir string) (func() error, error) 
 			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
 		)
 	}
-	release := func() error {
-		return errors.Join(
-			wrapError(readerLock.Unlock(), "unlock analytics cache"),
-			wrapError(builderLock.Unlock(), "unlock cache builder lock"),
-		)
+	invalidateErr := invalidateSyncStateFile(query.CacheStatePath(analyticsDir))
+	unlockErr := readerLock.Unlock()
+	if err := errors.Join(
+		wrapError(invalidateErr, "invalidate analytics cache before mutation"),
+		wrapError(unlockErr, "unlock analytics cache"),
+	); err != nil {
+		return nil, errors.Join(err, wrapError(builderLock.Unlock(), "unlock cache builder lock"))
 	}
-	if err := invalidateSyncStateFile(query.CacheStatePath(analyticsDir)); err != nil {
-		return nil, errors.Join(
-			fmt.Errorf("invalidate analytics cache before mutation: %w", err),
-			wrapError(release(), "unlock analytics cache after invalidation failure"),
-		)
-	}
+	release := func() error { return wrapError(builderLock.Unlock(), "unlock cache builder lock") }
+
 	return release, nil
 }
 
@@ -579,7 +573,6 @@ func buildCacheDerivedOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
-		acquirePublishLock,
 		false,
 		builderOverrides...,
 	)
@@ -846,16 +839,16 @@ func buildCacheScheduled(
 	}
 	return withFullBuildFallback(func() (*buildResult, error) {
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, acquirePublishLock,
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir,
 				builderOverrides...)
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				acquirePublishLock, true, builderOverrides...)
+				true, builderOverrides...)
 		}
 		return buildCacheLockedAttempt(dbPath, analyticsDir, staleness.FullRebuild, false,
-			acquirePublishLock, builderOverrides...)
-	}, dbPath, analyticsDir, acquirePublishLock, builderOverrides...)
+			builderOverrides...)
+	}, dbPath, analyticsDir, builderOverrides...)
 }
 
 func buildCacheImpl(
@@ -876,7 +869,6 @@ func buildCacheImpl(
 		analyticsDir,
 		fullRebuild,
 		recheckStaleness,
-		acquirePublishLock,
 		builderOverrides...,
 	)
 }
@@ -995,32 +987,29 @@ func relatedDriftOnly(staleness cacheStaleness) bool {
 // exclusive cross-process cache builder lock.
 func refreshIdentityDatasetsOnly(
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	return refreshDerivedDatasetsOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
-		locking,
 		false,
 		builderOverrides...,
 	)
 }
 
 // buildCacheLocked exports and publishes a cache while the caller holds the
-// exclusive cross-process cache builder lock. locking describes how the
-// publication step coordinates with readers — see cachePublishLocking.
+// exclusive cross-process cache builder lock. Publication briefly takes the
+// reader lock to replace datasets and write the marker.
 func buildCacheLocked(
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	return withFullBuildFallback(func() (*buildResult, error) {
 		return buildCacheLockedAttempt(dbPath, analyticsDir, fullRebuild, recheckStaleness,
-			locking, builderOverrides...)
-	}, dbPath, analyticsDir, locking, builderOverrides...)
+			builderOverrides...)
+	}, dbPath, analyticsDir, builderOverrides...)
 }
 
 // withFullBuildFallback runs build and finishes with a full build when a
@@ -1030,7 +1019,6 @@ func buildCacheLocked(
 func withFullBuildFallback(
 	build func() (*buildResult, error),
 	dbPath, analyticsDir string,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (*buildResult, error) {
 	result, err := build()
@@ -1038,13 +1026,12 @@ func withFullBuildFallback(
 		return result, err
 	}
 	fmt.Printf("%v. Forcing full rebuild...\n", err)
-	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, locking, builderOverrides...)
+	return buildCacheLockedAttempt(dbPath, analyticsDir, true, false, builderOverrides...)
 }
 
 func buildCacheLockedAttempt(
 	dbPath, analyticsDir string,
 	fullRebuild, recheckStaleness bool,
-	locking cachePublishLocking,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (result *buildResult, buildErr error) {
 	// Callers pass the configured DSN, which may be a file: URI; everything
@@ -1064,11 +1051,11 @@ func buildCacheLockedAttempt(
 			return &buildResult{Skipped: true, OutputDir: analyticsDir}, nil
 		}
 		if derivedDriftOnly(staleness) {
-			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, locking, builderOverrides...)
+			return refreshIdentityDatasetsOnly(dbPath, analyticsDir, builderOverrides...)
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				locking, true, builderOverrides...)
+				true, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -1307,7 +1294,7 @@ func buildCacheLockedAttempt(
 			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
 		}
 		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-			locking, true, builderOverrides...)
+			true, builderOverrides...)
 	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
 		if err := sourceSnapshot.Close(); err != nil {
@@ -1700,7 +1687,7 @@ func buildCacheLockedAttempt(
 	if err != nil {
 		return nil, fmt.Errorf("marshal sync state: %w", err)
 	}
-	if err := publishCache(staging, analyticsDir, publicationPlan, stateData, locking); err != nil {
+	if err := publishCache(staging, analyticsDir, publicationPlan, stateData); err != nil {
 		return nil, err
 	}
 	reportCacheTextRepairs(os.Stderr, textRepairs)

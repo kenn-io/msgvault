@@ -961,69 +961,82 @@ func TestRemoveNonMatrixAccountDoesNotWaitForMatrixLifecycleLock(t *testing.T) {
 	require.NoError(<-lockDone)
 }
 
-func TestRemoveAccountCmd_HoldsCacheLockThroughRebuild(t *testing.T) {
+func TestRemoveAccountCmd_LiveSQLDuringCacheRebuild(t *testing.T) {
 	cfg := testConfigValue()
-
 	require := require.New(t)
 	assert := assert.New(t)
 	tmpDir := t.TempDir()
 	dbPath := filepath.Join(tmpDir, "msgvault.db")
-
 	s := testutil.NewSQLiteTestStoreAt(t, dbPath)
 	seedQueryableMessageWithAttachment(t, s)
-	require.NoError(s.Close())
-
+	src, err := s.GetOrCreateSource(sourceTypeGmail, "kept@example.com")
+	require.NoError(err)
+	convID, err := s.EnsureConversation(src.ID, "kept-thread", "Kept")
+	require.NoError(err)
+	senderID, err := s.EnsureParticipant("kept@example.com", "Kept", "example.com")
+	require.NoError(err)
+	msgID, err := s.UpsertMessage(&store.Message{
+		ConversationID:  convID,
+		SourceID:        src.ID,
+		SourceMessageID: "kept-message",
+		MessageType:     "email",
+		SentAt:          sql.NullTime{Time: time.Date(2024, time.January, 2, 3, 4, 5, 0, time.UTC), Valid: true},
+		SenderID:        sql.NullInt64{Int64: senderID, Valid: true},
+	})
+	require.NoError(err)
+	require.NoError(s.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}))
+	t.Cleanup(func() { require.NoError(s.Close()) })
 	savedCfg := cfg
 	t.Cleanup(func() { cfg = savedCfg })
 	cfg = &config.Config{HomeDir: tmpDir, Data: config.DataConfig{DataDir: tmpDir}}
 	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	_ = testCtx
-	_, err := buildCache(dbPath, cfg.AnalyticsDir(), true)
-	require.NoError(err, "initial cache build")
-
-	engine, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", nil)
-	require.NoError(err, "open pre-removal cache engine")
-	t.Cleanup(func() { _ = engine.Close() })
-
+	_, err = buildCache(dbPath, cfg.AnalyticsDir(), true)
+	require.NoError(err)
+	engine, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", s.DB(), query.DuckDBOptions{DisableSQLiteScanner: true, LiveSQLWhenCacheUnavailable: true})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
+	strict, err := query.NewDuckDBEngine(cfg.AnalyticsDir(), "", s.DB(), query.DuckDBOptions{DisableSQLiteScanner: true})
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(strict.Close()) })
 	cascadePaused := make(chan struct{})
 	resumeRemoval := make(chan struct{})
 	removeAccountAfterCascadeHook = func() {
 		close(cascadePaused)
 		<-resumeRemoval
 	}
-	t.Cleanup(func() { removeAccountAfterCascadeHook = nil })
-
 	removeDone := make(chan error, 1)
 	go func() { removeDone <- executeRemoveAccount(t, testCtx) }()
-
+	resumed := false
+	t.Cleanup(func() {
+		if !resumed {
+			close(resumeRemoval)
+			require.NoError(<-removeDone)
+		}
+		removeAccountAfterCascadeHook = nil
+	})
 	select {
 	case <-cascadePaused:
 	case <-time.After(5 * time.Second):
 		require.FailNow("timed out waiting after account cascade")
 	}
-
-	type aggregateResult struct {
-		rows []query.AggregateRow
-		err  error
-	}
-	aggregateDone := make(chan aggregateResult, 1)
-	go func() {
-		rows, err := engine.Aggregate(context.Background(), query.ViewSenders, query.DefaultAggregateOptions())
-		aggregateDone <- aggregateResult{rows: rows, err: err}
-	}()
-
-	select {
-	case result := <-aggregateDone:
-		close(resumeRemoval)
-		require.FailNow("cache reader passed the removal writer lock", "rows=%v err=%v", result.rows, result.err)
-	case <-time.After(150 * time.Millisecond): //nolint:kennlint // deadlinetest: absence check: the paused removal holds the writer lock
-	}
-
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	rows, err := engine.Aggregate(ctx, query.ViewSenders, query.DefaultAggregateOptions())
+	require.NoError(err, "analytics must answer while removal is paused")
+	require.Len(rows, 1)
+	assert.Equal("kept@example.com", rows[0].Key)
+	stats, err := engine.GetTotalStats(ctx, query.StatsOptions{})
+	require.NoError(err)
+	assert.Equal(int64(1), stats.MessageCount)
+	_, err = strict.Aggregate(ctx, query.ViewSenders, query.DefaultAggregateOptions())
+	require.ErrorIs(err, query.ErrCacheUnavailable)
 	close(resumeRemoval)
-	require.NoError(<-removeDone, "remove account")
-	result := <-aggregateDone
-	require.NoError(result.err, "first aggregate after rebuild")
-	assert.Empty(result.rows, "removed source must not remain in the rebuilt cache")
+	resumed = true
+	require.NoError(<-removeDone)
+	rows, err = engine.Aggregate(t.Context(), query.ViewSenders, query.DefaultAggregateOptions())
+	require.NoError(err)
+	require.Len(rows, 1)
+	assert.Equal("kept@example.com", rows[0].Key)
 }
 
 // TestRemoveAccountCmd_FailedCacheRebuildInvalidatesSyncState pins that a

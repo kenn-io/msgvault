@@ -1303,7 +1303,9 @@ The `[activity].max_direct_counterparts` broadcast threshold continues to govern
 the activity projection; changing it does not change relationship membership.
 
 The daemon starts HTTP health and API routing before analytics cache
-maintenance. With `engine = "duckdb"`, analytics remain unavailable until a
+maintenance. In auto mode, message analytics answer from live SQL while the cache
+is unusable, including while `remove-account` or a repair command rebuilds it.
+With `engine = "duckdb"`, analytics remain unavailable until a
 usable cache is ready. If no usable cache can be built or opened, `msgvault serve`
 fails instead of silently falling back. A failed automatic refresh after a sync
 keeps serving the last usable publication, and the daemon checks again 15

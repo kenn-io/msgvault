@@ -116,7 +116,6 @@ func runRepairEncodingLocal(cmd *cobra.Command) (runErr error) {
 			analyticsDir,
 			true,
 			false,
-			publishLockHeld,
 			analyticsBuilderOverrides(cfg.Analytics),
 		)
 	} else {

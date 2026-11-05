@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/identityindex"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // TestDuckDBEngine_CacheRebuiltUnderneath reproduces the production crash where
@@ -99,6 +100,99 @@ func TestDuckDBEngineRejectsInterruptedCache(t *testing.T) {
 		_ = second.Close()
 	}
 	require.ErrorIs(err, ErrCacheUnavailable)
+}
+
+func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
+	t.Parallel()
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fallback=%t", enabled), func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			b := NewTestDataBuilder(t)
+			b.AddSource("archive@example.com")
+			sender := b.AddParticipant("old@example.com", "example.com", "Old")
+			message := b.AddMessage(MessageOpt{Subject: "old message"})
+			b.AddFrom(message, sender, "Old")
+			analyticsDir, cleanup := b.Build()
+			t.Cleanup(cleanup)
+			db := dbtest.NewTestDB(t, "../store/schema.sql")
+			_, err := db.DB.Exec(`
+				INSERT INTO sources (id, source_type, identifier) VALUES (7, 'gmail', 'live@example.com');
+				INSERT INTO participants (id, email_address, domain, display_name) VALUES (11, 'live@example.com', 'example.com', 'Live');
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title) VALUES (701, 7, 'live-thread', 'email', 'Live');
+				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, sender_id)
+				VALUES (801, 701, 7, 'live-message', 'email', '2024-01-15 10:00:00', 'live subject', 'live snippet', 11);
+				INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (801, 11, 'from');
+			`)
+			requirements.NoError(err)
+			engine, err := NewDuckDBEngine(analyticsDir, "", db.DB, DuckDBOptions{
+				DisableSQLiteScanner: true, LiveSQLWhenCacheUnavailable: enabled,
+			})
+			requirements.NoError(err)
+			t.Cleanup(func() { requirements.NoError(engine.Close()) })
+			rows, err := engine.Aggregate(t.Context(), ViewSenders, DefaultAggregateOptions())
+			requirements.NoError(err)
+			requirements.Len(rows, 1)
+			assertions.Equal("old@example.com", rows[0].Key)
+			requirements.NoError(os.Remove(CacheStatePath(analyticsDir)))
+			sourceID := int64(7)
+			filter := MessageFilter{SourceID: &sourceID}
+			for _, method := range []string{"Aggregate", "SubAggregate", "GetTotalStats", "ListMessages", "SearchFastWithStats"} {
+				t.Run(method, func(t *testing.T) {
+					require := require.New(t)
+					assert := assert.New(t)
+					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+					defer cancel()
+					switch method {
+					case "Aggregate", "SubAggregate":
+						var rows []AggregateRow
+						var err error
+						if method == "Aggregate" {
+							rows, err = engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
+						} else {
+							rows, err = engine.SubAggregate(ctx, filter, ViewSenders, DefaultAggregateOptions())
+						}
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						require.Len(rows, 1)
+						assert.Equal("live@example.com", rows[0].Key)
+					case "GetTotalStats":
+						stats, err := engine.GetTotalStats(ctx, StatsOptions{})
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						assert.Equal(int64(1), stats.MessageCount)
+					case "ListMessages":
+						messages, err := engine.ListMessages(ctx, filter)
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						require.Len(messages, 1)
+						assert.Equal("live-message", messages[0].SourceMessageID)
+					case "SearchFastWithStats":
+						result, err := engine.SearchFastWithStats(ctx, search.Parse("live"), "live", filter, ViewSenders, 10, 0)
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						require.Len(result.Messages, 1)
+						assert.Equal("live-message", result.Messages[0].SourceMessageID)
+						assert.Equal(int64(1), result.TotalCount)
+						require.NotNil(result.Stats)
+						assert.Equal(int64(1), result.Stats.MessageCount)
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestDuckDBEngine_SearchFastWithStatsRejectsMessageParquetDrift(t *testing.T) {
