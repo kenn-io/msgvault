@@ -326,45 +326,47 @@ func TestSearchMessagesQuery_ListIDFilters(t *testing.T) {
 }
 
 func TestSearchMessagesQueryPagesKeepRankAndDetails(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
 	f := storetest.New(t)
 	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	subjectHit := f.NewMessage().WithSubject("project").WithSentAt(day).Create(t, f.Store)
 	bodyHit := f.NewMessage().WithSubject("update").WithSentAt(day.Add(24*time.Hour)).Create(t, f.Store)
 	tiedHit := f.NewMessage().WithSubject("update").WithSentAt(day.Add(24*time.Hour)).Create(t, f.Store)
-	require.NoError(t, f.Store.UpsertFTS(subjectHit, "project", "", "", "", ""))
+	require.NoError(f.Store.UpsertFTS(subjectHit, "project", "", "", "", ""))
 	for _, id := range []int64{bodyHit, tiedHit} {
-		require.NoError(t, f.Store.UpsertFTS(id, "update", "project", "", "", ""))
+		require.NoError(f.Store.UpsertFTS(id, "update", "project", "", "", ""))
 	}
 	sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
-	require.NoError(t, f.Store.ReplaceMessageRecipients(subjectHit, "from", []int64{sender}, []string{"Sender"}))
+	require.NoError(f.Store.ReplaceMessageRecipients(subjectHit, "from", []int64{sender}, []string{"Sender"}))
 	labels := f.EnsureLabels(map[string]string{"project-label": "Project"}, "user")
-	require.NoError(t, f.Store.AddMessageLabels(subjectHit, []int64{labels["project-label"]}))
+	require.NoError(f.Store.AddMessageLabels(subjectHit, []int64{labels["project-label"]}))
 
 	q := &search.Query{TextTerms: []string{"project"}}
 	want := []int64{subjectHit, tiedHit, bodyHit}
 	full, total, err := f.Store.SearchMessagesQuery(q, 0, 10)
-	require.NoError(t, err)
-	require.Len(t, full, len(want))
-	assert.Equal(t, int64(len(want)), total)
+	require.NoError(err)
+	require.Len(full, len(want))
+	assert.Equal(int64(len(want)), total)
 	var ids []int64
 	for _, msg := range full {
 		ids = append(ids, msg.ID)
 	}
-	assert.Equal(t, want, ids)
-	assert.Equal(t, "sender@example.com", full[0].FromEmail)
-	assert.Equal(t, "Sender", full[0].FromName)
-	assert.Equal(t, f.ConvID, full[0].ConversationID)
-	assert.Equal(t, "default-thread", full[0].SourceConversationID)
-	assert.Equal(t, []string{"Project"}, full[0].Labels)
+	assert.Equal(want, ids)
+	assert.Equal("sender@example.com", full[0].FromEmail)
+	assert.Equal("Sender", full[0].FromName)
+	assert.Equal(f.ConvID, full[0].ConversationID)
+	assert.Equal("default-thread", full[0].SourceConversationID)
+	assert.Equal([]string{"Project"}, full[0].Labels)
 	var paged []store.APIMessage
-	for offset := range len(want) {
+	for offset := range want {
 		page, _, err := f.Store.SearchMessagesQuery(q, offset, 1)
-		require.NoError(t, err)
-		require.Len(t, page, 1)
+		require.NoError(err)
+		require.Len(page, 1)
 		paged = append(paged, page...)
 	}
-	assert.Equal(t, full, paged)
+	assert.Equal(full, paged)
 	pastEnd, _, err := f.Store.SearchMessagesQuery(q, len(want)+1, 1)
-	require.NoError(t, err)
-	assert.Empty(t, pastEnd)
+	require.NoError(err)
+	assert.Empty(pastEnd)
 }
