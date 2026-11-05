@@ -3922,7 +3922,6 @@ func TestHandleSourceStatusMappedJobScheduled(t *testing.T) {
 	for _, tc := range []struct{ sourceType, identifier, job string }{
 		{"granola", "acct-1", "granola:acct-1"},
 		{"whatsapp", "+15550000000", "whatsapp:+15550000000"},
-		{"apple_messages", "local", "apple-messages"},
 	} {
 		t.Run(tc.sourceType, func(t *testing.T) {
 			require := require.New(t)
@@ -3999,43 +3998,35 @@ func TestHandleSourceStatusGenericJobRunning(t *testing.T) {
 // sync_not_configured, rather than falling through to some other reason.
 func TestHandleSourceStatusGenericJobUnscheduled(t *testing.T) {
 	t.Parallel()
-	t.Run("whatsapp status and trigger without schedule", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		st := testutil.NewTestStore(t)
-		src, err := st.GetOrCreateSource("whatsapp", "+15550000000")
-		require.NoError(err)
-		sched := newMockScheduler()
-		srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
-		status, err := srv.sourceStatus(t.Context(), st, src, nil)
-		require.NoError(err)
-		assert.False(status.CanSync)
-		assert.Equal("sync_not_configured", status.SyncUnavailableReason)
-		response := servePOSTTestRequest(srv, "/api/v1/sync/+15550000000?source_type=whatsapp")
-		assert.Equal(http.StatusNotFound, response.Code)
-	})
+	for _, tc := range []struct{ sourceType, identifier string }{
+		{circleback.SourceType, "acct-2"},
+		{"whatsapp", "+15550000000"},
+	} {
+		t.Run(tc.sourceType, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			st := testutil.NewTestStore(t)
+			sched := newMockScheduler()
+			_, err := st.GetOrCreateSource(tc.sourceType, tc.identifier)
+			require.NoError(err)
+			srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
 
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	sched := newMockScheduler() // no jobStatuses configured
-	_, err := st.GetOrCreateSource(circleback.SourceType, "acct-2")
-	require.NoError(err, "GetOrCreateSource circleback")
-	srv := NewServer(&config.Config{Server: config.ServerConfig{APIPort: 8080}}, st, sched, testLogger())
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-
-	require.Equal(http.StatusOK, w.Code, w.Body.String())
-	var resp SourceStatusResponse
-	require.NoError(json.NewDecoder(w.Body).Decode(&resp), "decode response")
-	require.Len(resp.Sources, 1, "sources")
-
-	got := resp.Sources[0]
-	assert.False(got.Scheduled, "Scheduled")
-	assert.False(got.CanSync, "CanSync")
-	assert.Equal("sync_not_configured", got.SyncUnavailableReason)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			var resp SourceStatusResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+			require.Len(resp.Sources, 1)
+			status := resp.Sources[0]
+			assert.False(status.Scheduled)
+			assert.False(status.CanSync)
+			assert.Equal("sync_not_configured", status.SyncUnavailableReason)
+			if tc.sourceType == "whatsapp" {
+				response := servePOSTTestRequest(srv, "/api/v1/sync/"+tc.identifier+"?source_type="+tc.sourceType)
+				assert.Equal(http.StatusNotFound, response.Code)
+			}
+		})
+	}
 }
 
 // TestHandleSourceStatusBeeperSharesSingleJob covers the beeper N:1 fan-in:
@@ -9356,12 +9347,24 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 			sched.scheduledJobs = map[string]bool{"apple-messages": true}
 			sched.jobStatuses = []JobStatus{{Name: "apple-messages", Schedule: "0 */6 * * *", NextRun: time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)}}
 			srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
-			for _, src := range sources {
-				status, err := srv.sourceStatus(t.Context(), st, src, sources)
-				require.NoError(err)
-				assert.Equal(src.Identifier == tc.wantSelected, status.CanSync, src.Identifier)
-				if src.Identifier != tc.wantSelected {
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
+			require.Equal(http.StatusOK, w.Code, w.Body.String())
+			var resp SourceStatusResponse
+			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
+			require.Len(resp.Sources, len(sources))
+			for _, status := range resp.Sources {
+				assert.Equal(status.Identifier == tc.wantSelected, status.CanSync, status.Identifier)
+				if status.Identifier != tc.wantSelected {
 					assert.Equal("source_not_schedulable", status.SyncUnavailableReason)
+				}
+				if tc.name == "local source" {
+					assert.Equal(sources[0].ID, status.ID)
+					assert.True(status.Scheduled)
+					assert.Equal("0 */6 * * *", status.Schedule)
+					require.NotNil(status.NextSyncAt)
+					assert.Equal("2026-07-20T00:00:00Z", *status.NextSyncAt)
+					assert.Empty(status.SyncUnavailableReason)
 				}
 			}
 
