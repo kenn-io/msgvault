@@ -620,8 +620,12 @@ func requireManifestDigest(manifest *Manifest, expected string) error {
 func (m *Manager) resumeClaimedManifest(manifest *Manifest, inProgressPath string, method Method) (*Manifest, error) {
 	if manifest.Status == StatusCompleted || manifest.Status == StatusFailed {
 		// Republishing as in_progress would make superseded records apply again.
-		if err := os.Remove(journalPath(inProgressPath)); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("remove checkpoint journal before resuming %s: %w", manifest.ID, err)
+		path := journalPath(inProgressPath)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("cannot resume %s: %w", manifest.ID, err)
+		}
+		if err := atomicfile.SyncDir(filepath.Dir(path)); err != nil {
+			return nil, fmt.Errorf("cannot resume %s: %w", manifest.ID, err)
 		}
 	}
 	needsWrite := manifest.Status != StatusInProgress
