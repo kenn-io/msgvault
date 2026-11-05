@@ -88,7 +88,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 	}
 	root.AddCommand(importCommand)
 	for _, summary := range []bool{false, true} {
-		name, description := "list", "Inspect source observations and participant attendance"
+		name, description := "list", "List imported calls and who joined"
 		if summary {
 			name, description = "summary", "Rank people by confirmed answered calls"
 		}
@@ -102,7 +102,7 @@ func newCallsCommand(deps callCommandDeps) *cobra.Command {
 		if summary {
 			command.Flags().IntVar(&q.Offset, "offset", 0, "Skip ranked people")
 		} else {
-			command.Flags().Int64Var(&q.AfterID, "after-id", 0, "Continue after this observation message ID")
+			command.Flags().Int64Var(&q.AfterID, "after-id", 0, "Continue after this call's message ID")
 		}
 		command.RunE = func(cmd *cobra.Command, _ []string) error {
 			for _, bound := range []struct {
