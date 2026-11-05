@@ -75,6 +75,19 @@ func TestCalDAVRejectsInvalidUTF8(t *testing.T) {
 	assert.Empty(t, events)
 }
 
+func TestCalDAVFoldedUTF8(t *testing.T) {
+	for _, fold := range []string{"\r\n ", "\r\n\t", "\n ", "\n\t"} {
+		t.Run(fmt.Sprintf("%q", fold), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			raw := strings.Replace(calDAVFixture, "SUMMARY:Planning\\, session", "SUMMARY:Caf\xc3"+fold+"\xa9", 1)
+			events, err := ParseCalDAVResource(t.Context(), []byte(raw), "UTC")
+			require.NoError(err)
+			require.Len(events, 2)
+			assert.Equal("Café", events[0].Summary)
+		})
+	}
+}
+
 func TestCalDAVDatesCancellationAndInvalidContent(t *testing.T) {
 	wrap := func(event string) []byte {
 		return []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n" + event + "END:VCALENDAR\r\n")
@@ -96,7 +109,7 @@ func TestCalDAVDatesCancellationAndInvalidContent(t *testing.T) {
 		{"custom zone", "BEGIN:VEVENT\r\nUID:bad\r\nDTSTART;TZID=Custom/Zone:20270314T130000\r\nEND:VEVENT\r\n", "unknown time zone", nil},
 		{"malformed parameter", "BEGIN:VEVENT\r\nUID;X=\r\nEND:VEVENT\r\n", "malformed CalDAV iCalendar content", nil},
 		{"nested", "BEGIN:VEVENT\r\nUID:outer\r\nDTSTART:20270314T130000Z\r\nBEGIN:VEVENT\r\nUID:inner\r\nEND:VEVENT\r\nEND:VEVENT\r\n", "unsupported nested CalDAV event component", nil},
-		{"all-day end equals start", "BEGIN:VEVENT\r\nUID:bad\r\nDTSTART;VALUE=DATE:20270314\r\nDTEND;VALUE=DATE:20270314\r\nEND:VEVENT\r\n", "all-day DTEND must follow DTSTART", nil},
+		{"all-day end equals start", "BEGIN:VEVENT\r\nUID:bad\r\nDTSTART;VALUE=DATE:20270314\r\nDTEND;VALUE=DATE:20270314\r\nEND:VEVENT\r\n", "CalDAV all-day event end must follow DTSTART", nil},
 		{"zero all-day duration", "BEGIN:VEVENT\r\nUID:bad\r\nDTSTART;VALUE=DATE:20270314\r\nDURATION:P0D\r\nEND:VEVENT\r\n", "all-day event end must follow DTSTART", nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

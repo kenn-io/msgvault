@@ -2811,7 +2811,7 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 		for i := start; i < end; i++ {
 			values[i-start] = "(?, ?, ?, ?, ?)"
 			row := recipients[i]
-			args = append(args, messageID, row.participantID, rs.Type, row.displayName, NullIfEmpty(row.email))
+			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email))
 		}
 		return values, args
 	})
@@ -6535,8 +6535,8 @@ func (s *Store) replaceMessageAttachmentsWhereTxContext(ctx context.Context,
 	return nil
 }
 
-// NullIfEmpty represents an empty string as SQL NULL.
-func NullIfEmpty(s string) sql.NullString {
+// nullIfEmpty represents an empty string as SQL NULL.
+func nullIfEmpty(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }
 
@@ -6662,7 +6662,7 @@ func (s *Store) beeperAttachmentMetadataChangedTx(
 			SELECT COUNT(*) FROM attachments
 			WHERE message_id = ? AND source_attachment_id = ?
 			  AND NOT (%s)`, s.dialect.JSONIsDistinctExpr("attachment_metadata")),
-			messageID, sourceAttachmentID, NullIfEmpty(metadata)).Scan(&same); err != nil {
+			messageID, sourceAttachmentID, nullIfEmpty(metadata)).Scan(&same); err != nil {
 			return false, fmt.Errorf("compare existing Beeper attachment metadata: %w", err)
 		}
 		if same == 0 {

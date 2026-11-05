@@ -2,6 +2,7 @@ package caldav
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
@@ -90,6 +91,10 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Resul
 		result.Skipped += r.Skipped
 		result.Removed += r.Removed
 		if err != nil {
+			if errors.Is(err, store.ErrSourceRetired) && len(configured) == 0 {
+				slog.InfoContext(ctx, "skipping retired calendar source", "calendar", cal.URL)
+				continue
+			}
 			syncErrors = append(syncErrors, fmt.Errorf("archive CalDAV calendar %q (%s): %w", cal.DisplayName, cal.URL, err))
 			continue
 		}
@@ -402,8 +407,8 @@ func persistEvent(ctx context.Context, st *store.Store, sourceID int64, account 
 	data := &store.MessagePersistData{
 		Message:      &store.Message{SourceID: sourceID, SourceMessageID: e.ProviderEventID, SizeEstimate: int64(len(raw))},
 		Conversation: &store.ConversationPersistData{SourceConversationID: conversation},
-		Metadata:     new(store.NullIfEmpty(string(meta))),
-		BodyText:     store.NullIfEmpty(body),
+		Metadata:     &sql.NullString{String: string(meta), Valid: len(meta) > 0},
+		BodyText:     sql.NullString{String: body, Valid: body != ""},
 		RawMIME:      raw, RawFormat: calevent.CalDAVRawFormat,
 	}
 	var people []store.ParticipantPersistData

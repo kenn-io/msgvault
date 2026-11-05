@@ -127,13 +127,11 @@ func TestCalendarMultigetSplitsOversizedResponses(t *testing.T) {
 				}
 				batches = append(batches, len(request.Hrefs))
 				var body strings.Builder
-				body.WriteString(`<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">`)
 				for _, href := range request.Hrefs {
-					body.WriteString(`<D:response><D:href>` + href + `</D:href><D:propstat><D:prop><D:getetag>"v1"</D:getetag><C:calendar-data><![CDATA[` + raw + `]]></C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`)
+					body.WriteString(testutil.DAVPropResponse(href, `<D:getetag>"v1"</D:getetag><C:calendar-data><![CDATA[`+raw+`]]></C:calendar-data>`))
 				}
-				body.WriteString(`</D:multistatus>`)
 				w.WriteHeader(http.StatusMultiStatus)
-				_, _ = io.WriteString(w, body.String())
+				_, _ = io.WriteString(w, testutil.DAVMultiStatus(body.String(), "urn:ietf:params:xml:ns:caldav"))
 			}))
 			t.Cleanup(server.Close)
 			collection := mustParseURL(t, server.URL+"/calendar/")
