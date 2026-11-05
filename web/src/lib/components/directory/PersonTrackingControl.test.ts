@@ -21,7 +21,7 @@ function catalog(sensitive: boolean) {
     fingerprint: forbidden.fingerprint,
     targets: [{
       kind: 'attribute', key: forbidden.key, revision: forbidden.revision,
-      slug: sensitive ? 'private-note' : 'timezone', universal_id: forbidden.universal_id,
+      slug: sensitive ? 'private-note' : 'time-zone', universal_id: forbidden.universal_id,
       description: sensitive ? 'Private note' : 'Time zone', value_type: 'text',
       cardinality: 'single', sensitive, choices: null, fields: null,
       href: forbidden.href, credential: forbidden.credential
@@ -44,16 +44,34 @@ describe('PersonTrackingControl', () => {
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
-    expect(await screen.findByRole('heading', { name: 'Profile maintenance' })).toBeDefined();
-    const toggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }) as HTMLInputElement;
+    expect(await screen.findByRole('heading', { name: 'Fields it updates' })).toBeDefined();
+    const toggle = await screen.findByRole('switch', { name: 'Update automatically' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(false);
-    expect(screen.getByText(/eligible for future automatic profile maintenance/i)).toBeDefined();
+    expect(screen.getByText('Off')).toBeDefined();
     expect(screen.getByText('Time zone')).toBeDefined();
-    expect(screen.getByText('Attribute · text · single')).toBeDefined();
-    expect(screen.queryByText('Tracked since')).toBeNull();
+    expect(screen.queryByText('On since')).toBeNull();
     expect(document.body.textContent).not.toMatch(/forbidden/i);
     expect(document.body.innerHTML).not.toMatch(/forbidden\.example/i);
+  });
+
+  it('uses definition labels, slug fallbacks, and a compact Work history row', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      if (new URL(requestOf(input).url).pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: true, tracked_at: null });
+      const target = catalog(false).targets[0]!;
+      return Response.json({ targets: [target, { ...target, slug: 'favorite_foods' }, { ...target, kind: 'employment', slug: 'employment' }] });
+    });
+    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [{
+      id: 8, universal_id: '00000000-0000-4000-8000-000000000008', object_type: 'person', slug: 'time-zone', label: 'Local time zone',
+      value_type: 'text', field_type: 'text', cardinality: 'single', display_order: 1, is_required: false, ownership: 'user',
+      ui_creatable: true, ui_editable: true, api_mutable: true, is_searchable: true, is_sensitive: false, is_audited: true,
+      is_deletable: true, history_exempt: false, is_active: true, revision: 1, created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+    }] });
+    expect(await screen.findByText('Local time zone')).toBeDefined();
+    expect(screen.getByText('Favorite foods')).toBeDefined();
+    expect(screen.getByText('Work history')).toBeDefined();
+    expect(screen.getByText('Employer, title, and dates')).toBeDefined();
+    expect(screen.getByText('On', { exact: true })).toBeDefined();
   });
 
   it('submits once, announces once, shows tracked time, and returns focus to the connected toggle', async () => {
@@ -72,7 +90,7 @@ describe('PersonTrackingControl', () => {
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
 
-    const toggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' });
+    const toggle = await screen.findByRole('switch', { name: 'Update automatically' });
     toggle.focus();
     await fireEvent.click(toggle);
 
@@ -81,8 +99,9 @@ describe('PersonTrackingControl', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('switch')));
     expect(puts).toBe(1);
     expect(onAnnounce).toHaveBeenCalledWith('Profile maintenance tracking enabled.');
-    expect(screen.getByText('Tracked since')).toBeDefined();
+    expect(screen.getByText('On since')).toBeDefined();
     expect(document.querySelector('time')?.getAttribute('datetime')).toBe('2026-08-29T01:00:00Z');
+    expect(document.querySelector('time')?.textContent).not.toBe('2026-08-29T01:00:00Z');
   });
 
   it('locks an unknown mutation result behind a GET-only retry', async () => {
@@ -104,7 +123,7 @@ describe('PersonTrackingControl', () => {
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
-    await fireEvent.click(await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }));
+    await fireEvent.click(await screen.findByRole('switch', { name: 'Update automatically' }));
     const retry = await screen.findByRole('button', { name: 'Retry profile maintenance state' }) as HTMLButtonElement;
     expect(screen.queryByRole('switch')).toBeNull();
     await waitFor(() => expect(retry.disabled).toBe(false));
@@ -130,7 +149,7 @@ describe('PersonTrackingControl', () => {
     const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
     expect(await screen.findByText('Time zone')).toBeDefined();
-    const reveal = await screen.findByRole('button', { name: 'Show sensitive eligible fields' });
+    const reveal = await screen.findByRole('button', { name: 'Show sensitive fields' });
     expect((reveal as HTMLButtonElement).disabled).toBe(false);
     reveal.focus();
     await fireEvent.click(reveal);
@@ -154,7 +173,7 @@ describe('PersonTrackingControl', () => {
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
-    expect((await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }) as HTMLInputElement).disabled).toBe(false);
+    expect((await screen.findByRole('switch', { name: 'Update automatically' }) as HTMLInputElement).disabled).toBe(false);
     expect((await screen.findByRole('alert')).textContent).toContain('Unable to load eligible profile fields.');
     expect(document.body.textContent).not.toContain(forbidden.credential);
   });
@@ -179,7 +198,7 @@ describe('PersonTrackingControl', () => {
     const view = render(PersonTrackingControl, {
       client: createAPIClient(fetchFn), personID: 7, onAnnounce
     });
-    const oldToggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' });
+    const oldToggle = await screen.findByRole('switch', { name: 'Update automatically' });
     oldToggle.focus();
     await fireEvent.click(oldToggle);
 
@@ -189,7 +208,7 @@ describe('PersonTrackingControl', () => {
     expect(puts).toBe(1);
 
     await view.rerender({ client: createAPIClient(fetchFn), personID: 9, onAnnounce });
-    const currentToggle = await screen.findByRole('switch', { name: 'Track this person for profile maintenance' });
+    const currentToggle = await screen.findByRole('switch', { name: 'Update automatically' });
     currentToggle.focus();
     mutation.resolve(Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T01:00:00Z' }));
     await Promise.resolve();
@@ -231,7 +250,7 @@ describe('PersonTrackingControl', () => {
     });
     try {
       view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
-      await fireEvent.click(await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }));
+      await fireEvent.click(await screen.findByRole('switch', { name: 'Update automatically' }));
       await waitFor(() => expect(replaced).toBe(true));
       await Promise.resolve();
       await Promise.resolve();
@@ -267,7 +286,7 @@ describe('PersonTrackingControl', () => {
     });
     try {
       render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
-      await fireEvent.click(await screen.findByRole('switch', { name: 'Track this person for profile maintenance' }));
+      await fireEvent.click(await screen.findByRole('switch', { name: 'Update automatically' }));
       await waitFor(() => expect(destroyed).toBe(true));
       await Promise.resolve();
       await Promise.resolve();

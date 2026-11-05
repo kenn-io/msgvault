@@ -30,6 +30,21 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
+  it('opens named profile updates and returns focus after Close', async () => {
+    renderActions(vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      return Response.json(new URL(request.url).pathname.endsWith('/tracking')
+        ? { person_id: 7, tracked: false, tracked_at: null }
+        : { targets: [] });
+    }));
+    const trigger = screen.getByRole('button', { name: 'More actions' });
+    await choose('Keep this profile updated');
+    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(document.activeElement).toBe(trigger);
+  });
+
   it('renames the selected person with the current strong ETag', async () => {
     const requests: Request[] = [];
     renderActions(vi.fn<typeof fetch>(async (input) => {

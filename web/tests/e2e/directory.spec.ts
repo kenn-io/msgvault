@@ -130,12 +130,12 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
 
   const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
   await expect(maintenance).toBeVisible();
-  await expect(maintenance).toContainText('Time zone');
+  await expect(maintenance).toContainText('Timezone');
   await expectNoAxeViolations(page, 'Directory profile maintenance desktop');
   const forbidden = /forbidden-/i;
   expect(await page.locator('body').innerHTML()).not.toMatch(forbidden);
 
-  const toggle = maintenance.getByRole('switch', { name: 'Track this person for profile maintenance' });
+  const toggle = maintenance.getByRole('switch', { name: 'Update automatically' });
   await toggle.focus();
   await page.keyboard.press('Space');
   await expect(toggle).toBeChecked();
@@ -153,7 +153,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await expect(toggle).toBeEnabled();
   await expect(toggle).toBeFocused();
 
-  const reveal = maintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  const reveal = maintenance.getByRole('button', { name: 'Show sensitive fields' });
   await expect(reveal).toBeEnabled();
   await reveal.focus();
   await page.keyboard.press('Enter');
@@ -171,15 +171,20 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
     { method: 'GET', path: '/api/v1/person-fact-targets', includeSensitive: true }
   ]);
 
-  await page.getByRole('dialog', { name: 'Keep this profile updated' }).getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('dialog', { name: "Keep Archive Person's profile updated" }).getByRole('button', { name: 'Close', exact: true }).click();
   await expect(maintenance).toBeHidden();
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/v1/person-fact-targets*', (route) => route.fulfill({ json: {
+    targets: ['employment', 'favorite_foods', 'hometown', 'contact_every_n_days', 'timezone', 'languages', 'interests', 'education', 'skills', 'birthday', 'pronouns', 'preferred_name', 'private_note'].map((slug) => ({
+      kind: slug === 'employment' ? 'employment' : 'attribute', slug, description: 'Catalog description', value_type: 'text', cardinality: 'multi', sensitive: slug === 'private_note'
+    })).filter((target) => !target.sensitive || new URL(route.request().url()).searchParams.get('include_sensitive') === 'true')
+  } }));
+  await page.setViewportSize({ width: 390, height: 600 });
   const drawer = page.getByRole('group', { name: 'Person page' });
   await drawer.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
   const drawerMaintenance = page.getByRole('region', { name: 'Profile maintenance' });
-  await expect(drawerMaintenance.getByText('Time zone')).toBeVisible();
-  const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive eligible fields' });
+  await expect(drawerMaintenance.getByText('Timezone')).toBeVisible();
+  const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive fields' });
   await expect(drawerReveal).toBeEnabled();
   await drawerReveal.focus();
   await expect(drawerReveal).toBeFocused();
@@ -191,6 +196,17 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   expect(first).not.toBeNull();
   expect(second).not.toBeNull();
   expect(second!.y).toBeGreaterThanOrEqual(first!.y + first!.height - 1);
+  const geometry = await page.getByRole('dialog').evaluate((dialog) => {
+    const body = dialog.querySelector('.kit-modal-body')!;
+    const rows = [...dialog.querySelectorAll('li')].map((row) => row.getBoundingClientRect());
+    return { height: dialog.getBoundingClientRect().height, overflow: body.scrollWidth > body.clientWidth, scrolls: body.scrollHeight > body.clientHeight, lefts: rows.map((row) => row.left), heights: rows.map((row) => row.height) };
+  });
+  expect(geometry.height).toBeLessThanOrEqual(720);
+  expect(geometry.overflow).toBe(false);
+  expect(geometry.scrolls).toBe(true);
+  expect(new Set(geometry.lefts).size).toBe(1);
+  expect(Math.max(...geometry.heights)).toBeLessThanOrEqual(60);
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
   await expectNoAxeViolations(page, 'Directory profile maintenance narrow');
 });
 

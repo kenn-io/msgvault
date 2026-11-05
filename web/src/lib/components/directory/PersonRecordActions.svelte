@@ -142,10 +142,22 @@
   />
 {/if}
 
-{#if maintenance}
-  <Modal ariaLabel={maintenance === 'tracking' ? 'Keep this profile updated' : 'Publish to address book'} onclose={() => maintenance = undefined}>
-    {#if maintenance === 'tracking'}<PersonTrackingControl {client} {personID} {onAnnounce} />
-    {:else}<CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />{/if}
+{#if maintenance === 'tracking'}
+  <Modal
+    title={controller.person?.display_name ? `Keep ${controller.person.display_name}'s profile updated` : 'Keep this profile updated'}
+    closeLabel="Close profile updates"
+    closable
+    width="min(560px, calc(100vw - 32px))"
+    maxWidth="min(560px, calc(100vw - 32px))"
+    maxHeight="min(720px, calc(100svh - 64px))"
+    onclose={() => maintenance = undefined}
+  >
+    <PersonTrackingControl {client} {personID} definitions={controller.definitions} {onAnnounce} />
+    {#snippet footer()}<Button label="Close" onclick={() => maintenance = undefined} />{/snippet}
+  </Modal>
+{:else if maintenance === 'publication'}
+  <Modal ariaLabel="Publish to address book" onclose={() => maintenance = undefined}>
+    <CardDAVPublicationControl {client} {personID} onOpenConflict={onOpenCardDAVConflict} onOpenSettings={onOpenCardDAVSettings} {onAnnounce} />
   </Modal>
 {/if}
 

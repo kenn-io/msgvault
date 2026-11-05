@@ -31,6 +31,19 @@ function deferredResponse() {
 }
 
 describe('PersonTrackingController', () => {
+  it('keeps tracking usable when a catalog slug is malformed', async () => {
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      if (new URL(requestOf(input).url).pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [{ ...catalog().targets[0], slug: 12 }] });
+    }));
+    const controller = new PersonTrackingController(client);
+    await controller.setPerson(7);
+    expect(controller.targets).toEqual([]);
+    expect(controller.catalogError).toBe('Unable to load eligible profile fields.');
+    expect(controller.tracking?.tracked).toBe(false);
+    controller.destroy();
+  });
+
   it('loads the exact durable-person state and non-sensitive catalog and projects safe fields', async () => {
     const requests: Array<{ method: string; path: string; includeSensitive: string | null }> = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -58,7 +71,7 @@ describe('PersonTrackingController', () => {
     expect(requests.some(({ path }) => path.includes('/participants/'))).toBe(false);
     expect(controller.tracking).toEqual({ person_id: 7, tracked: true, tracked_at: null });
     expect(controller.targets).toEqual([{
-      kind: 'attribute', description: 'Time zone', value_type: 'text', cardinality: 'single', sensitive: false
+      kind: 'attribute', slug: 'timezone', description: 'Time zone', value_type: 'text', cardinality: 'single', sensitive: false
     }]);
     expect(JSON.stringify(controller.targets)).not.toMatch(/fingerprint|universal|forbidden/i);
     controller.destroy();
@@ -107,7 +120,7 @@ describe('PersonTrackingController', () => {
     expect(controller.personID).toBe(9);
     expect(controller.tracking).toEqual({ person_id: 9, tracked: false, tracked_at: null });
     expect(controller.targets).toEqual([{
-      kind: 'attribute', description: 'Time zone', value_type: 'text', cardinality: 'single', sensitive: false
+      kind: 'attribute', slug: 'timezone', description: 'Time zone', value_type: 'text', cardinality: 'single', sensitive: false
     }]);
     controller.destroy();
   });
