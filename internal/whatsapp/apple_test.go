@@ -724,3 +724,22 @@ func assertStoreCount(t *testing.T, db *sql.DB, table string, want int) {
 	require.NoError(t, db.QueryRow("SELECT COUNT(*) FROM "+table).Scan(&got))
 	assert.Equal(t, want, got, table)
 }
+
+func TestImportAppleSkippedChatWarningsRecorded(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path := createAppleType7DuplicateFixture(t)
+	execAppleFixture(t, path, appleMarkerSchema+`INSERT INTO Z_METADATA VALUES (1, 'store-uuid-a', NULL);`)
+	st := testutil.NewTestStore(t)
+	importer := NewImporter(st, nil)
+	opts := ImportOptions{Phone: "+15555550100", BatchSize: 2}
+	_, err := importer.Import(t.Context(), path, opts)
+	require.NoError(err)
+	summary, err := importer.Import(t.Context(), path, opts)
+	require.NoError(err)
+	assert.Zero(summary.MessagesProcessed)
+	assert.Equal(int64(1), summary.Errors)
+	run, err := st.GetLatestSync(summary.SourceID)
+	require.NoError(err)
+	assert.Equal(int64(1), run.ErrorsCount)
+}

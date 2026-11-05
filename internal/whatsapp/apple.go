@@ -125,6 +125,12 @@ func (imp *Importer) importApple(
 	scoped.store = imp.store.ScopedToSync(source.ID, syncID)
 	imp = &scoped
 	defer func() {
+		if summary != nil {
+			retErr = errors.Join(retErr, imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
+				MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded,
+				MessagesUpdated: summary.MessagesUpdated, ErrorsCount: summary.Errors,
+			}))
+		}
 		if retErr != nil {
 			_ = imp.store.FailSync(syncID, retErr.Error())
 			return
