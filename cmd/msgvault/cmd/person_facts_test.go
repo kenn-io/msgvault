@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -384,6 +385,10 @@ func TestPersonFactsContestedReadsRealAPI(t *testing.T) {
 	empty, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
 	requirements.NoError(err)
 	assertions.Contains(empty, "No contested facts.")
+	assertions.Contains(empty, "Sensitive fields are hidden; use --include-sensitive to include them.")
+	empty, err = runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--include-sensitive")
+	requirements.NoError(err)
+	assertions.Equal("No contested facts.\n", empty)
 	output, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--json", "--include-sensitive")
 	requirements.NoError(err)
 	assertions.JSONEq(`[]`, output)
@@ -430,6 +435,7 @@ func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
 	defaultOutput, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
 	requirements.NoError(err)
 	assertions.Contains(defaultOutput, "No contested facts.")
+	assertions.Contains(defaultOutput, "Sensitive fields are hidden; use --include-sensitive to include them.")
 	output, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--include-sensitive")
 	requirements.NoError(err)
 	assertions.Contains(output, "attribute/primary_channel (resolved 2026-08-22T12:00:00Z)")
@@ -444,6 +450,12 @@ func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
 	for _, expected := range []string{"primary_channel", "chat", "email", "https://example.test/chat", "2026-08-22", "Definition changed since resolution"} {
 		assertions.Contains(output, expected)
 	}
+	command := newPersonFactsCommand()
+	command.SetOut(failingSearchWriter{})
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{"contested", strconv.FormatInt(person.ID, 10), "--include-sensitive"})
+	command.SetContext(ctx)
+	requirements.ErrorIs(command.Execute(), io.ErrClosedPipe)
 
 	for _, item := range catalog.Targets {
 		if item.Slug == "employment" {

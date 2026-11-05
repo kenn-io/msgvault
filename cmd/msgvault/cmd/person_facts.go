@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -342,41 +343,43 @@ func newPersonFactsCommand() *cobra.Command {
 			if options.jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Contests, json.Deterministic(true))
 			}
+			writer := bufio.NewWriter(cmd.OutOrStdout())
+			if !options.includeSensitive {
+				_, _ = fmt.Fprintln(writer, "Sensitive fields are hidden; use --include-sensitive to include them.")
+			}
 			if len(response.JSON200.Contests) == 0 {
-				if _, err := fmt.Fprintln(cmd.OutOrStdout(), "No contested facts."); err != nil {
-					return fmt.Errorf("write empty contest report: %w", err)
-				}
-				return nil
+				_, _ = fmt.Fprintln(writer, "No contested facts.")
+				return writer.Flush()
 			}
 			for _, contest := range response.JSON200.Contests {
 				target := contest.Target.Slug
 				if contest.Target.Kind != contest.Target.Slug {
 					target = contest.Target.Kind + "/" + target
 				}
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (resolved %s)\n", target, contest.ResolvedAt.Format(time.RFC3339))
+				_, _ = fmt.Fprintf(writer, "%s (resolved %s)\n", target, contest.ResolvedAt.Format(time.RFC3339))
 				if contest.ResolutionRevision != contest.Target.Revision {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Definition changed since resolution.")
+					_, _ = fmt.Fprintln(writer, "  Definition changed since resolution.")
 				}
 				if len(contest.Current) == 0 {
-					_, _ = fmt.Fprintln(cmd.OutOrStdout(), "  Current: none")
+					_, _ = fmt.Fprintln(writer, "  Current: none")
 				}
 				for _, current := range contest.Current {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Current: %s\n", current.Value)
+					_, _ = fmt.Fprintf(writer, "  Current: %s\n", current.Value)
 				}
 				for _, claim := range contest.Claims {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  Claim: %s (%s; %s)\n", claim.Value, personFactCLIClaimRelation(claim.Relation), personFactCLIDecisionReason(claim.Decision.Reason))
+					_, _ = fmt.Fprintf(writer, "  Claim: %s (%s; %s)\n", claim.Value, personFactCLIClaimRelation(claim.Relation), personFactCLIDecisionReason(claim.Decision.Reason))
 					if claim.ValidFrom != nil {
-						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Valid from: %s\n", claim.ValidFrom.Format(time.RFC3339))
+						_, _ = fmt.Fprintf(writer, "    Valid from: %s\n", claim.ValidFrom.Format(time.RFC3339))
 					}
 					if claim.ValidUntil != nil {
-						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Valid until: %s\n", claim.ValidUntil.Format(time.RFC3339))
+						_, _ = fmt.Fprintf(writer, "    Valid until: %s\n", claim.ValidUntil.Format(time.RFC3339))
 					}
 					for _, evidence := range claim.Evidence {
-						_, _ = fmt.Fprintf(cmd.OutOrStdout(), "    Evidence: %s %s %s (event %s, recorded %s)\n", evidence.EvidenceKey, pointerString(evidence.SourceRef), pointerString(evidence.SourceURL), evidence.EventTime.Format(time.RFC3339), evidence.RecordedTime.Format(time.RFC3339))
+						_, _ = fmt.Fprintf(writer, "    Evidence: %s %s %s (event %s, recorded %s)\n", evidence.EvidenceKey, personFactCLIOptionalString(evidence.SourceRef), personFactCLIOptionalString(evidence.SourceURL), evidence.EventTime.Format(time.RFC3339), evidence.RecordedTime.Format(time.RFC3339))
 					}
 				}
 			}
-			return nil
+			return writer.Flush()
 		},
 	}
 	contested.Flags().BoolVar(&options.includeSensitive, "include-sensitive", false, "Include sensitive targets")
@@ -405,8 +408,6 @@ func personFactCLIClaimRelation(relation string) string {
 		return "contradicts"
 	case personfacts.RelationSupersede:
 		return "replaces"
-	case personfacts.RelationInvalid:
-		return "invalid relation"
 	default:
 		return relation
 	}
@@ -414,22 +415,6 @@ func personFactCLIClaimRelation(relation string) string {
 
 func personFactCLIDecisionReason(reason string) string {
 	switch personfacts.DecisionReason(reason) {
-	case personfacts.ReasonMalformedValue:
-		return "invalid value"
-	case personfacts.ReasonUnsupportedTarget:
-		return "unsupported field"
-	case personfacts.ReasonStaleTargetRevision:
-		return "field definition changed"
-	case personfacts.ReasonUnalignedEvidence:
-		return "evidence does not match the claim"
-	case personfacts.ReasonIdentityMismatch:
-		return "evidence refers to another person"
-	case personfacts.ReasonSensitivePolicy:
-		return "sensitive field restricted by policy"
-	case personfacts.ReasonPinRetained:
-		return "pinned value retained"
-	case personfacts.ReasonBelowThreshold:
-		return "too little confidence to apply"
 	case personfacts.ReasonInsufficientMargin:
 		return "too little advantage over competing claims"
 	case personfacts.ReasonCompetingTie:
@@ -438,14 +423,6 @@ func personFactCLIDecisionReason(reason string) string {
 		return "explicitly contradicted"
 	case personfacts.ReasonExplicitSupersession:
 		return "explicitly replaced"
-	case personfacts.ReasonOrganizationAmbiguous:
-		return "organization is ambiguous"
-	case personfacts.ReasonAppliedProjection:
-		return "profile updated"
-	case personfacts.ReasonEvidenceUnsupported:
-		return "evidence no longer supports the claim"
-	case personfacts.ReasonOutsideValidity:
-		return "outside the claim's validity period"
 	default:
 		return reason
 	}

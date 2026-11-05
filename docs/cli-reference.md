@@ -3335,6 +3335,10 @@ Evidence, claims, and decisions accept an exact `--target`; fact-history
 commands accept `--limit` (1–200) and `--offset`. `sweep run --backstop`
 revisits older evidence in a bounded pass.
 
+`person facts contested` hides sensitive fields by default. Its text report
+includes a reminder to pass `--include-sensitive`, even when no visible contests
+remain. Missing evidence source references and URLs appear as `-`.
+
 Provider configuration edits run on the daemon host. Restart the daemon after
 changing its active provider or policy. Profile removal uses the running daemon
 to revoke consent and clear checks for both the saved and running policies. If
