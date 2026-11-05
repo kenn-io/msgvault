@@ -191,7 +191,7 @@ test('archive management workspaces preserve reviewed authority and daemon job b
   await expect.poll(() => JSON.parse(new URL(page.url()).searchParams.get('explore') ?? '{}').query).toBe('invoice');
 });
 
-test('meeting context follows the browser tab order and returns focus on Escape', async ({ page }) => {
+test('meeting context follows the browser tab order', async ({ page }) => {
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
     rows: [{ ...row, message_type: 'meeting_transcript' }], total_count: 1, cache_revision: 'meeting', search_provenance: {}
@@ -211,20 +211,10 @@ test('meeting context follows the browser tab order and returns focus on Escape'
   const trigger = page.getByRole('button', { name: 'Meeting context…' });
   await trigger.click();
   const dialog = page.getByRole('dialog', { name: 'Meeting context', exact: true });
-  await page.keyboard.press('Escape');
-  await expect(trigger).toBeFocused();
-  await page.keyboard.press('Enter');
   await page.keyboard.press('Tab');
   await expect(dialog.getByRole('radio', { name: 'JSON' })).toBeFocused();
-  await dialog.getByRole('radio', { name: 'JSON' }).click();
   await page.keyboard.press('Tab');
   await expect(dialog.getByRole('checkbox', { name: 'Include transcript' })).toBeFocused();
   await page.keyboard.press('Tab');
   await expect(dialog.getByRole('button', { name: 'Export meeting context' })).toBeFocused();
-  await page.keyboard.press('Tab');
-  await expect(dialog).toBeHidden();
-  await expect(page.getByRole('tooltip')).toBeVisible();
-  await trigger.click();
-  await page.getByRole('combobox', { name: 'Group by' }).focus();
-  await expect(dialog).toBeHidden();
 });

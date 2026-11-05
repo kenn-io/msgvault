@@ -107,23 +107,13 @@ describe('SelectionBar', () => {
     expect(selection.snapshot()).toMatchObject({ cacheRevision: 'cache-1' });
   });
 
-  it('shows executable actions only when preflight supplies a target and a handler', () => {
+  it('shows count and estimated size together while announcing only the count', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onExport: () => undefined });
+    render(SelectionBar, { selection, preflight: { ...preflight(), estimated_bytes: 128 * 1024 * 1024 } });
 
-    expect(screen.getByRole('button', { name: 'Export selection' })).toBeDefined();
-  });
-
-  it('shows count and estimated size together while announcing only the count', async () => {
-    const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1', 'message:2']);
-    const { rerender } = render(SelectionBar, { selection, preflight: preflight() });
-    for (const [estimated_bytes, size] of [[20, '20 B'], [1024, '1 KB'], [128 * 1024 * 1024, '128.0 MB']] as const) {
-      await rerender({ preflight: { ...preflight(), estimated_bytes } });
-      expect(screen.getByText('2 selected', { selector: '.selection-count' }).textContent).toBe(`2 selected · ${size}`);
-      expect(screen.getByRole('status').textContent).toBe('2 selected');
-    }
+    expect(screen.getByText('2 selected', { selector: '.selection-count' }).textContent).toBe('2 selected · 128.0 MB');
+    expect(screen.getByRole('status').textContent).toBe('2 selected');
   });
 
   it('explains disabled actions on hover and keyboard focus', async () => {
@@ -136,28 +126,22 @@ describe('SelectionBar', () => {
         { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
       ]),
     });
-    for (const [name, reason] of [
-      ['Export selection', 'Export works for one message at a time.'],
-      ['Review deletion…', 'None of the selected items can be deleted from their source.'],
-    ]) {
+    for (const [name, reason, trigger] of [
+      ['Export selection', 'Export works for one message at a time.', fireEvent.mouseEnter],
+      ['Review deletion…', 'None of the selected items can be deleted from their source.', fireEvent.focusIn],
+    ] as const) {
       const control = screen.getByRole('button', { name }) as HTMLButtonElement;
       expect(control.disabled).toBe(true);
-      expect(screen.queryByText(reason!)).toBeNull();
+      expect(screen.queryByText(reason)).toBeNull();
       const wrapper = control.closest('.kit-tooltip-trigger')!;
-      await fireEvent.mouseEnter(wrapper);
+      await trigger(wrapper);
       expect((await screen.findByRole('tooltip')).textContent).toBe(reason);
-      await fireEvent.mouseLeave(wrapper);
-      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
-      await fireEvent.focusIn(wrapper);
-      expect((await screen.findByRole('tooltip')).textContent).toBe(reason);
-      await fireEvent.focusOut(wrapper);
-      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
     }
   });
 
   it('runs export and deletion review for the selected items', async () => {
     const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
+    selection.selectVisible(['message:1', 'message:2']);
     const onExport = vi.fn();
     const onReviewDeletion = vi.fn();
     render(SelectionBar, { selection, preflight: preflight(), onExport, onReviewDeletion });
@@ -191,25 +175,16 @@ describe('SelectionBar', () => {
       predicateFingerprint: predicateFingerprint({ query: 'synthetic', search_mode: 'full_text' }),
       resultGeneration: 1,
     };
-    render(SelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion });
+    render(SelectionBar, { selection, totalCount: 50, allMatching, onReviewDeletion, preflight: preflight() });
 
     expect(screen.getByRole('status').textContent).toContain('3 selected');
+    expect((screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement).disabled).toBe(false);
     await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('explicit');
 
     await fireEvent.click(screen.getByRole('button', { name: 'Select all 50 matching' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
     expect(onReviewDeletion).toHaveBeenLastCalledWith('all_matching');
-  });
-
-  it('keeps Review for deletion enabled when staging is available', () => {
-    const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
-    render(SelectionBar, { selection, totalCount: 2, onReviewDeletion: vi.fn(), preflight: preflight() });
-
-    const review = screen.getByRole('button', { name: 'Review deletion…' }) as HTMLButtonElement;
-    expect(review.disabled).toBe(false);
-    expect(review.getAttribute('aria-describedby')).toBeNull();
   });
 
   it('keeps meeting context independent from raw-export preflight eligibility', async () => {

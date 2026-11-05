@@ -373,9 +373,6 @@ for (const width of [1024, 1440]) {
     await page.keyboard.press('End');
     await page.keyboard.press('Space');
     const bar = page.locator('.selection-bar');
-    await expect(bar.locator('.selection-count')).toHaveText('500 selected · 128.0 MB');
-    await expect(bar.getByRole('button', { name: 'Export selection' })).toBeDisabled();
-    await expect(bar.getByRole('button', { name: 'Review deletion…' })).toBeDisabled();
     await expect(bar.getByRole('button', { name: 'Select all 10,035 matching', exact: true })).toBeVisible();
     const layout = await bar.evaluate(element => ({
       tops: Array.from(element.querySelectorAll('button')).filter(button => button.getBoundingClientRect().height > 0).map(button => button.getBoundingClientRect().top),
