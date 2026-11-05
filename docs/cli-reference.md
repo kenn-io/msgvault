@@ -699,8 +699,8 @@ revision returns `revision_mismatch` and leaves the draft unchanged.
 `draft-recover` returns `not_supported`. Delegated tokens use the same
 permissions as mail drafts, scoped to the conversation's source, except that
 listing and retrieval need `draft.edit` or `draft.delete`. Removing the source or
-conversation deletes its local drafts. An admitted LINE send freezes its draft;
-edit and delete return `pending_operation` until its send is resolved. See
+conversation deletes its local drafts. An admitted LINE send makes edits return
+`pending_operation`; deleting the draft preserves send recovery. See
 [LINE receipts and recovery](usage/line.md#read-a-send-receipt).
 
 ## send-line-reply
