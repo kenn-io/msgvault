@@ -806,5 +806,5 @@ func TestImportUnchangedFlagWithoutRowsWritesNoExtraUpdate(t *testing.T) {
 	require.NoError(err)
 	var updates int
 	require.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM synthetic_flag_updates`).Scan(&updates))
-	require.Equal(2, updates, "only the message upsert may write each message")
+	require.Zero(updates, "unchanged messages must leave the archive untouched")
 }

@@ -1,7 +1,6 @@
 package whatsapp
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json/v2"
@@ -394,7 +393,7 @@ func (imp *Importer) importApple(
 						FromAddr: senderPhone,
 					},
 				}
-				if existing, ok := stored[sourceMessage.StanzaID]; ok && appleMessageStored(existing, data) {
+				if existing, ok := stored[sourceMessage.StanzaID]; ok && existing.Matches(data.Message, data.RawMIME) {
 					unchanged, err := imp.store.MessageContentMatchesContext(
 						ctx, existing.ID, data.BodyText, *data.FTS,
 					)
@@ -799,30 +798,6 @@ func isImportableAppleMessage(message appleMessage, duplicateStanzas map[string]
 	}
 	_, duplicate := duplicateStanzas[message.StanzaID]
 	return !duplicate
-}
-
-// appleMessageStored reports whether the stored message columns and raw
-// payload already equal the derived message. Body and search document are
-// checked separately because they need a per-message read.
-func appleMessageStored(stored store.StoredMessage, data *store.MessagePersistData) bool {
-	message := data.Message
-	return stored.ConversationID == message.ConversationID &&
-		stored.SenderID == message.SenderID &&
-		stored.SourceIsFromMe.Valid && stored.SourceIsFromMe.Bool == message.IsFromMe &&
-		stored.MessageType == message.MessageType &&
-		sameAppleInstant(stored.SentAt, message.SentAt) &&
-		sameAppleInstant(stored.InternalDate, message.InternalDate) &&
-		stored.Snippet == message.Snippet &&
-		stored.SizeEstimate == message.SizeEstimate &&
-		bytes.Equal(stored.Raw, data.RawMIME)
-}
-
-// sameAppleInstant ignores differences below the microsecond PostgreSQL keeps.
-func sameAppleInstant(stored, derived sql.NullTime) bool {
-	if stored.Valid != derived.Valid {
-		return false
-	}
-	return !stored.Valid || stored.Time.Sub(derived.Time).Abs() < time.Microsecond
 }
 
 func appleMessageTimestamp(value appleTimestampValue) sql.NullTime {

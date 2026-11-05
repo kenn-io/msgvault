@@ -21,6 +21,7 @@ import (
 )
 
 func TestImportAdvancesPastAFullPageOfFailures(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite trigger injection")
 	require := require.New(t)
 	path, db := testutil.NewIMessageChatDB(t)
 	_, err := db.Exec(`INSERT INTO message (date, text) VALUES (725760000, 'one'), (725760001, 'two'), (725760002, 'three')`)
@@ -39,6 +40,12 @@ func TestImportAdvancesPastAFullPageOfFailures(t *testing.T) {
 	summary, err := client.Import(ctx, st, src.ID)
 	require.NoError(err)
 	assert.Equal(t, 3, summary.Skipped)
+	_, err = st.DB().Exec(`DROP TRIGGER fail_message`)
+	require.NoError(err)
+	retried, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	assert.Equal(t, 3, retried.MessagesAdded)
+	assert.Zero(t, retried.Skipped)
 }
 
 func TestImportIndexesMessageBodies(t *testing.T) {
@@ -361,4 +368,42 @@ func TestNewClientDoesNotRequireHomeWhenAttachmentCaptureIsDisabled(t *testing.T
 	client, err := NewClient(path, WithAttachments("", "", attachmentpolicy.Policy{}))
 	require.NoError(t, err)
 	require.NoError(t, client.Close())
+}
+
+func TestImportRerunWritesOnlyChanges(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two'), (725760002,'three')`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+	client, err := NewClient(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	first, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	assert.Equal(3, first.MessagesAdded)
+	// Pin a past modification time so even same-tick rewrites are observable.
+	_, err = st.DB().Exec(`UPDATE messages SET last_modified = '2020-01-01 00:00:00'`)
+	require.NoError(err)
+	var before, after time.Time
+	require.NoError(st.DB().QueryRow(`SELECT last_modified FROM messages ORDER BY last_modified DESC LIMIT 1`).Scan(&before))
+	idle, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	assert.Zero(idle.MessagesAdded)
+	assert.Zero(idle.MessagesUpdated)
+	require.NoError(st.DB().QueryRow(`SELECT last_modified FROM messages ORDER BY last_modified DESC LIMIT 1`).Scan(&after))
+	assert.Equal(before, after)
+	_, err = db.Exec(`UPDATE message SET text = 'edited' WHERE ROWID = 2;
+ INSERT INTO message (date,text) VALUES (723168000,'late arrival')`)
+	require.NoError(err)
+	edited, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	assert.Equal(1, edited.MessagesAdded)
+	assert.Equal(1, edited.MessagesUpdated)
+	var body string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT body_text FROM message_bodies WHERE message_id = (SELECT id FROM messages WHERE source_id = ? AND source_message_id = '2')`), src.ID).Scan(&body))
+	assert.Equal("edited", body)
 }

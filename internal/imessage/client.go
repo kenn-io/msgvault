@@ -39,7 +39,6 @@ type Client struct {
 	mediaPolicy       attachmentpolicy.Policy
 	attachmentQuery   string
 	participantCounts map[int64]int
-	maxMessageID      int64 // messages above this id were created by this run
 }
 
 // ClientOption configures a Client.
@@ -194,9 +193,6 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 	summary := &ImportSummary{}
 	if err := c.prepareAttachments(ctx); err != nil {
 		return summary, fmt.Errorf("read attachment schema: %w", err)
-	}
-	if err := s.DB().QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0) FROM messages`).Scan(&c.maxMessageID); err != nil {
-		return summary, fmt.Errorf("read message boundary: %w", err)
 	}
 
 	// Pre-create iMessage and SMS labels
@@ -493,21 +489,7 @@ func (c *Client) importMessage(
 		}
 		c.logger.Warn("failed to decode attributed body; preserving archived text")
 	}
-	clearsExistingDate := false
-	if msgDate.IsZero() {
-		err := s.DB().QueryRow(s.Rebind(`
-			SELECT EXISTS (
-				SELECT 1 FROM messages
-				WHERE source_id = ? AND source_message_id = ?
-				  AND (sent_at IS NOT NULL OR internal_date IS NOT NULL)
-			)`), sourceID, sourceMessageID).Scan(&clearsExistingDate)
-		if err != nil {
-			return fmt.Errorf("check existing message date: %w", err)
-		}
-	}
-
-	// Upsert the message
-	msgID, err := s.UpsertMessage(&store.Message{
+	message := &store.Message{
 		SourceID:        sourceID,
 		SourceMessageID: sourceMessageID,
 		ConversationID:  convID,
@@ -523,15 +505,25 @@ func (c *Client) importMessage(
 		SizeEstimate:            int64(len(body)),
 		HasAttachments:          msg.HasAttachments != 0,
 		PreserveAttachmentStats: true,
-	})
+	}
+	raw, err := marshalMessageRaw(msg, body)
+	if err != nil {
+		return err
+	}
+	stored, err := s.StoredMessagesContext(ctx, sourceID, "imessage_json", []string{sourceMessageID})
+	if err != nil {
+		return err
+	}
+	existing, exists := stored[sourceMessageID]
+	if exists && existing.Matches(message, raw) {
+		if err := s.IndexStoredMessageContext(ctx, existing.ID); err != nil {
+			c.logger.Warn("failed to index message for search", "message_id", existing.ID, "error", err)
+		}
+		return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true)
+	}
+	msgID, err := s.UpsertMessage(message)
 	if err != nil {
 		return fmt.Errorf("upsert message: %w", err)
-	}
-	if msgID > c.maxMessageID {
-		summary.MessagesAdded++
-	}
-	if clearsExistingDate {
-		summary.DatesCleared++
 	}
 
 	// Store body text directly (no MIME), including an empty body so reimports
@@ -556,11 +548,6 @@ func (c *Client) importMessage(
 		c.logger.Warn("failed to index message for search", "message_id", msgID, "error", err)
 	}
 
-	// Store raw data as JSON for completeness
-	if err := c.writeMessageRaw(s, msgID, msg, body); err != nil {
-		return fmt.Errorf("write message raw: %w", err)
-	}
-
 	// Label: iMessage or SMS
 	labelID := imessageLabelID
 	if msgType == "sms" {
@@ -570,7 +557,23 @@ func (c *Client) importMessage(
 		return fmt.Errorf("link label: %w", err)
 	}
 
-	if err := c.importAttachments(ctx, s, msgID, msg, summary); err != nil {
+	// Write raw last so an interrupted message is compared and repaired next run.
+	if err := s.UpsertMessageRawWithFormat(msgID, raw, "imessage_json"); err != nil {
+		return fmt.Errorf("write message raw: %w", err)
+	}
+	if exists {
+		summary.MessagesUpdated++
+		if msgDate.IsZero() && (existing.SentAt.Valid || existing.InternalDate.Valid) {
+			summary.DatesCleared++
+		}
+	} else {
+		summary.MessagesAdded++
+	}
+	return c.finishMessageAttachments(ctx, s, msgID, msg, summary, exists)
+}
+
+func (c *Client) finishMessageAttachments(ctx context.Context, s *store.Store, msgID int64, msg *messageRow, summary *ImportSummary, existing bool) error {
+	if err := c.importAttachments(ctx, s, msgID, msg, summary, existing); err != nil {
 		if ctx.Err() != nil {
 			return err
 		}
@@ -692,13 +695,8 @@ func (c *Client) getChatParticipantIDs(
 	return pids
 }
 
-// writeMessageRaw serializes the message data as JSON and stores it.
-func (c *Client) writeMessageRaw(
-	s *store.Store,
-	msgID int64,
-	msg *messageRow,
-	body string,
-) error {
+// marshalMessageRaw serializes the source message for comparison and storage.
+func marshalMessageRaw(msg *messageRow, body string) ([]byte, error) {
 	raw := map[string]any{
 		"rowid":           msg.ROWID,
 		"guid":            msg.GUID,
@@ -724,9 +722,9 @@ func (c *Client) writeMessageRaw(
 	}
 	rawJSON, err := json.Marshal(raw, json.Deterministic(true))
 	if err != nil {
-		return fmt.Errorf("marshal raw JSON: %w", err)
+		return nil, fmt.Errorf("marshal raw JSON: %w", err)
 	}
-	return s.UpsertMessageRawWithFormat(msgID, rawJSON, "imessage_json")
+	return rawJSON, nil
 }
 
 // ensureConversation gets or creates a conversation for the chat,

@@ -539,6 +539,27 @@ type StoredMessage struct {
 	Raw []byte
 }
 
+// Matches reports whether the stored columns and raw payload equal the derived message.
+func (stored StoredMessage) Matches(message *Message, raw []byte) bool {
+	return stored.ConversationID == message.ConversationID &&
+		stored.SenderID == message.SenderID &&
+		stored.SourceIsFromMe.Valid && stored.SourceIsFromMe.Bool == message.IsFromMe &&
+		stored.MessageType == message.MessageType &&
+		sameAppleInstant(stored.SentAt, message.SentAt) &&
+		sameAppleInstant(stored.InternalDate, message.InternalDate) &&
+		stored.Snippet == message.Snippet &&
+		stored.SizeEstimate == message.SizeEstimate &&
+		bytes.Equal(stored.Raw, raw)
+}
+
+// sameAppleInstant ignores differences below the microsecond PostgreSQL keeps.
+func sameAppleInstant(stored, derived sql.NullTime) bool {
+	if stored.Valid != derived.Valid {
+		return false
+	}
+	return !stored.Valid || stored.Time.Sub(derived.Time).Abs() < time.Microsecond
+}
+
 // StoredMessagesContext returns the stored output of the given source
 // messages, keyed by source_message_id. Bodies are left out; read them one
 // message at a time with MessageContentMatchesContext.
