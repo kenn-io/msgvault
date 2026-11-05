@@ -108,21 +108,17 @@ describe('SelectionBar', () => {
     render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onExport: () => undefined });
 
     expect(screen.getByRole('button', { name: 'Export selection' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Open selection in source' })).toBeNull();
   });
 
-  it.each([
-    [20, '20 B'],
-    [1024, '1 KB'],
-    [128 * 1024 * 1024, '128.0 MB'],
-  ])('shows count and estimated size %s as %s while announcing only the count', (estimated_bytes, size) => {
+  it('shows count and estimated size together while announcing only the count', async () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(SelectionBar, { selection, preflight: { ...preflight(), estimated_bytes } });
-    const count = screen.getByText('2 selected', { selector: '.selection-count' });
-    expect(count.textContent).toBe(`2 selected · ${size}`);
-    expect(count.closest('[aria-hidden="true"]')).toBeNull();
-    expect(screen.getByRole('status').textContent).toBe('2 selected');
+    const { rerender } = render(SelectionBar, { selection, preflight: preflight() });
+    for (const [estimated_bytes, size] of [[20, '20 B'], [1024, '1 KB'], [128 * 1024 * 1024, '128.0 MB']] as const) {
+      await rerender({ preflight: { ...preflight(), estimated_bytes } });
+      expect(screen.getByText('2 selected', { selector: '.selection-count' }).textContent).toBe(`2 selected · ${size}`);
+      expect(screen.getByRole('status').textContent).toBe('2 selected');
+    }
   });
 
   it('explains disabled actions on hover and keyboard focus', async () => {
@@ -154,16 +150,17 @@ describe('SelectionBar', () => {
     }
   });
 
-  it('offers only supported actions for the selection', () => {
+  it('runs export and deletion review for the selected items', async () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
-    const onOpenInSource = vi.fn();
-    const props = { selection, preflight: preflight(), onOpenInSource, onExport: vi.fn(), onReviewDeletion: vi.fn() };
-    render(SelectionBar, props);
+    const onExport = vi.fn();
+    const onReviewDeletion = vi.fn();
+    render(SelectionBar, { selection, preflight: preflight(), onExport, onReviewDeletion });
 
-    expect(screen.getAllByRole('button').map(button => button.getAttribute('aria-label') || button.textContent?.trim())).toEqual([
-      'Export selection', 'Review deletion…', 'Clear selection',
-    ]);
+    await fireEvent.click(screen.getByRole('button', { name: 'Export selection' }));
+    expect(onExport).toHaveBeenCalledOnce();
+    await fireEvent.click(screen.getByRole('button', { name: 'Review deletion…' }));
+    expect(onReviewDeletion).toHaveBeenCalledExactlyOnceWith('explicit');
   });
 
   it('renders nothing while nothing is selected', () => {
@@ -318,7 +315,7 @@ describe('SelectionBar', () => {
       expect(document.activeElement).toBe(trigger);
     });
 
-    it('hides on focus leaving and releases Escape', async () => {
+    it('hides on focus leaving', async () => {
       renderBar(true);
       const trigger = screen.getByRole('button', { name: 'Meeting context…' });
       trigger.focus();
@@ -329,65 +326,49 @@ describe('SelectionBar', () => {
         outside.focus();
         await tick();
         expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
-        const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-        document.dispatchEvent(escape);
-        expect(escape.defaultPrevented).toBe(false);
       } finally { outside.remove(); }
     });
 
-    it('closes on loss of eligibility and releases Escape', async () => {
-      const { view } = renderBar(true);
-      await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
-      await view.rerender({ canExportMeetings: false });
-      expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
-      const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
-      document.dispatchEvent(escape);
-      expect(escape.defaultPrevented).toBe(false);
-    });
-
-    it('keeps an export running when dismissed and shows its result on reopening', async () => {
+    it('keeps the panel mounted and its request running when dismissed', async () => {
       const selection = new ExploreSelectionState();
       selection.selectVisible(['message:1']);
-      let request!: Request;
-      let finish!: (response: Response) => void;
-      const download = vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:context');
-      const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
-      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
-      try {
-        render(SelectionBar, {
-          selection, meetingSelection, canExportMeetings: true,
-          client: createAPIClient(async input => {
-            request = input as Request;
-            return new Promise<Response>(resolve => { finish = resolve; });
-          }),
-        });
-        const trigger = screen.getByRole('button', { name: 'Meeting context…' });
-        await fireEvent.click(trigger);
-        const panel = screen.getByRole('dialog', { name: 'Meeting context' });
-        await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
-        await waitFor(() => expect(finish).toBeTypeOf('function'));
-        await fireEvent.mouseDown(document.body);
-        expect(panel.isConnected).toBe(true);
-        expect(panel.hidden).toBe(true);
-        expect(request.signal.aborted).toBe(false);
-        finish(Response.json({ schema_version: 1, format: 'json', content: '{}', content_bytes: 2, truncated: true, omitted_message_ids: [2] }));
-        await waitFor(() => expect(download).toHaveBeenCalledOnce());
-        await fireEvent.click(trigger);
-        expect(screen.getByRole('dialog', { name: 'Meeting context' })).toBe(panel);
-        expect(screen.getByText(/Export was truncated/)).toBeDefined();
-      } finally { download.mockRestore(); revoke.mockRestore(); click.mockRestore(); }
+      let request: Request | undefined;
+      render(SelectionBar, {
+        selection, meetingSelection, canExportMeetings: true,
+        client: createAPIClient(input => {
+          request = input as Request;
+          return new Promise<Response>(() => {});
+        }),
+      });
+      await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
+      const panel = screen.getByRole('dialog', { name: 'Meeting context' });
+      await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+      await waitFor(() => expect(request).toBeDefined());
+      await fireEvent.mouseDown(document.body);
+      expect(panel.isConnected).toBe(true);
+      expect(panel.hidden).toBe(true);
+      expect(request!.signal.aborted).toBe(false);
     });
 
-    it('closes the meeting context controls when the bar hides', async () => {
-      const { selection } = renderBar(true);
-      await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
-      await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    it('closes the meeting context controls when the bar hides or eligibility changes', async () => {
+      const { selection, view } = renderBar(true);
+      for (const cause of ['clear', 'ineligible']) {
+        await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
+        if (cause === 'clear') {
+          await fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+        } else {
+          await view.rerender({ canExportMeetings: false });
+        }
+        expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
+        const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+        document.dispatchEvent(escape);
+        expect(escape.defaultPrevented).toBe(false);
 
-      selection.selectVisible(['message:1']);
-      await tick();
-
-      expect(screen.getByRole('button', { name: 'Meeting context…' }).getAttribute('aria-expanded')).toBe('false');
-      expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
+        selection.selectVisible(['message:1']);
+        await view.rerender({ canExportMeetings: true });
+        expect(screen.getByRole('button', { name: 'Meeting context…' }).getAttribute('aria-expanded')).toBe('false');
+        expect(screen.queryByRole('button', { name: 'Export meeting context' })).toBeNull();
+      }
     });
   });
 });

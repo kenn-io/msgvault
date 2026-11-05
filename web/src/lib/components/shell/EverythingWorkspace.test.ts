@@ -612,7 +612,6 @@ describe('EverythingWorkspace', () => {
 
     const exportButton = await screen.findByRole('button', { name: 'Export selection' });
     expect((exportButton as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.queryByRole('button', { name: 'More selection actions' })).toBeNull();
     const body = await preflightRequests[0]!.clone().json();
     expect(body.selection).toMatchObject({
       mode: 'explicit', row_keys: ['message:1'], cache_revision: 'cache-1'

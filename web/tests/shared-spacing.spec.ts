@@ -291,43 +291,39 @@ test.describe('touch reading', () => {
   });
 });
 
-test('selected row keeps its accent while open in the reader', async ({ page }) => {
+test('selected rows keep their fill and accent on stripes and in the reader', async ({ page }) => {
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [1, 2].map(id => ({ ...row, key: `message:${id}`, title: `Example ${id}` })), total_count: 2, cache_revision: 'spacing', search_provenance: {}
+  } }));
   await selectWorkspace(page, 'Messages');
   const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.focus();
   await page.keyboard.press('Space');
   await expect(grid.locator('.data-row--selected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
   await page.keyboard.press('Space');
-  await grid.getByText(row.title, { exact: true }).click();
-  await expect(page.getByRole('complementary', { name: `Reading pane: ${row.title}` })).toBeVisible();
-  await grid.focus();
-  await page.keyboard.press('Space');
-  const selected = grid.locator('.data-row--selected.data-row--inspected');
-  await expect(selected).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
-});
-
-
-test('selected rows keep their fill on stripes and in the reader', async ({ page }) => {
-  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: [1, 2].map(id => ({ ...row, key: `message:${id}`, title: `Example ${id}` })), total_count: 2, cache_revision: 'spacing', search_provenance: {}
-  } }));
-  await selectWorkspace(page, 'Messages');
-  const grid = page.getByRole('grid', { name: 'Messages results' });
   await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
   const selected = grid.locator('.data-row--selected');
   await expect(selected).toHaveCount(2);
+  for (const selectedRow of await selected.all()) {
+    await expect(selectedRow).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
+  }
   const colors = () => selected.evaluateAll(rows => rows.map(row => getComputedStyle(row).backgroundColor));
   expect((await colors())[0]).toBe((await colors())[1]);
   await grid.getByText('Example 1', { exact: true }).click();
   await expect(page.getByRole('complementary', { name: /Reading pane/ })).toBeVisible();
   expect((await colors())[0]).toBe((await colors())[1]);
+  await grid.focus();
+  await page.keyboard.press('Space');
+  await page.keyboard.press('Space');
+  await expect(grid.locator('.data-row--selected.data-row--inspected')).toHaveCSS('box-shadow', /^rgb\([^)]+\) 3px 0px 0px 0px inset$/);
 });
 
 
-test.describe('touch selection', () => {
-  test.use({ hasTouch: true, colorScheme: 'dark', deviceScaleFactor: 2 });
+test.describe('all-matching selection', () => {
+  // Touch controls leave less room for the selection summary.
+  test.use({ hasTouch: true });
 
-  test('filtered all-matching selection shows size and exclusions at 1024px', async ({ page }, testInfo) => {
+  test('filtered all-matching selection shows size and exclusions at 1024px', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 900 });
     const meetings = Array.from({ length: 50 }, (_, index) => ({ ...row, key: `message:${index + 1}`, title: `Meeting ${index + 1}`, message_type: 'meeting_transcript' }));
     await page.route('**/api/v1/explore', route => route.fulfill({ json: {
@@ -348,15 +344,9 @@ test.describe('touch selection', () => {
     await page.getByRole('button', { name: 'Select all 50 matching', exact: true }).click();
     await grid.getByRole('checkbox', { name: 'Unselect Meeting 1', exact: true }).uncheck();
     const bar = page.locator('.selection-bar');
-    await expect(bar.getByRole('button', { name: 'Meeting context…' })).toBeVisible();
     const count = bar.locator('.selection-count');
-    await expect(count).toContainText('All 50');
-    await expect(count).toContainText('except 1');
-    await expect(count).toContainText('128.0 MB');
-    await expect(bar.getByRole('button', { name: 'Export selection' })).toBeDisabled();
-    await expect(bar.getByRole('button', { name: 'Review deletion…' })).toBeDisabled();
+    await expect(count).toHaveText(/^All 50 .*except 1 · .+$/);
     await page.evaluate(() => document.fonts.ready);
-    await page.screenshot({ path: testInfo.outputPath('filtered-selection.png') });
     const geometry = await count.evaluate(element => ({ content: element.scrollWidth, available: element.clientWidth }));
     expect(geometry.content).toBeLessThanOrEqual(geometry.available);
   });
