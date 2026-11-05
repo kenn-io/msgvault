@@ -605,8 +605,8 @@ func requireManifestDigest(manifest *Manifest, expected string) error {
 }
 
 // resumeClaimedManifest handles the ClaimManifest resume branch: the manifest
-// is already in in_progress/. Progress is preserved, CompletedAt is cleared,
-// and Execution is only initialized when nil, e.g. a
+// is already in in_progress/. Progress is preserved, and Execution is only
+// initialized when nil, e.g. a
 // manifest whose file was moved into in_progress/ without ever going through
 // ClaimManifest (the exact crash-before-checkpoint scenario this fix closes).
 // The inline Status field is corrected to InProgress and, if either it or a
@@ -616,10 +616,6 @@ func (m *Manager) resumeClaimedManifest(manifest *Manifest, inProgressPath strin
 	needsWrite := manifest.Status != StatusInProgress
 	if manifest.Execution == nil {
 		manifest.Execution = &Execution{StartedAt: time.Now(), Method: method}
-		needsWrite = true
-	}
-	if manifest.Execution.CompletedAt != nil {
-		manifest.Execution.CompletedAt = nil
 		needsWrite = true
 	}
 	manifest.Status = StatusInProgress
@@ -962,12 +958,6 @@ func (m *Manager) cancelManifestLocked(id string) error {
 		if err != nil {
 			return fmt.Errorf("reload manifest %s after move: %w", id, err)
 		}
-		journal, err := os.ReadFile(journalPath(fromPath))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			log.Printf("WARNING: cancelled manifest %s but could not read checkpoint journal: %v", id, err)
-			return nil
-		}
-		applyJournal(manifest, journal)
 		manifest.Status = StatusCancelled
 		if err := manifest.Save(toPath); err != nil {
 			return fmt.Errorf("update inline status for %s: %w", id, err)

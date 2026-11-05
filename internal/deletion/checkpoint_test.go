@@ -146,15 +146,16 @@ func TestManager_JournalTornTailAndCompletedManifest(t *testing.T) {
 	loaded, err = LoadManifest(path)
 	require.NoError(err)
 	assert.Equal(2, loaded.Execution.Succeeded)
-	m.Execution.CompletedAt = new(time.Now())
+	m.Execution.CompletedAt = new(time.Now().UTC())
 	m.Execution.Succeeded = 3
 	require.NoError(m.Save(path)) // Simulate finalize publishing before journal cleanup.
 	loaded, err = LoadManifest(path)
 	require.NoError(err)
-	assert.Equal(3, loaded.Execution.Succeeded)
+	assert.Equal(2, loaded.Execution.Succeeded)
+	assert.Equal(m.Execution.CompletedAt, loaded.Execution.CompletedAt)
 	resumed, err := mgr.ClaimManifest(m.ID, MethodTrash)
 	require.NoError(err)
-	assert.Nil(resumed.Execution.CompletedAt)
+	assert.Equal(m.Execution.CompletedAt, resumed.Execution.CompletedAt)
 	resumed.Execution.Succeeded = 4
 	require.NoError(mgr.WriteInProgressCheckpoint(resumed, m.ID, 0))
 	loaded, err = LoadManifest(path)
@@ -232,4 +233,49 @@ func TestExecutor_CancelMovesBeforeFallibleRewrite(t *testing.T) {
 	require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
 	assert.True(tc.Mgr.ManifestCancelled(m.ID))
 	assert.Equal([]string{"msg0", "msg1"}, tc.MockAPI.TrashCalls)
+	cancelled, err := LoadManifest(filepath.Join(tc.Mgr.dirForStatus(StatusCancelled), m.ID+".json"))
+	require.NoError(err)
+	assert.Equal(1, cancelled.Execution.LastProcessedIndex)
+	assert.Equal(1, cancelled.Execution.Succeeded)
+}
+
+func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprintf("batch=%v", batch), func(t *testing.T) {
+			tc := NewTestContext(t)
+			m := tc.CreateManifest("tombstone restart", msgIDs(3))
+			method := MethodTrash
+			if batch {
+				method = MethodDelete
+			}
+			m.Status = StatusInProgress
+			m.Execution = &Execution{
+				Method: method, LastProcessedIndex: 2,
+				Failed: 1, FailedIDs: []string{"msg0"}, TombstoneIDs: []string{"msg1"},
+			}
+			require.NoError(t, tc.Mgr.SaveManifest(m))
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			tc.Exec.WithProgress(&onStartProgress{hook: cancel})
+			var err error
+			require.NotPanics(t, func() {
+				if batch {
+					err = tc.Exec.ExecuteBatch(ctx, m.ID)
+				} else {
+					opts := trashOpts(1)
+					opts.Resume = false
+					err = tc.Exec.Execute(ctx, m.ID, opts)
+				}
+			})
+			require.ErrorIs(t, err, context.Canceled)
+			loaded, _, err := tc.Mgr.GetManifest(m.ID)
+			require.NoError(t, err)
+			assert.Equal(t, []string{"msg1"}, loaded.Execution.TombstoneIDs)
+			if batch {
+				assert.Equal(t, []string{"msg0"}, loaded.Execution.FailedIDs)
+			} else {
+				assert.Empty(t, loaded.Execution.FailedIDs)
+			}
+		})
+	}
 }

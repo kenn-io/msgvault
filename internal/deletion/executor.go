@@ -481,12 +481,12 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 	for ti, gmailID := range tombstoneIDs {
 		select {
 		case <-ctx.Done():
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], persistedFailed)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
 			return ctx.Err()
 		default:
 		}
 		if e.manifestCancelled(manifestID) {
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], persistedFailed)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
 			return ErrManifestCancelled
 		}
 		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, opts.Method == MethodDelete, gmailID); err != nil {
@@ -499,7 +499,7 @@ func (e *Executor) Execute(ctx context.Context, manifestID string, opts *Execute
 				len(retryIDs),
 				retryIDs,
 				remaining,
-				persistedFailed,
+				0,
 			)
 			return fmt.Errorf("retry local tombstone: %w", err)
 		}
@@ -691,12 +691,12 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 	for ti, gmailID := range tombstoneIDs {
 		select {
 		case <-ctx.Done():
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], persistedFailed)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
 			return ctx.Err()
 		default:
 		}
 		if e.manifestCancelled(manifestID) {
-			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], persistedFailed)
+			e.saveTombstoneCheckpoint(manifest, manifestID, startIndex, succeeded, len(retryIDs), retryIDs, tombstoneIDs[ti:], 0)
 			return ErrManifestCancelled
 		}
 		if err := e.store.MarkMessageDeletedBySourceMessageID(sourceID, true, gmailID); err != nil {
@@ -709,7 +709,7 @@ func (e *Executor) ExecuteBatch(ctx context.Context, manifestID string) (retErr 
 				len(retryIDs),
 				retryIDs,
 				remaining,
-				persistedFailed,
+				0,
 			)
 			return fmt.Errorf("retry local tombstone: %w", err)
 		}

@@ -3,10 +3,13 @@ package deletion
 import (
 	"bytes"
 	"encoding/json/v2"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
+	"go.kenn.io/kit/atomicfile"
 	"go.kenn.io/msgvault/internal/fileutil"
 )
 
@@ -20,7 +23,8 @@ type checkpoint struct {
 }
 
 func journalPath(manifestPath string) string {
-	return strings.TrimSuffix(manifestPath, ".json") + ".checkpoint"
+	// Status moves must leave the journal reachable until its progress is folded.
+	return filepath.Join(filepath.Dir(filepath.Dir(manifestPath)), strings.TrimSuffix(filepath.Base(manifestPath), ".json")+".checkpoint")
 }
 
 func appendCheckpoint(manifest *Manifest, path string, failedFrom int) error {
@@ -30,7 +34,12 @@ func appendCheckpoint(manifest *Manifest, path string, failedFrom int) error {
 	if err != nil {
 		return err
 	}
-	f, err := fileutil.SecureOpenFile(journalPath(path), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	path = journalPath(path)
+	f, err := fileutil.SecureOpenFile(path, os.O_APPEND|os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	created := err == nil
+	if errors.Is(err, os.ErrExist) {
+		f, err = fileutil.SecureOpenFile(path, os.O_APPEND|os.O_WRONLY, 0o600)
+	}
 	if err != nil {
 		return err
 	}
@@ -39,11 +48,17 @@ func appendCheckpoint(manifest *Manifest, path string, failedFrom int) error {
 	if _, err := f.Write(append(append([]byte{'\n'}, data...), '\n')); err != nil {
 		return fmt.Errorf("append checkpoint: %w", err)
 	}
-	return f.Sync()
+	if err := f.Sync(); err != nil {
+		return err
+	}
+	if created {
+		return atomicfile.SyncDir(filepath.Dir(path))
+	}
+	return nil
 }
 
 func applyJournal(m *Manifest, data []byte) {
-	if m.Execution == nil || m.Execution.CompletedAt != nil {
+	if m.Execution == nil {
 		return
 	}
 	for line := range bytes.SplitSeq(data, []byte{'\n'}) {
