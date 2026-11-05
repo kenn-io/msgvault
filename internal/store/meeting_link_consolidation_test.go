@@ -128,8 +128,7 @@ func TestMeetingLinksSourceMerge(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
 }
 
-func testMeetingLinksSubsetCopy(t *testing.T) {
-	t.Helper()
+func TestMeetingSubsetDecisions(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -162,16 +161,5 @@ func testMeetingLinksSubsetCopy(t *testing.T) {
 			assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, dst, note)[note])
 		}
 		requirements.NoError(dst.Close())
-	}
-}
-
-func TestMeetingSubsetDecisions(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingLinksSubsetCopy", testMeetingLinksSubsetCopy},
-	} {
-		t.Run(tc.name, tc.run)
 	}
 }
