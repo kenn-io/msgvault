@@ -379,10 +379,12 @@ for (const facet of ['person', 'domain'] as const) {
       if (facet === 'domain') await page.getByRole('radio', { name: 'Domains', exact: true }).click();
       await page.getByRole('grid', { name: 'People results' }).getByText(facet === 'person' ? 'Alice Example' : 'example.com', { exact: true }).click();
       const grid = page.getByRole('grid', { name: 'Messages results' });
+      const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
+      const secondary = page.locator('.results-split > [data-split-pane] > [data-pane="secondary"]');
       await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
       await page.getByRole('group', { name: 'Person page' }).evaluate(element => element.scrollTo(0, element.scrollHeight));
       await expect(grid.locator('[data-row-key]').first()).toBeInViewport();
-      expect((await grid.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+      expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
 
       const rowHeight = (await grid.locator('[data-row-key]').first().boundingBox())!.height;
       await grid.evaluate((element, height) => element.scrollTo(0, 490 * height), rowHeight);
@@ -404,8 +406,8 @@ for (const facet of ['person', 'domain'] as const) {
       await page.keyboard.press('Enter');
       const reader = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
       await expect(reader.getByText('Preview text', { exact: true })).toBeVisible();
-      expect((await grid.boundingBox())!.height).toBeGreaterThanOrEqual(120);
-      expect((await reader.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+      expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+      expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
     });
   }
 }
