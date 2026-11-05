@@ -3,10 +3,10 @@ package store_test
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/conversationpolicy"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -18,7 +18,7 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 			requirements := require.New(t)
 			f := newTimelineActivityFixture(t)
 			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
-			q := timelineContactQuery(f)
+			subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
 			alias := int64(0)
 			if saved {
 				alias = f.EnsureParticipant("alias@example.com", "Alias", "example.com")
@@ -26,9 +26,9 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 				requirements.NoError(err)
 				p, _, err := f.Store.CreatePersonFromParticipant(f.peer)
 				requirements.NoError(err)
-				q.Subject = store.ActivitySubject{PersonID: p.ID}
+				subject = store.ActivitySubject{PersonID: p.ID}
 			}
-			id := f.add(t, f.ConvID, f.Source.ID, q.Now, true, "")
+			id := addColdTimelineMessage(t, f, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true)
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner, f.peer}, nil))
 			guest := f.EnsureParticipant("guest@example.com", "Guest", "example.com")
 			to := []int64{f.peer, guest}
@@ -36,15 +36,13 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 				to = append(to, alias)
 			}
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", to, nil))
-			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
 			for _, limit := range []int{0, 25, 1} {
 				t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
 					assertions := assert.New(t)
 					requirements := require.New(t)
-					q.Filters = store.ActivityFilters{IncludeNoise: true, MaxDirect: limit}
 					burstQuery := timelineBurstQuery()
-					burstQuery.Subject = q.Subject
-					burstQuery.Filters = q.Filters
+					burstQuery.Subject = subject
+					burstQuery.Filters = store.ActivityFilters{IncludeNoise: true, MaxDirect: limit}
 					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), burstQuery)
 					requirements.NoError(err)
 					requirements.Len(page.Bursts, 1)
