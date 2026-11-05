@@ -363,7 +363,7 @@ func (c *Client) fetchPage(
 ) ([]messageRow, int, error) {
 	sqlQuery := `
 		WITH page AS (
-			SELECT m.ROWID, m.* FROM message m
+			SELECT m.ROWID FROM message m
 			WHERE m.ROWID > ?`
 	args := []any{afterROWID}
 
@@ -393,7 +393,8 @@ func (c *Client) fetchPage(
 			m.cache_has_attachments,
 			h.id,
 			c.ROWID, c.guid, c.display_name, c.chat_identifier
-		FROM page m
+		FROM page p
+		JOIN message m ON m.ROWID = p.ROWID
 		LEFT JOIN handle h ON h.ROWID = m.handle_id
 		LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
 		LEFT JOIN chat c ON c.ROWID = cmj.chat_id
