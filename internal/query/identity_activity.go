@@ -136,7 +136,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeysSQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_keys
 	FROM logical_entries le
-	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = le.anchor_message_id
+	` + e.meetingKeysJoin("le") + `
 	JOIN message_person mp ON mp.message_id = le.anchor_message_id
 	WHERE le.entry_kind <> 'conversation'
 	UNION ALL
@@ -145,7 +145,7 @@ func (e *DuckDBEngine) buildIdentityLogicalSQL(
 	       le.occurred_at, le.is_from_me, le.message_type, le.entry_kind,
 	       le.attachment_count, le.source_type, ` + identityindex.MeetingKeysSQL("mk", "le.message_type", "le.anchor_message_id") + ` AS meeting_keys
 	FROM logical_entries le
-	LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = le.anchor_message_id
+	` + e.meetingKeysJoin("le") + `
 	JOIN chat_person cp ON cp.conversation_id = le.conversation_id
 	WHERE le.entry_kind = 'conversation'
 ), owner_presence AS (
@@ -927,4 +927,8 @@ ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 
 func quoteIdentitySQLPath(value string) string {
 	return strings.ReplaceAll(value, "'", "''")
+}
+
+func (e *DuckDBEngine) meetingKeysJoin(alias string) string {
+	return `LEFT JOIN (SELECT message_id, list(meeting_key) AS meeting_keys FROM read_parquet('` + quoteIdentitySQLPath(e.parquetPath(datasetMeetingKeys)) + `') GROUP BY message_id) mk ON mk.message_id = ` + alias + `.anchor_message_id`
 }

@@ -112,6 +112,9 @@ func TestRelationshipMeetingCountsCollapseLinkedOccurrence(t *testing.T) {
 			}
 			engine := b.BuildEngine()
 			want := int64(1)
+			if unlinkedCalendar {
+				want++
+			}
 			for _, scope := range []Context{{}, {SourceIDs: []int64{first, second}, ParticipantIDs: []int64{person}}} {
 				result, err := engine.Relationships(t.Context(), RelationshipsRequest{Context: scope, Now: at.Add(time.Hour)})
 				require.NoError(err)
@@ -150,7 +153,7 @@ func TestRelationshipCalendarLinkedMeetingAcrossYears(t *testing.T) {
 	for _, tc := range []struct {
 		year int
 		want int64
-	}{{2024, 0}, {2025, 1}} {
+	}{{2024, 1}, {2025, 0}} {
 		calendar, err := engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: person, Year: tc.year, Timezone: "UTC"})
 		requirements.NoError(err)
 		var meetings int64

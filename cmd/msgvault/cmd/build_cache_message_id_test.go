@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/sqliteutil"
 )
 
 func TestBuildCacheMessageIDAcrossExports(t *testing.T) {
@@ -20,7 +21,7 @@ func TestBuildCacheMessageIDAcrossExports(t *testing.T) {
 			dir := setupTestSQLite(t)
 			dbPath := filepath.Join(dir, "test.db")
 			analytics := filepath.Join(dir, "analytics")
-			db, err := sql.Open("sqlite3", dbPath)
+			db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 			requirements.NoError(err)
 			defer func() { _ = db.Close() }()
 			_, err = db.Exec(`UPDATE messages SET rfc822_message_id = 'Case-ID@example.test' WHERE id = 1`)
@@ -37,8 +38,8 @@ func TestBuildCacheMessageIDAcrossExports(t *testing.T) {
 			requirements.NoError(duck.QueryRow(`SELECT rfc822_message_id FROM read_parquet(?) WHERE id = 2`, pattern).Scan(&id))
 			assertions.False(id.Valid)
 
-			_, err = db.Exec(`INSERT INTO messages (id,source_id,source_message_id,conversation_id,subject,sent_at,rfc822_message_id)
-    VALUES (6,1,'msg6',105,'New message','2024-03-15 10:00:00','<legacy@example.test>')`)
+			_, err = db.Exec(`INSERT INTO messages (id,source_id,source_message_id,conversation_id,subject,sent_at,rfc822_message_id, message_type)
+    VALUES (6,1,'msg6',105,'New message','2024-03-15 10:00:00','<legacy@example.test>', 'email')`)
 			requirements.NoError(err)
 			result, err := buildCache(dbPath, analytics, false)
 			requirements.NoError(err)

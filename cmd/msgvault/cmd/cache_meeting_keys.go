@@ -26,25 +26,19 @@ func stageMeetingKeys(ctx context.Context, db sqlRunner, keys map[int64][]string
 	if _, err := db.ExecContext(ctx, `CREATE TEMP TABLE tmp_meeting_keys (message_id BIGINT, meeting_key VARCHAR)`); err != nil {
 		return fmt.Errorf("create meeting keys: %w", err)
 	}
-	rows := make(map[int64]struct {
-		id  int64
-		key string
-	})
-	for id, occurrences := range keys {
-		if id <= maxMessageID {
-			for _, key := range occurrences {
-				rows[int64(len(rows))] = struct {
-					id  int64
-					key string
-				}{id, key}
+	rows := func(yield func(int64, string) bool) {
+		for id, occurrences := range keys {
+			if id <= maxMessageID {
+				for _, key := range occurrences {
+					if !yield(id, key) {
+						return
+					}
+				}
 			}
 		}
 	}
-	if err := stageCacheMapping(ctx, db, `INSERT INTO tmp_meeting_keys VALUES `, rows, func(_ int64, row struct {
-		id  int64
-		key string
-	}) string {
-		return fmt.Sprintf("(%d,'%s')", row.id, quoteCacheSQL(row.key))
+	if err := stageCacheMapping(ctx, db, `INSERT INTO tmp_meeting_keys VALUES `, rows, func(id int64, key string) string {
+		return fmt.Sprintf("(%d,'%s')", id, quoteCacheSQL(key))
 	}); err != nil {
 		return fmt.Errorf("stage meeting keys: %w", err)
 	}

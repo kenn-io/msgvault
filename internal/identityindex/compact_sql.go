@@ -154,10 +154,10 @@ WITH logical_people AS (
 	                 AND (p.entry_kind = 'conversation'
 	                      OR (p.entry_kind IN ('email','item') AND p.is_author))
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS received_units,
-	       CASE WHEN p.entry_kind = 'meeting' AND p.with_owner
+	       CASE WHEN p.entry_kind IN ('event','meeting') AND p.with_owner
 	            THEN 1::BIGINT ELSE 0::BIGINT END AS meeting_units,
 	       CASE
-	           WHEN p.entry_kind = 'meeting' AND p.with_owner THEN %d::UTINYINT
+	           WHEN p.entry_kind IN ('event','meeting') AND p.with_owner THEN %d::UTINYINT
 	           WHEN p.entry_kind = 'conversation' THEN %d::UTINYINT
 	           WHEN p.entry_kind IN ('email','item') THEN %d::UTINYINT
 	           ELSE 0::UTINYINT
@@ -386,8 +386,8 @@ func MeetingKeysSQL(keys, messageType, messageID string) string {
 func DeduplicateMeetingSQL(relation, meetingKeys, messageID string) string {
 	return `SELECT p.* FROM ` + relation + ` p
 	LEFT JOIN read_parquet('` + quoteSQLString(meetingKeys) + `') mk ON mk.message_id = p.` + messageID + `
-	QUALIFY p.entry_kind <> 'meeting' OR row_number() OVER (
-	    PARTITION BY p.canonical_id, p.entry_kind, ` + meetingIdentityKeySQL("mk", "p."+messageID) + `
+	QUALIFY p.entry_kind NOT IN ('event','meeting') OR row_number() OVER (
+	    PARTITION BY p.canonical_id, ` + meetingIdentityKeySQL("mk", "p."+messageID) + `
 	    ORDER BY p.occurred_at, p.` + messageID + `) = 1`
 }
 

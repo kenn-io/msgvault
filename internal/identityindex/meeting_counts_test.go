@@ -28,7 +28,7 @@ func TestMeetingCountsMultipleOccurrencesAndCalendarOnly(t *testing.T) {
 	assertions.Equal(int64(1), activities)
 }
 
-func TestCalendarOnlyDoesNotCountAsAttended(t *testing.T) {
+func TestCalendarOnlyCountsTowardRelationships(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	root, db := writeRelationshipBaseFixture(t, true)
 	writeSyntheticRelationshipFanOut(t, db, root, syntheticRelationshipFanOutOptions{
@@ -40,7 +40,7 @@ func TestCalendarOnlyDoesNotCountAsAttended(t *testing.T) {
 	requirements.NoError(err)
 	var meetings int64
 	requirements.NoError(db.QueryRow(`SELECT sum(meeting_units) FROM read_parquet(?) WHERE canonical_id=2`, relationshipParquetGlob(root, DatasetRelationshipDaily)).Scan(&meetings))
-	assertions.Zero(meetings)
+	assertions.Equal(int64(1), meetings)
 }
 
 func TestPersonMeetingCountDedupesCopiesGlobalAndSourceFiltered(t *testing.T) {

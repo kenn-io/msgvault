@@ -284,6 +284,8 @@ timeline, relationships, and last-contact information.
 
 Transcripts count as attended meetings. Transcripts linked to the same occurrence count once, including across selected sources. A transcript linked to two occurrences counts once for each. Counts update on the next scheduled cache refresh or when you run `msgvault build-cache`.
 
+Calendar events also contribute to relationship counts and scores when the owner is an attendee.
+
 Some sources also know that several emails and phone numbers are the same
 human. msgvault links those identities through the source's stable identifier,
 so a meeting reaches the person even when it only names an address the person

@@ -5,6 +5,8 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"iter"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -494,7 +496,7 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`); err != nil {
 		return fmt.Errorf("create participant clusters temp table: %w", err)
 	}
-	if err := stageCacheMapping(ctx, db, `INSERT INTO tmp_participant_clusters VALUES `, clusters, func(id, canonicalID int64) string {
+	if err := stageCacheMapping(ctx, db, `INSERT INTO tmp_participant_clusters VALUES `, maps.All(clusters), func(id, canonicalID int64) string {
 		return fmt.Sprintf("(%d,%d)", id, canonicalID)
 	}); err != nil {
 		return fmt.Errorf("populate participant clusters temp table: %w", err)
@@ -502,7 +504,7 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 	return nil
 }
 
-func stageCacheMapping[V any](ctx context.Context, db sqlRunner, insert string, entries map[int64]V, format func(int64, V) string) error {
+func stageCacheMapping[V any](ctx context.Context, db sqlRunner, insert string, entries iter.Seq2[int64, V], format func(int64, V) string) error {
 	values := make([]string, 0, participantClusterMaxBatchRows)
 	flush := func() error {
 		if len(values) == 0 {
