@@ -353,8 +353,8 @@ their normal bound parameters and backend dialect support.
    bounded export path.
 1. It emits the completion record with observed counts.
 
-The record phases read from one read-only database snapshot, using REPEATABLE
-READ on PostgreSQL. This keeps the exported records consistent while imports
+Source and person resolution share one read-only database snapshot with the
+record phases, using REPEATABLE READ on PostgreSQL. This keeps records consistent while imports
 and syncs continue. `export-messages` runs alongside that work without taking
 the daemon's operation gate. Direct local execution uses the same daemon
 command-routing policy.

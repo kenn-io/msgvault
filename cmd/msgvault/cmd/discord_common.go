@@ -102,7 +102,11 @@ func matchesDiscordSourceAliasOrDisplayName(source *store.Source, selector strin
 }
 
 func resolveDiscordSources(st *store.Store, selector string) ([]*store.Source, error) {
-	sources, err := st.ListSources(sourceTypeDiscord)
+	return resolveDiscordSourcesContext(context.Background(), st, selector)
+}
+
+func resolveDiscordSourcesContext(ctx context.Context, st *store.Store, selector string) ([]*store.Source, error) {
+	sources, err := st.ListSourcesContext(ctx, sourceTypeDiscord)
 	if err != nil {
 		return nil, fmt.Errorf("list Discord sources: %w", err)
 	}

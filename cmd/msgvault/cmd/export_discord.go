@@ -86,7 +86,13 @@ func runExportDiscord(
 	}
 	defer cleanup()
 
-	sources, err := resolveDiscordSources(st, selector)
+	ctx, release, err := st.BeginReadSnapshotContext(cmd.Context())
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	sources, err := resolveDiscordSourcesContext(ctx, st, selector)
 	if err != nil {
 		return usageErr(cmd, err)
 	}
@@ -94,7 +100,7 @@ func runExportDiscord(
 		return usageErr(cmd, errors.New("discord export requires exactly one guild"))
 	}
 	source := sources[0]
-	lastSync, err := st.GetLastSuccessfulSync(source.ID)
+	lastSync, err := st.GetLastSuccessfulSyncContext(ctx, source.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrSyncRunNotFound) {
 			return fmt.Errorf(
@@ -108,7 +114,7 @@ func runExportDiscord(
 		return fmt.Errorf("successful Discord sync for %q has no completion time", selector)
 	}
 
-	containers, err := st.DiscordExport(cmd.Context(), source.ID, start, end)
+	containers, err := st.DiscordExport(ctx, source.ID, start, end)
 	if err != nil {
 		return err
 	}

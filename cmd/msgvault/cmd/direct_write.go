@@ -130,6 +130,14 @@ func openStoreAndInitWithInvocation(state *invocation, migrate func(*store.Store
 // initialized. It never creates the SQLite file and runs no schema DDL or
 // startup migrations; an archive at another schema version is refused.
 func openInitializedStoreForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
+	return openArchiveStoreForInvocation(ctx, state, store.OpenContext)
+}
+
+func openReadOnlyStoreForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
+	return openArchiveStoreForInvocation(ctx, state, store.OpenReadOnlyContext)
+}
+
+func openArchiveStoreForInvocation(ctx context.Context, state *invocation, open func(context.Context, string) (*store.Store, error)) (*store.Store, func(), error) {
 	currentCfg, _ := invocationConfigLogger(state)
 	if currentCfg == nil {
 		return nil, nil, errors.New("configuration is unavailable")
@@ -144,25 +152,13 @@ func openInitializedStoreForInvocation(ctx context.Context, state *invocation) (
 			return nil, nil, fmt.Errorf("open initialized archive: %w", err)
 		}
 	}
-	st, err := store.OpenContext(ctx, dsn)
+	st, err := open(ctx, dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
 	if err := st.ValidateSchemaContext(ctx); err != nil {
 		_ = st.Close()
 		return nil, nil, fmt.Errorf("validate archive schema: %w", err)
-	}
-	return st, func() { _ = st.Close() }, nil
-}
-
-func openReadOnlyStoreForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
-	currentCfg, _ := invocationConfigLogger(state)
-	if currentCfg == nil {
-		return nil, nil, errors.New("configuration is unavailable")
-	}
-	st, err := store.OpenReadOnlyContext(ctx, currentCfg.DatabaseDSN())
-	if err != nil {
-		return nil, nil, fmt.Errorf("open database: %w", err)
 	}
 	return st, func() { _ = st.Close() }, nil
 }

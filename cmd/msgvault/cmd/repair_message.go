@@ -85,14 +85,7 @@ func defaultRepairMessageCommandDepsForContext(ctx context.Context) repairMessag
 			return openWritableStoreAndInitForInvocation(state)
 		},
 		openReadOnlyStore: func() (*store.Store, func(), error) {
-			if currentCfg == nil {
-				return nil, nil, errors.New("configuration is unavailable")
-			}
-			st, err := store.OpenReadOnly(currentCfg.DatabaseDSN())
-			if err != nil {
-				return nil, nil, fmt.Errorf("open database read-only: %w", err)
-			}
-			return st, func() { _ = st.Close() }, nil
+			return openReadOnlyStoreForInvocation(ctx, state)
 		},
 		newGmailClient: func(ctx context.Context, source *store.Source) (gmail.API, error) {
 			return buildAPIClient(ctx, source, oauthManagerCache(state), nil)

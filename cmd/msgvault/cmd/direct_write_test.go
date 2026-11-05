@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -543,4 +544,28 @@ func TestOpenInitializedStoreRefusesMissingArchive(t *testing.T) {
 	require.ErrorIs(t, err, fs.ErrNotExist)
 	_, statErr := os.Stat(cfg.DatabaseDSN())
 	assert.ErrorIs(t, statErr, fs.ErrNotExist, "status must not create an archive")
+}
+
+func TestOpenReadOnlyStoreRejectsUnsupportedSchema(t *testing.T) {
+	for _, version := range []int{store.SchemaVersion - 1, store.SchemaVersion + 1} {
+		t.Run(strconv.Itoa(version), func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			cfg := testConfigValue()
+			cfg.Data.DataDir = t.TempDir()
+			st, err := store.OpenForTest(cfg.DatabaseDSN())
+			require.NoError(err)
+			require.NoError(st.InitSchema())
+			_, err = st.DB().Exec(`UPDATE archive_metadata SET value = ? WHERE key = 'schema_version'`, strconv.Itoa(version))
+			require.NoError(err)
+			require.NoError(st.Close())
+
+			reader, cleanup, err := openReadOnlyStoreForInvocation(t.Context(), testInvocationWithConfig(cfg))
+			if cleanup != nil {
+				t.Cleanup(cleanup)
+			}
+			require.ErrorContains(err, "run setup with the matching release")
+			assert.Nil(reader)
+		})
+	}
 }
