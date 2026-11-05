@@ -51,12 +51,12 @@ the archive or its checksum entry is missing.
 Archives use `msgvault_<version>_<os>_<arch>`, with the version's leading `v`
 removed. Use `darwin` for macOS, `linux` for Linux, and `windows` for Windows;
 architectures are `amd64` and `arm64`. macOS and Linux archives end in `.tar.gz`;
-Windows archives end in `.zip`, such as `msgvault_0.21.0_windows_arm64.zip`.
+Windows archives end in `.zip`, such as `msgvault_0.23.0_windows_arm64.zip`.
 
 ### Migrate before replacing the executable
 
-The following commands are new on `main` and are not in v0.21.0. Use a candidate
-binary that includes them. Run maintenance on the archive host; for a configured
+These commands are available in 0.22.0 and later; run them from the candidate
+binary. Run maintenance on the archive host; for a configured
 remote server, use `--local` only when intentionally selecting this host's archive.
 
 1. Download, verify, and extract the candidate into a separate directory.

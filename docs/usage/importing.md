@@ -63,7 +63,7 @@ msgvault import-pst you@outlook.com backup.pst --no-resume
 
 PST imports are resumable. msgvault records a content-based archive fingerprint so an interrupted import resumes only when the file still matches the checkpointed archive.
 
-On `main`, the importer keeps existing transport threading headers and fills
+The importer keeps existing transport threading headers and fills
 missing `Message-ID`, `In-Reply-To`, and `References` fields from the PST's
 stored email metadata (MAPI properties). It groups replies by archived email
 identifiers after importing all folders, so replies can precede their parents
@@ -273,7 +273,7 @@ file once more.
 
 The importer stores the email's `Message-ID` in `rfc822_message_id`, without surrounding angle brackets and with its original case preserved. `In-Reply-To` links to a message in the same source when exactly one visible parent matches. Missing or ambiguous parents remain unresolved; a later import can link a parent that arrives afterward.
 
-To fill missing identifiers in an archive created by an older msgvault, re-import the same directory and source identifier, then rebuild the analytics cache. On unreleased `main`, messages archived before file receipts existed are finished again automatically on the first import. Use `--full-reconcile` to redo every file, for example after editing archived messages directly:
+To fill missing identifiers in an archive created by an older msgvault, re-import the same directory and source identifier, then rebuild the analytics cache. Messages archived before file receipts existed are finished again automatically on the first import. Use `--full-reconcile` to redo every file, for example after editing archived messages directly:
 
 ```bash
 msgvault import-emlx --full-reconcile me@gmail.com ~/Mail/INBOX.mbox/
@@ -349,7 +349,7 @@ MBOX, EML, and EMLX imports deduplicate messages by SHA-256 hash of the raw MIME
 
 PST imports namespace source message IDs by a stable archive fingerprint, so importing multiple PST files into the same source does not collide on Outlook EntryIDs that are only unique inside one archive. Re-running the same PST import is idempotent and resumes from checkpoints by default.
 
-### Repeat Apple Mail imports (unreleased)
+### Repeat Apple Mail imports
 
 A repeat Apple Mail import reads only new and changed `.emlx` files. It still
 walks every mailbox and checks each file's metadata, including the attachments

@@ -11,10 +11,9 @@ graph as the people you email — so a meeting with `alice@example.com` dedupes
 against the messages you exchanged with her.
 
 Calendar sync is **read-only**. The separate event-control commands can change
-live events when you opt in to write consent and source permissions. Event
-control described below is unreleased functionality.
+live events when you opt in to write consent and source permissions.
 
-## List archived events, unreleased
+## List archived events
 
 ```bash
 msgvault calendar events --from 2027-03-01 --to 2027-04-01
@@ -104,7 +103,7 @@ only what changed. Interrupted full syncs resume from a checkpoint; pass
 The first argument can be an account email or the `name` of a `[[gcal]]` entry in
 `config.toml` (see [Scheduled sync](#scheduled-sync-daemon) below).
 
-## Control events (unreleased)
+## Control events
 
 Authorize writes separately from sync:
 

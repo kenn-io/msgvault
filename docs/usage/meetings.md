@@ -14,8 +14,8 @@ emails connect meetings to the people you already know in msgvault.
 | Source | Connection | Main coverage limit |
 |---|---|---|
 | [Omi](#omi) | Developer API key | Completed, non-discarded, unlocked conversations exposed by the backend |
-| [Twilio](#twilio) (unreleased) | Account auth token or API key | Recordings and transcripts Twilio still retains |
-| [Chatwoot](../guides/chatwoot.md) calls (unreleased) | Account API token | Calls in selected inboxes; recordings and transcripts refresh for seven days |
+| [Twilio](#twilio) | Account auth token or API key | Recordings and transcripts Twilio still retains |
+| [Chatwoot](../guides/chatwoot.md) calls | Account API token | Calls in selected inboxes; recordings and transcripts refresh for seven days |
 | [Granola](#granola) | API key | Requires access to Granola's public API |
 | [Notion AI Meeting Notes](#notion-ai-meeting-notes) | Meeting PAT or integration, optional users integration | At most 50 attendee-visible meetings per discovery query |
 | [Plaud](#plaud) | Browser authorization to its hosted MCP server | Requires Cloud Sync and existing Plaud transcription |
@@ -461,7 +461,7 @@ its saved progress.
 
 ## Twilio
 
-This integration is unreleased. Each recorded Twilio call becomes one meeting
+Each recorded Twilio call becomes one meeting
 with its recordings saved as audio attachments, so you keep the audio after
 Twilio deletes it. Calls without a recording aren't archived. Sync only reads: it never places calls, turns on recording, or
 starts paid transcription.
@@ -825,8 +825,7 @@ See the [configuration reference](../configuration.md#plaud-sources) and
 ## Pocket
 
 Archive personal Pocket recordings with their transcripts, completed summaries,
-structured actions, speaker labels, and provider durations. This integration
-is available on `main`; check the release changelog for installed releases.
+structured actions, speaker labels, and provider durations.
 
 1. Obtain a personal API key in Pocket Settings → Developer → API Keys,
    as described in [Pocket's MCP setup](https://docs.heypocketai.com/docs/mcp).
@@ -964,8 +963,7 @@ Run the normal msgvault client on the Mac where Muesli records. The archive
 can stay on another host: configure the existing [remote connection](../configuration.md#remote)
 on the Mac. The client reads Muesli and Contacts locally; the daemon owns the
 archive and accepts authenticated, bounded meeting transfers. It never receives
-a Muesli or Contacts database. This native remote workflow is available on
-`main` and is not yet released.
+a Muesli or Contacts database.
 
 Without remote mode, same-host sync continues through the local daemon. If
 macOS blocks the read, grant Full Disk Access to the process reading the files:
@@ -1101,8 +1099,7 @@ Evidence describes a historical Contacts observation. It does not establish
 current ownership. Sync never chooses between divergent phones or merges two
 curated people. If both endpoints already have curated profiles, use the
 [explicit profile merge workflow](/docs/usage/people/#merge-duplicate-profiles-and-reverse-a-merge)
-after reviewing them. Duplicate-card review is available on `main` and is not
-yet released.
+after reviewing them.
 
 Routine imports follow the existing automatic analytics-refresh policy. An
 unchanged remote upload does not request a build. A same-host scheduled scan
@@ -1112,8 +1109,7 @@ checks the cache even when nothing changed, so a build that
 
 ### Muesli recordings
 
-Recording capture is available on `main` and is not yet released. Enable it
-per source on the Mac that reads Muesli:
+Enable recording capture per source on the Mac that reads Muesli:
 
 ```toml
 [[muesli]]

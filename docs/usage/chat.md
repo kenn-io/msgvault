@@ -9,7 +9,7 @@ retrieve attachments, and help you remember people and conversations. The
 server uses your selected daemon: without `[remote].url`, it starts or reuses
 the local daemon; with `[remote].url`, it uses that remote server.
 
-Unreleased: a running local MCP proxy rediscovers the daemon after idle shutdown
+A running local MCP proxy rediscovers the daemon after idle shutdown
 or a restart, starting it when `daemon_auto_start` permits. It retries a request
 once after a connection fails before sending. Failures after connecting are not
 replayed. If recovery fails, the tool reports `daemon_unavailable` and suggests
@@ -37,7 +37,7 @@ View never deletes archive messages.
 
 ## Calendar control
 
-Unreleased daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,
+Daemon API schema 3.1.0 adds `calendar_create`, `calendar_update`,
 `calendar_delete`, `calendar_move`, `calendar_respond`, `calendar_freebusy`, and
 `calendar_conflicts`. All require `account`; event mutations also require
 `calendar_id`. Availability requires `time_min` and `time_max`, and accepts
@@ -63,7 +63,7 @@ rejects mutations. `calendar_respond` uses `response` for the self attendee only
 Recurring edits default to `single`; future update/delete needs `original_start`.
 Availability needs `time_min` and `time_max`, and accepts optional `calendar_ids`.
 
-[Calendar setup](calendar.md#control-events-unreleased) owns write consent,
+[Calendar setup](calendar.md#control-events) owns write consent,
 configured calendar permissions, recurrence limits, and archive failure recovery.
 MCP forwards requests to that same daemon path. A delegated stdio bridge, invoked
 with `--agent-url` and `--agent-token-file`, exposes scoped read, calendar and draft tools. The daemon
@@ -196,7 +196,7 @@ If `msgvault` is not on your PATH, use the full path to the binary. Restart Clau
 
 ### Native daemon endpoints
 
-On unreleased `main`, connect directly to your running daemon at
+Connect directly to your running daemon at
 `http://127.0.0.1:8080/mcp` (substitute its configured address and port). Send
 `Authorization: Bearer <owner-api-key>` on every request. The endpoint is
 read-only, including when the daemon enables writes elsewhere.
@@ -245,8 +245,8 @@ expose different tools:
 - Tools that ask you to confirm through the client, such as identity decisions, person
   merges, and calendar event changes, keep their own opt-ins and over HTTP also
   require protocol `2026-07-28` or newer.
-- On unreleased `main`, agent-delegated credentials (`--agent-url` and
-  `--agent-token-file`) require stdio.
+- Agent-delegated credentials (`--agent-url` and `--agent-token-file`)
+  require stdio.
 
 If you run v0.20.0, upgrade and restart existing proxies. That release built every
 combination of tool schemas in each proxy at startup, which v0.21.0 removed.
@@ -401,7 +401,7 @@ The MCP server exposes the following tools to connected AI clients:
 | `stage_deletion` | Stage every match its source can delete (creates manifest only); refuses above 100000 Gmail, Microsoft Graph, or IMAP matches | `query` (string) OR structured filters: `from` (string), `domain` (string), `label` (string), `after` (string), `before` (string), `has_attachment` (bool); optional: `account` (string) |
 | `find_contact_candidates` | Find durable people by saved or observed names; returns stable UIDs and explicit ambiguity. Available with daemon API schema 3.20.0 or newer. | `query` (required), `limit` (1–100, default 20), `after_id` |
 | `get_person_messaging_routes` | Resolve a selected UID to curated points, bound observations, unreviewed suggestions and exact archived routes, with status and evidence. | `person_uid` (required), `network`, `source_id`, `limit` (1–100 per section, default 20), `after_conversation_id`, `after_contact_point_id`, `after_observation_id`, `after_suggestion_id` |
-| `find_chat` | Find archived chats by whole query tokens in names, aliases, identifiers and titles, ranked by the best matching name. Owner clients only; requires unreleased API schema 3.24.0. Returns archive/provider chat IDs, network labels and bounded match evidence. | `query` (string, required), `limit` (int, default 20, max 100), `source_id` (positive int, optional) |
+| `find_chat` | Find archived chats by whole query tokens in names, aliases, identifiers and titles, ranked by the best matching name. Owner clients only; requires API schema 3.24.0. Returns archive/provider chat IDs, network labels and bounded match evidence. | `query` (string, required), `limit` (int, default 20, max 100), `source_id` (positive int, optional) |
 | `search_people` | Find observed contacts and saved profiles by name or identity. Saved-profile rows include `vcard_uid` and `carddav_bindings`; older daemons return no CardDAV binding entries. This is a local lookup, not semantic profile search. | `query` (string), `limit` (int, default 20), `cursor` (string) |
 | `get_person_notes` | Read a saved person's private Notes, including provenance and current value ID. | `person_id` (int, required) |
 | `get_person_relationship` | Read interaction-based relationship scores and optional daily activity. A contact you've only drafted to reads as existing with no sent or received messages and no relationship calendar. A person ID that doesn't exist reads as not found. Scores describe archive patterns, not emotional closeness or permission to contact someone. | `participant_id` (int, required), `year` (int), `timezone` (IANA name, default UTC) |
@@ -508,7 +508,7 @@ backfill at archive initialization; new HTML writes refresh the flag.
 
 ### Find a person's messaging routes
 
-The unreleased contact tools require daemon API schema 3.20.0. First call
+The contact tools require daemon API schema 3.20.0. First call
 `find_contact_candidates` with `{"query":"Avery Example"}`. Inspect every
 candidate and the response's `ambiguous` flag, then call `get_person_messaging_routes` with
 `{"person_uid":"<selected person_uid>","network":"whatsapp"}`.
@@ -756,7 +756,7 @@ instruction or as your consent to a write.
 
 ## Source status and sync
 
-On unreleased `main`, MCP discovers these tools from the selected daemon's
+MCP discovers these tools from the selected daemon's
 capability response. Tools appear only when the daemon advertises their required
 routes and fields. If discovery fails, these tools are omitted; existing archive
 tools retain their own capability checks. Delegated sessions do not expose these
@@ -806,7 +806,7 @@ require `--allow-profile-writes` and the HTTP opt-in when applicable.
 | `set_person_display_name` | Set or clear a saved display name; requires confirmation. | `person_id` (int, required), `etag` (required), `display_name` (string, required) |
 | `update_person_notes` | Append or replace private Notes with `enrichment` provenance. | `person_id` (int, required), `text` (required), `mode` (`append` by default, or `replace`), `expected_value_id` |
 
-On unreleased `main`, supporting daemons expose the display-name tools and the
+Supporting daemons expose the display-name tools and the
 optional promotion name. Omitting `display_name` or passing `null` to
 `promote_person` uses observed names without per-call confirmation. A string,
 including `""`, requires confirmation: it seeds the name only for a new profile;
@@ -868,7 +868,7 @@ msgvault mcp --http 8080
 | `--http-token-env` | — | Name the variable holding the inbound bearer key; file takes priority. Requires `--http`. |
 | `--http-allow-writes` | `false` | Expose write-class tools over HTTP. Identity review, scoring, person merges, CardDAV writes, profile writes, and other write tools still need their separate flags. |
 | `--allow-profile-writes` | `false` | Expose person promotion, display-name edits, and private Notes writes. HTTP also requires `--http-allow-writes`. |
-| `--allow-source-writes` | `false` | On unreleased `main`, expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
+| `--allow-source-writes` | `false` | Expose source sync and Slack selection writes. Each call requires confirmation. HTTP also requires `--http-allow-writes` and protocol `2026-07-28` or newer. |
 | `--allow-identity-decisions` | `false` | Expose identity match accept/reject tools. Each decision needs client confirmation. HTTP also requires `--http-allow-writes`. |
 | `--allow-identity-scoring` | `false` | Expose consented manual identity scoring, which sends bounded raw identity data to the fixed provider. Each run needs client confirmation; HTTP also requires `--http-allow-writes`. |
 | `--allow-person-merges` | `false` | Expose local person merge tools. Each merge needs client confirmation; HTTP also requires `--http-allow-writes`. |
