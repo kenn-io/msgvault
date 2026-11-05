@@ -32,7 +32,6 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentstore"
 	"go.kenn.io/msgvault/internal/docbankmedia"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/testutil/docbanktest"
 )
 
 const docbankTestKey = "synthetic-docbank-key"
@@ -1867,7 +1866,8 @@ func (f *fakeDocbank) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if jobState == "" {
 			jobState = "completed"
 		}
-		docbanktest.WriteJobStatus(w, id, jobState, "done", jobFailureCode)
+		writeDocbankJSON(w, map[string]any{"job_id": id, "state": jobState, "phase": "done",
+			"failure_code": jobFailureCode, "embedding_job_ids": []string{}, "completed_bindings": 1})
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/media/sources/") && sourceHTTPStatus != 0:
 		http.Error(w, "private response body", sourceHTTPStatus)
 	case r.Method == http.MethodGet && strings.HasPrefix(path, "/api/v1/media/sources/"):
