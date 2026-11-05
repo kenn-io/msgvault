@@ -308,6 +308,42 @@ func TestNormalizedCancelledObservationWithdrawal(t *testing.T) {
 	require.ErrorIs(err, store.ErrCallObservationWithdrawn)
 }
 
+func TestSparseCalendarCancellationPreservesDirection(t *testing.T) {
+	for _, direction := range []string{"outgoing", "incoming", "unknown"} {
+		t.Run(direction, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st := storetest.New(t).Store
+			o := callhistory.Observation{
+				RecordID: "e1", Version: 1, Provider: "google_calendar", Account: "calendar@example.com",
+				Kind: "scheduled_meeting", Direction: direction, Outcome: "unknown", OwnerParticipation: "unknown",
+				OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
+			}
+			src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+			require.NoError(err)
+			id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+			require.NoError(err)
+			var fromMe bool
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&fromMe))
+			require.Equal(direction == "outgoing", fromMe)
+			cancelled, err := (callhistory.ImportRequest{
+				Format: "google_calendar", Account: "calendar@example.com", Record: []byte(`{"id":"e1","status":"cancelled"}`),
+			}).Observation()
+			require.NoError(err)
+			again, err := st.PutCallObservationContext(t.Context(), src.ID, cancelled)
+			require.NoError(err)
+			assert.Equal(id, again)
+			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&fromMe))
+			assert.Equal(direction == "outgoing", fromMe)
+			items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+			require.NoError(err)
+			require.Len(items, 1)
+			assert.Equal(direction, items[0].Direction)
+			assert.Equal("cancelled", items[0].Outcome)
+		})
+	}
+}
+
 func TestSparseCalendarCancellationKeepsEvent(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
