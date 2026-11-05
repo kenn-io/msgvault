@@ -187,8 +187,8 @@ func (s *Store) preloadMeetingMembers(ctx context.Context, r reboundReader, ids 
 	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	// Prefix arguments precede the chunk arguments in the shared chunking helper.
-	query := `SELECT m.id,md.projection_version,k.kind,k.value,k.calendar_id,k.scheduled_at,d.target_message_id,d.occurrence_key,d.decision
- FROM messages m LEFT JOIN meeting_details md ON md.message_id=m.id
+	query := `SELECT m.id,k.kind,k.value,k.calendar_id,k.scheduled_at,d.target_message_id,d.occurrence_key,d.decision
+ FROM messages m
  LEFT JOIN meeting_link_key k ON k.message_id=m.id
  LEFT JOIN meeting_link_decisions d ON d.member_message_id=m.id
  WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s)
@@ -203,11 +203,7 @@ func (s *Store) preloadMeetingMembers(ctx context.Context, r reboundReader, ids 
 		var kind, value, calendar, key, decision sql.NullString
 		var scheduled sql.NullTime
 		var target sql.NullInt64
-		var version sql.NullInt64
-		if err := rows.Scan(&id, &version, &kind, &value, &calendar, &scheduled, &target, &key, &decision); err != nil {
-			return err
-		}
-		if err := validateMeetingProjectionVersion(version); err != nil {
+		if err := rows.Scan(&id, &kind, &value, &calendar, &scheduled, &target, &key, &decision); err != nil {
 			return err
 		}
 		r.batch.visible[id] = true

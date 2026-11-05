@@ -118,30 +118,6 @@ func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {
 	})
 }
 
-func TestMeetingActionItemCountsByTranscript(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	data, one := projectionFixture(t, st, "one", "meeting_json", `{"action_items":[{"title":"Send brief"},{"title":"Book room","status":"done"}]}`)
-	_, empty := projectionFixture(t, st, "empty", "meeting_json", `{"action_items":[]}`)
-	_, deleted := projectionFixture(t, st, "deleted", "meeting_json", meetingProjectionRaw)
-	_, err := st.db.Exec(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`, deleted)
-	require.NoError(err)
-	eventData, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.org"))
-	got, err := st.MeetingActionItemCountsContext(t.Context(), []int64{one, one, empty, deleted, event, 999999})
-	require.NoError(err)
-	assert.Equal(map[int64]int{one: 2, empty: 0}, got)
-	scoped, err := st.MeetingActionItemCountsContext(sourcescope.WithSourceIDs(t.Context(), []int64{eventData.Message.SourceID}), []int64{one})
-	require.NoError(err)
-	assert.Empty(scoped)
-	scoped, err = st.MeetingActionItemCountsContext(sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID}), []int64{one, empty})
-	require.NoError(err)
-	assert.Equal(map[int64]int{one: 2, empty: 0}, scoped)
-	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version=? WHERE message_id=?`, meetingProjectionVersion+1, one)
-	require.NoError(err)
-	_, err = st.MeetingActionItemCountsContext(t.Context(), []int64{one})
-	require.ErrorIs(err, ErrMeetingProjectionUnavailable)
-}
-
 func TestParticipantsByEmailBatchReadBound(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

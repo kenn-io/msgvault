@@ -11,24 +11,20 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
-	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 // MeetingIdentityRequest bounds identity resolution to occurrences and notes.
 type MeetingIdentityRequest struct {
-	OccurrenceRefs     []string
-	TranscriptIDs      []int64
-	IncludeSuggestions bool
+	OccurrenceRefs []string
+	TranscriptIDs  []int64
 }
 
-// MeetingIdentityInfo describes exact meeting evidence. Suggestions never
-// contribute to the count key or attendance.
+// MeetingIdentityInfo describes exact meeting evidence.
 type MeetingIdentityInfo struct {
-	Key                     string
-	OccurrenceRef           string
-	LinkedTranscriptIDs     []int64
-	ExactOccurrenceRefs     []string
-	SuggestedOccurrenceRefs []string
+	Key                 string
+	OccurrenceRef       string
+	LinkedTranscriptIDs []int64
+	ExactOccurrenceRefs []string
 }
 
 type MeetingIdentityResult struct {
@@ -43,8 +39,7 @@ type timelineMeetingGroup struct {
 
 // ResolveMeetingIdentitiesContext resolves references in one read snapshot.
 // A shared read budget limits calendar candidate reads and recurrence expansion.
-// Out-of-scope and inactive references are absent. A scoped request never returns
-// suggestions, even when IncludeSuggestions is set.
+// Out-of-scope and inactive references are absent.
 func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req MeetingIdentityRequest) (MeetingIdentityResult, error) {
 	result := MeetingIdentityResult{ByOccurrence: map[string]MeetingIdentityInfo{}, ByTranscript: map[int64]MeetingIdentityInfo{}}
 	if len(req.OccurrenceRefs) == 0 && len(req.TranscriptIDs) == 0 {
@@ -132,11 +127,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		}
 		aliases[value] = g
 	}
-	// Complete every returned group, including groups first reached through a
-	// transcript or a suggestion. Discover each group once.
-	includeCandidate := func(candidate meetingMemberCandidate) bool {
-		return candidate.Exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx)
-	}
+	// Complete every returned group, including groups first reached through a transcript.
 	discovered := map[*timelineMeetingGroup]bool{}
 	processed := map[int64]bool{}
 	for {
@@ -261,13 +252,13 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		if err := s.preloadMeetingOccurrences(ctx, r, candidateRefs, &budget); err != nil {
 			return result, err
 		}
-		resolvedMembers := map[int64][]meetingMemberCandidate{}
+		resolvedMembers := map[int64][]linkOccurrence{}
 		memberCopies := []meetingEventQuery{}
 		for _, id := range ids {
 			if !r.batch.visible[id] {
 				continue
 			}
-			candidates, err := s.meetingMemberCandidates(ctx, r, id, &budget)
+			candidates, err := s.meetingMemberOccurrences(ctx, r, id, &budget)
 			if err != nil {
 				return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
 			}
@@ -275,9 +266,6 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				relevant := false
 				if len(candidates) > 0 {
 					for _, candidate := range candidates {
-						if !includeCandidate(candidate) {
-							continue
-						}
 						if g := groups[candidate.Identity]; g != nil && requestedGroups[g] {
 							relevant = true
 						}
@@ -291,9 +279,6 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			resolvedMembers[id] = candidates
 			if len(candidates) > 0 {
 				for _, candidate := range candidates {
-					if !includeCandidate(candidate) {
-						continue
-					}
 					predicate, args := s.meetingIdentityPredicate(candidate.Identity)
 					memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
 				}
@@ -305,9 +290,6 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 		copyRefs = nil
 		for _, candidates := range resolvedMembers {
 			for _, candidate := range candidates {
-				if !includeCandidate(candidate) {
-					continue
-				}
 				predicate, args := s.meetingIdentityPredicate(candidate.Identity)
 				copyRefs = append(copyRefs, meetingIdentityCopyRefs(candidate.Identity, r.batch.events[meetingQueryKey(predicate, args)])...)
 			}
@@ -322,23 +304,15 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			}
 			info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
 			for _, candidate := range candidates {
-				if !includeCandidate(candidate) {
-					continue
-				}
-				g, err := groupFor(candidate.linkOccurrence)
+				g, err := groupFor(candidate)
 				if err != nil {
 					return result, fmt.Errorf("resolve transcript occurrence: %w", err)
 				}
 				value := publicMeetingOccurrenceRef(g.occurrence)
-				if candidate.Exact {
-					info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, value)
-					g.linked = append(g.linked, id)
-				} else {
-					info.SuggestedOccurrenceRefs = append(info.SuggestedOccurrenceRefs, value)
-				}
+				info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, value)
+				g.linked = append(g.linked, id)
 			}
 			info.ExactOccurrenceRefs = sortedUniqueMeetingRefs(info.ExactOccurrenceRefs)
-			info.SuggestedOccurrenceRefs = sortedUniqueMeetingRefs(info.SuggestedOccurrenceRefs)
 			if len(info.ExactOccurrenceRefs) == 1 {
 				info.OccurrenceRef = info.ExactOccurrenceRefs[0]
 				info.Key = "occ:" + formatMeetingOccurrence(aliases[info.OccurrenceRef].occurrence.Ref)

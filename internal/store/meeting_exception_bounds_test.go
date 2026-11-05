@@ -80,10 +80,9 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 	requirements.NoError(err)
 	defer release()
 	budget := calrecur.RequestReadBudget
-	occurrences, err := st.meetingMemberCandidates(ctx, st.meetingReader(), note, &budget)
+	occurrences, err := st.meetingMemberOccurrences(ctx, st.meetingReader(), note, &budget)
 	requirements.NoError(err)
 	requirements.Len(occurrences, 1)
-	assertions.True(occurrences[0].Exact)
 	assertions.Equal(cancelled, occurrences[0].Row.MessageID)
 	assertions.Equal("cancelled", occurrences[0].Row.Event.Status)
 }

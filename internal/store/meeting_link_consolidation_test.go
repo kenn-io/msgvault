@@ -199,7 +199,7 @@ func TestMeetingLinksUniqueNoteSourceMerge(t *testing.T) {
 			if mode == "new decision" {
 				requirements.NoError(st.LinkMeetingContext(t.Context(), note, target))
 			}
-			ref := identityRef(event)
+			ref := formatMeetingOccurrence(OccurrenceRef{MessageID: event})
 			links, err := meetingLinksForTest(t, st, note)
 			requirements.NoError(err)
 			if assertions.Len(links, 1) {

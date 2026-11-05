@@ -325,18 +325,14 @@ func memberLinkKey(ctx context.Context, r loggedReader, id int64) (meetingLinkKe
 	}
 	var key meetingLinkKey
 	var at sql.NullTime
-	var version sql.NullInt64
 	var kind, value, calendar sql.NullString
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	args = append([]any{id}, args...)
-	err := r.QueryRowContext(ctx, `SELECT k.kind,k.value,k.calendar_id,k.scheduled_at,md.projection_version FROM messages m LEFT JOIN meeting_link_key k ON k.message_id=m.id LEFT JOIN meeting_details md ON md.message_id=m.id WHERE m.id = ? AND m.deleted_at IS NULL`+scope, args...).Scan(&kind, &value, &calendar, &at, &version)
+	err := r.QueryRowContext(ctx, `SELECT k.kind,k.value,k.calendar_id,k.scheduled_at FROM messages m LEFT JOIN meeting_link_key k ON k.message_id=m.id WHERE m.id = ? AND m.deleted_at IS NULL`+scope, args...).Scan(&kind, &value, &calendar, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return key, nil
 	}
 	if err != nil {
-		return key, err
-	}
-	if err := validateMeetingProjectionVersion(version); err != nil {
 		return key, err
 	}
 	key.Kind, key.Value, key.CalendarID = kind.String, value.String, calendar.String
@@ -505,47 +501,17 @@ candidatesLoop:
 	return out, nil
 }
 
-func meetingOccurrencesExact(out []linkOccurrence) bool {
-	for _, o := range out {
-		if o.Identity != out[0].Identity {
-			return false
-		}
-	}
-	return len(out) > 0
-}
-
 type meetingLinkDecision struct {
 	Ref      OccurrenceRef
 	Decision string
 }
 
-type meetingMemberCandidate struct {
-	linkOccurrence
-
-	Exact bool
-}
-
 func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]linkOccurrence, error) {
-	candidates, err := s.meetingMemberCandidates(ctx, r, memberID, budget)
-	if err != nil {
-		return nil, err
-	}
-	var out []linkOccurrence
-	for _, c := range candidates {
-		if c.Exact {
-			out = append(out, c.linkOccurrence)
-		}
-	}
-	return out, nil
-}
-
-func (s *Store) meetingMemberCandidates(ctx context.Context, r reboundReader, memberID int64, budget *int) ([]meetingMemberCandidate, error) {
 	decisions, err := readMeetingLinkDecisions(ctx, r, memberID)
 	if err != nil {
 		return nil, err
 	}
 	var out []linkOccurrence
-	manual := map[meetingIdentity]bool{}
 	splits := map[meetingIdentity]bool{}
 	for _, d := range decisions {
 		if d.Decision == "split" {
@@ -574,7 +540,6 @@ func (s *Store) meetingMemberCandidates(ctx context.Context, r reboundReader, me
 			return nil, err
 		}
 		out = append(out, o)
-		manual[o.Identity] = true
 	}
 	key, err := memberLinkKey(ctx, r, memberID)
 	if err != nil {
@@ -584,15 +549,16 @@ func (s *Store) meetingMemberCandidates(ctx context.Context, r reboundReader, me
 	if err != nil {
 		return nil, err
 	}
+	for _, o := range matches {
+		if o.Identity != matches[0].Identity {
+			matches = nil
+			break
+		}
+	}
 	out = slices.DeleteFunc(append(out, matches...), func(o linkOccurrence) bool {
 		return splits[o.Identity]
 	})
-	exact := meetingOccurrencesExact(matches)
-	var candidates []meetingMemberCandidate
-	for _, o := range uniqueMeetingOccurrences(out) {
-		candidates = append(candidates, meetingMemberCandidate{o, manual[o.Identity] || exact})
-	}
-	return candidates, nil
+	return uniqueMeetingOccurrences(out), nil
 }
 
 func (s *Store) meetingReader() reboundReader {
