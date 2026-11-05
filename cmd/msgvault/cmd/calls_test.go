@@ -129,7 +129,7 @@ func TestCallsCommandThroughDaemon(t *testing.T) {
 }
 
 func TestCallsCommandRequiresSchemaForPublishedEndpoints(t *testing.T) {
-	for _, version := range []string{"3.42.0", "3.43.0"} {
+	for _, version := range []string{"3.42.0", "3.43.0", "3.44.0"} {
 		t.Run(version, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			client := &fakeCallCommandClient{schemaVersion: version}
@@ -138,13 +138,13 @@ func TestCallsCommandRequiresSchemaForPublishedEndpoints(t *testing.T) {
 			command.SetOut(&output)
 			command.SetErr(&output)
 			command.SetArgs([]string{"list"})
-			err = command.ExecuteContext(t.Context())
-			if version == "3.43.0" {
+			err := command.ExecuteContext(t.Context())
+			if version == "3.44.0" {
 				requirements.NoError(err)
 				assertions.JSONEq(`{"items":[]}`, output.String())
 				assertions.Len(client.lists, 1)
 			} else {
-				requirements.ErrorContains(err, "calls require daemon API 3.43.0 or newer")
+				requirements.ErrorContains(err, "calls require daemon API 3.44.0 or newer")
 				assertions.Contains(err.Error(), "daemon reports "+version)
 				assertions.Empty(client.lists)
 			}
