@@ -114,6 +114,7 @@ func (e *DuckDBEngine) CompletePeople(
 			FROM read_parquet('`+directory+`') d, params
 		), candidates AS (
 			SELECT d.canonical_id AS participant_id,
+			       primitive.participant_id AS primitive_participant_id,
 			       d.display_label,
 			       d.current_temperature,
 			       d.last_at,
@@ -150,7 +151,7 @@ func (e *DuckDBEngine) CompletePeople(
 		), deduplicated AS (
 			SELECT *, row_number() OVER (
 				PARTITION BY participant_id, kind, match_value
-				ORDER BY source_rank, lower(display_value), source, display_value
+				ORDER BY source_rank, lower(display_value), source, primitive_participant_id, display_value
 			) AS duplicate_rank
 			FROM candidates
 		)
