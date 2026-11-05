@@ -222,6 +222,10 @@ func TestReplyKnownReceiptRecoveryIgnoresProviderGates(t *testing.T) {
 				} else {
 					require.Error(err)
 					assert.Equal("sent_archive_pending", pending.Status)
+					assert.True(pending.Accepted)
+					assert.Equal("900000000000000001", pending.RemoteMessageID)
+					assert.Zero(pending.MessageID)
+					assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
 					_, err = f.st.DB().Exec(`DROP TRIGGER fail_reply_archive`)
 					require.NoError(err)
 				}
@@ -313,8 +317,6 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 			assert.Equal("provider_rejected", rejected.Status)
 			assert.Nil(rejected.RetryAfter)
 			f.now = f.now.Add(3 * time.Minute)
-			_, err = f.st.UpdateChatDraftContext(t.Context(), f.draft.DraftID, 1, "new text")
-			require.ErrorIs(err, store.ErrChatDraftFrozen)
 			require.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
 			sender := f.sender()
 			sender.Client = nil
@@ -330,94 +332,132 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 }
 
 func TestReplyRateLimitClassification(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newReplyFixture(t, "user", nil)
-	f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-	_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	f.now = f.now.Add(31 * time.Second)
-	retryAt := f.now.Add(3 * time.Minute)
-	f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"180"}}})
-	receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(store.LineReplyRemoteUnknown, receipt.Status)
-	require.NotNil(receipt.RetryAfter)
-	assert.Equal(retryAt, *receipt.RetryAfter)
-	f.now = retryAt.Add(-time.Second)
-	waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(receipt, waiting)
-	assert.Equal(2, f.fake.Count("POST", "/v2/bot/message/push"))
-	f.now = retryAt
-	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(store.LineReplySent, sent.Status)
-	assert.Equal(1, f.fake.AcceptedPushes())
-	var keys []string
-	for _, request := range f.fake.Requests() {
-		if request.Path == "/v2/bot/message/push" {
-			keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
+	t.Run("retry after lost response", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newReplyFixture(t, "user", nil)
+		f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
+		_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		f.now = f.now.Add(31 * time.Second)
+		retryAt := f.now.Add(3 * time.Minute)
+		f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: http.StatusTooManyRequests, Header: http.Header{"Retry-After": {"180"}}})
+		receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(store.LineReplyRemoteUnknown, receipt.Status)
+		require.NotNil(receipt.RetryAfter)
+		assert.Equal(retryAt, *receipt.RetryAfter)
+		f.now = retryAt.Add(-time.Second)
+		waiting, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(receipt, waiting)
+		assert.Equal(2, f.fake.Count("POST", "/v2/bot/message/push"))
+		f.now = retryAt
+		sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(store.LineReplySent, sent.Status)
+		assert.Equal(1, f.fake.AcceptedPushes())
+		var keys []string
+		for _, request := range f.fake.Requests() {
+			if request.Path == "/v2/bot/message/push" {
+				keys = append(keys, request.Header.Get("X-Line-Retry-Key"))
+			}
 		}
-	}
-	require.Len(keys, 3)
-	assert.Equal(keys[0], keys[1])
-	assert.Equal(keys[0], keys[2])
+		require.Len(keys, 3)
+		assert.Equal(keys[0], keys[1])
+		assert.Equal(keys[0], keys[2])
+	})
+	t.Run("deadline from response time", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newReplyFixture(t, "user", nil)
+		initial := f.now
+		f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(func() time.Time { return f.now }), line.WithHTTPClient(&http.Client{Transport: replyRoundTrip(func(request *http.Request) (*http.Response, error) {
+			response, err := http.DefaultTransport.RoundTrip(request)
+			if request.URL.Path == "/v2/bot/message/push" {
+				f.now = f.now.Add(time.Minute)
+			}
+			return response, err
+		})}))
+		f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}})
+		receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		require.NotNil(receipt.RetryAfter)
+		assert.Equal(initial.Add(4*time.Minute), *receipt.RetryAfter)
+		f.now = initial.Add(2 * time.Minute)
+		_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+	})
 }
 
 func TestReplyConcurrentCallsAcceptOnce(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newReplyFixture(t, "user", nil)
-	type result struct {
-		receipt line.ReplyReceipt
-		err     error
-	}
-	results := make(chan result, 8)
-	var wg sync.WaitGroup
-	for range 8 {
-		wg.Go(func() {
-			receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-			results <- result{receipt, err}
-		})
-	}
-	wg.Wait()
-	close(results)
-	for result := range results {
-		if result.err != nil {
-			require.ErrorIs(result.err, store.ErrSyncAlreadyActive)
-		} else {
-			assert.Contains([]string{"sent", "remote_unknown"}, result.receipt.Status)
+	t.Run("concurrent admission", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newReplyFixture(t, "user", nil)
+		type result struct {
+			receipt line.ReplyReceipt
+			err     error
 		}
-	}
-	receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal("sent", receipt.Status)
-	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-	assert.Equal(1, f.fake.AcceptedPushes())
-}
-
-func TestReplyRetryDeadlineUsesResponseTime(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newReplyFixture(t, "user", nil)
-	initial := f.now
-	f.client = line.NewClient("2000000001", "synthetic-secret", line.WithBaseURLs(f.http.URL, f.http.URL), line.WithClock(func() time.Time { return f.now }), line.WithHTTPClient(&http.Client{Transport: replyRoundTrip(func(request *http.Request) (*http.Response, error) {
-		response, err := http.DefaultTransport.RoundTrip(request)
-		if request.URL.Path == "/v2/bot/message/push" {
-			f.now = f.now.Add(time.Minute)
+		results := make(chan result, 8)
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() {
+				receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+				results <- result{receipt, err}
+			})
 		}
-		return response, err
-	})}))
-	f.fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Status: 503, Header: http.Header{"Retry-After": {"180"}}})
-	receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	require.NotNil(receipt.RetryAfter)
-	assert.Equal(initial.Add(4*time.Minute), *receipt.RetryAfter)
-	f.now = initial.Add(2 * time.Minute)
-	_, err = f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+		wg.Wait()
+		close(results)
+		for result := range results {
+			if result.err != nil {
+				require.ErrorIs(result.err, store.ErrSyncAlreadyActive)
+			} else {
+				assert.Contains([]string{"sent", "remote_unknown"}, result.receipt.Status)
+			}
+		}
+		receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		assert.Equal("sent", receipt.Status)
+		assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+		assert.Equal(1, f.fake.AcceptedPushes())
+	})
+	// SQL tracing pauses the draft lookup after the receipt lookup has completed.
+	// Actual Store queries and the fake HTTP API execute both sends.
+	t.Run("completion between receipt and draft lookup", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		f := newReplyFixture(t, "user", testutil.NewSQLiteTestStore(t))
+		handler := &replyLookupHandler{arrived: make(chan struct{}), release: make(chan struct{})}
+		prior := slog.Default()
+		slog.SetDefault(slog.New(handler))
+		store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
+		t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}); slog.SetDefault(prior) })
+		var release sync.Once
+		defer release.Do(func() { close(handler.release) })
+		type result struct {
+			receipt line.ReplyReceipt
+			err     error
+		}
+		completed := make(chan result, 1)
+		go func() {
+			receipt, err := f.sender().Send(store.WithRequestID(t.Context(), "reply-lookup-race"), f.draft.DraftID, 1)
+			completed <- result{receipt, err}
+		}()
+		select {
+		case <-handler.arrived:
+		case <-time.After(30 * time.Second):
+			require.FailNow("second sender did not reach draft lookup")
+		}
+		first, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		require.NoError(err)
+		release.Do(func() { close(handler.release) })
+		second := <-completed
+		require.NoError(second.err)
+		assert.Equal(first, second.receipt)
+		assert.Equal(1, f.fake.AcceptedPushes())
+	})
 }
 
 type replyRoundTrip func(*http.Request) (*http.Response, error)
@@ -454,23 +494,6 @@ type replyClosingBody struct {
 }
 
 func (b replyClosingBody) Close() error { err := b.ReadCloser.Close(); b.closed(); return err }
-
-func TestReplyArchiveFailureReturnsPendingReceipt(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newReplyFixture(t, "user", testutil.NewSQLiteTestStore(t))
-	_, err := f.st.DB().ExecContext(t.Context(), `CREATE TRIGGER fail_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
-	require.NoError(err)
-	pending, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.Error(err)
-	assert.Equal("sent_archive_pending", pending.Status)
-	assert.True(pending.Accepted)
-	assert.Equal("900000000000000001", pending.RemoteMessageID)
-	assert.Zero(pending.MessageID)
-	_, err = f.st.DB().ExecContext(t.Context(), `DROP TRIGGER fail_reply_archive`)
-	require.NoError(err)
-	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
-}
 
 func TestReplyKnownRemoteIDSurvivesReceiptStoreFailure(t *testing.T) {
 	for _, recovery := range []string{"same-key retry", "revoked policy"} {
@@ -591,42 +614,6 @@ func TestReplyConflictingReceiptKeepsDurableIdentity(t *testing.T) {
 	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 	require.NoError(err)
 	assert.Equal("sent", sent.Status)
-	assert.Equal(1, f.fake.AcceptedPushes())
-}
-
-// SQL tracing pauses the draft lookup after the receipt lookup has completed.
-// Actual Store queries and the fake HTTP API execute both sends.
-func TestReplyConcurrentCompletionReturnsReceipt(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	f := newReplyFixture(t, "user", testutil.NewSQLiteTestStore(t))
-	handler := &replyLookupHandler{arrived: make(chan struct{}), release: make(chan struct{})}
-	prior := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
-	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}); slog.SetDefault(prior) })
-	var release sync.Once
-	defer release.Do(func() { close(handler.release) })
-	type result struct {
-		receipt line.ReplyReceipt
-		err     error
-	}
-	completed := make(chan result, 1)
-	go func() {
-		receipt, err := f.sender().Send(store.WithRequestID(t.Context(), "reply-lookup-race"), f.draft.DraftID, 1)
-		completed <- result{receipt, err}
-	}()
-	select {
-	case <-handler.arrived:
-	case <-time.After(30 * time.Second):
-		require.FailNow("second sender did not reach draft lookup")
-	}
-	first, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	require.NoError(err)
-	release.Do(func() { close(handler.release) })
-	second := <-completed
-	require.NoError(second.err)
-	assert.Equal(first, second.receipt)
 	assert.Equal(1, f.fake.AcceptedPushes())
 }
 

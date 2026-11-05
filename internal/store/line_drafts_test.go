@@ -9,7 +9,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestLineChatDraftRequiresSameSourceReply(t *testing.T) {
+func TestLineChatDraftRequiresArchivedReplyInConversation(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)

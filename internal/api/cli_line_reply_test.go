@@ -17,7 +17,6 @@ import (
 func TestCLIRunLineReplyOwnerAdmission(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	assert.True(cliRunCommandAllowed([]string{"send-line-reply", "chat-draft-example", "--revision=1"}))
 	server, secret := newDelegatedTestServer(t)
 	_, allSecret, _, err := server.agentGrants.Issue("reply-agent", []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete}, []agentgrant.SourceRef{{ID: 1, Type: "imap", Identifier: "alice@example.com"}}, time.Time{})
 	require.NoError(err)

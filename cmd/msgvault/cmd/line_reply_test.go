@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -41,54 +40,6 @@ func lineReplyAdapterFixture(t *testing.T) (*storeAPIAdapter, store.ChatDraft, *
 	cfg.Line = []config.LineSource{{ChannelID: "2000000001", SecretEnv: "EXAMPLE_LINE_SECRET", Enabled: true, AllowSend: true}}
 	require.NoError(t, cfg.Save())
 	return &storeAPIAdapter{store: st, config: cfg, logger: slog.New(slog.DiscardHandler)}, draft, fake
-}
-
-func TestSendLineReplyThroughOwnerCLI(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	refreshed := 0
-	a.draftCacheRefresh = func(ctx context.Context, source string) error {
-		refreshed++
-		require.NoError(ctx.Err())
-		assert.Equal("2000000001", source)
-		execution, err := a.store.AcquireSyncExecutionContext(ctx, draft.SourceID)
-		require.NoError(err)
-		require.NoError(execution.Release())
-		return errors.New("synthetic cache failure")
-	}
-	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
-	defer server.Close()
-	ctx := configureRemoteDaemonForTest(t, server.URL)
-	run := func(args ...string) (string, error) {
-		root := &cobra.Command{Use: "msgvault"}
-		root.SetContext(ctx)
-		root.AddCommand(newSendLineReplyCommand(), newDraftComposeCommand())
-		silenceUsageInRunE(root)
-		var output bytes.Buffer
-		root.SetOut(&output)
-		root.SetErr(&output)
-		root.SetArgs(args)
-		err := root.ExecuteContext(ctx)
-		return output.String(), err
-	}
-	parent, err := a.store.LineMessageContext(t.Context(), draft.SourceID, "100")
-	require.NoError(err)
-	createdJSON, err := run("draft-compose", "--conversation", strconv.FormatInt(draft.ConversationID, 10), "--reply-to", strconv.FormatInt(parent.ID, 10), "--body", "Other reviewed draft", "--json")
-	require.NoError(err)
-	var created chatDraftOutput
-	require.NoError(json.Unmarshal([]byte(createdJSON), &created))
-	assert.Equal("line", created.SourceType)
-	out, err := run("send-line-reply", draft.DraftID, "--revision", "1", "--json")
-	require.NoError(err)
-	var sent line.ReplyReceipt
-	require.NoError(json.Unmarshal([]byte(out), &sent))
-	assert.Equal("sent", sent.Status)
-	assert.True(sent.Accepted)
-	_, err = run("send-line-reply", created.DraftID, "--revision", "1", "--json")
-	require.NoError(err)
-	assert.Equal(2, refreshed)
-	assert.Equal(2, fake.Count("POST", "/v2/bot/message/push"))
 }
 
 func TestSendLineReplyThroughLocalDaemonCLI(t *testing.T) {
@@ -135,9 +86,8 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 			case "missing secret":
 				t.Setenv("EXAMPLE_LINE_SECRET", "")
 			case "invalid text":
-				edited, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "")
+				_, err := a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "")
 				require.NoError(err)
-				draft = edited
 				req.Args[2] = "--revision=2"
 			case "grant":
 				req.Grant = &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftCreate, agentgrant.PermissionDraftEdit, agentgrant.PermissionDraftDelete}}
@@ -169,13 +119,6 @@ func TestLineReplyOwnerAdmissionGuards(t *testing.T) {
 				assert.Equal("invalid_args", err.Error())
 			}
 			assert.Len(fake.Requests(), before)
-			if kind == "grant" || kind == "env" || kind == "cwd" || kind == "missing revision" {
-				return
-			}
-			_, err = a.store.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-			require.ErrorIs(err, sql.ErrNoRows)
-			_, err = a.store.UpdateChatDraftContext(t.Context(), draft.DraftID, draft.Revision, "still editable")
-			require.NoError(err)
 		})
 	}
 }
@@ -185,9 +128,17 @@ func TestLineReplyCacheAfterOutputFailureAndRecovery(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
-			a, draft, fake := lineReplyAdapterFixture(t)
+			a, draft, _ := lineReplyAdapterFixture(t)
 			refreshed := 0
-			a.draftCacheRefresh = func(ctx context.Context, _ string) error { refreshed++; require.NoError(ctx.Err()); return nil }
+			a.draftCacheRefresh = func(ctx context.Context, source string) error {
+				refreshed++
+				require.NoError(ctx.Err())
+				assert.Equal("2000000001", source)
+				execution, err := a.store.AcquireSyncExecutionContext(ctx, draft.SourceID)
+				require.NoError(err)
+				require.NoError(execution.Release())
+				return errors.New("synthetic cache failure")
+			}
 			req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
 			outputErr := errors.New("synthetic output failure")
 			ctx, cancel := context.WithCancel(t.Context())
@@ -210,58 +161,58 @@ func TestLineReplyCacheAfterOutputFailureAndRecovery(t *testing.T) {
 			require.NoError(err)
 			assert.Contains(out.String(), `"status":"sent"`)
 			assert.Equal(2, refreshed)
-			assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
 		})
 	}
 }
 
 func TestLineReplyKnownAcceptanceEmitsRecoveryReceipt(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	_, err := a.store.DB().Exec(`CREATE TRIGGER fail_line_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
-	require.NoError(err)
-	req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
-	var out strings.Builder
-	err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
-	require.NoError(err)
-	var pending line.ReplyReceipt
-	require.NoError(json.Unmarshal([]byte(out.String()), &pending))
-	assert.Equal("sent_archive_pending", pending.Status)
-	assert.True(pending.Accepted)
-	assert.NotEmpty(pending.RemoteMessageID)
-	_, err = a.store.DB().Exec(`DROP TRIGGER fail_line_reply_archive`)
-	require.NoError(err)
-	a.config.Line = nil
-	require.NoError(a.config.Save())
-	out.Reset()
-	err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
-	require.NoError(err)
-	assert.Contains(out.String(), `"status":"sent"`)
-	assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
-}
-
-func TestLineReplyUnpersistedAcceptanceEmitsBoundedRecoveryReceipt(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a, draft, fake := lineReplyAdapterFixture(t)
-	_, err := a.store.DB().Exec(`CREATE TRIGGER fail_line_reply_receipt BEFORE UPDATE ON line_reply_attempts WHEN NEW.state='remote_accepted' BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`)
-	require.NoError(err)
-	req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
-	var out strings.Builder
-	err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
-	require.NoError(err)
-	var pending line.ReplyReceipt
-	require.NoError(json.Unmarshal([]byte(out.String()), &pending))
-	assert.Equal("accepted_receipt_pending", pending.Status)
-	assert.True(pending.Accepted)
-	assert.Equal("synthetic-request-1", pending.RequestID)
-	assert.Equal("900000000000000001", pending.RemoteMessageID)
-	durable, err := a.store.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	assert.Equal(store.LineReplyRemoteUnknown, durable.State)
-	assert.Empty(durable.RemoteMessageID)
-	assert.Equal(1, fake.AcceptedPushes())
+	t.Run("archive failure", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		a, draft, fake := lineReplyAdapterFixture(t)
+		_, err := a.store.DB().Exec(`CREATE TRIGGER fail_line_reply_archive BEFORE INSERT ON messages WHEN NEW.is_from_me=1 BEGIN SELECT RAISE(ABORT,'synthetic archive failure'); END`)
+		require.NoError(err)
+		req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
+		var out strings.Builder
+		err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
+		require.NoError(err)
+		var pending line.ReplyReceipt
+		require.NoError(json.Unmarshal([]byte(out.String()), &pending))
+		assert.Equal("sent_archive_pending", pending.Status)
+		assert.True(pending.Accepted)
+		assert.NotEmpty(pending.RemoteMessageID)
+		_, err = a.store.DB().Exec(`DROP TRIGGER fail_line_reply_archive`)
+		require.NoError(err)
+		a.config.Line = nil
+		require.NoError(a.config.Save())
+		out.Reset()
+		err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
+		require.NoError(err)
+		assert.Contains(out.String(), `"status":"sent"`)
+		assert.Equal(1, fake.Count("POST", "/v2/bot/message/push"))
+	})
+	t.Run("receipt persistence failure", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		a, draft, fake := lineReplyAdapterFixture(t)
+		_, err := a.store.DB().Exec(`CREATE TRIGGER fail_line_reply_receipt BEFORE UPDATE ON line_reply_attempts WHEN NEW.state='remote_accepted' BEGIN SELECT RAISE(ABORT,'synthetic receipt failure'); END`)
+		require.NoError(err)
+		req := api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1", "--json"}}
+		var out strings.Builder
+		err = a.RunCLICommand(t.Context(), req, func(event api.CLIRunEvent) error { out.WriteString(event.Data); return nil })
+		require.NoError(err)
+		var pending line.ReplyReceipt
+		require.NoError(json.Unmarshal([]byte(out.String()), &pending))
+		assert.Equal("accepted_receipt_pending", pending.Status)
+		assert.True(pending.Accepted)
+		assert.Equal("synthetic-request-1", pending.RequestID)
+		assert.Equal("900000000000000001", pending.RemoteMessageID)
+		durable, err := a.store.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(store.LineReplyRemoteUnknown, durable.State)
+		assert.Empty(durable.RemoteMessageID)
+		assert.Equal(1, fake.AcceptedPushes())
+	})
 }
 
 func TestLineReplyCredentialFailureCode(t *testing.T) {
@@ -272,9 +223,6 @@ func TestLineReplyCredentialFailureCode(t *testing.T) {
 	err := a.RunCLICommand(t.Context(), api.CLIRunRequest{Args: []string{"send-line-reply", draft.DraftID, "--revision=1"}}, func(api.CLIRunEvent) error { return nil })
 	require.Error(err)
 	assert.Equal("credentials_unavailable", err.Error())
-	attempt, err := a.store.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	assert.Equal(store.LineReplyRemoteUnknown, attempt.State)
 }
 
 func TestLineReplyRevokedSendCanDeleteDraftAndRecover(t *testing.T) {

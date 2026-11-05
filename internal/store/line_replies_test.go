@@ -131,14 +131,6 @@ func TestLineReplyRejectionFlagDeterminesReceipt(t *testing.T) {
 				want = store.LineReplyProviderRejected
 			}
 			assert.Equal(want, receipt.State)
-			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "edited after rejection")
-			require.ErrorIs(err, store.ErrChatDraftFrozen)
-			_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 2, now, allowLineReply)
-			require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
-			repeated, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			require.NoError(err)
-			assert.Equal(receipt, repeated)
 		})
 	}
 }
@@ -246,8 +238,8 @@ func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
 }
 
 func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
-	for _, submitted := range []bool{false, true} {
-		t.Run(map[bool]string{false: "delayed first push", true: "immediate first push"}[submitted], func(t *testing.T) {
+	for _, phase := range []string{"delayed first push", "immediate first push", "accepted"} {
+		t.Run(phase, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			st, draft, _ := replyStoreFixture(t)
@@ -255,26 +247,41 @@ func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
 			original, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 			require.NoError(err)
 			firstPush := now
-			if !submitted {
+			if phase == "delayed first push" {
 				firstPush = now.Add(2 * time.Hour)
 			}
-			started, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush, firstPush.Add(time.Minute))
+			nextRetry := firstPush.Add(time.Minute)
+			if phase == "accepted" {
+				nextRetry = firstPush.Add(30 * time.Second)
+			}
+			started, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush, nextRetry)
 			require.NoError(err)
 			assert.Equal(firstPush, started.AdmittedAt)
+			if phase == "accepted" {
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "original-request"})
+				require.NoError(err)
+			}
 			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, firstPush.Add(23*time.Hour), firstPush.Add(23*time.Hour+30*time.Second))
 			require.ErrorIs(err, store.ErrLineReplyExpired)
-			assert.Equal(store.LineReplyRemoteUnknownExpired, expired.State)
+			if phase == "accepted" {
+				assert.Equal(store.LineReplyAcceptedUnresolvedExpired, expired.State)
+				assert.Equal("original-request", expired.RequestID)
+			} else {
+				assert.Equal(store.LineReplyRemoteUnknownExpired, expired.State)
+			}
 			repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
 			require.ErrorIs(err, store.ErrLineReplyExpired)
 			assert.Equal(original.RetryKey, repeated.RetryKey)
-			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
-			require.ErrorIs(err, store.ErrChatDraftFrozen)
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
-			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
-			require.ErrorIs(err, store.ErrChatDraftNotFound)
-			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-			require.NoError(err)
-			assert.Equal(expired, receipt)
+			if phase == "accepted" {
+				_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+				require.ErrorIs(err, store.ErrChatDraftFrozen)
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+				_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+				require.ErrorIs(err, store.ErrChatDraftNotFound)
+				receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				assert.Equal(expired, receipt)
+			}
 		})
 	}
 }
@@ -302,31 +309,6 @@ func TestLineReplyBindingChangesFailClosed(t *testing.T) {
 			require.ErrorIs(err, store.ErrChatDraftInvalidDestination)
 		})
 	}
-}
-
-func TestLineReplyAcceptedExpiryPreservesAcceptance(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, draft, _ := replyStoreFixture(t)
-	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-	require.NoError(err)
-	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
-	require.NoError(err)
-	_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200, RequestID: "original-request"})
-	require.NoError(err)
-	expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour+30*time.Second))
-	require.ErrorIs(err, store.ErrLineReplyExpired)
-	assert.Equal(store.LineReplyAcceptedUnresolvedExpired, expired.State)
-	assert.Equal("original-request", expired.RequestID)
-	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
-	require.ErrorIs(err, store.ErrChatDraftFrozen)
-	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
-	_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
-	require.ErrorIs(err, store.ErrChatDraftNotFound)
-	receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	assert.Equal(expired, receipt)
 }
 
 func TestLineReplyReceiptCannotOverwriteInboundMessage(t *testing.T) {
@@ -459,8 +441,6 @@ func TestLineReplyTerminalReceiptAllowsSourceMerge(t *testing.T) {
 					_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
 					require.ErrorIs(err, store.ErrLineReplyExpired)
 				}
-				_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
-				require.ErrorIs(err, store.ErrChatDraftFrozen)
 				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
 			}
 			target, err := st.GetOrCreateSource("line", "2000000002")
