@@ -527,9 +527,48 @@ describe('SourcesWorkspace', () => {
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenOperations });
     expect(await screen.findByText('No sources yet')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
-    expect(within(screen.getByRole('dialog', { name: 'Add source' })).getByText('msgvault add-account user@example.com')).toBeDefined();
+    const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
+    await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
+    const email = dialog.getByLabelText('Email address');
+    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
+    await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
+    expect(dialog.getByText('POSIX shell')).toBeDefined();
+    expect(dialog.getByText('Command Prompt')).toBeDefined();
+    expect(dialog.getAllByText('msgvault add-account you@gmail.com')).toHaveLength(2);
+    expect(dialog.getAllByRole('button', { name: 'Copy msgvault add-account you@gmail.com' })).toHaveLength(2);
+    expect(dialog.getByRole('link', { name: 'Learn more' }).getAttribute('href')).toBe('https://msgvault.io/docs/setup/#configure-oauth');
+    await fireEvent.input(email, { target: { value: '' } });
+    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
+    await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
+    await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
+    expect(dialog.getByRole('list', { name: 'Source kinds' })).toBeDefined();
+    await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
+    expect((dialog.getByLabelText('Email address') as HTMLInputElement).value).toBe('');
+    await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
+  });
+
+  it('opens existing CardDAV setup and closes the picker', async () => {
+    const onOpenSettings = vi.fn();
+    render(SourcesWorkspace, { client: createCaptureClient(api([]), []), onOpenSettings });
+    await screen.findByText('No sources yet');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Set up Contacts (CardDAV)' }));
+    expect(onOpenSettings).toHaveBeenCalledWith('carddav');
+    expect(screen.queryByRole('dialog', { name: 'Add source' })).toBeNull();
+  });
+
+  it('discovers the first source when the window regains focus', async () => {
+    let sources: unknown[] = [];
+    render(SourcesWorkspace, { client: createCaptureClient(api([], url => {
+      if (url.pathname.endsWith('/sources/status')) return Response.json({ sources });
+    }), []) });
+    await screen.findByText('No sources yet');
+    sources = [source()];
+    await fireEvent.focus(window);
+    expect(await screen.findByRole('button', { name: 'Details for Archive' })).toBeDefined();
   });
 
   it('keeps polling through idle races until the accepted run completes', async () => {
