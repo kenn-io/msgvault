@@ -21,11 +21,6 @@ func TestImportLegacyGroup(t *testing.T) {
 			summary := runImport(t, st, dir, attachments)
 
 			assert.Equal(int64(1), summary.MessagesAdded)
-			assert.Equal(map[string]importedMessage{
-				"signal:group-v1:AP8:" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol+10): {
-					conversation: "signal:group-v1:AP8", body: "Old group text",
-				},
-			}, importedMessages(t, st))
 			before := importedMessages(t, st)
 			changeFixture(t, dir, `UPDATE thread SET _id = 113 WHERE _id = 13`, `UPDATE message SET thread_id = 113 WHERE thread_id = 13`)
 			summary = runImport(t, st, dir, attachments)

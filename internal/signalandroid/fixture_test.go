@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ import (
 )
 
 // writeTablesFixture writes a SQLite file containing only the given DDL.
-func writeTablesFixture(t *testing.T, ddl ...string) string {
+func writeTablesFixture(t *testing.T, version int, ddl ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "database.sqlite")
 	db, err := sql.Open("sqlite3", path)
@@ -19,6 +20,6 @@ func writeTablesFixture(t *testing.T, ddl ...string) string {
 	_, err = db.Exec(strings.Join(ddl, ";\n"))
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
-	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "DatabaseVersion.sbf"), []byte("VERSION:uint32:215\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(filepath.Dir(path), "DatabaseVersion.sbf"), []byte("VERSION:uint32:"+strconv.Itoa(version)+"\n"), 0o600))
 	return path
 }

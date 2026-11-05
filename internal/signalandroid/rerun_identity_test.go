@@ -20,11 +20,6 @@ func TestLongTextRevisionIdentityAcrossRestore(t *testing.T) {
 			`UPDATE message SET _id = 900 WHERE _id = 300`,
 			`UPDATE attachment SET message_id = 900 WHERE _id = 503`,
 		}},
-		{"new revision with same preview", "Carol here", []string{
-			`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
-			`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, body, 300 FROM message WHERE _id = 300`,
-			`UPDATE attachment SET message_id = 301 WHERE _id = 503`,
-		}},
 		{"changed raw preview", "Carol changed", []string{`UPDATE message SET body = 'Carol changed' WHERE _id = 300`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

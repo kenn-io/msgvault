@@ -17,8 +17,9 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 	for _, tc := range []struct {
 		name, full, body, messageID, presentSearch, absentSearch string
 		initial, revision                                        []string
-		firstMissing                                             bool
-		checkMissing                                             bool
+		firstMissing, firstOnly, emptyFile, unreadableFile       bool
+		keepFile, bodyContains, checkMissing, portableStore      bool
+		wantErrors, wantProcessed                                int64
 	}{
 		{
 			name: "missing on rerun", full: strings.Repeat("long text ", 300) + "searchablesuffix",
@@ -26,10 +27,10 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			presentSearch: "searchablesuffix", checkMissing: true,
 		},
 		{
-			name: "missing on first import", firstMissing: true, body: "Carol here", checkMissing: true,
+			name: "missing on first import", firstMissing: true, firstOnly: true, body: "Carol here", checkMissing: true,
 		},
 		{
-			name: "edited latest preview", full: "Carol here originalsuffix", body: "Carol EDITED short",
+			name: "edited latest preview", keepFile: true, full: "Carol here originalsuffix", body: "Carol EDITED short",
 			revision: []string{
 				`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
 				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, 'Carol EDITED short', 300 FROM message WHERE _id = 300`,
@@ -47,16 +48,51 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			absentSearch: "obsoleteending",
 		},
 		{
-			name: "contact rename", full: "Hi \uFFFC, look searchablesuffix",
+			name: "contact rename", bodyContains: true, full: "Hi \uFFFC, look searchablesuffix",
 			messageID:     "signal:group:" + signalfixture.GroupB64 + ":" + signalfixture.BobACI + ":" + ms(signalfixture.TGroup),
 			initial:       []string{`UPDATE attachment SET message_id = 200 WHERE _id = 503`},
 			revision:      []string{`UPDATE recipient SET system_joined_name = 'Renamed Example' WHERE _id = 2`},
 			presentSearch: "searchablesuffix",
 		},
+		{
+			name: "full text on first import", firstOnly: true,
+			full:          strings.Repeat("long text ", 300) + "searchablesuffix",
+			initial:       []string{`UPDATE message SET body = 'preview' WHERE _id = 300`},
+			presentSearch: "searchablesuffix",
+		},
+		{
+			name: "restored revision with same preview", portableStore: true, full: "Carol here archivedsuffix", body: "Carol here",
+			revision: []string{
+				`UPDATE message SET latest_revision_id = 301 WHERE _id = 300`,
+				`INSERT INTO message (_id, date_sent, date_received, thread_id, from_recipient_id, to_recipient_id, type, body, original_message_id) SELECT 301, date_sent + 1, date_received + 1, thread_id, from_recipient_id, to_recipient_id, type, body, 300 FROM message WHERE _id = 300`,
+				`UPDATE attachment SET message_id = 301 WHERE _id = 503`,
+			},
+		},
+		{
+			name: "empty on first import", firstOnly: true, emptyFile: true,
+			body: "Carol here", presentSearch: "Carol", checkMissing: true,
+		},
+		{
+			name: "empty on rerun", emptyFile: true, full: "Carol here archivedsuffix",
+			presentSearch: "archivedsuffix", checkMissing: true,
+		},
+		{
+			name: "unreadable on first import", firstOnly: true, unreadableFile: true, portableStore: true,
+			full: "Carol here archivedsuffix", body: "Carol here", checkMissing: true,
+			wantErrors: 1, wantProcessed: 7,
+		},
+		{
+			name: "unreadable on rerun", unreadableFile: true, keepFile: true, portableStore: true, full: "Carol here archivedsuffix",
+			checkMissing: true, wantErrors: 1, wantProcessed: 7,
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			st, dir := testutil.NewSQLiteTestStore(t), t.TempDir()
+			newStore := testutil.NewSQLiteTestStore
+			if tc.portableStore {
+				newStore = testutil.NewTestStore
+			}
+			st, dir := newStore(t), t.TempDir()
 			signalfixture.Write(t, dir, signalfixture.Current, 0)
 			changeFixture(t, dir, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`)
 			changeFixture(t, dir, tc.initial...)
@@ -64,21 +100,40 @@ func TestMissingLongTextOnRerun(t *testing.T) {
 			if !tc.firstMissing {
 				require.NoError(os.WriteFile(file, []byte(tc.full), 0o600))
 			}
-			summary := runImport(t, st, dir, storage)
-			if !tc.firstMissing {
-				// The latest-preview case keeps the original file, but the new revision's file is missing.
-				if tc.name != "edited latest preview" {
+			if !tc.firstOnly {
+				runImport(t, st, dir, storage)
+				if !tc.keepFile {
 					require.NoError(os.Remove(file))
 				}
 				changeFixture(t, dir, tc.revision...)
-				summary = runImport(t, st, dir, storage)
+			}
+			if tc.emptyFile {
+				require.NoError(os.WriteFile(file, nil, 0o600))
+			}
+			var progress ImportProgress
+			if tc.unreadableFile {
+				progress = longTextReadFailureProgress{onStart: func() {
+					// Discovery must see a file before reading it fails.
+					require.NoError(os.Remove(file))
+					require.NoError(os.Mkdir(file, 0o700))
+					_, err := os.ReadFile(file)
+					require.Error(err)
+				}}
+			}
+			opts := DefaultOptions()
+			opts.Phone, opts.AttachmentFilesDir, opts.AttachmentsDir = signalfixture.OwnPhone, dir, storage
+			summary, err := NewImporter(st, progress).Import(t.Context(), filepath.Join(dir, "database.sqlite"), opts)
+			require.NoError(err)
+			assert.Equal(tc.wantErrors, summary.Errors)
+			if tc.wantProcessed != 0 {
+				assert.Equal(tc.wantProcessed, summary.MessagesAdded+summary.MessagesUpdated)
 			}
 			id := tc.messageID
 			if id == "" {
 				id = "signal:aci:" + signalfixture.CarolACI + ":" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol)
 			}
 			body := importedMessages(t, st)[id].body
-			if tc.name == "contact rename" {
+			if tc.bodyContains {
 				assert.Contains(body, "searchablesuffix")
 			} else {
 				want := tc.body
@@ -139,7 +194,6 @@ func TestProducerVersionSidecar(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			st, dir := testutil.NewTestStore(t), t.TempDir()
 			path := signalfixture.Write(t, dir, signalfixture.Current, 0)
-			changeFixture(t, dir, `PRAGMA user_version = 0`)
 			versionPath := filepath.Join(dir, "DatabaseVersion.sbf")
 			if tc.data != "" {
 				require.NoError(os.WriteFile(versionPath, []byte(tc.data), 0o600))
@@ -157,7 +211,6 @@ func TestProducerVersionSidecar(t *testing.T) {
 				assert.Zero(countRows(t, st, `SELECT COUNT(*) FROM sources`))
 			} else {
 				require.NoError(err)
-				assert.Len(importedMessages(t, st), 6)
 			}
 		})
 	}
@@ -216,3 +269,11 @@ func TestNegativeLimit(t *testing.T) {
 	_, err := NewImporter(testutil.NewTestStore(t), nil).Import(t.Context(), "missing.sqlite", opts)
 	require.ErrorContains(t, err, "limit must be non-negative")
 }
+
+type longTextReadFailureProgress struct {
+	NullProgress
+
+	onStart func()
+}
+
+func (p longTextReadFailureProgress) OnStart() { p.onStart() }

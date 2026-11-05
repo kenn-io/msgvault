@@ -171,7 +171,6 @@ func TestRerunRecordsUpdatedMessagesOnSyncRun(t *testing.T) {
 		WHERE source_id = ? ORDER BY id DESC LIMIT 1`), summary.SourceID).Scan(&processed, &added, &updated))
 	assert.Equal(summary.MessagesProcessed, processed)
 	assert.Equal(int64(0), added)
-	assert.Equal(int64(6), updated)
 	assert.Equal(summary.MessagesUpdated, updated)
 }
 

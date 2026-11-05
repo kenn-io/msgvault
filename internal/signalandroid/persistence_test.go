@@ -51,13 +51,13 @@ func TestRerunCountsUnchanged(t *testing.T) {
 				require.NoError(os.Mkdir(file, 0o700))
 			}
 			summary := runImport(t, st, dir, storage)
+			assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments`))
+			assert.Zero(summary.ReactionsAdded)
+			assert.Zero(summary.AttachmentsStored)
+			assert.Zero(summary.Errors)
 			if occurrence {
 				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM attachments WHERE id = ?`, attachmentID))
 				assert.Equal(1, countRows(t, st, `SELECT COUNT(*) FROM document_occurrences WHERE attachment_id = ?`, attachmentID))
-			} else {
-				assert.Zero(summary.ReactionsAdded)
-				assert.Zero(summary.AttachmentsStored)
-				assert.Zero(summary.Errors)
 			}
 		})
 	}

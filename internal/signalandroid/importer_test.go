@@ -218,17 +218,18 @@ func TestReimportAddsNothingAfterRestore(t *testing.T) {
 
 func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 	tests := []struct {
-		name string
-		ddl  []string
-		want string
+		name    string
+		version int
+		ddl     []string
+		want    string
 	}{
 		{
-			name: "not signal",
+			name: "not signal", version: 215,
 			ddl:  []string{`CREATE TABLE message (_id INTEGER PRIMARY KEY)`},
 			want: "recipient and thread tables are missing",
 		},
 		{
-			name: "before the single message table",
+			name: "before the single message table", version: 184,
 			ddl: []string{
 				`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, uuid TEXT, phone TEXT, group_id TEXT)`,
 				`CREATE TABLE thread (_id INTEGER PRIMARY KEY, thread_recipient_id INTEGER)`,
@@ -238,7 +239,8 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 			want: "predates Signal Android database version 185",
 		},
 		{
-			name: "before message authorship columns",
+			// A damaged schema exercises the defensive column check.
+			name: "damaged message authorship columns", version: 215,
 			ddl: []string{
 				`CREATE TABLE recipient (_id INTEGER PRIMARY KEY, uuid TEXT, phone TEXT, group_id TEXT)`,
 				`CREATE TABLE thread (_id INTEGER PRIMARY KEY, recipient_id INTEGER)`,
@@ -252,7 +254,7 @@ func TestImportRejectsUnsupportedDatabases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
-			path := writeTablesFixture(t, tt.ddl...)
+			path := writeTablesFixture(t, tt.version, tt.ddl...)
 			opts := DefaultOptions()
 			opts.Phone = signalfixture.OwnPhone
 			_, err := NewImporter(testutil.NewTestStore(t), nil).Import(context.Background(), path, opts)

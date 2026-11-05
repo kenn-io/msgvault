@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,12 +27,6 @@ func TestLongTextAttachment(t *testing.T) {
 		name, full, body, messageID, search string
 		changes                             []string
 	}{
-		{
-			name: "full text", full: strings.Repeat("long text ", 300) + "searchablesuffix",
-			messageID: "signal:aci:" + signalfixture.CarolACI + ":" + signalfixture.CarolACI + ":" + ms(signalfixture.TCarol),
-			search:    "searchablesuffix",
-			changes:   []string{`UPDATE message SET body = 'preview' WHERE _id = 300`, `INSERT INTO attachment (_id, message_id, content_type) VALUES (503, 300, 'text/x-signal-plain')`},
-		},
 		{
 			name: "short edit", full: "Original long text", body: "Short replacement",
 			messageID: "signal:aci:" + signalfixture.AliceACI + ":" + signalfixture.OwnACI + ":" + ms(signalfixture.TEditOld),
