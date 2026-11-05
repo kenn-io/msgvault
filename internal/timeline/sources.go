@@ -2,6 +2,7 @@ package timeline
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"go.kenn.io/msgvault/internal/loops"
@@ -12,6 +13,7 @@ import (
 // Sources supplies the required archive readers for composition. Agenda is optional.
 // Source authorization always travels in the request context.
 type Sources struct {
+	db          *sql.DB
 	Activity    ActivitySource
 	Cold        ColdSource
 	Calendar    CalendarSource

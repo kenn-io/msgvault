@@ -93,8 +93,14 @@ func TestTimelineReentryReloadsRelativeDayAfterMidnight(t *testing.T) {
 			defer m.cancelTimelineRequest()
 			m.timelineState.request = tc.req
 			m.timelineState.result.Now = time.Now().AddDate(0, 0, -1)
+			m.timelineState.history = []timelineNavigation{{result: timelineModeFixture()}}
 			cmd := m.activateTimeline()
 			assert.Equal(t, tc.reload, cmd != nil)
+			if tc.reload {
+				assert.Empty(t, m.timelineState.history)
+			} else {
+				assert.Len(t, m.timelineState.history, 1)
+			}
 		})
 	}
 }

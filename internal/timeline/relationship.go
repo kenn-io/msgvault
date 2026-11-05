@@ -100,7 +100,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
 	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts}
-	parallel(c.ctx,
+	c.parallel(
 		func() {
 			messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
 				return c.src.Activity.MessageContactAggregateContext(ctx, q)

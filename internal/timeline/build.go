@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"maps"
 	"slices"
-	"sync"
 	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -271,18 +270,12 @@ func readWithin[T any](ctx context.Context, timeout time.Duration, fn func(conte
 		return readResult[T]{err: ctx.Err()}
 	}
 }
-func parallel(ctx context.Context, tasks ...func()) {
-	if store.HasReadSnapshotContext(ctx) {
-		for _, task := range tasks {
-			task()
-		}
-		return
-	}
-	var wg sync.WaitGroup
+func (c *composer) parallel(tasks ...func()) {
+	reads := make([]func(context.Context) error, 0, len(tasks))
 	for _, task := range tasks {
-		wg.Go(task)
+		reads = append(reads, func(context.Context) error { task(); return nil })
 	}
-	wg.Wait()
+	_ = store.RunIndependentReads(c.ctx, c.src.db, reads...)
 }
 
 func (c *composer) bounds() (time.Time, time.Time) {

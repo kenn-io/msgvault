@@ -163,7 +163,7 @@ func (m Model) timelineNoteLines() []string {
 		return nil
 	}
 	lines := []string{note.LocalDate, ""}
-	for line := range strings.SplitSeq(textutil.SanitizeTerminal(note.Body), "\n") {
+	for line := range strings.SplitSeq(textutil.SanitizeTerminalMultiline(note.Body), "\n") {
 		lines = append(lines, wrapText(line, max(m.width-2, 1))...)
 	}
 	return lines

@@ -2,7 +2,6 @@
 package sourceinventory
 
 import (
-	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
@@ -13,6 +12,7 @@ import (
 	"go.kenn.io/msgvault/internal/chatwoot"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/freshness"
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/oauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
@@ -142,12 +142,6 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		}
 		items = append(items, item)
 	}
-	slices.SortStableFunc(items, func(a, b Item) int {
-		if n := cmp.Compare(a.SourceType, b.SourceType); n != 0 {
-			return n
-		}
-		return cmp.Compare(a.Identifier, b.Identifier)
-	})
 	return items, nil
 }
 
@@ -171,14 +165,10 @@ func matches(source *store.Source, entry configuredSource) bool {
 		return json.Unmarshal([]byte(source.Identifier), &identity) == nil && identity[0] == entry.identifier
 	}
 	if entry.kind == "gcal" {
-		identifier := normalizeEmail(source.Identifier)
+		identifier := gcalmodel.NormalizeParticipantEmail(source.Identifier)
 		return identifier == entry.identifier || strings.HasPrefix(identifier, entry.identifier+"/")
 	}
 	return source.Identifier == entry.identifier
-}
-
-func normalizeEmail(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
 }
 
 func scheduling(enabled bool, schedule string) string {
@@ -227,7 +217,7 @@ func configuration(cfg *config.Config) []configuredSource {
 		if name == "" {
 			name = s.Email
 		}
-		add("gcal", normalizeEmail(s.Email), s.Enabled, s.Schedule, "msgvault sync-calendar "+shellArgument(name))
+		add("gcal", gcalmodel.NormalizeParticipantEmail(s.Email), s.Enabled, s.Schedule, "msgvault sync-calendar "+shellArgument(name))
 	}
 	for _, s := range cfg.Chatwoot {
 		entries = append(entries, configuredSource{kind: "chatwoot", identifier: s.Identifier,

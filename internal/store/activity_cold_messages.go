@@ -18,15 +18,12 @@ func (s *Store) ListColdActivityMessagesContext(ctx context.Context, q MessageQu
 	if window.After == nil && window.Before == nil {
 		window.After = new(time.Time)
 	}
-	groups, filters, err := s.coldActivityGroupsContext(ctx, window)
+	groups, _, err := s.coldActivityGroupsContext(ctx, window)
 	if err != nil {
 		return nil, err
 	}
 	result := []ActivityMessage{}
 	for _, group := range groups {
-		if !filters.IncludeNoise && !group.nonNoise {
-			continue
-		}
 		for _, m := range group.messages {
 			if q.AfterKey != nil {
 				comparison := compareColdMessageKey(m.dating.OccurredAt, m.ID, *q.AfterKey)

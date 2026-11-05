@@ -217,7 +217,7 @@ func (m *Model) activateTimeline() tea.Cmd {
 			m.loading = false
 			return nil
 		}
-		m.timelineState.request.Cursor = ""
+		m.timelineState.request.Cursor, m.timelineState.history = "", nil
 	}
 	req := m.timelineState.request
 	if req.Mode == "" {

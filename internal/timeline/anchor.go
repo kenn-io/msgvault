@@ -155,7 +155,7 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	var calendar readResult[store.CalendarOccurrencePage]
 	var calls readResult[[]store.LogicalCall]
 	var notes readResult[[]store.DailyNoteEntry]
-	parallel(c.ctx,
+	c.parallel(
 		func() {
 			activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
 				if c.req.Conversation {
@@ -339,7 +339,7 @@ func (c *composer) conversationEntries(conversation int64, from, to time.Time) (
 		}
 	}
 	var r, cold readResult[[]store.ActivityMessage]
-	parallel(c.ctx,
+	c.parallel(
 		func() {
 			r = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.ActivityMessage, error) {
 				return readMessages(ctx, c.src.Activity.ListActivityMessagesContext)
