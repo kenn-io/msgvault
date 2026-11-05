@@ -238,7 +238,7 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = owner.Close() })
-			grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{"attachment.read", "verification.read"}, []int64{source.ID}, nil, time.Time{})
+			grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{"attachment.read"}, []int64{source.ID}, nil, time.Time{})
 			requirements.NoError(err)
 			agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
 			requirements.NoError(err)

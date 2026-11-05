@@ -323,7 +323,7 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 		ID:      "gmail-draft-managed",
 		Message: gmail.RawMessage{ID: "gmail-message-edited", ThreadID: "gmail-thread-1"},
 	}
-	getAfterEditCode, getAfterEditEvents := run(issue([]string{"draft.create", "verification.read"}, fixture.source.ID, ownerSender), []string{
+	getAfterEditCode, getAfterEditEvents := run(issue([]string{"draft.create"}, fixture.source.ID, ownerSender), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
 	require.Equal(http.StatusOK, getAfterEditCode)
@@ -386,7 +386,7 @@ func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create", "verification.read"}, []int64{fixture.source.ID}, nil, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{fixture.source.ID}, nil, time.Time{})
 	require.NoError(err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))

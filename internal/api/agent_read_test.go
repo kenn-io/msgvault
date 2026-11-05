@@ -745,7 +745,7 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
-	requirements.NoError(os.WriteFile(path, []byte("\x00allback"), 0600))
+	requirements.NoError(os.WriteFile(path, []byte("fallback"), 0600))
 	protected := &agentReadGateStore{Store: st}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
@@ -772,7 +772,7 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 			assertions.Equal(before+1, protected.sourceLists.Load())
 			assertions.Zero(protected.sourceLookups.Load())
 			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-			assertions.Equal("\x00allback", w.Body.String())
+			assertions.Equal("fallback", w.Body.String())
 			assertions.NotContains(w.Header().Get("Content-Disposition"), "private.bin")
 			if strings.Contains(path, "/content") {
 				assertions.Contains(w.Header().Get("Content-Disposition"), "allowed.bin")

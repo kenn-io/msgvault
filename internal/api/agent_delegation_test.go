@@ -266,7 +266,7 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
-	requirements.NoError(os.WriteFile(path, []byte("\x00ermitted bytes"), 0600))
+	requirements.NoError(os.WriteFile(path, []byte("permitted bytes"), 0600))
 	requirements.NoError(st.UpsertAttachment(t.Context(), id, "permitted.bin", "application/octet-stream", filepath.ToSlash(path), hash, 15))
 	var attachmentID int64
 	requirements.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind("SELECT id FROM attachments WHERE message_id=?"), id).Scan(&attachmentID))
@@ -294,8 +294,8 @@ func TestDelegatedOperationAllowlistIsClosed(t *testing.T) {
 		"getMessage":              {fmt.Sprintf("/api/v1/messages/%d", id), src.Identifier},
 		"getCLIMessage":           {fmt.Sprintf("/api/v1/cli/message?id=%d", id), src.Identifier},
 		"getAttachment":           {fmt.Sprintf("/api/v1/attachments/%d", attachmentID), "permitted.bin"},
-		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "\x00ermitted bytes"},
-		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "\x00ermitted bytes"},
+		"getAttachmentContent":    {"/api/v1/attachments/" + hash + "/content", "permitted bytes"},
+		"getCLIAttachment":        {"/api/v1/cli/attachment?content_hash=" + hash, "permitted bytes"},
 		"listCLIAccounts":         {"/api/v1/cli/accounts", src.Identifier},
 		"listCLICollections":      {"/api/v1/cli/collections", `"name":"Selected"`},
 	}
