@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"slices"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/hex/evidence"
 	"go.kenn.io/msgvault/internal/meetingarchive"
@@ -83,16 +81,9 @@ func (imp *Importer) registeredSource(ctx context.Context, source meetingimport.
 	if err != nil {
 		return nil, err
 	}
-	identities, err := imp.store.ListAccountIdentitiesContext(ctx, st.ID)
+	has, matches, err := meetingimport.RecorderIdentityMatch(ctx, imp.store, st.ID, source.AccountEmail)
 	if err != nil {
 		return nil, err
-	}
-	has, matches := false, false
-	for _, identity := range identities {
-		if slices.Contains(strings.Split(identity.SourceSignal, ","), "account-email") {
-			has = true
-			matches = matches || store.EqualIdentifier(identity.Address, source.AccountEmail)
-		}
 	}
 	if (has && !matches) || (!register && !matches) {
 		return nil, ErrRemoteValidation

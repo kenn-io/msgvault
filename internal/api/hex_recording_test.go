@@ -11,7 +11,6 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -90,33 +89,11 @@ func TestHexRecordingOwnerBoundaryAndSizeCap(t *testing.T) {
 	}
 }
 
-type hexPausedRecordingReader struct {
-	reader  *bytes.Reader
-	started chan struct{}
-	resume  chan struct{}
-	once    sync.Once
-}
-
-func (r *hexPausedRecordingReader) Read(p []byte) (int, error) {
-	r.once.Do(func() {
-		close(r.started)
-		<-r.resume
-	})
-	n, err := r.reader.Read(p)
-	if err == io.EOF {
-		return n, io.EOF
-	}
-	if err != nil {
-		return n, fmt.Errorf("read paused recording body: %w", err)
-	}
-	return n, nil
-}
-
 func TestHexRecordingReceivesBodyBeforeTakingOperationGate(t *testing.T) {
 	recording := syntheticMuesliRecording()
 	digest := sha256.Sum256(recording)
 	url := fmt.Sprintf("%s?track=system&identifier=recorder&account_email=user%%40example.com&message_id=42&sha256=%s&size=%d", hexRecordingEndpointPath, hex.EncodeToString(digest[:]), len(recording))
-	body := &hexPausedRecordingReader{reader: bytes.NewReader(recording), started: make(chan struct{}), resume: make(chan struct{})}
+	body := &pausedRecordingReader{reader: bytes.NewReader(recording), started: make(chan struct{}), resume: make(chan struct{})}
 	gate := NewSerialOperationGate()
 	st := &hexRecordingBoundaryStore{mockStore: &mockStore{stats: &StoreStats{}}}
 	server := NewServerWithOptions(ServerOptions{

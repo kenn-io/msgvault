@@ -100,8 +100,9 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 			out.Warnings++
 			continue
 		}
+		inferred := manifest.TitleSource == ""
 		manifest.ResolveTitleSource(time.Local)
-		m := Meeting{Manifest: manifest, TranscriptState: "missing"}
+		m := Meeting{Manifest: manifest, TranscriptState: "missing", TitleSourceInferred: inferred}
 		data, err = r.read(filepath.Join(id, "transcript.ndjson"))
 		if errors.Is(err, os.ErrNotExist) {
 			data, err = r.read(filepath.Join(id, "transcript.rolling.ndjson"))
@@ -127,12 +128,13 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 				var header struct {
 					Covered jsontext.Value `json:"covered_ms"`
 				}
-				_ = json.Unmarshal(line, &header)
-				if len(header.Covered) > 0 {
+				headerErr := json.Unmarshal(line, &header)
+				if headerErr == nil && len(header.Covered) > 0 {
 					continue
 				}
 				var entry Entry
 				if json.Unmarshal(line, &entry) != nil || !evidence.ValidEntry(entry) {
+					m.TranscriptPartial = true
 					out.Warnings++
 					continue
 				}

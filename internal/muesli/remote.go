@@ -315,16 +315,9 @@ func (imp *Importer) ImportRemote(ctx context.Context, r RemoteRequest) (result 
 		return result, err
 	}
 	result.SourceID = source.ID
-	identities, err := imp.store.ListAccountIdentitiesContext(ctx, source.ID)
+	hasRecorder, matches, err := meetingimport.RecorderIdentityMatch(ctx, imp.store, source.ID, r.Source.AccountEmail)
 	if err != nil {
 		return result, err
-	}
-	hasRecorder, matches := false, false
-	for _, identity := range identities {
-		if slices.Contains(strings.Split(identity.SourceSignal, ","), "account-email") {
-			hasRecorder = true
-			matches = matches || store.EqualIdentifier(identity.Address, r.Source.AccountEmail)
-		}
 	}
 	if hasRecorder && !matches {
 		return result, remoteInvalid("source.account_email", "does not match the registered recorder")

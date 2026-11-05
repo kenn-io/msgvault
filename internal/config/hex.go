@@ -60,7 +60,7 @@ func DefaultHexMeetingsDir() string {
 	case "darwin":
 		return filepath.Join(home, "Library", "Application Support", "hex", "meetings")
 	case "windows":
-		return filepath.Join(os.Getenv("APPDATA"), "hex", "meetings")
+		return windowsHexMeetingsDir(home, os.Getenv("APPDATA"))
 	default:
 		root := os.Getenv("XDG_DATA_HOME")
 		if root == "" {
@@ -68,4 +68,11 @@ func DefaultHexMeetingsDir() string {
 		}
 		return filepath.Join(root, "hex", "meetings")
 	}
+}
+
+func windowsHexMeetingsDir(home, appData string) string {
+	if appData == "" {
+		appData = filepath.Join(home, "AppData", "Roaming")
+	}
+	return filepath.Join(appData, "hex", "meetings")
 }

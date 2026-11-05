@@ -74,9 +74,11 @@ type Entry struct {
 	Text    string `json:"text"`
 }
 type Meeting struct {
-	Manifest        Manifest `json:"manifest"`
-	Entries         []Entry  `json:"entries,omitempty"`
-	TranscriptState string   `json:"transcript_state"`
+	Manifest            Manifest `json:"manifest"`
+	Entries             []Entry  `json:"entries,omitempty"`
+	TranscriptState     string   `json:"transcript_state"`
+	TranscriptPartial   bool     `json:"transcript_partial,omitempty"`
+	TitleSourceInferred bool     `json:"title_source_inferred,omitempty"`
 }
 
 func (e Entry) Speaker() string {

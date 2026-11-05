@@ -2,6 +2,7 @@ package hex
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -72,7 +73,32 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 	return changed, err
 }
 func prepareTrack(ctx context.Context, opts ImportOptions, m Meeting, track string) (*meetingarchive.Recording, error) {
-	return meetingarchive.PrepareRecording(ctx, opts.MeetingsDir, filepath.Join(m.Manifest.ID, track+".wav"), opts.RecordingMaxBytes)
+	r, err := meetingarchive.PrepareRecording(ctx, opts.MeetingsDir, filepath.Join(m.Manifest.ID, track+".wav"), opts.RecordingMaxBytes)
+	if r != nil && !trackHasSamples(r) {
+		_ = r.Close()
+		return nil, nil
+	}
+	return r, err
+}
+
+// Hex creates valid empty WAVs for tracks that never opened. Inspect chunks
+// in the immutable snapshot so these tracks wait for real samples.
+func trackHasSamples(r *meetingarchive.Recording) bool {
+	for pos, count := int64(12), 0; pos <= r.Size-8 && count < 10000; count++ {
+		var header [8]byte
+		if _, err := r.File.ReadAt(header[:], pos); err != nil {
+			return false
+		}
+		size := int64(binary.LittleEndian.Uint32(header[4:]))
+		if size > r.Size-pos-8 {
+			return false
+		}
+		if string(header[:4]) == "data" {
+			return size > 0
+		}
+		pos += 8 + size + size%2
+	}
+	return false
 }
 func (imp *Importer) importRecordings(ctx context.Context, opts ImportOptions, m Meeting, messageID int64, sum *ImportSummary) (bool, error) {
 	var failures []error

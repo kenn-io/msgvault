@@ -67,6 +67,12 @@ func decodeHex(fields map[string]jsontext.Value) Content {
 	if m.TranscriptState != "final" {
 		content.Transcript.Reason = "hex_" + m.TranscriptState
 	}
+	if m.TranscriptPartial {
+		content.Transcript.Reason = "hex_partial"
+		if len(lines) == 0 {
+			content.Transcript.State = StateUnavailable
+		}
+	}
 	content.ActionCoverage = CoverageUnsupported
 	content.ActionReason = "no_structured_actions"
 	if m.Manifest.DurationMS != nil {
@@ -76,13 +82,16 @@ func decodeHex(fields map[string]jsontext.Value) Content {
 	} else if m.Manifest.EndedAtMS != nil && *m.Manifest.EndedAtMS > m.Manifest.CreatedAtMS {
 		setDuration(&content, float64(*m.Manifest.EndedAtMS-m.Manifest.CreatedAtMS)/1000, DurationProvider)
 	} else {
-		var end int64
-		for _, entry := range m.Entries {
+		var start, end int64
+		for i, entry := range m.Entries {
+			if i == 0 || entry.StartMS < start {
+				start = entry.StartMS
+			}
 			if entry.EndMS > end {
 				end = entry.EndMS
 			}
 		}
-		setDuration(&content, float64(end)/1000, DurationTranscriptSpan)
+		setDuration(&content, float64(end-start)/1000, DurationTranscriptSpan)
 	}
 
 	return content

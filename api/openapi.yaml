@@ -6775,6 +6775,10 @@ components:
           type: array
         manifest:
           $ref: "#/components/schemas/HexManifest"
+        title_source_inferred:
+          type: boolean
+        transcript_partial:
+          type: boolean
         transcript_state:
           type: string
       required:

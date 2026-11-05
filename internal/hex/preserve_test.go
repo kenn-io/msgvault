@@ -79,6 +79,12 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 			after, err := st.GetMessageRaw(id)
 			require.NoError(t, err)
 			assert.Contains(t, meetingcontent.Decode(RawFormat, after, nil).Transcript.Text, "Short")
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "transcript.ndjson"), nil, 0600))
+			_, err = sync()
+			require.NoError(t, err)
+			empty, err := st.GetMessageRaw(id)
+			require.NoError(t, err)
+			assert.Empty(t, meetingcontent.Decode(RawFormat, empty, nil).Transcript.Text)
 			var wire map[string]any
 			require.NoError(t, json.Unmarshal(after, &wire))
 			wire["version"] = 2
@@ -91,6 +97,20 @@ func TestPreserveSnapshotUntilReadableFinalReplacement(t *testing.T) {
 			untouched, err := st.GetMessageRaw(id)
 			require.NoError(t, err)
 			assert.Equal(t, string(future), string(untouched))
+			manifestPath := filepath.Join(dir, "manifest.json")
+			manifestBytes, err := os.ReadFile(manifestPath)
+			require.NoError(t, err)
+			var manifest Manifest
+			require.NoError(t, json.Unmarshal(manifestBytes, &manifest))
+			manifest.TitleSource = "user"
+			manifestBytes, err = json.Marshal(manifest)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(manifestPath, manifestBytes, 0600))
+			_, err = sync()
+			require.Error(t, err, "clean explicit-title finals must also refuse future evidence")
+			untouched, err = st.GetMessageRaw(id)
+			require.NoError(t, err)
+			assert.Equal(t, string(future), string(untouched))
 		})
 	}
 }
@@ -100,7 +120,7 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 	old := time.Local
 	time.Local = zone
 	t.Cleanup(func() { time.Local = old })
-	_, imp, opts := importFixture(t)
+	st, imp, opts := importFixture(t)
 	dir := fixtureMeeting(t, opts.MeetingsDir, "titles", "complete")
 	fixtureTranscript(t, dir)
 	v := Manifest{SchemaVersion: 1, ID: "titles", Status: "complete", CreatedAtMS: 1790000000123, App: "Zoom", Notes: &Notes{Title: " Notes title "}, ProvisionalTitle: "Provisional"}
@@ -132,6 +152,21 @@ func TestHexTitlesResolvedOnRecorder(t *testing.T) {
 		require.NoError(t, err)
 		_, err = imp.ImportRemote(t.Context(), RemoteRequest{Action: "upsert", Source: account, Meeting: &m})
 		require.NoError(t, err)
+		if source == "" {
+			for _, remote := range []bool{false, true} {
+				var sum *ImportSummary
+				if remote {
+					sum, err = ScanRemote(t.Context(), opts, imp.ImportRemote)
+				} else {
+					sum, err = imp.Import(t.Context(), opts)
+				}
+				require.NoError(t, err)
+				assert.Zero(t, sum.MeetingsUpdated, "timezone changes must not alter an archived legacy title")
+				message, err := st.GetMessage(messageID(t, st, sum.SourceID, "titles"))
+				require.NoError(t, err)
+				assert.Equal(t, want, message.Subject)
+			}
+		}
 		time.Local = zone
 	}
 	v.TitleSource = "default"

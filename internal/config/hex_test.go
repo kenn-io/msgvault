@@ -42,3 +42,10 @@ func TestLoadHexRejectsInvalidEntries(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestWindowsHexDataDirectoryFallback(t *testing.T) {
+	home := t.TempDir()
+	assert.Equal(t, filepath.Join(home, "AppData", "Roaming", "hex", "meetings"), windowsHexMeetingsDir(home, ""))
+	appData := t.TempDir()
+	assert.Equal(t, filepath.Join(appData, "hex", "meetings"), windowsHexMeetingsDir(home, appData))
+}

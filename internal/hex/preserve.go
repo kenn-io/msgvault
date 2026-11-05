@@ -23,7 +23,10 @@ func (imp *Importer) prepareArchive(ctx context.Context, m Meeting, sourceID int
 		if err != nil {
 			return meetingarchive.Snapshot{}, 0, fmt.Errorf("decode archived Hex evidence: %w", err)
 		}
-		if (stored.Meeting.HasTranscript() && (m.TranscriptState == "missing" || m.TranscriptState == "unreadable")) || (stored.Meeting.TranscriptState == "final" && m.TranscriptState == "rolling") {
+		if m.TitleSourceInferred && m.Manifest.Title == stored.Meeting.Manifest.Title && m.Manifest.App == stored.Meeting.Manifest.App && m.Manifest.CreatedAtMS == stored.Meeting.Manifest.CreatedAtMS && stored.Meeting.Manifest.TitleSource != "" {
+			m.Manifest.TitleSource = stored.Meeting.Manifest.TitleSource
+		}
+		if (stored.Meeting.HasTranscript() && (m.TranscriptState == "missing" || m.TranscriptState == "unreadable" || m.TranscriptPartial)) || (stored.Meeting.TranscriptState == "final" && m.TranscriptState == "rolling") {
 			return meetingarchive.Snapshot{}, previous.ID, nil
 		}
 	}

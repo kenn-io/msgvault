@@ -17,7 +17,7 @@ import (
 
 // Hex's writer atomically publishes newline-terminated JSON snapshots. All
 // data here is synthetic; neither defaults nor user source folders are read.
-func TestReviewHexWorkflow(t *testing.T) {
+func TestHexMeetingEditsRescansAndSourceExpiry(t *testing.T) {
 	st, imp, opts := importFixture(t)
 	dir := fixtureMeeting(t, opts.MeetingsDir, "workflow", "recording")
 	rolling := "{\"covered_ms\":{\"system\":4000,\"microphone\":4000}}\n{\"source\":\"system\",\"start_ms\":1000,\"end_ms\":4000,\"text\":\"Recovered synthetic discussion\"}\n"
@@ -62,7 +62,7 @@ func TestReviewHexWorkflow(t *testing.T) {
 	assert.Contains(t, meetingcontent.Decode(RawFormat, raw, nil).Transcript.Text, "Synthetic transcript")
 }
 
-func TestReviewHexUnreadablePreservesArchivedTranscript(t *testing.T) {
+func TestHexUnreadablePreservesArchivedTranscript(t *testing.T) {
 	for _, remote := range []bool{false, true} {
 		name := "local"
 		if remote {
@@ -99,7 +99,7 @@ func TestReviewHexUnreadablePreservesArchivedTranscript(t *testing.T) {
 	}
 }
 
-func TestReviewHexRecoverPendingMarkdownInMemory(t *testing.T) {
+func TestHexPendingMarkdownRemainsUntouched(t *testing.T) {
 	root := t.TempDir()
 	dir := fixtureMeeting(t, root, "pending-publication", "transcribing")
 	fixtureTranscript(t, dir)
@@ -117,13 +117,13 @@ func TestReviewHexRecoverPendingMarkdownInMemory(t *testing.T) {
 	require.NoError(t, err, "source must remain unchanged")
 }
 
-func TestReviewHexTranscriptSpanAvailable(t *testing.T) {
+func TestHexObservedTranscriptSpanAndProviderDuration(t *testing.T) {
 	m := Meeting{Manifest: Manifest{SchemaVersion: 1, ID: "interrupted", Status: "interrupted", CreatedAtMS: 1790000000000}, TranscriptState: "rolling", Entries: []Entry{{Source: "system", StartMS: 1000, EndMS: 2000, Text: "Synthetic opening"}, {Source: "microphone", StartMS: 11000, EndMS: 12000, Text: "Synthetic ending"}}}
 	snapshot, err := m.ArchiveSnapshot(1, "recorder", "you@example.com")
 	require.NoError(t, err)
 	content := meetingcontent.Decode(RawFormat, snapshot.Raw, nil)
 	require.NotNil(t, content.DurationSeconds, "transcript offsets provide a duration estimate even after a crash")
-	assert.InDelta(t, 12, *content.DurationSeconds, 0.0001)
+	assert.InDelta(t, 11, *content.DurationSeconds, 0.0001)
 	assert.Equal(t, meetingcontent.DurationTranscriptSpan, content.DurationBasis)
 	assert.Equal(t, time.UnixMilli(m.Manifest.CreatedAtMS+12000).UTC(), *content.Transcript.Segments[1].EndedAt)
 	for _, milliseconds := range []int64{0, 45000} {
@@ -137,14 +137,14 @@ func TestReviewHexTranscriptSpanAvailable(t *testing.T) {
 	}
 }
 
-func TestReviewHexLargeCalendarMeeting(t *testing.T) {
+func TestHexCalendarAttendeesAreNotTruncated(t *testing.T) {
 	for _, remote := range []bool{false, true} {
 		name := "local"
 		if remote {
 			name = "remote"
 		}
 		t.Run(name, func(t *testing.T) {
-			_, imp, opts := importFixture(t)
+			st, imp, opts := importFixture(t)
 			dir := fixtureMeeting(t, opts.MeetingsDir, "all-hands", "complete")
 			fixtureTranscript(t, dir)
 			attendees := make([]string, 201)
@@ -167,11 +167,14 @@ func TestReviewHexLargeCalendarMeeting(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, int64(1), summary.MeetingsAdded, "an upstream-valid large calendar must not suppress its transcript")
 			assert.Zero(t, summary.Warnings)
+			raw, err := st.GetMessageRaw(messageID(t, st, summary.SourceID, "all-hands"))
+			require.NoError(t, err)
+			assert.Len(t, meetingcontent.Decode(RawFormat, raw, nil).SourceParticipants, 201)
 		})
 	}
 }
 
-func TestReviewHexNewerReceiptVersionRejected(t *testing.T) {
+func TestHexFutureReceiptVersionIsPreserved(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "receipts.json")
 	original := []byte(`{"version":3,"meetings":["future-shape"],"recordings":{},"future_state":{"retain":true}}`)
 	require.NoError(t, os.WriteFile(path, original, 0600))

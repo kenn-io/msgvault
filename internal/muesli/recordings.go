@@ -6,11 +6,9 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
 	"go.kenn.io/msgvault/internal/meetingimport"
-	"go.kenn.io/msgvault/internal/store"
 )
 
 const DefaultRecordingMaxBytes = meetingarchive.DefaultRecordingMaxBytes
@@ -86,15 +84,9 @@ func (imp *Importer) ImportRecording(ctx context.Context, u RecordingUpload, dir
 	if err != nil {
 		return false, err
 	}
-	identities, err := imp.store.ListAccountIdentitiesContext(ctx, source.ID)
+	_, matches, err := meetingimport.RecorderIdentityMatch(ctx, imp.store, source.ID, u.Source.AccountEmail)
 	if err != nil {
 		return false, err
-	}
-	matches := false
-	for _, identity := range identities {
-		if strings.Contains(","+identity.SourceSignal+",", ",account-email,") && store.EqualIdentifier(identity.Address, u.Source.AccountEmail) {
-			matches = true
-		}
 	}
 	if !matches {
 		return false, ErrRemoteValidation

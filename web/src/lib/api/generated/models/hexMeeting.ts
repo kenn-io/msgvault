@@ -7,5 +7,7 @@ import type { HexManifest } from "./hexManifest";
 export interface HexMeeting {
   entries?: HexEntry[];
   manifest: HexManifest;
+  title_source_inferred?: boolean;
+  transcript_partial?: boolean;
   transcript_state: string;
 }

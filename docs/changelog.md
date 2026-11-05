@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-04"
+last_edited: "2026-11-05"
 title: Changelog
 description: Release history for msgvault
 ---
@@ -7,6 +7,10 @@ description: Release history for msgvault
 All notable changes to msgvault, grouped by release.
 
 ## Unreleased
+
+### API schema 3.43.0
+
+- Archive stopped [Hex meetings](usage/meetings.md#hex) from a local folder or a remote recorder, including transcripts, notes, available participant evidence and optional separate audio tracks. Schedule capture before Hex expires unsynced meetings; partial replacements preserve previously readable evidence.
 
 ### API schema 3.40.0
 

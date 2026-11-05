@@ -140,5 +140,5 @@ func (imp *Importer) Import(ctx context.Context, opts ImportOptions) (sum *Impor
 	if err := scoped.UpdateSyncCheckpoint(syncID, checkpoint()); err != nil {
 		return sum, err
 	}
-	return sum, scoped.CompleteSync(syncID, `{"version":1}`)
+	return sum, scoped.CompleteSync(syncID, "")
 }

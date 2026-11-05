@@ -6482,9 +6482,11 @@ func (h HexManifest) Validate() error {
 }
 
 type HexMeeting struct {
-	Entries         []HexEntry  `json:"entries,omitempty"`
-	Manifest        HexManifest `json:"manifest"`
-	TranscriptState string      `json:"transcript_state" validate:"required"`
+	Entries             []HexEntry  `json:"entries,omitempty"`
+	Manifest            HexManifest `json:"manifest"`
+	TitleSourceInferred *bool       `json:"title_source_inferred,omitempty"`
+	TranscriptPartial   *bool       `json:"transcript_partial,omitempty"`
+	TranscriptState     string      `json:"transcript_state" validate:"required"`
 }
 
 func (h HexMeeting) Validate() error {
