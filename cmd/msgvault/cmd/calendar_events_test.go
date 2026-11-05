@@ -77,15 +77,12 @@ func TestCalendarEventsCommand(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			fake := &calendarEventsFakeClient{page: tc.page, version: tc.version, err: tc.err}
 			if strings.HasPrefix(tc.name, "whole window") {
-				first := store.CalendarOccurrencePage{NextCursor: "second-page", Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}
+				first := store.CalendarOccurrencePage{Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}
 				for i := range 100 {
 					first.Occurrences = append(first.Occurrences, store.CalendarOccurrence{MessageID: int64(i + 1), Subject: fmt.Sprintf("Event %d", i), Start: start, End: start.Add(time.Hour)})
 				}
-				fake.pages = map[string]store.CalendarOccurrencePage{
-					"":            first,
-					"second-page": {NextCursor: "final-page", Occurrences: []store.CalendarOccurrence{{Subject: "Middle event", Start: start, End: start.Add(time.Hour)}}},
-					"final-page":  {Occurrences: []store.CalendarOccurrence{{Subject: "Final event", Start: start, End: start.Add(time.Hour)}}},
-				}
+				first.Occurrences = append(first.Occurrences, store.CalendarOccurrence{Subject: "Middle event", Start: start, End: start.Add(time.Hour)}, store.CalendarOccurrence{Subject: "Final event", Start: start, End: start.Add(time.Hour)})
+				fake.pages = map[string]store.CalendarOccurrencePage{"": first}
 			}
 			if fake.version == "" {
 				fake.version = calendarEventsMinAPISchemaVersion
@@ -121,10 +118,9 @@ func TestCalendarEventsCommand(t *testing.T) {
 			}
 			assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.Local), fake.query.From)
 			if strings.HasPrefix(tc.name, "whole window") {
-				requirements.Len(fake.queries, 3)
+				requirements.Len(fake.queries, 1)
 				assertions.Empty(fake.queries[0].Cursor)
-				assertions.Equal("second-page", fake.queries[1].Cursor)
-				assertions.Equal("final-page", fake.queries[2].Cursor)
+				assertions.Nil(fake.queries[0].Limit)
 				assertions.NotContains(out.String(), "next cursor:")
 				if tc.name == "whole window json" {
 					var page store.CalendarOccurrencePage
@@ -170,6 +166,43 @@ func TestCalendarEventsCommand(t *testing.T) {
 		})
 	}
 }
+func TestCalendarEventsUnpagedSingleRequest(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, pages: map[string]store.CalendarOccurrencePage{
+		"":     {NextCursor: "next", Occurrences: []store.CalendarOccurrence{{Subject: "First event"}}},
+		"next": {Occurrences: []store.CalendarOccurrence{{Subject: "Second event"}}},
+	}}
+	command := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
+	var out bytes.Buffer
+	command.SetOut(&out)
+	command.SetArgs([]string{"--from", "2026-01-01", "--to", "2028-01-01", "--json"})
+	requirements.NoError(command.Execute())
+	requirements.Len(fake.queries, 1)
+	assertions.Nil(fake.query.Limit)
+	assertions.Empty(fake.query.Cursor)
+	var page store.CalendarOccurrencePage
+	requirements.NoError(json.Unmarshal(out.Bytes(), &page))
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("First event", page.Occurrences[0].Subject)
+	assertions.Equal("next", page.NextCursor)
+}
+
+func TestCalendarEventsSkippedDateEmptyWindow(t *testing.T) {
+	zone, err := time.LoadLocation("Pacific/Apia")
+	require.NoError(t, err)
+	previous := time.Local
+	time.Local = zone
+	t.Cleanup(func() { time.Local = previous })
+	command := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) {
+		require.FailNow(t, "empty window reached daemon")
+		return nil, nil, nil
+	})
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs([]string{"--from", "2011-12-30", "--to", "2011-12-31"})
+	require.ErrorContains(t, command.Execute(), "--to must be after --from")
+}
+
 func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
 	for _, name := range []string{"events", "event"} {
 		t.Run(name, func(t *testing.T) {
@@ -348,7 +381,6 @@ func TestCalendarEventsSkippedDateWindow(t *testing.T) {
 		want           []string
 	}{
 		{"exclusive skipped date", "2011-12-29", "2011-12-30", []string{"Before", "Timed"}},
-		{"inclusive skipped date", "2011-12-30", "2011-12-31", []string{"Skipped"}},
 		{"spanning skipped date", "2011-12-29", "2011-12-31", []string{"Before", "Skipped", "Timed"}},
 		{"starting skipped date", "2011-12-30", "2012-01-01", []string{"Skipped", "After", "Timed"}},
 	} {

@@ -18121,10 +18121,10 @@ paths:
           schema:
             format: date-time
             type: string
-        - in: query
+        - description: Occurrences per page, 1–500; cursor alone defaults to 100. Omit both for the whole window.
+          in: query
           name: limit
           schema:
-            default: 100
             maximum: 500
             minimum: 1
             type: integer

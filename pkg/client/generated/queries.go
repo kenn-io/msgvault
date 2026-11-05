@@ -139,10 +139,12 @@ type ListAttributeDefinitionsQuery struct {
 }
 
 type ListCalendarEventsQuery struct {
-	From   time.Time `json:"from" validate:"required"`
-	To     time.Time `json:"to" validate:"required"`
-	Limit  *int      `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
-	Cursor *string   `json:"cursor,omitempty"`
+	From time.Time `json:"from" validate:"required"`
+	To   time.Time `json:"to" validate:"required"`
+
+	// Limit Occurrences per page, 1–500; cursor alone defaults to 100. Omit both for the whole window.
+	Limit  *int    `json:"limit,omitempty" validate:"omitempty,gte=1,lte=500"`
+	Cursor *string `json:"cursor,omitempty"`
 }
 
 func (l ListCalendarEventsQuery) Validate() error {

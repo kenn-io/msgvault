@@ -60,6 +60,13 @@ func TestCalendarArchiveToolsPermissionGatedReads(t *testing.T) {
 	}
 }
 
+func TestCalendarArchiveDefaultPageSize(t *testing.T) {
+	st := &calendarEventsTestBackend{}
+	result := rawCallTool(t, ServeOptions{CalEvents: st}, ToolListCalendarEvents, map[string]any{"from": "2026-01-01T00:00:00Z", "to": "2028-01-01T00:00:00Z"})
+	require.NotEqual(t, true, result["isError"], fmt.Sprint(result["content"]))
+	assert.Equal(t, new(100), st.query.Limit)
+}
+
 func TestCalendarArchiveRejectsInvalidArguments(t *testing.T) {
 	st := testutil.NewTestStore(t)
 	for _, tt := range []struct {

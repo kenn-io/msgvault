@@ -2012,7 +2012,7 @@ msgvault calendar event evt:123@20270302T170000Z --json
 
 `calendar events` expands repeating events, shows edited occurrences at their new times, and marks cancellations. Dates use midnight in your machine's time zone; RFC3339 bounds keep their explicit offset. `--to` is exclusive and must follow `--from`. Timed rows print in your machine's time zone; all-day rows show dates. The `END (EXCL)` column shows the exclusive end. IDs identify the effective archive message, including the edited or cancelled copy. JSON carries the series master ID separately in `series_message_id`. JSON includes status, attendees, roles, RSVPs, and events that could not be expanded. Narrow the window if the query is too broad. The command requires daemon API schema 3.43.0 or newer and rejects `--account`, `--dry-run`, `--read-only`, and `--send-updates`.
 
-Prints the whole window by default. `--limit` (1–500, default 100) or `--cursor` prints one page. Tables include `REF` and print `next cursor:` on its own line. Continue with `--cursor` and the same window, up to 400 days.
+Omit `--limit` and `--cursor` for the whole window in one call. Either prints one page, default 100, range 1–500. Tables include `REF` and print `next cursor:` on its own line. Continue with `--cursor` and the same window.
 
 `calendar event <ref>` opens an occurrence and prints its attendees, roles, and RSVPs. `--json` includes the archived location, description, and join URL when present. Paging, detail, and delegated reads require daemon API schema 3.43.0. Agents need `calendar.event.read` or `message.read` on the source. Both archive commands reject the live-calendar flags listed above.
 

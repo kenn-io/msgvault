@@ -57,7 +57,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				return usageErr(cmd, fmt.Errorf("--%s: use YYYY-MM-DD or RFC3339 with an offset", []string{"from", "to"}[i]))
 			}
 		}
-		if bounds[1].Before(bounds[0]) || bounds[1].Equal(bounds[0]) && bounds[1].Format(time.DateOnly) <= bounds[0].Format(time.DateOnly) {
+		if bounds[1].Before(bounds[0]) || bounds[1].Equal(bounds[0]) {
 			return usageErr(cmd, errors.New("--to must be after --from"))
 		}
 		return nil
@@ -67,26 +67,13 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 		if cmd.Flags().Changed("limit") {
 			query.Limit = &limit
 		}
-		var page store.CalendarOccurrencePage
-		for {
-			next, err := client.ListCalendarOccurrencesContext(cmd.Context(), query)
-			if err != nil {
-				var apiError *daemonclient.APIError
-				if errors.As(err, &apiError) && apiError.Code == "query_too_broad" {
-					return fmt.Errorf("%w%s", store.ErrQueryTooBroad, strings.TrimPrefix(apiError.Message, store.ErrQueryTooBroad.Error()))
-				}
-				return err
+		page, err := client.ListCalendarOccurrencesContext(cmd.Context(), query)
+		if err != nil {
+			var apiError *daemonclient.APIError
+			if errors.As(err, &apiError) && apiError.Code == "query_too_broad" {
+				return fmt.Errorf("%w%s", store.ErrQueryTooBroad, strings.TrimPrefix(apiError.Message, store.ErrQueryTooBroad.Error()))
 			}
-			if query.Cursor == cursor {
-				page = next
-			} else {
-				page.Occurrences = append(page.Occurrences, next.Occurrences...)
-				page.NextCursor = next.NextCursor
-			}
-			if cmd.Flags().Changed("limit") || cmd.Flags().Changed("cursor") || next.NextCursor == "" {
-				break
-			}
-			query.Cursor = next.NextCursor
+			return err
 		}
 		if jsonOutput {
 			data, err := json.Marshal(page)

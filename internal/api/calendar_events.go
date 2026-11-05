@@ -24,7 +24,7 @@ func (s *Server) registerCalendarEventsRoute(api huma.API) {
 	op.Parameters = []*huma.Param{
 		{Name: "from", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
 		{Name: "to", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString, Format: "date-time"}},
-		{Name: "limit", In: "query", Schema: &huma.Schema{Type: "integer", Default: 100, Minimum: new(float64(1)), Maximum: new(float64(500))}},
+		{Name: "limit", In: "query", Description: "Occurrences per page, 1–500; cursor alone defaults to 100. Omit both for the whole window.", Schema: &huma.Schema{Type: "integer", Minimum: new(float64(1)), Maximum: new(float64(500))}},
 		{Name: "cursor", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
 	}
 	op.Responses = jsonResponsesFor[store.CalendarOccurrencePage](api)
