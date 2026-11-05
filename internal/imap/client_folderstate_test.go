@@ -544,7 +544,7 @@ func TestWithFolderFilter_NoConfigNoCLIIncludesAll(t *testing.T) {
 
 func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 	addr, _ := testutil.StartIMAPMemServerWithSpecialUse(t,
-		map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1},
+		map[string]int{"INBOX": 1, "Trash": 1, "Junk": 1, "Archive/Newsletters": 1},
 		map[string][]imapv2.MailboxAttr{
 			"Trash": {imapv2.MailboxAttrTrash},
 			"Junk":  {imapv2.MailboxAttrJunk},
@@ -593,6 +593,12 @@ func TestClientReportsLabelSnapshotCompleteness(t *testing.T) {
 			opts:           []Option{WithFolderFilter(nil, []string{"Trash", "Junk"}), WithFilteredDeletionReconciliation(true)},
 			wantFiltered:   true,
 			wantReconciles: true,
+		},
+		{
+			name:         "newsletters skipped",
+			cfg:          &Config{},
+			opts:         []Option{WithFolderFilter(nil, []string{"Trash", "Junk", "Archive/Newsletters"}), WithFilteredDeletionReconciliation(true)},
+			wantFiltered: true,
 		},
 		{
 			name:         "after filter",

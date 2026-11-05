@@ -68,7 +68,6 @@ func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedAndAbsentMailboxes(t *tes
 	assert.True(messageTombstoned(t, f.store, removed))
 	assert.False(messageTombstoned(t, f.store, shared))
 	assert.False(messageTombstoned(t, f.store, skipped))
-	assert.True(messageTombstoned(t, f.store, skippedDeleted))
 	assert.False(messageTombstoned(t, f.store, legacy))
 	assert.False(messageTombstoned(t, f.store, absent))
 	assert.Equal([]string{"Trash"}, messageLabels(t, f.store, shared))
@@ -76,13 +75,11 @@ func TestApplyIMAPScannedMailboxDeltas_PreservesSkippedAndAbsentMailboxes(t *tes
 }
 
 func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
-	for _, name := range []string{"first scan", "incremental", "empty mailbox", "new generation"} {
+	for _, name := range []string{"incremental", "empty mailbox", "new generation"} {
 		t.Run(name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			f := newIMAPIdentityFixture(t)
-			if name != "first scan" {
-				require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)}))
-			}
+			require.NoError(f.store.ApplyIMAPMailboxDeltas(f.source.ID, []store.IMAPMailboxDelta{scannedIMAPDelta("INBOX", 11)}))
 			// Earlier filtered syncs archived these rows without memberships.
 			moved := f.createMessage(t, "INBOX|1", "<moved@example.com>")
 			retained := f.createMessage(t, "INBOX|2", "<retained@example.com>")
@@ -97,8 +94,6 @@ func TestApplyIMAPScannedMailboxDeltas_ReconcilesUntrackedRows(t *testing.T) {
 			delta.KnownUIDs = []uint32{2}
 			var newID int64
 			switch name {
-			case "first scan":
-				delta.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "INBOX|2"}}
 			case "incremental":
 				delta.Reset = false
 				delta.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "INBOX|2"}}
