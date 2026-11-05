@@ -290,6 +290,13 @@ func TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents(t *t
 	b.AddFrom(attendedEventID, xID, "X")
 	b.AddTo(attendedEventID, ownerAliasID, "Owner Alias")
 
+	attendedMeetingID := b.AddMessage(MessageOpt{
+		SourceID: srcID, MessageType: "meeting_transcript",
+		SentAt: time.Date(2026, 1, 6, 12, 0, 0, 0, time.UTC),
+	})
+	b.AddFrom(attendedMeetingID, xID, "X")
+	b.AddTo(attendedMeetingID, ownerAliasID, "Owner Alias")
+
 	emailID := b.AddMessage(MessageOpt{
 		SourceID: srcID, MessageType: "email",
 		SentAt: time.Date(2026, 1, 5, 9, 0, 0, 0, time.UTC),
@@ -302,21 +309,24 @@ func TestRelationshipTimelineAndExploreInteractionsExcludeOwnerAbsentEvents(t *t
 		CanonicalID: xID, Limit: 10,
 	})
 	require.NoError(err)
-	require.Len(result.Rows, 2,
-		"owner-absent and roster-only events and the meeting must be excluded; owner-attended event and owner-absent email remain")
-	assert.Equal(int64(2), result.TotalCount)
+	require.Len(result.Rows, 3,
+		"owner-absent and roster-only events and meetings must be excluded; owner-attended events and meetings and owner-absent email remain")
+	assert.Equal(int64(3), result.TotalCount)
 
-	assert.Equal("message:"+strconv.FormatInt(attendedEventID, 10), result.Rows[0].Key,
+	assert.Equal("message:"+strconv.FormatInt(attendedMeetingID, 10), result.Rows[0].Key)
+	assert.Equal("meeting", result.Rows[0].Kind)
+	assert.Equal("message:"+strconv.FormatInt(attendedEventID, 10), result.Rows[1].Key,
 		"an event the owner attended via a clustered alias must remain")
-	assert.Equal("event", result.Rows[0].Kind)
-	assert.Equal("message:"+strconv.FormatInt(emailID, 10), result.Rows[1].Key,
+	assert.Equal("event", result.Rows[1].Kind)
+	assert.Equal("message:"+strconv.FormatInt(emailID, 10), result.Rows[2].Key,
 		"a plain email from the counterpart keeps its current owner-independent scope")
-	assert.Equal("email", result.Rows[1].Kind)
+	assert.Equal("email", result.Rows[2].Kind)
 	activity, err := engine.Explore(context.Background(), ExploreRequest{SentOnly: true, PersonInteractionsOnly: true, Context: Context{ParticipantIDs: []int64{xID}}, Page: PageSpec{Limit: 10}})
 	require.NoError(err)
-	require.Len(activity.Rows, 2, "the replacement person timeline preserves direct-owner eligibility")
-	assert.Equal(attendedEventID, *activity.Rows[0].AnchorMessageID)
-	assert.Equal(emailID, *activity.Rows[1].AnchorMessageID)
+	require.Len(activity.Rows, 3, "the replacement person timeline preserves direct-owner eligibility")
+	assert.Equal(attendedMeetingID, *activity.Rows[0].AnchorMessageID)
+	assert.Equal(attendedEventID, *activity.Rows[1].AnchorMessageID)
+	assert.Equal(emailID, *activity.Rows[2].AnchorMessageID)
 }
 
 // TestResolveCanonicalParticipant covers both the linked case (any member ID
