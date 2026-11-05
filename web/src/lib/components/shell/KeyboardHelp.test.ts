@@ -18,7 +18,7 @@ describe('keyboard command registry', () => {
     expect(registry.find(({ id }) => id === 'select-visible')?.keys).toEqual(['a']);
     expect(registry.find(({ id }) => id === 'select-visible')?.combos).toEqual(['a', 'shift+a']);
     expect(registry.find(({ id }) => id === 'clear-selection')?.keys).toContain('x');
-    expect(registry.some(({ keys }) => keys.includes('Tab'))).toBe(false);
+    expect(registry.some(({ keys }) => keys.includes('tab'))).toBe(false);
     expect(registry.filter(({ destructive }) => destructive).every(({ review }) => review)).toBe(true);
   });
 
@@ -62,12 +62,19 @@ describe('keyboard command registry', () => {
     expect(command?.querySelector('[aria-label="Ctrl K"]')).not.toBeNull();
     expect(command?.querySelectorAll('.kit-kbd-badge__key')).toHaveLength(2);
     expect(command?.textContent).not.toContain('or');
+
+    const selected = screen.getByText('Review selected messages for deletion').closest('div');
+    const matching = screen.getByText('Review all matching messages for deletion').closest('div');
+    expect(selected?.querySelector('[aria-label="D"]')).not.toBeNull();
+    expect(matching?.querySelector('[aria-label="Shift D"]')).not.toBeNull();
+    expect(screen.getAllByText('opens review first')).toHaveLength(2);
   });
 
   it.each([
     ['shift', 'Extend selection to focused row'],
     ['enter', 'Open or drill into focused row'],
     ['ctrl', 'Open command palette'],
+    ['Ctrl K', 'Open command palette'],
     ['cmd', 'Open command palette']
   ])('finds shortcuts by the readable key name %s', async (query, label) => {
     render(KeyboardHelp, {
@@ -82,7 +89,7 @@ describe('keyboard command registry', () => {
     expect(screen.queryByText('Open filters')).toBeNull();
   });
 
-  it.each(['zzzxxyy', '  zzzxxyy  '])('shows review chords and offers the query %j to command search when no shortcut matches', async (query) => {
+  it.each(['zzzxxyy', '  zzzxxyy  '])('offers the query %j to command search when no shortcut matches', async (query) => {
     const onOpenCommands = vi.fn();
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
@@ -90,16 +97,7 @@ describe('keyboard command registry', () => {
       onclose: vi.fn()
     });
 
-    const selected = screen.getByText('Review selected messages for deletion').closest('div');
-    const matching = screen.getByText('Review all matching messages for deletion').closest('div');
-    expect(selected?.querySelector('[aria-label="D"]')).not.toBeNull();
-    expect(matching?.querySelector('[aria-label="Shift D"]')).not.toBeNull();
-    expect(screen.getAllByText('opens review first')).toHaveLength(2);
-
     const search = screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' });
-    await fireEvent.input(search, { target: { value: 'Ctrl K' } });
-    expect(screen.getByText('Open command palette', { selector: 'dt' })).toBeDefined();
-    expect(screen.queryByText('Open filters')).toBeNull();
     await fireEvent.input(search, { target: { value: query } });
     expect(screen.getByText('No shortcuts match "zzzxxyy"')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Search commands instead' }));

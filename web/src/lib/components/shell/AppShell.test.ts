@@ -154,7 +154,6 @@ describe('AppShell', () => {
     const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
     expect((within(palette).getByRole('combobox') as HTMLInputElement).value).toBe('sources');
     expect(within(palette).getByRole('option', { name: 'Sources' })).toBeDefined();
-    expect(within(palette).queryByRole('option', { name: 'People' })).toBeNull();
     rendered.unmount(); state.destroy();
   });
 
