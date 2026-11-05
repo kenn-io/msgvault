@@ -54,6 +54,60 @@ test.describe('compact toolbar', () => {
     });
   }
 
+  for (const theme of ['light', 'dark'] as const) {
+    test(`compact controls align in ${theme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme });
+      await page.goto('/?workspace=everything');
+      const controls = page.locator('.context-controls');
+      const filter = await controls.getByRole('button', { name: 'Filter', exact: true }).boundingBox();
+      const view = await controls.getByRole('button', { name: 'View', exact: true }).boundingBox();
+      expect(filter!.y).toBeCloseTo(view!.y, 1);
+      expect(filter!.height).toBeCloseTo(view!.height, 1);
+    });
+
+    test(`compact menu open states match in ${theme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme });
+      await page.goto('/?workspace=everything');
+      const filter = page.getByRole('button', { name: 'Filter', exact: true });
+      const view = page.getByRole('button', { name: 'View', exact: true });
+      await filter.click();
+      const filterStyle = await filter.evaluate(el => [getComputedStyle(el).borderColor, getComputedStyle(el).backgroundColor]);
+      await filter.click();
+      await view.click();
+      const viewStyle = await view.evaluate(el => [getComputedStyle(el).borderColor, getComputedStyle(el).backgroundColor]);
+      expect(viewStyle).toEqual(filterStyle);
+    });
+
+    test(`compact grouping lines up and shows selection in ${theme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme });
+      await page.goto('/?workspace=everything');
+      const view = page.getByRole('button', { name: 'View', exact: true });
+      await view.click();
+      const menu = page.getByRole('menu', { name: 'View' });
+      const table = menu.getByRole('menuitemradio', { name: 'Table', exact: true });
+      const year = menu.getByText('Year', { exact: true });
+      const tableText = await table.locator('.kit-menu__radio-content').boundingBox();
+      const yearText = await year.evaluate(el => { const range = document.createRange(); range.selectNodeContents(el); const rect = range.getBoundingClientRect(); return { x: rect.x }; });
+      expect.soft(yearText.x).toBeCloseTo(tableText!.x, 1);
+      await year.click();
+      await view.click();
+      await expect(menu.getByRole('menuitemradio', { name: 'Year', exact: true })).toHaveAttribute('aria-checked', 'true');
+    });
+
+    test(`compact visual search has a section heading in ${theme}`, async ({ page }) => {
+      await page.emulateMedia({ colorScheme: theme });
+      await stubVisualFiles(page);
+      await page.goto('/?workspace=files');
+      await page.getByRole('button', { name: 'Filter', exact: true }).click();
+      const dialog = page.getByRole('dialog', { name: 'Filter' });
+      const heading = dialog.getByText('Visual search', { exact: true }).filter({ visible: true });
+      await expect(heading).toHaveCount(2);
+      const headingBox = await heading.first().boundingBox();
+      const switchBox = await dialog.getByRole('switch', { name: 'Visual search' }).boundingBox();
+      expect(headingBox!.y + headingBox!.height).toBeLessThanOrEqual(switchBox!.y);
+    });
+  }
+
   test('compact Messages and Files toolbars fit one row and View opens Files', async ({ page }) => {
     await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
     await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));

@@ -118,7 +118,10 @@
 
 {#snippet popoverExtra()}
   {@render filterExtra?.()}
-  <div class="popover-extra">{@render extraControls?.()}</div>
+  <div class="popover-extra">
+    <div class="popover-extra-heading">Visual search</div>
+    {@render extraControls?.()}
+  </div>
 {/snippet}
 
 <section class="context-bar" aria-label="Active analytical context">
@@ -137,7 +140,7 @@
     {/if}
     {#if compact.current}
       {#if !lockedFilter || sort}
-        <ViewMenu scoped={Boolean(lockedFilter)} {presentation} {presentationOptions} {groupOptions} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
+        <ViewMenu scoped={Boolean(lockedFilter)} {presentation} {presentationOptions} groupOptions={groupingOptions({ includeUnavailable: true })} {groupingChain} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
       {/if}
     {:else}
     {#if !lockedFilter}
@@ -269,6 +272,12 @@
     :global(.file-controls > label > .kit-search-input) {
       width: 100%;
     }
+  }
+
+  .popover-extra-heading {
+    margin-bottom: var(--label-gap);
+    color: var(--text-muted);
+    font-size: var(--font-size-xs);
   }
 
   .context-chips :global(.chip) {
