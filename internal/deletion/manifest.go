@@ -407,7 +407,8 @@ func writeManifestAtomic(manifest *Manifest, path string) error {
 		return fmt.Errorf("publish manifest: %w", err)
 	}
 	if err := os.Remove(journalPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove checkpoint journal: %w", err)
+		log.Printf("WARNING: published manifest %s but could not remove checkpoint journal: %v",
+			manifest.ID, err)
 	}
 	return nil
 }

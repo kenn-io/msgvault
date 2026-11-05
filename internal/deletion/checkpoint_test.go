@@ -125,20 +125,21 @@ func TestExecutor_FinalizeJournalCleanupFailurePreservesProgress(t *testing.T) {
 		return nil
 	}
 	err := tc.ExecuteWithOpts(m.ID, trashOpts(2))
-	require.ErrorIs(err, os.ErrPermission)
-	require.ErrorContains(err, "remove checkpoint journal")
-	path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
+	require.NoError(err)
+	path := filepath.Join(tc.Mgr.CompletedDir(), m.ID+".json")
 	_, err = os.Stat(journalPath(path))
 	require.NoError(err)
 	loaded, err := LoadManifest(path)
 	require.NoError(err)
+	assert.Equal(StatusCompleted, loaded.Status)
 	assert.Equal(3, loaded.Execution.LastProcessedIndex)
 	assert.Equal(3, loaded.Execution.Succeeded)
+	assert.Zero(loaded.Execution.Failed)
 	require.NotNil(loaded.Execution.CompletedAt)
 
 	require.NoError(os.Chmod(baseDir, 0o700))
 	tc.MockAPI.BeforeTrash = nil
-	require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(2)))
+	require.ErrorContains(tc.ExecuteWithOpts(m.ID, trashOpts(2)), "is completed, cannot execute")
 	assert.Equal([]string{"msg0", "msg1", "msg2"}, tc.MockAPI.TrashCalls)
 	tc.AssertManifestExecution(m.ID, 3, 0)
 }
