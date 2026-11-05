@@ -1469,7 +1469,7 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 		{"queued", "rendition", "", "requested", false},
 		{"running", "rendition", "", "requested", false},
 		{"retry_wait", "rendition", "provider_timeout", "requested", false},
-		{"new_state", "rendition", "provider_code", "new_state", true},
+		{"new_state", "rendition", "provider_code", "requested", true},
 		{"operator_required", "failed", "operator_required", "operator_required", false},
 		{"failed", "rendition", "provider_timeout", "provider_timeout", false},
 		{"failed", "rendition", "", "failed", false},
@@ -1481,6 +1481,9 @@ func TestAttachmentMirrorProcessingJobStates(t *testing.T) {
 			job := docbankmedia.JobStatus{State: tc.state, Phase: tc.phase, FailureCode: tc.code}
 			answer := processingJobAnswer(job)
 			assert.Equal(tc.outcome, answer.outcome)
+			if tc.state == "operator_required" {
+				assert.Zero(answer.delay)
+			}
 			if tc.report {
 				require.ErrorContains(answer.report, tc.state)
 				assert.Equal(store.BeeperMediaRetryDelay, answer.delay)
