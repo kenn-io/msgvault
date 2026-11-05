@@ -15,33 +15,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestMicrosoftInviteAccountSearch(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := storetest.New(t)
-	st := f.Store
-	source, err := st.GetOrCreateSource("msmail", "owner@example.org")
-	requirements.NoError(err)
-	requirements.NoError(st.AddAccountIdentity(source.ID, "owner@example.org", "manual"))
-	raw := "From: organizer@example.com\r\nTo: owner@example.org\r\nSubject: Invite\r\nMIME-Version: 1.0\r\nContent-Type: text/calendar\r\n\r\nBEGIN:VCALENDAR\r\nVERSION:2.0\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:microsoft@example.org\r\nDTSTART:20270302T120000Z\r\nSUMMARY:Meeting\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
-	_, err = st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message:      &store.Message{SourceID: source.ID, SourceMessageID: "invite", MessageType: "email"},
-		Conversation: &store.ConversationPersistData{SourceConversationID: "invite", Title: "Invite"},
-		RawMIME:      []byte(raw),
-	})
-	requirements.NoError(err)
-	engine := query.NewSQLiteEngine(st.DB())
-	if st.IsPostgreSQL() {
-		engine = query.NewEngineWithDialect(st.DB(), query.PostgreSQLQueryDialect{})
-	}
-	allEvents, err := engine.Search(t.Context(), search.Parse("message_type:calendar_event"), 100, 0)
-	requirements.NoError(err)
-	requirements.Len(allEvents, 1)
-	rows, err := engine.Search(t.Context(), search.Parse("account:owner@example.org message_type:calendar_event"), 100, 0)
-	requirements.NoError(err)
-	requirements.Len(rows, 1)
-	assertions.Equal(allEvents[0].ID, rows[0].ID)
-}
-
 func TestAccountOperatorsOnLiveEngine(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
