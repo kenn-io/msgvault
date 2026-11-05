@@ -81,6 +81,11 @@ func TestMeetingLinksWindowedExceptions(t *testing.T) {
 		at := time.Date(2026, 1, 4, 10, 0, 0, 0, time.UTC).AddDate(0, 0, i)
 		calendarFixture(t, st, fmt.Sprintf("old-%d", i), fmt.Sprintf(`{"id":"old-%d","iCalUID":"weekly@example.org","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":%q}}`, i, at.Format(time.RFC3339)))
 	}
+	note := granolaLinkFixture(t, st, "series_20270314T100000Z")
+	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: master, Key: "20270314T100000Z"})
+	requirements.NoError(err)
+	assertions.Equal([]int64{note}, record.MessageIDs)
+
 	_, twenty := projectionFixture(t, st, "twenty", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 	assertions.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, twenty)[twenty])
 
@@ -326,7 +331,7 @@ func TestMeetingLinksProjectionEnvelopeAndRepair(t *testing.T) {
 	assertions.Zero(count)
 }
 
-func TestMeetingLinksUpgradeFromSchema11(t *testing.T) {
+func TestMeetingLinksUpgradeFromSchema31(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -335,7 +340,7 @@ func TestMeetingLinksUpgradeFromSchema11(t *testing.T) {
 	note := granolaLinkFixture(t, st, "event")
 	_, err := st.db.Exec(`DROP TABLE meeting_link_decisions; DROP TABLE meeting_link_key; DROP INDEX idx_messages_calendar_ical_uid`)
 	requirements.NoError(err)
-	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1; UPDATE archive_metadata SET value = '11' WHERE key = 'schema_version'`)
+	_, err = st.db.Exec(`UPDATE meeting_details SET projection_version = 1; UPDATE archive_metadata SET value = '31' WHERE key = 'schema_version'`)
 	requirements.NoError(err)
 	_, err = st.db.Exec(`UPDATE applied_migrations SET version = 1 WHERE name = ?`, migrationMeetingProjectionV1)
 	requirements.NoError(err)

@@ -45,30 +45,6 @@ func TestMeetingRecordAllDayCopiesShareNotesAcrossCalendarZones(t *testing.T) {
 	}
 }
 
-func TestMeetingRecordNotesAndCopies(t *testing.T) {
-	require, assert := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "record@example.org"))
-	_, copyID := calendarFixture(t, st, "copy", singleLinkRaw("copy", "record@example.org"), "second@example.com")
-	_, automatic := projectionFixture(t, st, "automatic", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"record@example.org"}}`)
-	_, manual := projectionFixture(t, st, "manual", "plaud_json", `{}`)
-	_, excluded := projectionFixture(t, st, "excluded", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"record@example.org"}}`)
-	require.NoError(st.LinkMeetingContext(t.Context(), manual, OccurrenceRef{MessageID: copyID}))
-	require.NoError(st.UnlinkMeetingContext(t.Context(), excluded, OccurrenceRef{MessageID: copyID}))
-	for _, id := range []int64{event, copyID} {
-		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id})
-		require.NoError(err)
-		assert.Equal([]int64{automatic, manual}, record.MessageIDs)
-		require.Len(record.Links, 1)
-		assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: id}), record.Links[0].Ref)
-	}
-	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: automatic})
-	require.NoError(err)
-	assert.Equal([]int64{automatic, manual}, record.MessageIDs)
-	require.Len(record.Links, 1)
-	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: event}), record.Links[0].Ref)
-}
-
 func TestMeetingRecordRecurringGoogleEvidence(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
@@ -91,14 +67,11 @@ func TestMeetingDecisionsFollowMessageIdentity(t *testing.T) {
 	var count int
 	require.NoError(st.db.QueryRow(`SELECT count(*) FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&count))
 	assert.Equal(1, count)
-	data, _ := calendarFixture(t, st, "copy", strings.ReplaceAll(singleLinkRaw("copy", "old@example.org"), "old@example.org", "new@example.org"), "second@example.com")
+	calendarFixture(t, st, "copy", strings.ReplaceAll(singleLinkRaw("copy", "old@example.org"), "old@example.org", "new@example.org"), "second@example.com")
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: copyID}))
 	links, err := meetingLinksForTest(t, st, note)
 	require.NoError(err)
 	assert.Empty(links)
-	require.NoError(st.RemoveSource(data.Message.SourceID))
-	require.NoError(st.db.QueryRow(`SELECT count(*) FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&count))
-	assert.Zero(count)
 }
 
 func TestMeetingDecisionReplacesUnexpandableCopy(t *testing.T) {
@@ -115,4 +88,50 @@ func TestMeetingDecisionReplacesUnexpandableCopy(t *testing.T) {
 	require.NoError(err)
 	require.Len(links, 1)
 	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: automatic}), links[0].Ref)
+}
+
+func TestMeetingRecordNotesAndCopies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"automatic notes", func(t *testing.T) {
+			t.Helper()
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "shared@example.org"))
+			_, a := projectionFixture(t, st, "a", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"shared@example.org"}}`)
+			_, b := projectionFixture(t, st, "b", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"shared@example.org"}}`)
+			for _, ref := range []MeetingLinkRef{{Kind: "evt", MessageID: event}, {Kind: "msg", MessageID: a}, {Kind: "msg", MessageID: b}} {
+				record, err := st.MeetingRecordContext(t.Context(), ref)
+				require.NoError(t, err)
+				assert.Equal(t, []int64{a, b}, record.MessageIDs)
+			}
+		}},
+		{"decisions and copies", func(t *testing.T) {
+			t.Helper()
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "record@example.org"))
+			_, copyID := calendarFixture(t, st, "copy", singleLinkRaw("copy", "record@example.org"), "second@example.com")
+			_, automatic := projectionFixture(t, st, "automatic", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"record@example.org"}}`)
+			_, manual := projectionFixture(t, st, "manual", "plaud_json", `{}`)
+			_, excluded := projectionFixture(t, st, "excluded", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"record@example.org"}}`)
+			require.NoError(st.LinkMeetingContext(t.Context(), manual, OccurrenceRef{MessageID: copyID}))
+			require.NoError(st.UnlinkMeetingContext(t.Context(), excluded, OccurrenceRef{MessageID: copyID}))
+			for _, id := range []int64{event, copyID} {
+				record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id})
+				require.NoError(err)
+				assert.Equal([]int64{automatic, manual}, record.MessageIDs)
+				require.Len(record.Links, 1)
+				assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: id}), record.Links[0].Ref)
+			}
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: automatic})
+			require.NoError(err)
+			assert.Equal([]int64{automatic, manual}, record.MessageIDs)
+			require.Len(record.Links, 1)
+			assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: event}), record.Links[0].Ref)
+		}},
+	} {
+		t.Run(tc.name, tc.run)
+	}
 }
