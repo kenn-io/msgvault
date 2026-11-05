@@ -56,57 +56,35 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 		}
 		return nil
 	}
-	if o.Kind == "scheduled_meeting" && o.Outcome == "cancelled" {
-		var id int64
-		err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
-			if s.dialect.DriverName() != postgresDriverName {
-				if _, err := tx.ExecContext(ctx, `UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
-					return fmt.Errorf("lock calendar cancellation: %w", err)
-				}
-			}
-			if err := before(ctx, tx); err != nil {
-				return err
-			}
-			var metadata sql.NullString
-			err := tx.QueryRowContext(ctx, `
-				SELECT m.id, m.metadata FROM messages m JOIN call_details c ON c.message_id = m.id
-				WHERE m.source_id = ? AND m.source_message_id = ? AND c.kind = 'scheduled_meeting'`, sourceID, o.RecordID).Scan(&id, &metadata)
-			if errors.Is(err, sql.ErrNoRows) {
-				if o.OccurredAt.IsZero() {
-					return fmt.Errorf("%w: calendar event to cancel does not exist", callhistory.ErrInvalid)
-				}
-				return nil
-			}
-			if err != nil {
-				return fmt.Errorf("find calendar event to cancel: %w", err)
-			}
-			var evidence callhistory.Evidence
-			if err := json.Unmarshal([]byte(metadata.String), &evidence); err != nil {
-				return fmt.Errorf("decode calendar evidence: %w", err)
-			}
-			evidence.Outcome = "cancelled"
-			data, err := json.Marshal(evidence)
-			if err != nil {
-				return fmt.Errorf("encode calendar evidence: %w", err)
-			}
-			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
-				return err
-			}
-			q := boundQuerier{ctx: ctx, q: tx}
-			if err := s.requireSyncMessageSourceTx(q, id); err != nil {
-				return err
-			}
-			if err := setMessageMetadataWith(q, s.dialect, id, sql.NullString{String: string(data), Valid: true}); err != nil {
-				return err
-			}
-			if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
-				return err
-			}
-			return s.refreshCalendarEventProjectionWith(ctx, tx, id)
-		})
-		if err != nil || id != 0 {
-			return id, err
+	prepare := func(ctx context.Context, tx *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
+		if !o.Sparse {
+			return data, nil
 		}
+		var metadata string
+		err := tx.QueryRowContext(ctx, `
+			SELECT m.metadata FROM messages m JOIN call_details c ON c.message_id = m.id
+			WHERE m.source_id = ? AND m.source_message_id = ? AND c.kind = 'scheduled_meeting'`, sourceID, o.RecordID).Scan(&metadata)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("%w: calendar event to cancel does not exist", callhistory.ErrInvalid)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("find calendar event to cancel: %w", err)
+		}
+		var evidence callhistory.Evidence
+		if err := json.Unmarshal([]byte(metadata), &evidence); err != nil {
+			return nil, fmt.Errorf("decode calendar evidence: %w", err)
+		}
+		evidence.Outcome = "cancelled"
+		encoded, err := json.Marshal(evidence)
+		if err != nil {
+			return nil, fmt.Errorf("encode calendar evidence: %w", err)
+		}
+		data.Message.SentAt = sql.NullTime{Time: evidence.OccurredAt, Valid: true}
+		data.Metadata = &sql.NullString{String: string(encoded), Valid: true}
+		// A delta has no replacement recipients or raw. Persistence keeps the
+		// stored rows when these fields are absent, inside this transaction.
+		data.Recipients, data.RawMIME = nil, nil
+		return data, nil
 	}
 	metadata, err := json.Marshal(o.Evidence)
 	if err != nil {
@@ -134,7 +112,7 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
 			}
-		}, nil, nil)
+		}, prepare, nil)
 }
 
 // Scalar projections share the message lock and transaction of their metadata.
@@ -154,11 +132,10 @@ func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id 
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO call_details
-		(message_id, projection_version, canonical_key, kind, direction, outcome,
+		(message_id, canonical_key, kind, direction, outcome,
 		 owner_participation, occurred_at, duration_seconds, withdrawn)
-		VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (message_id) DO UPDATE SET
-			projection_version = excluded.projection_version,
 			canonical_key = excluded.canonical_key, kind = excluded.kind,
 			direction = excluded.direction, outcome = excluded.outcome,
 			owner_participation = excluded.owner_participation,

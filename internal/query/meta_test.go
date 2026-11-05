@@ -31,3 +31,7 @@ func TestMetaCommentsVisibleAsTextConversations(t *testing.T) {
 		})
 	}
 }
+
+func TestKnownMessageTypesIncludesCallRecord(t *testing.T) {
+	assert.Contains(t, KnownMessageTypes, "call_record")
+}

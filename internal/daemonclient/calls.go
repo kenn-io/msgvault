@@ -1,24 +1,22 @@
 package daemonclient
 
 import (
-	"bytes"
 	"context"
 	"encoding/json/v2"
 	"fmt"
 
 	"go.kenn.io/msgvault/internal/callhistory"
-	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/store"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
 func (c *Client) ImportCallObservation(ctx context.Context, data []byte) (*generated.CallImportResponse, error) {
-	if _, err := callhistory.DecodeImport(bytes.NewReader(data)); err != nil {
-		return nil, err
-	}
 	var body generated.CallImportRequest
-	if err := json.Unmarshal(data, &body, jsonexact.PreserveNumbers); err != nil {
+	if len(data) > callhistory.MaxRequestBytes {
+		return nil, callhistory.ErrImportTooLarge
+	}
+	if err := json.Unmarshal(data, &body, json.RejectUnknownMembers(true)); err != nil {
 		return nil, err
 	}
 	resp, err := APIResponse(c, func(client *apiclient.Client) (*generated.ImportCallObservationResp, error) {

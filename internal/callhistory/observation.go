@@ -61,6 +61,7 @@ type Observation struct {
 	RecordID     string         `json:"record_id"`
 	Participants []Participant  `json:"participants"`
 	Raw          jsontext.Value `json:"raw"`
+	Sparse       bool           `json:"-"` // Only an ID-only Calendar cancellation is a delta.
 }
 
 // SourceIdentifier keeps provider/account namespaces separate without
@@ -93,7 +94,14 @@ func validID(s string) bool {
 }
 
 func (e Evidence) Validate() error {
-	sparseCancellation := e.Kind == "scheduled_meeting" && e.Outcome == "cancelled" && e.OccurredAt.IsZero()
+	return e.validate(false)
+}
+
+func (e Evidence) validate(sparse bool) error {
+	sparseCancellation := sparse && e.Provider == "google_calendar" && e.Kind == "scheduled_meeting" && e.Outcome == "cancelled" && e.OccurredAt.IsZero()
+	if sparse && !sparseCancellation {
+		return invalid("sparse calendar cancellation")
+	}
 	if e.Version != 1 || !validID(e.Provider) || !validID(e.Account) ||
 		(e.NativeCallID != "" && !validID(e.NativeCallID)) {
 		return invalid("version or provenance")
@@ -138,7 +146,7 @@ func (e Evidence) Validate() error {
 }
 
 func (o Observation) Validate() error {
-	if err := o.Evidence.Validate(); err != nil {
+	if err := o.Evidence.validate(o.Sparse); err != nil {
 		return err
 	}
 	if !validID(o.RecordID) || len(o.Participants) > 100 ||

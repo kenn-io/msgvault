@@ -2,16 +2,16 @@ package callhistory
 
 import (
 	"encoding/json/v2"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
+	"go.kenn.io/msgvault/internal/meetingurl"
 )
 
-var calendarLink = regexp.MustCompile(`https?://[^\s<>"']+|tel:\+?[0-9][0-9().;-]*`)
+var calendarLink = regexp.MustCompile(`https?://[^\s<>"']+|tel:\+?[0-9][^\s<>"']*`)
 
 func (r ImportRequest) calendarObservation() (Observation, error) {
 	event, err := gcalmodel.DecodeEvent(r.Record)
@@ -40,7 +40,7 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 		}
 	}
 	o := Observation{
-		RecordID: event.ID,
+		RecordID: event.ID, Sparse: event.Status == "cancelled" && event.Start.IsZero(),
 
 		Version: 1, Provider: "google_calendar", Account: r.Account, Kind: "scheduled_meeting",
 		Direction: unknown, Outcome: unknown, OwnerParticipation: unknown,
@@ -59,10 +59,15 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 		o.Outcome = "cancelled"
 	}
 	used := make(map[string]bool)
+	bindings := make(map[string]int64, len(r.Bindings))
+	for email, id := range r.Bindings {
+		bindings[gcalmodel.NormalizeParticipantEmail(email)] = id
+	}
 	for _, attendee := range event.Attendees {
-		if id, ok := r.Bindings[attendee.Email]; ok && !start.IsZero() {
+		email := gcalmodel.NormalizeParticipantEmail(attendee.Email)
+		if id, ok := bindings[email]; ok && !start.IsZero() {
 			o.Participants = append(o.Participants, Participant{ID: id, Participation: "invited"})
-			used[attendee.Email] = true
+			used[email] = true
 		}
 	}
 	if len(used) != len(r.Bindings) {
@@ -77,32 +82,19 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 	for _, entry := range conference.ConferenceData.EntryPoints {
 		if entry.EntryPointType == "phone" {
 			add("phone", entry.URI)
-		} else if isMeetingURL(entry.URI) {
-			add("url", entry.URI)
+		} else if join := meetingurl.KnownJoinURL(entry.URI); join != "" {
+			add("url", join)
 		}
 	}
-	if isMeetingURL(event.HangoutLink) {
-		add("url", event.HangoutLink)
+	if join := meetingurl.KnownJoinURL(event.HangoutLink); join != "" {
+		add("url", join)
 	}
 	for _, link := range calendarLink.FindAllString(event.Description+" "+event.Location, -1) {
-		link = strings.TrimRight(link, ".,);]")
 		if strings.HasPrefix(link, "tel:") {
 			add("phone", link)
-		} else if isMeetingURL(link) {
-			add("url", link)
+		} else if join := meetingurl.KnownJoinURL(strings.TrimRight(link, ".,);]")); join != "" {
+			add("url", join)
 		}
 	}
 	return o, nil
-}
-
-func isMeetingURL(value string) bool {
-	u, err := url.Parse(value)
-	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" {
-		return false
-	}
-	host := strings.ToLower(u.Hostname())
-	if slices.Contains([]string{"meet.google.com", "teams.microsoft.com", "teams.live.com", "cal.com"}, host) {
-		return true
-	}
-	return host == "zoom.us" || strings.HasSuffix(host, ".zoom.us")
 }

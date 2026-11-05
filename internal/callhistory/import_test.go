@@ -79,6 +79,34 @@ func TestCalendarOffsetFreeTimeZone(t *testing.T) {
 	assert.Equal("2026-10-01T17:00:00Z", o.EndedAt.UTC().Format(time.RFC3339))
 }
 
+func TestCalendarPreservesDialSequence(t *testing.T) {
+	for _, field := range []string{"description", "location"} {
+		t.Run(field, func(t *testing.T) {
+			o, err := (ImportRequest{Format: "google_calendar", Account: "example",
+				Record: []byte(fmt.Sprintf(`{"id":"event","start":{"date":"2026-10-01"},%q:"tel:+12025550101,,,123456789;1234"}`, field)),
+			}).Observation()
+			require.NoError(t, err)
+			assert.Equal(t, []AccessPoint{{Kind: "phone", Value: "tel:+12025550101,,,123456789;1234"}}, o.AccessPoints)
+		})
+	}
+}
+
+func TestCalendarBindingEmailCase(t *testing.T) {
+	o, err := (ImportRequest{Format: "google_calendar", Account: "example",
+		Record:   []byte(`{"id":"event","start":{"date":"2026-10-01"},"attendees":[{"email":"peer@example.com"}]}`),
+		Bindings: map[string]int64{"Peer@EXAMPLE.com": 7},
+	}).Observation()
+	require.NoError(t, err)
+	assert.Equal(t, []Participant{{ID: 7, Participation: "invited"}}, o.Participants)
+}
+
+func TestNormalizedCancellationRequiresTime(t *testing.T) {
+	_, err := (ImportRequest{Format: "normalized", Account: "example",
+		Record: []byte(`{"version":1,"provider":"google_calendar","account":"example","record_id":"event","kind":"scheduled_meeting","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","precision":"instant","raw":{}}`),
+	}).Observation()
+	require.ErrorIs(t, err, ErrInvalid)
+}
+
 func TestCalendarSchedulingIsNeverAttendance(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
