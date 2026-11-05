@@ -158,10 +158,7 @@ func decodeTranscript(data []byte, rolling bool) (entries []Entry, partial bool,
 			continue
 		}
 		var header struct {
-			Covered *struct {
-				System     *uint64 `json:"system"`
-				Microphone *uint64 `json:"microphone"`
-			} `json:"covered_ms"`
+			Covered *struct{} `json:"covered_ms"`
 		}
 		if rolling && line[len(line)-1] == '\n' && json.Unmarshal(line, &header) == nil && header.Covered != nil {
 			continue

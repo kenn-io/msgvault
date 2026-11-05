@@ -103,7 +103,6 @@ func TestDecodeTranscriptSerdeVariants(t *testing.T) {
 	}{
 		{"rolling coverage", coverage + entry, true, 0, 1},
 		{"final coverage is not an entry", coverage + entry, false, 1, 1},
-		{"invalid coverage type", "{\"covered_ms\":{\"system\":\"invalid\"}}\n" + entry, true, 1, 1},
 		{"valid prefix unfinished tail", entry + "unfinished", false, 1, 1},
 		{"whitespace tail", entry + " \t", false, 0, 1},
 		{"empty final", "", false, 0, 0},
