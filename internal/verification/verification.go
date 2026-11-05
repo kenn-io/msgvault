@@ -32,15 +32,13 @@ var (
 	englishQualifiedCodeCue = regexp.MustCompile(`(?i)` + englishQualifiedCodeCues)
 	ordinaryCodePrefix      = regexp.MustCompile(`(?i)\b(?:promo|coupon|discount|voucher|referral|gift|zip|postal|area|tracking|order|invoice|product|project)\s+$`)
 
-	compactCode           = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\n", "")
-	codeToken             = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
-	directYearCode        = regexp.MustCompile(`(?:` + codeCue.String() + `)\s*(?:is|:|-)?\s*[0-9]{4}$`)
-	englishDirectYearCode = regexp.MustCompile(`(?:` + englishCodeCue.String() + `)\s*(?:is|:|-)?\s*[0-9]{4}$`)
-	codeGap               = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|est|ist|es|è|:|-|your|the|verification|security|to verify|this|below)[\s\x{00a0}]*)*$`)
-	reverseGap            = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
-	signInAfter           = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in|verify your account)\b`)
-	useBefore             = regexp.MustCompile(`(?i)\buse\s+$`)
-	link                  = regexp.MustCompile(`https?://[^\s<>"']+`)
+	compactCode = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\n", "")
+	codeToken   = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
+	codeGap     = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|est|ist|es|è|:|-|your|the|verification|security|to verify|this|below)[\s\x{00a0}]*)*$`)
+	reverseGap  = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
+	signInAfter = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in|verify your account)\b`)
+	useBefore   = regexp.MustCompile(`(?i)\buse\s+$`)
+	link        = regexp.MustCompile(`https?://[^\s<>"']+`)
 )
 
 // Is fails closed for oversized fields. Cue distance is at most 60 runes.
@@ -97,9 +95,9 @@ func Is(c Content) bool {
 		if !separateCue && !codeFields[i] && !useFields[i] {
 			continue
 		}
-		cue, year := englishCodeCue, englishDirectYearCode
+		cue := englishCodeCue
 		if localizedFields[i] {
-			cue, year = codeCue, directYearCode
+			cue = codeCue
 		}
 		for _, loc := range codeToken.FindAllStringIndex(field, -1) {
 			start, end := loc[0], loc[1]
@@ -135,7 +133,7 @@ func Is(c Content) bool {
 				right += n
 			}
 			if len(value) == 4 && value >= "1900" && value <= "2099" {
-				if codeFields[i] && year.MatchString(field[left:start]+value) && nearCue(field[left:start], true, cue) {
+				if codeFields[i] && nearCue(field[left:start], true, cue) {
 					return true
 				}
 			} else if separateCue || codeFields[i] && (nearCue(field[left:start], true, cue) || nearCue(field[end:right], false, cue)) || useFields[i] && useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right]) {
