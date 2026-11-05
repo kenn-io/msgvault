@@ -981,7 +981,10 @@
     'reverse-sort': fixedSortNotice,
     'open-keyboard-help': openKeyboardHelp,
     'open-command-palette': (event) => {
-      if (!editableTarget(event?.target ?? null)) { paletteQuery = ''; paletteOpen = true; }
+      if (!editableTarget(event?.target ?? null)) {
+        paletteQuery = '';
+        paletteOpen = true;
+      }
     },
   };
   const groupingCommands = $derived(
@@ -1091,12 +1094,20 @@
   }
   $effect(() => {
     keyboardHelpScopeCleanup?.();
-    if (!keyboardHelpOpen) { keyboardHelpScopeCleanup = undefined; return; }
+    if (!keyboardHelpOpen) {
+      keyboardHelpScopeCleanup = undefined;
+      return;
+    }
     const scope = 'everything-keyboard-help';
     const popScope = appShortcuts.pushScope(scope);
     const palette = commandRegistry.find(({ id }) => id === 'open-command-palette')!;
-    const unregister = palette.combos.map(combo => appShortcuts.register(combo, () => { void openCommandsFromHelp(); }, { scope }));
-    keyboardHelpScopeCleanup = () => { unregister.forEach(remove => remove()); popScope(); };
+    const unregister = palette.combos.map(combo => appShortcuts.register(combo, () => {
+      void openCommandsFromHelp();
+    }, { scope }));
+    keyboardHelpScopeCleanup = () => {
+      unregister.forEach(remove => remove());
+      popScope();
+    };
   });
   // AppShell owns the People controller and opens the URL target on initial
   // load and Back/Forward navigation.
@@ -1597,7 +1608,9 @@
   <KeyboardHelp
     commands={commandRegistry}
     onclose={() => void closeKeyboardHelp()}
-    onOpenCommands={(query) => { void openCommandsFromHelp(query); }}
+    onOpenCommands={(query) => {
+      void openCommandsFromHelp(query);
+    }}
   />
 {/if}
 

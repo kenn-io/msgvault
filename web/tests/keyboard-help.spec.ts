@@ -79,6 +79,27 @@ test('help scrolls vertically on narrow screens and formats Mac shortcuts', asyn
   await expect(help).toHaveCount(0);
 });
 
+test('help wraps long unmatched queries on a phone', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: 'Help', exact: true }).click();
+  const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
+  const query = '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  await help.getByRole('searchbox', { name: 'Search keyboard shortcuts' }).fill(query);
+  const title = help.getByText(`No shortcuts match "${query}"`, { exact: true });
+  await expect(title).toBeVisible();
+  const list = help.locator('.keyboard-help-list');
+  expect(await list.evaluate(element => element.scrollWidth - element.clientWidth)).toBe(0);
+  const action = help.getByRole('button', { name: 'Search commands instead' });
+  await expect(action).toBeInViewport({ ratio: 1 });
+  await page.screenshot({ path: testInfo.outputPath('artifacts/keyboard-help-long-query.png') });
+  await action.click();
+  await expect(page.getByRole('dialog', { name: 'Messages commands' }).getByRole('combobox')).toHaveValue(query);
+  expect(errors).toEqual([]);
+});
+
 test('short laptop windows scroll every shortcut inside Help', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 720 });
   await page.getByRole('button', { name: 'Help', exact: true }).click();

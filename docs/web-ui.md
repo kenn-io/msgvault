@@ -413,7 +413,7 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 
 | Key | Action |
 |---|---|
-| `J` / `K`, `↓` / `↑` | Move to the next or previous row |
+| `j` / `k`, `↓` / `↑` | Move to the next or previous row |
 | `H` / `L` | Open the previous or next item in the reader |
 | `Home` / `End` | Move to the first or last row |
 | `PgUp` / `PgDn` | Move up or down one page |
@@ -423,22 +423,18 @@ Tab keeps its normal browser meaning. Outside inputs and content viewers:
 | `Space` | Toggle selection of the focused row |
 | `⇧ Space` | Extend the selection to the focused row |
 | `A` | Select all visible rows |
-| `X` | Clear the selection |
+| `x` | Clear the selection |
 | `D` / `⇧ D` | Review the selected or all matching items for deletion |
-| `F` | Open Filters |
-| `G` | Open Group by |
-| `S` | Open Sort |
-| `R` | Show sort order; in Files, point to the Sort menu |
+| `f` | Open Filters |
+| `g` | Open Group by |
+| `s` | Open Sort |
+| `r` | Show sort order; in Files, point to the Sort menu |
 | `?` | Open the searchable Keyboard shortcuts dialog |
 | `Ctrl K`, `⌘ K` on Mac | Open the command palette |
 
 Select **Help** in the sidebar, or press `?`, to search this list
-in the app. Each key has its own keycap, with ⌘ for Command on Mac. The list uses two columns on wide
-screens and stays in place while you filter it. The footer opens the command
-palette, and an empty search offers **Search commands instead**.
-
-Destructive keys open a review before any deletion. Shortcuts are suspended
-while typing and inside message/file
+in the app. Destructive keys open a review; they never execute deletion
+immediately. Shortcuts are suspended while typing and inside message/file
 content.
 
 ## Settings and restart behavior

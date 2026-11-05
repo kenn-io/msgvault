@@ -103,6 +103,10 @@
     display: none;
   }
 
+  .keyboard-help-list :global(.kit-empty-state__title) {
+    overflow-wrap: anywhere;
+  }
+
   .keyboard-help-track:not(:empty) + .keyboard-help-track,
   section + section {
     margin-top: 16px;
