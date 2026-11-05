@@ -29,7 +29,10 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 		lines = append(lines, "Notes title: "+v.Notes.Title)
 	}
 	if v.Calendar != nil {
-		lines = append(lines, "Calendar: "+v.Calendar.Title, "Attendees: "+strings.Join(v.Calendar.Attendees, ", "))
+		if strings.TrimSpace(v.Calendar.Title) != title {
+			lines = append(lines, "Calendar: "+v.Calendar.Title)
+		}
+		lines = append(lines, "Attendees: "+strings.Join(v.Calendar.Attendees, ", "))
 	}
 	if v.Notes != nil {
 		lines = append(lines, "", "Summary:", string(v.Notes.Summary))
