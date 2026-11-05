@@ -9,7 +9,11 @@ export function decodeText(bytes: Uint8Array, contentType = '', truncated = fals
   return decoder.decode(bytes, { stream: truncated });
 }
 
-export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; hasErrors: boolean }> {
+// Short records are padded only up to this width, so one wide header can't
+// expand every row into thousands of empty cells.
+const MAX_PREVIEW_COLUMNS = 100;
+
+export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; hasErrors: boolean; columnsTruncated: boolean }> {
   const { default: Papa } = await import('papaparse');
   const result = Papa.parse<string[]>(text, { delimiter, preview: maxRows + 2, skipEmptyLines: true });
   const hasErrors = result.errors.some((error) => error.type === 'Quotes');
@@ -18,11 +22,11 @@ export async function parseDelimited(text: string, delimiter = '', maxRows = 200
   if (inputTruncated && !result.meta.truncated && (!text.endsWith(result.meta.linebreak) || hasErrors)) result.data.pop();
   const visible = result.data.slice(0, maxRows + 1);
   const columns = Math.max(0, ...visible.map((row) => row.length));
-  const padded = visible.map((row) => [...row, ...Array<string>(columns - row.length).fill('')]);
+  const padded = visible.map((row) => Array.from({ length: Math.min(columns, MAX_PREVIEW_COLUMNS) }, (_, index) => row[index] ?? ''));
   return {
-    header: padded[0] ?? [],
-    rows: padded.slice(1),
+    header: padded[0] ?? [], rows: padded.slice(1),
     truncated: result.data.length > maxRows + 1 || result.meta.truncated,
     hasErrors,
+    columnsTruncated: columns > MAX_PREVIEW_COLUMNS,
   };
 }

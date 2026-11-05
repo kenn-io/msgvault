@@ -412,10 +412,11 @@
             {#snippet header()}{#each delimited?.header ?? [] as cell}<TableHeaderCell><span title={cell}>{cell}</span></TableHeaderCell>{/each}{/snippet}
             {#each delimited.rows as row}<tr>{#each row as cell}<td title={cell}>{cell}</td>{/each}</tr>{/each}
           </Table>
-          {#if textTruncated || delimited.truncated || delimited.hasErrors}
+          {#if textTruncated || delimited.truncated || delimited.columnsTruncated || delimited.hasErrors}
             <div class="preview-notes">
               {#if textTruncated}<p>Preview stops at the 2 MiB size limit.</p>
               {:else if delimited.truncated}<p>Showing the first 200 rows.</p>{/if}
+              {#if delimited.columnsTruncated}<p>Preview stops at 100 columns.</p>{/if}
               {#if delimited.hasErrors}<p role="status">Some rows couldn't be read.</p>{/if}
             </div>
           {/if}
