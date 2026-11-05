@@ -70,7 +70,7 @@ func TestIncludeColdCollapsesEmailCopiesBeforeGrouping(t *testing.T) {
 	requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 	conv, err := f.Store.EnsureConversationWithType(source.ID, "email-copy", "email_thread", "Email copy")
 	requirements.NoError(err)
-	f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
+	copyID := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
 		m.SourceID, m.ConversationID = source.ID, conv
 		m.RFC822MessageID = sql.NullString{String: "shared@example.com", Valid: true}
 	})
@@ -115,6 +115,14 @@ func TestIncludeColdCollapsesEmailCopiesBeforeGrouping(t *testing.T) {
 			assertions.Contains(ids, coldTail)
 		})
 	}
+	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(copyID)))
+	requirements.NoError(err)
+	requirements.NotNil(got.Anchor)
+	assert.False(t, got.Anchor.Filtered)
+	requirements.Len(got.History, 1)
+	assert.True(t, got.History[0].Anchor)
+	requirements.NotNil(got.History[0].Burst)
+	assert.Contains(t, got.History[0].Burst.LatestMessageIDs, warm)
 }
 
 func TestUpcomingExcludesCancelledAndRemovedOccurrences(t *testing.T) {

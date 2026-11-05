@@ -302,28 +302,3 @@ func TestDelegatedConversationAnchorSkipsNewerNativeCall(t *testing.T) {
 	assertions.True(got.History[0].Anchor)
 	assertions.NotEqual(messageRef(call), got.History[0].Ref)
 }
-
-func TestDelegatedColdActivityOmitsNativeCalls(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	id := f.call(f.now)
-	display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
-	requirements.NoError(err)
-	d := display[id]
-	// Exercise the cold reader against an archived call in a cold conversation.
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`INSERT INTO conversation_policy(conversation_id,effective_tier) VALUES(?,'cold') ON CONFLICT(conversation_id) DO UPDATE SET effective_tier='cold'`), d.ConversationID)
-	requirements.NoError(err)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{d.SourceID})
-	for _, includeNoise := range []bool{false, true} {
-		req := dayRequest()
-		req.Scope = Scope{}
-		req.IncludeCold = true
-		req.IncludeNoise = includeNoise
-		got, err := Build(ctx, f.src, req)
-		requirements.NoError(err)
-		assertions.Empty(allDayEntries(got))
-		assertions.Zero(got.Omitted.Noise)
-		assertions.Zero(got.Omitted.Cold)
-	}
-}

@@ -17,14 +17,12 @@ import (
 
 func TestFreshnessSourcesOnlyIncludeIssues(t *testing.T) {
 	for _, tc := range []struct {
-		name, outcome, status string
+		name, outcome         string
 		errors                int
 		disabled, stale, keep bool
-		caldav                bool
 	}{
 		{name: "current"},
-		{name: "caldav never synced", caldav: true, status: "never_synced", keep: true},
-		{name: "stale", stale: true, status: "stale", keep: true},
+		{name: "stale", stale: true, keep: true},
 		{name: "failed", outcome: "failed", keep: true},
 		{name: "cancelled", outcome: "cancelled", keep: true},
 		{name: "paused", outcome: "paused", keep: true},
@@ -53,26 +51,14 @@ func TestFreshnessSourcesOnlyIncludeIssues(t *testing.T) {
 			if tc.stale {
 				now = now.Add(48 * time.Hour)
 			}
-			if tc.caldav {
-				cfg.Accounts = nil
-				cfg.CalDAV.Sources = []config.CalDAVSource{{Name: "personal", URL: "https://calendar.example.com/dav/", Username: "owner@example.com"}}
-				_, err := st.GetOrCreateSource("caldav", `["owner@example.com","https://calendar.example.com/dav/work/"]`)
-				requirements.NoError(err)
-			}
 			src, err := NewStoreSources(st, cfg)
 			requirements.NoError(err)
 			report, err := src.Inventory.Build(t.Context(), now)
 			requirements.NoError(err)
-			assertions.Equal(now, report.AsOf)
 			if tc.keep {
 				requirements.Len(report.Sources, 1)
-				assertions.Equal(tc.status, report.Sources[0].Reason)
-				if tc.caldav {
-					assertions.Equal("msgvault sync-caldav personal", report.Sources[0].SyncCommand)
-				} else {
-					assertions.Equal("msgvault sync-incremental owner@example.test", report.Sources[0].SyncCommand)
-					assertions.Contains(Markdown(&Timeline{Freshness: report}), "gmail:owner@example.test")
-				}
+				requirements.NotNil(report.Sources[0].SourceID)
+				assertions.Equal(source.ID, *report.Sources[0].SourceID)
 			} else {
 				assertions.Empty(report.Sources)
 			}

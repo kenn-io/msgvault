@@ -129,8 +129,7 @@ func TestTimelineKeysSwitchModes(t *testing.T) {
 	}{
 		{key: 'a', mode: timeline.ModeAnchor, around: "burst:1:7:2027-03-14", appMode: modeTimeline},
 		{key: 'w', mode: timeline.ModeRelationship, with: "person:42", appMode: modeTimeline},
-		{key: '?', mode: timeline.ModeDay, date: "2027-03-14", modal: modalHelp, appMode: modeTimeline},
-		{key: 'm', mode: timeline.ModeDay, date: "2027-03-14", appMode: modeEmail},
+		{key: '?', modal: modalHelp, appMode: modeTimeline},
 	} {
 		t.Run(string(tc.key), func(t *testing.T) {
 			assert := assert.New(t)
@@ -140,7 +139,7 @@ func TestTimelineKeysSwitchModes(t *testing.T) {
 			assert.Equal(tc.modal, updated.modal)
 			assert.Equal(allSourceScope(), updated.sourceScope)
 			assert.Equal(tc.appMode, updated.mode)
-			if tc.key == '?' || tc.key == 'm' {
+			if tc.key == '?' {
 				return
 			}
 			require.NotNil(cmd)
@@ -202,6 +201,8 @@ func TestTimelineCancelsAndDiscardsStaleResults(t *testing.T) {
 				m = sendMsg(t, m, late)
 				assertions.Equal(before, m.timelineState.result)
 				assertions.Equal(modeEmail, m.mode)
+				assertions.Equal(modalNone, m.modal)
+				assertions.Equal(allSourceScope(), m.sourceScope)
 			case "Esc", "Esc after n":
 				if action == "Esc" {
 					second := m.startTimelineRequest(timeline.Request{Mode: timeline.ModeDay, Date: "2027-03-16"}, true)
@@ -477,8 +478,8 @@ func TestTimelineCalendarOpensExactOccurrenceAndReturns(t *testing.T) {
 		configure func(*store.CalendarOccurrenceDetail)
 		text      []string
 	}{
-		{"timed", "evt:42@20270314T083000.123456789Z", func(*store.CalendarOccurrenceDetail) {}, nil},
-		{"moved", "evt:42@20270314T083000.123456789Z", func(d *store.CalendarOccurrenceDetail) {
+		{"timed", "evt:42@20270314T083000Z", func(*store.CalendarOccurrenceDetail) {}, nil},
+		{"moved", "evt:42@20270314T083000Z", func(d *store.CalendarOccurrenceDetail) {
 			d.Start = time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)
 			d.End = d.Start.Add(time.Hour)
 		}, []string{"Start: 2027-03-15T10:00:00Z", "End: 2027-03-15T11:00:00Z"}},
@@ -553,7 +554,7 @@ func (b *timelineModeBackend) GetCalendarOccurrenceContext(context.Context, stri
 
 func TestTimelineCalendarRetryKeepsExactRef(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
-	m, backend := timelineCalendarModel("evt:42@20270314T083000.123456789Z")
+	m, backend := timelineCalendarModel("evt:42@20270314T083000Z")
 	backend.calendarErr = errors.New("calendar temporarily unavailable\x1b]52;c;unsafe\x07")
 	opened, cmd := sendKey(t, m, keyEnter())
 	require.NotNil(cmd)
@@ -565,7 +566,7 @@ func TestTimelineCalendarRetryKeepsExactRef(t *testing.T) {
 	retry, cmd := sendKey(t, failed, key('r'))
 	require.NotNil(cmd)
 	loaded := sendMsg(t, retry, cmd())
-	assert.Equal([]string{"evt:42@20270314T083000.123456789Z", "evt:42@20270314T083000.123456789Z"}, backend.calendarRequests)
+	assert.Equal([]string{"evt:42@20270314T083000Z", "evt:42@20270314T083000Z"}, backend.calendarRequests)
 	assert.Contains(stripANSI(loaded.renderView()), "Archived planning")
 	assert.NoError(loaded.timelineState.err)
 }

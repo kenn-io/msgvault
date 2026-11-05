@@ -158,7 +158,7 @@ func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T
 }
 
 func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
-	for _, behavior := range []string{"attendance", "hidden text", "source scope", "future clock"} {
+	for _, behavior := range []string{"attendance", "hidden text", "future clock"} {
 		t.Run(behavior, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)
@@ -202,14 +202,6 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements.Len(hidden.History, 1)
 				assertions.True(hidden.History[0].HiddenText)
 				assertions.Empty(hidden.History[0].Meeting.Title.Text)
-			case "source scope":
-				// Source context reaches discovery and exact resolution; no visible notes means no attendance.
-				detail, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", event))
-				requirements.NoError(err)
-				scoped, err := Build(sourcescope.WithSourceIDs(t.Context(), []int64{detail.SourceID, f.Source.ID}), f.src, relationshipRequest(ref))
-				requirements.NoError(err)
-				assertions.Zero(scoped.Person.InteractionCount)
-				assertions.Empty(scoped.History)
 			case "future clock":
 				// Request clock excludes meetings in the future even if recording was imported earlier.
 				f.src.Clock = func() time.Time { return time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC) }
@@ -234,21 +226,6 @@ func TestRelationshipTranscriptOnlyFallback(t *testing.T) {
 	requirements.Len(got.History, 1)
 	assertions.Equal(messageRef(id), got.History[0].Ref)
 	assertions.Equal("transcript", got.History[0].Kind)
-}
-
-func TestCalendarAttendanceRequiresCanonicalSubject(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	f.calendar("canonical-other", strings.ReplaceAll(singleDayEvent, "alice@example.com", "other@example.com"))
-	f.calendar("stale-attendee", strings.ReplaceAll(singleDayEvent, `"id":"planning"`, `"id":"stale"`))
-	note := f.transcript("recording", "planning@example.com", f.now.Add(-time.Hour))
-	requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", nil, nil))
-	f.project()
-	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
-	requirements.NoError(err)
-	assertions.Zero(got.Person.InteractionCount)
-	assertions.Empty(got.History)
 }
 
 func TestRelationshipCalendarAttendanceOlderThanExpansionWindow(t *testing.T) {

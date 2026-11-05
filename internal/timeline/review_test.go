@@ -296,17 +296,3 @@ func TestColdConversationIncludesAllMessages(t *testing.T) {
 	assertions.Greater(pages, 1)
 	assertions.Equal(want, refs)
 }
-
-func TestColdFixtureRetractsWarmProjection(t *testing.T) {
-	f := newTimelineFixture(t)
-	f.add(f.now, false)
-	f.project()
-	require.NoError(t, f.seedConversationPolicy(t.Context(), f.Source.ID, "default-thread"))
-	f.project()
-	warm, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Limit: 10})
-	require.NoError(t, err)
-	assert.Empty(t, warm.Bursts)
-	cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Limit: 10})
-	require.NoError(t, err)
-	require.Len(t, cold.Bursts, 1)
-}

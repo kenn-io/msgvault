@@ -116,24 +116,7 @@ func TestTimelineCommandRefusesOldDaemon(t *testing.T) {
 	assert.Zero(t, timelineCalls.Load())
 }
 
-func TestTimelineCommandAmbiguityExplainsHowToChoose(t *testing.T) {
-	old := timelineOpen
-	t.Cleanup(func() { timelineOpen = old })
-	fake := &timelineFakeClient{err: &timeline.ErrAmbiguousReference{Candidates: []timeline.Candidate{
-		{PersonID: 7, DisplayName: "Alice", Address: "alice@example.org"},
-		{PersonID: 8, DisplayName: "Alice", Address: "alice@example.com"},
-	}}}
-	timelineOpen = func(context.Context) (timelineClient, func(), error) { return fake, func() {}, nil }
-	var stderr bytes.Buffer
-	command := newTimelineCommand()
-	command.SilenceUsage = true
-	command.SetErr(&stderr)
-	command.SetArgs([]string{"--with", "alice"})
-	require.ErrorContains(t, command.Execute(), "more than one person matches; choose a match")
-	assert.Equal(t, "person:7\tAlice\talice@example.org\nperson:8\tAlice\talice@example.com\nError: more than one person matches; choose a match\n", stderr.String())
-}
-
-func TestTimelineRealTransportPreservesResponseAndFlagPresence(t *testing.T) {
+func TestTimelineRealTransportPreservesFittedResponse(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -220,7 +203,6 @@ func TestTimelineRealTransportAmbiguityPrintsUsableReferences(t *testing.T) {
 	timelineOpen = func(context.Context) (timelineClient, func(), error) { return client, func() {}, nil }
 	var candidates, output bytes.Buffer
 	command := newTimelineCommand()
-	command.SilenceErrors = true
 	command.SilenceUsage = true
 	command.SetErr(&candidates)
 	command.SetOut(&output)
@@ -228,9 +210,10 @@ func TestTimelineRealTransportAmbiguityPrintsUsableReferences(t *testing.T) {
 	var ambiguous *timeline.ErrAmbiguousReference
 	requirements.ErrorAs(command.Execute(), &ambiguous)
 	requirements.Len(ambiguous.Candidates, 2)
+	assertions.Contains(candidates.String(), "Error: more than one person matches; choose a match\n")
 	assertions.NotContains(candidates.String(), "\x1b")
 	assertions.NotContains(candidates.String(), "person:0")
-	lines := strings.Split(strings.TrimSpace(candidates.String()), "\n")
+	lines := strings.Split(strings.TrimSpace(strings.TrimSuffix(candidates.String(), "Error: more than one person matches; choose a match\n")), "\n")
 	requirements.Len(lines, 2)
 	refs := []string{}
 	for _, line := range lines {

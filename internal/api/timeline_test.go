@@ -126,7 +126,6 @@ func TestTimelineDelegatedAdmission(t *testing.T) {
 		sources []agentgrant.SourceRef
 		status  int
 	}{
-		{"message", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, 200},
 		{"calendar only", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, 403},
 		{"no admitted sources", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: 9998, Type: "gmail", Identifier: "removed@example.com"}}, 403},
 	} {

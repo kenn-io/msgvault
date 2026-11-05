@@ -220,11 +220,17 @@ func TestAnchorWithPersonNarrows(t *testing.T) {
 	otherID := f.add(f.now.Add(time.Hour), false, func(m *store.Message) { m.SenderID = sql.NullInt64{Int64: other, Valid: true}; m.ConversationID = conv })
 	requirements.NoError(f.Store.ReplaceMessageRecipients(otherID, "from", []int64{other}, nil))
 	f.project()
-	req := anchorRequest(messageRef(id))
-	req.With = fmt.Sprintf("person:%d", p)
-	got, err := Build(t.Context(), f.src, req)
-	requirements.NoError(err)
-	requirements.Len(got.History, 1)
+	for _, with := range []string{fmt.Sprintf("person:%d", p), "email:alice@example.com"} {
+		req := anchorRequest(messageRef(id))
+		req.With = with
+		req.Conversation = with == "email:alice@example.com"
+		got, err := Build(t.Context(), f.src, req)
+		requirements.NoError(err)
+		requirements.Len(got.History, 1)
+		if req.Conversation {
+			assert.Equal(t, messageRef(id), got.History[0].AnchorRef)
+		}
+	}
 }
 func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 	f := newTimelineFixture(t)
@@ -252,33 +258,6 @@ func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAnchorUsesDeduplicatedEmailRepresentative(t *testing.T) {
-	f := newTimelineFixture(t)
-	representative := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
-		m.RFC822MessageID = sql.NullString{String: "<shared@example.com>", Valid: true}
-	})
-	// A fuller conversation selects this account, even when the copy is the anchor.
-	f.add(f.now.Add(-30*time.Minute), false)
-	source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
-	require.NoError(t, err)
-	require.NoError(t, f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
-	conv, err := f.Store.EnsureConversationWithType(source.ID, "copy", "email_thread", "Copy")
-	require.NoError(t, err)
-	copyID := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
-		m.SourceID, m.ConversationID = source.ID, conv
-		m.RFC822MessageID = sql.NullString{String: "shared@example.com", Valid: true}
-	})
-	f.project()
-	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(copyID)))
-	require.NoError(t, err)
-	require.NotNil(t, got.Anchor)
-	assert.False(t, got.Anchor.Filtered)
-	require.Len(t, got.History, 1)
-	assert.True(t, got.History[0].Anchor)
-	require.NotNil(t, got.History[0].Burst)
-	assert.Contains(t, got.History[0].Burst.LatestMessageIDs, representative)
 }
 
 func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {

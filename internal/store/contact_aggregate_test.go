@@ -199,7 +199,11 @@ func calendarAttendanceFixture(t *testing.T, address, envelope string) (*timelin
 	if envelope == "none" {
 		raw = strings.NewReplacer(`"attendees":[{`, `"organizer":{`, `}]}`, `}}`).Replace(raw)
 	}
-	event := calendarMergeEvent(t, f.Store, source.ID, "planning", raw)
+	eventRaw := raw
+	if envelope == "canonical subject" {
+		eventRaw = strings.ReplaceAll(raw, "alice@example.com", "other@example.com")
+	}
+	event := calendarMergeEvent(t, f.Store, source.ID, "planning", eventRaw)
 	copyID := calendarMergeEvent(t, f.Store, source.ID, "calendar-copy", strings.ReplaceAll(raw, `"id":"planning"`, `"id":"calendar-copy"`))
 	for _, id := range []int64{event, copyID} {
 		requirements.NoError(f.Store.SetMessageMetadata(id, sql.NullString{String: `{"ical_uid":"planning@example.com","calendar_id":"calendar@example.com"}`, Valid: true}))
@@ -229,10 +233,10 @@ func calendarAttendanceFixture(t *testing.T, address, envelope string) (*timelin
 
 func TestCalendarAttendanceTranscriptIDs(t *testing.T) {
 	for _, saved := range []bool{false, true} {
-		for _, envelope := range []string{"other", "none"} {
+		for _, envelope := range []string{"other", "none", "canonical subject", "source scope"} {
 			t.Run(fmt.Sprintf("calendar/saved=%t/envelope=%s", saved, envelope), func(t *testing.T) {
 				assertions, requirements := assert.New(t), require.New(t)
-				f, now, _, notes := calendarAttendanceFixture(t, "alice@example.com", envelope)
+				f, now, event, notes := calendarAttendanceFixture(t, "alice@example.com", envelope)
 				subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
 				if saved {
 					person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
@@ -240,9 +244,19 @@ func TestCalendarAttendanceTranscriptIDs(t *testing.T) {
 					subject = store.ActivitySubject{PersonID: person.ID}
 				}
 				q := store.ContactQuery{Subject: subject, Now: now, Location: time.UTC}
-				ids, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+				ctx := t.Context()
+				if envelope == "source scope" {
+					calendar, err := f.Store.GetMessageSourceContext(ctx, event)
+					requirements.NoError(err)
+					ctx = sourcescope.WithSourceIDs(ctx, []int64{f.Source.ID, calendar.ID})
+				}
+				ids, more, err := f.Store.AttendedTranscriptIDsContext(ctx, q, 10)
 				requirements.NoError(err)
 				assertions.False(more)
+				if envelope == "canonical subject" || envelope == "source scope" {
+					assertions.Empty(ids)
+					return
+				}
 				assertions.ElementsMatch(notes, ids)
 				bounded, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 1)
 				requirements.NoError(err)
