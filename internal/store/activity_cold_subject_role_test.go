@@ -11,7 +11,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// A coauthor who is also addressed retains the stronger sender
+// A sender who is also addressed retains the stronger sender
 // role for saved and unsaved participants under the stored audience limit.
 func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 	for _, saved := range []bool{false, true} {
@@ -29,10 +29,10 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 				requirements.NoError(err)
 				subject = store.ActivitySubject{PersonID: p.ID}
 			}
-			id := addColdTimelineMessage(t, f, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true)
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner, f.peer}, nil))
+			id := addColdTimelineMessage(t, f, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false)
+			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.peer}, nil))
 			guest := f.EnsureParticipant("guest@example.com", "Guest", "example.com")
-			to := []int64{f.peer, guest}
+			to := []int64{f.owner, f.peer, guest}
 			if alias != 0 {
 				to = append(to, alias)
 			}
@@ -43,6 +43,7 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 					requirements := require.New(t)
 					burstQuery := timelineBurstQuery()
 					burstQuery.Subject = subject
+					// The cold room stays unprojected; RunOnce stores the audience limit.
 					projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
 					requirements.NoError(err)
 					_, err = projector.RunOnce(t.Context())
@@ -51,21 +52,22 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), burstQuery)
 					requirements.NoError(err)
 					requirements.Len(page.Bursts, 1)
+					wantInbound := 1
+					if limit == 1 {
+						wantInbound = 0
+					}
+					assertions.Equal(wantInbound, page.Bursts[0].Inbound)
 					assertions.Zero(page.Bursts[0].Outbound)
 					seen := map[int64]bool{}
 					for _, cp := range page.Bursts[0].Counterparts {
 						seen[cp.ParticipantID] = true
 						if cp.ParticipantID == f.peer || cp.ParticipantID == alias {
 							assertions.Equal(store.RoleSender, cp.Role)
-							assertions.False(cp.Counted)
-							wantEvidence := store.EvidenceDirect
-							if limit == 1 {
-								wantEvidence = store.EvidenceCoPresence
-							}
-							assertions.Equal(wantEvidence, cp.Evidence)
+							assertions.Equal(limit != 1, cp.Counted)
+							assertions.Equal(store.EvidenceDirect, cp.Evidence)
 						}
 						if cp.ParticipantID == guest {
-							assertions.Equal(limit != 1, cp.Counted)
+							assertions.False(cp.Counted)
 						}
 					}
 					assertions.True(seen[f.peer])
