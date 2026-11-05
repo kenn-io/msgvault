@@ -257,7 +257,7 @@ var icsDurationPattern = regexp.MustCompile(`^\+?P(?:(\d+)W|(?:(\d+)D)?(?:T(?:(\
 // icsDuration splits a DURATION into nominal days and exact elapsed time.
 func icsDuration(value string) (int, time.Duration, error) {
 	m := icsDurationPattern.FindStringSubmatch(value)
-	if m == nil {
+	if m == nil || strings.Join(m[1:], "") == "" || strings.HasSuffix(value, "T") {
 		return 0, 0, errors.New("invalid calendar DURATION")
 	}
 	var n [5]int64
@@ -282,8 +282,7 @@ func icsDuration(value string) (int, time.Duration, error) {
 func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICSComponent, error) {
 	p := comp.Props
 	c := ICSComponent{OrganizerEmail: icsEmail(p.Get("ORGANIZER"))}
-	var status string
-	for name, target := range map[string]*string{"UID": &c.UID, "SUMMARY": &c.Summary, "DESCRIPTION": &c.Description, "LOCATION": &c.Location, "STATUS": &status} {
+	for name, target := range map[string]*string{"UID": &c.UID, "SUMMARY": &c.Summary, "DESCRIPTION": &c.Description, "LOCATION": &c.Location} {
 		text, err := propText(p, name)
 		if err != nil {
 			return ICSComponent{}, err
@@ -302,11 +301,12 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		}
 		c.Sequence = n
 	}
-	switch strings.ToUpper(status) {
-	case "TENTATIVE":
-		e.Status = "tentative"
-	case "CANCELLED":
-		e.Status = "cancelled"
+	status, err := (&ical.Event{Component: comp}).Status()
+	if err != nil {
+		return ICSComponent{}, fmt.Errorf("STATUS: %w", err)
+	}
+	if status != "" {
+		e.Status = strings.ToLower(string(status))
 	}
 	if method == "CANCEL" {
 		e.Status = "cancelled"
