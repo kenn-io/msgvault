@@ -57,6 +57,7 @@ type MockEngine struct {
 	RawMessages map[int64][]byte
 	// SenderLabelsByID answers SenderLabels for the requested message IDs.
 	SenderLabelsByID map[int64]string
+	SenderLabelsErr  error
 }
 
 // Compile-time check.
@@ -65,6 +66,9 @@ var _ query.MessageBodySearcher = (*MockEngine)(nil)
 var _ query.SenderLabeler = (*MockEngine)(nil)
 
 func (m *MockEngine) SenderLabels(_ context.Context, ids []int64) (map[int64]string, error) {
+	if m.SenderLabelsErr != nil {
+		return nil, m.SenderLabelsErr
+	}
 	labels := make(map[int64]string, len(ids))
 	for _, id := range ids {
 		labels[id] = m.SenderLabelsByID[id]

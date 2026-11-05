@@ -889,7 +889,7 @@
       grid-template-areas: 'kind people att time' 'title title title title' 'excerpt excerpt excerpt excerpt';
     }
     .selection-cell { grid-area: kind; z-index: 1; }
-    .data-row:hover .cell--kind, .data-row:focus-within .cell--kind, .selection-mode .cell--kind { visibility: hidden; }
+    .data-row:hover .selection-cell ~ .cell--kind, .data-row:focus-within .selection-cell ~ .cell--kind, .selection-mode .selection-cell ~ .cell--kind { visibility: hidden; }
     .cell--kind { grid-area: kind; justify-self: center; color: var(--artifact-ink); }
     .cell--kind :global(.row-kind__label) { display: none; }
     .desktop-people { display: none; }

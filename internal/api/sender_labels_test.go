@@ -37,14 +37,8 @@ func TestExploreSenderLabelsKeepConversationRoster(t *testing.T) {
 	assert.Equal(t, []string{"Alice Recipient", "Zoe Sender"}, result.Rows[2].ParticipantLabels)
 }
 
-type failingSenderExploreEngine struct{ *peopleAPIEngine }
-
-func (e *failingSenderExploreEngine) SenderLabels(context.Context, []int64) (map[int64]string, error) {
-	return nil, errors.New("sender lookup failed")
-}
-
 func TestExploreSenderLookupFailureKeepsRows(t *testing.T) {
-	engine := &failingSenderExploreEngine{&peopleAPIEngine{MockEngine: &querytest.MockEngine{}, timelineResult: &query.ExploreResponse{Rows: []query.EntryRow{{Kind: query.EntryEmail, AnchorMessageID: new(int64(1)), ParticipantLabels: []string{"Example Sender"}}}, TotalCount: 1}}}
+	engine := &peopleAPIEngine{MockEngine: &querytest.MockEngine{SenderLabelsErr: errors.New("sender lookup failed")}, timelineResult: &query.ExploreResponse{Rows: []query.EntryRow{{Kind: query.EntryEmail, AnchorMessageID: new(int64(1)), ParticipantLabels: []string{"Example Sender"}}}, TotalCount: 1}}
 	opts := testServerOptions(t, nil)
 	opts.Engine = engine
 	response := postExploreJSON(t, NewServerWithOptions(opts), "/api/v1/explore", `{}`)
@@ -56,14 +50,8 @@ func TestExploreSenderLookupFailureKeepsRows(t *testing.T) {
 	assert.Equal(t, []string{"Example Sender"}, result.Rows[0].ParticipantLabels)
 }
 
-type failingSenderFileEngine struct{ *fileSearchEngine }
-
-func (e *failingSenderFileEngine) SenderLabels(context.Context, []int64) (map[int64]string, error) {
-	return nil, errors.New("sender lookup failed")
-}
-
 func TestFilesSenderLookupFailureKeepsRows(t *testing.T) {
-	engine := &failingSenderFileEngine{&fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{Files: []query.FileRow{{ID: 1, MessageID: 11, Filename: "example.pdf", ParticipantLabels: []string{"Example Sender"}}}, TotalCount: 1}}}
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{SenderLabelsErr: errors.New("sender lookup failed")}, result: &query.FileSearchResponse{Files: []query.FileRow{{ID: 1, MessageID: 11, Filename: "example.pdf", ParticipantLabels: []string{"Example Sender"}}}, TotalCount: 1}}
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{1: {ID: 1, MessageID: 11, Filename: "example.pdf"}}}
 	opts := testServerOptions(t, nil)
 	opts.Engine, opts.Store = engine, catalog
