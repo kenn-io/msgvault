@@ -98,6 +98,21 @@ describe('PersonNetwork', () => {
     expect(screen.getByRole('region', { name: 'Network graph' }).tabIndex).toBe(0);
   });
 
+  it('shows a symmetric relationship label when the root is the target', async () => {
+    const network = connected();
+    network.nodes = network.nodes.slice(0, 2);
+    network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'friend', label: 'friend' }];
+    const { controller } = controllerWith(networkFetcher(network));
+    controller.relationshipTypes = [{
+      id: 31, revision: 1, slug: 'friend', forward_label: 'friend', reverse_label: 'friend',
+      is_symmetric: true, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
+    }];
+    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
+    await screen.findByRole('button', { name: 'Curated Peer' });
+    expect(container.querySelector('.edge-label')?.textContent).toBe('friend');
+  });
+
   it('marks an incoming relationship label right to left', async () => {
     const network = connected();
     network.nodes = network.nodes.slice(0, 2);

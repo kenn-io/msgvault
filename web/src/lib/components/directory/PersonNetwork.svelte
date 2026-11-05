@@ -70,6 +70,8 @@
     const from = layout.place.get(edge.source_node_id)!;
     const to = layout.place.get(edge.target_node_id)!;
     const flipped = from.x > to.x || (from.x === to.x && from.y > to.y);
+    const type = controller.relationshipTypes.find(({ slug }) => slug === edge.relationship_type_slug);
+    if (type) return flipped ? type.reverse_label : type.forward_label;
     return flipped && edge.relationship_type_slug ? (from.x === to.x ? '↑ ' : '← ') + edge.label : edge.label;
   }
 
