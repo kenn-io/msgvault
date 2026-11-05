@@ -97,6 +97,21 @@ func (e *DuckDBEngine) CompletePeople(
 		WITH params AS (
 			SELECT ?::VARCHAR AS query_text, ?::VARCHAR AS query_username,
 			       ?::VARCHAR AS query_digits
+		), matched AS (
+			SELECT d.canonical_id, d.display_label, d.current_temperature, d.last_at,
+			       params.*,
+			       unnest(list_filter(d.search_primitives, lambda primitive:
+			           -- CASE limits phone normalization to phone searches.
+			           CASE
+			               WHEN primitive.kind = 'username' THEN
+			                   params.query_username != '' AND contains(primitive.match_value, params.query_username)
+			               WHEN contains(primitive.match_value, params.query_text) THEN true
+			               WHEN primitive.kind = 'phone' AND params.query_digits != '' THEN
+			                   contains(regexp_replace(primitive.match_value, '[^0-9]', '', 'g'), params.query_digits)
+			               ELSE false
+			           END
+			       )) AS primitive
+			FROM read_parquet('`+directory+`') d, params
 		), candidates AS (
 			SELECT d.canonical_id AS participant_id,
 			       d.display_label,
@@ -107,20 +122,20 @@ func (e *DuckDBEngine) CompletePeople(
 			       primitive.match_value,
 			       primitive."source" AS source,
 			       CASE
-			           WHEN primitive.kind = 'phone' AND params.query_digits != '' THEN
+			           WHEN primitive.kind = 'phone' AND d.query_digits != '' THEN
 			               CASE
-			                   WHEN regexp_replace(primitive.match_value, '[^0-9]', '', 'g') = params.query_digits THEN 0
-			                   WHEN starts_with(regexp_replace(primitive.match_value, '[^0-9]', '', 'g'), params.query_digits) THEN 1
+			                   WHEN regexp_replace(primitive.match_value, '[^0-9]', '', 'g') = d.query_digits THEN 0
+			                   WHEN starts_with(regexp_replace(primitive.match_value, '[^0-9]', '', 'g'), d.query_digits) THEN 1
 			                   ELSE 2
 			               END
-			           WHEN primitive.kind = 'username' AND params.query_username != '' THEN
+			           WHEN primitive.kind = 'username' AND d.query_username != '' THEN
 			               CASE
-			                   WHEN primitive.match_value = params.query_username THEN 0
-			                   WHEN starts_with(primitive.match_value, params.query_username) THEN 1
+			                   WHEN primitive.match_value = d.query_username THEN 0
+			                   WHEN starts_with(primitive.match_value, d.query_username) THEN 1
 			                   ELSE 2
 			               END
-			           WHEN primitive.match_value = params.query_text THEN 0
-			           WHEN starts_with(primitive.match_value, params.query_text) THEN 1
+			           WHEN primitive.match_value = d.query_text THEN 0
+			           WHEN starts_with(primitive.match_value, d.query_text) THEN 1
 			           ELSE 2
 			       END AS match_rank,
 			       CASE primitive.kind
@@ -131,14 +146,7 @@ func (e *DuckDBEngine) CompletePeople(
 			           ELSE 3
 			       END AS kind_rank,
 			       CASE WHEN primitive."source" = 'observed' THEN 0 ELSE 1 END AS source_rank
-			FROM read_parquet('`+directory+`') d,
-			     unnest(d.search_primitives) AS completed(primitive), params
-			WHERE (primitive.kind = 'username' AND params.query_username != ''
-			       AND contains(primitive.match_value, params.query_username))
-			   OR (primitive.kind != 'username'
-			       AND contains(primitive.match_value, params.query_text))
-			   OR (primitive.kind = 'phone' AND params.query_digits != ''
-			       AND contains(regexp_replace(primitive.match_value, '[^0-9]', '', 'g'), params.query_digits))
+			FROM matched d
 		), deduplicated AS (
 			SELECT *, row_number() OVER (
 				PARTITION BY participant_id, kind, match_value
