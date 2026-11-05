@@ -159,6 +159,7 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 }
 
 func TestRunScheduledWhatsAppAppleSkipsMergedSource(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	cfg := config.NewDefaultConfig()
 	cfg.Data.DataDir = t.TempDir()
 	cfg.Analytics.AutoBuildCache = false
@@ -166,39 +167,40 @@ func TestRunScheduledWhatsAppAppleSkipsMergedSource(t *testing.T) {
 	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 	source := config.WhatsAppAppleSource{Phone: "+15550000000", Path: createWhatsAppIdentityFixture(t, false, false)}
 	retired, err := st.GetOrCreateSource("whatsapp", source.Phone)
-	require.NoError(t, err)
+	require.NoError(err)
 	destination, err := st.GetOrCreateSource("whatsapp", "+15550000001")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: retired.ID, IntoSourceID: destination.ID})
-	require.NoError(t, err)
+	require.NoError(err)
 
-	assert.NoError(t, runScheduledWhatsAppApple(ctx, st, source))
+	assert.NoError(runScheduledWhatsAppApple(ctx, st, source))
 	var runs int
-	require.NoError(t, st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
-	assert.Zero(t, runs)
+	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
+	assert.Zero(runs)
 }
 
 func TestImportImessageRecordedPreservesCountersAfterCheckpointFailure(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	path, chat := testutil.NewIMessageChatDB(t)
 	_, err := chat.Exec(`INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two')`)
-	require.NoError(t, err)
+	require.NoError(err)
 	st := testutil.NewSQLiteTestStore(t)
 	src, err := resolveImessageSource(st)
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.DB().Exec(`CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs
 		WHEN NEW.status = 'running'
 		BEGIN SELECT RAISE(ABORT, 'synthetic checkpoint failure'); END`)
-	require.NoError(t, err)
+	require.NoError(err)
 	client, err := imessage.NewClient(path)
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = importImessageRecorded(t.Context(), st, client, src.ID)
-	require.ErrorContains(t, err, "synthetic checkpoint failure")
+	require.ErrorContains(err, "synthetic checkpoint failure")
 	run, err := st.GetLatestSync(src.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "failed", run.Status)
-	assert.Equal(t, int64(2), run.MessagesProcessed)
-	assert.Equal(t, int64(2), run.MessagesAdded)
+	require.NoError(err)
+	assert.Equal("failed", run.Status)
+	assert.Equal(int64(2), run.MessagesProcessed)
+	assert.Equal(int64(2), run.MessagesAdded)
 }
 
 func TestImportImessageRecordedPreservesPartialCounters(t *testing.T) {

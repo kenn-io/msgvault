@@ -105,26 +105,27 @@ func TestOpenReadOnlyDatabase(t *testing.T) {
 }
 
 func TestImportApplePreservesCountersAfterCheckpointFailure(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	chatDBPath := createAppleChatFixture(t)
 	createAppleLIDFixture(t, filepath.Dir(chatDBPath))
 	st := testutil.NewSQLiteTestStore(t)
 	_, err := st.DB().Exec(`CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs
 		WHEN NEW.status = 'running'
 		BEGIN SELECT RAISE(ABORT, 'synthetic checkpoint failure'); END`)
-	require.NoError(t, err)
+	require.NoError(err)
 	summary, err := NewImporter(st, nil).Import(t.Context(), chatDBPath, appleTestOptions())
-	require.ErrorContains(t, err, "synthetic checkpoint failure")
-	require.NotNil(t, summary)
-	require.Equal(t, int64(1), summary.MessagesProcessed)
-	require.Equal(t, int64(1), summary.MessagesAdded)
+	require.ErrorContains(err, "synthetic checkpoint failure")
+	require.NotNil(summary)
+	require.Equal(int64(1), summary.MessagesProcessed)
+	require.Equal(int64(1), summary.MessagesAdded)
 	src, err := st.GetSourceByTypeAndIdentifier("whatsapp", "+15555550100")
-	require.NoError(t, err)
+	require.NoError(err)
 	run, err := st.GetLatestSync(src.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "failed", run.Status)
-	assert.Equal(t, int64(1), run.MessagesProcessed)
-	assert.Equal(t, int64(1), run.MessagesAdded)
-	assert.Equal(t, int64(1), run.ErrorsCount)
+	require.NoError(err)
+	assert.Equal("failed", run.Status)
+	assert.Equal(int64(1), run.MessagesProcessed)
+	assert.Equal(int64(1), run.MessagesAdded)
+	assert.Equal(int64(1), run.ErrorsCount)
 }
 
 func TestImportAppleTextMessages(t *testing.T) {

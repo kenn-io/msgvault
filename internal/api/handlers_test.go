@@ -9280,36 +9280,37 @@ func (*fakeVectorBackend) EmbeddingCheckpoints() vector.EmbeddingCheckpoints {
 }
 
 func TestMergedWhatsAppSourceSchedulingAndTrigger(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
 	t.Parallel()
 	st := testutil.NewTestStore(t)
 	retired, err := st.GetOrCreateSource("whatsapp", "+15550000000")
-	require.NoError(t, err)
+	require.NoError(err)
 	destination, err := st.GetOrCreateSource("whatsapp", "+15550000001")
-	require.NoError(t, err)
+	require.NoError(err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: retired.ID, IntoSourceID: destination.ID})
-	require.NoError(t, err)
+	require.NoError(err)
 	sched := newMockScheduler()
 	sched.scheduledJobs = map[string]bool{"whatsapp:+15550000000": true}
 	sched.jobStatuses = []JobStatus{{Name: "whatsapp:+15550000000", Schedule: "0 */6 * * *"}}
 	srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status?source_type=whatsapp", nil))
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(http.StatusOK, w.Code)
 	var resp SourceStatusResponse
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	require.NoError(json.NewDecoder(w.Body).Decode(&resp))
 	var retiredStatus *SourceStatus
 	for i := range resp.Sources {
 		if resp.Sources[i].ID == retired.ID {
 			retiredStatus = &resp.Sources[i]
 		}
 	}
-	require.NotNil(t, retiredStatus)
-	assert.False(t, retiredStatus.CanSync)
-	assert.Equal(t, "source_not_schedulable", retiredStatus.SyncUnavailableReason)
+	require.NotNil(retiredStatus)
+	assert.False(retiredStatus.CanSync)
+	assert.Equal("source_not_schedulable", retiredStatus.SyncUnavailableReason)
 	response := servePOSTTestRequest(srv, "/api/v1/sync/+15550000000?source_type=whatsapp")
-	assert.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
-	assert.Contains(t, response.Body.String(), `"error":"source_not_schedulable"`)
-	assert.Empty(t, sched.startedJobs)
+	assert.Equal(http.StatusBadRequest, response.Code, response.Body.String())
+	assert.Contains(response.Body.String(), `"error":"source_not_schedulable"`)
+	assert.Empty(sched.startedJobs)
 }
 
 func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
