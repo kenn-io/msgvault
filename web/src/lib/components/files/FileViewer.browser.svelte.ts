@@ -1,4 +1,5 @@
-import { GlobalWorkerOptions, getDocument, version } from 'pdfjs-dist';
+import { GlobalWorkerOptions, TextLayer, getDocument, version } from 'pdfjs-dist';
+import 'pdfjs-dist/web/pdf_viewer.css';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
 export const PDFJS_PINNED_VERSION = '5.4.296';
@@ -9,6 +10,7 @@ export const MAX_TOTAL_CANVAS_PIXELS = 64_000_000;
 
 export interface PDFRenderHandle {
   pages: number;
+  setZoom(zoom: number): void;
   destroy(): void;
 }
 
@@ -22,17 +24,35 @@ export async function renderPDF(
   if (version !== PDFJS_PINNED_VERSION) {
     throw new Error(`PDF renderer version mismatch: expected ${PDFJS_PINNED_VERSION}, got ${version}`);
   }
-  if (bytes.byteLength > MAX_PDF_BYTES) throw new Error('PDF exceeds the preview byte limit.');
+  if (bytes.byteLength > MAX_PDF_BYTES) throw new Error('This file is too large to preview.');
   if (signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
 
   const loadingTask = getDocument({ data: bytes });
   let activeRender: { cancel(): void; promise: Promise<unknown> } | undefined;
   let activePage: { cleanup(): void } | undefined;
   let destroyed = false;
+  let zoom = 1;
+  const layers: Array<{ section: HTMLElement; layer: TextLayer; page: Awaited<ReturnType<Awaited<typeof loadingTask.promise>['getPage']>> }> = [];
+  const resize = (): void => {
+    for (const { section, layer, page } of layers) {
+      const natural = page.getViewport({ scale: 1 });
+      const width = Math.min(host.clientWidth - 24, natural.width * 1.25) * zoom;
+      const scale = Math.max(1, width) / natural.width;
+      const viewport = page.getViewport({ scale });
+      section.style.width = `${viewport.width}px`;
+      section.style.height = `${viewport.height}px`;
+      section.style.setProperty('--total-scale-factor', String(scale));
+      layer.update({ viewport });
+    }
+  };
+  const observer = new ResizeObserver(resize);
+  observer.observe(host);
   const cleanup = async (): Promise<void> => {
     if (destroyed) return;
     destroyed = true;
     signal.removeEventListener('abort', abortLoading);
+    observer.disconnect();
+    for (const { layer } of layers) layer.cancel();
     activeRender?.cancel();
     activeRender = undefined;
     activePage?.cleanup();
@@ -59,7 +79,13 @@ export async function renderPDF(
         throw new DOMException('Preview cancelled', 'AbortError');
       }
       activePage = page;
-      const viewport = page.getViewport({ scale: 1.25 });
+      const baseViewport = page.getViewport({ scale: 1.25 });
+      const basePixels = Math.ceil(baseViewport.width) * Math.ceil(baseViewport.height);
+      if (basePixels > MAX_CANVAS_PIXELS) throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
+      const desiredScale = Math.max(1.25, (host.clientWidth - 24) * 2 * (host.ownerDocument.defaultView?.devicePixelRatio ?? 1) / page.getViewport({ scale: 1 }).width);
+      const budget = Math.min(MAX_CANVAS_PIXELS, (MAX_TOTAL_CANVAS_PIXELS - totalCanvasPixels) / (pdfDocument.numPages - pageNumber + 1));
+      const scale = Math.max(1.25, Math.min(desiredScale, 1.25 * Math.sqrt(budget / basePixels)));
+      const viewport = page.getViewport({ scale });
       const pagePixels = Math.ceil(viewport.width) * Math.ceil(viewport.height);
       if (pagePixels > MAX_CANVAS_PIXELS) {
         throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
@@ -88,19 +114,22 @@ export async function renderPDF(
       const text = await page.getTextContent();
       if (destroyed || signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
       const textLayer = host.ownerDocument.createElement('div');
-      textLayer.className = 'pdf-text kit-sr-only';
+      textLayer.className = 'textLayer';
       textLayer.setAttribute('aria-label', `Text from PDF page ${pageNumber}`);
-      textLayer.textContent = text.items
-        .map((item) => ('str' in item ? item.str : ''))
-        .filter(Boolean)
-        .join(' ');
+      const layer = new TextLayer({ textContentSource: text, container: textLayer, viewport: page.getViewport({ scale: 1.25 }) });
+      section.style.setProperty('--total-scale-factor', '1.25');
       section.append(textLayer);
       host.append(section);
+      layers.push({ section, layer, page });
+      await layer.render();
+      if (destroyed || signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
+      resize();
       page.cleanup();
       activePage = undefined;
     }
     return {
       pages: pdfDocument.numPages,
+      setZoom(value: number): void { zoom = value; resize(); },
       destroy(): void { void cleanup(); }
     };
   } catch (error) {

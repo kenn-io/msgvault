@@ -197,7 +197,8 @@ test('opening a containing conversation and one Back restores the exact Files UR
   await page.keyboard.press('Enter');
   const filesURL = page.url();
 
-  await page.getByRole('button', { name: 'Open conversation' }).click();
+  await page.getByRole('button', { name: 'More file actions' }).click();
+  await page.getByRole('menuitem', { name: 'Open conversation' }).click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Containing item' });
   await expect(reading).toBeVisible();
   await expect(reading.getByRole('region', { name: 'Conversation thread' })).toBeVisible();
@@ -230,7 +231,7 @@ test('Back from an open file viewer closes it and restores the Files list URL', 
 });
 
 test('real PDF renders in-app and Escape closes with shortcut isolation and exact focus restoration', async ({ page, baseURL }) => {
-  const pdf = tinyPDF('Fixture preview text');
+  const pdf = tinyPDF('Fixture preview text', 3);
   await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), pdf);
 
   const grid = page.getByRole('grid', { name: 'Files results' });
@@ -238,7 +239,22 @@ test('real PDF renders in-app and Escape closes with shortcut isolation and exac
   await page.keyboard.press('Enter');
   const preview = page.getByRole('region', { name: 'PDF preview fixture.pdf' });
   await expect(preview.getByLabel('PDF page 1', { exact: true })).toBeVisible();
-  await expect(preview.locator('.pdf-text')).toContainText('Fixture preview text');
+  await expect(preview.locator('.textLayer').first()).toContainText('Fixture preview text');
+  const canvas = preview.locator('canvas').first();
+  const fitWidth = (await canvas.boundingBox())!.width;
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(fitWidth);
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  expect(await canvas.evaluate((element) => (element as HTMLCanvasElement).width)).toBeGreaterThanOrEqual((await canvas.boundingBox())!.width);
+  await page.getByRole('button', { name: 'Fit', exact: true }).click();
+  await expect.poll(async () => (await canvas.boundingBox())!.width).toBe(fitWidth);
+  await preview.locator('.textLayer').first().evaluate((layer) => {
+    const range = document.createRange(); range.selectNodeContents(layer); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+  });
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toContain('Fixture preview text');
+  await expect(page.getByText('Page 1 of 3', { exact: true })).toBeVisible();
+  await page.locator('.file-viewer .preview').evaluate((element) => { element.scrollTop = (element.querySelectorAll<HTMLElement>('.pdf-page')[1]!).offsetTop - (element as HTMLElement).offsetTop; });
+  await expect(page.getByText('Page 2 of 3', { exact: true })).toBeVisible();
   await expect(page.locator('iframe, embed, object')).toHaveCount(0);
   await page.keyboard.press('f');
   await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
@@ -260,14 +276,17 @@ test('real PDF renders in-app and Escape closes with shortcut isolation and exac
   )).toBe(true);
 });
 
-function tinyPDF(text: string): Buffer {
+function tinyPDF(text: string, pageCount = 1): Buffer {
   const escaped = text.replace(/[()\\]/g, (character) => `\\${character}`);
   const stream = `BT /F1 18 Tf 36 100 Td (${escaped}) Tj ET`;
+  const fontID = 3 + pageCount * 2;
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
-    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
-    `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    `<< /Type /Pages /Kids [${Array.from({ length: pageCount }, (_, index) => `${3 + index * 2} 0 R`).join(' ')}] /Count ${pageCount} >>`,
+    ...Array.from({ length: pageCount }, (_, index) => [
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 144] /Resources << /Font << /F1 ${fontID} 0 R >> >> /Contents ${4 + index * 2} 0 R >>`,
+      `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream`,
+    ]).flat(),
     '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
   ];
   let source = '%PDF-1.4\n';

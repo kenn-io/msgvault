@@ -151,7 +151,7 @@ export async function readBoundedStream(
           // The stable size error is authoritative even when transport cleanup fails.
         }
       }
-      throw new Error('File exceeds the preview byte limit.');
+      throw new Error('This file is too large to preview.');
     }
   }
   return (await readStream(stream, signal, maxBytes, false)).bytes;
@@ -184,7 +184,7 @@ async function readStream(stream: ReadableStream<Uint8Array> | null, signal: Abo
       length += value.byteLength;
       if (length > maxBytes) {
         await reader.cancel();
-        throw new Error('File exceeds the preview byte limit.');
+        throw new Error('This file is too large to preview.');
       }
       chunks.push(value);
     }

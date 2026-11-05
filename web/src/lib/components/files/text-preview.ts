@@ -12,13 +12,14 @@ export function decodeText(bytes: Uint8Array, contentType = '', truncated = fals
 export async function parseDelimited(text: string, delimiter = '', maxRows = 200, inputTruncated = false): Promise<{ header: string[]; rows: string[][]; truncated: boolean; hasErrors: boolean }> {
   const { default: Papa } = await import('papaparse');
   const result = Papa.parse<string[]>(text, { delimiter, preview: maxRows + 2, skipEmptyLines: true });
+  const hasErrors = result.errors.some((error) => error.type === 'Quotes');
   // A byte prefix can end inside a field, including a quoted multiline field.
   // Only a parsed record terminator proves the final record is complete.
-  if (inputTruncated && !result.meta.truncated && (!text.endsWith(result.meta.linebreak) || result.errors.some((error) => error.code === 'MissingQuotes'))) result.data.pop();
+  if (inputTruncated && !result.meta.truncated && (!text.endsWith(result.meta.linebreak) || hasErrors)) result.data.pop();
   return {
     header: result.data[0] ?? [],
     rows: result.data.slice(1, maxRows + 1),
     truncated: result.data.length > maxRows + 1 || result.meta.truncated,
-    hasErrors: result.errors.length > 0,
+    hasErrors,
   };
 }
