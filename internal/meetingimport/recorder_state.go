@@ -130,9 +130,10 @@ func (u *RecorderUploads[K]) Save() error {
 	return nil
 }
 
-// ForgetRecorderUploads clears only a supported receipt after acquiring its source lock.
+// ForgetRecorderUploads clears only a supported receipt after acquiring its
+// source lock. Registration may precede the root or find it offline.
 func ForgetRecorderUploads[K comparable](ctx context.Context, root, dir, identifier, target string) error {
-	canonical, dir, err := RecorderSyncPaths(root, dir)
+	canonical, dir, err := recorderPaths(root, dir, resolveMissingRoot)
 	if err != nil {
 		return err
 	}

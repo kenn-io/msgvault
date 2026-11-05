@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"os"
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
@@ -14,9 +13,6 @@ import (
 type RemoteSender func(context.Context, RemoteRequest) (RemoteResult, error)
 
 func ForgetRemoteUploads(ctx context.Context, opts ImportOptions) error {
-	if _, err := os.Stat(opts.MeetingsDir); errors.Is(err, os.ErrNotExist) {
-		return ctx.Err()
-	}
 	return meetingimport.ForgetRecorderUploads[string](ctx, opts.MeetingsDir, opts.LockDir, opts.Identifier, opts.RemoteTarget)
 }
 
