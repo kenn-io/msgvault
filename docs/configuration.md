@@ -1492,6 +1492,8 @@ calendars = []
 
 Detecting your own events, setting `is_from_me`, and marking attendees as copy-self require `username` to be an email address.
 
+For iCloud, set `url` to your account's `pNN-caldav.icloud.com` host, such as `https://p01-caldav.icloud.com/`. Discovery requires the same origin, so `https://caldav.icloud.com/` cannot discover calendars on that account host.
+
 Keep the password in a regular file readable only by its owner (`chmod 600`
 or `chmod 400` on Unix). Surrounding whitespace is ignored. The daemon rejects empty files and
 files over 64 KiB. On Windows, restrict the file's ACL to the daemon user.
