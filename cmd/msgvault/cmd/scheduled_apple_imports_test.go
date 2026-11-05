@@ -164,7 +164,7 @@ func TestImportImessageRecordedRecordsWarningsAndFailures(t *testing.T) {
 	assert := assert.New(t)
 	path, chat := testutil.NewIMessageAttachmentChatDB(t)
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setTestHome(t, home)
 	root := filepath.Join(home, "Library", "Messages")
 	require.NoError(os.MkdirAll(filepath.Join(root, "Attachments"), 0700))
 	require.NoError(os.WriteFile(filepath.Join(root, "Attachments", "voice.caf"), []byte("caffSYNTHETIC"), 0600))
