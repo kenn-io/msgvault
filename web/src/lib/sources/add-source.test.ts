@@ -2,9 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { ADD_SOURCE_KINDS, addSourceCommand, type CommandSourceKind } from './add-source';
 
-const gmail = ADD_SOURCE_KINDS[0] as CommandSourceKind;
-const imap = ADD_SOURCE_KINDS[2] as CommandSourceKind;
-const mbox = ADD_SOURCE_KINDS[3] as CommandSourceKind;
+function commandKind(id: string): CommandSourceKind {
+  const kind = ADD_SOURCE_KINDS.find(kind => kind.id === id);
+  if (!kind || !('fields' in kind)) throw new Error(`Missing command source kind: ${id}`);
+  return kind;
+}
+
+const gmail = commandKind('gmail');
+const imap = commandKind('imap');
+const mbox = commandKind('mbox');
 
 describe('addSourceCommand', () => {
   it('trims safe Gmail values in both shells and waits for a value', () => {
@@ -16,14 +22,24 @@ describe('addSourceCommand', () => {
 
   it('quotes apostrophes and dollar signs per shell', () => {
     const values = { email: 'you@example.com', path: "/tmp/O'Brien $notes.mbox" };
-    expect(addSourceCommand(mbox, values, 'posix')).toBe("msgvault import-mbox you@example.com '/tmp/O'\\''Brien $notes.mbox'");
-    expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox you@example.com "/tmp/O\'Brien $notes.mbox"');
+    expect(addSourceCommand(mbox, values, 'posix')).toBe("msgvault import-mbox -- you@example.com '/tmp/O'\\''Brien $notes.mbox'");
+    expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox -- you@example.com "/tmp/O\'Brien $notes.mbox"');
   });
 
   it('expands a home path only in POSIX shells', () => {
     const values = { email: 'you@example.com', path: '~/All mail.mbox' };
-    expect(addSourceCommand(mbox, values, 'posix')).toBe("msgvault import-mbox you@example.com ~/'All mail.mbox'");
-    expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox you@example.com "~/All mail.mbox"');
+    expect(addSourceCommand(mbox, values, 'posix')).toBe("msgvault import-mbox -- you@example.com ~/'All mail.mbox'");
+    expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox -- you@example.com "~/All mail.mbox"');
+  });
+
+  it('places an option terminator before hyphen-prefixed MBOX arguments', () => {
+    const values = { email: '-reader@example.com', path: '-archive.mbox' };
+    for (const shell of ['posix', 'cmd'] as const) {
+      expect(addSourceCommand(mbox, values, shell)).toBe('msgvault import-mbox -- -reader@example.com -archive.mbox');
+    }
+    const command = addSourceCommand(mbox, values, 'posix')!;
+    const output = execFileSync('sh', ['-c', command.replace('msgvault import-mbox', 'printf "%s\\n"')], { encoding: 'utf8' });
+    expect(output).toBe('--\n-reader@example.com\n-archive.mbox\n');
   });
 
   it('preserves a tilde-prefixed IMAP username', () => {
@@ -36,7 +52,7 @@ describe('addSourceCommand', () => {
   it('preserves a quoted path through a real POSIX shell', () => {
     const command = addSourceCommand(mbox, { email: 'you@example.com', path: "/tmp/O'Brien $notes.mbox" }, 'posix')!;
     const output = execFileSync('sh', ['-c', command.replace('msgvault import-mbox', 'printf "%s\\n"')], { encoding: 'utf8' });
-    expect(output).toBe("you@example.com\n/tmp/O'Brien $notes.mbox\n");
+    expect(output).toBe("--\nyou@example.com\n/tmp/O'Brien $notes.mbox\n");
   });
 
   it('requires both IMAP fields', () => {

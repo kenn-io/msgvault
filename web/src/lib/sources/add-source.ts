@@ -4,10 +4,10 @@ interface SourceKind {
   id: string;
   name: string;
   description: string;
-  docs: string;
 }
 
 export interface CommandSourceKind extends SourceKind {
+  docs: string;
   fields: { id: string; label: string; placeholder: string }[];
   template: string;
 }
@@ -43,11 +43,11 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
       { id: 'email', label: 'Email address', placeholder: 'you@example.com' },
       { id: 'path', label: 'Full path to the file', placeholder: '/Users/you/Downloads/export.mbox' },
     ],
-    template: 'msgvault import-mbox {email} {path}',
+    template: 'msgvault import-mbox -- {email} {path}',
   },
   {
     id: 'contacts', name: 'Contacts (CardDAV)', description: 'Import address books from Google, Microsoft, or a CardDAV server.',
-    docs: 'https://msgvault.io/docs/usage/people-carddav/', settings: 'carddav',
+    settings: 'carddav',
   },
 ];
 
