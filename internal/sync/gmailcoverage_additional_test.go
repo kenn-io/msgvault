@@ -123,7 +123,7 @@ func TestGmailCoverageRejectsOldCheckpoint(t *testing.T) {
 			_, err := e.Syncer.Full(e.Context, testEmail)
 			require.Error(err)
 			// Model an older unfiltered, unlimited Gmail full request.
-			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?", scenario.fingerprint)
+			_, err = e.Store.DB().Exec("UPDATE sync_runs SET request_fingerprint=?, cursor_after=NULL", scenario.fingerprint)
 			require.NoError(err)
 			f.requests = nil
 			gmailCoverageReopen(t, e)
