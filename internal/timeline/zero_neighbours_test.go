@@ -76,37 +76,3 @@ func TestBuildExplicitZeroNeighbours(t *testing.T) {
 		})
 	}
 }
-
-func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {
-	requirements := require.New(t)
-	b := cursorBinding()
-	b.Request = anchorRequest("msg:12")
-	omitted, err := EncodeCursor(b, map[string]string{"history": "key"})
-	requirements.NoError(err)
-	b.Request.Before, b.Request.After = 5, 5
-	b.Request.BeforeSet, b.Request.AfterSet = true, true
-	_, err = DecodeCursor(omitted, b)
-	requirements.NoError(err, "explicit defaults and omitted defaults have identical effective counts")
-	for _, before := range []bool{false, true} {
-		b.Request = anchorRequest("msg:12")
-		if before {
-			b.Request.BeforeSet = true
-		} else {
-			b.Request.AfterSet = true
-		}
-		_, err = DecodeCursor(omitted, b)
-		requirements.ErrorIs(err, ErrCursorExpired)
-		zero, err := EncodeCursor(b, map[string]string{"history": "key"})
-		requirements.NoError(err)
-		_, err = DecodeCursor(zero, b)
-		requirements.NoError(err)
-		normalized, err := normalizeRequest(b.Request)
-		requirements.NoError(err)
-		b.Request = normalized
-		_, err = DecodeCursor(zero, b)
-		requirements.NoError(err, "Build's normalized request retains the same zero binding")
-		b.Request = anchorRequest("msg:12")
-		_, err = DecodeCursor(zero, b)
-		requirements.ErrorIs(err, ErrCursorExpired)
-	}
-}

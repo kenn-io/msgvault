@@ -80,28 +80,32 @@ func TestCursorRejectsInvalidNanoseconds(t *testing.T) {
 	}
 }
 func TestCursorRejectsChangedScope(t *testing.T) {
-	b := cursorBinding()
-	s, err := EncodeCursor(b, nil)
-	require.NoError(t, err)
-	b.Request.Scope = Scope{PersonIDs: []int64{7}, OpenTools: []string{"get_message"}}
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
-}
-func TestCursorRejectsChangedFormat(t *testing.T) {
-	b := cursorBinding()
-	s, err := EncodeCursor(b, nil)
-	require.NoError(t, err)
-	b.Request.Format = "markdown"
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
-}
-func TestCursorRejectsOtherArchive(t *testing.T) {
-	b := cursorBinding()
-	s, err := EncodeCursor(b, nil)
-	require.NoError(t, err)
-	b.ArchiveUID = "other-archive"
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
+	for _, tc := range []struct {
+		name    string
+		sources []int64
+		change  func(*CursorBinding)
+	}{
+		{"scope", nil, func(b *CursorBinding) {
+			b.Request.Scope = Scope{PersonIDs: []int64{7}, OpenTools: []string{"get_message"}}
+		}},
+		{"format", nil, func(b *CursorBinding) { b.Request.Format = "markdown" }},
+		{"archive", nil, func(b *CursorBinding) { b.ArchiveUID = "other-archive" }},
+		{"window", nil, func(b *CursorBinding) { b.Window.To = "2026-10-23" }},
+		{"timezone", nil, func(b *CursorBinding) { b.Timezone = "America/Toronto" }},
+		{"source grant", []int64{1, 2}, func(b *CursorBinding) { b.SourceIDs = []int64{1} }},
+		{"empty source scope", nil, func(b *CursorBinding) { b.SourceIDs = []int64{} }},
+		{"no open tools", nil, func(b *CursorBinding) { b.Request.Scope.OpenTools = []string{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := cursorBinding()
+			b.SourceIDs = tc.sources
+			encoded, err := EncodeCursor(b, nil)
+			require.NoError(t, err)
+			tc.change(&b)
+			_, err = DecodeCursor(encoded, b)
+			require.ErrorIs(t, err, ErrCursorExpired)
+		})
+	}
 }
 func TestCursorSizeLimit(t *testing.T) {
 	assertions := assert.New(t)
@@ -124,39 +128,6 @@ func TestCursorSizeLimit(t *testing.T) {
 	requirements.NoError(json.Unmarshal(raw, &fields))
 	assertions.Len(fields, 5)
 }
-func TestCursorRejectsChangedWindowAndZone(t *testing.T) {
-	b := cursorBinding()
-	s, err := EncodeCursor(b, nil)
-	require.NoError(t, err)
-	b.Window.To = "2026-10-23"
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
-	b = cursorBinding()
-	b.Timezone = "America/Toronto"
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
-}
-func TestCursorRejectsChangedSourceGrant(t *testing.T) {
-	b := cursorBinding()
-	b.SourceIDs = []int64{1, 2}
-	s, err := EncodeCursor(b, nil)
-	require.NoError(t, err)
-	b.SourceIDs = []int64{1}
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
-}
-func TestCursorDistinguishesEmptySourceScopeAndNoOpenTools(t *testing.T) {
-	b := cursorBinding()
-	s, err := EncodeCursor(b, nil)
-	require.NoError(t, err)
-	b.SourceIDs = []int64{}
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
-	b = cursorBinding()
-	b.Request.Scope.OpenTools = []string{}
-	_, err = DecodeCursor(s, b)
-	require.ErrorIs(t, err, ErrCursorExpired)
-}
 func TestCursorPinsRelativeWindowAcrossMidnight(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -174,4 +145,38 @@ func TestCursorPinsRelativeWindowAcrossMidnight(t *testing.T) {
 	assertions.Equal("2026-10-21", c.Window.From)
 	assertions.Equal("2026-10-22", c.Window.To)
 	assertions.Equal(22, c.Now.Day())
+}
+
+func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {
+	requirements := require.New(t)
+	b := cursorBinding()
+	b.Request = anchorRequest("msg:12")
+	omitted, err := EncodeCursor(b, map[string]string{"history": "key"})
+	requirements.NoError(err)
+	b.Request.Before, b.Request.After = 5, 5
+	b.Request.BeforeSet, b.Request.AfterSet = true, true
+	_, err = DecodeCursor(omitted, b)
+	requirements.NoError(err, "explicit defaults and omitted defaults have identical effective counts")
+	for _, before := range []bool{false, true} {
+		b.Request = anchorRequest("msg:12")
+		if before {
+			b.Request.BeforeSet = true
+		} else {
+			b.Request.AfterSet = true
+		}
+		_, err = DecodeCursor(omitted, b)
+		requirements.ErrorIs(err, ErrCursorExpired)
+		zero, err := EncodeCursor(b, map[string]string{"history": "key"})
+		requirements.NoError(err)
+		_, err = DecodeCursor(zero, b)
+		requirements.NoError(err)
+		normalized, err := normalizeRequest(b.Request)
+		requirements.NoError(err)
+		b.Request = normalized
+		_, err = DecodeCursor(zero, b)
+		requirements.NoError(err, "Build's normalized request retains the same zero binding")
+		b.Request = anchorRequest("msg:12")
+		_, err = DecodeCursor(zero, b)
+		requirements.ErrorIs(err, ErrCursorExpired)
+	}
 }

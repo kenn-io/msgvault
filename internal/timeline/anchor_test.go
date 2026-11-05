@@ -98,20 +98,42 @@ func TestAnchorNeighboursChronologicalWithProbeGrowth(t *testing.T) {
 	assertions.True(got.History[3].Anchor)
 }
 func TestAnchorFilteredAnchorStillShown(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	id := f.add(f.now, false)
-	f.project()
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET list_id='list.example.com' WHERE id=?"), id)
-	requirements.NoError(err)
-	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(id)))
-	requirements.NoError(err)
-	requirements.NotNil(got.Anchor)
-	assertions.True(got.Anchor.Filtered)
-	requirements.Len(got.History, 1)
-	assertions.True(got.History[0].Filtered)
-	assertions.True(got.History[0].Anchor)
+	for _, tc := range []struct {
+		name           string
+		messages       int
+		list, filtered bool
+	}{
+		{"single list message", 1, true, true},
+		{"mixed list burst", 2, true, false},
+		{"oldest message in burst", 8, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			var id int64
+			for i := range tc.messages {
+				added := f.add(f.now.Add(time.Duration(i)*time.Second), false)
+				if i == 0 {
+					id = added
+				}
+			}
+			f.project()
+			if tc.list {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET list_id='list.example.com' WHERE id=?"), id)
+				requirements.NoError(err)
+			}
+			got, err := Build(t.Context(), f.src, anchorRequest(messageRef(id)))
+			requirements.NoError(err)
+			requirements.NotNil(got.Anchor)
+			assertions.Equal(tc.filtered, got.Anchor.Filtered)
+			requirements.Len(got.History, 1)
+			assertions.Equal(tc.filtered, got.History[0].Filtered)
+			assertions.True(got.History[0].Anchor)
+			if !tc.filtered {
+				assertions.Equal("burst", got.History[0].Kind)
+			}
+		})
+	}
 }
 func TestAnchorUndatedRefused(t *testing.T) {
 	f := newTimelineFixture(t)
@@ -167,8 +189,6 @@ func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	f.project()
 	f.call(f.now.Add(-2 * time.Hour))
-	bp, be := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Limit: 5000})
-	t.Log("bursts", bp, be)
 	got, err := Build(t.Context(), f.src, dayRequest())
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(allDayEntries(got)), 5)
@@ -188,25 +208,6 @@ func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 	}
 }
 
-func TestAnchorOldestMessageInBurstIsNotFiltered(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	ids := []int64{}
-	for i := range 8 {
-		ids = append(ids, f.add(f.now.Add(time.Duration(i)*time.Second), false))
-	}
-	f.project()
-	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(ids[0])))
-	requirements.NoError(err)
-	requirements.NotNil(got.Anchor)
-	assertions.False(got.Anchor.Filtered)
-	requirements.Len(got.History, 1)
-	assertions.Equal("burst", got.History[0].Kind)
-	assertions.True(got.History[0].Anchor)
-	assertions.False(got.History[0].Filtered)
-}
-
 func TestAnchorMissingSourcesProduceUnavailableGaps(t *testing.T) {
 	for _, ref := range []string{"2026-10-22", "msg:1"} {
 		t.Run(ref, func(t *testing.T) {
@@ -223,23 +224,4 @@ func TestAnchorMissingSourcesProduceUnavailableGaps(t *testing.T) {
 			require.NotEmpty(t, got.Freshness.Sources)
 		})
 	}
-}
-
-func TestAnchorMixedListBurstStaysAdmitted(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	id := f.add(f.now, false)
-	f.add(f.now.Add(time.Second), false)
-	f.project()
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET list_id='list.example.com' WHERE id=?"), id)
-	requirements.NoError(err)
-	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(id)))
-	requirements.NoError(err)
-	requirements.NotNil(got.Anchor)
-	assertions.False(got.Anchor.Filtered)
-	requirements.Len(got.History, 1)
-	assertions.Equal("burst", got.History[0].Kind)
-	assertions.True(got.History[0].Anchor)
-	assertions.False(got.History[0].Filtered)
 }

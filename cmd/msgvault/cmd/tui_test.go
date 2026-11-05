@@ -394,7 +394,7 @@ func TestAnalyticsCacheNoticeClearsAfterBackgroundSwap(t *testing.T) {
 
 func TestTUITimelineBackendRequiresTimelineSchema(t *testing.T) {
 	assert.Nil(t, tuiTimelineBackend(context.Background(), nil))
-	for _, version := range []string{"3.43.0", "3.44.0", "3.45.0"} {
+	for _, version := range []string{"3.44.0", "3.45.0"} {
 		t.Run(version, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

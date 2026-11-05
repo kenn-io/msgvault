@@ -49,7 +49,19 @@ func TestTimelineCommandFlagsAndFormats(t *testing.T) {
 	old := timelineOpen
 	t.Cleanup(func() { timelineOpen = old })
 	fake := &timelineFakeClient{}
-	timelineOpen = func(context.Context) (timelineClient, func(), error) { return fake, func() {}, nil }
+	opens := 0
+	timelineOpen = func(context.Context) (timelineClient, func(), error) {
+		opens++
+		return fake, func() {}, nil
+	}
+	for _, flag := range []string{"days", "budget"} {
+		command := newTimelineCommand()
+		command.SetOut(&bytes.Buffer{})
+		command.SetErr(&bytes.Buffer{})
+		command.SetArgs([]string{"--" + flag, "0"})
+		requirements.ErrorContains(command.Execute(), "--"+flag+" must be between")
+	}
+	assertions.Zero(opens, "invalid explicit zeros fail before endpoint resolution")
 	command := newTimelineCommand()
 	var out bytes.Buffer
 	command.SetOut(&out)
@@ -64,6 +76,18 @@ func TestTimelineCommandFlagsAndFormats(t *testing.T) {
 	requirements.NoError(command.Execute())
 	assertions.Equal("# Timeline\n", out.String())
 	assertions.Equal("markdown", fake.req.Format)
+	assertions.Equal(5, fake.req.Before)
+	assertions.Equal(5, fake.req.After)
+	assertions.False(fake.req.BeforeSet)
+	assertions.False(fake.req.AfterSet)
+	command = newTimelineCommand()
+	command.SetOut(&bytes.Buffer{})
+	command.SetArgs([]string{"--around", "msg:7", "--before", "0", "--after", "0"})
+	requirements.NoError(command.Execute())
+	assertions.Zero(fake.req.Before)
+	assertions.Zero(fake.req.After)
+	assertions.True(fake.req.BeforeSet)
+	assertions.True(fake.req.AfterSet)
 }
 
 // Exercise the production opener: endpoint selection and authentication must
@@ -74,7 +98,6 @@ func TestTimelineCommandRefusesOldDaemon(t *testing.T) {
 	remoteAPISchemaCheckEnabled = true
 	t.Cleanup(func() { remoteAPISchemaCheckEnabled = oldSchemaCheck })
 	for _, tc := range []struct{ kind, version string }{
-		{"local", "3.43.0"}, {"remote", "3.43.0"}, {"delegated", "3.43.0"},
 		{"local", "3.44.0"}, {"remote", "3.44.0"}, {"delegated", "3.44.0"},
 	} {
 		t.Run(tc.kind+"/"+tc.version, func(t *testing.T) {
@@ -257,43 +280,6 @@ func TestTimelineRealTransportPreservesResponseAndFlagPresence(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestTimelineCommandExplicitZeros(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	old := timelineOpen
-	t.Cleanup(func() { timelineOpen = old })
-	fake := &timelineFakeClient{}
-	opens := 0
-	timelineOpen = func(context.Context) (timelineClient, func(), error) {
-		opens++
-		return fake, func() {}, nil
-	}
-	for _, flag := range []string{"days", "budget"} {
-		command := newTimelineCommand()
-		command.SetOut(&bytes.Buffer{})
-		command.SetErr(&bytes.Buffer{})
-		command.SetArgs([]string{"--" + flag, "0"})
-		requirements.ErrorContains(command.Execute(), "--"+flag+" must be between")
-	}
-	assertions.Zero(opens, "invalid explicit zeros fail before endpoint resolution")
-	command := newTimelineCommand()
-	command.SetOut(&bytes.Buffer{})
-	command.SetArgs([]string{"--around", "msg:7", "--before", "0", "--after", "0"})
-	requirements.NoError(command.Execute())
-	assertions.Zero(fake.req.Before)
-	assertions.Zero(fake.req.After)
-	assertions.True(fake.req.BeforeSet)
-	assertions.True(fake.req.AfterSet)
-	command = newTimelineCommand()
-	command.SetOut(&bytes.Buffer{})
-	command.SetArgs(nil)
-	requirements.NoError(command.Execute())
-	assertions.Equal(5, fake.req.Before)
-	assertions.Equal(5, fake.req.After)
-	assertions.False(fake.req.BeforeSet)
-	assertions.False(fake.req.AfterSet)
 }
 
 func TestTimelineRealTransportAmbiguityPrintsUsableReferences(t *testing.T) {

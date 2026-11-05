@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -64,10 +63,14 @@ func TestActivityProjectionStateIsScoped(t *testing.T) {
 				assertions.Equal(1, after.Queued)
 			}
 			assertions.True(after.Reconciling)
-			empty, err := f.Store.ActivityProjectionStateContext(sourcescope.WithSourceIDs(t.Context(), []int64{}))
+			invisible, err := f.Store.ActivityProjectionStateContext(sourcescope.WithSourceIDs(t.Context(), []int64{}))
 			requirements.NoError(err)
-			assertions.False(empty.Reconciling)
+			assertions.Zero(invisible.Queued)
+			assertions.False(invisible.Reconciling)
 			projectTierSignals(t, f.Fixture, "UTC", 0)
+			empty, err := f.Store.EnsureConversation(f.Source.ID, "empty", "Empty")
+			requirements.NoError(err)
+			requirements.NoError(f.Store.EnsureConversationParticipant(empty, f.peer, "member"))
 			drained, err := f.Store.ActivityProjectionStateContext(ctx)
 			requirements.NoError(err)
 			assertions.Zero(drained.Queued)
@@ -99,37 +102,4 @@ func TestActivityProjectionStateIsScoped(t *testing.T) {
 		assertions.NotNil(state.OldestQueuedAt)
 		assertions.True(state.Reconciling)
 	})
-}
-
-func TestActivityProjectionStateIncludesConversationMarkers(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineActivityFixture(t)
-	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	f.add(t, f.ConvID, f.Source.ID, at, false, "")
-	projectTimelineActivity(t, f, "UTC")
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	before, err := f.Store.ActivityProjectionStateContext(ctx)
-	requirements.NoError(err)
-	assertions.Zero(before.Queued)
-	member := f.EnsureParticipant("member@example.com", "Member", "example.com")
-	requirements.NoError(f.Store.EnsureConversationParticipant(f.ConvID, member, "member"))
-	pending, err := f.Store.ActivityProjectionStateContext(ctx)
-	requirements.NoError(err)
-	assertions.Equal(1, pending.Queued)
-	assertions.True(pending.Reconciling)
-	hidden := sourcescope.WithSourceIDs(t.Context(), []int64{})
-	invisible, err := f.Store.ActivityProjectionStateContext(hidden)
-	requirements.NoError(err)
-	assertions.Zero(invisible.Queued)
-	assertions.False(invisible.Reconciling)
-	expandActivityConversations(t, f.Store)
-	projectTimelineActivity(t, f, "UTC")
-	// An empty conversation leaves a marker but has no activity to reconcile.
-	empty, err := f.Store.EnsureConversation(f.Source.ID, "empty", "Empty")
-	requirements.NoError(err)
-	requirements.NoError(f.Store.EnsureConversationParticipant(empty, member, "member"))
-	clean, err := f.Store.ActivityProjectionStateContext(ctx)
-	requirements.NoError(err)
-	assertions.Zero(clean.Queued)
-	assertions.False(clean.Reconciling)
 }

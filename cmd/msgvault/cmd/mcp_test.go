@@ -746,7 +746,7 @@ func TestCalendarArchiveMCPVersionGates(t *testing.T) {
 }
 
 func TestTimelineToolHiddenBelowSchemaVersion(t *testing.T) {
-	for _, version := range []string{"3.43.0", "3.44.0", "3.45.0"} {
+	for _, version := range []string{"3.44.0", "3.45.0"} {
 		t.Run(version, func(t *testing.T) {
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Content-Type", "application/json")

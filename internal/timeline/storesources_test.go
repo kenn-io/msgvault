@@ -22,6 +22,7 @@ func TestStoreSourcesSatisfyInterfaces(t *testing.T) {
 	src, err := NewStoreSources(st, config.NewDefaultConfig())
 	requirements.NoError(err)
 	assertions.NotEmpty(src.ArchiveUID)
+	assertions.Zero(src.Filters.MaxDirect, "stored projection policy governs full-audience reads")
 	ctx := t.Context()
 	now := time.Date(2026, 10, 22, 12, 0, 0, 123, time.UTC)
 	_, err = src.Activity.ListActivityBurstsContext(ctx, store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Limit: 10})

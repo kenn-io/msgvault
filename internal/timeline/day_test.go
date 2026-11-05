@@ -263,12 +263,15 @@ func TestBuildHiddenTextReachesLoopsTranscriptsAndUnsavedEmail(t *testing.T) {
 	req.Days = 3
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
+	transcripts := []Entry{}
 	for _, e := range allDayEntries(got) {
 		if e.Kind == "transcript" {
-			assertions.True(e.HiddenText)
-			assertions.Empty(e.Meeting.Title.Text)
+			transcripts = append(transcripts, e)
 		}
 	}
+	requirements.Len(transcripts, 1)
+	assertions.True(transcripts[0].HiddenText)
+	assertions.Empty(transcripts[0].Meeting.Title.Text)
 	req.Date = "2026-10-20"
 	req.Days = 0
 	old, err := Build(t.Context(), f.src, req)
@@ -277,12 +280,9 @@ func TestBuildHiddenTextReachesLoopsTranscriptsAndUnsavedEmail(t *testing.T) {
 	assertions.True(allDayEntries(old)[0].HiddenText)
 	assertions.Empty(allDayEntries(old)[0].Burst.Snippet.Text)
 	requirements.NotNil(got.OpenLoops)
-	requirements.NotEmpty(got.OpenLoops.Items)
-	for _, e := range got.OpenLoops.Items {
-		if e.Ref == fmt.Sprintf("msg:%d", email) {
-			assertions.True(e.HiddenText)
-		}
-	}
+	requirements.Len(got.OpenLoops.Items, 1)
+	assertions.Equal(fmt.Sprintf("msg:%d", email), got.OpenLoops.Items[0].Ref)
+	assertions.True(got.OpenLoops.Items[0].HiddenText)
 	encoded, err := json.Marshal(got)
 	requirements.NoError(err)
 	assertions.NotContains(string(encoded), "Synthetic meeting")

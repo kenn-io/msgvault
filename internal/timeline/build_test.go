@@ -9,12 +9,15 @@ import (
 
 func TestBuildRejectsInvalidRequests(t *testing.T) {
 	f := newTimelineFixture(t)
+	id := f.add(f.now, false)
+	f.project()
 	for _, tc := range []struct {
 		name    string
 		request Request
 		options []string
 		want    error
 	}{
+		{"combined anchor narrowing", Request{Around: messageRef(id), With: "email:alice@example.com", Conversation: true, Format: "json", Budget: 65536}, nil, nil},
 		{"relationship date", Request{With: "email:alice@example.com", Date: "2026-10-22"}, []string{"with", "date"}, ErrInvalidRequest},
 		{"anchor date", Request{Around: "2026-10-22", Date: "2026-10-22"}, []string{"around", "date"}, ErrInvalidRequest},
 		{"anchor malformed date", Request{Around: "2026-10-22", Date: "bad"}, []string{"around", "date"}, ErrInvalidRequest},
@@ -37,27 +40,22 @@ func TestBuildRejectsInvalidRequests(t *testing.T) {
 		{"incomplete range", Request{From: "2026-10-22"}, nil, ErrInvalidRequest},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
 			req := tc.request
 			req.Scope = Scope{Owner: true}
 			got, err := Build(t.Context(), f.src, req)
-			require.ErrorIs(t, err, tc.want)
-			assert.Nil(t, got)
+			if tc.want == nil {
+				requirements.NoError(err)
+				requirements.NotNil(got)
+				requirements.Len(got.History, 1)
+				assertions.Equal(messageRef(id), got.History[0].AnchorRef)
+				return
+			}
+			requirements.ErrorIs(err, tc.want)
+			assertions.Nil(got)
 			for _, option := range tc.options {
-				assert.Contains(t, err.Error(), option)
+				assertions.Contains(err.Error(), option)
 			}
 		})
 	}
-}
-
-func TestBuildAllowsCombinedAnchorNarrowing(t *testing.T) {
-	f := newTimelineFixture(t)
-	id := f.add(f.now, false)
-	f.project()
-	req := anchorRequest(messageRef(id))
-	req.With = "email:alice@example.com"
-	req.Conversation = true
-	got, err := Build(t.Context(), f.src, req)
-	require.NoError(t, err)
-	require.Len(t, got.History, 1)
-	assert.Equal(t, messageRef(id), got.History[0].AnchorRef)
 }

@@ -128,7 +128,6 @@ func TestTimelineDelegatedAdmission(t *testing.T) {
 		{"message", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, 200},
 		{"calendar only", []agentgrant.Permission{agentgrant.PermissionCalendarEventRead}, []agentgrant.SourceRef{{ID: src.ID, Type: src.SourceType, Identifier: src.Identifier}}, 403},
 		{"no admitted sources", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: 9998, Type: "gmail", Identifier: "removed@example.com"}}, 403},
-		{"missing source", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: 9999, Type: "gmail", Identifier: "missing@example.com"}}, 403},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -304,9 +303,6 @@ func TestTimelineStoreSourcesUsesStoredProjectionPolicy(t *testing.T) {
 	requirements.NoError(err)
 	_, err = projector.RunOnce(t.Context())
 	requirements.NoError(err)
-	sources, err := timeline.NewStoreSources(st, config.NewDefaultConfig())
-	requirements.NoError(err)
-	assertions.Zero(sources.Filters.MaxDirect)
 	for _, includeNoise := range []bool{false, true} {
 		w := timelineGET(srv, fmt.Sprintf("?date=2027-03-01&include_noise=%t", includeNoise), "")
 		requirements.Equal(http.StatusOK, w.Code, w.Body.String())

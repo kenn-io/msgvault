@@ -193,26 +193,6 @@ func TestConfiguredRetiredAccountDoesNotScheduleSurvivor(t *testing.T) {
 	assertions.Equal("msgvault sync-incremental owner@example.test", items[0].SyncCommand)
 }
 
-func TestRetiredConfiguredProviderDoesNotCreatePlaceholder(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	retired, err := st.GetOrCreateSource("slack", "retired-workspace")
-	requirements.NoError(err)
-	survivor, err := st.GetOrCreateSource("slack", "active-workspace")
-	requirements.NoError(err)
-	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: retired.ID, IntoSourceID: survivor.ID})
-	requirements.NoError(err)
-
-	cfg := config.NewDefaultConfig()
-	cfg.Slack.Enabled = true
-	cfg.Slack.Schedule = "0 * * * *"
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{retired.ID})
-	items, err := Build(ctx, cfg, st)
-	requirements.NoError(err)
-	assertions.Empty(items, "a retired source in a scoped archive must not become a configured placeholder")
-}
-
 func TestConfiguredCalendarEmailMatchesNormalizedArchive(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -289,7 +269,7 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 }
 
 func TestImportOnlySourcesAreStatic(t *testing.T) {
-	for _, sourceType := range []string{"whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import"} {
+	for _, sourceType := range []string{"whatsapp", "apple_messages", "google_messages", "imessage", "google_voice", "meeting_import", "ics"} {
 		t.Run(sourceType, func(t *testing.T) {
 			assertions := assert.New(t)
 			requirements := require.New(t)

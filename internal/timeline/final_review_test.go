@@ -168,7 +168,10 @@ func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T
 
 func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 	for _, saved := range []bool{false, true} {
-		for _, envelope := range []string{"other", "none"} {
+		for _, envelope := range []string{"other", "none", "peer"} {
+			if envelope == "peer" && !saved {
+				continue
+			}
 			t.Run(fmt.Sprintf("saved=%t/envelope=%s", saved, envelope), func(t *testing.T) {
 				assertions := assert.New(t)
 				requirements := require.New(t)
@@ -177,23 +180,29 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				if saved {
 					ref = fmt.Sprintf("person:%d", f.savePerson())
 				}
-				// An unsent observation makes the subject resolvable in the source-scoped control without adding contact.
-				f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
+				if envelope != "peer" {
+					// An unsent observation resolves the source-scoped subject without adding contact.
+					f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
+				}
 				raw := singleDayEvent
 				if envelope == "none" {
 					// Organizer-only calendar identity also supplies attendance.
 					raw = strings.NewReplacer(`"attendees":[{`, `"organizer":{`, `}]}`, `}}`).Replace(raw)
 				}
 				event := f.calendar("calendar-only-attendee", raw)
-				f.calendar("calendar-copy", strings.ReplaceAll(raw, `"id":"planning"`, `"id":"calendar-copy"`))
+				if envelope != "peer" {
+					f.calendar("calendar-copy", strings.ReplaceAll(raw, `"id":"planning"`, `"id":"calendar-copy"`))
+				}
 				var notes []int64
 				for _, key := range []string{"one", "two"} {
 					note := f.transcript(key, "planning@example.com", f.now.Add(-time.Hour))
 					recipients := []int64{}
-					if envelope == "other" {
-						recipients = []int64{f.EnsureParticipant("other@example.com", "Other", "example.com")}
+					if envelope != "peer" {
+						if envelope == "other" {
+							recipients = []int64{f.EnsureParticipant("other@example.com", "Other", "example.com")}
+						}
+						requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", recipients, nil))
 					}
-					requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", recipients, nil))
 					notes = append(notes, note)
 				}
 				f.project()
@@ -202,12 +211,17 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements.NotNil(got.Person)
 				assertions.Equal(1, got.Person.InteractionCount)
 				assertions.Equal([]string{"meeting"}, got.Person.Channels)
+				requirements.NotNil(got.Person.FirstAt)
+				assertions.Equal(10, got.Person.FirstAt.Hour())
 				requirements.NotNil(got.Person.LastAt)
 				assertions.Equal(10, got.Person.LastAt.Hour())
 				assertions.Equal(1, got.Person.Monthly[11])
 				requirements.Len(got.History, 1)
 				assertions.Equal(fmt.Sprintf("evt:%d", event), got.History[0].Ref)
 				assertions.ElementsMatch(notes, got.History[0].Meeting.LinkedTranscriptIDs)
+				if envelope == "peer" {
+					return
+				}
 				// Hidden text remains attendance evidence, but no hidden title leaks.
 				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id IN (?,?)`), notes[0], notes[1])
 				requirements.NoError(err)

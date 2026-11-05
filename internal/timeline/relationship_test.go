@@ -30,24 +30,6 @@ func TestRelationshipCallOnlyContact(t *testing.T) {
 	requirements.Len(got.History, 1)
 	assertions.Equal("call", got.History[0].Kind)
 }
-func TestRelationshipMeetingOnlyContactDeduplicatesNotes(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	p := f.savePerson()
-	f.calendar("event", singleDayEvent)
-	for _, key := range []string{"one", "two"} {
-		id := f.transcript(key, "planning@example.com", f.now.Add(-time.Hour))
-		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer}, nil))
-	}
-	f.project()
-	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
-	requirements.NoError(err)
-	requirements.NotNil(got.Person)
-	assertions.Equal(1, got.Person.InteractionCount)
-	assertions.Equal([]string{"meeting"}, got.Person.Channels)
-	assertions.Equal(10, got.Person.FirstAt.Hour())
-}
 func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

@@ -96,9 +96,14 @@ func TestAttendedTranscriptIDsByRole(t *testing.T) {
 	f := newTimelineActivityFixture(t)
 	q := timelineContactQuery(f)
 	for i := range 3 {
-		id := f.add(t, f.ConvID, f.Source.ID, q.Now.Add(time.Duration(i-3)*time.Minute), false, "")
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id=?`), id)
+		at := q.Now.Add(time.Duration(i-3) * time.Minute)
+		id, err := f.Store.PersistMessage(&store.MessagePersistData{
+			Message:      &store.Message{SourceID: f.Source.ID, SourceMessageID: fmt.Sprintf("role-%d", i), MessageType: "meeting_transcript", IsFromMe: true, SentAt: sql.NullTime{Time: at, Valid: true}},
+			Conversation: &store.ConversationPersistData{SourceConversationID: fmt.Sprintf("role-%d", i), ConversationType: "meeting", Title: "Synthetic meeting"},
+			BodyText:     sql.NullString{String: "Synthetic notes", Valid: true}, RawMIME: []byte(`{"schema_version":1,"recording":{},"participants":[{"displayName":"Alice","handle":"alice@example.com"}]}`), RawFormat: "twenty_json",
+		})
 		requirements.NoError(err)
+		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer}, nil))
 	}
 	projectTierSignals(t, f.Fixture, "UTC", 0)
 	got, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)

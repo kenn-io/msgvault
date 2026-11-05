@@ -2,8 +2,6 @@ package timeline
 
 import (
 	"database/sql"
-	"encoding/json/jsontext"
-	"encoding/json/v2"
 	"fmt"
 	"testing"
 	"time"
@@ -29,11 +27,10 @@ func TestBuildInvalidUTF8Snippet(t *testing.T) {
 			entries := allDayEntries(got)
 			require.Len(entries, 1)
 			if format == "json" {
-				wire, err := json.Marshal(got, jsontext.AllowInvalidUTF8(true))
-				require.NoError(err)
-				assert.Contains(string(wire), "damaged \ufffd\ufffd")
+				require.NotNil(entries[0].Burst)
+				assert.Equal("damaged \xff\xfe", entries[0].Burst.Snippet.Text)
 			} else {
-				assert.Contains(Markdown(got), "damaged")
+				assert.Contains(Markdown(got), "damaged \ufffd\ufffd")
 			}
 		})
 	}
