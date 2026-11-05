@@ -262,6 +262,7 @@
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
+  <!-- The heading repeats the tab at phone width; toolbar sizing follows touch. -->
   <div class={compact.current && !urlState.peopleDuplicates ? 'kit-sr-only' : 'heading'}><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
   {#if urlState.peopleDuplicates}
     <PossibleDuplicates controller={reviews} onDecide={(candidate, decision) => reviews.queueDecision(candidate, decision)} />
