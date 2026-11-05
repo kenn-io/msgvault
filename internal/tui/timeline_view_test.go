@@ -41,12 +41,8 @@ func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 	require.Len(m.timelineState.entries, 2)
 	assert.Equal(m.timelineState.entries[0].line, m.timelineState.entries[1].line)
 	originalLines := append([]string(nil), m.timelineState.lines...)
-	firstView := stripANSI(m.renderView())
 	moved, _ := sendKey(t, m, key('j'))
-	secondView := stripANSI(moved.renderView())
-	assert.NotEqual(firstView, secondView, "selecting another call on the same line must be visible")
-	assert.Contains(firstView, "Selected: msg:20")
-	assert.Contains(secondView, "Selected: msg:21")
+	assert.Equal("msg:21", moved.highlightedTimelineEntry().Ref)
 	assert.Equal(originalLines, moved.timelineState.lines, "shared Markdown body stays verbatim")
 	for i, selected := range []Model{m, moved} {
 		id := int64(20 + i)
@@ -62,13 +58,13 @@ func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 	}
 }
 
-func TestTimelineSelectedRefSanitizesTerminalControls(t *testing.T) {
+func TestTimelineRowSanitizesTerminalControls(t *testing.T) {
 	assert := assert.New(t)
 	m := timelineModeModel()
 	m.timelineState.result.Days[0].Bursts[0].Ref = "conv:7\x1b]52;c;unsafe\x07"
 	m.rebuildTimelineRows()
 	view := m.renderView()
-	assert.Contains(stripANSI(view), "Selected: conv:7")
+	assert.Contains(stripANSI(view), "conv:7")
 	assert.NotContains(view, "\x1b]52;")
 }
 

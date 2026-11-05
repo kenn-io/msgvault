@@ -30,6 +30,13 @@ type coldActivityGroup struct {
 // ListColdActivityBurstsContext reconstructs complete cold conversation-days
 // from live message metadata, without restoring or writing projection rows.
 func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
+	q.IncludeCold = false
+	return s.listLiveActivityBurstsContext(ctx, q)
+}
+
+// listLiveActivityBurstsContext selects email copies across the complete
+// requested population before grouping them into conversation-days.
+func (s *Store) listLiveActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
 	page := BurstPage{Bursts: []ActivityBurst{}}
 	if q.Limit < 1 || q.Limit > 5000 {
 		return page, fmt.Errorf("%w: burst limit must be 1..5000", ErrInvalidActivityRequest)
@@ -122,6 +129,9 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 		return nil, err
 	}
 	where := `m.conversation_id IN (SELECT p.conversation_id FROM conversation_policy p JOIN conversations c ON c.id=p.conversation_id WHERE p.effective_tier='cold' AND c.conversation_type IN ` + chatConversationTypesSQL + `)`
+	if q.IncludeCold {
+		where = `m.message_type<>'call_record' AND (` + FullMessageWhere("m") + ` OR m.conversation_id IN (SELECT p.conversation_id FROM conversation_policy p JOIN conversations c ON c.id=p.conversation_id WHERE p.effective_tier='cold' AND c.conversation_type IN ` + chatConversationTypesSQL + `))`
+	}
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	if q.ConversationID > 0 {

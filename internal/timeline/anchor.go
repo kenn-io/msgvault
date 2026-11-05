@@ -139,7 +139,7 @@ func anchorWindow(at time.Time, loc *time.Location) Window {
 func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 	from := target.at.In(c.loc).AddDate(0, 0, -days)
 	to := target.at.In(c.loc).AddDate(0, 0, days).Add(time.Nanosecond)
-	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), Limit: maxBursts}
+	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), IncludeCold: c.req.IncludeCold && c.src.Cold != nil, Limit: maxBursts}
 	if c.req.Conversation {
 		q.ConversationID = target.conversationID
 	}
@@ -165,11 +165,11 @@ func (c *composer) probeAnchor(target anchorTarget, days int) []Entry {
 		},
 		func() {
 			if c.src.Cold != nil {
-				if c.req.IncludeCold {
+				if c.req.IncludeCold && c.src.Activity == nil {
 					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
 						return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
 					})
-				} else {
+				} else if !c.req.IncludeCold {
 					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
 						return c.src.Cold.CountColdActivityMessagesContext(ctx, q)
 					})

@@ -138,9 +138,6 @@ func (m Model) renderTimelineView() string {
 		if result := m.timelineState.result; result != nil && result.Cursor != "" {
 			footer = "n next page · " + footer
 		}
-		if entry := m.highlightedTimelineEntry(); entry != nil {
-			footer = "Selected: " + textutil.SanitizeTerminal(entry.Ref) + " · " + footer
-		}
 	}
 	footerView := m.styles.stats.Render(footer)
 	if m.timelineState.reader == timelineReaderMeeting && m.timelineState.meeting.detailSearchActive {
@@ -152,7 +149,7 @@ func (m Model) renderTimelineView() string {
 var timelineHelpLines = []string{
 	"Timeline", "", "j/k, arrows       Select an entry", "PgUp/PgDn         Scroll", "[ / ]             Previous / next archive day",
 	"a                 Around the highlighted entry", "w                 Relationship with its first person",
-	"Enter             Open the existing reader or thread", "Esc               Back to the timeline / previous request",
+	"Enter             Open details", "Esc               Back to the timeline / previous request",
 	"n                 Next page (when available)", "r                 Retry / refresh", "m                 Switch content mode", "?                 Help", "q / ctrl+c        Quit",
 }
 

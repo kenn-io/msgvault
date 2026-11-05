@@ -49,12 +49,6 @@ func TestMarkdownGapFooterGroupsRetryable(t *testing.T) {
 	v.Gaps = nil
 	assert.NotContains(t, Markdown(v), "retry:")
 }
-func TestMarkdownUpcomingHasDayAndEmailVolume(t *testing.T) {
-	v := sampleTimeline()
-	got := Markdown(v)
-	assert.Contains(t, got, "- Thu 13:30 Weekly sync")
-	assert.Contains(t, got, "×3")
-}
 func TestMarkdownSummaryStubReportsAllOmittedNames(t *testing.T) {
 	v := sampleTimeline()
 	v.Days = []Day{{Date: "2026-10-22", Summary: &DaySummary{PeopleCount: 13, Truncated: true}}}

@@ -11,6 +11,7 @@ export interface TimelineMeetingEntry {
   attendee_count: number;
   attendees?: TimelinePerson[];
   attendees_truncated?: boolean;
+  deleted_from_source?: boolean;
   end?: string;
   linked_transcript_ids?: number[];
   people?: TimelinePerson[];
@@ -18,6 +19,7 @@ export interface TimelineMeetingEntry {
   people_truncated?: boolean;
   possibly_related?: string[];
   start?: string;
+  status?: string;
   time?: string;
   untrusted_text: TimelineUntrustedText;
   [key: string]: unknown;

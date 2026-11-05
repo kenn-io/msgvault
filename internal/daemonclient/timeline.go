@@ -1,9 +1,8 @@
 package daemonclient
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 
+	"go.kenn.io/msgvault/internal/jsonexact"
 	"go.kenn.io/msgvault/internal/timeline"
 	apiclient "go.kenn.io/msgvault/pkg/client"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -33,7 +33,7 @@ func (c *Client) Timeline(ctx context.Context, req timeline.Request) (*timeline.
 	query := timelineQuery(req)
 	resp, err := apiResponseWithErrorDecoder(c, func(client *apiclient.Client) (*timelineHTTPResponse, error) {
 		// Preserve the raw encoding: the generated JSON response decoder also runs
-		// for Markdown, and generic opener numbers need lossless UseNumber below.
+		// for Markdown, and generic opener numbers need lossless decoding below.
 		api := client.APIClient()
 		request, err := api.CreateRequest(ctx, runtime.RequestOptionsParameters{
 			RequestURL: api.GetBaseURL() + "/api/v1/timeline",
@@ -59,9 +59,7 @@ func (c *Client) Timeline(ctx context.Context, req timeline.Request) (*timeline.
 		return nil, string(resp.Body), nil
 	}
 	var result timeline.Timeline
-	decoder := json.NewDecoder(bytes.NewReader(resp.Body))
-	decoder.UseNumber()
-	if err := decoder.Decode(&result); err != nil {
+	if err := json.Unmarshal(resp.Body, &result, jsonexact.PreserveNumbers); err != nil {
 		return nil, "", fmt.Errorf("decode timeline: %w", err)
 	}
 	return &result, "", nil

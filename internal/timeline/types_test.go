@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"flag"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,7 +53,7 @@ func golden(t *testing.T, name string, got []byte) {
 	}
 	want, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Equal(t, string(want), string(got))
+	assert.Equal(t, strings.ReplaceAll(string(want), "\r\n", "\n"), string(got))
 }
 func TestTimelineJSONGolden(t *testing.T) {
 	b, err := json.Marshal(sampleTimeline(), json.Deterministic(true), jsontext.Multiline(true))

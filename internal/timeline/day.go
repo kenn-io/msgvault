@@ -66,7 +66,7 @@ type dayRead struct {
 
 func (c *composer) collectDay() dayRead {
 	from, to := c.bounds()
-	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Filters: c.filters(), Limit: maxBursts}
+	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), IncludeCold: c.req.IncludeCold && c.src.Cold != nil, Limit: maxBursts}
 	var r dayRead
 	parallel(c.ctx,
 		func() {
@@ -80,11 +80,11 @@ func (c *composer) collectDay() dayRead {
 		},
 		func() {
 			if c.src.Cold != nil {
-				if c.req.IncludeCold {
+				if c.req.IncludeCold && c.src.Activity == nil {
 					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
 						return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
 					})
-				} else {
+				} else if !c.req.IncludeCold {
 					r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
 				}
 			}
@@ -106,13 +106,13 @@ func (c *composer) collectDay() dayRead {
 		func() {
 			if c.req.Scope.Owner && c.src.Calls != nil {
 				r.calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, Limit: 500})
+					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, ParticipantIDs: c.participants, Limit: 500})
 				})
 			}
 		},
 		func() {
 			if c.req.Scope.Owner && c.src.Loops != nil {
-				r.loops = c.collectLoops(0)
+				r.loops = c.collectLoops(c.subject.PersonID)
 			}
 		},
 		func() {
@@ -226,12 +226,15 @@ func (c *composer) buildDay() {
 	}
 	occurrences := append(slices.Clone(r.calendar.value.Occurrences), r.upcoming.value.Occurrences...)
 	entries, upcoming := c.mergeEntries(bursts, r.activity.value.meetings, occurrences, r.calls.value, r.notes.value)
-	c.t.Upcoming = upcoming
+	c.t.Upcoming = c.filterSubject(upcoming)
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
-	c.groupDays(entries)
+	c.groupDays(c.filterSubject(entries))
 	if c.req.Scope.Owner && c.src.Loops != nil {
 		c.addLoops(r.loops)
+		if c.t.OpenLoops != nil {
+			c.t.OpenLoops.Items = c.filterSubject(c.t.OpenLoops.Items)
+		}
 	}
 }
 func (c *composer) calendarGaps(r readResult[store.CalendarOccurrencePage], section string) {

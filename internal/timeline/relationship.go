@@ -117,7 +117,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
-	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts}
+	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, IncludeCold: c.req.IncludeCold && c.src.Cold != nil, Limit: maxBursts}
 	parallel(c.ctx,
 		func() {
 			if c.src.Activity != nil {
@@ -140,11 +140,11 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		},
 		func() {
 			if c.src.Cold != nil {
-				if c.req.IncludeCold {
+				if c.req.IncludeCold && c.src.Activity == nil {
 					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
 						return c.src.Cold.ListColdActivityBurstsContext(ctx, historyQuery)
 					})
-				} else {
+				} else if !c.req.IncludeCold {
 					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
 						return c.src.Cold.CountColdActivityMessagesContext(ctx, historyQuery)
 					})

@@ -188,6 +188,8 @@ type Omitted struct {
 
 // MeetingEntry is also the payload of an unlinked transcript entry.
 type MeetingEntry struct {
+	Status              string        `json:"status,omitzero"`
+	DeletedFromSource   bool          `json:"deleted_from_source,omitzero"`
 	AttendeeCount       int           `json:"attendee_count"`
 	AttendeesTruncated  bool          `json:"attendees_truncated,omitzero"`
 	PeopleCount         int           `json:"people_count"`

@@ -53,6 +53,9 @@ func Markdown(t *Timeline) string {
 		}
 	}
 	for _, warning := range t.Freshness.Warnings {
+		if strings.HasPrefix(warning, "The latest sync ") {
+			continue
+		}
 		fmt.Fprintf(&b, "⚠ %s\n", singleLine(warning, 160))
 	}
 	if p := t.Person; p != nil && t.Mode == ModeRelationship {
@@ -186,6 +189,12 @@ func entryRow(e Entry, loc *time.Location) string {
 			clock = "all-day"
 		}
 		body = clock + " " + textLine(m.Title, 80)
+		if m.Status == "cancelled" {
+			body += " · cancelled"
+		}
+		if m.DeletedFromSource {
+			body += " · removed from source"
+		}
 		if m.Attended {
 			body += " ✓"
 		}
@@ -214,9 +223,6 @@ func entryRow(e Entry, loc *time.Location) string {
 		body = peopleNames(p.People, p.PeopleCount) + fmt.Sprintf(" · %s ↓%d ↑%d · %s", singleLine(p.Channel, 80), p.Inbound, p.Outbound, clock)
 		if !e.HiddenText && p.Snippet.Text != "" {
 			body += " \"" + textLine(p.Snippet, 80) + "\""
-		}
-		if p.Channel == "email" {
-			body += fmt.Sprintf(" ×%d", p.Inbound+p.Outbound)
 		}
 		copies, groups := 0, 0
 		for _, n := range p.Copies {

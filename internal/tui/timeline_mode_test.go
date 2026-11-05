@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"errors"
 	"strings"
 	"testing"
@@ -177,10 +178,12 @@ func TestTimelineOpenUsesEmittedTargets(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	m := timelineModeModel()
+	m.timelineState.result.Days[0].Bursts[0].Open[0].Args["conversation_id"] = jsontext.Value("9007199254740993")
+	m.rebuildTimelineRows()
 	opened, cmd := sendKey(t, m, keyEnter())
 	require.NotNil(cmd)
 	assert.Equal(timelineReaderThread, opened.timelineState.reader)
-	assert.Equal(int64(7), opened.timelineState.readerID)
+	assert.Equal(int64(9007199254740993), opened.timelineState.readerID)
 	m.timelineState.result.Days[0].Bursts[0].HiddenText = true
 	m.rebuildTimelineRows()
 	hidden, cmd := sendKey(t, m, keyEnter())
@@ -427,7 +430,7 @@ func TestTimelineMeetingSearchAcceptsTextAndCursorEditing(t *testing.T) {
 	assert.Equal(timelineReaderMeeting, m.timelineState.reader)
 	m, _ = sendKey(t, m, keyEsc())
 	assert.Equal(timelineReaderNone, m.timelineState.reader)
-	assert.Contains(stripANSI(m.renderView()), "Selected: msg:55")
+	assert.Equal("msg:55", m.highlightedTimelineEntry().Ref)
 	assert.Equal(parked, m.meetingState)
 }
 
@@ -556,7 +559,7 @@ func TestTimelineCalendarBackCancelsAndRejectsLateResult(t *testing.T) {
 	assert.Equal(timelineReaderNone, back.timelineState.reader)
 	assert.Nil(back.timelineState.calendar)
 	assert.False(back.loading)
-	assert.Contains(stripANSI(back.renderView()), "Selected: evt:42")
+	assert.Equal("evt:42", back.highlightedTimelineEntry().Ref)
 }
 
 func TestTimelineCalendarModeExitCancelsAndReentryResumes(t *testing.T) {

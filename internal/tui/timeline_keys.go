@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"strconv"
 	"time"
 
@@ -284,8 +284,8 @@ func timelineOpenID(value any) int64 {
 		return id
 	case int:
 		return int64(id)
-	case json.Number:
-		n, err := id.Int64()
+	case jsontext.Value:
+		n, err := strconv.ParseInt(string(id), 10, 64)
 		if err == nil {
 			return n
 		}

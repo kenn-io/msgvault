@@ -18,6 +18,7 @@ type BurstQuery struct {
 	Descending       bool
 	AfterKey         *BurstKey
 	Limit            int
+	IncludeCold      bool
 }
 type BurstKey struct {
 	FirstAt time.Time
@@ -70,6 +71,9 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 }
 
 func (s *Store) listActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
+	if q.IncludeCold {
+		return s.listLiveActivityBurstsContext(ctx, q)
+	}
 	page := BurstPage{Bursts: []ActivityBurst{}}
 	if q.Limit < 1 || q.Limit > 5000 {
 		return page, fmt.Errorf("%w: burst limit must be 1..5000", ErrInvalidActivityRequest)
