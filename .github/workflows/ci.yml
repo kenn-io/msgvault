@@ -434,7 +434,8 @@ jobs:
             --workdir "$GITHUB_WORKSPACE/web" \
             "$image" node "$cli" run-server --host 127.0.0.1 --port 3000)
           echo "container_id=$container_id" >> "$GITHUB_OUTPUT"
-          for attempt in {1..30}; do
+          # Allow slow container startup to finish while polling for readiness.
+          for attempt in {1..120}; do
             if [ "$(docker inspect --format '{{.State.Running}}' "$container_id")" != true ]; then
               echo 'Browser server container exited before becoming ready.' >&2
               exit 1
@@ -445,7 +446,7 @@ jobs:
             fi
             sleep 1
           done
-          echo 'Browser server did not become ready within 30 attempts.' >&2
+          echo 'Browser server did not become ready within 120 attempts.' >&2
           exit 1
 
       - name: Check and test frontend
