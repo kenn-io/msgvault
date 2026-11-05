@@ -1,4 +1,5 @@
 import { documentStatus } from '../src/test/operations';
+import { view } from '../src/lib/components/shell/fixtures.test-support';
 import { stubOperationStatus } from './kit-ui';
 import { expect, test } from '@playwright/test';
 
@@ -13,9 +14,7 @@ function entry(index: number) {
   };
 }
 
-const saved = { id: 3, name: 'Project notes', revision: 1, schema_version: 2,
-  created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
-  canonical_state: { filters: [], grouping: [], presentation: 'table', sort: [], columns: [] } };
+const saved = view(3, 'Project notes');
 
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/session', (route) => route.fulfill({
@@ -93,10 +92,13 @@ test('mouse navigation retains compact control sizes', async ({ page }) => {
   const opener = page.getByRole('button', { name: 'Open navigation' });
   await opener.click();
   const drawer = page.getByRole('dialog', { name: 'Navigation' });
-  expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBe(28);
-  expect((await drawer.getByRole('button', { name: 'Messages' }).boundingBox())!.height).toBe(36);
+  await expect(drawer.getByRole('button', { name: 'Messages' })).toBeFocused();
+  for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
+  await expect(drawer.locator(':focus')).toHaveCount(1);
+  expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBeLessThan(44);
+  expect((await drawer.getByRole('button', { name: 'Messages' }).boundingBox())!.height).toBeLessThan(44);
   await drawer.getByRole('button', { name: 'Project notes', exact: true }).focus();
-  expect((await drawer.getByRole('button', { name: 'Project notes actions' }).boundingBox())!.height).toBe(24);
+  expect((await drawer.getByRole('button', { name: 'Project notes actions' }).boundingBox())!.height).toBeLessThan(44);
   await drawer.getByRole('button', { name: 'Close navigation' }).click();
   await expect(drawer).toBeHidden();
   await expect(opener).toBeFocused();

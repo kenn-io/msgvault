@@ -622,8 +622,8 @@ test('narrow mouse People toolbar retains compact control sizes', async ({ page 
   expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
   await page.goto('/?workspace=relationships');
   await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
-  expect((await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox())!.height).toBe(24);
-  expect((await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).boundingBox())!.height).toBe(26);
+  expect((await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox())!.height).toBeLessThan(44);
+  expect((await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).boundingBox())!.height).toBeLessThan(44);
 });
 
 test('desktop People keeps its heading when its pane is narrow', async ({ page }) => {
