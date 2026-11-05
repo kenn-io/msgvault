@@ -65,14 +65,17 @@ func TestCallSummaryExcludesArchiveOwner(t *testing.T) {
 	require.NoError(err)
 	owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "signal")
 	require.NoError(err)
-	_, _, err = f.Store.CreatePersonFromParticipant(owner)
+	alias := f.EnsureParticipant("owner-alias@example.com", "Owner alias", "example.com")
+	_, err = f.Store.LinkParticipants(owner, alias)
+	require.NoError(err)
+	ownerPerson, _, err := f.Store.CreatePersonFromParticipant(owner)
 	require.NoError(err)
 	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "+12025550102", "manual"))
 	o := callhistory.Observation{
 		RecordID: "owner-and-peer", Version: 1, Provider: "signal", Account: "example",
 		Kind: "call", Direction: "outgoing", Outcome: "answered", OwnerParticipation: "joined",
 		OccurredAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Precision: "instant",
-		Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}, {ID: owner, Participation: "joined"}},
+		Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}, {ID: owner, Participation: "joined"}, {ID: alias, Participation: "joined"}},
 		Raw:          []byte(`{}`),
 	}
 	src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
@@ -84,6 +87,13 @@ func TestCallSummaryExcludesArchiveOwner(t *testing.T) {
 	require.Len(summary, 1)
 	assert.Equal(person.ID, summary[0].PersonID)
 	assert.Equal(1, summary[0].Answered)
+	items, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{})
+	require.NoError(err)
+	require.Len(items, 1)
+	assert.Equal([]callhistory.Participant{{ID: peer, Participation: "joined"}}, items[0].Participants)
+	items, err = f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: ownerPerson.ID})
+	require.NoError(err)
+	assert.Empty(items)
 }
 
 func TestLegacyCallsExcludeArchiveOwner(t *testing.T) {
@@ -96,6 +106,9 @@ func TestLegacyCallsExcludeArchiveOwner(t *testing.T) {
 				owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "manual")
 				require.NoError(err)
 				ownerPerson, _, err := f.Store.CreatePersonFromParticipant(owner)
+				require.NoError(err)
+				alias := f.EnsureParticipant("owner-alias@example.com", "Owner alias", "example.com")
+				_, err = f.Store.LinkParticipants(owner, alias)
 				require.NoError(err)
 				require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "+12025550102", "manual"))
 				peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Peer", "manual")
@@ -111,7 +124,7 @@ func TestLegacyCallsExcludeArchiveOwner(t *testing.T) {
 				message.SentAt = sql.NullTime{Time: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Valid: true}
 				id, err := f.Store.UpsertMessage(message)
 				require.NoError(err)
-				require.NoError(f.Store.ReplaceMessageRecipients(id, role, []int64{owner, peer}, nil))
+				require.NoError(f.Store.ReplaceMessageRecipients(id, role, []int64{owner, alias, peer}, nil))
 				require.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
 
 				items, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{})

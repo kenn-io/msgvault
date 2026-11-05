@@ -84,14 +84,12 @@ func (s *Store) callRolesSQL() string {
 		CASE WHEN r.recipient_type IN ('call_joined', 'call_invited', 'call_unknown') THEN r.recipient_type
 			WHEN ` + s.callConnectedSecondsSQL() + ` > 0 THEN 'call_joined' ELSE 'call_unknown' END AS recipient_type
 		FROM message_recipients r JOIN messages m ON m.id = r.message_id
-		JOIN participants p ON p.id = r.participant_id
 		WHERE (r.recipient_type IN ('call_joined', 'call_invited', 'call_unknown') OR
 			(m.message_type IN ('` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `')
 			AND r.recipient_type = CASE WHEN m.is_from_me THEN 'to' ELSE 'from' END))
-		AND NOT EXISTS (SELECT 1 FROM account_identities ai
-			WHERE (` + ownerEmailMatch("p.email_address", "ai.address") + `) OR EXISTS (
-				SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id = p.id AND ` +
-		ownerIdentifierMatch("pi.identifier_type", "pi.identifier_value", "ai.address", identifierWithoutPrimaryEmail) + `))`
+		AND r.participant_id NOT IN (` + ownerParticipantIDsSQL + `)
+		AND NOT EXISTS (SELECT 1 FROM person_participants pp
+			WHERE pp.participant_id = r.participant_id AND pp.person_id IN (` + fmt.Sprintf(personIDsForParticipantsSQL, ownerParticipantIDsSQL) + `))`
 }
 
 // ListCallObservationsContext includes withdrawn evidence for inspection but

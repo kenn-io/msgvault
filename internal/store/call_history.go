@@ -65,8 +65,8 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 		}
 		var metadata string
 		err := tx.QueryRowContext(ctx, `
-			SELECT m.metadata FROM messages m JOIN call_details c ON c.message_id = m.id
-			WHERE m.source_id = ? AND m.source_message_id = ? AND c.kind = 'scheduled_meeting'`, sourceID, o.RecordID).Scan(&metadata)
+			SELECT m.metadata, m.is_from_me FROM messages m JOIN call_details c ON c.message_id = m.id
+			WHERE m.source_id = ? AND m.source_message_id = ? AND c.kind = 'scheduled_meeting'`, sourceID, o.RecordID).Scan(&metadata, &data.Message.IsFromMe)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("%w: calendar event to cancel does not exist", callhistory.ErrInvalid)
 		}
