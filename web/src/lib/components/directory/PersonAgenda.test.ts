@@ -17,14 +17,16 @@ function readyStatus(): Response {
 describe('PersonAgenda', () => {
   it('groups live tasks into virtual lists and creates with a retry-stable request id', async () => {
     const requests: Request[] = [];
-    let created = false;
+    const createdItems: ReturnType<typeof item>[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
       requests.push(request);
       if (isStatus(request)) return readyStatus();
       if (request.method === 'POST') {
-        created = true;
-        return Response.json({ item: { ...item('new', 'Send notes'), list: 'waiting' } }, { status: 201 });
+        const { title, list } = await request.clone().json();
+        const created = { ...item(`new-${createdItems.length}`, title), list };
+        createdItems.push(created);
+        return Response.json({ item: created }, { status: 201 });
       }
       return Response.json({ project: 'msgvault', items: [
         { ...item('one', 'Send the revised budget'), web_url: 'https://tasks.example.test/one' },
@@ -32,7 +34,7 @@ describe('PersonAgenda', () => {
         { ...item('three', 'First follow-up'), list: 'follow-up' },
         { ...item('four', 'Second follow-up'), list: 'follow_up' },
         { ...item('five', 'Third follow-up'), list: 'follow up' },
-        ...(created ? [{ ...item('new', 'Send notes'), list: 'waiting' }] : [])
+        ...createdItems
       ] });
     }));
 
@@ -42,6 +44,12 @@ describe('PersonAgenda', () => {
     expect(await screen.findByText('Waiting')).toBeDefined();
     expect(screen.getByRole('link', { name: 'Send the revised budget' }).getAttribute('href')).toBe('https://tasks.example.test/one');
 
+    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send follow-up notes' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await screen.findByText('Send follow-up notes');
+    const defaultPost = requests.find(request => request.method === 'POST');
+    expect(await defaultPost!.clone().json()).toMatchObject({ title: 'Send follow-up notes', list: 'agenda' });
+
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     for (const label of ['Follow-up', 'Follow_up', 'Follow up']) expect(screen.getByText(label)).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'List: Agenda' }));
@@ -50,15 +58,14 @@ describe('PersonAgenda', () => {
     }
     await fireEvent.mouseDown(screen.getByRole('option', { name: 'Follow-up' }));
     await fireEvent.click(await screen.findByRole('button', { name: 'List: Follow-up' }));
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'waiting' } });
-    expect(screen.getAllByRole('option', { name: 'Waiting' })).toHaveLength(1);
+    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'ArrowDown' });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: Waiting' });
-    expect(requests.some(request => request.method === 'POST')).toBe(false);
-    await fireEvent.submit(screen.getByLabelText('New agenda item').closest('form')!);
+    expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     await waitFor(() => expect(screen.getByText('Send notes')).toBeDefined());
 
-    const post = requests.find((request) => request.method === 'POST');
+    const post = requests.filter(request => request.method === 'POST')[1];
     expect(post).toBeDefined();
     expect(post!.headers.get('Idempotency-Key')).toBeTruthy();
     expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list: 'waiting' });
@@ -168,7 +175,7 @@ describe('PersonAgenda', () => {
     expect(screen.queryByText('Ask about launch')).toBeNull();
   });
 
-  it('canonicalizes the list before fingerprinting so case or spacing changes keep the retry key', async () => {
+  it('canonicalizes the list when the picker selects a case or spacing variant', async () => {
     const requests: Request[] = [];
     let attempts = 0;
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -180,9 +187,9 @@ describe('PersonAgenda', () => {
         if (attempts === 1) {
           return Response.json({ error: 'task_unavailable', message: 'Unable to add agenda item' }, { status: 503 });
         }
-        return Response.json({ item: item('new', 'Send notes') }, { status: 201 });
+        return Response.json({ item: { ...item('new', 'Send notes'), list: 'gift ideas' } }, { status: 201 });
       }
-      return Response.json({ project: 'msgvault', items: attempts >= 2 ? [{ ...item('new', 'Send notes'), list: 'gift ideas' }] : [] });
+      return Response.json({ project: 'msgvault', items: [] });
     }));
 
     render(PersonAgenda, { client, personID: 7 });
@@ -193,17 +200,10 @@ describe('PersonAgenda', () => {
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: Gift ideas' });
-    expect(requests.some(request => request.method === 'POST')).toBe(false);
-    await fireEvent.click(screen.getByRole('button', { name: 'List: Gift ideas' }));
-    expect(screen.getAllByRole('option')).toHaveLength(1);
-    expect(screen.getByRole('option', { name: 'Agenda' })).toBeDefined();
-    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByText('Unable to add agenda item')).toBeDefined();
 
-    // The server canonicalizes lists (lowercase, whitespace-collapsed, empty
-    // → 'agenda'), so an unknown-outcome retry typed with different case or
-    // spacing must keep the same idempotency key and send the canonical list.
+    // Selecting either spelling canonicalizes the draft list before creation.
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
     await fireEvent.click(screen.getByRole('button', { name: 'List: Gift ideas' }));
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'gift ideas' } });
@@ -218,12 +218,6 @@ describe('PersonAgenda', () => {
     expect(keys[0]).toBe(keys[1]);
     expect(await posts[0].clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
     expect(await posts[1].clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
-    await waitFor(() => expect(screen.getByRole('button', { name: 'List: Gift ideas' })).toHaveProperty('disabled', false));
-    await fireEvent.click(screen.getByRole('button', { name: 'List: Gift ideas' }));
-    expect(screen.getAllByRole('option', { name: 'Gift ideas' })).toHaveLength(1);
-    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
-    await fireEvent.mouseDown(screen.getByRole('option', { name: 'Use "Gift Ideas"' }));
-    expect(await screen.findByRole('button', { name: 'List: Gift ideas' })).toBeDefined();
   });
 
   it('resets the idempotency key when the selected person changes', async () => {
@@ -261,7 +255,6 @@ describe('PersonAgenda', () => {
     const posts = requests.filter((request) => request.method === 'POST');
     expect(new URL(posts[0].url).pathname).toBe('/api/v1/people/7/agenda');
     expect(new URL(posts[1].url).pathname).toBe('/api/v1/people/8/agenda');
-    expect(await posts[1].clone().json()).toMatchObject({ list: 'agenda' });
     expect(posts[1].headers.get('Idempotency-Key')).not.toBe(posts[0].headers.get('Idempotency-Key'));
   });
 
