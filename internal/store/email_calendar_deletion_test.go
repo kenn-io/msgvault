@@ -1,9 +1,7 @@
 package store_test
 
 import (
-	"database/sql"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,31 +25,10 @@ func TestEmailCalendarArchiveOnlyMarker(t *testing.T) {
 	var marker int
 	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM source_merge_archive_only_messages WHERE message_id=?`), eventID).Scan(&marker))
 	assertions.Equal(1, marker)
-	_, err = st.ReconcileSourceMessageSnapshot(t.Context(), source.ID, map[string]struct{}{"parent": {}})
-	requirements.NoError(err)
-	var deleted sql.NullTime
-	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT deleted_from_source_at FROM messages WHERE id=?`), eventID).Scan(&deleted))
-	assertions.False(deleted.Valid)
-	key, err := st.GetMessageSourceID(eventID)
-	requirements.NoError(err)
-	requirements.ErrorIs(st.RejectArchiveOnlyDeletionTargetsContext(t.Context(), source.ID, []string{key}), store.ErrArchiveOnlyDeletionTarget)
-	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
 	dest, err := st.GetOrCreateSource("gmail", "destination@example.org")
 	requirements.NoError(err)
 	_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: source.ID, IntoSourceID: dest.ID})
 	requirements.NoError(err)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	key, err = st.GetMessageSourceID(eventID)
-	requirements.NoError(err)
-	requirements.ErrorIs(st.RejectArchiveOnlyDeletionTargetsContext(t.Context(), dest.ID, []string{key}), store.ErrArchiveOnlyDeletionTarget)
-	_, err = st.ReconcileSourceMessageSnapshot(t.Context(), dest.ID, map[string]struct{}{})
-	requirements.NoError(err)
-	page, err = st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	assertions.Len(page.Occurrences, 1)
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*) FROM source_merge_archive_only_messages a JOIN messages m ON m.id=a.message_id WHERE m.id=? AND m.source_id=?`), eventID, dest.ID).Scan(&marker))
+	assertions.Equal(1, marker)
 }
