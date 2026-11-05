@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/sourcescope"
@@ -1304,7 +1305,7 @@ func (s *Store) fetchRecipientsInto(
 	args = append(args, recipientType)
 
 	query := fmt.Sprintf(`
-		SELECT mr.message_id, p.id, %s
+		SELECT mr.message_id, p.id, %s, COALESCE(p.domain, '')
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
@@ -1319,8 +1320,12 @@ func (s *Store) fetchRecipientsInto(
 	for rows.Next() {
 		var msgID int64
 		var recipient ParticipantDisplay
-		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display); err != nil {
+		var domain string
+		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display, &domain); err != nil {
 			return fmt.Errorf("scan recipient: %w", err)
+		}
+		if calevent.IsRoomAttendee("@"+domain, false) {
+			recipient.ParticipantID = 0
 		}
 		if recipient.Display != "" {
 			result[msgID] = append(result[msgID], recipient)

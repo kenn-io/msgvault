@@ -15,6 +15,29 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestConversationWindowRoomRecipientsStayPlainText(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gcal", "archive@example.com")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "room-event", "calendar", "Planning")
+	requirements.NoError(err)
+	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
+	requirements.NoError(err)
+	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+	requirements.NoError(err)
+	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "room-event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC), Valid: true}})
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(message, "to", []int64{room, alice}, []string{"Room", "Alice"}))
+	window, err := st.GetConversationWindow(conversation, message, 0, 0)
+	requirements.NoError(err)
+	requirements.Len(window.Messages, 1)
+	assertions.ElementsMatch([]store.ParticipantDisplay{
+		{ParticipantID: 0, Display: "Room <room@resource.calendar.google.com>"},
+		{ParticipantID: alice, Display: "Alice <alice@example.com>"},
+	}, window.Messages[0].ToParticipants)
+}
+
 func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
