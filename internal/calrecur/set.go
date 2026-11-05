@@ -18,10 +18,7 @@ var (
 const SeriesReadBudget, RequestReadBudget = 50000, 500000
 
 type Set struct {
-	DTStart time.Time
-	// CivilStart keeps the supplied local DTSTART fields as a UTC timestamp.
-	// Zero means to derive them from DTStart and Zone.
-	CivilStart      time.Time
+	DTStart         time.Time
 	AllDay          bool
 	StartDate       string
 	Zone            *time.Location
@@ -231,11 +228,7 @@ func (s Set) parseRule(line string) (*rrule.ROption, error) {
 	if seen["COUNT"] && opt.Count <= 0 || seen["INTERVAL"] && opt.Interval <= 0 {
 		return nil, unsupported(line, errors.New("COUNT and INTERVAL must be positive"))
 	}
-	selectorStart := start
-	if !s.AllDay && !s.CivilStart.IsZero() {
-		selectorStart = s.CivilStart
-	}
-	if err := supportedRule(opt, seen, selectorStart); err != nil {
+	if err := supportedRule(opt, seen, start); err != nil {
 		return nil, unsupported(line, err)
 	}
 	// A date-only UNTIL on a timed rule includes that whole local date, as
@@ -267,16 +260,13 @@ func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) er
 	}
 	maxInterval := gregorianCycleDays
 	switch opt.Freq {
-	case rrule.DAILY:
-		// maxInterval already spans one daily Gregorian cycle.
+	case rrule.DAILY, rrule.HOURLY, rrule.MINUTELY, rrule.SECONDLY:
 	case rrule.WEEKLY:
 		maxInterval = gregorianCycleDays / 7
 	case rrule.MONTHLY:
 		maxInterval = gregorianCycleMonths
 	case rrule.YEARLY:
 		maxInterval = gregorianCycleYears
-	default:
-		return errors.New("unsupported recurrence frequency")
 	}
 	if opt.Interval > maxInterval {
 		return fmt.Errorf("interval exceeds the %d-period Gregorian cycle", maxInterval)
@@ -481,13 +471,7 @@ func greatestCommonDivisor(a, b int) int {
 }
 
 func ParseSet(dtstart time.Time, allDay bool, startDate string, zone *time.Location, lines []string) (Set, error) {
-	return ParseSetWithCivilStart(dtstart, time.Time{}, allDay, startDate, zone, lines)
-}
-
-// ParseSetWithCivilStart preserves the original local DTSTART fields when a
-// provider resolved an instant through a daylight-saving gap.
-func ParseSetWithCivilStart(dtstart, civilStart time.Time, allDay bool, startDate string, zone *time.Location, lines []string) (Set, error) {
-	s := Set{DTStart: dtstart, CivilStart: civilStart, AllDay: allDay, StartDate: startDate, Zone: zone}
+	s := Set{DTStart: dtstart, AllDay: allDay, StartDate: startDate, Zone: zone}
 	if _, err := s.start(); err != nil {
 		return Set{}, unsupported("DTSTART", err)
 	}

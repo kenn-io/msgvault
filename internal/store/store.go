@@ -1523,9 +1523,6 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			return fmt.Errorf("execute %s: %w", filename, err)
 		}
 	}
-	if err := s.ensureCalendarEventStartWallColumn(ctx); err != nil {
-		return err
-	}
 	if !s.IsPostgreSQL() {
 		if err := ensureRecipientCacheJournalTriggers(boundQuerier{ctx: ctx, q: s.db}); err != nil {
 			return err
@@ -2408,7 +2405,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 	if err := s.runOnceMigration(ctx, migrationChatMembers, 1, false, s.rebuildChatMembersContext); err != nil {
 		return fmt.Errorf("initialize chat members projection: %w", err)
 	}
-	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV2, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
+	if err := s.runOnceMigration(ctx, migrationCalendarEventProjectionV1, calendarEventProjectionVersion, false, s.backfillCalendarEventProjectionsContext); err != nil {
 		return fmt.Errorf("initialize calendar event projections: %w", err)
 	}
 

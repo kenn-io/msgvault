@@ -59,8 +59,8 @@ type Message struct {
 
 // CalendarPart is decoded calendar evidence from a physical MIME part.
 type CalendarPart struct {
-	Content       []byte
-	Method, Error string
+	Content []byte
+	Method  string
 }
 
 // Address represents an email address with optional display name.
@@ -875,18 +875,8 @@ func calendarParts(root *enmime.Part) []CalendarPart {
 			return
 		}
 		if strings.EqualFold(part.ContentType, "text/calendar") {
-			_, params, invalid, err := parseMediaTypeLenient(part.Header.Get("Content-Type"))
-			value := CalendarPart{Content: part.Content, Method: strings.ToUpper(params["method"])}
-			if err != nil || len(invalid) != 0 {
-				value.Error = "invalid calendar Content-Type parameters"
-			}
-			for _, problem := range part.Errors {
-				if problem.Severe {
-					value.Error = "calendar MIME decoding failed"
-					break
-				}
-			}
-			out = append(out, value)
+			_, params, _, _ := parseMediaTypeLenient(part.Header.Get("Content-Type"))
+			out = append(out, CalendarPart{Content: part.Content, Method: strings.ToUpper(params["method"])})
 		}
 		for child := part.FirstChild; child != nil; child = child.NextSibling {
 			walk(child)

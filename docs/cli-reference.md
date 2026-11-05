@@ -2027,39 +2027,36 @@ Import a local iCalendar file as separate calendar event messages:
 msgvault import-ics calendar.ics --identifier personal-calendar
 ```
 
-Choose a stable `--identifier` for each calendar. Re-importing into that source
-updates events by UID and original recurrence identity. Higher SEQUENCE wins;
-equal sequences use DTSTAMP, with cancellation winning an exact tie. Older
-invitations cannot undo a cancellation. Each event keeps a stable message ID
-and its own VEVENT with calendar time zone definitions. A single-VEVENT file
-without sibling components stays byte-identical. The daemon reads the file locally; importing
-files through a remote daemon is unavailable.
+Choose a stable `--identifier` for each calendar. Each VEVENT becomes its own
+event, identified by UID and original recurrence identity, and keeps its own
+VEVENT with the calendar's time zone definitions. A single-VEVENT file stays
+byte-identical. Re-importing updates events: higher SEQUENCE wins, equal
+sequences use DTSTAMP, and a cancellation wins an exact tie. A malformed
+component rejects the whole file. A series with unsupported recurrence stays
+archived and is reported as unexpandable. The command reports updated,
+unchanged, and unexpandable event counts. Floating times use UTC. The daemon
+reads the file locally; importing files through a remote daemon is unavailable.
 
-Each VEVENT becomes its own entry. A malformed or unsupported component rejects
-the whole file. Valid series with unsupported recurrence remain archived with
-an expansion error. The command reports updated, unchanged, and unexpandable
-event counts. Imports support UTC times, IANA time zones, all-day dates, and
-floating times. Floating times use the source's time zone, set with `--time-zone`, or UTC. Changing that zone
-rebuilds event times from the stored raw while preserving floating recurrence identities. Recurring timed events with a day or week DURATION in a zone with clock changes remain archived with an expansion error. All-day dates and exact-time durations still expand. Unsupported custom time zones and
-RECURRENCE-ID RANGE reject a file or email part. For email, the original MIME
-preserves that raw evidence.
-
-Files are limited to 32 MiB, 10,000 VEVENTs, 32 component levels, and 8 KiB per
-unfolded line.
+A cancellation keeps the event's last accepted title, times, participants, and
+raw, and only marks it cancelled. A cancellation received before the event
+creates a tombstone that a later-arriving invitation fills in.
 
 ### Invitations in email
 
-Archiving email extracts decoded `text/calendar` MIME parts, including inline alternatives, into event messages in the same source. A `.ics` filename alone does not qualify. Attached forwarded emails and iTIP messages with the ADD, REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+Archiving email extracts decoded `text/calendar` MIME parts into event messages
+in the same source. Attached forwarded emails and iTIP messages with the ADD,
+REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
 
-The first invitation for a UID creates an event entry. Recurring exceptions use the UID and original recurrence identity. Every contributing email keeps its full MIME and attachments. Events survive replacement or deletion of those emails. Floating invite times in email sources use UTC because email sources have no calendar time zone.
-
-Later emailed revisions, including recurring exceptions and cancellations, apply when their `ORGANIZER` address matches the family's original `invite_organizer`, ignoring case. `From`, `CN`, and `SENT-BY` do not affect this comparison. An empty original organizer or a mismatched organizer leaves the event unchanged and records `update ignored: ORGANIZER does not match invite_organizer` in the email's `calendar_invite_errors` metadata. The email keeps its full MIME and attachments. An emailed cancellation for an unseen UID creates a tombstone only if it carries an `ORGANIZER`, which becomes the family's original organizer. Accepted revisions still follow SEQUENCE, then DTSTAMP precedence. Standalone `import-ics` revisions do not use this email rule.
-
-This rule checks organizer continuity. The addresses are unauthenticated. A stranger who copies the visible `ORGANIZER` address can update or cancel the derived event. The archived emails remain available as evidence.
-
-Guest replies and single-guest removals stay in the email and leave the event unchanged. Ignored guest removals record a `guest removal ignored` diagnostic in `calendar_invite_errors`.
-
-For `import-ics`, `STATUS:CANCELLED` marks a full cancellation. `METHOD:CANCEL` without STATUS cancels the event when it has no ATTENDEE properties; with ATTENDEE properties, it is a guest removal. Cancellation preserves the last accepted event's title, times, participants, and raw. A cancellation received before the event creates a tombstone. Cancelled series list all occurrences as cancelled. Email cancellations follow the organizer continuity rule above. Invalid email calendar parts leave the email intact and record `calendar_invite_errors`.
+An invitation, its updates, and its cancellation share one event. Every
+contributing email keeps its full MIME and attachments, and the event survives
+deletion of any of them. A later email applies only when its `ORGANIZER`
+address matches the organizer of the email that created the event, ignoring
+case. Otherwise the event stays unchanged and the email records
+`update ignored: ORGANIZER does not match invite_organizer` in its
+`calendar_invite_errors` metadata. Organizer addresses are unauthenticated: a
+sender who copies the `ORGANIZER` address can update or cancel the event.
+Invalid calendar parts leave the email intact and record
+`calendar_invite_errors`.
 
 To extract invites from emails already in the archive, run
 [`repair-derived`](#repair-derived). It works from stored MIME without a provider
