@@ -53,6 +53,7 @@ import (
 	"go.kenn.io/msgvault/internal/synctechsms"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
@@ -8491,6 +8492,22 @@ func requestInline(t *testing.T, srv *Server, cid string) *httptest.ResponseReco
 	w := httptest.NewRecorder()
 	srv.Router().ServeHTTP(w, req)
 	return w
+}
+
+func TestHandleMessageInline_LegacyCSVRecovery(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	raw := testemail.LegacyCSV(true, testemail.LegacyCSVOptions{
+		Body:      `<p>Example body<img src="cid:logo@example.org"></p>`,
+		InlinePNG: true,
+	})
+	engine := &querytest.MockEngine{RawMessages: map[int64][]byte{1: raw}}
+	srv := newTestServerWithEngine(t, engine)
+
+	w := requestInline(t, srv, "logo@example.org")
+	require.Equal(t, http.StatusOK, w.Code, "status (body: %s)", w.Body.String())
+	assert.Equal("image/png", w.Header().Get("Content-Type"))
+	assert.Equal([]byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}, w.Body.Bytes())
 }
 
 // TestHandleMessageInline_ParseOnce verifies that fetching every distinct cid
