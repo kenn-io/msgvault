@@ -1,12 +1,34 @@
 package store
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMeetingRecordIncludesNotesOnMovedCopy(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
+	calendarFixture(t, st, "copy", linkSeriesRaw, "copy@example.com")
+	_, exception := calendarFixture(t, st, "moved", `{"id":"series_20270314T100000Z","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-15T12:00:00Z"},"end":{"dateTime":"2027-03-15T13:00:00Z"}}`, "copy@example.com")
+	var notes []int64
+	for i, start := range []string{"2027-03-14T10:00:00Z", "2027-03-15T12:00:00Z"} {
+		_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "twenty_json", fmt.Sprintf(`{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":%q}}`, start))
+		notes = append(notes, note)
+		links, err := meetingLinksForTest(t, st, note)
+		requirements.NoError(err)
+		requirements.Len(links, 1)
+	}
+	for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314T100000Z"}, {MessageID: exception}} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: ref})
+		requirements.NoError(err)
+		assert.Equal(t, notes, record.MessageIDs)
+	}
+}
 
 func TestMeetingRecordNotesAndCopies(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)

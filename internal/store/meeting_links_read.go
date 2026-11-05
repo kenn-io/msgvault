@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -88,17 +89,34 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		values = append(values, target.Row.ICalUID)
 	}
 	targets := []any{target.Ref.MessageID, target.Row.MessageID}
+	starts := []any{target.Start}
+	if _, original, ok := calrecur.ParseInstanceID("event_" + target.Identity.OccurrenceKey); ok {
+		if original.AllDay {
+			zone, err := calendarEventZone(target.Row.Event)
+			if err != nil {
+				return membersOut, err
+			}
+			original.Instant, _, err = calrecur.CivilDateBoundary(original.Date, zone)
+			if err != nil {
+				return membersOut, err
+			}
+		}
+		starts = append(starts, original.Instant)
+	}
 	for _, row := range copies {
 		targets = append(targets, row.MessageID)
+		if row.Event.Kind == meetingExceptionKind && row.Event.Start != nil {
+			starts = append(starts, *row.Event.Start)
+		}
 		value := row.Event.ProviderEventID
 		if row.Event.Kind == meetingSeriesKind && target.Identity.OccurrenceKey != "" {
 			value += "_" + target.Identity.OccurrenceKey
 		}
 		values = append(values, value)
 	}
-	args := slices.Concat(values, []any{target.Row.Event.Kind, target.Start, target.Ref.Key, target.Identity.OccurrenceKey}, targets)
+	args := slices.Concat(values, []any{target.Row.Event.Kind}, starts, []any{target.Ref.Key, target.Identity.OccurrenceKey}, targets)
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM (
- SELECT k.message_id FROM meeting_link_key k WHERE k.value IN (`+placeholders(len(values))+`) AND (`+s.meetingKeyStartPredicate()+`)
+ SELECT k.message_id FROM meeting_link_key k WHERE k.value IN (`+placeholders(len(values))+`) AND (`+s.meetingKeyStartPredicate(len(starts))+`)
  UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE d.occurrence_key IN ('', ?, ?) AND EXISTS (
  SELECT 1 FROM calendar_events e JOIN messages m ON m.id = e.message_id
  WHERE e.message_id IN (`+placeholders(len(targets))+`) AND (`+meetingEventAliasPredicate("d.target_message_id")+`))
@@ -139,11 +157,12 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 	return membersOut, nil
 }
 
-// A recurring occurrence only gathers notes scheduled at its own start, so a
-// long series does not expand every other date's notes against the budget.
-func (s *Store) meetingKeyStartPredicate() string {
-	if s.IsPostgreSQL() {
-		return `k.kind != 'ical_uid' OR k.scheduled_at IS NULL OR ? = 'single' OR k.scheduled_at = ?`
+// Gather only notes scheduled at the occurrence's original or copied starts,
+// so a long series does not expand every other date's notes against the budget.
+func (s *Store) meetingKeyStartPredicate(starts int) string {
+	column, values := "k.scheduled_at", placeholders(starts)
+	if !s.IsPostgreSQL() {
+		column, values = "julianday(k.scheduled_at)", strings.ReplaceAll(values, "?", "julianday(?)")
 	}
-	return `k.kind != 'ical_uid' OR k.scheduled_at IS NULL OR ? = 'single' OR julianday(k.scheduled_at) = julianday(?)`
+	return `k.kind != 'ical_uid' OR k.scheduled_at IS NULL OR ? = 'single' OR ` + column + ` IN (` + values + `)`
 }
