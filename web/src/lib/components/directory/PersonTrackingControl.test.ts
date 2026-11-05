@@ -138,8 +138,9 @@ describe('PersonTrackingControl', () => {
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
     await fireEvent.click(await screen.findByRole('switch', { name: 'Update automatically' }));
-    const retry = await screen.findByRole('button', { name: 'Retry profile maintenance state' }) as HTMLButtonElement;
+    const retry = await screen.findByRole('button', { name: 'Retry' }) as HTMLButtonElement;
     expect(screen.queryByRole('switch')).toBeNull();
+    expect(screen.queryByText('Uses archived conversations when a people sweep runs.')).toBeNull();
     await waitFor(() => expect(retry.disabled).toBe(false));
     await fireEvent.click(retry);
 
@@ -192,6 +193,7 @@ describe('PersonTrackingControl', () => {
     expect((await screen.findByRole('switch', { name: 'Update automatically' }) as HTMLInputElement).disabled).toBe(false);
     expect((await screen.findByRole('alert')).textContent).toContain('Unable to load eligible profile fields.');
     expect(document.body.textContent).not.toContain(forbidden.credential);
+    expect(screen.queryByRole('button', { name: 'Show sensitive fields' })).toBeNull();
   });
 
   it('keeps pending focus connected and blocks stale focus or announcement after person replacement', async () => {
@@ -234,6 +236,50 @@ describe('PersonTrackingControl', () => {
     expect(document.activeElement).toBe(currentToggle);
     expect((currentToggle as HTMLInputElement).checked).toBe(false);
     expect(onAnnounce).not.toHaveBeenCalled();
+  });
+
+  it('shows the pending change in the switch status until saving finishes', async () => {
+    let mutation = deferredResponse();
+    let tracked = false;
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'PUT') return mutation.promise;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      return Response.json(catalog(false));
+    });
+    const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    await fireEvent.click(await screen.findByRole('switch'));
+    expect(screen.getByText('Turning on…')).toBeDefined();
+    expect(screen.queryByText('Off', { exact: true })).toBeNull();
+    mutation.resolve(Response.json({ person_id: 7, tracked: true, tracked_at: null }));
+    expect(await screen.findByText('On', { exact: true })).toBeDefined();
+    view.unmount();
+
+    tracked = true;
+    mutation = deferredResponse();
+    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    await fireEvent.click(await screen.findByRole('switch'));
+    expect(screen.getByText('Turning off…')).toBeDefined();
+    mutation.resolve(Response.json({ person_id: 7, tracked: false, tracked_at: null }));
+    expect(await screen.findByText('Off', { exact: true })).toBeDefined();
+  });
+
+  it('offers sensitive disclosure only after a catalog has loaded and keeps the empty state compact', async () => {
+    const fields = deferredResponse();
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
+      return fields.promise;
+    });
+    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
+    expect(await screen.findByText('Loading profile fields…')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Show sensitive fields' })).toBeNull();
+    fields.resolve(Response.json({ targets: [] }));
+    expect(await screen.findByText('No fields are set up for automatic updates.')).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Show sensitive fields' })).toBeDefined();
   });
 
   it('suppresses mutation announcement and focus when the person changes after controller settlement', async () => {
@@ -344,7 +390,7 @@ describe('PersonTrackingControl', () => {
     });
     try {
       render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
-      const retry = await screen.findByRole('button', { name: 'Retry profile maintenance state' });
+      const retry = await screen.findByRole('button', { name: 'Retry' });
       await fireEvent.click(retry);
       await waitFor(() => expect(replaced).toBe(true));
       await Promise.resolve();

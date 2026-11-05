@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, EmptyState, Spinner, Toggle } from '@kenn-io/kit-ui';
+  import { Button, Spinner, Toggle } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
 
   import type { AttributeDefinition } from '../../api/generated/models';
@@ -65,8 +65,11 @@
   }
 
   async function loadSensitiveCatalog(): Promise<void> {
+    const contextToken = controller.contextToken;
     catalogRetryIncludesSensitive = true;
     await controller.retryCatalog(true);
+    await tick();
+    if (controller.isContextCurrent(contextToken) && controller.catalogIncludesSensitive && root?.parentElement) root.parentElement.scrollTop = 0;
   }
 </script>
 
@@ -78,14 +81,16 @@
     {#if controller.trackingError}
       <div class="notice notice--error" role="alert">
         <span>{controller.trackingError}</span>
-        <Button size="sm" label={controller.stateUnknown ? 'Retry profile maintenance state' : 'Retry profile maintenance'} disabled={controller.trackingLoading || controller.pending} onclick={() => void retryTracking()} />
+        <Button size="sm" label="Retry" disabled={controller.trackingLoading || controller.pending} onclick={() => void retryTracking()} />
       </div>
     {/if}
     {#if controller.tracking}
       <div class="tracking-row">
         <Toggle label="Update automatically" checked={controller.tracking.tracked} disabled={controller.trackingLoading || controller.pending || controller.stateUnknown} onchange={(checked) => void changeTracking(checked)} />
-        <span class="tracked-time">
-          {#if controller.tracking.tracked && controller.tracking.tracked_at}
+        <span class="tracked-time" role="status" aria-busy={controller.pending}>
+          {#if controller.pending}
+            {controller.tracking.tracked ? 'Turning off…' : 'Turning on…'}
+          {:else if controller.tracking.tracked && controller.tracking.tracked_at}
             On since <time datetime={controller.tracking.tracked_at}>{formatDateTime(controller.tracking.tracked_at)}</time>
           {:else}{controller.tracking.tracked ? 'On' : 'Off'}{/if}
         </span>
@@ -93,9 +98,8 @@
     {:else if !controller.trackingLoading && !controller.trackingError}
       <p>Profile maintenance state is unavailable.</p>
     {/if}
-    <p class="helper">Uses archived conversations when a people sweep runs.</p>
-    {#if controller.pending}
-      <p class="working" role="status" aria-busy="true"><Spinner size={14} label="Updating profile maintenance" />Updating profile maintenance…</p>
+    {#if controller.tracking && !controller.trackingError}
+      <p class="helper">Uses archived conversations when a people sweep runs.</p>
     {/if}
   </div>
 
@@ -123,12 +127,14 @@
         {/each}
       </ul>
     {:else if !controller.catalogLoading && !controller.catalogError}
-      <EmptyState title="No eligible profile fields" description="The server catalog does not currently expose fields for automatic maintenance." />
+      <p class="helper">No fields are set up for automatic updates.</p>
     {/if}
-    {#if !controller.catalogIncludesSensitive}
-      <button type="button" class="reveal" disabled={controller.catalogLoading} onclick={() => void loadSensitiveCatalog()}>Show sensitive fields</button>
-    {:else}
-      <p class="disclosure">Sensitive fields are shown.</p>
+    {#if !controller.catalogLoading && !controller.catalogError}
+      {#if !controller.catalogIncludesSensitive}
+        <button type="button" class="reveal" onclick={() => void loadSensitiveCatalog()}>Show sensitive fields</button>
+      {:else}
+        <p class="disclosure">Sensitive fields are shown.</p>
+      {/if}
     {/if}
   </div>
 </section>
@@ -149,8 +155,8 @@
   .meta { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
   .reveal { justify-self: start; border: 0; padding: 0; background: none; color: var(--link-ink); font: inherit; font-size: var(--font-size-sm); cursor: pointer; }
   .reveal:hover { text-decoration: underline; }
-  .reveal:disabled { color: var(--text-muted); cursor: default; }
   @media (max-width: 640px) {
     .target-list li, .tracking-row, .notice { align-items: flex-start; flex-direction: column; gap: var(--space-1); }
+    .tracked-time { margin-left: calc(36px + var(--space-4)); }
   }
 </style>

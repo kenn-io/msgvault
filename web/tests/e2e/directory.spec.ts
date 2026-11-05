@@ -146,7 +146,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   archive.failNextTrackingMutation();
   archive.failNextTrackingRead();
   await page.keyboard.press('Space');
-  const retry = maintenance.getByRole('button', { name: 'Retry profile maintenance state' });
+  const retry = maintenance.getByRole('button', { name: 'Retry' });
   await expect(retry).toBeVisible();
   await retry.focus();
   await page.keyboard.press('Enter');
@@ -190,7 +190,9 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await drawerReveal.focus();
   await expect(drawerReveal).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(maintenance.getByText('Private note')).toBeVisible();
+  await expect(drawerMaintenance.getByText('Sensitive fields are shown.')).toBeAttached();
+  await expect(drawerMaintenance.getByText('Private note')).toBeAttached();
+  await expect(drawerMaintenance.getByRole('switch')).toBeInViewport();
   const targetCards = maintenance.locator('li');
   const first = await targetCards.nth(0).boundingBox();
   const second = await targetCards.nth(1).boundingBox();
@@ -200,11 +202,13 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   const geometry = await page.getByRole('dialog').evaluate((dialog) => {
     const body = dialog.querySelector('.kit-modal-body')!;
     const rows = [...dialog.querySelectorAll('li')].map((row) => row.getBoundingClientRect());
-    return { height: dialog.getBoundingClientRect().height, overflow: body.scrollWidth > body.clientWidth, scrolls: body.scrollHeight > body.clientHeight, lefts: rows.map((row) => row.left), heights: rows.map((row) => row.height) };
+    return { height: dialog.getBoundingClientRect().height, overflow: body.scrollWidth > body.clientWidth, scrolls: body.scrollHeight > body.clientHeight, scrollTop: body.scrollTop, statusLeft: dialog.querySelector('.tracked-time')!.getBoundingClientRect().left, labelLeft: dialog.querySelector('.kit-toggle__label')!.getBoundingClientRect().left, lefts: rows.map((row) => row.left), heights: rows.map((row) => row.height) };
   });
   expect(geometry.height).toBeLessThanOrEqual(720);
   expect(geometry.overflow).toBe(false);
   expect(geometry.scrolls).toBe(true);
+  expect(geometry.scrollTop).toBe(0);
+  expect(geometry.statusLeft).toBe(geometry.labelLeft);
   expect(new Set(geometry.lefts).size).toBe(1);
   expect(Math.max(...geometry.heights)).toBeLessThanOrEqual(60);
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
