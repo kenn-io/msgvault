@@ -85,11 +85,11 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	}
 	initiation := `(previous_at IS NULL OR ` + gap + `) AND bucket.month IS NOT NULL`
 	query := cte + activityBurstGroupsCTE + `, contact_messages AS (
- SELECT r.* FROM representatives r JOIN burst_groups b ON b.source_id=r.source_id AND b.conversation_id=COALESCE(r.conversation_id,0) AND b.local_date=r.local_date
+ SELECT r.* FROM representatives r JOIN burst_groups b ON b.source_id=r.thread_source_id AND b.conversation_id=r.thread_conversation_id AND b.local_date=r.local_date
  WHERE b.noise=0 AND r.ref_kind='message' AND r.contact_eligible=1 AND r.encrypted=0 AND r.occurred_at<=?
  AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND ` + subject + ` AND ` + counted + `)
  ), contact_months(month,start_at,end_at) AS (VALUES ` + strings.Join(months, ",") + `), exchanges AS (
- SELECT *,LAG(occurred_at) OVER(PARTITION BY source_id,conversation_id ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages
+ SELECT *,LAG(occurred_at) OVER(PARTITION BY thread_source_id,thread_conversation_id ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages
  ) SELECT channel,COALESCE(bucket.month,''),MIN(occurred_at),MAX(occurred_at),
  MAX(CASE WHEN direction='inbound' THEN occurred_at END),MAX(CASE WHEN direction='outbound' THEN occurred_at END),COUNT(*),
  SUM(CASE WHEN direction='inbound' AND ` + initiation + ` THEN 1 ELSE 0 END),

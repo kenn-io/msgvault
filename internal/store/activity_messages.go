@@ -55,7 +55,7 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 	args = append(args, q.Limit)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+activityBurstGroupsCTE+`
  SELECT r.message_id,r.source_id,COALESCE(r.conversation_id,0),r.channel,r.direction,r.occurred_at,r.local_date,r.message_type,r.list_id,r.encrypted,r.large_inbound,r.contact_eligible
- FROM representatives r JOIN burst_groups b ON b.source_id=r.source_id AND b.conversation_id=COALESCE(r.conversation_id,0) AND b.local_date=r.local_date
+ FROM representatives r JOIN burst_groups b ON b.source_id=r.thread_source_id AND b.conversation_id=r.thread_conversation_id AND b.local_date=r.local_date
  WHERE `+where+` ORDER BY r.occurred_at `+order+`,r.message_id `+order+` LIMIT ?`), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read activity messages: %w", err)

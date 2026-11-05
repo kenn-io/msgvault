@@ -240,8 +240,44 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,COALESCE(ts.thread_messages,1) DESC,e.source_id,message_id) AS copy_rank,
  COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
  FROM scored e LEFT JOIN thread_sizes ts ON ts.source_id=e.source_id AND ts.conversation_id=e.conversation_id
- ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
+ ), ` + s.activityRepresentativesCTE()
 	return query, args, nil
+}
+
+// activityRepresentativesCTE keeps one copy per logical message and files
+// mailbox threads that continue one another under one logical thread. Threads
+// sharing a copy continue each other only when the shared copy ends one of
+// them; threads that both continue past it are separate replies to it. Each
+// group takes the thread holding most representatives, then the fullest one.
+func (s *Store) activityRepresentativesCTE() string {
+	return `kept_copies AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1), thread_copies AS MATERIALIZED (
+ SELECT ` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` AS copy_key,source_id,conversation_id,occurred_at FROM scored
+ WHERE channel='email' AND COALESCE(rfc822_message_id,'')<>'' AND conversation_id IS NOT NULL
+ ), thread_ends AS MATERIALIZED (
+ SELECT t.source_id,t.conversation_id,(SELECT MAX(ae.occurred_at) FROM messages m JOIN activity_events ae ON ae.message_id=m.id JOIN sources src ON src.id=m.source_id
+ WHERE m.source_id=t.source_id AND m.conversation_id=t.conversation_id AND ` + s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae") + `) AS last_at
+ FROM thread_copies t GROUP BY t.source_id,t.conversation_id
+ ), thread_edges AS MATERIALIZED (
+ SELECT DISTINCT a.source_id,a.conversation_id,b.source_id AS member_source_id,b.conversation_id AS member_conversation_id
+ FROM thread_copies a JOIN thread_copies b ON b.copy_key=a.copy_key
+ JOIN thread_ends ae ON ae.source_id=a.source_id AND ae.conversation_id=a.conversation_id
+ JOIN thread_ends be ON be.source_id=b.source_id AND be.conversation_id=b.conversation_id
+ WHERE a.occurred_at>=ae.last_at OR b.occurred_at>=be.last_at
+ ), thread_reach(source_id,conversation_id,member_source_id,member_conversation_id) AS (
+ SELECT source_id,conversation_id,source_id,conversation_id FROM thread_edges
+ UNION SELECT r.source_id,r.conversation_id,e.member_source_id,e.member_conversation_id FROM thread_reach r
+ JOIN thread_edges e ON e.source_id=r.member_source_id AND e.conversation_id=r.member_conversation_id
+ ), thread_reps AS (
+ SELECT source_id,conversation_id,COUNT(*) AS kept FROM kept_copies GROUP BY source_id,conversation_id
+ ), thread_groups AS (
+ SELECT r.source_id,r.conversation_id,r.member_source_id,r.member_conversation_id,ROW_NUMBER() OVER (PARTITION BY r.source_id,r.conversation_id
+ ORDER BY COALESCE(k.kept,0) DESC,COALESCE(ts.thread_messages,1) DESC,r.member_source_id,r.member_conversation_id) AS member_rank
+ FROM thread_reach r LEFT JOIN thread_reps k ON k.source_id=r.member_source_id AND k.conversation_id=r.member_conversation_id
+ LEFT JOIN thread_sizes ts ON ts.source_id=r.member_source_id AND ts.conversation_id=r.member_conversation_id
+ ), representatives AS (
+ SELECT c.*,COALESCE(g.member_source_id,c.source_id) AS thread_source_id,COALESCE(g.member_conversation_id,c.conversation_id,0) AS thread_conversation_id
+ FROM kept_copies c LEFT JOIN thread_groups g ON g.source_id=c.source_id AND g.conversation_id=c.conversation_id AND g.member_rank=1
+ )`
 }
 
 // activityClassificationCTE owns the counterpart facts used by totals and flags.
@@ -284,12 +320,12 @@ func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters
 }
 
 const activityBurstGroupsCTE = `, burst_groups AS (
- SELECT source_id,COALESCE(conversation_id,0) AS conversation_id,local_date,MIN(channel) AS channel,
- 'burst:'||CAST(source_id AS TEXT)||':'||CAST(COALESCE(conversation_id,0) AS TEXT)||':'||local_date AS key,
+ SELECT thread_source_id AS source_id,thread_conversation_id AS conversation_id,local_date,MIN(channel) AS channel,
+ 'burst:'||CAST(thread_source_id AS TEXT)||':'||CAST(thread_conversation_id AS TEXT)||':'||local_date AS key,
  MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
  SUM(CASE WHEN direction='inbound' THEN counted ELSE 0 END) AS inbound,
  SUM(CASE WHEN direction='outbound' THEN counted ELSE 0 END) AS outbound,
  COUNT(*) AS message_count,CASE WHEN MAX(CASE WHEN ref_kind='meeting' THEN 1 ELSE 0 END)=1 THEN 0
  WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
- FROM representatives GROUP BY source_id,conversation_id,local_date
+ FROM representatives GROUP BY thread_source_id,thread_conversation_id,local_date
 )`

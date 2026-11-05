@@ -90,7 +90,7 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
  SELECT omitted.n,b.key,b.source_id,b.conversation_id,b.channel,b.local_date,b.first_at,b.last_at,b.inbound,b.outbound,b.page_number,
  r.message_id,r.direction,r.message_type,r.list_id,r.encrypted,r.large_inbound,r.contact_eligible,r.copy_count
  FROM omitted LEFT JOIN selected b ON TRUE LEFT JOIN representatives r
- ON b.page_number<=` + strconv.Itoa(q.Limit) + ` AND r.source_id=b.source_id AND COALESCE(r.conversation_id,0)=b.conversation_id AND r.local_date=b.local_date
+ ON b.page_number<=` + strconv.Itoa(q.Limit) + ` AND r.thread_source_id=b.source_id AND r.thread_conversation_id=b.conversation_id AND r.local_date=b.local_date
  ORDER BY b.first_at ` + order + `,b.key ` + order + `,r.occurred_at DESC,r.message_id DESC`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
