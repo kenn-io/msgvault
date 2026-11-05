@@ -380,7 +380,8 @@ than claiming success. Conflicting runs and unavailable capabilities retain
 their explicit errors or reasons. Full resync, pause/resume, schedule editing,
 and source removal are not available in Sources.
 
-**Add source** shows setup commands for Gmail, Microsoft 365, IMAP, and MBOX files and opens CardDAV setup for contacts.
+**Add source** shows setup commands for Gmail, Microsoft 365, IMAP, and MBOX
+files and opens CardDAV setup for contacts.
 
 Viewing Sources does not repair runs left marked as running after a crash.
 They remain active until the daemon restarts or another sync for that source

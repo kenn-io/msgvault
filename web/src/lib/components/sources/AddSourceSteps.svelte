@@ -16,14 +16,18 @@
   {/each}
   {#if kind.id === 'imap'}<p>You'll be prompted for your password.</p>{/if}
   {#if posix && cmd}
-    <div class="terminal"><p>POSIX shell</p><CommandLine command={posix} /></div>
-    <div class="terminal">
-      <p>Command Prompt</p>
-      <p>Start Command Prompt with <code>cmd /d /v:off</code>, then paste:</p>
-      <CommandLine command={cmd} />
-    </div>
+    {#if posix === cmd}
+      <CommandLine command={posix} />
+    {:else}
+      <div class="terminal"><p>POSIX shell</p><CommandLine command={posix} /></div>
+      <div class="terminal">
+        <p>Command Prompt</p>
+        <p>Start Command Prompt with <code>cmd /d /v:off</code>, then paste:</p>
+        <CommandLine command={cmd} />
+      </div>
+    {/if}
   {/if}
-  <p>Run this in a terminal where msgvault is installed. When it finishes, reload Sources to see the new source{kind.id === 'mbox' ? '.' : ', then open it for its first sync command.'}</p>
+  <p>Run this in a terminal where msgvault is installed. When it finishes, {kind.id === 'mbox' ? '' : 'run the printed first sync command, then '}reload Sources to see the new source.</p>
   <a href={kind.docs} target="_blank" rel="noreferrer">Learn more</a>
 </div>
 

@@ -62,10 +62,4 @@ describe('addSourceCommand', () => {
     const output = execFileSync('sh', ['-c', command.replace('msgvault import-mbox', 'printf "%s\\n"')], { encoding: 'utf8' });
     expect(output).toBe("--\nyou@example.com\n/tmp/O'Brien $notes.mbox\n");
   });
-
-  it('requires both IMAP fields', () => {
-    expect(addSourceCommand(imap, { host: 'imap.example.com' }, 'posix')).toBeUndefined();
-    expect(addSourceCommand(imap, { username: 'you@example.com' }, 'cmd')).toBeUndefined();
-    expect(addSourceCommand(imap, { host: 'imap.example.com', username: 'you@example.com' }, 'posix')).toBe('msgvault add-imap --host imap.example.com --username you@example.com');
-  });
 });

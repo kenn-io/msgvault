@@ -104,9 +104,7 @@
     };
     document.addEventListener('visibilitychange', visibilityChanged);
     refresh();
-    return () => {
-      document.removeEventListener('visibilitychange', visibilityChanged);
-    };
+    return () => document.removeEventListener('visibilitychange', visibilityChanged);
   });
   onDestroy(() => {
     disposed = true;
