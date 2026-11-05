@@ -45,7 +45,7 @@ func hexSources(cfg *config.Config) meetingSources[config.HexSource] {
 	return sources
 }
 
-// probeHexMeetings proves the configured meeting folder opens read-only.
+// probeHexMeetings checks existing storage read-only; Hex may not have created it yet.
 func probeHexMeetings(ctx context.Context, path string) error {
 	reader, err := hex.Open(ctx, path)
 	if err != nil {
@@ -61,7 +61,7 @@ var addHexCmd = &cobra.Command{
 	Long: `Register a configured Hex meeting folder as a msgvault meeting source.
 
 Reads meetings_dir from the matching [[hex]] entry in config.toml, or Hex's
-platform default when omitted, and checks that the folder opens read-only. In remote mode the client reads local files
+platform default when omitted. Existing folders are checked read-only; a missing folder is empty until the first recording. In remote mode the client reads local files
 and securely registers the source with the configured daemon. In same-host
 mode the daemon reads the files.
 

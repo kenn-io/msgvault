@@ -975,6 +975,10 @@ setting. A sleeping recorder cannot sync; allow for that when choosing retention
 Archived copies survive Hex's expiry and source deletion. Shutdown or offline
 time beyond retention can lose calls that have never synced.
 
+You can register before the first recording. A missing meetings folder is an
+empty scan; msgvault does not create it or write to Hex storage. Dot-prefixed
+folders are ignored, as they are in Hex.
+
 Scans revisit stopped meetings so edits update the archive:
 
 - If transcript input disappears, cannot be read, or contains malformed lines
@@ -1022,6 +1026,9 @@ Audio is off by default. Set `recordings = true` to retain `system.wav` and
 
 - Missing, empty, recent or changing audio waits while text is archived.
   Each track retries independently.
+- WAV files with a RIFF size that does not match the saved file are deferred.
+  msgvault does not repair their headers. If Hex never finalizes an incomplete
+  file, its audio may expire without being archived; transcript capture continues.
 - The recorder and daemon default to 4 GiB per track. Raise
   `recording_max_bytes` and `[server].hex_recording_max_bytes` together if needed.
 - Source paths and filenames stay on the recorder. `--full` reoffers text and

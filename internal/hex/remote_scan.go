@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
+	"os"
 	"time"
 
 	"go.kenn.io/msgvault/internal/meetingarchive"
@@ -13,6 +14,9 @@ import (
 type RemoteSender func(context.Context, RemoteRequest) (RemoteResult, error)
 
 func ForgetRemoteUploads(ctx context.Context, opts ImportOptions) error {
+	if _, err := os.Stat(opts.MeetingsDir); errors.Is(err, os.ErrNotExist) {
+		return ctx.Err()
+	}
 	return meetingimport.ForgetRecorderUploads[string](ctx, opts.MeetingsDir, opts.LockDir, opts.Identifier, opts.RemoteTarget)
 }
 
@@ -22,6 +26,14 @@ func ScanRemote(ctx context.Context, opts ImportOptions, send RemoteSender) (sum
 	sum = &ImportSummary{}
 	started := time.Now()
 	defer func() { sum.Duration = time.Since(started) }()
+	reader, err := Open(ctx, opts.MeetingsDir)
+	if err != nil {
+		return sum, err
+	}
+	defer func() { _ = reader.Close() }()
+	if reader.root == nil {
+		return sum, nil
+	}
 	canonical, dir, err := meetingimport.RecorderSyncPaths(opts.MeetingsDir, opts.LockDir)
 	if err != nil {
 		return sum, err
@@ -36,11 +48,6 @@ func ScanRemote(ctx context.Context, opts ImportOptions, send RemoteSender) (sum
 		return sum, err
 	}
 	defer func() { retErr = errors.Join(retErr, receipts.Save()) }()
-	reader, err := Open(ctx, opts.MeetingsDir)
-	if err != nil {
-		return sum, err
-	}
-	defer func() { _ = reader.Close() }()
 	scan, err := reader.ListMeetings(ctx)
 	if err != nil {
 		return sum, err
@@ -148,8 +155,7 @@ func pushMeeting(ctx context.Context, opts ImportOptions, m Meeting, send Remote
 		receipts.RecordRecording(m.Manifest.ID+":"+track, r.Hash)
 		sum.RecordingsStored++
 	}
-	if result.Warnings == 0 {
-		receipts.Record(m.Manifest.ID, digest)
-	}
+	// A successful retention is also an acknowledgement of this payload.
+	receipts.Record(m.Manifest.ID, digest)
 	return errors.Join(failures...)
 }

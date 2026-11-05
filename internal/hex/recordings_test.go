@@ -146,3 +146,20 @@ func TestHeaderOnlyTracksWaitForSamples(t *testing.T) {
 	must.NoError(err)
 	check.Len(message.Attachments, 2, "identical populated tracks remain separate")
 }
+
+func TestUnfinalizedWAVHeaderDefersTrack(t *testing.T) {
+	must := require.New(t)
+	_, _, opts := importFixture(t)
+	dir := fixtureMeeting(t, opts.MeetingsDir, "unfinished-audio", "interrupted")
+	writeTrack(t, dir, "system")
+	path := filepath.Join(dir, "system.wav")
+	data, err := os.ReadFile(path)
+	must.NoError(err)
+	binary.LittleEndian.PutUint32(data[4:], 36) // Header was not updated for the saved samples.
+	must.NoError(os.WriteFile(path, data, 0600))
+	old := time.Now().Add(-time.Minute)
+	must.NoError(os.Chtimes(path, old, old))
+	recording, err := prepareTrack(t.Context(), opts, Meeting{Manifest: Manifest{ID: "unfinished-audio"}}, "system")
+	must.NoError(err)
+	assert.Nil(t, recording, "an inconsistent RIFF size is deferred, not repaired")
+}

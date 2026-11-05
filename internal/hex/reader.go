@@ -26,12 +26,17 @@ func Open(ctx context.Context, path string) (*Reader, error) {
 		return nil, err
 	}
 	root, err := os.OpenRoot(path)
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("open Hex meetings: %w", err)
 	}
 	return &Reader{root: root}, nil
 }
-func (r *Reader) Close() error { return r.root.Close() }
+func (r *Reader) Close() error {
+	if r.root == nil {
+		return nil
+	}
+	return r.root.Close()
+}
 
 type Scan struct {
 	Meetings []Meeting
@@ -43,6 +48,12 @@ type Scan struct {
 // locks defer the whole folder. No lock file or recovery output is created.
 func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 	var out Scan
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+	if r.root == nil {
+		return out, nil
+	}
 	dir, err := r.root.Open(".")
 	if err != nil {
 		return out, err
@@ -58,7 +69,7 @@ func (r *Reader) ListMeetings(ctx context.Context) (Scan, error) {
 		if err := ctx.Err(); err != nil {
 			return out, err
 		}
-		if !folder.IsDir() || folder.Type()&os.ModeSymlink != 0 {
+		if !folder.IsDir() || folder.Type()&os.ModeSymlink != 0 || strings.HasPrefix(folder.Name(), ".") {
 			continue
 		}
 		id := folder.Name()
