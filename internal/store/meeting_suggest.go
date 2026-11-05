@@ -297,28 +297,6 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		decided[suggestion.MemberMessageID] = refs
 		identities[suggestion.MemberMessageID] = matched
 	}
-	filtered := suggestions[:0]
-	for _, suggestion := range suggestions {
-		if decided[suggestion.MemberMessageID][suggestion.Ref] {
-			continue
-		}
-		id, key, _ := strings.Cut(strings.TrimPrefix(suggestion.Ref, "evt:"), "@")
-		messageID, err := strconv.ParseInt(id, 10, 64)
-		if err != nil {
-			continue
-		}
-		o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: messageID, Key: key}, budget)
-		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-			continue
-		}
-		if err != nil {
-			return nil, err
-		}
-		if !identities[suggestion.MemberMessageID][o.Identity] {
-			filtered = append(filtered, suggestion)
-		}
-	}
-	suggestions = filtered
 	slices.SortFunc(suggestions, func(a, b MeetingSuggestion) int {
 		if a.OverlapMinutes != b.OverlapMinutes {
 			return b.OverlapMinutes - a.OverlapMinutes
@@ -340,6 +318,36 @@ func (s *Store) undecidedMeetingSuggestions(ctx context.Context, r reboundReader
 		}
 		return 0
 	})
+	type pair struct {
+		memberID int64
+		identity meetingIdentity
+	}
+	seen := map[pair]bool{}
+	filtered := suggestions[:0]
+	for _, suggestion := range suggestions {
+		if decided[suggestion.MemberMessageID][suggestion.Ref] {
+			continue
+		}
+		id, key, _ := strings.Cut(strings.TrimPrefix(suggestion.Ref, "evt:"), "@")
+		messageID, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			continue
+		}
+		o, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: messageID, Key: key}, budget)
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		candidate := pair{suggestion.MemberMessageID, o.Identity}
+		if !identities[suggestion.MemberMessageID][o.Identity] && !seen[candidate] {
+			seen[candidate] = true
+			filtered = append(filtered, suggestion)
+		}
+	}
+	suggestions = filtered
+
 	if limit <= 0 {
 		limit = 10
 	}

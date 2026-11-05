@@ -14,6 +14,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMeetingSuggestionsDeduplicateCopiesBeforeLimit(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "first", `{"id":"first","iCalUID":"shared@example.org","start":{"dateTime":"2027-03-14T09:30:00Z"},"end":{"dateTime":"2027-03-14T10:15:00Z"}}`)
+	_, best := calendarFixture(t, st, "best", singleLinkRaw("best", "shared@example.org"), "copy@example.com")
+	_, other := calendarFixture(t, st, "other", `{"id":"other","iCalUID":"other@example.org","start":{"dateTime":"2027-03-14T10:20:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
+	data, note := projectionFixture(t, st, "note", "circleback_json", `{"meeting":{"url":"https://meet.example.com/room"}}`)
+	data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+	_, err := st.UpsertMessage(data.Message)
+	requirements.NoError(err)
+	for _, limit := range []int{10, 2} {
+		page, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, limit)
+		requirements.NoError(err)
+		requirements.Len(page.Suggestions, 2)
+		assertions.Equal(fmt.Sprintf("evt:%d", best), page.Suggestions[0].Ref)
+		assertions.Equal(fmt.Sprintf("evt:%d", other), page.Suggestions[1].Ref)
+	}
+}
+
 func TestMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
 	t.Helper()
 	assertions := assert.New(t)
