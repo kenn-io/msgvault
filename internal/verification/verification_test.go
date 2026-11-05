@@ -37,6 +37,8 @@ func TestIs(t *testing.T) {
 		{"pin items", Content{Text: "Pin your favorite items. Order 123456 shipped"}, false},
 		{"Google", Content{Subject: "G-482913 is your Google verification code"}, true},
 		{"split", Content{Text: "Your code is 482 913"}, true},
+		{"entity repeat", Content{HTML: "<p>Your code is &#52;&#56;&#50;&#57;&#49;&#51;</p>"}, true},
+		{"nbsp repeat", Content{HTML: "<p>Your code is 4&nbsp;8&nbsp;2&nbsp;9&nbsp;1&nbsp;3</p>"}, true},
 		{"cells", Content{HTML: "Your verification code is <td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td>"}, true},
 		{"mixed", Content{Text: "Your code is K7M2-9QXA"}, true},
 		{"subject cue", Content{Subject: "Your code", Text: "482913"}, true},

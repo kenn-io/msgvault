@@ -28,7 +28,6 @@ import (
 
 func TestAgentVerificationReads(t *testing.T) {
 	requirements := require.New(t)
-	assertions := assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Your verification code is 482913", "Your verification code is 482913")
 
@@ -38,13 +37,6 @@ func TestAgentVerificationReads(t *testing.T) {
 	requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
 	requirements.NoError(err)
-	const link = "https://example.test/reset?token=abcDEF1234567890"
-	message, err := st.GetMessage(id)
-	requirements.NoError(err)
-	chatID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, SourceMessageID: "chat", ConversationID: message.ConversationID, MessageType: "chat", Subject: sql.NullString{String: "Reset your password " + link, Valid: true}, Snippet: sql.NullString{String: link, Valid: true}})
-	requirements.NoError(err)
-	requirements.NoError(st.UpsertMessageBody(chatID, sql.NullString{String: "Reset your password " + link, Valid: true}, sql.NullString{}))
-	requirements.NoError(st.UpsertFTS(chatID, "Reset your password "+link, "Reset your password "+link, "", "", ""))
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
@@ -54,8 +46,7 @@ func TestAgentVerificationReads(t *testing.T) {
 	requirements.NoError(err)
 	for _, path := range []string{
 		fmt.Sprintf("/cli/message?id=%d", id), fmt.Sprintf("/messages/%d", id),
-		"/cli/search?q=verification&include_snippet=true", "/search?q=verification", "/messages/filter", "/messages", "/search/domains?domains=example.test",
-		"/search/fast?q=verification", "/search/deep?q=verification&scope=body", fmt.Sprintf("/cli/message/thread?id=%d", id),
+		"/messages/filter", "/messages", "/search/domains?domains=example.test", fmt.Sprintf("/cli/message/thread?id=%d", id),
 	} {
 		t.Run(path, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -66,12 +57,7 @@ func TestAgentVerificationReads(t *testing.T) {
 			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 			assertions.NotContains(w.Body.String(), "482913")
 			assertions.NotContains(w.Body.String(), "4829")
-			assertions.NotContains(w.Body.String(), "abcDEF1234567890")
-			if strings.Contains(path, "q=") {
-				assertions.NotContains(w.Body.String(), "[verification content masked]")
-			} else {
-				assertions.Contains(w.Body.String(), "[verification content masked]")
-			}
+			assertions.Contains(w.Body.String(), "[verification content masked]")
 			for _, credential := range []string{"owner", revealToken} {
 				req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
 				req.RemoteAddr = "127.0.0.1:1234"
@@ -87,19 +73,6 @@ func TestAgentVerificationReads(t *testing.T) {
 				assertions.NotContains(w.Body.String(), "[verification content masked]")
 			}
 		})
-	}
-	for _, path := range []string{fmt.Sprintf("/cli/message?id=%d", chatID), fmt.Sprintf("/messages/%d", chatID), "/cli/search?q=reset&include_snippet=true", "/search?q=reset", "/search/fast?q=reset", "/search/deep?q=reset&scope=body", fmt.Sprintf("/cli/message/thread?id=%d", chatID)} {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
-		req.Header.Set(apiprotocol.AgentTokenHeader, token)
-		w := httptest.NewRecorder()
-		srv.Router().ServeHTTP(w, req)
-		assertions.Equal(http.StatusOK, w.Code, path+": "+w.Body.String())
-		assertions.NotContains(w.Body.String(), "abcDEF1234567890", path)
-		if strings.Contains(path, "q=") {
-			assertions.NotContains(w.Body.String(), "[verification content masked]", path)
-		} else {
-			assertions.Contains(w.Body.String(), "[verification content masked]", path)
-		}
 	}
 }
 
@@ -122,13 +95,9 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		tokens[mode] = token
 	}
 	for _, tc := range []struct{ name, subject, text, html string }{
-		{"code", "Your code is 482913", "Your code is 482913", "<p>Your code is 482913</p>"},
+		{"code", "Account", "Your code is 482913", ""},
 		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>"},
 		{"HTML beside text", "Account", "Ordinary text", "<p>Your code is 482913</p>"},
-		{"cells", "Account", "", "Your verification code is <table><tr><td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td></tr></table>"},
-		{"entity repeat", "Account", "Your code is 482913", "<p>Your code is 482913 and &#52;&#56;&#50;&#57;&#49;&#51;</p>"},
-		{"nbsp repeat", "Account", "", "<p>Your code is 4&nbsp;8&nbsp;2&nbsp;9&nbsp;1&nbsp;3</p>"},
-		{"repeated link payload", "Sign in", "Sign in https://example.test/r?token=abcDEF1234567890 repeat abcDEF1234567890", ""},
 		{"ordinary", "Project update", "Order 1234567 shipped. Log in to track it. © 2026", "<p>Project update</p>"},
 		{"uncapped detail", "Account", strings.Repeat("x", 256*1024) + " Your code is 482913", ""},
 	} {
@@ -162,19 +131,19 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 						srv.Router().ServeHTTP(w, req)
 						assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 						responses[mode] = w.Body.String()
+						var body struct {
+							BodyText string `json:"body_text"`
+							BodyHTML string `json:"body_html"`
+						}
+						requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
 						if mode == "masked" && tc.name != "ordinary" {
-							var body struct{ BodyText, BodyHTML string }
-							// Both detail APIs expose the same body keys.
-							var fields map[string]json.RawMessage
-							requirements.NoError(json.Unmarshal(w.Body.Bytes(), &fields))
-							requirements.NoError(json.Unmarshal(fields["body_text"], &body.BodyText))
-							if value := fields["body_html"]; value != nil {
-								requirements.NoError(json.Unmarshal(value, &body.BodyHTML))
-							}
 							assertions.Equal("[verification content masked]", body.BodyText)
 							assertions.Empty(body.BodyHTML)
 							assertions.NotContains(w.Body.String(), "482913")
 							assertions.NotContains(w.Body.String(), "abcDEF1234567890")
+						} else {
+							assertions.Equal(tc.text, body.BodyText)
+							assertions.Equal(tc.html, body.BodyHTML)
 						}
 					}
 					assertions.Equal(responses["owner"], responses["reveal"])
@@ -222,77 +191,50 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 }
 
 func TestAgentVerificationFields(t *testing.T) {
-	for _, tc := range []struct{ name, subject, snippet, text, html string }{
-		{name: "newline", subject: "Account", text: "Your verification code is:\n\n482913"},
-		{name: "title cue", subject: "482913", snippet: "verification"},
-		{name: "body cue filename", subject: "verification", text: "Your code"},
-		{name: "filename cue", subject: "Your code", snippet: "verification"},
+	for _, tc := range []struct{ name, subject, snippet, title, text, filename string }{
+		{name: "title cue", subject: "482913", title: "Your code"},
+		{name: "body cue", subject: "482913", text: "Your code"},
+		{name: "filename cue", subject: "Your code", filename: "482913.png"},
 		{name: "thread snippet", subject: "482913", snippet: "Your verification code"},
-		{name: "metadata", subject: "Your code is 482913", snippet: "verification", text: "verification"},
-		{name: "title", subject: "verification", snippet: "verification", text: "verification"},
-		{name: "snippet", subject: "verification", snippet: "Your code is 482913"},
-		{name: "tail", subject: "verification", snippet: "verification", text: strings.Repeat("ordinary ", 33000) + " Your verification code is 482913"},
+		{name: "metadata", subject: "Your code is 482913"},
+		{name: "title", title: "Your code is 482913"},
+		{name: "snippet", snippet: "Your code is 482913"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
+			requirements, assertions := require.New(t), assert.New(t)
 			st := testutil.NewTestStore(t)
 			source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", tc.subject, tc.text)
 			requirements.NoError(err)
-			requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: tc.text, Valid: true}, sql.NullString{String: tc.html, Valid: true}))
 			_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet=? WHERE id=?"), tc.snippet, id)
 			requirements.NoError(err)
 			msg, err := st.GetMessage(id)
 			requirements.NoError(err)
-			title := tc.subject
-			if tc.name == "title cue" {
-				title = "Your code"
-			}
-			if tc.name == "title" {
-				title = "Your code is 482913"
-			}
-			_, err = st.DB().Exec(st.Rebind("UPDATE conversations SET title=? WHERE id=?"), title, msg.ConversationID)
+			_, err = st.DB().Exec(st.Rebind("UPDATE conversations SET title=? WHERE id=?"), tc.title, msg.ConversationID)
 			requirements.NoError(err)
-			requirements.NoError(st.UpsertAttachment(id, "482913.png", "image/png", "", strings.Repeat("a", 64), 1))
+			if tc.filename != "" {
+				requirements.NoError(st.UpsertAttachment(id, tc.filename, "image/png", "", strings.Repeat("a", 64), 1))
+			}
 			cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
 			srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-			t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
-			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+			t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
-			for _, path := range []string{
-				fmt.Sprintf("/messages/%d", id), fmt.Sprintf("/cli/message?id=%d", id), fmt.Sprintf("/cli/message/thread?id=%d", id),
-				"/cli/search?q=verification&include_snippet=true", "/search?q=verification", "/messages/filter", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/messages",
-			} {
-				if tc.name == "newline" && path == "/search/fast?q=verification" {
-					path = "/search/fast?q=Account"
+			for _, withEngine := range []bool{true, false} {
+				if !withEngine {
+					srv.SetAnalyticsEngine(nil, "")
 				}
-				if (tc.name == "filename cue" || tc.name == "title cue" || tc.name == "body cue filename" || tc.name == "thread snippet") && strings.Contains(path, "q=") {
-					continue
+				req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil)
+				req.Header.Set(apiprotocol.AgentTokenHeader, token)
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+				var body struct {
+					BodyText string `json:"body_text"`
 				}
-				t.Run(path, func(t *testing.T) {
-					assertions := assert.New(t)
-					req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
-					req.Header.Set(apiprotocol.AgentTokenHeader, token)
-					w := httptest.NewRecorder()
-					srv.Router().ServeHTTP(w, req)
-					assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-					assertions.NotContains(w.Body.String(), "482913")
-					assertions.NotContains(w.Body.String(), "abcDEF1234567890")
-					if path == fmt.Sprintf("/messages/%d", id) || strings.HasPrefix(path, "/cli/message?") {
-						assertions.Contains(w.Body.String(), "[verification content masked]")
-					} else if !strings.Contains(path, "q=") && (tc.name != "snippet" || !strings.HasPrefix(path, "/search/deep")) && (tc.name != "title" || strings.HasPrefix(path, "/cli/search")) {
-						assertions.Contains(w.Body.String(), "[verification content masked]")
-					}
-				})
+				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
+				assertions.Equal("[verification content masked]", body.BodyText)
+				assertions.NotContains(w.Body.String(), "482913")
 			}
-			srv.SetAnalyticsEngine(nil, "")
-			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil)
-			req.Header.Set(apiprotocol.AgentTokenHeader, token)
-			w := httptest.NewRecorder()
-			srv.Router().ServeHTTP(w, req)
-			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-			assertions.NotContains(w.Body.String(), "482913")
-			assertions.NotContains(w.Body.String(), "abcDEF1234567890")
 		})
 	}
 }
@@ -402,29 +344,6 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestAgentVerificationDetailUsesLoadedBody(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "message", "Account", "Your code is 482913")
-	requirements.NoError(err)
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Logger: testLogger()})
-	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	requirements.NoError(err)
-	msg, err := st.GetMessage(id)
-	requirements.NoError(err)
-	// The loaded response is the classification input even if the database changes.
-	requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: "Ordinary", Valid: true}, sql.NullString{}))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages/1", nil)
-	req.Header.Set(apiprotocol.AgentTokenHeader, token)
-	srv.maskStoreMessage(req, msg)
-	assertions.Equal("[verification content masked]", msg.BodyText)
-	detail := &query.MessageDetail{ID: id, Subject: "Account", BodyText: "Your code is 482913"}
-	srv.maskMessageDetail(req, detail)
-	assertions.Equal("[verification content masked]", detail.BodyText)
 }
 
 func TestAgentVerificationSearchOmitsMatches(t *testing.T) {

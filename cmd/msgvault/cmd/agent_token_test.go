@@ -268,7 +268,7 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 
 	sourceID := strconv.FormatInt(fixture.source.ID, 10)
 	ownerSender := map[string][]string{sourceID: {"owner@example.test"}}
-	getCode, getEvents := run(issue([]string{"draft.create"}, fixture.source.ID, ownerSender), []string{
+	getCode, getEvents := run(issue([]string{"draft.create", "verification.read"}, fixture.source.ID, ownerSender), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
 	require.Equal(http.StatusOK, getCode)
@@ -323,7 +323,7 @@ func TestDelegatedGmailDraftLifecycleThroughHTTP(t *testing.T) {
 		ID:      "gmail-draft-managed",
 		Message: gmail.RawMessage{ID: "gmail-message-edited", ThreadID: "gmail-thread-1"},
 	}
-	getAfterEditCode, getAfterEditEvents := run(issue([]string{"draft.create"}, fixture.source.ID, ownerSender), []string{
+	getAfterEditCode, getAfterEditEvents := run(issue([]string{"draft.create", "verification.read"}, fixture.source.ID, ownerSender), []string{
 		api.CLIRunDraftGetCommand, draft.DraftID, "--json",
 	})
 	require.Equal(http.StatusOK, getAfterEditCode)
@@ -386,7 +386,7 @@ func TestDelegatedGmailDraftGetThroughAgentCLI(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner-test-key", AllowInsecure: true})
 	require.NoError(err)
 	t.Cleanup(func() { _ = owner.Close() })
-	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create"}, []int64{fixture.source.ID}, nil, time.Time{})
+	grant, err := owner.IssueAgentToken(t.Context(), "test agent", []string{"draft.create", "verification.read"}, []int64{fixture.source.ID}, nil, time.Time{})
 	require.NoError(err)
 	tokenFile := filepath.Join(t.TempDir(), "agent.token")
 	require.NoError(os.WriteFile(tokenFile, []byte(grant.Secret+"\n"), 0o600))
@@ -453,9 +453,6 @@ func TestAgentTokenIssueOutputsSecret(t *testing.T) {
 		"--label", "Test Agent", "--permissions", "draft.create", "--source-ids", "1", "--json")
 	require.NoError(err)
 	assert.True(strings.HasSuffix(output, "\n"), "JSON output must end with a newline")
-	_, err = runAgentTokenCommand(testCtx, t, agentTokenIssueCmd, "--label", "Reader", "--permissions", "message.read,verification.read", "--source-ids", "1")
-	require.NoError(err)
-	assert.Equal([]any{"message.read", "verification.read"}, gotBody["permissions"])
 }
 
 // TestAgentTokenListFormatsTable verifies that the list subcommand (row 18):

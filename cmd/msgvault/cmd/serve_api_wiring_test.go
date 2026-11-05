@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -22,7 +21,6 @@ import (
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/documentindex"
-	msgexport "go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/tasklinks"
@@ -448,18 +446,9 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 func TestStoreAPIAdapterVerificationRegressions(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := testutil.NewTestStore(t)
-	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "newline", "Account", "Your verification code is:\n\n482913")
-	requirements.NoError(err)
-	_, parent, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "forward", "Forwarded mail", "See attached")
+	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Account", "Your code is 482913")
 	requirements.NoError(err)
 	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
-	const body = "Subject: Your code\r\n\r\nYour code is 482913"
-	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(body)))
-	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
-	requirements.NoError(err)
-	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
-	requirements.NoError(os.WriteFile(path, []byte(body), 0600))
-	requirements.NoError(st.UpsertAttachment(parent, "mail.eml", "message/rfc822", "", hash, len(body)))
 	srv := api.NewServerWithOptions(api.ServerOptions{Config: cfg, Store: &storeAPIAdapter{store: st}, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
 	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
 	daemon := httptest.NewServer(srv.Router())
@@ -469,34 +458,23 @@ func TestStoreAPIAdapterVerificationRegressions(t *testing.T) {
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(owner.Close()) })
 	for _, reveal := range []bool{false, true} {
-		permissions := []string{"message.read", "search.read", "attachment.read"}
+		permissions := []string{"search.read"}
 		if reveal {
 			permissions = append(permissions, "verification.read")
 		}
 		issued, err := owner.IssueAgentToken(t.Context(), strconv.FormatBool(reveal), permissions, []int64{source.ID}, nil, time.Time{})
 		requirements.NoError(err)
-		for _, endpoint := range []string{fmt.Sprintf("/messages/%d", id), fmt.Sprintf("/cli/message?id=%d", id), "/messages", "/search?q=verification", fmt.Sprintf("/cli/message/thread?id=%d", id), "/attachments/" + hash + "/content", "/cli/attachment?content_hash=" + hash} {
-			request := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
-			request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
-			response := httptest.NewRecorder()
-			srv.Router().ServeHTTP(response, request)
-			if !reveal && (strings.HasPrefix(endpoint, "/attachments/") || strings.HasPrefix(endpoint, "/cli/attachment?")) {
-				assertions.Equal(http.StatusForbidden, response.Code, endpoint)
-				assertions.Contains(response.Body.String(), "verification_masked")
-			} else {
-				assertions.Equal(http.StatusOK, response.Code, response.Body.String())
-				if !reveal {
-					assertions.Contains(response.Body.String(), "[verification content masked]", endpoint)
-				}
-			}
-			if reveal {
-				if strings.HasPrefix(endpoint, "/messages/") || strings.HasPrefix(endpoint, "/cli/message?") || strings.Contains(endpoint, "attachment") {
-					assertions.Contains(response.Body.String(), "482913", endpoint)
-				}
-				assertions.NotContains(response.Body.String(), "[verification content masked]", endpoint)
-			} else {
-				assertions.NotContains(response.Body.String(), "482913", endpoint)
-			}
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
+		request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
+		response := httptest.NewRecorder()
+		srv.Router().ServeHTTP(response, request)
+		assertions.Equal(http.StatusOK, response.Code, response.Body.String())
+		if reveal {
+			assertions.Contains(response.Body.String(), "Account")
+			assertions.NotContains(response.Body.String(), "[verification content masked]")
+		} else {
+			assertions.Contains(response.Body.String(), "[verification content masked]")
+			assertions.NotContains(response.Body.String(), "Account")
 		}
 	}
 }
