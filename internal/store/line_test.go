@@ -39,25 +39,26 @@ func TestLineInboxAtomicDedupe(t *testing.T) {
 	checks.Equal(src.ID, rows[0].SourceID)
 	for _, guard := range []string{"stale channel", "changed bot", "retired source"} {
 		t.Run(guard, func(t *testing.T) {
+			require := require.New(t)
 			st := testutil.NewTestStore(t)
 			src, err := st.GetOrCreateSource("line", "2000000001")
-			require.NoError(t, err)
-			require.NoError(t, st.SetLineBotContext(t.Context(), src.ID, botID))
+			require.NoError(err)
+			require.NoError(st.SetLineBotContext(t.Context(), src.ID, botID))
 			channel, bot := "2000000001", botID
 			switch guard {
 			case "stale channel":
 				channel = "2000000000"
 			case "changed bot":
-				require.NoError(t, st.SetLineBotContext(t.Context(), src.ID, otherBotID))
+				require.NoError(st.SetLineBotContext(t.Context(), src.ID, otherBotID))
 			case "retired source":
 				into, err := st.GetOrCreateSource("line", "2000000002")
-				require.NoError(t, err)
+				require.NoError(err)
 				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: src.ID, IntoSourceID: into.ID})
-				require.NoError(t, err)
+				require.NoError(err)
 			}
-			require.Error(t, st.EnqueueLineEventsContext(t.Context(), src.ID, channel, bot, []store.LineWebhookEvent{event}))
+			require.Error(st.EnqueueLineEventsContext(t.Context(), src.ID, channel, bot, []store.LineWebhookEvent{event}))
 			status, err := st.LineInboxStatusContext(t.Context(), src.ID)
-			require.NoError(t, err)
+			require.NoError(err)
 			assert.Zero(t, status.Pending)
 		})
 	}

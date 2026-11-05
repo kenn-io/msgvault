@@ -73,6 +73,7 @@ func TestMediaPreparingAtRetryHorizonFinishesAttachment(t *testing.T) {
 
 func TestMediaFailureAtRetryHorizonWaitsForConversationFinalization(t *testing.T) {
 	t.Run("at receipt", func(t *testing.T) {
+		assert := assert.New(t)
 		f := newInboxFixture(t)
 		path := "/v2/bot/message/1/content"
 		f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
@@ -80,9 +81,9 @@ func TestMediaFailureAtRetryHorizonWaitsForConversationFinalization(t *testing.T
 		f.run(t)
 		var state string
 		require.NoError(t, f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-		assert.Equal(t, "failed", state)
-		assert.Equal(t, attachmentpolicy.StateFailed, f.media(t).State)
-		assert.Equal(t, 1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
+		assert.Equal("failed", state)
+		assert.Equal(attachmentpolicy.StateFailed, f.media(t).State)
+		assert.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
 	})
 	t.Run("finalization failure", func(t *testing.T) {
 		must := require.New(t)
