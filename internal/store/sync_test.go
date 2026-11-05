@@ -662,9 +662,6 @@ func TestScopedStoreRejectsEveryImporterMutationAfterSupersession(t *testing.T) 
 		{name: "reply link", write: func() error {
 			return stale.SetMessageReplyContext(t.Context(), messageID, messageID)
 		}},
-		{name: "sent flag", write: func() error {
-			return stale.SetMessageSentStateContext(t.Context(), messageID, false)
-		}},
 		{name: "edited flag", write: func() error {
 			return stale.SetMessageEdited(messageID)
 		}},

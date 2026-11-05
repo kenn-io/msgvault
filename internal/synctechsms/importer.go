@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/export"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
-	"go.kenn.io/msgvault/internal/synctechstate"
 	"go.kenn.io/msgvault/internal/textimport"
 )
 
@@ -275,9 +274,6 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
 	}
-	if err := i.store.SetMessageSentState(msgID, sent); err != nil {
-		return 0, fmt.Errorf("record message send state: %w", err)
-	}
 	if body != "" {
 		if err := i.store.UpsertMessageBody(msgID, sql.NullString{String: body, Valid: true}, sql.NullString{}); err != nil {
 			return 0, fmt.Errorf("upsert body: %w", err)
@@ -287,7 +283,7 @@ func (i *Importer) upsertTextMessage(sourceID, convID int64, sourceMessageID, me
 	if err != nil {
 		return 0, fmt.Errorf("marshal raw record: %w", err)
 	}
-	if err := i.store.UpsertMessageRawWithFormat(msgID, rawJSON, synctechstate.RawFormat); err != nil {
+	if err := i.store.UpsertMessageRawWithFormat(msgID, rawJSON, RawFormat); err != nil {
 		return 0, fmt.Errorf("upsert raw record: %w", err)
 	}
 	if err := i.store.ReplaceMessageRecipients(msgID, "from", []int64{senderID}, []string{""}); err != nil {
