@@ -221,7 +221,7 @@
   {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No tasks yet</p>{/if}
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
   {#each items as item (item.uid)}
-    <DetailRow collapseActions>
+    <DetailRow>
       <div class="task-row">
         <span class="task-title">{#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}</span>
         {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info"><span class="list-label">{listLabel(item.list)}</span></Chip>{/if}
@@ -257,6 +257,10 @@
   form { flex-wrap: wrap; justify-content: flex-start; }
   form :global(.kit-text-input) { min-width: 0; flex: 1; }
   .task-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--field-gap); }
+  @media (hover: hover) {
+    .person-agenda :global(.detail-row:not(:hover):not(:focus-within)) { gap: 0; }
+    .person-agenda :global(.detail-row:not(:hover):not(:focus-within) > .actions) { width: 0; overflow: hidden; }
+  }
   .task-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
   .task-row :global(.kit-chip) { box-sizing: border-box; max-width: 100%; margin-left: auto; }
   .list-label { white-space: normal; overflow-wrap: anywhere; }

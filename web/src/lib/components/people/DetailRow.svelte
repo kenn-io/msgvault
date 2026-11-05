@@ -8,14 +8,12 @@
     children: Snippet;
     /** Buttons for the row. They show on hover and keyboard focus. */
     actions?: Snippet;
-    /** Let the value use the action space until hover or keyboard focus. */
-    collapseActions?: boolean;
   }
 
-  let { label = undefined, description = undefined, children, actions = undefined, collapseActions = false }: Props = $props();
+  let { label = undefined, description = undefined, children, actions = undefined }: Props = $props();
 </script>
 
-<div class="detail-row" class:collapse-actions={collapseActions}>
+<div class="detail-row">
   {#if label !== undefined}<span class="label">{label}</span>{/if}
   <div class="value">{@render children()}{#if description}<span class="description">{description}</span>{/if}</div>
   {#if actions}<div class="actions">{@render actions()}</div>{/if}
@@ -71,14 +69,5 @@
     .actions {
       opacity: 1;
     }
-  }
-
-  @media (hover: hover) {
-    .collapse-actions { gap: 0; }
-    .collapse-actions > .actions { width: 0; overflow: hidden; }
-    .collapse-actions:hover,
-    .collapse-actions:focus-within { gap: var(--field-gap); }
-    .collapse-actions:hover > .actions,
-    .collapse-actions:focus-within > .actions { width: auto; overflow: visible; }
   }
 </style>
