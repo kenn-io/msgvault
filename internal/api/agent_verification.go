@@ -37,17 +37,17 @@ func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, id
 	}
 	withheld := make(map[int64]bool, len(ids))
 	for _, msg := range messages {
-		withheld[msg.ID] = verification.Is(messageVerificationContent(&msg))
+		withheld[msg.ID] = verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename }))
 	}
 	return withheld, true
 }
 
-func messageVerificationContent(msg *store.APIMessage) verification.Content {
-	names := make([]string, len(msg.Attachments))
-	for i, att := range msg.Attachments {
-		names[i] = att.Filename
+func messageVerificationContent(subject, snippet, title, text, html string, attachments int, filename func(int) string) verification.Content {
+	names := make([]string, attachments)
+	for i := range names {
+		names[i] = filename(i)
 	}
-	return verification.Content{Subject: msg.Subject, Snippet: msg.Snippet, Title: msg.ConversationTitle, Filenames: names, Text: msg.BodyText, HTML: msg.BodyHTML}
+	return verification.Content{Subject: subject, Snippet: snippet, Title: title, Filenames: names, Text: text, HTML: html}
 }
 
 func (s *Server) withholdsVerification(r *http.Request) bool {
@@ -104,11 +104,7 @@ func (s *Server) maskMessageDetail(r *http.Request, msg *query.MessageDetail) {
 	if !s.withholdsVerification(r) {
 		return
 	}
-	names := make([]string, len(msg.Attachments))
-	for i, att := range msg.Attachments {
-		names[i] = att.Filename
-	}
-	if !verification.Is(verification.Content{Subject: msg.Subject, Snippet: msg.Snippet, Title: msg.ConversationTitle, Filenames: names, Text: msg.BodyText, HTML: msg.BodyHTML}) {
+	if !verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })) {
 		return
 	}
 	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
@@ -118,7 +114,7 @@ func (s *Server) maskMessageDetail(r *http.Request, msg *query.MessageDetail) {
 }
 
 func (s *Server) maskStoreMessage(r *http.Request, msg *store.APIMessage) {
-	if !s.withholdsVerification(r) || !verification.Is(messageVerificationContent(msg)) {
+	if !s.withholdsVerification(r) || !verification.Is(messageVerificationContent(msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML, len(msg.Attachments), func(i int) string { return msg.Attachments[i].Filename })) {
 		return
 	}
 	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.Body, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
@@ -145,7 +141,7 @@ func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, 
 		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
 	detected := http.DetectContentType(prefix)
-	if strings.HasPrefix(detected, "text/") || strings.HasPrefix(detected, "message/") {
+	if strings.HasPrefix(detected, "text/") {
 		return nil, denied
 	}
 	return reader, nil
