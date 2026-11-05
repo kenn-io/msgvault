@@ -1620,16 +1620,9 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SourceStatusResponse{Sources: statuses})
 }
 
-// sourceScheduling excludes retired WhatsApp sources and restricts Messages to its import target.
+// sourceScheduling restricts the singleton Messages job to its import target.
 func (s *Server) sourceScheduling(sourceType, identifier string, sources []*store.Source) sourceScheduleClassification {
 	scheduling := classifySourceScheduling(sourceType, identifier)
-	if sourceType == "whatsapp" {
-		for _, source := range sources {
-			if source.SourceType == sourceType && source.Identifier == identifier && source.MergedIntoSourceID != 0 {
-				return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}
-			}
-		}
-	}
 	if sourceType != "apple_messages" {
 		return scheduling
 	}
@@ -1836,7 +1829,7 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
 	var sources []*store.Source
-	if sourceType == "apple_messages" || sourceType == "whatsapp" {
+	if sourceType == "apple_messages" {
 		statusStore, ok := s.store.(SourceStatusStore)
 		if !ok {
 			writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
