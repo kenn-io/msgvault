@@ -2077,8 +2077,7 @@ reports updated and unchanged counts. Floating times use UTC. The daemon
 reads the file locally; importing files through a remote daemon is unavailable.
 
 A cancellation keeps the event's last accepted title, times, participants, and
-raw, and only marks it cancelled. A cancellation received before the event
-creates a tombstone that a later-arriving invitation fills in.
+raw, and only marks it cancelled.
 
 ### Invitations in email
 
