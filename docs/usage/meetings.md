@@ -50,7 +50,7 @@ aggregates remain email-only unless you choose another message type.
 
 ## Connect notes to calendar events
 
-Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row.
+Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row. When the note records a scheduled start, a copy starting at that time takes precedence. If no copy matches that time, or the note has no scheduled start, the lowest message ID wins.
 
 ```bash
 msgvault meetings links 42
@@ -59,7 +59,7 @@ msgvault meetings link 42 --event evt:100
 msgvault meetings unlink 42 --event evt:100
 ```
 
-`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport, and stops a UID match from linking the note again.
+`suggest` lists overlapping events for a note, or overlapping notes for an event such as `evt:100`. Results show overlap minutes, shared attendees, and shared title words. Suggestions leave links unchanged. `link` selects an event for the note; `unlink` keeps that meeting and its calendar copies apart from the note, including after reimport, while the target event stays in the archive. Removing the target deletes its saved decision.
 
 Some recurring series or exceptions cannot be fully expanded because their
 recurrence is unsupported, exceeds request bounds, or lacks an original start.
@@ -71,9 +71,11 @@ Copy event references from suggestions or `calendar events --json`. Recurring oc
 
 Each calendar occurrence is one archived row. A cancellation keeps the fields of its own row, and the series fills in what a cancellation that was never seen omits.
 
-A saved choice follows the event's iCalendar UID and original occurrence time, so if a provider later changes either, for example by turning a one-off event into a series, the link can stop resolving and the event shows up as a suggestion.
+A saved choice follows the archived event message and its original occurrence key. Changing its iCalendar UID keeps the choice on that event. A changed recurrence can make the chosen occurrence unavailable.
 
-These commands require owner access. MCP tools and an event-to-notes meeting record come with the next slice of the [calendar roadmap](https://github.com/kenn-io/msgvault/issues/1200).
+These commands require owner access. `GET /api/v1/meetings/record?ref=msg:42` returns a note's linked events and its message ID. Use `ref=evt:100` or a recurring occurrence reference to find the linked note IDs from an event. The response has `links` and `message_ids` arrays. Feed the note IDs to `get_meeting_context` to read their content.
+
+MCP exposes `get_meeting_record` and `suggest_meeting_links` for reads. `link_meeting` and `unlink_meeting` take `message_id` and `event`, and require writes to be enabled.
 
 ## Export context and read follow-ups
 

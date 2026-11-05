@@ -17,7 +17,7 @@ import (
 const meetingLinksMinAPISchemaVersion = "3.43.0"
 
 type meetingLinkClient interface {
-	MeetingLinks(ctx context.Context, messageID int64) ([]store.MeetingLink, error)
+	MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error)
 	DecideMeetingLink(ctx context.Context, messageID int64, event, decision string) error
 	SuggestMeetingLinks(ctx context.Context, ref string) (store.MeetingSuggestionPage, error)
 	APISchemaVersion(ctx context.Context) (string, error)
@@ -127,10 +127,11 @@ func newMeetingLinksCommand(open meetingLinkOpen) *cobra.Command {
 			return err
 		}
 		defer cleanup()
-		links, err := client.MeetingLinks(cmd.Context(), id)
+		record, err := client.MeetingRecord(cmd.Context(), fmt.Sprintf("msg:%d", id))
 		if err != nil {
 			return err
 		}
+		links := record.Links
 		if jsonOutput {
 			return json.MarshalWrite(cmd.OutOrStdout(), links)
 		}

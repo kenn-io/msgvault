@@ -3,13 +3,13 @@
  */
 import type {
   ActionsPage,
-  GetMeetingLinksParams,
+  GetMeetingRecordParams,
   MeetingActionsRequest,
   MeetingContextRequest,
   MeetingLinkDecisionRequest,
   MeetingLinkDecisionResponse,
-  MeetingLinksResponse,
   MeetingMetricsRequest,
+  MeetingRecord,
   MeetingSuggestionsResponse,
   Metrics,
   PacketResult,
@@ -55,18 +55,6 @@ export const getMeetingContext = (
   );
 };
 /**
- * @summary List a note's linked calendar occurrences
- */
-export const getMeetingLinks = (
-  params: GetMeetingLinksParams,
-  options?: SecondParameter<typeof orvalFetch<MeetingLinksResponse>>,
-) => {
-  return orvalFetch<MeetingLinksResponse>(
-    { url: `/api/v1/meetings/links`, method: "GET", params },
-    options,
-  );
-};
-/**
  * @summary Link or unlink an archived meeting
  */
 export const decideMeetingLink = (
@@ -97,6 +85,18 @@ export const getMeetingMetrics = (
       headers: { "Content-Type": "application/json" },
       data: meetingMetricsRequest,
     },
+    options,
+  );
+};
+/**
+ * @summary Read an archived meeting from a note or event
+ */
+export const getMeetingRecord = (
+  params: GetMeetingRecordParams,
+  options?: SecondParameter<typeof orvalFetch<MeetingRecord>>,
+) => {
+  return orvalFetch<MeetingRecord>(
+    { url: `/api/v1/meetings/record`, method: "GET", params },
     options,
   );
 };

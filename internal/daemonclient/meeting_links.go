@@ -45,21 +45,19 @@ func (c *Client) SuggestMeetingLinks(ctx context.Context, ref string) (store.Mee
 	return *decoded, nil
 }
 
-func (c *Client) MeetingLinks(ctx context.Context, messageID int64) ([]store.MeetingLink, error) {
-	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetMeetingLinksResp, error) {
-		return client.GetMeetingLinksWithResponse(ctx, &generated.GetMeetingLinksRequestOptions{Query: &generated.GetMeetingLinksQuery{MessageID: messageID}})
+func (c *Client) MeetingRecord(ctx context.Context, ref string) (store.MeetingRecord, error) {
+	response, err := APIResponse(c, func(client *apiclient.Client) (*generated.GetMeetingRecordResp, error) {
+		return client.GetMeetingRecordWithResponse(ctx, &generated.GetMeetingRecordRequestOptions{Query: &generated.GetMeetingRecordQuery{Ref: ref}})
 	})
 	if err != nil {
-		return nil, err
+		return store.MeetingRecord{}, err
 	}
 	if response.JSON200 == nil {
-		return nil, errors.New("meeting links: empty response")
+		return store.MeetingRecord{}, errors.New("meeting record: empty response")
 	}
-	decoded, err := decodeMeetingResponse[struct {
-		Links []store.MeetingLink `json:"links"`
-	}]("meeting links", response.Body)
+	decoded, err := decodeMeetingResponse[store.MeetingRecord]("meeting record", response.Body)
 	if err != nil {
-		return nil, err
+		return store.MeetingRecord{}, err
 	}
-	return decoded.Links, nil
+	return *decoded, nil
 }

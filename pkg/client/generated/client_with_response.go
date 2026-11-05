@@ -16509,163 +16509,6 @@ func (c *Client) GetMeetingContextWithResponse(ctx context.Context, options *Get
 	}
 }
 
-// GetMeetingLinks List a note's linked calendar occurrences
-func (c *Client) GetMeetingLinksWithResponse(ctx context.Context, options *GetMeetingLinksRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingLinksResp, error) {
-	var err error
-	reqParams := runtime.RequestOptionsParameters{
-		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/meetings/links",
-		Method:     "GET",
-		Options:    options,
-	}
-
-	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/links")
-	if err != nil {
-		return nil, fmt.Errorf("error executing request: %w", err)
-	}
-
-	out := &GetMeetingLinksResp{
-		HTTPResponse: resp.Raw,
-		Body:         resp.Content,
-		StatusCode:   resp.StatusCode,
-	}
-
-	switch resp.StatusCode {
-	case 200:
-		out.JSON200 = new(GetMeetingLinksResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, nil
-	case 400:
-		out.JSON400 = new(GetMeetingLinksErrorResponse)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksErrorResponse",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	case 401:
-		out.JSON401 = new(GetMeetingLinksErrorResponseJSON)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON401); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksErrorResponseJSON",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	case 403:
-		out.JSON403 = new(GetMeetingLinksErrorResponseJSON403)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksErrorResponseJSON403",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	case 404:
-		out.JSON404 = new(GetMeetingLinksErrorResponseJSON404)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksErrorResponseJSON404",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	case 500:
-		out.JSON500 = new(GetMeetingLinksErrorResponseJSON500)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksErrorResponseJSON500",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	case 503:
-		out.JSON503 = new(GetMeetingLinksErrorResponseJSON503)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksErrorResponseJSON503",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	default:
-		out.JSONDefault = new(GetMeetingLinksErrorResponseJSONDefault)
-		bodyBytes := resp.Content
-		if len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, out.JSONDefault); err != nil {
-				return out, &runtime.ResponseDecodeError{
-					StatusCode:    resp.StatusCode,
-					ContentType:   resp.Headers.Get("Content-Type"),
-					ContentLength: len(bodyBytes),
-					TargetType:    "GetMeetingLinksErrorResponseJSONDefault",
-					Body:          bodyBytes,
-					Err:           err,
-				}
-			}
-		}
-		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
-	}
-}
-
 // DecideMeetingLink Link or unlink an archived meeting
 func (c *Client) DecideMeetingLinkWithResponse(ctx context.Context, options *DecideMeetingLinkRequestOptions, reqEditors ...runtime.RequestEditorFn) (*DecideMeetingLinkResp, error) {
 	var err error
@@ -17037,6 +16880,163 @@ func (c *Client) GetMeetingMetricsWithResponse(ctx context.Context, options *Get
 					ContentType:   resp.Headers.Get("Content-Type"),
 					ContentLength: len(bodyBytes),
 					TargetType:    "GetMeetingMetricsErrorResponseJSONDefault",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	}
+}
+
+// GetMeetingRecord Read an archived meeting from a note or event
+func (c *Client) GetMeetingRecordWithResponse(ctx context.Context, options *GetMeetingRecordRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetMeetingRecordResp, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/v1/meetings/record",
+		Method:     "GET",
+		Options:    options,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/v1/meetings/record")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+
+	out := &GetMeetingRecordResp{
+		HTTPResponse: resp.Raw,
+		Body:         resp.Content,
+		StatusCode:   resp.StatusCode,
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		out.JSON200 = new(GetMeetingRecordResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON200); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, nil
+	case 400:
+		out.JSON400 = new(GetMeetingRecordErrorResponse)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON400); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordErrorResponse",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 401:
+		out.JSON401 = new(GetMeetingRecordErrorResponseJSON)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON401); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordErrorResponseJSON",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 403:
+		out.JSON403 = new(GetMeetingRecordErrorResponseJSON403)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON403); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordErrorResponseJSON403",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 404:
+		out.JSON404 = new(GetMeetingRecordErrorResponseJSON404)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON404); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordErrorResponseJSON404",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 500:
+		out.JSON500 = new(GetMeetingRecordErrorResponseJSON500)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON500); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordErrorResponseJSON500",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	case 503:
+		out.JSON503 = new(GetMeetingRecordErrorResponseJSON503)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSON503); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordErrorResponseJSON503",
+					Body:          bodyBytes,
+					Err:           err,
+				}
+			}
+		}
+		return out, runtime.NewClientAPIError(fmt.Errorf("API error (status %d)", resp.StatusCode), runtime.WithStatusCode(resp.StatusCode))
+	default:
+		out.JSONDefault = new(GetMeetingRecordErrorResponseJSONDefault)
+		bodyBytes := resp.Content
+		if len(bodyBytes) > 0 {
+			if err := json.Unmarshal(bodyBytes, out.JSONDefault); err != nil {
+				return out, &runtime.ResponseDecodeError{
+					StatusCode:    resp.StatusCode,
+					ContentType:   resp.Headers.Get("Content-Type"),
+					ContentLength: len(bodyBytes),
+					TargetType:    "GetMeetingRecordErrorResponseJSONDefault",
 					Body:          bodyBytes,
 					Err:           err,
 				}

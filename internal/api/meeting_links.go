@@ -14,7 +14,7 @@ import (
 )
 
 type MeetingLinkStore interface {
-	MeetingLinksContext(ctx context.Context, messageID int64) ([]store.MeetingLink, error)
+	MeetingRecordContext(ctx context.Context, ref store.MeetingLinkRef) (store.MeetingRecord, error)
 	LinkMeetingContext(ctx context.Context, memberID int64, ref store.OccurrenceRef) error
 	UnlinkMeetingContext(ctx context.Context, memberID int64, ref store.OccurrenceRef) error
 	SuggestMeetingLinksContext(ctx context.Context, ref store.MeetingLinkRef, limit int) (store.MeetingSuggestionPage, error)
@@ -37,23 +37,19 @@ type MeetingSuggestionsResponse struct {
 	Unexpandable []store.CalendarUnexpandable `json:"unexpandable"`
 }
 
-type MeetingLinksResponse struct {
-	Links []store.MeetingLink `json:"links"`
-}
-
 func (s *Server) registerMeetingLinkRoutes(api huma.API) {
-	links := rawAPIV1Operation("getMeetingLinks", http.MethodGet, "/meetings/links", "List a note's linked calendar occurrences")
+	links := rawAPIV1Operation("getMeetingRecord", http.MethodGet, "/meetings/record", "Read an archived meeting from a note or event")
 	links.Tags = []string{"Meetings"}
-	links.Parameters = []*huma.Param{{Name: "message_id", In: "query", Required: true, Schema: &huma.Schema{Type: "integer", Format: "int64", Minimum: new(float64(1)), Maximum: new(float64(9007199254740991))}}}
-	links.Responses = jsonResponsesFor[MeetingLinksResponse](api)
+	links.Parameters = []*huma.Param{{Name: "ref", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString}}}
+	links.Responses = jsonResponsesFor[store.MeetingRecord](api)
 	links.Errors = []int{400, 401, 403, 404, 500, 503}
 	addErrorResponses(api, links.Responses, links.Errors...)
-	registerRawHumaRoute(api, links, s.handleMeetingLinks)
+	registerRawHumaRoute(api, links, s.handleMeetingRecord)
 
 	registerMeetingRoute[MeetingLinkDecisionRequest, MeetingLinkDecisionResponse](api, "decideMeetingLink", "/meetings/links/decisions", "Link or unlink an archived meeting", s.handleMeetingLinkDecision)
 	op := rawAPIV1Operation("suggestMeetingLinks", http.MethodGet, "/meetings/suggestions", "Suggest archived meeting links")
 	op.Tags = []string{"Meetings"}
-	op.Parameters = []*huma.Param{{Name: "ref", In: "query", Required: true, Schema: &huma.Schema{Type: "string"}}}
+	op.Parameters = []*huma.Param{{Name: "ref", In: "query", Required: true, Schema: &huma.Schema{Type: huma.TypeString}}}
 	op.Responses = jsonResponsesFor[MeetingSuggestionsResponse](api)
 	op.Errors = []int{400, 401, 403, 404, 500, 503}
 	addErrorResponses(api, op.Responses, op.Errors...)
@@ -71,7 +67,7 @@ func parseMeetingLinkRef(value string, eventOnly bool) (store.MeetingLinkRef, er
 		return store.MeetingLinkRef{}, errors.New("invalid meeting reference")
 	}
 	if hasKey {
-		if _, identity, ok := calrecur.ParseInstanceID("event_" + key); !ok || identity.Key() != key {
+		if base, _, ok := calrecur.ParseInstanceID("event_" + key); !ok || base != "event" {
 			return store.MeetingLinkRef{}, errors.New("invalid occurrence key")
 		}
 	}
@@ -145,10 +141,10 @@ func (s *Server) writeMeetingLinkError(w http.ResponseWriter, err error) {
 	}
 }
 
-func (s *Server) handleMeetingLinks(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(r.URL.Query().Get("message_id"), 10, 64)
-	if err != nil || id <= 0 || id > 9007199254740991 {
-		writeError(w, 400, "invalid_argument", "message_id must be a positive message ID")
+func (s *Server) handleMeetingRecord(w http.ResponseWriter, r *http.Request) {
+	ref, err := parseMeetingLinkRef(r.URL.Query().Get("ref"), false)
+	if err != nil {
+		writeError(w, 400, "invalid_argument", err.Error())
 		return
 	}
 	backend, ok := s.store.(MeetingLinkStore)
@@ -156,13 +152,10 @@ func (s *Server) handleMeetingLinks(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 503, "meetings_unavailable", "Meeting links are unavailable")
 		return
 	}
-	links, err := backend.MeetingLinksContext(r.Context(), id)
+	record, err := backend.MeetingRecordContext(r.Context(), ref)
 	if err != nil {
 		s.writeMeetingLinkError(w, err)
 		return
 	}
-	if links == nil {
-		links = []store.MeetingLink{}
-	}
-	writeJSON(w, 200, MeetingLinksResponse{Links: links})
+	writeJSON(w, 200, record)
 }

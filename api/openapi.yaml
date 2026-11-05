@@ -8169,16 +8169,6 @@ components:
         - event
         - decision
       type: object
-    MeetingLinksResponse:
-      additionalProperties: true
-      properties:
-        links:
-          items:
-            $ref: "#/components/schemas/MeetingLink"
-          type: array
-      required:
-        - links
-      type: object
     MeetingMetricsRequest:
       additionalProperties: false
       not:
@@ -8223,6 +8213,22 @@ components:
           description: International phone number starting with + or 00; normalized to E.164
           maxLength: 64
           type: string
+      type: object
+    MeetingRecord:
+      additionalProperties: true
+      properties:
+        links:
+          items:
+            $ref: "#/components/schemas/MeetingLink"
+          type: array
+        message_ids:
+          items:
+            format: int64
+            type: integer
+          type: array
+      required:
+        - links
+        - message_ids
       type: object
     MeetingRef:
       additionalProperties: true
@@ -25251,72 +25257,6 @@ paths:
       summary: Render bounded archived meeting context
       tags:
         - Meetings
-  /api/v1/meetings/links:
-    get:
-      operationId: getMeetingLinks
-      parameters:
-        - in: query
-          name: message_id
-          required: true
-          schema:
-            format: int64
-            maximum: 9007199254740991
-            minimum: 1
-            type: integer
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/MeetingLinksResponse"
-          description: OK
-        "400":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "401":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "403":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "404":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "500":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        "503":
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-        default:
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-          description: Error
-      security:
-        - apiKey: []
-      summary: List a note's linked calendar occurrences
-      tags:
-        - Meetings
   /api/v1/meetings/links/decisions:
     post:
       operationId: decideMeetingLink
@@ -25465,6 +25405,69 @@ paths:
       security:
         - apiKey: []
       summary: Get archived meeting duration metrics
+      tags:
+        - Meetings
+  /api/v1/meetings/record:
+    get:
+      operationId: getMeetingRecord
+      parameters:
+        - in: query
+          name: ref
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeetingRecord"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+        default:
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+          description: Error
+      security:
+        - apiKey: []
+      summary: Read an archived meeting from a note or event
       tags:
         - Meetings
   /api/v1/meetings/suggestions:
