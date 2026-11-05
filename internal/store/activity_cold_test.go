@@ -27,7 +27,7 @@ func coldTimelineRoom(t *testing.T, f *timelineActivityFixture, source int64, ke
 	t.Helper()
 	room, err := f.Store.EnsureConversation(source, key, "Quiet room")
 	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='email_thread' WHERE id=?`), room)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), room)
 	require.NoError(t, err)
 	require.NoError(t, f.Store.EnsureConversationParticipant(room, f.owner, "member"))
 	require.NoError(t, f.Store.EnsureConversationParticipant(room, f.peer, "member"))
@@ -52,12 +52,62 @@ func retractTimelineActivity(t *testing.T, f *timelineActivityFixture, messageID
 	require.NoError(t, err)
 }
 
+func TestColdAdapterExcludesEmailThreads(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineActivityFixture(t)
+	setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
+	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
+	page, err := f.Store.ListColdActivityBurstsContext(t.Context(), timelineBurstQuery())
+	requirements.NoError(err)
+	assertions.Empty(page.Bursts)
+	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), timelineBurstQuery())
+	requirements.NoError(err)
+	assertions.Zero(count)
+}
+
+func TestColdAdapterIntersectsDateAndTimestampWindows(t *testing.T) {
+	f := newTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "date-intersection")
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	for _, offset := range []time.Duration{-24 * time.Hour, -time.Hour, 0, time.Hour, 24 * time.Hour} {
+		f.add(t, room, f.Source.ID, at.Add(offset), false, "")
+	}
+	for _, tc := range []struct {
+		name          string
+		from, to      string
+		after, before *time.Time
+		want          int
+	}{
+		{"date bounds", "2026-10-22", "2026-10-22", new(at.Add(-48 * time.Hour)), new(at.Add(48 * time.Hour)), 3},
+		{"timestamp bounds", "2026-10-21", "2026-10-23", &at, new(at.Add(time.Hour)), 1},
+		{"disjoint", "2026-10-21", "2026-10-21", &at, new(at.Add(time.Hour)), 0},
+		{"unbounded", "", "", nil, nil, 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			q := store.BurstQuery{FromDate: tc.from, ToDate: tc.to, After: tc.after, Before: tc.before, Limit: 10}
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			messages := 0
+			for _, burst := range page.Bursts {
+				messages += len(burst.LatestMessageIDs)
+			}
+			assertions.Equal(tc.want, messages)
+			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Equal(tc.want, count)
+		})
+	}
+}
+
 // A saved person's human address keeps automated aliases visible in either role.
 func TestColdAdapterSavedAliasesMatchWarmSenderNoise(t *testing.T) {
 	for _, automatedSender := range []bool{false, true} {
 		t.Run(fmt.Sprintf("automated-sender=%t", automatedSender), func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			f := newTimelineActivityFixture(t)
+			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
+			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Full)
 			alias := f.EnsureParticipant("no-reply@example.com", "Automated alias", "example.com")
 			_, err := f.Store.LinkParticipants(f.peer, alias)
 			requirements.NoError(err)
@@ -228,7 +278,7 @@ func TestColdAdapterFallsBackFromMissingSentAt(t *testing.T) {
 	}
 }
 
-// Counts describe all admitted representatives, independently of burst pagination.
+// Counts describe all admitted messages, independently of burst pagination.
 func TestColdCountIgnoresBurstPagination(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -266,31 +316,26 @@ func TestColdCountIgnoresBurstPagination(t *testing.T) {
 }
 
 // The same archive must produce the same logical groups after full-room retraction.
-func TestColdAdapterMatchesSpineCopyNoiseAndDateRules(t *testing.T) {
+func TestColdAdapterMatchesSpineNoiseAndDateRules(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
-	other, err := f.Store.GetOrCreateSource("gmail", "copy@example.com")
-	requirements.NoError(err)
-	requirements.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
-	room := coldTimelineRoom(t, f, f.Source.ID, "mail")
-	copyRoom := coldTimelineRoom(t, f, other.ID, "mail-copy")
+	room := coldTimelineRoom(t, f, f.Source.ID, "room")
 	at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
-	rep := f.add(t, room, f.Source.ID, at, false, "<same@example.com>")
-	f.add(t, copyRoom, other.ID, at, false, "same@example.com")
+	f.add(t, room, f.Source.ID, at, false, "")
 	for i := range 6 {
 		f.add(t, room, f.Source.ID, at.Add(time.Duration(i+1)*time.Minute), i%2 == 0, "")
 	}
 	noiseRoom := coldTimelineRoom(t, f, f.Source.ID, "noise")
 	noise := f.add(t, noiseRoom, f.Source.ID, at, false, "")
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), noise)
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), noise)
 	requirements.NoError(err)
 	// Both instants stay on Nov 1 in UTC and Vancouver.
 	f.add(t, room, f.Source.ID, at.Add(time.Hour), false, "")
 	for _, item := range []struct {
 		source int64
 		key    string
-	}{{f.Source.ID, "mail"}, {other.ID, "mail-copy"}, {f.Source.ID, "noise"}} {
+	}{{f.Source.ID, "room"}, {f.Source.ID, "noise"}} {
 		setTimelineConversationTier(t, f, item.source, item.key, conversationpolicy.Full)
 	}
 	projectColdTimeline(t, f, "America/Vancouver")
@@ -298,14 +343,13 @@ func TestColdAdapterMatchesSpineCopyNoiseAndDateRules(t *testing.T) {
 	warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 	requirements.NoError(err)
 	requirements.Len(warm.Bursts, 1)
-	assertions.Equal(2, warm.Bursts[0].CopyCounts[rep])
 	assertions.Equal(5, warm.Bursts[0].Inbound)
 	assertions.Equal(3, warm.Bursts[0].Outbound)
 	assertions.Len(warm.Bursts[0].LatestMessageIDs, 5)
 	for _, item := range []struct {
 		source int64
 		key    string
-	}{{f.Source.ID, "mail"}, {other.ID, "mail-copy"}, {f.Source.ID, "noise"}} {
+	}{{f.Source.ID, "room"}, {f.Source.ID, "noise"}} {
 		setTimelineConversationTier(t, f, item.source, item.key, conversationpolicy.Cold)
 	}
 	projectColdTimeline(t, f, "America/Vancouver")
@@ -324,31 +368,6 @@ func TestColdAdapterMatchesSpineCopyNoiseAndDateRules(t *testing.T) {
 	count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(9, count)
-}
-
-// Treating meeting evidence as email would collapse unrelated all-day events.
-func TestColdAdapterDatesDayPrecisionBeforeCopyCollapse(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	room := coldTimelineRoom(t, f, f.Source.ID, "all-day")
-	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
-	first := f.add(t, room, f.Source.ID, at, false, "<event@example.com>")
-	second := f.add(t, room, f.Source.ID, at, false, "<event@example.com>")
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='calendar_event',metadata='{"all_day":true}' WHERE id IN (?,?)`), first, second)
-	requirements.NoError(err)
-	projectColdTimeline(t, f, "America/Vancouver")
-	q := store.BurstQuery{FromDate: "2026-11-01", ToDate: "2026-11-01", Limit: 10, Filters: store.ActivityFilters{IncludeNoise: true}}
-	page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	requirements.Len(page.Bursts, 1)
-	assertions.Equal(store.ChannelMeeting, page.Bursts[0].Channel)
-	assertions.Equal([]int64{second, first}, page.Bursts[0].LatestMessageIDs)
-	assertions.Equal("2026-11-01", page.Bursts[0].LocalDate)
-	assertions.Empty(page.Bursts[0].CopyCounts)
-	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(2, count)
 }
 
 // A burst page limit must never truncate the messages used for a complete group.
@@ -445,6 +464,8 @@ func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
 			f := newTimelineActivityFixture(t)
+			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
+			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Full)
 			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
 			if tc.aliases {
 				_, err := f.Store.LinkParticipants(f.peer, other)
@@ -512,10 +533,7 @@ func TestColdAdapterPreservesContactEligibilityAcrossRetraction(t *testing.T) {
 		outbound                 bool
 		want                     int
 	}{
-		{"legacy email", "", "email_thread", false, 1},
-		{"email", "email", "email_thread", false, 1},
 		{"SMS", "sms", "direct_chat", false, 1},
-		{"meeting", "meeting_transcript", "meeting", true, 1},
 		{"missed Synctech call", "synctech_sms_call", "direct_chat", false, 0},
 		{"missed Google Voice call", "google_voice_call", "direct_chat", false, 0},
 	} {

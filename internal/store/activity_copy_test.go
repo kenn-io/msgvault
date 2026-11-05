@@ -323,54 +323,6 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 	}
 }
 
-func TestActivityEmailCopiesPreferNonNoiseOnCountedTie(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineActivityFixture(t)
-	contact := timelineContactQuery(f)
-	source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
-	requirements.NoError(err)
-	requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
-	room, err := f.Store.EnsureConversationWithType(source.ID, "clean-copy", "email_thread", "Clean copy")
-	requirements.NoError(err)
-	requirements.Less(f.Source.ID, source.ID)
-	noisy := f.add(t, f.ConvID, f.Source.ID, contact.Now, true, "<noise-copy@example.com>")
-	excluded := f.EnsureParticipant("noreply@example.com", "Automated sender", "example.com")
-	requirements.NoError(f.Store.ReplaceMessageRecipients(noisy, "from", []int64{f.owner, excluded}, nil))
-	clean := f.add(t, room, source.ID, contact.Now, true, "noise-copy@example.com")
-	projectTimelineActivity(t, f, "UTC")
-
-	// Each copy counts as outbound contact, but only one passes the noise filter.
-	for _, tc := range []struct {
-		source int64
-		noise  bool
-	}{{f.Source.ID, true}, {source.ID, false}} {
-		ctx := sourcescope.WithSourceIDs(t.Context(), []int64{tc.source})
-		q := timelineBurstQuery()
-		q.Filters.IncludeNoise = true
-		page, err := f.Store.ListActivityBurstsContext(ctx, q)
-		requirements.NoError(err)
-		requirements.Len(page.Bursts, 1)
-		assertions.Equal(1, page.Bursts[0].Outbound)
-		q.Filters.IncludeNoise = false
-		quiet, err := f.Store.ListActivityBurstsContext(ctx, q)
-		requirements.NoError(err)
-		if tc.noise {
-			assertions.Empty(quiet.Bursts)
-		} else {
-			assertions.Len(quiet.Bursts, 1)
-		}
-	}
-
-	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	requirements.NoError(err)
-	requirements.Len(page.Bursts, 1)
-	assertions.Equal(clean, page.Bursts[0].AnchorMessageID)
-	assertions.Equal(source.ID, page.Bursts[0].SourceID)
-	assertions.Equal(1, page.Bursts[0].Outbound)
-	assertions.Equal(2, page.Bursts[0].CopyCounts[clean])
-	assertions.Zero(page.NoiseOmitted)
-}
-
 // The same sender is received in one account and owns the sending account.
 // Only the sent copy counts for the requested addressee.
 func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {

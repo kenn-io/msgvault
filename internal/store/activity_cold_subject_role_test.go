@@ -17,6 +17,7 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
 			requirements := require.New(t)
 			f := newTimelineActivityFixture(t)
+			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
 			q := timelineContactQuery(f)
 			alias := int64(0)
 			if saved {

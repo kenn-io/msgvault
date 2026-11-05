@@ -17,8 +17,6 @@ type coldActivityMessage struct {
 	candidate ActivityCandidate
 	dating    activitydate.Dating
 	channel   ActivityChannel
-	copyKey   string
-	copies    int
 }
 
 type coldActivityGroup struct {
@@ -40,7 +38,7 @@ func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery)
 	}
 	admitted := make([]ActivityBurst, 0, len(groups))
 	for _, g := range groups {
-		if !filters.IncludeNoise && coldActivityNoise(g) {
+		if !filters.IncludeNoise && !g.nonNoise {
 			page.NoiseOmitted += len(g.messages)
 			continue
 		}
@@ -69,7 +67,7 @@ func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery)
 	return page, nil
 }
 
-// CountColdActivityMessagesContext counts copy-collapsed messages in admitted
+// CountColdActivityMessagesContext counts messages in admitted
 // logical groups across the whole window. Burst limits and cursors do not
 // narrow omissions; request eligibility, scope, subject and noise filters do.
 func (s *Store) CountColdActivityMessagesContext(ctx context.Context, q BurstQuery) (int, error) {
@@ -79,7 +77,7 @@ func (s *Store) CountColdActivityMessagesContext(ctx context.Context, q BurstQue
 	}
 	count := 0
 	for _, g := range groups {
-		if filters.IncludeNoise || !coldActivityNoise(g) {
+		if filters.IncludeNoise || g.nonNoise {
 			count += len(g.messages)
 		}
 	}
@@ -91,9 +89,6 @@ func compareColdBurstKey(a, b BurstKey) int {
 		return n
 	}
 	return cmp.Compare(a.Key, b.Key)
-}
-func coldActivityNoise(g *coldActivityGroup) bool {
-	return !g.nonNoise
 }
 
 func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (map[string]*coldActivityGroup, ActivityFilters, error) {
@@ -112,7 +107,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	if err != nil {
 		return nil, filters, err
 	}
-	where := `m.conversation_id IN (SELECT conversation_id FROM conversation_policy WHERE effective_tier='cold')`
+	where := `m.conversation_id IN (SELECT p.conversation_id FROM conversation_policy p JOIN conversations c ON c.id=p.conversation_id WHERE p.effective_tier='cold' AND c.conversation_type IN ` + chatConversationTypesSQL + `)`
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	if q.ConversationID > 0 {
@@ -126,7 +121,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	if q.Before != nil {
 		upper = new(q.Before.UTC().Add(24 * time.Hour))
 	}
-	if q.After == nil && q.Before == nil {
+	if q.FromDate != "" || q.ToDate != "" {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
 			return nil, filters, fmt.Errorf("%w: invalid local dates", ErrInvalidActivityRequest)
 		}
@@ -134,7 +129,13 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		// DateEvent below applies the exact archive-zone civil-date boundary.
 		from, _ := time.Parse(time.DateOnly, q.FromDate)
 		to, _ := time.Parse(time.DateOnly, q.ToDate)
-		lower, upper = new(from.Add(-24*time.Hour)), new(to.Add(48*time.Hour))
+		dateLower, dateUpper := from.Add(-24*time.Hour), to.Add(48*time.Hour)
+		if lower == nil || dateLower.After(*lower) {
+			lower = &dateLower
+		}
+		if upper == nil || dateUpper.Before(*upper) {
+			upper = &dateUpper
+		}
 	}
 	var timestampWindows []string
 	for _, column := range []string{"m.sent_at", "m.received_at", "m.internal_date"} {
@@ -147,10 +148,13 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 			bounds = append(bounds, column+"<?")
 			args = append(args, *upper)
 		}
-		timestampWindows = append(timestampWindows, "("+strings.Join(bounds, " AND ")+")")
+		if len(bounds) > 0 {
+			timestampWindows = append(timestampWindows, "("+strings.Join(bounds, " AND ")+")")
+		}
 	}
-	where += " AND (" + strings.Join(timestampWindows, " OR ") + ")"
-	copyKey := s.activityCopyKeySQL(`CASE WHEN c.conversation_type='email_thread' AND COALESCE(m.message_type,'') NOT IN ('calendar_event','meeting_transcript') THEN 'email' ELSE 'other' END`, "m.rfc822_message_id", "m.id")
+	if len(timestampWindows) > 0 {
+		where += " AND (" + strings.Join(timestampWindows, " OR ") + ")"
+	}
 	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")
 	if err != nil {
 		return nil, filters, err
@@ -158,14 +162,13 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	// Materialize the scoped cold window before live eligibility and counterpart
 	// classification. Otherwise SQLite can evaluate those correlated queries for
 	// every archived message, even when no cold conversation matches.
-	warm, warmArgs := s.coldWarmCopyClause(ctx, copyKey)
-	args = slices.Concat(args, subjectArgs, warmArgs)
+	args = append(args, subjectArgs...)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
  SELECT m.id FROM messages m WHERE `+where+`
- ) SELECT m.id,`+copyKey+`,m.list_id IS NOT NULL,
+ ) SELECT m.id,m.list_id IS NOT NULL,
  `+matrixPendingEncryptedSQL("m")+`
- FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id
- WHERE `+s.activityLiveEligibleSQL()+subject+warm+` ORDER BY m.source_id,m.id`), args...)
+ FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id
+ WHERE `+s.activityLiveEligibleSQL()+subject+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
 		return nil, filters, fmt.Errorf("read cold activity: %w", err)
 	}
@@ -173,7 +176,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	ids := []int64{}
 	for rows.Next() {
 		var m coldActivityMessage
-		if err = rows.Scan(&m.ID, &m.copyKey, &m.List, &m.Encrypted); err != nil {
+		if err = rows.Scan(&m.ID, &m.List, &m.Encrypted); err != nil {
 			_ = rows.Close()
 			return nil, filters, fmt.Errorf("scan cold activity: %w", err)
 		}
@@ -209,7 +212,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 			(q.Before != nil && !dating.OccurredAt.Before(*q.Before)) {
 			continue
 		}
-		if q.After == nil && q.Before == nil && (dating.LocalDate < q.FromDate || dating.LocalDate > q.ToDate) {
+		if (q.FromDate != "" && dating.LocalDate < q.FromDate) || (q.ToDate != "" && dating.LocalDate > q.ToDate) {
 			continue
 		}
 		classified := ClassifyActivityCandidate(c, filters.directLimit())
@@ -229,29 +232,9 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	if err = s.hydrateColdActivityCounterpartsContext(ctx, facts, filters); err != nil {
 		return nil, filters, err
 	}
-	// Prefer counted contact, then non-noise, after scoped copies have their
-	// complete counterpart facts. SQL source/message ordering breaks ties.
-	representatives := []coldActivityMessage{}
-	representativeIndex := map[string]int{}
-	copies := map[string]int{}
+	groups := map[string]*coldActivityGroup{}
 	for i, m := range classifiedMessages {
 		m.activityReadMessage = facts[i]
-		copies[m.copyKey]++
-		if index, found := representativeIndex[m.copyKey]; found {
-			current := representatives[index]
-			counted, currentCounted := coldActivityCounted(m, q.Subject), coldActivityCounted(current, q.Subject)
-			if (counted && !currentCounted) ||
-				(counted == currentCounted && coldActivityNonNoise(m, filters) && !coldActivityNonNoise(current, filters)) {
-				representatives[index] = m
-			}
-			continue
-		}
-		representativeIndex[m.copyKey] = len(representatives)
-		representatives = append(representatives, m)
-	}
-	groups := map[string]*coldActivityGroup{}
-	for _, m := range representatives {
-		m.copies = copies[m.copyKey]
 		conv := int64(0)
 		if m.candidate.ConversationID != nil {
 			conv = *m.candidate.ConversationID
@@ -287,18 +270,6 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		finishColdActivityGroup(g)
 	}
 	return groups, filters, nil
-}
-
-// coldWarmCopyClause leaves out a cold copy whose copy key also has a projected
-// copy the warm reader shows within the same source scope. The derived table
-// keeps the warm message's m and src aliases apart from the outer cold copy m.
-// Matching canonical Message-IDs first lets each probe use the expression index.
-func (s *Store) coldWarmCopyClause(ctx context.Context, copyKey string) (string, []any) {
-	scope, args := sourceScopeClause(ctx, "m.source_id")
-	return ` AND NOT EXISTS (SELECT 1 FROM (SELECT m.id,m.rfc822_message_id FROM messages m JOIN sources src ON src.id=m.source_id
- WHERE ` + s.activityLiveEligibleSQL() + scope + `) warm JOIN activity_events ae ON ae.message_id=warm.id
- WHERE ` + s.dialect.RFC822CanonicalIDExpr("warm.rfc822_message_id") + `=` + s.dialect.RFC822CanonicalIDExpr("m.rfc822_message_id") + `
- AND ` + FullActivityEventWhere("ae") + ` AND ` + s.activityCopyKeySQL("ae.channel", "warm.rfc822_message_id", "warm.id") + `=` + copyKey + `)`, args
 }
 
 // Cold messages have no projection rows. Supply their live classification to
@@ -372,9 +343,6 @@ func finishColdActivityGroup(g *coldActivityGroup) {
 		}
 		if len(g.burst.LatestMessageIDs) < 5 {
 			g.burst.LatestMessageIDs = append(g.burst.LatestMessageIDs, m.ID)
-		}
-		if g.burst.Channel == ChannelEmail {
-			g.burst.CopyCounts[m.ID] = m.copies
 		}
 		for _, cp := range m.Counterparts {
 			old, found := counterparts[cp.ParticipantID]
