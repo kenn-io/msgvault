@@ -257,10 +257,6 @@
   form { flex-wrap: wrap; justify-content: flex-start; }
   form :global(.kit-text-input) { min-width: 0; flex: 1; }
   .task-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--field-gap); }
-  @media (hover: hover) {
-    .person-agenda :global(.detail-row:not(:hover):not(:focus-within)) { gap: 0; }
-    .person-agenda :global(.detail-row:not(:hover):not(:focus-within) > .actions) { width: 0; overflow: hidden; }
-  }
   .task-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
   .task-row :global(.kit-chip) { box-sizing: border-box; max-width: 100%; margin-left: auto; }
   .list-label { white-space: normal; overflow-wrap: anywhere; }
