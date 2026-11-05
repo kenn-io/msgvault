@@ -166,7 +166,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
  SELECT m.id FROM messages m WHERE `+where+`
  ) SELECT m.id,m.list_id IS NOT NULL,
- `+matrixPendingEncryptedSQL("m")+`
+ `+matrixPendingEncryptedSQL+`
  FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id
  WHERE `+s.activityLiveEligibleSQL()+subject+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
@@ -275,6 +275,9 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 // Cold messages have no projection rows. Supply their live classification to
 // the shared counterpart query instead of reading eligible activity_events.
 func (s *Store) hydrateColdActivityCounterpartsContext(ctx context.Context, messages []activityReadMessage, filters ActivityFilters) error {
+	// Recompute roles and evidence at the effective limit, even while stale
+	// projection rows await retraction.
+	filters.MaxDirect = filters.directLimit()
 	byID := make(map[int64]activityReadMessage, len(messages))
 	for _, m := range messages {
 		byID[m.ID] = m

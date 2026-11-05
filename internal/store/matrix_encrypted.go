@@ -12,9 +12,7 @@ import (
 const MatrixEncryptedPlaceholder = "[encrypted message — keys unavailable]"
 
 // matrixPendingEncryptedSQL uses recovery state rather than user-authored text.
-func matrixPendingEncryptedSQL(message string) string {
-	return `EXISTS(SELECT 1 FROM matrix_encrypted_events encrypted WHERE encrypted.message_id=` + message + `.id AND NOT encrypted.recovered)`
-}
+const matrixPendingEncryptedSQL = `EXISTS(SELECT 1 FROM matrix_encrypted_events encrypted WHERE encrypted.message_id=m.id AND NOT encrypted.recovered)`
 
 const migrationMatrixEncryptedEventsV1 = "matrix_encrypted_events_v1"
 

@@ -569,6 +569,49 @@ func TestColdAdapterPreservesContactEligibilityAcrossRetraction(t *testing.T) {
 	}
 }
 
+func TestColdAdapterIgnoresStaleProjection(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	f := newTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "growing-room")
+	setTimelineConversationTier(t, f, f.Source.ID, "growing-room", conversationpolicy.Full)
+	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+	requirements.NoError(err)
+	id := f.add(t, room, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='chat' WHERE id=?`), id)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
+	projectColdTimeline(t, f, "UTC")
+	var evidence string
+	err = f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT evidence FROM activity_event_persons WHERE message_id=? AND person_id=?`), id, person.ID).Scan(&evidence)
+	requirements.NoError(err)
+	requirements.Equal("direct", evidence)
+	for i := range 25 {
+		participant := f.EnsureParticipant(fmt.Sprintf("member%d@example.com", i), "Member", "example.com")
+		requirements.NoError(f.Store.EnsureConversationParticipant(room, participant, "member"))
+	}
+	setTimelineConversationTier(t, f, f.Source.ID, "growing-room", conversationpolicy.Cold)
+	q := timelineBurstQuery()
+	q.Subject.PersonID = person.ID
+	q.Filters.IncludeNoise = true
+	for _, retracted := range []bool{false, true} {
+		if retracted {
+			retractTimelineActivity(t, f, id)
+		}
+		page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+		requirements.NoError(err)
+		requirements.Len(page.Bursts, 1)
+		assertions.Zero(page.Bursts[0].Outbound, "retracted=%t", retracted)
+		var peer store.ActivityMessageCounterpart
+		for _, cp := range page.Bursts[0].Counterparts {
+			if cp.ParticipantID == f.peer {
+				peer = cp
+			}
+		}
+		requirements.Equal(f.peer, peer.ParticipantID)
+		assertions.False(peer.Counted, "retracted=%t", retracted)
+	}
+}
+
 func TestColdAdapterHonorsListExclusionOptOut(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineActivityFixture(t)
