@@ -71,64 +71,30 @@ func DecodeICS(raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	return e, true, nil
 }
 
-type icsDocument struct {
-	common  string
-	events  []string
-	closing string
-}
-
-// Split once so retaining an event copies only its own lines and shared data.
-// Keep raw content lines because the encoder requires optional input fields
-// such as DTSTAMP, and retained evidence must preserve omitted properties.
-func splitICSDocument(unfolded string) icsDocument {
-	var doc icsDocument
-	var common strings.Builder
-	depth, offset, start := 0, 0, 0
-	var component string
-	for line := range strings.SplitAfterSeq(unfolded, "\n") {
-		name, value, _ := strings.Cut(strings.TrimRight(line, "\r\n"), ":")
-		if strings.EqualFold(name, "BEGIN") {
-			if depth == 1 {
-				start, component = offset, strings.ToUpper(value)
-			}
-			depth++
-		} else if strings.EqualFold(name, "END") {
-			depth--
-			if depth == 0 {
-				doc.closing = line
-			}
-			if depth == 1 {
-				block := unfolded[start : offset+len(line)]
-				switch component {
-				case "VEVENT":
-					doc.events = append(doc.events, block)
-				case "VTIMEZONE":
-					common.WriteString(block)
-				}
-				component = ""
-			}
+func encodeICSEvent(cal *ical.Calendar, event *ical.Component) ([]byte, error) {
+	retained := ical.NewCalendar()
+	retained.Props = cal.Props
+	for _, comp := range cal.Children {
+		if comp.Name == ical.CompTimezone || comp == event {
+			retained.Children = append(retained.Children, comp)
 		}
-		if depth == 1 && component == "" && !strings.EqualFold(name, "END") {
-			common.WriteString(line)
-		}
-		offset += len(line)
 	}
-	doc.common = common.String()
-	return doc
+	var buf bytes.Buffer
+	err := ical.NewEncoder(&buf).Encode(retained)
+	return buf.Bytes(), err
 }
 
 // ParseICS accepts one complete VCALENDAR. A single-event file is retained
 // byte for byte; each event of a larger file keeps its own VEVENT and the
 // shared calendar lines.
 func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err error) {
-	unfolded := strings.NewReplacer("\r\n ", "", "\r\n\t", "", "\n ", "", "\n\t", "").Replace(string(raw))
 	defer func() {
 		if recover() != nil {
 			out = nil
 			err = errors.New("malformed iCalendar parameters")
 		}
 	}()
-	decoder := ical.NewDecoder(strings.NewReader(unfolded))
+	decoder := ical.NewDecoder(bytes.NewReader(raw))
 	cal, err := decoder.Decode()
 	if err != nil {
 		return nil, fmt.Errorf("decode iCalendar: %w", err)
@@ -155,26 +121,25 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	if err != nil {
 		return nil, err
 	}
-	doc := splitICSDocument(unfolded)
-	index := 0
-	for _, comp := range cal.Children {
-		if comp.Name != ical.CompEvent {
-			continue
+	events := cal.Events()
+	for index, event := range events {
+		comp := event.Component
+		retained := raw
+		if len(events) > 1 {
+			retained, err = encodeICSEvent(cal, comp)
+			if err != nil {
+				return nil, fmt.Errorf("retain VEVENT %d: %w", index+1, err)
+			}
 		}
 		normalizeICSParams(comp.Props, zones)
 		result, err := parseICSEvent(comp, method, loc)
 		if err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
 		}
-		if len(doc.events) == 1 {
-			result.Raw = bytes.Clone(raw)
-		} else if index < len(doc.events) {
-			result.Raw = []byte(doc.common + doc.events[index] + doc.closing)
-		}
+		result.Raw = bytes.Clone(retained)
 		out = append(out, result)
-		index++
 	}
-	if index == 0 {
+	if len(out) == 0 {
 		return nil, errors.New("calendar has no VEVENT")
 	}
 	return out, nil
