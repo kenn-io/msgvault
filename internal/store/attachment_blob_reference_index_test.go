@@ -1,18 +1,13 @@
 package store
 
 import (
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestAttachmentBlobReferencedUsesIndexes(t *testing.T) {
-	st, err := OpenForTest(filepath.Join(t.TempDir(), "blob-reference.db"))
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
-	require.NoError(t, st.InitSchema())
+	st := openTestStore(t)
 
 	for _, tc := range []struct {
 		name, hash, path string
