@@ -39,6 +39,82 @@ function view(id: number, direction: 'incoming' | 'outgoing', label: string, nam
 }
 
 describe('RelationshipsTab', () => {
+  it('selects the first type option with Enter after filtering', async () => {
+    const { client, controller } = controllerWith(async () => Response.json({}));
+    controller.relationshipTypes = [relationshipType({ slug: 'parent', forward_label: 'parent', reverse_label: 'child' })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    const input = await openTypeahead('Connection type');
+    await fireEvent.input(input, { target: { value: 'child' } });
+    expect(document.getElementById(input.getAttribute('aria-activedescendant')!)?.textContent?.trim()).toBe('Child');
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('button', { name: 'Connection type: is a child of' })).toBeDefined();
+  });
+
+  it('shows a type failure with retry, then query-specific empty copy', async () => {
+    let reads = 0;
+    const { client, controller } = controllerWith(async () => ++reads === 1
+      ? Response.json({ message: 'Types unavailable' }, { status: 503 })
+      : Response.json({ relationship_types: [relationshipType()] }));
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await controller.refreshRelationshipTypes();
+    await openTypeahead('Connection type');
+    expect(screen.getByRole('alert').textContent).toBe('Types unavailable');
+    expect(screen.queryByText('No matches')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Retry connection types' }));
+    await screen.findByRole('treeitem', { name: 'Mentors' });
+    await fireEvent.input(screen.getByRole('combobox', { name: 'Connection type' }), { target: { value: 'missing' } });
+    expect(screen.getByText('No type matches "missing"')).toBeDefined();
+  });
+
+  it('distinguishes saved people who share a name without organizations', async () => {
+    const { client, controller } = controllerWith(async () => Response.json({ people: [
+      directoryPerson(8, { display_name: 'Synthetic Peer' }), directoryPerson(9, { display_name: 'Synthetic Peer' }),
+    ] }));
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await openTypeahead('Search people');
+    expect(await screen.findByRole('option', { name: 'Synthetic Peer Contact 8' })).toBeDefined();
+    expect(screen.getByRole('option', { name: 'Synthetic Peer Contact 9' })).toBeDefined();
+  });
+
+  it('uses a contact title and muted identifier for an unresolved imported UID', async () => {
+    const client = createAPIClient(async () => Response.json({ reviews: [{
+      id: 1, person_id: 7, raw_related_value: 'urn:uuid:11111111-2222-3333-4444-555555555555',
+      raw_related_type: 'friend', value_kind: 'uri', status: 'pending', source: 'carddav_import',
+      created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z',
+    }] }));
+    const controller = new DirectoryEntityController(client, 7);
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    const title = await screen.findByText('Unknown contact');
+    expect(title.closest('.value')?.querySelector('.description')?.textContent).toContain('urn:uuid:11111111-2222-3333-4444-555555555555');
+  });
+
+  it('shows saved recovery once in the editor and restores it to the page on close', async () => {
+    let saved = false;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+      if (request.method === 'POST') { saved = true; return Response.json(relationship()); }
+      return saved ? Response.json({ message: 'Refresh unavailable' }, { status: 503 }) : Response.json({ relationships: [] });
+    });
+    controller.relationshipTypes = [relationshipType()];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await openTypeahead('Search people');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(screen.getAllByRole('alert')).toHaveLength(1));
+    expect(screen.getByRole('alert').textContent?.trim()).toBe('The relationship was saved, but the list could not be refreshed.');
+    expect(screen.getAllByRole('button', { name: 'Refresh relationships' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Create' })).toHaveProperty('disabled', true);
+    await fireEvent.click(screen.getByRole('button', { name: 'Close relationship editor' }));
+    expect(screen.getByRole('alert').textContent).toContain('Refresh unavailable');
+  });
+
   it('clears old options before debounce so Enter cannot select the wrong person', async () => {
     const { client, controller } = controllerWith(async input => {
       const q = new URL(requestOf(input).url).searchParams.get('q');
@@ -204,7 +280,7 @@ describe('RelationshipsTab', () => {
     expect(screen.getByText('Earlier suggestion').closest('.detail-row')?.textContent).toContain('Aug 2, 2026');
     await fireEvent.click(within(row).getByRole('button', { name: 'Open person' }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
-    expect(screen.getByText('Rejected')).toBeDefined();
+    expect(screen.getByText(/Rejected/).closest('.description')).toBeTruthy();
   });
 
   it('renders curated connections', () => {
@@ -244,12 +320,12 @@ describe('RelationshipsTab', () => {
     const rendered = render(RelationshipsTab, { client, controller, personID: 7 });
     try {
       await screen.findByText('existing@example.com');
-      expect(screen.getByText('Accepted')).toBeDefined();
+      expect(screen.getByText(/^Accepted ·/).closest('.description')).toBeTruthy();
       expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X-CUSTOM_friend · from Vcard import · Text · Aug 1, 2026 · Aug 2, 2026');
       merged = true;
       await controller.refreshRelationships();
       expect(await screen.findByText('absorbed@example.com')).toBeDefined();
-      expect(screen.getAllByText('Accepted')).toHaveLength(2);
+      expect(screen.getAllByText(/^Accepted ·/)).toHaveLength(2);
     } finally { rendered.unmount(); controller.destroy(); vi.unstubAllEnvs(); }
   });
 
@@ -397,17 +473,17 @@ describe('RelationshipsTab', () => {
 
       const start = screen.getByRole('textbox', { name: 'Relationship start date' });
       await fireEvent.input(start, { target: { value: '2019-02-30' } });
-      const message = screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.');
+      const message = screen.getByText('Use YYYY, YYYY-MM, or YYYY-MM-DD.');
       expect(start.getAttribute('aria-describedby')).toBe(message.id);
       expect(create).toHaveProperty('disabled', true);
 
       await fireEvent.input(start, { target: { value: '2019' } });
-      expect(screen.queryByText(/Use a year/)).toBeNull();
+      expect(screen.queryByText('Use YYYY, YYYY-MM, or YYYY-MM-DD.', { selector: '.field-error' })).toBeNull();
       expect(create).toHaveProperty('disabled', false);
 
       const end = screen.getByRole('textbox', { name: 'Relationship end date' });
       await fireEvent.input(end, { target: { value: '--04-12' } });
-      expect(screen.getByText('Use a year, year and month, or full date, like 2019, 2019-04, or 2019-04-12.').id).toBe(end.getAttribute('aria-describedby'));
+      expect(screen.getByText('Use YYYY, YYYY-MM, or YYYY-MM-DD.', { selector: '.field-error' }).id).toBe(end.getAttribute('aria-describedby'));
       expect(create).toHaveProperty('disabled', true);
     } finally {
       vi.useRealTimers();
@@ -467,7 +543,8 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(notes, { target: { value: 'Retained local draft' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('changed elsewhere');
+    expect((await screen.findByRole('alert')).textContent).toContain('This relationship changed elsewhere.');
+    expect(screen.getByRole('alert').textContent).not.toContain('edge changed elsewhere');
     expect((screen.getByRole('textbox', { name: 'Relationship notes' }) as HTMLInputElement).value).toBe('Retained local draft');
     expect(screen.getByText(/Server concurrent/)).toBeDefined();
     expect(writes).toBe(1);
@@ -611,7 +688,8 @@ describe('RelationshipsTab', () => {
     await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: 'Retained unknown draft' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
-    expect((await screen.findByRole('alert')).textContent).toContain('outcome is unknown');
+    expect((await screen.findByRole('alert')).textContent).toContain('Refresh relationships before submitting again.');
+    expect(screen.getByRole('alert').textContent).not.toContain('outcome unknown');
     expect((screen.getByRole('textbox', { name: 'Relationship notes' }) as HTMLInputElement).value).toBe('Retained unknown draft');
     expect(screen.getByRole('button', { name: 'Create' })).toHaveProperty('disabled', true);
     await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add relationship' })).getByRole('button', { name: 'Refresh relationships' }));

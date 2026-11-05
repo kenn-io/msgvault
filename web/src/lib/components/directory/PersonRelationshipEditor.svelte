@@ -51,6 +51,8 @@
   let searchError = $state('');
   let lookupQuery: string | undefined;
   let searchText = $state('');
+  let typeQuery = $state('');
+  let sentence: HTMLDivElement | undefined = $state();
   let choice = $state('');
   const typeOptions = $derived(relationshipTypeOptions(controller.relationshipTypes));
   const selectedType = $derived(typeOptions.flatMap(group => group.children ?? []).find(option => option.name === choice) as RelationshipChoice | undefined);
@@ -60,8 +62,9 @@
   let startDate = $state(partialDate(initialRelationship?.start_date));
   let endDate = $state(partialDate(initialRelationship?.end_date));
   const uid = $props.id();
-  const startDateError = $derived(intervalDateError(startDate));
-  const endDateError = $derived(intervalDateError(endDate));
+  const dateFormat = 'Use YYYY, YYYY-MM, or YYYY-MM-DD.';
+  const startDateError = $derived(intervalDateError(startDate) ? dateFormat : null);
+  const endDateError = $derived(intervalDateError(endDate) ? dateFormat : null);
   let notes = $state(initialRelationship?.notes ?? '');
   let submitting = $state(false);
   let committed = $state(false);
@@ -75,7 +78,8 @@
       (person): TypeaheadOption => ({
         name: String(person.id),
         label: person.display_name?.trim() || `Person ${person.id}`,
-        meta: person.organizations.length > 0 ? person.organizations.join(', ') : '',
+        meta: person.organizations.length > 0 ? person.organizations.join(', ') :
+          people.some(other => other.id !== person.id && other.display_name === person.display_name) ? `Contact ${person.id}` : '',
       }),
     ),
   );
@@ -158,7 +162,7 @@
       if (result.ok) {
         if (controller.errors.relationships) {
           committed = true;
-          message = `The relationship was saved, but the list could not be refreshed. ${controller.errors.relationships}`;
+          message = 'The relationship was saved, but the list could not be refreshed.';
         } else {
           onDone();
         }
@@ -166,9 +170,9 @@
       }
       if (result.kind === 'conflict') {
         conflictCurrent = result.current;
-        message = `This relationship changed elsewhere. ${result.message}`;
+        message = 'This relationship changed elsewhere.';
       } else if (result.kind === 'unknown' || result.kind === 'blocked') {
-        message = `The create outcome is unknown. ${result.message}`;
+        message = 'The create outcome is unknown. Refresh relationships before submitting again.';
       } else {
         message = result.message;
       }
@@ -211,6 +215,10 @@
   }
 </script>
 
+{#snippet retryTypes()}
+  <Button size="sm" label="Retry" ariaLabel="Retry connection types" onclick={() => void controller.refreshRelationshipTypes()} />
+{/snippet}
+
 <form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
   <Modal
     title={initialRelationship ? 'Edit relationship' : 'Add relationship'}
@@ -230,15 +238,19 @@
             <span class="muted">{historySource(initialRelationship.source)}</span>
           </div>
         {:else}
-          <div class="sentence">
+          <div class="sentence" bind:this={sentence}>
             <strong>{personName}</strong>
             <span class="type-picker">
               <Typeahead options={typeOptions} value={choice} fallbackLabel="Choose connection" placeholder="Connection type" title="Connection type"
+                highlightFirstOption panelAnchor={sentence} onquery={(query) => { typeQuery = query; }}
+                emptyLabel={controller.errors.relationshipTypes ? '' : typeQuery ? `No type matches "${typeQuery}"` : 'No connection types'}
+                header={controller.errors.relationshipTypes ? retryTypes : undefined}
                 loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes} disabled={submitting}
                 onselect={(value) => { choice = value; }} />
             </span>
             <span class="people-picker">
               <Typeahead options={peopleOptions} value={counterpartID === null ? '' : String(counterpartID)}
+                panelAnchor={sentence}
                 fallbackLabel="Search people" placeholder="Search people" title="Search people"
                 emptyLabel={searchError ? '' : searchText ? `No one matches "${searchText}"` : 'No other saved people'}
                 loading={searching} loadingLabel="Searching…" remote onquery={handleQuery} error={searchError}
@@ -253,14 +265,15 @@
         <h3>Details</h3>
         <div class="dates">
           {#if !initialRelationship}
-            <label>Start date<TextInput ariaLabel="Relationship start date" bind:value={startDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined} />
-              {#if startDateError}<span id="{uid}-start-date-error" class="field-error">{startDateError}</span>{/if}
+            <label>Start date<TextInput ariaLabel="Relationship start date" bind:value={startDate} placeholder="YYYY-MM-DD" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : `${uid}-date-format`} />
             </label>
           {/if}
-          <label>End date<TextInput ariaLabel="Relationship end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} />
-            {#if endDateError}<span id="{uid}-end-date-error" class="field-error">{endDateError}</span>{/if}
+          <label>End date<TextInput ariaLabel="Relationship end date" bind:value={endDate} placeholder="YYYY-MM-DD" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : `${uid}-date-format`} />
           </label>
         </div>
+        {#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}
+        {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
+        <p id="{uid}-date-format" class="muted date-format" hidden={Boolean(startDateError || endDateError)}>YYYY, YYYY-MM, or YYYY-MM-DD</p>
         <label>Notes<TextInput ariaLabel="Relationship notes" bind:value={notes} block disabled={submitting} /></label>
       </section>
       {#if message}
@@ -275,14 +288,14 @@
         </div>
       {/if}
       {#if controller.createBlocked.relationships || committed}
-        <Button label="Refresh relationships" disabled={submitting} onclick={() => void refreshAfterUncertainOutcome()} />
+        <div><Button size="sm" label="Refresh relationships" disabled={submitting} onclick={() => void refreshAfterUncertainOutcome()} /></div>
       {/if}
     </div>
     {#snippet footer()}
         <Button
           type="submit"
-          tone="info"
-          surface="solid"
+          tone={committed || controller.createBlocked.relationships ? 'neutral' : 'info'}
+          surface={committed || controller.createBlocked.relationships ? 'outline' : 'solid'}
           label={initialRelationship ? 'Save' : 'Create'}
           disabled={submitting ||
             committed ||
@@ -334,15 +347,32 @@
     overflow-wrap: anywhere;
   }
   .type-picker {
+    width: 136px;
     min-width: 0;
     max-width: 100%;
-    --typeahead-panel-min-width: min(408px, calc(100vw - 64px));
+    --typeahead-panel-min-width: 0px;
   }
   .people-picker {
+    width: 164px;
     min-width: 0;
     max-width: 100%;
     --typeahead-icon-width: 24px;
-    --typeahead-panel-min-width: min(408px, calc(100vw - 64px));
+    --typeahead-panel-min-width: 0px;
+  }
+  .sentence :global(.kit-typeahead) {
+    width: 100%;
+    --typeahead-min-width: 0px;
+    --typeahead-max-width: 100%;
+    --typeahead-control-padding: 0 var(--space-2);
+  }
+  .people-picker :global(.kit-typeahead__value > .kit-typeahead__icon:empty) {
+    display: none;
+  }
+  .type-picker :global(.kit-typeahead__option--group) {
+    background: transparent;
+  }
+  .date-format {
+    font-size: var(--font-size-xs);
   }
   .dates {
     display: flex;
