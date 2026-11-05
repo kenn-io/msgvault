@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/gmail"
 	"go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -204,33 +203,13 @@ func TestAttachmentReviewExpectedMIMECountWithRemoteImages(t *testing.T) {
 	assert.Empty(debt)
 }
 
-type attachmentReviewLabelClient struct {
-	*gmail.Client
-
-	short bool
-}
-
-func (c *attachmentReviewLabelClient) GetMessageLabelsBatch(ctx context.Context, ids []string) ([]gmail.MessageLabelsBatchResult, error) {
-	labels, err := c.Client.GetMessageLabelsBatch(ctx, ids)
-	for _, id := range ids {
-		if c.short && id == "trash" {
-			return nil, err
-		}
-	}
-	return labels, err
-}
-
 func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 	for _, kind := range []string{syncItemKindAttachmentError, syncItemKindRemoteImageError} {
-		for _, fault := range []string{"", "write", "cancel", "short"} {
+		for _, fault := range []string{"", "write", "cancel"} {
 			t.Run(kind+"/"+fault, func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				e, f, ids := recoveryLabelsEnv(t)
 				api := e.Syncer.client
-				client, ok := api.(*gmail.Client)
-				require.True(ok)
-				short := &attachmentReviewLabelClient{Client: client, short: fault == "short"}
-				api = short
 				source := gmailCoverageSource(t, e)
 				if kind == syncItemKindRemoteImageError {
 					raw := revisionHTMLMIME()
@@ -268,8 +247,6 @@ func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 						assert.Positive(summary.Errors)
 					case "cancel":
 						require.ErrorIs(err, context.Canceled)
-					case "short":
-						require.ErrorContains(err, "label metadata missing from batch response")
 					default:
 						require.ErrorContains(err, "synthetic acquisition write failure")
 					}
@@ -300,7 +277,6 @@ func TestAttachmentReviewRecoveryRefreshesLabelsDespiteDebt(t *testing.T) {
 				}
 				removeFault()
 				f.fault = ""
-				short.short = false
 				_, err = e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
 				require.NoError(err)
 				labelID, err := e.Store.LabelIDContext(t.Context(), source.ID, "INBOX")

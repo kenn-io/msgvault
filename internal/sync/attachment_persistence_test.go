@@ -297,7 +297,7 @@ func TestAttachmentRepairProviderCollisionRollsBack(t *testing.T) {
 	before := attachmentSnapshot(t, e.Store, id)
 	dir := filepath.Join(e.TmpDir, "attachments")
 	service := New(nil, e.Store, &Options{AttachmentsDir: dir})
-	require.ErrorContains(service.RepairMessageAttachments(t.Context(), RepairRequest{Reference: "collision", SourceID: source.ID}), "conflicting attachment metadata")
+	require.ErrorContains(service.RepairMessageAttachments(t.Context(), RepairRequest{Reference: "collision", SourceID: source.ID}), `conflicting metadata for attachment "two.bin"`)
 	assert.Equal(before, attachmentSnapshot(t, e.Store, id))
 	assert.NoFileExists(filepath.Join(dir, parsed.Attachments[0].ContentHash[:2], parsed.Attachments[0].ContentHash))
 }

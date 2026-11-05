@@ -63,7 +63,7 @@ func (s *Store) RestoreMIMEAttachmentRecordsContext(ctx context.Context, expecte
 				FROM attachments WHERE message_id = ? AND source_part_key = ?`, expected.ID, write.SourcePartKey).Scan(&hash, &provider, &size)
 			if err == nil {
 				if provider.Valid || !AttachmentContentHashesEqual(hash, write.ContentHash) || size != write.Size {
-					return fmt.Errorf("conflicting attachment metadata for part %q", write.SourcePartKey)
+					return fmt.Errorf("conflicting metadata for attachment %q", write.Filename)
 				}
 				continue
 			}

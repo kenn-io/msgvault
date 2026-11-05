@@ -1969,7 +1969,7 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 		// This obligation and RAW are one transaction. A process exit or a
 		// rejected ledger write cannot leave committed RAW without retry debt.
 		resolution = &store.SyncRunItem{SyncRunID: s.acquisitionSyncID, SourceMessageID: data.message.SourceMessageID,
-			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: "Message files still need saving"}
+			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: store.SyncRunItemFilesPendingMessage}
 	}
 	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,

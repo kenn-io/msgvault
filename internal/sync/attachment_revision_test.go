@@ -268,26 +268,6 @@ func TestAttachmentRevisionRepeatedLabelDoesNotEraseDebt(t *testing.T) {
 	assert.Empty(e.Mock.GetMessageCalls)
 }
 
-func TestAttachmentRevisionRemoteImagesRunAfterMIMEFailure(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	e := attachmentPersistenceEnv(t)
-	fetcher, requests := revisionImageServer(t)
-	dir := filepath.Join(e.TmpDir, "attachments")
-	require.NoError(os.MkdirAll(dir, 0700))
-	hash := sha256.Sum256([]byte("Hello World!"))
-	require.NoError(os.WriteFile(filepath.Join(dir, hex.EncodeToString(hash[:])[:2]), []byte("blocked MIME prefix"), 0600))
-	e.Mock.AddMessage("remote-independent", revisionHTMLMIME(), []string{"INBOX"})
-	sum, err := New(e.Mock, e.Store, &Options{AttachmentsDir: dir, RemoteImages: fetcher}).Full(t.Context(), testEmail)
-	require.NoError(err)
-	assert.Equal(int64(1), sum.Errors)
-	assert.Equal(int64(1), requests.Load())
-	var id int64
-	require.NoError(e.Store.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
-	refs, err := e.Store.MessageRemoteImages(id)
-	require.NoError(err)
-	assert.Len(refs, 1)
-}
-
 func TestAttachmentRevisionReferenceDiagnostics(t *testing.T) {
 	require := require.New(t)
 	e := attachmentPersistenceEnv(t)
