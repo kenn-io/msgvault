@@ -50,7 +50,7 @@ describe('PersonTrackingControl', () => {
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(false);
     expect(screen.getByRole('switch', { name: 'Update automatically — Off' })).toBeDefined();
-    expect(screen.getByText('Uses archived conversations when updates run.')).toBeDefined();
+    expect(screen.getByText('Updates run while People sweep is on in Settings.')).toBeDefined();
     expect(document.querySelector('.tracked-time')).toBeNull();
     expect(screen.getByText('Time zone')).toBeDefined();
     expect(screen.queryByText('Since')).toBeNull();
@@ -74,6 +74,7 @@ describe('PersonTrackingControl', () => {
     expect(screen.getByText('Work history')).toBeDefined();
     expect(screen.getByText('Employer, title, and dates')).toBeDefined();
     expect(screen.getByRole('switch', { name: 'Update automatically — On' })).toBeDefined();
+    expect(screen.getByText('Updates run while People sweep is on in Settings.')).toBeDefined();
     expect(document.querySelector('.tracked-time')).toBeNull();
     definitions.resolve(Response.json({ definitions: [{ slug: 'conversation_topics', label: 'Conversation starters' }] }));
     expect(await screen.findByText('Conversation starters')).toBeDefined();
@@ -142,7 +143,7 @@ describe('PersonTrackingControl', () => {
     await fireEvent.click(await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ }));
     const retry = await screen.findByRole('button', { name: 'Retry' }) as HTMLButtonElement;
     expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.queryByText('Uses archived conversations when updates run.')).toBeNull();
+    expect(screen.queryByText('Updates run while People sweep is on in Settings.')).toBeNull();
     await waitFor(() => expect(retry.disabled).toBe(false));
     await fireEvent.click(retry);
 

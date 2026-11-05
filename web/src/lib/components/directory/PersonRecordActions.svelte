@@ -9,6 +9,7 @@
   import type { PersonSplitCommittedContext } from '../../directory/person-merge-history-controller.svelte';
   import { Modal } from '@kenn-io/kit-ui';
   import ProfileHistoryDialog from './ProfileHistoryDialog.svelte';
+  import { joinDefinitions } from './attribute-value';
 
   interface Props {
     client: APIClient;
@@ -27,6 +28,7 @@
   let renaming = $state(false);
   let renameValue = $state('');
   let confirmingDelete = $state(false);
+  const trackingDefinitions = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).map(field => field.definition));
 
   function beginRename(): void {
     renameValue = controller.person?.display_name ?? '';
@@ -153,7 +155,7 @@
     maxHeight="min(720px, calc(100svh - 64px))"
     onclose={() => maintenance = undefined}
   >
-    <PersonTrackingControl {client} {personID} {onAnnounce} />
+    <PersonTrackingControl {client} {personID} {onAnnounce} definitions={trackingDefinitions} />
     {#snippet footer()}<Button label="Close" onclick={() => maintenance = undefined} />{/snippet}
   </Modal>
   </div>
