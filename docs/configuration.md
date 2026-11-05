@@ -910,8 +910,9 @@ messages or contact a provider.
 
 `[beeper]`, `[inline]`, `[slack]`, `[discord]`, `[teams]`, and `[imessage]` share
 one attachment policy vocabulary. It decides which chat media is downloaded
-during sync and backfill; message text is always archived. `[imessage]` takes
-only `media_max_participants` and `max_media_mb`.
+during sync and backfill; message text is always archived. For attachment policy,
+`[imessage]` accepts `media_max_participants` and `max_media_mb`. It also accepts
+`enabled`, `schedule`, `db_path`, and `me`; see the [iMessage settings](#imessage).
 
 [Chatwoot](#chatwoot) supports `media` and `max_media_mb` for each configured
 account. Its `media = false` records an `account_policy` skip marker.
