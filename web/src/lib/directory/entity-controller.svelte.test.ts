@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
-import { requestOf, pathOf, employment, organization, organizationProfile } from './entity-fixtures.test-support';
+import { relationshipType as typeFixture, requestOf, pathOf, employment, organization, organizationProfile } from './entity-fixtures.test-support';
 
 function relationship(id: number, revision = 1) {
   return {
@@ -14,11 +14,7 @@ function relationship(id: number, revision = 1) {
 }
 
 function relationshipType(id = 31, revision = 1) {
-  return {
-    id, revision, slug: 'knows', forward_label: 'knows', reverse_label: 'is known by', is_symmetric: false,
-    is_canonical: false, is_deletable: true, ownership: 'user', universal_id: `relationship-type-${id}`,
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
+  return typeFixture({ id, revision, slug: 'knows', forward_label: 'knows', reverse_label: 'is known by', universal_id: `relationship-type-${id}` });
 }
 
 function network(personID: number, depth: number) {

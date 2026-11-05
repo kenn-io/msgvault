@@ -5,7 +5,6 @@
     Button,
     debounce,
     Modal,
-    SelectDropdown,
     TextInput,
     Typeahead,
     type TypeaheadOption,
@@ -21,12 +20,16 @@
     PersonRelationship,
     PersonRelationshipView,
   } from '../../directory/models';
+  import IdentityAvatar from '../common/IdentityAvatar.svelte';
+  import { historySource } from './history-format';
+  import { relationshipPhrase, relationshipTypeOptions, type RelationshipChoice } from '../../directory/relationship-type-options';
   const SEARCH_LIMIT = 20;
   const SEARCH_DEBOUNCE_MS = 250;
   interface Props {
     client: APIClient;
     controller: DirectoryEntityController;
     personID: number;
+    personName?: string;
     relationship?: PersonRelationshipView;
     onDone?: () => void;
     onClose?: () => void;
@@ -35,6 +38,7 @@
     client,
     controller,
     personID,
+    personName = 'This person',
     relationship = undefined,
     onDone = () => undefined,
     onClose = () => undefined,
@@ -45,9 +49,14 @@
   let people = $state<DirectoryPerson[]>([]);
   let searching = $state(false);
   let searchError = $state('');
-  let preserveSelectionOnClose = false;
-  let direction = $state<'outgoing' | 'incoming'>('outgoing');
-  let relationshipTypeSlug = $state(initialRelationship?.type_slug ?? '');
+  let lookupQuery: string | undefined;
+  let searchText = $state('');
+  let choice = $state('');
+  const typeOptions = $derived(relationshipTypeOptions(controller.relationshipTypes));
+  const selectedType = $derived(typeOptions.flatMap(group => group.children ?? []).find(option => option.name === choice) as RelationshipChoice | undefined);
+  const relationshipTypeSlug = $derived(initialRelationship?.type_slug ?? selectedType?.slug ?? '');
+  const direction = $derived(selectedType?.direction ?? 'outgoing');
+  const editPhrase = $derived(initialRelationship ? relationshipPhrase(initialView?.direction === 'incoming' ? initialRelationship.reverse_label : initialRelationship.forward_label) : '');
   let startDate = $state(partialDate(initialRelationship?.start_date));
   let endDate = $state(partialDate(initialRelationship?.end_date));
   const uid = $props.id();
@@ -66,20 +75,10 @@
       (person): TypeaheadOption => ({
         name: String(person.id),
         label: person.display_name?.trim() || `Person ${person.id}`,
-        meta: person.organizations.length > 0 ? person.organizations.join(', ') : 'Durable person',
+        meta: person.organizations.length > 0 ? person.organizations.join(', ') : '',
       }),
     ),
   );
-  const typeOptions = $derived(
-    controller.relationshipTypes.map((type) => ({
-      value: type.slug,
-      label: type.is_symmetric ? type.forward_label : `${type.forward_label} / ${type.reverse_label}`,
-    })),
-  );
-  const directionOptions = [
-    { value: 'outgoing', label: 'Selected person → counterpart' },
-    { value: 'incoming', label: 'Counterpart → selected person' },
-  ];
   const debouncedSearch = debounce((value: string) => void searchPeople(value), SEARCH_DEBOUNCE_MS);
   onMount(() => {
     releaseScope = appShortcuts.pushScope('directory-relationship-editor');
@@ -92,12 +91,6 @@
   async function searchPeople(value: string): Promise<void> {
     const query = value.trim();
     searchAbort?.abort();
-    if (!query) {
-      people = [];
-      searching = false;
-      searchError = '';
-      return;
-    }
     const abort = new AbortController();
     searchAbort = abort;
     const generation = ++searchGeneration;
@@ -105,7 +98,7 @@
     searchError = '';
     try {
       const response = await generatedListDirectoryPeople(
-        { q: query, limit: SEARCH_LIMIT },
+        { ...(query ? { q: query } : {}), sort: 'last_contact_desc', limit: SEARCH_LIMIT },
         {
           ...client,
           signal: abort.signal,
@@ -124,15 +117,22 @@
     }
   }
   function handleQuery(value: string): void {
-    if (!value.trim() && preserveSelectionOnClose) return;
-    counterpartID = null;
-    preserveSelectionOnClose = false;
-    debouncedSearch(value);
+    const query = value.trim();
+    searchText = query;
+    if (query === lookupQuery && !searchError) return;
+    debouncedSearch.cancel();
+    searchAbort?.abort();
+    searchGeneration++;
+    lookupQuery = query;
+    people = [];
+    searchError = '';
+    searching = true;
+    if (query) debouncedSearch(query);
+    else void searchPeople('');
   }
   function selectCounterpart(value: string): void {
     const id = Number(value);
     counterpartID = id === personID ? null : id;
-    preserveSelectionOnClose = counterpartID !== null;
     message = counterpartID === null ? 'A person cannot have a relationship with itself.' : '';
   }
   async function submit(): Promise<void> {
@@ -211,134 +211,153 @@
   }
 </script>
 
-<Modal
-  title={initialRelationship ? 'Edit relationship' : 'Add relationship'}
-  ariaLabel={initialRelationship ? 'Edit relationship' : 'Add relationship'}
-  closeLabel="Close relationship editor"
-  onclose={requestClose}
->
-  <form
-    class="editor"
-    aria-busy={submitting}
-    onsubmit={(event) => {
-      event.preventDefault();
-      void submit();
-    }}
+<form onsubmit={(event) => { event.preventDefault(); void submit(); }}>
+  <Modal
+    title={initialRelationship ? 'Edit relationship' : 'Add relationship'}
+    ariaLabel={initialRelationship ? 'Edit relationship' : 'Add relationship'}
+    closeLabel="Close relationship editor"
+    closable
+    width="min(440px, calc(100vw - 32px))"
+    maxWidth="min(440px, calc(100vw - 32px))"
+    onclose={requestClose}
   >
-    {#if initialRelationship}
-      <p>
-        <strong
-          >{initialView?.counterpart_display_name?.trim() ||
-            initialView?.counterpart_vcard_uid ||
-            `Person ${initialView?.counterpart_person_id}`}</strong
-        >
-        · {initialView?.counterpart_label}
-      </p>
-      <p class="muted">
-        Type: {initialRelationship.type_slug}. End date and notes are editable; edge direction and type stay fixed.
-      </p>
-    {:else}
-      <label
-        >Counterpart
-        <Typeahead
-          options={peopleOptions}
-          value={counterpartID === null ? '' : String(counterpartID)}
-          fallbackLabel="Choose a durable person"
-          placeholder="Relationship counterpart"
-          title="Relationship counterpart"
-          emptyLabel="No matching durable people"
-          loading={searching}
-          loadingLabel="Searching…"
-          remote
-          onquery={handleQuery}
-          error={searchError}
-          onselect={selectCounterpart}
-        />
-      </label>
-      <label
-        >Direction<SelectDropdown
-          title="Relationship direction"
-          value={direction}
-          options={directionOptions}
-          onchange={(value) => {
-            direction = value as typeof direction;
-          }}
-          disabled={submitting}
-        /></label
-      >
-      <label
-        >Type<SelectDropdown
-          title="Relationship type"
-          value={relationshipTypeSlug}
-          options={typeOptions}
-          onchange={(value) => {
-            relationshipTypeSlug = value;
-          }}
-          disabled={submitting}
-        /></label
-      >
-      <label
-        >Start date<TextInput
-          ariaLabel="Relationship start date"
-          bind:value={startDate}
-          placeholder="YYYY, YYYY-MM, or YYYY-MM-DD"
-          block
-          disabled={submitting}
-          ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined}
-        /></label
-      >
-      {#if startDateError}<p id="{uid}-start-date-error" class="field-error">{startDateError}</p>{/if}
-    {/if}
-    <label
-      >End date<TextInput
-        ariaLabel="Relationship end date"
-        bind:value={endDate}
-        placeholder="YYYY, YYYY-MM, or YYYY-MM-DD"
-        block
-        disabled={submitting}
-        ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined}
-      /></label
-    >
-    {#if endDateError}<p id="{uid}-end-date-error" class="field-error">{endDateError}</p>{/if}
-    <label>Notes<TextInput ariaLabel="Relationship notes" bind:value={notes} block disabled={submitting} /></label>
-    {#if message}
-      <div role="alert">
-        <p>{message}</p>
-        {#if conflictCurrent}
-          <p>
-            Current record: {partialDate(conflictCurrent.end_date) || 'no end date'} · {conflictCurrent.notes ||
-              'no notes'}.
-          </p>
+    <div class="editor" aria-busy={submitting}>
+      <section>
+        <h3>Connection</h3>
+        {#if initialRelationship}
+          <div class="connection-row">
+            <p><strong>{personName}</strong> {editPhrase} <strong>{initialView?.counterpart_display_name?.trim() || initialView?.counterpart_vcard_uid || `Person ${initialView?.counterpart_person_id}`}</strong></p>
+            <span class="muted">{historySource(initialRelationship.source)}</span>
+          </div>
+        {:else}
+          <div class="sentence">
+            <strong>{personName}</strong>
+            <span class="type-picker">
+              <Typeahead options={typeOptions} value={choice} fallbackLabel="Choose connection" placeholder="Connection type" title="Connection type"
+                loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes} emptyLabel={controller.errors.relationshipTypes ? '' : 'No matches'} disabled={submitting}
+                onselect={(value) => { choice = value; }} />
+            </span>
+            <span class="people-picker">
+              <Typeahead options={peopleOptions} value={counterpartID === null ? '' : String(counterpartID)}
+                fallbackLabel="Search people" placeholder="Search people" title="Search people"
+                emptyLabel={searchError ? '' : searchText ? `No one matches "${searchText}"` : 'No other saved people'}
+                loading={searching} loadingLabel="Searching…" remote onquery={handleQuery} error={searchError}
+                disabled={submitting} onselect={selectCounterpart}>
+                {#snippet icon(option)}<IdentityAvatar label={option.label} seed={option.name} size={24} />{/snippet}
+              </Typeahead>
+            </span>
+          </div>
         {/if}
-      </div>
-    {/if}
-    {#if controller.createBlocked.relationships || committed}
-      <Button label="Refresh relationships" disabled={submitting} onclick={() => void refreshAfterUncertainOutcome()} />
-    {/if}
-    <div class="actions">
-      <Button label="Cancel" disabled={submitting} onclick={requestClose} />
-      <Button
-        type="submit"
-        tone="info"
-        surface="solid"
-        label={initialRelationship ? 'Save relationship' : 'Create relationship'}
-        disabled={submitting ||
-          committed ||
-          !relationshipTypeSlug ||
-          Boolean(startDateError) ||
-          Boolean(endDateError) ||
-          (!initialRelationship && (counterpartID === null || counterpartID === personID)) ||
-          controller.createBlocked.relationships}
-      />
+      </section>
+      <section>
+        <h3>Details</h3>
+        <div class="dates">
+          {#if !initialRelationship}
+            <label>Start date<TextInput ariaLabel="Relationship start date" bind:value={startDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={startDateError ? `${uid}-start-date-error` : undefined} />
+              {#if startDateError}<span id="{uid}-start-date-error" class="field-error">{startDateError}</span>{/if}
+            </label>
+          {/if}
+          <label>End date<TextInput ariaLabel="Relationship end date" bind:value={endDate} placeholder="YYYY, YYYY-MM, or YYYY-MM-DD" block disabled={submitting} ariaDescribedby={endDateError ? `${uid}-end-date-error` : undefined} />
+            {#if endDateError}<span id="{uid}-end-date-error" class="field-error">{endDateError}</span>{/if}
+          </label>
+        </div>
+        <label>Notes<TextInput ariaLabel="Relationship notes" bind:value={notes} block disabled={submitting} /></label>
+      </section>
+      {#if message}
+        <div role="alert">
+          <p>{message}</p>
+          {#if conflictCurrent}
+            <p>
+              Current record: {partialDate(conflictCurrent.end_date) || 'no end date'} · {conflictCurrent.notes ||
+                'no notes'}.
+            </p>
+          {/if}
+        </div>
+      {/if}
+      {#if controller.createBlocked.relationships || committed}
+        <Button label="Refresh relationships" disabled={submitting} onclick={() => void refreshAfterUncertainOutcome()} />
+      {/if}
     </div>
-  </form>
-</Modal>
+    {#snippet footer()}
+        <Button
+          type="submit"
+          tone="info"
+          surface="solid"
+          label={initialRelationship ? 'Save' : 'Create'}
+          disabled={submitting ||
+            committed ||
+            !relationshipTypeSlug ||
+            Boolean(startDateError) ||
+            Boolean(endDateError) ||
+            (!initialRelationship && (counterpartID === null || counterpartID === personID)) ||
+            controller.createBlocked.relationships}
+        />
+    {/snippet}
+  </Modal>
+</form>
 
 <style>
   .editor {
     display: grid;
-    gap: var(--space-3);
+    gap: var(--space-6);
     min-width: 0;
+  }
+  section {
+    display: grid;
+    gap: var(--field-gap);
+    min-width: 0;
+  }
+  h3 {
+    margin: 0;
+    font-size: var(--font-size-md);
+  }
+  .sentence strong {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .sentence, .connection-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2) 0;
+    border-bottom: 1px solid var(--border-muted);
+  }
+  .connection-row {
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--field-gap);
+  }
+  .connection-row p {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .type-picker {
+    min-width: 0;
+    max-width: 100%;
+    --typeahead-panel-min-width: min(408px, calc(100vw - 64px));
+  }
+  .people-picker {
+    min-width: 0;
+    max-width: 100%;
+    --typeahead-icon-width: 24px;
+    --typeahead-panel-min-width: min(408px, calc(100vw - 64px));
+  }
+  .dates {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--field-gap);
+  }
+  .dates label {
+    flex: 1;
+    min-width: 0;
+  }
+  @media (max-width: 640px) {
+    .dates {
+      flex-direction: column;
+      align-items: stretch;
+    }
   }
   label {
     display: grid;
@@ -362,11 +381,5 @@
     display: grid;
     gap: var(--space-1);
     color: var(--text-danger);
-  }
-  .actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-2);
-    flex-wrap: wrap;
   }
 </style>

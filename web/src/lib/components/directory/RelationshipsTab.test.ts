@@ -1,10 +1,10 @@
-import { controllerWith as entityControllerWith, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith as entityControllerWith, directoryPerson, relationshipType, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../../api/client';
 import { DirectoryEntityController } from '../../directory/entity-controller.svelte';
-import { chooseSelectOption, openTypeahead } from '../../../test/kit-ui';
+import { openTypeahead } from '../../../test/kit-ui';
 import RelationshipsTab from './RelationshipsTab.svelte';
 
 function controllerWith(fetchFn: typeof fetch, personID = 7) {
@@ -38,15 +38,202 @@ function view(id: number, direction: 'incoming' | 'outgoing', label: string, nam
   };
 }
 
-function relationshipType(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by',
-    is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
-  };
-}
-
 describe('RelationshipsTab', () => {
+  it('clears old options before debounce so Enter cannot select the wrong person', async () => {
+    const { client, controller } = controllerWith(async input => {
+      const q = new URL(requestOf(input).url).searchParams.get('q');
+      return Response.json({ people: [directoryPerson(q ? 9 : 8)] });
+    });
+    controller.relationshipTypes = [relationshipType()];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    const input = await openTypeahead('Search people');
+    await screen.findByRole('option', { name: 'Synthetic Two' });
+    vi.useFakeTimers();
+    try {
+      await fireEvent.input(input, { target: { value: 'Synthetic Two Other' } });
+      await fireEvent.keyDown(input, { key: 'Enter' });
+      expect(screen.queryByRole('option', { name: 'Synthetic Two' })).toBeNull();
+      expect(screen.getByRole('button', { name: 'Create' })).toHaveProperty('disabled', true);
+      await fireEvent.keyDown(input, { key: 'Escape' });
+      expect(screen.getByRole('button', { name: 'Search people' })).toBeDefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('clears queries before response and ignores late results from older requests', async () => {
+    const responses: ((response: Response) => void)[] = [];
+    const { client, controller } = controllerWith(async () => new Promise<Response>(resolve => responses.push(resolve)));
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    const input = await openTypeahead('Search people');
+    await waitFor(() => expect(responses).toHaveLength(1));
+    await fireEvent.input(input, { target: { value: 'Other' } });
+    await fireEvent.input(input, { target: { value: '' } });
+    await waitFor(() => expect(responses).toHaveLength(2));
+    responses[1](Response.json({ people: [directoryPerson(9, { display_name: 'Current result' })] }));
+    await screen.findByRole('option', { name: 'Current result' });
+    const stale = Response.json({ people: [directoryPerson(8, { display_name: 'Stale result' })] });
+    responses[0](stale);
+    await waitFor(() => expect(stale.bodyUsed).toBe(true));
+    expect(screen.queryByRole('option', { name: 'Stale result' })).toBeNull();
+    expect(screen.getByRole('option', { name: 'Current result' })).toBeDefined();
+  });
+
+  it('retries a failed recent lookup when the people picker reopens', async () => {
+    let reads = 0;
+    let fail = true;
+    const { client, controller } = controllerWith(async () => {
+      reads++;
+      return fail
+        ? Response.json({ message: 'Recent lookup unavailable' }, { status: 503 })
+        : Response.json({ people: [directoryPerson(8)] });
+    });
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    const input = await openTypeahead('Search people');
+    await waitFor(() => expect(reads).toBe(1));
+    await screen.findByText('Recent lookup unavailable');
+    fail = false;
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    await openTypeahead('Search people');
+    expect(await screen.findByRole('option', { name: 'Synthetic Two' })).toBeDefined();
+  });
+
+  it.each([
+    ['Guides (guide; subject → person)', '→ guides → (guide; subject → person)', 'guide', 'guides', 'guides', 7, 8],
+    ['Guides (guide; person → subject)', '→ guides → (guide; person → subject)', 'guide', 'guides', 'guides', 8, 7],
+  ])('creates literal endpoints for %s', async (caption, phrase, slug, forward, reverse, source, target) => {
+    let post: Request | undefined;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'POST') { post = request; return Response.json(relationship()); }
+      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+      return Response.json({ relationships: [] });
+    });
+    controller.relationshipTypes = [relationshipType({ slug: String(slug), forward_label: String(forward), reverse_label: String(reverse) })];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await openTypeahead('Search people');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: String(caption) }));
+    expect(screen.getByRole('button', { name: `Connection type: ${phrase}` })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(post).toBeDefined());
+    await expect(post!.clone().json()).resolves.toEqual({ source_person_id: source, target_person_id: target, relationship_type_slug: slug });
+  });
+
+  it('offers recent saved people immediately and excludes the subject', async () => {
+    const requests: Request[] = [];
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      requests.push(request);
+      return Response.json({ people: [
+        directoryPerson(7, { display_name: 'Selected Self' }),
+        directoryPerson(8, { display_name: 'Synthetic Peer', organizations: ['Example Labs'] })
+      ] });
+    });
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await openTypeahead('Search people');
+    await waitFor(() => expect(requests).toHaveLength(1));
+    expect(await screen.findByRole('option', { name: /Synthetic Peer/ })).toBeDefined();
+    await fireEvent.mouseDown(screen.getByRole('option', { name: /Synthetic Peer/ }));
+    await openTypeahead('Search people');
+    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'Search people' }), { key: 'Escape' });
+    expect(requests).toHaveLength(1);
+    expect(screen.queryByText('Selected Self')).toBeNull();
+    const query = new URL(requests[0].url).searchParams;
+    expect(query.has('q')).toBe(false);
+    expect(query.get('sort')).toBe('last_contact_desc');
+    expect(query.get('limit')).toBe('20');
+  });
+
+  it('shows no-match, empty, and failed searches without losing a selected label', async () => {
+    let fail = false;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      const q = new URL(request.url).searchParams.get('q');
+      if (fail) return Response.json({ message: 'Search unavailable' }, { status: 503 });
+      return Response.json({ people: q ? [] : [directoryPerson(8, { display_name: 'Synthetic Peer' })] });
+    });
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    let input = await openTypeahead('Search people');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Peer' }));
+    expect(screen.getByRole('button', { name: 'Search people: Synthetic Peer' })).toBeDefined();
+    input = await openTypeahead('Search people');
+    await fireEvent.input(input, { target: { value: 'Nobody' } });
+    expect(await screen.findByText('No one matches "Nobody"')).toBeDefined();
+    await fireEvent.input(input, { target: { value: '' } });
+    expect(await screen.findByRole('option', { name: 'Synthetic Peer' })).toBeDefined();
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.getByRole('button', { name: 'Search people: Synthetic Peer' })).toBeDefined();
+    input = await openTypeahead('Search people');
+    fail = true;
+    await fireEvent.input(input, { target: { value: 'Retry' } });
+    expect(await screen.findByText('Search unavailable')).toBeDefined();
+    expect(screen.queryByText('No one matches "Retry"')).toBeNull();
+    expect(screen.queryByText('No other saved people')).toBeNull();
+  });
+
+  it('keeps a renamed inverse type searchable and writes its slug', async () => {
+    let post: Request | undefined;
+    const { client, controller } = controllerWith(async input => {
+      const request = requestOf(input);
+      if (request.method === 'POST') { post = request; return Response.json(relationship()); }
+      if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [directoryPerson(8)] });
+      return Response.json({ relationships: [] });
+    });
+    controller.relationshipTypes = [
+      relationshipType({ id: 1, slug: 'parent', ownership: 'system', is_canonical: true, inverse_type_id: 2, forward_label: 'parent', reverse_label: 'child' }),
+      relationshipType({ id: 2, slug: 'child', ownership: 'system', is_canonical: false, inverse_type_id: 1, forward_label: 'is a descendant of', reverse_label: 'parent' }),
+    ];
+    render(RelationshipsTab, { client, controller, personID: 7 });
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
+    await openTypeahead('Search people');
+    await fireEvent.mouseDown(await screen.findByRole('option', { name: 'Synthetic Two' }));
+    const input = await openTypeahead('Connection type');
+    await fireEvent.input(input, { target: { value: 'descendant' } });
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Is a descendant of' }));
+    expect(screen.getByRole('button', { name: 'Connection type: → is a descendant of →' })).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(post).toBeDefined());
+    await expect(post!.clone().json()).resolves.toEqual({ source_person_id: 7, target_person_id: 8, relationship_type_slug: 'child' });
+  });
+
+  it.each(['incoming', 'outgoing'] as const)('reads the existing %s connection as a sentence', async direction => {
+    const { client, controller } = controllerWith(async () => Response.json({ reviews: [] }));
+    controller.relationshipTypes = [relationshipType()];
+    controller.relationships = [view(41, direction, direction === 'incoming' ? 'is mentored by' : 'mentors', 'Synthetic Peer')];
+    render(RelationshipsTab, { client, controller, personID: 7, personName: 'Synthetic Subject' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
+    expect(screen.getByRole('dialog').textContent).toContain(`Synthetic Subject → ${direction === 'incoming' ? 'is mentored by' : 'mentors'} → Synthetic Peer`);
+  });
+
+  it.each([true, false])('separates suggestions and guards navigation with callback %s', async navigable => {
+    const review = { id: 1, person_id: 7, matched_person_id: 8, raw_related_value: 'Synthetic Peer', raw_related_type: 'friend', value_kind: 'text', status: 'pending', source: 'carddav_import', created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+    const client = createAPIClient(async () => Response.json({ reviews: [review, { ...review, id: 2, status: 'rejected', matched_person_id: null, raw_related_value: 'Earlier suggestion', reviewed_at: '2026-08-02T12:00:00Z' }, { ...review, id: 3, status: 'accepted', raw_related_value: 'Confirmed suggestion' }] }));
+    const controller = new DirectoryEntityController(client, 7);
+    controller.relationships = [view(41, 'outgoing', 'friend', 'Confirmed person', { counterpart_person_id: 8 })];
+    const onOpenPerson = vi.fn();
+    render(RelationshipsTab, { client, controller, personID: 7, onOpenPerson: navigable ? onOpenPerson : undefined });
+    expect(await screen.findByRole('heading', { name: 'Suggested (1)' })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Reviewed (2)' })).toBeDefined();
+    expect(screen.queryByText('Pending')).toBeNull();
+    const row = screen.getByText('Synthetic Peer').closest('.detail-row') as HTMLElement;
+    expect(row.textContent).toContain('from Address book');
+    expect(screen.queryAllByRole('button', { name: 'Open person' })).toHaveLength(navigable ? 1 : 0);
+    expect(screen.getByText('Earlier suggestion').closest('.detail-row')?.textContent).toContain('Aug 2, 2026');
+    if (navigable) {
+      await fireEvent.click(within(row).getByRole('button', { name: 'Open person' }));
+      expect(onOpenPerson).toHaveBeenCalledWith(8);
+    }
+    expect(screen.getByText('Rejected')).toBeDefined();
+  });
+
   it('renders curated connections', () => {
     const { client, controller } = controllerWith(async input => {
       const path = pathOf(requestOf(input));
@@ -85,7 +272,7 @@ describe('RelationshipsTab', () => {
     try {
       await screen.findByText('existing@example.com');
       expect(screen.getByText('Accepted')).toBeDefined();
-      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X-CUSTOM_friend · Vcard import · Text · Aug 1, 2026 · Aug 2, 2026');
+      expect(screen.getByText('existing@example.com').closest('.detail-row')?.textContent).toContain('X-CUSTOM_friend · from Vcard import · Text · Aug 1, 2026 · Aug 2, 2026');
       merged = true;
       await controller.refreshRelationships();
       expect(await screen.findByText('absorbed@example.com')).toBeDefined();
@@ -181,21 +368,21 @@ describe('RelationshipsTab', () => {
       render(RelationshipsTab, { client, controller, personID: 7 });
 
       await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-      const personSearch = await openTypeahead('Relationship counterpart');
+      const personSearch = await openTypeahead('Search people');
       await fireEvent.input(personSearch, { target: { value: 'Synthetic' } });
       await vi.advanceTimersByTimeAsync(250);
       expect(await screen.findByRole('option', { name: /Synthetic Counterpart/ })).toBeDefined();
       expect(screen.queryByText('Selected Self')).toBeNull();
       await fireEvent.mouseDown(screen.getByRole('option', { name: /Synthetic Counterpart/ }));
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship direction:/ }), 'Counterpart → selected person');
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
+      await openTypeahead('Connection type');
+      await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Is mentored by' }));
       await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship start date' }), { target: { value: '2025' } });
       await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship end date' }), { target: { value: '2026-08' } });
       await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: 'Synthetic note' } });
-      await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
+      await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
       await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship' })).toBeNull());
-      const search = requests.find((request) => pathOf(request) === '/api/v1/people/directory')!;
+      const search = requests.find((request) => new URL(request.url).searchParams.get('q') === 'Synthetic')!;
       expect(new URL(search.url).searchParams.get('q')).toBe('Synthetic');
       expect(new URL(search.url).searchParams.get('limit')).toBe('20');
       const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships')!;
@@ -229,12 +416,13 @@ describe('RelationshipsTab', () => {
       render(RelationshipsTab, { client, controller, personID: 7 });
 
       await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-      const personSearch = await openTypeahead('Relationship counterpart');
+      const personSearch = await openTypeahead('Search people');
       await fireEvent.input(personSearch, { target: { value: 'Synthetic' } });
       await vi.advanceTimersByTimeAsync(250);
       await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
-      await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
-      const create = screen.getByRole('button', { name: 'Create relationship' });
+      await openTypeahead('Connection type');
+      await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+      const create = screen.getByRole('button', { name: 'Create' });
       expect(create).toHaveProperty('disabled', false);
 
       const start = screen.getByRole('textbox', { name: 'Relationship start date' });
@@ -262,7 +450,7 @@ describe('RelationshipsTab', () => {
       const request = requestOf(input);
       if (pathOf(request) === '/api/v1/relationship-types') {
         reads += 1;
-        return Response.json({ relationship_types: [relationshipType()] });
+        return reads === 1 ? Response.json({ message: 'Types unavailable' }, { status: 503 }) : Response.json({ relationship_types: [relationshipType()] });
       }
       if (pathOf(request) === '/api/v1/people/directory') return Response.json({ people: [] });
       throw new Error(`unexpected ${request.method} ${pathOf(request)}`);
@@ -272,7 +460,14 @@ describe('RelationshipsTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
     await waitFor(() => expect(reads).toBe(1));
+    const input = await openTypeahead('Connection type');
+    await screen.findByText('Types unavailable');
+    expect(screen.queryByText('No matches')).toBeNull();
+    await fireEvent.keyDown(input, { key: 'Escape' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Close relationship editor' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
     await waitFor(() => expect(controller.relationshipTypes).toHaveLength(1));
+    expect(reads).toBe(2);
     expect(controller.errors.relationshipTypes).toBeFalsy();
   });
 
@@ -298,11 +493,11 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await fireEvent.input(await openTypeahead('Relationship counterpart'), { target: { value: 'Colleague' } });
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Colleague' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Colleague/ }));
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship direction:/ }), 'Selected person → counterpart');
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
-    await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Add relationship' })).toBeNull());
     const post = requests.find((request) => pathOf(request) === '/api/v1/person-relationships' && request.method === 'POST')!;
@@ -340,7 +535,7 @@ describe('RelationshipsTab', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
     const notes = await screen.findByRole('textbox', { name: 'Relationship notes' });
     await fireEvent.input(notes, { target: { value: 'Retained local draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('changed elsewhere');
     expect((screen.getByRole('textbox', { name: 'Relationship notes' }) as HTMLInputElement).value).toBe('Retained local draft');
@@ -376,7 +571,7 @@ describe('RelationshipsTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship end date' }), { target: { value: '2026-08' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
     const patch = requests.find((request) => request.method === 'PATCH')!;
@@ -409,7 +604,7 @@ describe('RelationshipsTab', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: '   ' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
     const patch = requests.find((request) => request.method === 'PATCH')!;
@@ -428,7 +623,7 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Edit relationship' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Save relationship' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Edit relationship' })).toBeNull());
     expect(fetchFn).not.toHaveBeenCalled();
@@ -479,15 +674,16 @@ describe('RelationshipsTab', () => {
     render(RelationshipsTab, { client, controller, personID: 7 });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Add connection' }));
-    await fireEvent.input(await openTypeahead('Relationship counterpart'), { target: { value: 'Counterpart' } });
+    await fireEvent.input(await openTypeahead('Search people'), { target: { value: 'Counterpart' } });
     await fireEvent.mouseDown(await screen.findByRole('option', { name: /Synthetic Counterpart/ }));
-    await chooseSelectOption(screen.getByRole('combobox', { name: /^Relationship type:/ }), 'mentors / is mentored by');
+    await openTypeahead('Connection type');
+    await fireEvent.mouseDown(screen.getByRole('treeitem', { name: 'Mentors' }));
     await fireEvent.input(screen.getByRole('textbox', { name: 'Relationship notes' }), { target: { value: 'Retained unknown draft' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'Create relationship' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
 
     expect((await screen.findByRole('alert')).textContent).toContain('outcome is unknown');
     expect((screen.getByRole('textbox', { name: 'Relationship notes' }) as HTMLInputElement).value).toBe('Retained unknown draft');
-    expect(screen.getByRole('button', { name: 'Create relationship' })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('button', { name: 'Create' })).toHaveProperty('disabled', true);
     await fireEvent.click(within(screen.getByRole('dialog', { name: 'Add relationship' })).getByRole('button', { name: 'Refresh relationships' }));
     await waitFor(() => expect(controller.createBlocked.relationships).toBe(false));
     expect(posts).toBe(1);
