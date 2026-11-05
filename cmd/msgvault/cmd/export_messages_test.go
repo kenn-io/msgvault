@@ -458,12 +458,6 @@ func TestExportMessagesRequiredBoundsBeforeDaemonAccess(t *testing.T) {
 	}
 }
 
-// The first output follows filter resolution and precedes the record reads.
-// Commit through the real store at that boundary, as a concurrent sync would.
-type exportWriteFunc func([]byte) (int, error)
-
-func (f exportWriteFunc) Write(p []byte) (int, error) { return f(p) }
-
 func TestExportMessagesCommandConcurrentParticipantMerge(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -487,7 +481,7 @@ func TestExportMessagesCommandConcurrentParticipantMerge(t *testing.T) {
 	}})
 	var output bytes.Buffer
 	merged := false
-	cmd.SetOut(exportWriteFunc(func(p []byte) (int, error) {
+	cmd.SetOut(optimizeStreamWriter(func(p []byte) (int, error) {
 		if !merged {
 			merged = true
 			require.NoError(st.MergeParticipants(oldID, newID))

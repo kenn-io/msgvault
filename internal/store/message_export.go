@@ -142,12 +142,6 @@ func (s *Store) ExportMessages(
 			return MessageExportCounts{}, err
 		}
 	}
-	ctx, release, err := s.BeginReadSnapshotContext(ctx)
-	if err != nil {
-		return MessageExportCounts{}, err
-	}
-	defer release()
-
 	var counts MessageExportCounts
 	if err := s.exportMessageSources(ctx, filter, sink, &counts); err != nil {
 		return counts, err

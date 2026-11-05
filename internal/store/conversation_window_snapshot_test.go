@@ -2,7 +2,10 @@ package store
 
 import (
 	"database/sql"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,7 +19,16 @@ func TestConversationWindowConcurrentWriteSnapshot(t *testing.T) {
 			t.Run(boundary+"/"+change, func(t *testing.T) {
 				requirements := require.New(t)
 				assertions := assert.New(t)
-				st := newSnapshotTestStore(t)
+				var st *Store
+				if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+					st = newPGStoreInternal(t)
+				} else {
+					var err error
+					st, err = OpenForTest(filepath.Join(t.TempDir(), "window.db"))
+					requirements.NoError(err)
+					t.Cleanup(func() { requirements.NoError(st.Close()) })
+					requirements.NoError(st.InitSchema())
+				}
 				source, err := st.GetOrCreateSource("gmail", "snapshot@example.com")
 				requirements.NoError(err)
 				conv, err := st.EnsureConversation(source.ID, "snapshot", "Snapshot")
@@ -41,10 +53,21 @@ func TestConversationWindowConcurrentWriteSnapshot(t *testing.T) {
 				}
 				requirements.NoError(err)
 
-				fired := commitSnapshotWriterOnQuery(t, st, writer, boundary)
+				// Commit a real sync/dedup write after the anchor read or counts.
+				// Rebind is the existing statement boundary; queries still run on the database.
+				rebind := st.db.rebind
+				fired := false
+				st.db.rebind = func(query string) string {
+					if !fired && strings.Contains(query, boundary) {
+						fired = true
+						requirements.NoError(writer.Commit())
+					}
+					return rebind(query)
+				}
+				defer func() { st.db.rebind = rebind }()
 				window, err := st.GetConversationWindow(conv, ids[1], 25, 25)
 				requirements.NoError(err)
-				requirements.True(*fired, "the concurrent write must commit during the read")
+				requirements.True(fired, "the concurrent write must commit during the read")
 				got := make([]int64, 0, len(window.Messages))
 				for _, message := range window.Messages {
 					got = append(got, message.ID)

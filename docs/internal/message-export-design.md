@@ -354,10 +354,10 @@ their normal bound parameters and backend dialect support.
 1. It emits the completion record with observed counts.
 
 Source and person resolution share one read-only database snapshot with the
-record phases, using REPEATABLE READ on PostgreSQL. This keeps records consistent while imports
-and syncs continue. `export-messages` runs alongside that work without taking
-the daemon's operation gate. Direct local execution uses the same daemon
-command-routing policy.
+record phases, using REPEATABLE READ on PostgreSQL. This keeps records
+consistent while imports and syncs continue. `export-messages` runs alongside
+that work without taking the daemon's operation gate. Direct local execution
+uses the same daemon command-routing policy.
 
 The existing daemon CLI transport may wrap subprocess output in its own NDJSON
 events internally. The daemon client reconstructs command stdout, so callers
