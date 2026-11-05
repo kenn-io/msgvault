@@ -283,7 +283,7 @@ func calendarEventZone(e calevent.Event) (*time.Location, error) {
 	if name == "" {
 		return time.UTC, nil
 	}
-	zone, err := time.LoadLocation(name)
+	zone, err := calevent.LoadZone(name)
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)
 	}
