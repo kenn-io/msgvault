@@ -61,9 +61,9 @@ func TestBuildExcludesRooms(t *testing.T) {
 			assertions.Zero(roomRows)
 			requirements.NoError(db.QueryRow(`SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetPeople)).Scan(&aliceCount))
 			if mode == ModeIncremental {
-				assertions.Equal(int64(2), aliceCount)
+				assertions.Equal(int64(2), aliceCount, "incremental builds retain Alice's committed activity and add her new message to the room")
 			} else {
-				assertions.Equal(int64(1), aliceCount)
+				assertions.Equal(int64(1), aliceCount, "full and index-only builds preserve Alice's activity while excluding the room-only message")
 			}
 			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetDomains)).Scan(&roomRows))
 			assertions.Zero(roomRows)

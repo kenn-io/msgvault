@@ -1,12 +1,14 @@
 package identityindex
 
-import "fmt"
+import (
+	"fmt"
 
-const roomDomain = "resource.calendar.google.com"
+	"go.kenn.io/msgvault/internal/calevent"
+)
 
 // RoomDomainSQL matches a normalized domain against calendar resource domains.
 func RoomDomainSQL(col string) string {
-	return fmt.Sprintf("(%s = '%s' OR ends_with(%s, '.%s'))", col, roomDomain, col, roomDomain)
+	return fmt.Sprintf("(%s = '%s' OR ends_with(%s, '.%s'))", col, calevent.RoomDomain, col, calevent.RoomDomain)
 }
 
 // CanonicalParticipantsSQL resolves participants through their identity clusters.
