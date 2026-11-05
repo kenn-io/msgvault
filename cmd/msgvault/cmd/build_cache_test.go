@@ -36,7 +36,6 @@ func initCacheTestSchema(t *testing.T, path string) *store.Store {
 	st, err := store.OpenForTest(path)
 	require.NoError(t, err)
 	require.NoError(t, st.InitSchema())
-	t.Cleanup(func() { require.NoError(t, st.Close()) })
 	return st
 }
 
@@ -91,6 +90,7 @@ func setupTestSQLite(t *testing.T) string {
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	st := initCacheTestSchema(t, dbPath)
+	defer func() { require.NoError(t, st.Close()) }()
 	db := st.DB()
 
 	// Insert test data
@@ -2894,7 +2894,7 @@ func TestBuildCache_EmptyDatabase(t *testing.T) {
 	dbPath := filepath.Join(tmpDir, "empty.db")
 	analyticsDir := filepath.Join(tmpDir, "analytics")
 
-	initCacheTestSchema(t, dbPath)
+	require.NoError(initCacheTestSchema(t, dbPath).Close())
 
 	result, err := buildCache(dbPath, analyticsDir, false)
 	require.NoError(err, "buildCache on empty db")
@@ -3130,6 +3130,7 @@ func setupTestSQLiteEmpty(t *testing.T) string {
 
 	dbPath := filepath.Join(tmpDir, "test.db")
 	st := initCacheTestSchema(t, dbPath)
+	defer func() { require.NoError(t, st.Close()) }()
 	db := st.DB()
 
 	// Insert metadata but NO messages
