@@ -988,34 +988,6 @@ func TestExecutor_Finalize_TerminalFileCarriesFinalState(t *testing.T) {
 	require.NotNil(loaded.Execution.CompletedAt, "CompletedAt persisted before the move")
 }
 
-func TestExecutor_Finalize_WithoutJournalWrite(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tc := NewTestContext(t)
-
-	manifest := tc.CreateManifest("journal write failure", msgIDs(3))
-	tc.Exec.WithProgress(&onStartProgress{hook: func() {
-		// An empty directory blocks the append on every OS while allowing
-		// the full manifest writer to remove it after publication.
-		path := journalPath(filepath.Join(tc.Mgr.InProgressDir(), manifest.ID+".json"))
-		require.NoError(os.Mkdir(path, 0o700))
-	}})
-
-	require.NoError(tc.ExecuteWithOpts(manifest.ID, trashOpts(100)))
-	tc.AssertTrashCalls(3)
-
-	loaded, err := LoadManifest(filepath.Join(tc.Mgr.CompletedDir(), manifest.ID+".json"))
-	require.NoError(err)
-	assert.Equal(StatusCompleted, loaded.Status)
-	require.NotNil(loaded.Execution)
-	assert.Equal(3, loaded.Execution.Succeeded)
-	assert.Equal(3, loaded.Execution.LastProcessedIndex)
-	assert.NotNil(loaded.Execution.CompletedAt)
-
-	require.Error(tc.ExecuteWithOpts(manifest.ID, trashOpts(100)))
-	assert.Len(tc.MockAPI.TrashCalls, 3, "rerunning a completed manifest must make no additional Trash calls")
-}
-
 // TestExecutor_Finalize_CompletedFileIsSelfConsistent verifies the ordinary
 // path: the file in completed/ carries its own final status and counters, so
 // readers never depend on the directory to correct a stale inline status.
@@ -1623,12 +1595,8 @@ func TestExecutor_ExecuteBatch_CooperativeCancel(t *testing.T) {
 	tc.AssertCancelledCount(1)
 }
 
-// TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest drives the
-// exact checkpoint-write race: a manifest is claimed into in_progress/, then a
-// daemon cancel moves it to cancelled/ in the window where the executor's
-// cancellation stat would previously have already passed. The subsequent
-// checkpoint write must NOT recreate in_progress/<id>.json; the manifest must
-// remain only in cancelled/.
+// TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest verifies that
+// a checkpoint rejected after cancellation leaves no journal behind.
 func TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest(t *testing.T) {
 	tc := NewTestContext(t)
 	manifest := tc.CreateManifest("checkpoint race", msgIDs(10))
@@ -1643,7 +1611,9 @@ func TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest(t *testing.T)
 	require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
 
 	// Invoke the checkpoint write directly at the race boundary.
-	tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil, 0)
+	assert.False(t, tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil, 0))
+	_, err := os.Stat(journalPath(path))
+	assert.ErrorIs(t, err, os.ErrNotExist, "cancelled checkpoint must not create a journal")
 
 	// The in_progress file must not be resurrected; the manifest lives only
 	// in cancelled/.

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -106,42 +107,62 @@ func TestExecutor_JournalResume(t *testing.T) {
 	tc.AssertManifestExecution(m.ID, 4, 2, "msg3", "msg4")
 }
 
-func TestExecutor_FinalizeJournalCleanupFailurePreservesProgress(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Getuid() == 0 {
-		t.Skip("requires Unix file permissions enforced for the current user")
-	}
-	require := require.New(t)
-	assert := assert.New(t)
-	tc := NewTestContext(t)
-	m := tc.CreateManifest("final journal cleanup failure", msgIDs(3))
-	baseDir := tc.Mgr.baseDir
-	t.Cleanup(func() { require.NoError(os.Chmod(baseDir, 0o700)) })
-	tc.MockAPI.BeforeTrash = func(id string) error {
-		if id == "msg2" {
-			// Existing journal appends and the full write in in_progress still
-			// succeed, but unlinking the journal in its parent must fail.
-			require.NoError(os.Chmod(baseDir, 0o500))
-		}
-		return nil
-	}
-	err := tc.ExecuteWithOpts(m.ID, trashOpts(2))
-	require.NoError(err)
-	path := filepath.Join(tc.Mgr.CompletedDir(), m.ID+".json")
-	_, err = os.Stat(journalPath(path))
-	require.NoError(err)
-	loaded, err := LoadManifest(path)
-	require.NoError(err)
-	assert.Equal(StatusCompleted, loaded.Status)
-	assert.Equal(3, loaded.Execution.LastProcessedIndex)
-	assert.Equal(3, loaded.Execution.Succeeded)
-	assert.Zero(loaded.Execution.Failed)
-	require.NotNil(loaded.Execution.CompletedAt)
+func TestExecutor_FinalizeWithJournalFailure(t *testing.T) {
+	for _, failure := range []string{"append", "cleanup"} {
+		t.Run(failure, func(t *testing.T) {
+			if failure == "cleanup" && (runtime.GOOS == "windows" || os.Getuid() == 0) {
+				t.Skip("requires Unix file permissions enforced for the current user")
+			}
+			require := require.New(t)
+			assert := assert.New(t)
+			tc := NewTestContext(t)
+			m := tc.CreateManifest("final journal failure", msgIDs(3))
+			baseDir := tc.Mgr.baseDir
+			batchSize := 100
+			if failure == "append" {
+				tc.Exec.WithProgress(&onStartProgress{hook: func() {
+					// A directory blocks appends on every OS and can be removed
+					// after the full manifest has been published.
+					path := journalPath(filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json"))
+					require.NoError(os.Mkdir(path, 0o700))
+				}})
+			} else {
+				batchSize = 2
+				t.Cleanup(func() { require.NoError(os.Chmod(baseDir, 0o700)) })
+				tc.MockAPI.BeforeTrash = func(id string) error {
+					if id == "msg2" {
+						// Appends and publication in in_progress still succeed,
+						// but unlinking the journal in its parent must fail.
+						require.NoError(os.Chmod(baseDir, 0o500))
+					}
+					return nil
+				}
+			}
+			require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(batchSize)))
+			tc.AssertTrashCalls(3)
+			path := filepath.Join(tc.Mgr.CompletedDir(), m.ID+".json")
+			if failure == "cleanup" {
+				_, err := os.Stat(journalPath(path))
+				require.NoError(err)
+			}
+			loaded, err := LoadManifest(path)
+			require.NoError(err)
+			assert.Equal(StatusCompleted, loaded.Status)
+			require.NotNil(loaded.Execution)
+			assert.Equal(3, loaded.Execution.LastProcessedIndex)
+			assert.Equal(3, loaded.Execution.Succeeded)
+			assert.Zero(loaded.Execution.Failed)
+			assert.Empty(loaded.Execution.FailedIDs)
+			require.NotNil(loaded.Execution.CompletedAt)
 
-	require.NoError(os.Chmod(baseDir, 0o700))
-	tc.MockAPI.BeforeTrash = nil
-	require.ErrorContains(tc.ExecuteWithOpts(m.ID, trashOpts(2)), "is completed, cannot execute")
-	assert.Equal([]string{"msg0", "msg1", "msg2"}, tc.MockAPI.TrashCalls)
-	tc.AssertManifestExecution(m.ID, 3, 0)
+			if failure == "cleanup" {
+				require.NoError(os.Chmod(baseDir, 0o700))
+			}
+			tc.MockAPI.BeforeTrash = nil
+			require.ErrorContains(tc.ExecuteWithOpts(m.ID, trashOpts(batchSize)), "is completed, cannot execute")
+			assert.Equal([]string{"msg0", "msg1", "msg2"}, tc.MockAPI.TrashCalls)
+		})
+	}
 }
 
 func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
@@ -151,7 +172,7 @@ func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 	m := tc.CreateManifest("tombstone resume", msgIDs(3))
 	tc.SeedMessages(msgIDs(3))
 	m.Status = StatusInProgress
-	m.Execution = &Execution{Method: MethodTrash, LastProcessedIndex: 1, TombstoneIDs: []string{"msg0"}}
+	m.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash, LastProcessedIndex: 1, TombstoneIDs: []string{"msg0"}}
 	require.NoError(tc.Mgr.SaveManifest(m))
 	tc.MockAPI.BeforeTrash = func(id string) error {
 		if id == "msg2" {
@@ -173,50 +194,44 @@ func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 }
 
 func TestExecutor_CancelFoldsJournal(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	tc := NewTestContext(t)
-	m := tc.CreateManifest("cancel progress", msgIDs(3))
-	tc.MockAPI.BeforeTrash = func(id string) error {
-		if id == "msg1" {
-			require.NoError(tc.Mgr.CancelManifest(m.ID))
-		}
-		return nil
-	}
-	require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
-	cancelled, status, err := tc.Mgr.GetManifestWithStatus(m.ID)
-	require.NoError(err)
-	assert.Equal(StatusCancelled, status)
-	assert.Equal(1, cancelled.Execution.Succeeded)
-	assert.Equal(1, cancelled.Execution.LastProcessedIndex)
-	_, err = os.Stat(journalPath(filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")))
-	assert.ErrorIs(err, os.ErrNotExist)
-}
-
-func TestExecutor_CancelMovesBeforeFallibleRewrite(t *testing.T) {
-	if runtime.GOOS == "windows" || os.Getuid() == 0 {
-		t.Skip("requires Unix file permissions enforced for the current user")
-	}
-	require := require.New(t)
-	assert := assert.New(t)
-	tc := NewTestContext(t)
-	m := tc.CreateManifest("cancel rewrite failure", msgIDs(3))
-	tc.MockAPI.BeforeTrash = func(id string) error {
-		if id == "msg1" {
+	for _, rewriteFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rewriteFails=%v", rewriteFails), func(t *testing.T) {
+			if rewriteFails && (runtime.GOOS == "windows" || os.Getuid() == 0) {
+				t.Skip("requires Unix file permissions enforced for the current user")
+			}
+			require := require.New(t)
+			assert := assert.New(t)
+			tc := NewTestContext(t)
+			m := tc.CreateManifest("cancel progress", msgIDs(3))
 			path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
-			// The rename succeeds, but saving the moved file must fail.
-			require.NoError(os.Chmod(path, 0o400))
-			require.ErrorIs(tc.Mgr.CancelManifest(m.ID), os.ErrPermission)
-		}
-		return nil
+			tc.MockAPI.BeforeTrash = func(id string) error {
+				if id == "msg1" {
+					if rewriteFails {
+						// The rename succeeds, but saving the moved file fails.
+						require.NoError(os.Chmod(path, 0o400))
+						require.ErrorIs(tc.Mgr.CancelManifest(m.ID), os.ErrPermission)
+					} else {
+						require.NoError(tc.Mgr.CancelManifest(m.ID))
+					}
+				}
+				return nil
+			}
+			require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
+			assert.True(tc.Mgr.ManifestCancelled(m.ID))
+			assert.Equal([]string{"msg0", "msg1"}, tc.MockAPI.TrashCalls)
+			cancelled, status, err := tc.Mgr.GetManifestWithStatus(m.ID)
+			require.NoError(err)
+			assert.Equal(StatusCancelled, status)
+			assert.Equal(1, cancelled.Execution.Succeeded)
+			assert.Equal(1, cancelled.Execution.LastProcessedIndex)
+			_, err = os.Stat(journalPath(path))
+			if rewriteFails {
+				assert.NoError(err, "journal preserves progress when the rewrite fails")
+			} else {
+				assert.ErrorIs(err, os.ErrNotExist)
+			}
+		})
 	}
-	require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
-	assert.True(tc.Mgr.ManifestCancelled(m.ID))
-	assert.Equal([]string{"msg0", "msg1"}, tc.MockAPI.TrashCalls)
-	cancelled, err := LoadManifest(filepath.Join(tc.Mgr.dirForStatus(StatusCancelled), m.ID+".json"))
-	require.NoError(err)
-	assert.Equal(1, cancelled.Execution.LastProcessedIndex)
-	assert.Equal(1, cancelled.Execution.Succeeded)
 }
 
 func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
@@ -224,7 +239,7 @@ func TestExecutor_TombstoneStopReplacesFailures(t *testing.T) {
 	m := tc.CreateManifest("tombstone restart", msgIDs(3))
 	m.Status = StatusInProgress
 	m.Execution = &Execution{
-		Method: MethodTrash, LastProcessedIndex: 2,
+		StartedAt: time.Now(), Method: MethodTrash, LastProcessedIndex: 2,
 		Failed: 1, FailedIDs: []string{"msg0"}, TombstoneIDs: []string{"msg1"},
 	}
 	require.NoError(t, tc.Mgr.SaveManifest(m))

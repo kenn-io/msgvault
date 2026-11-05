@@ -907,7 +907,7 @@ func TestManifestListIDsRoundTripAndOmitWhenEmpty(t *testing.T) {
 	require.NoError(err)
 	require.NotNil(claimed.Execution)
 	claimed.Execution.LastProcessedIndex = 1
-	require.NoError(mgr.WriteInProgressCheckpoint(claimed, manifest.ID, 0))
+	require.NoError(mgr.WriteInProgressManifest(claimed, manifest.ID))
 
 	loaded, status, err := mgr.GetManifestWithStatus(manifest.ID)
 	require.NoError(err)
@@ -1118,7 +1118,7 @@ func TestManager_CheckpointCancelSerialize(t *testing.T) {
 }
 
 // TestManager_WriteInProgressCheckpoint_Writes verifies the happy path: a
-// checkpoint on a live in_progress manifest publishes its content atomically.
+// checkpoint on a live in_progress manifest is applied when loading progress.
 func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -1132,12 +1132,6 @@ func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
 	require.NoError(err, "reload checkpoint")
 	require.NotNil(loaded.Execution)
 	assert.Equal(7, loaded.Execution.LastProcessedIndex)
-	// No stray temp files left in the status directory.
-	entries, err := os.ReadDir(mgr.InProgressDir())
-	require.NoError(err, "ReadDir")
-	for _, e := range entries {
-		assert.False(strings.HasPrefix(e.Name(), "."), "leftover temp file %s", e.Name())
-	}
 }
 
 // TestManager_WriteInProgressCheckpoint_Cancelled verifies that a checkpoint on
@@ -1153,12 +1147,11 @@ func TestManager_WriteInProgressCheckpoint_Cancelled(t *testing.T) {
 	err := mgr.WriteInProgressCheckpoint(m, m.ID, 0)
 	require.ErrorIs(err, ErrManifestCancelled, "checkpoint after cancel")
 
-	_, statErr := os.Stat(filepath.Join(mgr.InProgressDir(), m.ID+".json"))
-	assert.True(os.IsNotExist(statErr), "in_progress must not be resurrected, got err=%v", statErr)
+	_, statErr := os.Stat(journalPath(filepath.Join(mgr.InProgressDir(), m.ID+".json")))
+	assert.ErrorIs(statErr, os.ErrNotExist, "rejected checkpoint must leave no journal")
 	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
 	require.NoError(err, "cancelled manifest parseable")
 	assert.Equal(StatusCancelled, loaded.Status)
-	assertSingleValidManifest(t, mgr, m.ID)
 }
 
 // TestManager_FinalizeInProgress_Cancelled verifies that a finalize losing to a
@@ -1209,6 +1202,9 @@ func TestManager_CheckpointCancelStress(t *testing.T) {
 			assert.NoError(t, mgr.CancelManifest(id), "CancelManifest")
 		}()
 		wg.Wait()
+
+		_, err := os.Stat(journalPath(filepath.Join(mgr.InProgressDir(), id+".json")))
+		assert.ErrorIs(t, err, os.ErrNotExist, "cancel must remove every checkpoint journal")
 
 		assertSingleValidManifest(t, mgr, id)
 	}
