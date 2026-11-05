@@ -3,12 +3,10 @@
 package query_test
 
 import (
-	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
@@ -38,17 +36,11 @@ func TestSQLiteListThreadUsesExpressionIndex(t *testing.T) {
 	must.NoError(err)
 	_, err = f.Store.DB().ExecContext(t.Context(), "ANALYZE")
 	must.NoError(err)
-	// Observe queries against the same temporary archive, including its indexes
-	// and planner statistics. Unqualified table names resolve to the attachment.
+	// Observe the temporary archive with its indexes and planner statistics.
 	var sequence int
 	var name, path string
 	must.NoError(f.Store.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
-	db, observer := sqlobserve.Open(t, func(conn *sqlite3.SQLiteConn) error {
-		if _, err := conn.Exec("ATTACH DATABASE ? AS archive", []driver.Value{path}); err != nil {
-			return fmt.Errorf("attach test archive: %w", err)
-		}
-		return nil
-	})
+	db, observer := sqlobserve.OpenFile(t, path, nil)
 	engine := query.NewSQLiteEngine(db)
 
 	for _, scoped := range []bool{false, true} {

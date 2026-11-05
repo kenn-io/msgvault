@@ -1142,6 +1142,7 @@ func (s *Store) buildLargeIndexesConcurrently(ctx context.Context) {
 	// under the pool-wide statement_timeout and could fail InitSchema outright.
 	concurrentIndexes := []struct{ name, definition string }{
 		{"idx_messages_conversation_id", "ON messages(conversation_id, id)"},
+		{"idx_messages_conversation_content_changed", "ON messages(conversation_id, content_changed_at)"},
 		{"idx_messages_conversation_timeline", "ON messages(conversation_id, COALESCE(sent_at, received_at, internal_date), id) WHERE deleted_at IS NULL"},
 		{"idx_messages_beeper_conversation", "ON messages(conversation_id, message_type) WHERE deleted_at IS NULL"},
 		{"idx_messages_source_id", "ON messages(source_id, id)"},
@@ -2048,6 +2049,12 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			if _, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id, id)`); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_conversation_content_changed
+				    ON messages(conversation_id, content_changed_at)
+			`); err != nil {
+				return err
+			}
 			// Beeper context guards on membership and title triggers seek live messages by conversation.
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_beeper_conversation
@@ -2065,7 +2072,7 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 			}
 			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_conversation_sent_at_julianday
-				    ON messages(conversation_id, NULLIF(julianday(sent_at), 1721425.5), id, source_id)
+				    ON messages(conversation_id, NULLIF(julianday(sent_at), `+sqliteutil.ZeroTimeJulianDay+`), id, source_id)
 				    WHERE deleted_at IS NULL
 			`); err != nil {
 				return err

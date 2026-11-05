@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -326,9 +327,13 @@ func sortClause(opts AggregateOptions) (string, error) {
 // Returns joinClauses (already joined by \n), conditions (slice), and args.
 // This is used for SubAggregate to apply drill-down filters before sub-grouping.
 func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (string, []string, []any) {
-	// Every structured filter below resolves through an EXISTS / NOT EXISTS
-	// correlated subquery, so this builder emits no JOIN of its own. The
-	// empty join slot is preserved in the return shape because callers
+	predicate, args := senderMatchSQL(filter, 0)
+	return e.buildFilterWithSender(filter, predicate, args)
+}
+
+func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, senderPredicate string, senderArgs []any) (string, []string, []any) {
+	// Structured filters use membership or correlated subqueries, so this
+	// builder emits no JOIN of its own. The empty join slot is preserved because callers
 	// (SubAggregate) concatenate the search-side FTS join onto it.
 	var conditions []string
 	var args []any
@@ -373,47 +378,12 @@ func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (stri
 		}
 	}
 	conditions, args = appendExactListIDCondition(e.dialect, conditions, args, prefix+"list_id", filter.ListID)
-	// Sender + sender-name filters — check both message_recipients (email)
-	// and direct sender_id (WhatsApp/chat). Also checks phone_number for
-	// phone-based lookups (e.g., from:+447...). Uses EXISTS (not a plain
-	// JOIN) so a message with multiple 'from' rows is not multiplied into
-	// duplicate result rows.
-	//
-	// When BOTH the email and the display name are filtered, they must
-	// match the SAME from-row (or the SAME direct sender), not two
-	// independent EXISTS that a multi-author message could satisfy via
-	// different rows. So fold them into a single correlated EXISTS per
-	// branch when both are set; otherwise keep the per-field EXISTS.
-	if filter.Sender != "" && filter.SenderName != "" {
-		conditions = append(conditions, fmt.Sprintf(`(EXISTS (
-			SELECT 1 FROM message_recipients mr_filter_from
-			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-			WHERE mr_filter_from.message_id = m.id
-			  AND mr_filter_from.recipient_type = 'from'
-			  AND (p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)
-			  AND %s = ?
-		) OR EXISTS (
-			SELECT 1 FROM participants p_direct_sender
-			WHERE p_direct_sender.id = m.sender_id
-			  AND (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)
-			  AND %s = ?
-		))`, recipientNameExpr("mr_filter_from", "p_filter_from"), participantNameExpr("p_direct_sender")))
-		args = append(args, filter.Sender, filter.Sender, filter.SenderName, filter.Sender, filter.Sender, filter.SenderName)
+	// Address and name must match the same from-row or direct sender.
+	if filter.Sender != "" {
+		conditions = append(conditions, senderPredicate)
+		args = append(args, senderArgs...)
 	} else {
-		if filter.Sender != "" {
-			conditions = append(conditions, `(EXISTS (
-			SELECT 1 FROM message_recipients mr_filter_from
-			JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
-			WHERE mr_filter_from.message_id = m.id
-			  AND mr_filter_from.recipient_type = 'from'
-			  AND (p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)
-		) OR EXISTS (
-			SELECT 1 FROM participants p_direct_sender
-			WHERE p_direct_sender.id = m.sender_id
-			  AND (p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)
-		))`)
-			args = append(args, filter.Sender, filter.Sender, filter.Sender, filter.Sender)
-		} else if filter.MatchesEmpty(ViewSenders) {
+		if filter.MatchesEmpty(ViewSenders) {
 			// A message has an "empty sender" only if it has no from-recipient with a
 			// non-empty email/phone AND no direct sender_id. NOT EXISTS keeps the
 			// predicate message-scoped (no per-from-row multiplication).
@@ -945,20 +915,84 @@ func (e *SQLiteEngine) executeAggregateQuery(ctx context.Context, query string, 
 	return results, nil
 }
 
+// senderMessageBound counts distinct messages across both sender representations, including hidden ones.
+const senderMessageBound = 5000
+
+// senderMatchSQL owns the address and same-row name rules for both query paths.
+// A zero limit builds the EXISTS predicate; otherwise senderCandidateSQL applies it.
+func senderMatchSQL(filter MessageFilter, limit int) (string, []any) {
+	if filter.Sender == "" {
+		return "", nil
+	}
+	address := `(p_filter_from.email_address = ? OR p_filter_from.phone_number = ?)`
+	directAddress := `(p_direct_sender.email_address = ? OR p_direct_sender.phone_number = ?)`
+	fromName, directName := "", ""
+	fromArgs := []any{filter.Sender, filter.Sender}
+	directArgs := []any{filter.Sender, filter.Sender}
+	if filter.SenderName != "" {
+		fromName = " AND " + recipientNameExpr("mr_filter_from", "p_filter_from") + " = ?"
+		directName = " AND " + participantNameExpr("p_direct_sender") + " = ?"
+		fromArgs = append(fromArgs, filter.SenderName)
+		directArgs = append(directArgs, filter.SenderName)
+	}
+	if limit != 0 {
+		from := `SELECT mr_filter_from.message_id AS id FROM message_recipients mr_filter_from
+			WHERE mr_filter_from.recipient_type = 'from' AND mr_filter_from.participant_id IN (
+				SELECT id FROM participants p_filter_from WHERE ` + address + `)`
+		if fromName != "" {
+			from += ` AND EXISTS (SELECT 1 FROM participants p_filter_from WHERE p_filter_from.id = mr_filter_from.participant_id` + fromName + `)`
+		}
+		direct := `SELECT id FROM messages WHERE sender_id IN (
+			SELECT id FROM participants p_direct_sender WHERE ` + directAddress + directName + `)`
+		return senderCandidateSQL(direct, from, directArgs, fromArgs, limit)
+	}
+	return `(EXISTS (
+		SELECT 1 FROM message_recipients mr_filter_from
+		JOIN participants p_filter_from ON p_filter_from.id = mr_filter_from.participant_id
+		WHERE mr_filter_from.message_id = m.id AND mr_filter_from.recipient_type = 'from'
+			AND ` + address + fromName + `
+	) OR EXISTS (
+		SELECT 1 FROM participants p_direct_sender WHERE p_direct_sender.id = m.sender_id
+			AND ` + directAddress + directName + `
+	))`, append(fromArgs, directArgs...)
+}
+
+// senderCandidateSQL lists every sender message ID for a negative limit. A positive limit instead
+// counts distinct messages, reading at most limit from each representation and skipping From
+// deduplication when direct senders alone fill the limit.
+func senderCandidateSQL(direct, from string, directArgs, fromArgs []any, limit int) (string, []any) {
+	if limit < 0 {
+		return direct + ` UNION ALL ` + from, slices.Concat(directArgs, fromArgs)
+	}
+	return `WITH direct(id) AS MATERIALIZED (` + direct + ` LIMIT ?) SELECT CASE WHEN (SELECT COUNT(*) FROM direct) = ? THEN ?
+		ELSE (SELECT COUNT(*) FROM (SELECT id FROM direct UNION SELECT id FROM (SELECT DISTINCT id FROM (` + from + `) LIMIT ?))) END`,
+		slices.Concat(directArgs, []any{limit, limit, limit}, fromArgs, []any{limit})
+}
+
 // ListMessages retrieves messages matching the filter.
 func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) ([]MessageSummary, error) {
-	filterJoins, conditions, args := e.buildFilterJoinsAndConditions(filter)
+	senderPredicate, senderArgs := senderMatchSQL(filter, 0)
+	membership := false
+	if _, sqlite := e.dialect.(SQLiteQueryDialect); sqlite && filter.Sender != "" {
+		// Probe only indexed sender rows, before visibility, name, or other filters.
+		candidateSQL, candidateArgs := senderMatchSQL(MessageFilter{Sender: filter.Sender}, senderMessageBound+1)
+		var count int
+		if err := e.queryRowContext(ctx, candidateSQL, candidateArgs...).Scan(&count); err != nil {
+			return nil, fmt.Errorf("probe sender candidates: %w", err)
+		}
+		if count <= senderMessageBound {
+			candidateSQL, senderArgs = senderMatchSQL(filter, -1)
+			senderPredicate = "m.id IN (" + candidateSQL + ")"
+			membership = true
+		}
+	}
+	filterJoins, conditions, args := e.buildFilterWithSender(filter, senderPredicate, senderArgs)
 	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
 
-	// Build ORDER BY with validation. Every structured filter in
-	// buildFilterJoinsAndConditions resolves through an EXISTS / NOT EXISTS
-	// correlated subquery — including the from-side Sender, SenderName and
-	// Domain branches — so the message_recipients/participants 1:N
-	// relationships cannot multiply a message into duplicate result rows, and
-	// SELECT DISTINCT is therefore unnecessary (and avoided per the SQL
-	// guideline: never DISTINCT + JOIN). The displayed sender is resolved via
-	// a correlated scalar subquery (LIMIT 1) so messages with multiple 'from'
-	// rows still produce exactly one result row.
+	// IN and EXISTS predicates keep each matching message to one row, so
+	// SELECT DISTINCT is unnecessary (and avoided per the SQL guideline:
+	// never DISTINCT + JOIN). The displayed sender uses a scalar subquery
+	// with LIMIT 1 so multiple 'from' rows still produce one result row.
 	var orderBy string
 	switch filter.Sorting.Field {
 	case MessageSortByDate:
@@ -988,6 +1022,15 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 	whereClause := "1=1"
 	if len(conditions) > 0 {
 		whereClause = strings.Join(conditions, " AND ")
+	}
+	offset := filter.Pagination.Offset
+	if membership {
+		// Sort and page candidates before resolving display names and conversations.
+		// Otherwise those lookups run for every candidate before the sort's LIMIT.
+		whereClause = fmt.Sprintf(`m.id IN (SELECT m.id FROM messages m %s WHERE %s ORDER BY %s LIMIT ? OFFSET ?)`, filterJoins, whereClause, orderBy)
+		args = append(args, limit, offset)
+		filterJoins = ""
+		offset = 0
 	}
 
 	query := fmt.Sprintf(`
@@ -1019,7 +1062,7 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 		LIMIT ? OFFSET ?
 	`, sqliteSenderNameExpr, sqliteSenderJoin, filterJoins, whereClause, orderBy)
 
-	args = append(args, limit, filter.Pagination.Offset)
+	args = append(args, limit, offset)
 
 	rows, err := e.queryContext(ctx, query, args...)
 	if err != nil {

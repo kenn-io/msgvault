@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"unsafe"
 
+	"go.kenn.io/kit/consolewindow"
 	"golang.org/x/sys/windows"
 )
 
@@ -27,6 +28,7 @@ func runHelper(command *exec.Cmd) (retErr error) {
 		}
 	}()
 	command.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_SUSPENDED}
+	consolewindow.Hide(command)
 	command.Cancel = func() error {
 		if err := windows.TerminateJobObject(job.handle, 1); err != nil {
 			return fmt.Errorf("terminate credential helper Job Object: %w", err)

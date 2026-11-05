@@ -7296,7 +7296,7 @@ func (c *Client) GetCLIMessageRawWithResponse(ctx context.Context, options *GetC
 	}
 }
 
-// GetCLIMessageThread List one conversation in chronological order for export
+// GetCLIMessageThread List one conversation in chronological order for export. SQLite compares instants to the millisecond, with ties in message-ID order.
 func (c *Client) GetCLIMessageThreadWithResponse(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
