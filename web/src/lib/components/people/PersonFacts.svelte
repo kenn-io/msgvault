@@ -28,7 +28,7 @@
 
   // Nothing loads until the section opens.
   $effect(() => {
-    const id = personID, shown = open; refreshKey;
+    const id = personID, shown = open; refreshKey; entity?.employments;
     untrack(() => {
       if (shown && controller.active && controller.personID === id) {
         void controller.retrySection('pins');

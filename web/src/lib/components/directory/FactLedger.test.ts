@@ -69,7 +69,9 @@ describe('FactLedger', () => {
     expect(rendered.container.innerHTML).not.toContain('allowed sensitive value');
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
     expect(screen.getByText('allowed sensitive value')).toBeDefined();
-    expect(screen.getByText(/Reported confidence 88/)).toBeDefined();
+    expect(screen.getByText(/^From a message ·/)).toBeDefined();
+    await fireEvent.click(screen.getByText('Details', { selector: 'summary' }));
+    expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('88');
 
     await fireEvent.click(screen.getByRole('radio', { name: 'Decisions' }));
     expect(screen.getByText(/Total 21/)).toBeDefined();
@@ -199,8 +201,8 @@ it('preserves claim order and keeps claim relations visible', async () => {
   expect(rows[1]!.textContent).toContain('Current City');
   expect(rows[1]!.textContent).toContain('Location');
   expect(rows[2]!.textContent).toContain('Contradicted City');
-  expect(rows[2]!.textContent).toContain('contradict');
-  expect(rows[3]!.textContent).toContain('invalid');
+  expect(rows[2]!.textContent).toContain('Contradicted · From a message');
+  expect(rows[3]!.textContent).toContain('Invalid · From a message');
   expect(rows[4]!.textContent).toContain('Future City');
 });
 
@@ -278,8 +280,10 @@ it('keeps original rejected JSON alongside relation and enrichment confidence', 
   value.applyContext(true, 42);
   await vi.waitFor(() => expect(value.initialLoading).toBe(false));
   const view = render(FactLedger, { controller: value });
-  expect(screen.getByText(/invalid · enrichment · Reported confidence 42/)).toBeDefined();
+  expect(screen.getByText(/Invalid · From enrichment/)).toBeDefined();
   await fireEvent.click(screen.getByText('Details'));
+  expect(screen.getByText('Origin').nextElementSibling?.textContent).toBe('enrichment');
+  expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('42');
   expect(view.container.querySelector('code')!.textContent).toBe(submitted);
   value.destroy();
 });
@@ -311,5 +315,63 @@ it('treats a missing saved definition as unavailable rather than empty', () => {
   render(FactLedger, { controller: value, profile });
   expect(screen.getByText('Saved field unavailable')).toBeDefined();
   expect(screen.queryByText('No saved value')).toBeNull();
+  profile.destroy();
+});
+
+it('filters saved pins with claims while Pins keeps every saved field', async () => {
+  const value = controller();
+  value.selectedTargetOption = 'target-0';
+  value.pins.rows = [{ rowToken: 'employment', description: 'Employment', kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: 'employment:other' }];
+  const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
+  entity.employments = [employment()];
+  entity.organizations = [organization()];
+  render(FactLedger, { controller: value, entity });
+  expect(screen.queryByText('Engineer · Synthetic Org')).toBeNull();
+  value.selectedSection = 'pins';
+  await tick();
+  expect(screen.getByText('Engineer · Synthetic Org')).toBeDefined();
+  entity.destroy();
+});
+
+it('folds historical saved employment without claiming it is empty', async () => {
+  const value = controller();
+  value.selectedSection = 'pins';
+  value.pins.rows = [{ rowToken: 'employment', description: 'Employment', kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: undefined }];
+  const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
+  entity.employments = [employment(11, 1, { is_current: false })];
+  entity.organizations = [organization()];
+  render(FactLedger, { controller: value, entity });
+  expect(screen.queryByText('No saved value')).toBeNull();
+  const disclosure = screen.getByText('1 earlier value', { selector: 'summary' });
+  expect(disclosure.closest('details')?.open).toBe(false);
+  await fireEvent.click(disclosure);
+  expect(disclosure.closest('details')?.open).toBe(true);
+  expect(screen.getByText('Engineer · Synthetic Org')).toBeDefined();
+  entity.destroy();
+});
+
+it.each(['current', 'history'] as const)('keeps saved %s values when the separate definition list fails', async lane => {
+  const value = controller();
+  value.selectedSection = 'pins';
+  const when = '2026-08-01T00:00:00Z';
+  const definition = {
+    id: 8, universal_id: 'note', object_type: 'person' as const, slug: 'location', label: 'Location',
+    value_type: 'text' as const, field_type: 'text' as const, cardinality: 'single' as const, display_order: 10,
+    is_required: false, ownership: 'user' as const, ui_creatable: true, ui_editable: true, api_mutable: true,
+    is_searchable: true, is_sensitive: false, is_audited: true, is_deletable: true, history_exempt: false,
+    is_active: true, revision: 1, created_at: when, updated_at: when,
+  };
+  const saved = { id: 1, person_id: 42, definition_id: 8, definition_slug: 'location', ordinal: 0,
+    value: { type: 'text' as const, text: 'Example City' }, source: 'user', created_at: when, active_from: when, ...(lane === 'history' ? { active_until: when } : {}) };
+  const profile = new DirectoryProfileController(createAPIClient(vi.fn()), 42, {
+    attributes: { person_id: 42, attributes: [{ definition, current: lane === 'current' ? [saved] : [], history: lane === 'history' ? [saved] : [] }] },
+    etags: {}, errors: {},
+  });
+  profile.definitionsError = 'Definitions unavailable';
+  render(FactLedger, { controller: value, profile });
+  expect(screen.queryByText('Saved values unavailable.')).toBeNull();
+  expect(screen.queryByText('No saved value')).toBeNull();
+  if (lane === 'history') await fireEvent.click(screen.getByText('1 earlier value', { selector: 'summary' }));
+  expect(screen.getByText('Example City')).toBeDefined();
   profile.destroy();
 });

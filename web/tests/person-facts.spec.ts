@@ -10,6 +10,12 @@ for (const width of [1440, 390]) {
     const facts = page.getByRole('region', { name: 'Facts', exact: true });
     await facts.getByRole('button', { name: 'Show', exact: true }).click();
     await expect(facts.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeVisible();
+    await expect(facts.getByRole('heading', { name: 'Claims', exact: true })).toHaveCount(0);
+    if (width === 1440) {
+      const tabs = await facts.getByRole('radiogroup').boundingBox();
+      const picker = await facts.getByRole('button', { name: 'Search fields: All fields' }).boundingBox();
+      expect(Math.abs(tabs!.y + tabs!.height / 2 - picker!.y - picker!.height / 2)).toBeLessThanOrEqual(1);
+    }
     await facts.getByRole('button', { name: 'Search fields: All fields' }).click();
     const bounds = await page.evaluate(() => {
       const column = document.querySelector('.ledger')!.getBoundingClientRect();

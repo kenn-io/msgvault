@@ -10,6 +10,7 @@
   import AttributeSection from './AttributeSection.svelte';
   import { joinDefinitions } from './attribute-value';
   import { historyProvenance } from './history-format';
+  import { organizationName } from './organization-name';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
 
   interface Props { controller: FactLedgerController; profile?: DirectoryProfileController | null; entity?: DirectoryEntityController | null }
@@ -21,13 +22,8 @@
   const definitions = $derived(fields.map(field => field.definition));
   const selectedTarget = $derived(controller.targets.find(target => target.optionID === controller.selectedTargetOption));
   const selectedField = $derived(selectedTarget ? controller.fieldName({ targetCanonical: selectedTarget.canonical, targetKey: selectedTarget.targetKey }, definitions) : undefined);
-  const pins = $derived(controller.pins.rows.filter(pin => pin.pinned));
+  const pins = $derived(controller.pins.rows.filter(pin => pin.pinned && (controller.selectedSection === 'pins' || !selectedTarget || pin.targetCanonical === selectedTarget.canonical)));
   const attributeIDs = $derived(pins.filter(pin => pin.kind === 'attribute').flatMap(pin => pin.targetKey ? [pin.targetKey] : []));
-  function organizationName(id: number): string {
-    return entity?.organizationRecords.get(id)?.organization.name ?? entity?.organizations.find(item => item.id === id)?.name
-      ?? (entity?.employmentProjection?.organization_id === id ? entity.employmentProjection.organization_name : undefined)
-      ?? `Organization ${id}`;
-  }
   function emptyTitle(section: string): string { return selectedField ? `No ${section} for ${selectedField} yet.` : `No ${section} yet`; }
 
   onDestroy(() => { destroyed = true; });
@@ -129,11 +125,12 @@
                   <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
                 {:else}<span>{row.displayValue}</span>{/if}
                 <details><summary>Details</summary>
+                  <dl><div><dt>Relation</dt><dd>{row.relation}</dd></div><div><dt>Origin</dt><dd>{row.origin}</dd></div><div><dt>Reported confidence</dt><dd>{row.reportedScore}</dd></div></dl>
                   {#if row.validFrom || row.validUntil}<p>{row.validFrom ? formatShortDate(row.validFrom) : 'No start'} – {row.validUntil ? formatShortDate(row.validUntil) : 'No end'}</p>{/if}
                   {#if shown}<dl><div><dt>Submitted JSON</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized JSON</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}</dl>{/if}
                 </details>
               </div>
-              <span class="meta">{row.relation} · {row.origin} · Reported confidence {row.reportedScore} · {formatShortDate(row.createdAt)}</span>
+              <span class="meta">{row.relation === 'contradict' ? 'Contradicted · ' : row.relation === 'invalid' ? 'Invalid · ' : ''}{row.origin === 'extraction' ? 'From a message' : 'From enrichment'} · {formatShortDate(row.createdAt)}</span>
             </div>
           {:else}<EmptyState title={emptyTitle('claims')} description={selectedField ? undefined : "Facts appear as msgvault reads this person's messages."} />{/each}
         </div>
@@ -172,13 +169,13 @@
     {:else if pins.length}
       <h4>Saved pinned values</h4>
       {#if attributeIDs.length}
-        {#if !profile || profile.attributesError || profile.definitionsError || !profile.attributes}
+        {#if !profile || profile.attributesError || !profile.attributes}
           <div class="message" role="alert"><p>Saved values unavailable.</p>{#if profile}<Button label="Retry saved values" size="sm" onclick={() => void profile?.reload()} />{/if}</div>
         {:else}
           <AttributeSection controller={profile} universalIDs={attributeIDs} />
           {#each pins.filter(pin => pin.kind === 'attribute') as pin (pin.targetKey)}
             {@const field = fields.find(field => field.definition.universal_id === pin.targetKey)}
-            {#if !field || !field.current.length}
+            {#if !field || (!field.current.length && !field.history.length)}
               <div class="row"><strong>{controller.fieldName(pin, definitions)}</strong><span class="meta">{field ? 'No saved value' : 'Saved field unavailable'}</span></div>
             {/if}
           {/each}
@@ -191,13 +188,23 @@
           {:else if !entity || entity.errors.employments}<div class="message" role="alert"><p>Saved employment unavailable.</p>{#if entity}<Button label="Retry employment" size="sm" onclick={() => void entity?.refreshEmployments()} />{/if}</div>
           {:else}
             {#each entity.employments.filter(value => value.is_current) as value (value.id)}
-              <div class="row"><span>{[value.title ?? value.role, organizationName(value.organization_id)].filter(Boolean).join(' · ')}</span><span class="meta">{historyProvenance(value)}</span></div>
-            {:else}<div class="row"><span>No saved value</span></div>{/each}
+              {@render EmploymentRow(value)}
+            {:else}{#if !entity.employments.length}<div class="row"><span>No saved value</span></div>{/if}{/each}
+            {@const history = entity.employments.filter(value => !value.is_current)}
+            {#if history.length}
+              <details><summary>{history.length} earlier {history.length === 1 ? 'value' : 'values'}</summary>
+                {#each history as value (value.id)}{@render EmploymentRow(value)}{/each}
+              </details>
+            {/if}
           {/if}
         </section>
       {/each}
     {:else if controller.selectedSection === 'pins'}<EmptyState title="No pinned fields yet" />{/if}
   </section>
+{/snippet}
+
+{#snippet EmploymentRow(value: import('../../directory/models').Employment)}
+  <div class="row"><span>{[value.title ?? value.role, organizationName(entity, value.organization_id)].filter(Boolean).join(' · ')}</span><span class="meta">{historyProvenance(value)}</span></div>
 {/snippet}
 
 {#if controller.historyOpen}<FactEvidenceHistoryDialog {controller} onClose={() => controller.closeEvidenceHistory()} />{/if}
@@ -236,5 +243,9 @@
   .message { justify-items: start; padding-left: var(--space-3); border-left: 2px solid var(--accent-red); border-start-start-radius: 0; border-end-start-radius: 0; }
   .revealed { display: grid; gap: var(--space-1); }
   @media (max-width: 760px) { .toolbar { flex-direction: column; align-items: stretch; } .field { margin-left: 0; } .pagination { flex-wrap: wrap; } }
-  @media (max-width: 640px) { .row { flex-direction: column; gap: var(--space-1); } .meta { text-align: left; max-width: 100%; } }
+  @media (max-width: 640px) {
+    .ledger :global(.history-rows li) { flex-direction: column; align-items: stretch; gap: var(--space-1); overflow-wrap: anywhere; }
+    .row { flex-direction: column; gap: var(--space-1); }
+    .meta { text-align: left; max-width: 100%; }
+  }
 </style>
