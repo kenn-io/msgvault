@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -60,19 +61,31 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	if s.IsPostgreSQL() {
 		gap = `EXTRACT(EPOCH FROM (occurred_at-previous_at))>=604800`
 	}
-	initiation := `(previous_at IS NULL OR ` + gap + `) AND SUBSTR(local_date,1,7) BETWEEN ? AND ?`
-	args = append(args, monthStart, monthEnd, monthStart, monthEnd)
+	// Build civil month boundaries in the caller's zone, including its DST
+	// transitions. Comparing instants works identically on both databases.
+	months := make([]string, 12)
+	firstMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc).AddDate(0, -11, 0)
+	for i := range months {
+		start := firstMonth.AddDate(0, i, 0)
+		months[i] = "(?,?,?)"
+		if s.IsPostgreSQL() {
+			months[i] = "(?,CAST(? AS TIMESTAMPTZ),CAST(? AS TIMESTAMPTZ))"
+		}
+		args = append(args, start.Format("2006-01"), start.UTC(), start.AddDate(0, 1, 0).UTC())
+	}
+	initiation := `(previous_at IS NULL OR ` + gap + `) AND bucket.month IS NOT NULL`
 	query := cte + activityBurstGroupsCTE + `, contact_messages AS (
  SELECT r.* FROM representatives r JOIN burst_groups b ON b.source_id=r.source_id AND b.conversation_id=COALESCE(r.conversation_id,0) AND b.local_date=r.local_date
  WHERE b.noise=0 AND r.ref_kind='message' AND r.contact_eligible=1 AND r.encrypted=0 AND r.occurred_at<=?
  AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND ` + subject + ` AND ` + counted + `)
- ), exchanges AS (
+ ), contact_months(month,start_at,end_at) AS (VALUES ` + strings.Join(months, ",") + `), exchanges AS (
  SELECT *,LAG(occurred_at) OVER(PARTITION BY source_id,conversation_id ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages
- ) SELECT channel,SUBSTR(local_date,1,7),MIN(occurred_at),MAX(occurred_at),
+ ) SELECT channel,COALESCE(bucket.month,''),MIN(occurred_at),MAX(occurred_at),
  MAX(CASE WHEN direction='inbound' THEN occurred_at END),MAX(CASE WHEN direction='outbound' THEN occurred_at END),COUNT(*),
  SUM(CASE WHEN direction='inbound' AND ` + initiation + ` THEN 1 ELSE 0 END),
  SUM(CASE WHEN direction='outbound' AND ` + initiation + ` THEN 1 ELSE 0 END)
- FROM exchanges GROUP BY channel,SUBSTR(local_date,1,7) ORDER BY channel,SUBSTR(local_date,1,7)`
+ FROM exchanges LEFT JOIN contact_months bucket ON occurred_at>=bucket.start_at AND occurred_at<bucket.end_at
+ GROUP BY channel,bucket.month ORDER BY channel,bucket.month`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
 	if err != nil {
 		return result, fmt.Errorf("aggregate message contact: %w", err)

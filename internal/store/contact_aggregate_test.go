@@ -58,6 +58,34 @@ func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, [12]int{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}, got.Monthly)
 }
+
+func TestMessageAggregateUsesQueryTimezone(t *testing.T) {
+	for _, zone := range []string{"America/New_York", "Asia/Tokyo"} {
+		t.Run(zone, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			loc, err := time.LoadLocation(zone)
+			require.NoError(err)
+			q := timelineContactQuery(f)
+			q.Location = loc
+			q.Now = time.Date(2026, 10, 22, 12, 0, 0, 0, loc)
+			start := time.Date(2025, 11, 1, 0, 0, 0, 0, loc)
+			// UTC projection dates cross the first month of the window and
+			// an interior month boundary.
+			for i, at := range []time.Time{start.Add(-time.Minute), start, start.AddDate(0, 0, 8), time.Date(2026, 10, 1, 0, 0, 0, 0, loc).Add(-time.Minute), time.Date(2026, 10, 1, 0, 0, 0, 0, loc)} {
+				f.add(t, f.ConvID, f.Source.ID, at, i == 2, "")
+			}
+			projectTimelineActivity(t, f, "UTC")
+			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+			require.NoError(err)
+			assert.Equal(5, got.Count)
+			assert.Equal([12]int{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}, got.Monthly)
+			assert.Equal(1, got.InitiatedByContact)
+			assert.Equal(1, got.InitiatedByOwner)
+		})
+	}
+}
 func TestMessageAggregateUnsavedCluster(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

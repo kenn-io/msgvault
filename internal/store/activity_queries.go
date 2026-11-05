@@ -567,7 +567,7 @@ func (s *Store) attachActivityCounterpartChunkContext(
 ) error {
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messageIDs)), ",")
 
-	query := activityCounterpartsSQL(placeholders)
+	query := s.activityCounterpartsSQL(placeholders)
 
 	args := make([]any, 0, len(messageIDs)*4)
 	args = append(args, messageIDs...)
@@ -619,12 +619,18 @@ func (s *Store) attachActivityCounterpartChunkContext(
 
 // activityCounterpartsSQL keeps every read and projection on the same population.
 // selection is an internal placeholder list or a scoped message-ID subquery.
-func activityCounterpartsSQL(placeholders string) string {
+func (s *Store) activityCounterpartsSQL(placeholders string) string {
 	// Direct recipients are reused by the sender and room fallbacks. Keep the
 	// selected ID set out of their correlated lookups so SQLite does not rebuild
 	// that set for each message or counterpart.
+	materialization, directLookup := "MATERIALIZED", "direct"
+	if s.IsPostgreSQL() {
+		// PostgreSQL needs the recipient index for per-message probes. A fenced
+		// CTE has no index and can turn these into repeated full scans.
+		materialization, directLookup = "NOT MATERIALIZED", "message_recipients"
+	}
 	return `
-		WITH direct AS MATERIALIZED (
+		WITH direct AS ` + materialization + ` (
 			SELECT mr.message_id, mr.participant_id, mr.recipient_type,
 			       mr.email_address AS envelope_address
 			FROM message_recipients mr
@@ -654,7 +660,7 @@ func activityCounterpartsSQL(placeholders string) string {
 			WHERE m.id IN (` + placeholders + `)
 			  AND NOT EXISTS (
 				SELECT 1
-				FROM direct d
+				FROM ` + directLookup + ` d
 				WHERE d.message_id = m.id
 				  AND d.recipient_type = 'from'
 			  )
@@ -693,7 +699,7 @@ func activityCounterpartsSQL(placeholders string) string {
 			JOIN participants p ON p.id = cp.participant_id
 			WHERE m.id IN (` + placeholders + `)
 			  AND NOT EXISTS (
-				SELECT 1 FROM direct d
+				SELECT 1 FROM ` + directLookup + ` d
 				WHERE d.message_id = m.id
 				  AND d.recipient_type IN ('to', 'cc', 'bcc')
 			  )
@@ -755,7 +761,7 @@ func activityCounterpartsSQL(placeholders string) string {
 					     AND sender_id IS NULL
 					     AND 1 = (
 						SELECT COUNT(DISTINCT d.participant_id)
-						FROM direct d
+						FROM ` + directLookup + ` d
 						WHERE d.message_id = matched_counterparts.message_id
 						  AND d.recipient_type = 'from'
 					     )

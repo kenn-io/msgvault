@@ -81,6 +81,67 @@ func TestBurstsReturnUnsavedCorrespondents(t *testing.T) {
 	assertions.Equal("alice@example.com", peer.Address)
 	assertions.True(peer.Counted)
 }
+
+func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
+	for _, tc := range []struct {
+		name, address, alias, phone, kind, value, excluded string
+	}{
+		{"human email", "noreply@example.com", "human@example.com", "", "", "", ""},
+		{"phone", "noreply@example.com", "", "+12025550123", "", "", ""},
+		{"chat identifier", "noreply@example.com", "", "", "matrix", "@peer:example.com", ""},
+		{"email identifier", "noreply@example.com", "", "", "email", "human@example.com", ""},
+		{"room human email", "room@resource.calendar.google.com", "human@example.com", "", "", "", ""},
+		{"room phone", "room@resource.calendar.google.com", "", "+12025550123", "", "", "calendar_room"},
+		{"automated aliases", "noreply@example.com", "noreply@other.example.com", "", "", "", "automated_address"},
+		{"mixed categories", "noreply@example.com", "human@resource.calendar.google.com", "", "", "", ""},
+		{"overlapping categories", "noreply@resource.calendar.google.com", "noreply@example.com", "", "", "", "automated_address"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			f.peer = f.EnsureParticipant(tc.address, "Peer", "example.com")
+			person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+			require.NoError(err)
+			var alias int64
+			err = f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`INSERT INTO participants(email_address,phone_number,display_name) VALUES(?,?,'Alias') RETURNING id`), tc.alias, tc.phone).Scan(&alias)
+			require.NoError(err)
+			if tc.kind != "" {
+				require.NoError(f.Store.SetParticipantIdentifier(alias, tc.kind, tc.value))
+			}
+			_, err = f.Store.LinkParticipants(f.peer, alias)
+			require.NoError(err)
+			q := timelineContactQuery(f)
+			f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+			projectTimelineActivity(t, f, "UTC")
+			q.Subject = store.ActivitySubject{PersonID: person.ID}
+			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+			require.NoError(err)
+			want := 0
+			if tc.excluded == "" {
+				want = 1
+			}
+			assert.Equal(want, aggregate.Count)
+			bq := timelineBurstQuery()
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
+			require.NoError(err)
+			assert.Len(page.Bursts, want)
+			bq.Filters.IncludeNoise = true
+			page, err = f.Store.ListActivityBurstsContext(t.Context(), bq)
+			require.NoError(err)
+			require.Len(page.Bursts, 1)
+			found := false
+			for _, cp := range page.Bursts[0].Counterparts {
+				if cp.ParticipantID == f.peer {
+					found = true
+					assert.Equal(tc.excluded, cp.Excluded)
+					assert.Equal(want == 1, cp.Counted)
+				}
+			}
+			assert.True(found, "burst includes the email counterpart")
+		})
+	}
+}
 func TestBurstsApplySourceScope(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -159,29 +220,32 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 	}
 	// Project the three interleaved rows without replacing the large fixture.
 	projectTimelineActivity(t, f, "UTC")
-	q := timelineBurstQuery()
-	q.Limit = 2
-	seen := map[string]bool{}
-	total := 0
-	for {
-		page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-		requirements.NoError(err)
-		for _, b := range page.Bursts {
-			assertions.False(seen[b.Key])
-			seen[b.Key] = true
-			total++
-			if b.ConversationID == f.ConvID {
-				assertions.Equal(3000, b.Inbound)
-				assertions.Equal(3000, b.Outbound)
-				assertions.Len(b.LatestMessageIDs, 5)
+	for _, subject := range []store.ActivitySubject{{}, {ParticipantIDs: []int64{f.peer}}} {
+		q := timelineBurstQuery()
+		q.Limit = 2
+		q.Subject = subject
+		seen := map[string]bool{}
+		total := 0
+		for {
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			for _, b := range page.Bursts {
+				assertions.False(seen[b.Key])
+				seen[b.Key] = true
+				total++
+				if b.ConversationID == f.ConvID {
+					assertions.Equal(3000, b.Inbound)
+					assertions.Equal(3000, b.Outbound)
+					assertions.Len(b.LatestMessageIDs, 5)
+				}
 			}
+			if page.NextKey == nil {
+				break
+			}
+			q.AfterKey = page.NextKey
 		}
-		if page.NextKey == nil {
-			break
-		}
-		q.AfterKey = page.NextKey
+		assertions.Equal(4, total)
 	}
-	assertions.Equal(4, total)
 }
 func TestBurstsDropNoiseAndCount(t *testing.T) {
 	requirements := require.New(t)

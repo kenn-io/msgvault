@@ -182,8 +182,8 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	return page, nil
 }
 
-// hydrateActivityCounterpartsContext deliberately uses the exact projector
-// population. CountedEvent and ExcludesAddress remain the Go annotation rules.
+// hydrateActivityCounterpartsContext uses the projector's population and the
+// SQL readers' address exclusions.
 func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages []activityReadMessage, f ActivityFilters) error {
 	ids := make([]int64, len(messages))
 	for i := range messages {
@@ -195,7 +195,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 	}
 	type participant struct {
 		name, address string
-		phone         bool
+		excluded      string
 	}
 	participants := map[int64]participant{}
 	wanted := map[int64]bool{}
@@ -211,16 +211,17 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 	for start := 0; start < len(participantIDs); start += activityCandidateIDChunk {
 		batch := participantIDs[start:min(start+activityCandidateIDChunk, len(participantIDs))]
 		predicate, args := messageExportInClause("p.id", batch)
-		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT p.id,COALESCE(p.display_name,''),COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),p.phone_number,''),
-  (COALESCE(p.phone_number,'')<>'' OR EXISTS(SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type<>'email' AND TRIM(pi.identifier_value)<>''))
-  FROM participants p WHERE `+predicate), args...)
+		exclusionCTE, exclusionArgs := s.activityAddressExclusionsCTE(`SELECT p.id AS participant_id,pp.person_id FROM participants p LEFT JOIN person_participants pp ON pp.participant_id=p.id WHERE `+predicate, f)
+		args = append(args, exclusionArgs...)
+		rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+exclusionCTE+` SELECT p.id,COALESCE(p.display_name,''),COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),p.phone_number,''),ax.excluded
+ FROM participants p JOIN address_exclusions ax ON ax.participant_id=p.id`), args...)
 		if err != nil {
 			return fmt.Errorf("read activity participant display: %w", err)
 		}
 		for rows.Next() {
 			var id int64
 			var p participant
-			if err = rows.Scan(&id, &p.name, &p.address, &p.phone); err != nil {
+			if err = rows.Scan(&id, &p.name, &p.address, &p.excluded); err != nil {
 				_ = rows.Close()
 				return fmt.Errorf("scan activity participant: %w", err)
 			}
@@ -280,10 +281,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 			if owner(cp) {
 				excluded = "owner"
 			} else {
-				excluded = f.Exclusions.ExcludesAddress(p.address)
-				if p.phone && excluded == "automated_address" {
-					excluded = ""
-				}
+				excluded = p.excluded
 			}
 			refKind := "message"
 			if m.Meeting {
