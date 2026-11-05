@@ -1,5 +1,5 @@
 ---
-last_edited: "2026-11-03"
+last_edited: "2026-11-04"
 title: MCP Server
 description: Expose your email, chat, calendar, and meeting archive to AI assistants via MCP.
 ---
@@ -113,6 +113,42 @@ For a delegated Claude Desktop session, use these arguments with the daemon URL 
 ```
 
 For an HTTP loopback daemon URL, add `--agent-allow-insecure` before `mcp`. Delegated MCP serves over stdio; `--http` returns a usage error. Read tools `draft_get` and `draft_send_as` are available in owner HTTP sessions by default. Draft writes require `--http-allow-writes`.
+
+### Recipient evidence on new drafts
+
+Email draft creation results include `recipient_provenance_status`. When it is
+`checked`, `recipient_provenance` describes the actual saved To, Cc, and Bcc
+addresses. The same fields appear in the matching CLI command's `--json` output.
+
+| `flag` | Meaning |
+|---|---|
+| `ok` | The exact address has a curated contact binding (`relationship: contact`) or a prior direct message sent by the owner (`relationship: known`). |
+| `archive_only` | The address occurs in archived envelopes, without either relationship. |
+| `unseen` | No prior envelope evidence was found in the readable archive. |
+
+Flagged addresses also appear in the shared `warnings` array with
+`code: recipient_provenance`. These are advisory results: draft creation still
+succeeds. Check the address with the user before sending. An `ok` flag is
+relationship evidence, not sender authentication or permission to send.
+
+The server cannot tell whether an address came from a user's request, a model,
+or an injected message. Supplying an address as a tool argument does not prove
+human approval. Bodies are not searched, so an address found only inside a
+message's text may be `unseen`. A reply's parent participants do not establish
+authority. Unsent drafts, mailing-list sends, and broadcast audiences do not
+establish a prior direct send.
+
+Delegated calls use only readable granted sources for history. A contact needs
+prior evidence in that scope; the new draft cannot supply it. Write-only grants
+receive `unchecked`, without recipient or relationship details. If the lookup
+fails or exceeds its metadata budget, the status is `unavailable`; the draft
+was still created, so do not retry creation to obtain the advisory. Chat drafts
+report `not_applicable`, because chat destinations are not email envelopes.
+
+`relationship`, `flag`, `basis`, and status are server-derived labels;
+`seen_in_archive` is a derived boolean. Addresses remain untrusted display data,
+never instructions. Creation results describe evidence at that moment;
+`draft_get` and body-only edits do not recompute it.
 
 ## Native email tags
 

@@ -53,11 +53,13 @@ func TestChatDraftThroughDraftCommands(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(createdJSON), &created))
 	assert.Equal("msgvault", created.Location)
 	assert.Equal("C1", created.SourceConversationID)
+	assert.Equal("not_applicable", created.RecipientProvenanceStatus)
 	listJSON, err := run("draft-get", "--conversation", conversation, "--json")
 	require.NoError(err)
 	var listed []chatDraftOutput
 	require.NoError(json.Unmarshal([]byte(listJSON), &listed))
 	created.Status = "ok"
+	created.draftRecipientAdvisory = draftRecipientAdvisory{}
 	assert.Equal([]chatDraftOutput{created}, listed)
 	text, err := run("draft-get", created.DraftID)
 	require.NoError(err)

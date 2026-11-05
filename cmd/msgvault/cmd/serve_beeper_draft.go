@@ -15,6 +15,8 @@ import (
 )
 
 type beeperDraftOutput struct {
+	draftRecipientAdvisory
+
 	Status           string  `json:"status"`
 	DraftID          string  `json:"draft_id"`
 	Revision         int64   `json:"revision"`
@@ -33,6 +35,9 @@ func emitBeeperDraft(emit func(api.CLIRunEvent) error, stream string, intent dra
 	output := beeperDraftOutput{
 		Status: status, DraftID: draft.DraftID, Revision: draft.Revision, Lifecycle: draftLifecycleActive,
 		SourceID: draft.SourceID, ChatID: draft.ChatID, Content: draft.Text,
+	}
+	if status == "created" {
+		output.RecipientProvenanceStatus = "not_applicable"
 	}
 	if draft.DiscardedAt != nil {
 		output.Lifecycle = "discarded"
