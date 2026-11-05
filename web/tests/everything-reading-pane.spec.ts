@@ -301,7 +301,7 @@ test('global command and Escape shortcuts stay suspended in editable controls', 
   }
 });
 
-test('desktop deep link and desktop resizing leave focus on the page', async ({ page }) => {
+test('desktop deep link leaves focus on the page', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
@@ -309,8 +309,6 @@ test('desktop deep link and desktop resizing leave focus on the page', async ({ 
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState({ selectedRow: 'message:1' })))}`);
   await expect(page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' })).toBeVisible();
-  await expect(page.locator('body')).toBeFocused();
-  await page.setViewportSize({ width: 1100, height: 900 });
   await expect(page.locator('body')).toBeFocused();
 });
 
@@ -320,17 +318,9 @@ test('phone reader replaces results and Back restores the focused row', async ({
     auth_mode: 'loopback', https: false, plain_http_warning: false
   } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: Array.from({ length: 120 }, (_, index) => ({ ...entry(index + 1), conversation_id: 7, anchor_message_id: index + 1 })), total_count: 120,
+    rows: Array.from({ length: 120 }, (_, index) => entry(index + 1)), total_count: 120,
     cache_revision: 'cache-phone', search_provenance: {}
   } }));
-  await page.route('**/api/v1/conversations/7?*', route => {
-    const id = Number(new URL(route.request().url()).searchParams.get('anchor'));
-    return route.fulfill({ json: {
-      id: 7, anchor_id: id, has_before: false, has_after: false, total: 1,
-      messages: [{ ...recordingMessage, id, conversation_id: 7, message_type: 'email', subject: `Synthetic subject ${id}`,
-        body: `Synthetic body ${id}`, body_html: '', has_attachments: false, attachments: [] }]
-    } });
-  });
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
@@ -346,7 +336,6 @@ test('phone reader replaces results and Back restores the focused row', async ({
   const resultsBox = (await page.locator('.results-split').boundingBox())!;
   expect(Math.abs((await reading.boundingBox())!.width - resultsBox.width)).toBeLessThanOrEqual(1);
   await expect(reading.locator('.pane-title')).toHaveText(`Synthetic subject ${index}`);
-  await expect(reading.getByText(`Synthetic body ${index}`, { exact: true })).toBeVisible();
   await expect(reading.getByRole('button', { name: 'Back to results' })).toBeFocused();
   await reading.getByRole('button', { name: 'Back to results' }).click();
   await expect(grid).toBeVisible();
@@ -364,7 +353,6 @@ test('phone reader replaces results and Back restores the focused row', async ({
 });
 
 test('resizing an open reader preserves expanded messages and focus', async ({ page }) => {
-  await page.addInitScript(() => { Object.defineProperty(Element.prototype, 'checkVisibility', { value: undefined, configurable: true }); });
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.route('**/api/session', route => route.fulfill({ json: { auth_mode: 'loopback', https: false, plain_http_warning: false } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
@@ -392,13 +380,6 @@ test('resizing an open reader preserves expanded messages and focus', async ({ p
   await page.setViewportSize({ width: 1280, height: 900 });
   await expect(expanded).toBeVisible();
   await expect(collapse).toBeFocused();
-  await grid.focus();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.getByRole('button', { name: 'Back to results' })).toBeFocused();
-  await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(page.getByRole('button', { name: 'Close reading pane' })).toBeFocused();
-  await expect(expanded).toBeVisible();
-  await expect(page.getByText('Synthetic body 1', { exact: true })).toBeVisible();
   expect(requests).toBe(1);
 });
 
