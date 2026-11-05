@@ -2,7 +2,6 @@ package caldav
 
 import (
 	"database/sql"
-	"encoding/binary"
 	"encoding/json/v2"
 	"encoding/xml"
 	"io"
@@ -26,6 +25,7 @@ import (
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	"go.kenn.io/msgvault/internal/testutil/tzfixture"
 )
 
 type syncFixture struct {
@@ -39,8 +39,6 @@ type syncFixture struct {
 	forceSnapshot           bool
 	incompleteSnapshot      bool
 	explicitCollectionPort  bool
-	missingCollection       bool
-	failDiscovery           bool
 	getRequests             int
 	multigetSizes           []int
 }
@@ -53,13 +51,6 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 		f.Lock()
 		defer f.Unlock()
 		if body, ok := discoveryResponse(r); ok {
-			if f.failDiscovery {
-				http.Error(w, "discovery failed", http.StatusInternalServerError)
-				return
-			}
-			if r.URL.Path == "/home/" && f.missingCollection {
-				body = multi(testutil.DAVPropResponse("/home/", `<D:resourcetype><D:collection/></D:resourcetype>`))
-			}
 			if r.URL.Path == "/home/" && f.explicitCollectionPort {
 				body = strings.Replace(body, `<D:href>/home/cal/</D:href>`, `<D:href>http://203.0.113.1:80/home/cal/</D:href>`, 1)
 			}
@@ -150,7 +141,7 @@ func archiveFixture(t *testing.T) (*Client, *syncFixture) {
 }
 func syncOpts() Options {
 	source := (&config.Config{CalDAV: config.CalDAVConfig{Sources: []config.CalDAVSource{{Name: "personal"}}}}).GetCalDAVSource("personal")
-	return Options{Name: source.Name, BaseURL: "http://203.0.113.1/dav", Username: "owner@example.org", TimeZone: source.TimeZone, MaxEvents: source.MaxEvents}
+	return Options{BaseURL: "http://203.0.113.1/dav", Username: "owner@example.org", TimeZone: source.TimeZone, MaxEvents: source.MaxEvents}
 }
 func sourceToken(t *testing.T, st *store.Store) string {
 	t.Helper()
@@ -291,48 +282,6 @@ func TestSyncRetiredCalendarSelection(t *testing.T) {
 	opts.Calendars = []string{"http://203.0.113.1/home/cal/"}
 	_, err = c.Sync(t.Context(), st, opts)
 	require.ErrorIs(err, store.ErrSourceRetired)
-}
-
-func TestSyncMissingCollection(t *testing.T) {
-	for _, mode := range []string{"automatic", "explicit", "failed discovery"} {
-		t.Run(mode, func(t *testing.T) {
-			assert, require := assert.New(t), require.New(t)
-			c, f := archiveFixture(t)
-			st := testutil.NewTestStore(t)
-			opts := syncOpts()
-			_, err := c.Sync(t.Context(), st, opts)
-			require.NoError(err)
-			var sourceID int64
-			require.NoError(st.DB().QueryRow(`SELECT id FROM sources WHERE source_type = 'caldav'`).Scan(&sourceID))
-			other := opts
-			other.Name = "other"
-			other.Username = "other@example.org"
-			_, err = c.Sync(t.Context(), st, other)
-			require.NoError(err)
-			f.missingCollection = true
-			f.failDiscovery = mode == "failed discovery"
-			if mode == "explicit" {
-				opts.Calendars = []string{"http://203.0.113.1/home/cal/"}
-			}
-			result, err := c.Sync(t.Context(), st, opts)
-			if mode == "automatic" {
-				require.NoError(err)
-				assert.Equal(int64(1), result.Removed)
-				assert.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
-				var removedSourceID int64
-				require.NoError(st.DB().QueryRow(`SELECT source_id FROM messages WHERE deleted_from_source_at IS NOT NULL`).Scan(&removedSourceID))
-				assert.Equal(sourceID, removedSourceID)
-				result, err = c.Sync(t.Context(), st, opts)
-				require.NoError(err)
-				assert.Zero(result.Removed)
-			} else {
-				require.Error(err)
-				assert.Zero(result.Removed)
-				assert.Equal(2, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
-			}
-			assert.Equal(2, count(t, st, `SELECT COUNT(*) FROM message_raw`))
-		})
-	}
 }
 
 func TestSyncCalDAVSubset(t *testing.T) {
@@ -555,36 +504,6 @@ func TestSyncPreservesDisplayNameOnSelectorConflict(t *testing.T) {
 	assertions.Equal("t1", sourceToken(t, st))
 }
 
-func TestSyncConfigRenamePreservesSourceAndEvents(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	c, f := archiveFixture(t)
-	st := testutil.NewTestStore(t)
-	opts := syncOpts()
-	first, err := c.Sync(t.Context(), st, opts)
-	requirements.NoError(err)
-	requirements.Equal(1, first.Events)
-	sources, err := st.ListSourcesContext(t.Context(), "caldav")
-	requirements.NoError(err)
-	requirements.Len(sources, 1)
-	sourceID := sources[0].ID
-	f.Lock()
-	f.reported = map[string]bool{}
-	f.Unlock()
-	opts.Name = "renamed"
-	second, err := c.Sync(t.Context(), st, opts)
-	requirements.NoError(err)
-	assertions.Zero(second.Events)
-	sources, err = st.ListSourcesContext(t.Context(), "caldav")
-	requirements.NoError(err)
-	requirements.Len(sources, 1)
-	assertions.Equal(sourceID, sources[0].ID)
-	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE deleted_from_source_at IS NULL`))
-	assertions.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_events`))
-	f.Lock()
-	assertions.Equal("t1", f.lastToken)
-	f.Unlock()
-}
-
 func TestSyncCanonicalizesDefaultPortForSourceIdentity(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)
@@ -704,14 +623,7 @@ func TestReviewRunningDaemonZoneUpdate(t *testing.T) {
 	zoneDir := filepath.Join(os.Getenv("ZONEINFO"), "Test")
 	requirements.NoError(os.MkdirAll(zoneDir, 0o700))
 	writeZone := func(offset int32) {
-		// Minimal TZif v1 file with one fixed-offset local time type.
-		data := make([]byte, 54)
-		copy(data, "TZif")
-		binary.BigEndian.PutUint32(data[36:40], 1) // type count
-		binary.BigEndian.PutUint32(data[40:44], 4) // abbreviation bytes
-		binary.BigEndian.PutUint32(data[44:48], uint32(offset))
-		copy(data[50:], "TST\x00")
-		requirements.NoError(os.WriteFile(filepath.Join(zoneDir, "Calendar"), data, 0o600))
+		requirements.NoError(os.WriteFile(filepath.Join(zoneDir, "Calendar"), tzfixture.FixedOffset(offset), 0o600))
 	}
 	writeZone(-4 * 3600)
 	c, f := archiveFixture(t)
@@ -1775,6 +1687,39 @@ func TestSyncSeriesBecomesStandalone(t *testing.T) {
 	}
 }
 
+func TestSyncDeletedSeriesKeepsArchivedExceptions(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	f.raw["a.ics"] = compound()
+	st := testutil.NewTestStore(t)
+	_, err := c.Sync(t.Context(), st, syncOpts())
+	require.NoError(err)
+	before := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-04-01T00:00:00Z")
+	require.Len(before, 3)
+
+	f.Lock()
+	delete(f.raw, "a.ics")
+	f.deleted, f.token = []string{"a.ics"}, "t2"
+	f.Unlock()
+	_, err = c.Sync(t.Context(), st, syncOpts())
+	require.NoError(err)
+	deleted := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-04-01T00:00:00Z")
+	require.Len(deleted, 1)
+	assert.Equal(before[1].MessageID, deleted[0].MessageID)
+	assert.Equal(before[1].SeriesMessageID, deleted[0].SeriesMessageID)
+	assert.Equal("2027-03-21T15:00:00Z", deleted[0].Start.UTC().Format(time.RFC3339))
+	assert.True(deleted[0].DeletedFromSource)
+	assert.Equal(2, count(t, st, `SELECT COUNT(*) FROM message_raw`))
+
+	f.Lock()
+	f.raw["a.ics"] = compound()
+	f.deleted, f.token = nil, "t3"
+	f.Unlock()
+	_, err = c.Sync(t.Context(), st, syncOpts())
+	require.NoError(err)
+	assert.Equal(before, occurrences(t, st, "2027-03-14T00:00:00Z", "2027-04-01T00:00:00Z"))
+}
+
 func TestSyncRestoredResourceDropsHistoricalOverride(t *testing.T) {
 	for _, tc := range []struct {
 		name                   string
@@ -1826,11 +1771,7 @@ func TestSyncRestoredResourceDropsHistoricalOverride(t *testing.T) {
 			_, err = c.Sync(t.Context(), st, opts)
 			require.NoError(err)
 			got := occurrences(t, st, "2027-03-21T00:00:00Z", "2027-03-22T00:00:00Z")
-			require.Len(got, 1)
-			require.Equal("2027-03-21T13:00:00Z", got[0].Start.UTC().Format(time.RFC3339))
-			require.Equal("confirmed", got[0].Status)
-			require.Equal(got[0].SeriesMessageID, got[0].MessageID)
-			require.True(got[0].DeletedFromSource)
+			require.Empty(got)
 		})
 	}
 }

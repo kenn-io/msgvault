@@ -1466,7 +1466,7 @@ Archive CalDAV calendars with `msgvault sync-caldav <name>`. The daemon reads
 these settings and the password file on its own host. Sync is manual and
 read-only. Each discovered calendar becomes a separate archive source.
 
-Each source is identified by the connection's username and canonical calendar collection URL. Renaming a CalDAV entry in the configuration preserves its source and archived events. Different accounts archive a shared collection separately. A calendar whose collection URL moves archives again under a new source. With an empty `calendars` filter, sync marks the old collection's events as deleted from the source and keeps their archived data.
+Each source is identified by the connection's username and canonical calendar collection URL. Renaming a CalDAV entry in the configuration preserves its source and archived events. Different accounts archive a shared collection separately. A calendar whose collection URL moves archives again under a new source. The old source keeps its archived events.
 
 ```toml
 [[caldav.sources]]

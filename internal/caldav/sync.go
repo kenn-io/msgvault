@@ -21,10 +21,10 @@ import (
 )
 
 type Options struct {
-	Name, BaseURL, Username, TimeZone string
-	Calendars                         []string
-	MaxEvents                         int
-	Full                              bool
+	BaseURL, Username, TimeZone string
+	Calendars                   []string
+	MaxEvents                   int
+	Full                        bool
 }
 type Result struct {
 	Calendars, Events, Skipped int
@@ -76,13 +76,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Resul
 	var result Result
 	var syncErrors []error
 	found := make([]bool, len(configured))
-	discovered := make(map[string]bool, len(calendars))
 	for _, cal := range calendars {
-		identifier, err := sourceIdentifier(opts.Username, cal.URL.String())
-		if err != nil {
-			return result, err
-		}
-		discovered[identifier] = true
 		selected := len(configured) == 0
 		for i, u := range configured {
 			if carddav.SameCollectionURL(u, cal.URL) || cal.DiscoveryAliasURL != nil && carddav.SameCollectionURL(u, cal.DiscoveryAliasURL) {
@@ -105,23 +99,6 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Resul
 			continue
 		}
 		result.Calendars++
-	}
-	if len(configured) == 0 {
-		sources, err := st.ListSourcesContext(ctx, calevent.CalDAVSourceType)
-		if err != nil {
-			return result, errors.Join(append(syncErrors, err)...)
-		}
-		for _, src := range sources {
-			var identity [2]string
-			if json.Unmarshal([]byte(src.Identifier), &identity) != nil || identity[0] != opts.Username || discovered[src.Identifier] || src.HistoryOnly || src.MergedIntoSourceID != 0 {
-				continue
-			}
-			removed, err := st.ReconcileSourceMessageSnapshot(ctx, src.ID, map[string]struct{}{})
-			result.Removed += removed
-			if err != nil {
-				syncErrors = append(syncErrors, fmt.Errorf("reconcile missing CalDAV calendar: %w", err))
-			}
-		}
 	}
 	for _, ok := range found {
 		if !ok {

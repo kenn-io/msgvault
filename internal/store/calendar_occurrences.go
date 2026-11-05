@@ -189,7 +189,7 @@ func expandCalendarSeries(ctx context.Context, r *loggedDB, row CalendarEventRow
 		return bounded, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable occurrences.
 	}
 	// A deleted series keeps only its archived exceptions.
-	if row.Event.Kind == "single" || row.Event.Status == "cancelled" {
+	if row.DeletedFromSource || row.Event.Kind == "single" || row.Event.Status == "cancelled" {
 		return resolved, 0, "", nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"
