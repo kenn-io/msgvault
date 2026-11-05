@@ -108,7 +108,7 @@ func TestCalendarOccurrenceCursorScope(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, _ := calendarFixture(t, st, "first", calendarRaw)
-	calendarFixture(t, st, "second", calendarRaw)
+	calendarFixture(t, st, "second", strings.ReplaceAll(calendarRaw, "event-example", "second-example"))
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 	query := CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0), Limit: new(1)}
 	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
