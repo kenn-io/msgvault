@@ -277,6 +277,8 @@ export * from "./employmentVCard";
 export * from "./endEmploymentBody";
 export * from "./endEmploymentPathParameters";
 export * from "./entryRow";
+export * from "./entryRowInboxState";
+export * from "./entryRowReadState";
 export * from "./errorResponse";
 export * from "./evidence";
 export * from "./execution";

@@ -4810,35 +4810,48 @@ func (e EndEmploymentBody) Validate() error {
 }
 
 type EntryRow struct {
-	AnchorMessageID            *int64       `json:"anchor_message_id,omitempty"`
-	AttachmentCount            int64        `json:"attachment_count"`
-	AttachmentSize             int64        `json:"attachment_size"`
-	ConversationID             *int64       `json:"conversation_id,omitempty"`
-	ConversationType           string       `json:"conversation_type" validate:"required"`
-	CounterpartParticipantID   *int64       `json:"counterpart_participant_id,omitempty"`
-	DeletedFromSource          bool         `json:"deleted_from_source"`
-	HasAttachments             bool         `json:"has_attachments"`
-	Key                        string       `json:"key" validate:"required"`
-	Kind                       string       `json:"kind" validate:"required"`
-	Match                      MatchSummary `json:"match"`
-	MatchedRecipientIdentities []string     `json:"matched_recipient_identities" validate:"required"`
-	MatchedSenderIdentities    []string     `json:"matched_sender_identities" validate:"required"`
-	MessageCount               int64        `json:"message_count"`
-	MessageType                string       `json:"message_type" validate:"required"`
-	OccurredAt                 time.Time    `json:"occurred_at" validate:"required"`
-	ParticipantIds             []int64      `json:"participant_ids,omitempty"`
-	ParticipantLabels          []string     `json:"participant_labels,omitempty"`
-	Preview                    string       `json:"preview" validate:"required"`
-	SourceID                   int64        `json:"source_id"`
-	SourceIdentifier           string       `json:"source_identifier" validate:"required"`
-	SourceType                 string       `json:"source_type" validate:"required"`
-	Title                      string       `json:"title" validate:"required"`
+	AnchorMessageID          *int64 `json:"anchor_message_id,omitempty"`
+	AttachmentCount          int64  `json:"attachment_count"`
+	AttachmentSize           int64  `json:"attachment_size"`
+	ConversationID           *int64 `json:"conversation_id,omitempty"`
+	ConversationType         string `json:"conversation_type" validate:"required"`
+	CounterpartParticipantID *int64 `json:"counterpart_participant_id,omitempty"`
+	DeletedFromSource        bool   `json:"deleted_from_source"`
+	HasAttachments           bool   `json:"has_attachments"`
+
+	// InboxState Provider Inbox membership last observed by sync; missing observations are unknown.
+	InboxState                 *EntryRowInboxState `json:"inbox_state,omitempty"`
+	Key                        string              `json:"key" validate:"required"`
+	Kind                       string              `json:"kind" validate:"required"`
+	Match                      MatchSummary        `json:"match"`
+	MatchedRecipientIdentities []string            `json:"matched_recipient_identities" validate:"required"`
+	MatchedSenderIdentities    []string            `json:"matched_sender_identities" validate:"required"`
+	MessageCount               int64               `json:"message_count"`
+	MessageType                string              `json:"message_type" validate:"required"`
+	OccurredAt                 time.Time           `json:"occurred_at" validate:"required"`
+	ParticipantIds             []int64             `json:"participant_ids,omitempty"`
+	ParticipantLabels          []string            `json:"participant_labels,omitempty"`
+	Preview                    string              `json:"preview" validate:"required"`
+
+	// ReadState Provider read status last observed by sync; separate from msgvault local read state.
+	ReadState        *EntryRowReadState `json:"read_state,omitempty"`
+	SourceID         int64              `json:"source_id"`
+	SourceIdentifier string             `json:"source_identifier" validate:"required"`
+	SourceType       string             `json:"source_type" validate:"required"`
+	Title            string             `json:"title" validate:"required"`
 }
 
 func (e EntryRow) Validate() error {
 	var errors runtime.ValidationErrors
 	if err := typesValidator.Var(e.ConversationType, "required"); err != nil {
 		errors = errors.Append("ConversationType", err)
+	}
+	if e.InboxState != nil {
+		if v, ok := any(e.InboxState).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("InboxState", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(e.Key, "required"); err != nil {
 		errors = errors.Append("Key", err)
@@ -4865,6 +4878,13 @@ func (e EntryRow) Validate() error {
 	}
 	if err := typesValidator.Var(e.Preview, "required"); err != nil {
 		errors = errors.Append("Preview", err)
+	}
+	if e.ReadState != nil {
+		if v, ok := any(e.ReadState).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ReadState", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(e.SourceIdentifier, "required"); err != nil {
 		errors = errors.Append("SourceIdentifier", err)

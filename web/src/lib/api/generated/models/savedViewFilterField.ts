@@ -6,6 +6,8 @@ export type SavedViewFilterField =
   (typeof SavedViewFilterField)[keyof typeof SavedViewFilterField];
 
 export const SavedViewFilterField = {
+  inbox_state: "inbox_state",
+  read_state: "read_state",
   source: "source",
   identity: "identity",
   participant: "participant",
