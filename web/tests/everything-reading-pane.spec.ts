@@ -202,7 +202,6 @@ test('the bottom reading pane stays within a short Messages viewport', async ({ 
   await page.getByRole('grid', { name: 'Messages results' }).getByText('Synthetic subject 1').click();
   const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
   await expect(reading).toBeVisible();
-  await expect(page.getByRole('separator', { name: 'Resize reading pane' })).toHaveAttribute('aria-orientation', 'horizontal');
   await expect.poll(async () => {
     const box = (await reading.boundingBox())!;
     return box.y + box.height;

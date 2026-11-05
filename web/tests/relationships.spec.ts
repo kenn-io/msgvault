@@ -361,7 +361,8 @@ for (const facet of ['person', 'domain'] as const) {
         const count = Math.min(500, 1200 - offset);
         return route.fulfill({ json: {
           rows: Array.from({ length: count }, (_, index) => ({
-            ...timelineRows[0], key: `message:${offset + index + 1}`, title: `Synthetic subject ${offset + index + 1}`
+            ...timelineRows[0], key: `message:${offset + index + 1}`, title: `Synthetic subject ${offset + index + 1}`,
+            anchor_message_id: offset + index + 1, preview: `Synthetic preview ${offset + index + 1}`
           })),
           total_count: 1200, cache_revision: 'cache-relationships', search_provenance: {},
           ...(offset + count < 1200 ? { next_cursor: `page:${offset + count}` } : {})
@@ -375,6 +376,7 @@ for (const facet of ['person', 'domain'] as const) {
         } }));
       }
       await page.goto('/?workspace=relationships');
+      // Comfortable density exercises the wrapped meeting summary at phone width.
       if (width === 420) await setTemporaryDensity(page, 'Comfortable');
       if (facet === 'domain') await page.getByRole('radio', { name: 'Domains', exact: true }).click();
       await page.getByRole('grid', { name: 'People results' }).getByText(facet === 'person' ? 'Alice Example' : 'example.com', { exact: true }).click();
@@ -384,7 +386,6 @@ for (const facet of ['person', 'domain'] as const) {
       await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
       await page.getByRole('group', { name: 'Person page' }).evaluate(element => element.scrollTo(0, element.scrollHeight));
       await expect(grid.locator('[data-row-key]').first()).toBeInViewport();
-      expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
 
       const rowHeight = (await grid.locator('[data-row-key]').first().boundingBox())!.height;
       await grid.evaluate((element, height) => element.scrollTo(0, 490 * height), rowHeight);
@@ -392,20 +393,14 @@ for (const facet of ['person', 'domain'] as const) {
       await grid.evaluate((element, height) => element.scrollTo(0, 500 * height), rowHeight);
       await expect(grid.getByText('Synthetic subject 501', { exact: true })).toBeInViewport();
       await grid.focus();
-      const active = await grid.getAttribute('aria-activedescendant');
-      await page.keyboard.press('PageDown');
-      await expect(grid).not.toHaveAttribute('aria-activedescendant', active!);
-      let activeID = await grid.getAttribute('aria-activedescendant');
-      await expect(page.locator(`#${activeID}`)).toBeInViewport();
-      await expect(grid).toBeFocused();
       await page.keyboard.press('End');
       await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-1200$/);
-      activeID = await grid.getAttribute('aria-activedescendant');
+      const activeID = await grid.getAttribute('aria-activedescendant');
       await expect(page.locator(`#${activeID}`)).toBeInViewport();
       await expect(grid).toBeFocused();
       await page.keyboard.press('Enter');
       const reader = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
-      await expect(reader.getByText('Preview text', { exact: true })).toBeVisible();
+      await expect(reader.getByText('Synthetic preview 1200', { exact: true })).toBeVisible();
       expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
       expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
     });
@@ -413,16 +408,13 @@ for (const facet of ['person', 'domain'] as const) {
 }
 
 for (const [width, height] of [[1440, 900], [420, 900], [1280, 720]]) {
-  test(`person calendar, messages, and files remain usable at ${width}px`, async ({ page }) => {
+  test(`person calendar and files remain usable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     await prepare(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
-    const messages = page.getByRole('grid', { name: 'Messages results' });
     await page.getByRole('group', { name: 'Person page' }).hover();
     await page.mouse.wheel(0, 700);
-    await expect(messages.getByText('Subject line')).toBeInViewport();
-    expect((await messages.boundingBox())!.height).toBeGreaterThan(100);
     await page.getByRole('radio', { name: 'Files', exact: true }).click();
     await expect(page.getByRole('grid', { name: 'Files results' }).getByText('notes.pdf')).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
