@@ -16,22 +16,25 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 		return meetingarchive.Snapshot{}, err
 	}
 	v := m.Manifest
-	title := strings.TrimSpace(v.DisplayTitle())
 	lines := []string{v.DisplayTitle()}
-	if strings.TrimSpace(v.Title) != title {
-		lines = append(lines, "Manifest title: "+v.Title)
+	shownTitles := map[string]bool{strings.TrimSpace(v.DisplayTitle()): true}
+	appendTitle := func(label, value string) {
+		title := strings.TrimSpace(value)
+		if !shownTitles[title] {
+			lines = append(lines, label+value)
+			shownTitles[title] = true
+		}
 	}
+	appendTitle("Manifest title: ", v.Title)
 	lines = append(lines, "Status: "+v.Status)
-	if v.ProvisionalTitle != "" && strings.TrimSpace(v.ProvisionalTitle) != title {
-		lines = append(lines, "Provisional title: "+v.ProvisionalTitle)
+	if v.ProvisionalTitle != "" {
+		appendTitle("Provisional title: ", v.ProvisionalTitle)
 	}
-	if v.Notes != nil && strings.TrimSpace(v.Notes.Title) != title {
-		lines = append(lines, "Notes title: "+v.Notes.Title)
+	if v.Notes != nil {
+		appendTitle("Notes title: ", v.Notes.Title)
 	}
 	if v.Calendar != nil {
-		if strings.TrimSpace(v.Calendar.Title) != title {
-			lines = append(lines, "Calendar: "+v.Calendar.Title)
-		}
+		appendTitle("Calendar: ", v.Calendar.Title)
 		lines = append(lines, "Attendees: "+strings.Join(v.Calendar.Attendees, ", "))
 	}
 	if v.Notes != nil {
