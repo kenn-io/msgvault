@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"go.kenn.io/msgvault/internal/activitydate"
@@ -119,13 +120,12 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		where += ` AND m.conversation_id=?`
 		args = append(args, q.ConversationID)
 	}
+	var lower, upper *time.Time
 	if q.After != nil {
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=?`
-		args = append(args, q.After.UTC().Add(-24*time.Hour))
+		lower = new(q.After.UTC().Add(-24 * time.Hour))
 	}
 	if q.Before != nil {
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, q.Before.UTC().Add(24*time.Hour))
+		upper = new(q.Before.UTC().Add(24 * time.Hour))
 	}
 	if q.After == nil && q.Before == nil {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
@@ -135,9 +135,22 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		// DateEvent below applies the exact archive-zone civil-date boundary.
 		from, _ := time.Parse(time.DateOnly, q.FromDate)
 		to, _ := time.Parse(time.DateOnly, q.ToDate)
-		where += ` AND COALESCE(m.sent_at,m.received_at,m.internal_date)>=? AND COALESCE(m.sent_at,m.received_at,m.internal_date)<?`
-		args = append(args, from.Add(-24*time.Hour), to.Add(48*time.Hour))
+		lower, upper = new(from.Add(-24*time.Hour)), new(to.Add(48*time.Hour))
 	}
+	var timestampWindows []string
+	for _, column := range []string{"m.sent_at", "m.received_at", "m.internal_date"} {
+		var bounds []string
+		if lower != nil {
+			bounds = append(bounds, column+">=?")
+			args = append(args, *lower)
+		}
+		if upper != nil {
+			bounds = append(bounds, column+"<?")
+			args = append(args, *upper)
+		}
+		timestampWindows = append(timestampWindows, "("+strings.Join(bounds, " AND ")+")")
+	}
+	where += " AND (" + strings.Join(timestampWindows, " OR ") + ")"
 	channel := `CASE WHEN c.conversation_type='email_thread' AND COALESCE(m.message_type,'') NOT IN ('calendar_event','meeting_transcript') THEN 'email' ELSE 'other' END`
 	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")
 	if err != nil {

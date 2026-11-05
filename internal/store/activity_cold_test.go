@@ -191,6 +191,37 @@ func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 	assertions.Empty(empty.Bursts)
 }
 
+func TestColdAdapterFallsBackFromZeroSentAt(t *testing.T) {
+	f := newTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "zero-sent-at")
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	id := f.add(t, room, f.Source.ID, at, false, "")
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sent_at=?,received_at=? WHERE id=?`), time.Time{}, at, id)
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name  string
+		query store.BurstQuery
+	}{
+		{"timestamp", store.BurstQuery{After: &at, Before: new(at.Add(time.Hour)), Limit: 10}},
+		{"civil-date", store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Limit: 10}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Run("list", func(t *testing.T) {
+				page, err := f.Store.ListColdActivityBurstsContext(t.Context(), tc.query)
+				require.NoError(t, err)
+				require.Len(t, page.Bursts, 1)
+				assert.Equal(t, []int64{id}, page.Bursts[0].LatestMessageIDs)
+				assert.Equal(t, at, page.Bursts[0].FirstAt)
+			})
+			t.Run("count", func(t *testing.T) {
+				count, err := f.Store.CountColdActivityMessagesContext(t.Context(), tc.query)
+				require.NoError(t, err)
+				assert.Equal(t, 1, count)
+			})
+		})
+	}
+}
+
 // Counts describe all admitted representatives, independently of burst pagination.
 func TestColdCountMatchesList(t *testing.T) {
 	requirements := require.New(t)
