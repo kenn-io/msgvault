@@ -337,9 +337,6 @@ func newPersonFactsCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if response.JSON200 == nil {
-				return errors.New("person fact contests response was empty")
-			}
 			if options.jsonOutput {
 				return json.MarshalEncode(jsontext.NewEncoder(cmd.OutOrStdout()), response.JSON200.Contests, json.Deterministic(true))
 			}

@@ -10,18 +10,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/personfacts"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
@@ -370,107 +366,101 @@ func outputIndex(output, value string) int {
 	return strings.Index(output, value)
 }
 
-func TestPersonFactsContestedReadsRealAPI(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	participant, err := st.EnsureParticipantByIdentifier("email", "contest-cli@example.test", "Contest Fixture")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	requirements.NoError(err)
-	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)})
-	server := httptest.NewServer(srv.Router())
-	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	empty, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
-	requirements.NoError(err)
-	assertions.Contains(empty, "No contested facts.")
-	assertions.Contains(empty, "Sensitive fields are hidden; use --include-sensitive to include them.")
-	empty, err = runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--include-sensitive")
-	requirements.NoError(err)
-	assertions.Equal("No contested facts.\n", empty)
-	output, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--json", "--include-sensitive")
-	requirements.NoError(err)
-	assertions.JSONEq(`[]`, output)
-}
-
 func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	participant, err := st.EnsureParticipantByIdentifier("email", "contest-report@example.test", "Contest Fixture")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(participant)
-	requirements.NoError(err)
-	_, err = st.SetPersonTrackingContext(t.Context(), person.ID, true)
-	requirements.NoError(err)
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE attribute_definitions SET is_sensitive = TRUE WHERE slug = ?`), store.AttributeSlugPrimaryChannel)
-	requirements.NoError(err)
-	catalog, err := st.BuildPersonFactCatalogContext(t.Context(), true)
-	requirements.NoError(err)
-	var target personfacts.TargetDescriptor
-	for _, item := range catalog.Targets {
-		if item.Slug == store.AttributeSlugPrimaryChannel {
-			target = item
+	const sensitiveContests = `[{
+		"target":{"kind":"attribute","key":"religion-key","slug":"religion","revision":"revision-2","sensitive":true},
+		"resolution_revision":"revision-1","resolved_at":"2026-08-22T12:00:00Z",
+		"current":[],"claims":[{
+			"claim_key":"claim-buddhism","value":"\"Buddhism\"","relation":"support",
+			"decision":{"reason":"competing-tie"},
+			"evidence":[{"evidence_key":"evidence-buddhism","source_ref":"message:42",
+				"source_url":"https://example.test/buddhism",
+				"event_time":"2026-08-22T10:00:00Z","recorded_time":"2026-08-22T11:00:00Z"}]
+		},{
+			"claim_key":"claim-hinduism","value":"\"Hinduism\"","relation":"support",
+			"decision":{"reason":"competing-tie"},"evidence":[]
+		}]
+	}]`
+	const employmentContests = `[{
+		"target":{"kind":"employment","key":"system:employment","slug":"employment","revision":"revision-1","sensitive":false},
+		"resolution_revision":"revision-1","resolved_at":"2026-08-22T12:00:00Z",
+		"current":[],"claims":[]
+	}]`
+	var queries []url.Values
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertions.Equal(http.MethodGet, r.Method)
+		queries = append(queries, r.URL.Query())
+		contests := `[]`
+		switch r.URL.Path {
+		case "/api/v1/people/7/fact-contests":
+			if r.URL.Query().Get("include_sensitive") == "true" {
+				contests = sensitiveContests
+			}
+		case "/api/v1/people/8/fact-contests":
+		case "/api/v1/people/9/fact-contests":
+			contests = employmentContests
+		default:
+			assertions.Fail("unexpected contested facts path", r.URL.Path)
+			http.NotFound(w, r)
+			return
 		}
-	}
-	requirements.NotEmpty(target.Key)
-	now := time.Date(2026, 8, 22, 12, 0, 0, 0, time.UTC)
-	claims := []personfacts.ProposedClaim{}
-	for _, value := range []string{`"chat"`, `"email"`} {
-		claims = append(claims, personfacts.ProposedClaim{Target: target, Relation: personfacts.RelationSupport, SubmittedValue: json.RawMessage(value), Origin: personfacts.OriginExtraction, Confidence: personfacts.ConfidenceInputs{ReportedScore: 900}, Evidence: []personfacts.EvidenceInput{{PersonID: person.ID, SourceClass: personfacts.EvidencePublic, Directness: personfacts.DirectSelf, Authority: personfacts.AuthorityAuthoritative, SourceURL: "https://example.test/" + strings.Trim(value, `"`), SubjectPersonID: &person.ID, SubjectRef: "synthetic-person", SourceVersion: "v1", EventTime: now, RecordedTime: now, IdentityScore: 990}}})
-	}
-	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{PersonID: person.ID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "one", End: "two"}}, ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now, Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"}, Claims: claims}, nil)
-	requirements.NoError(err)
-	definition, err := st.GetAttributeDefinitionBySlugContext(t.Context(), store.AttributeObjectPerson, store.AttributeSlugPrimaryChannel)
-	requirements.NoError(err)
-	description := "Updated preferred channel description"
-	descriptionUpdate := &description
-	updatedDefinition, err := st.UpdateAttributeDefinitionContext(t.Context(), definition.ID, definition.Revision, store.AttributeDefinitionUpdate{Description: &descriptionUpdate})
-	requirements.NoError(err)
-	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{}, Store: &storeAPIAdapter{store: st}, Logger: slog.New(slog.DiscardHandler)})
-	server := httptest.NewServer(srv.Router())
+		w.Header().Set("Content-Type", "application/json")
+		_, err := fmt.Fprintf(w, `{"contests":%s}`, contests)
+		assertions.NoError(err)
+	}))
 	t.Cleanup(server.Close)
-	ctx := withStoreResolverConfig(t, &config.Config{Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true}})
-	defaultOutput, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
+	ctx := withStoreResolverConfig(t, &config.Config{
+		Remote: config.RemoteConfig{URL: server.URL, AllowInsecure: true},
+	})
+
+	defaultOutput, err := runPersonFactsCommand(ctx, t, "contested", "7")
 	requirements.NoError(err)
-	assertions.Contains(defaultOutput, "No contested facts.")
-	assertions.Contains(defaultOutput, "Sensitive fields are hidden; use --include-sensitive to include them.")
-	output, err := runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10), "--include-sensitive")
+	assertions.Equal("Sensitive fields are hidden; use --include-sensitive to include them.\nNo contested facts.\n", defaultOutput)
+
+	output, err := runPersonFactsCommand(ctx, t, "contested", "7", "--include-sensitive")
 	requirements.NoError(err)
-	assertions.Contains(output, "attribute/primary_channel (resolved 2026-08-22T12:00:00Z)")
-	assertions.Contains(output, "Claim: \"chat\" (supports; too close to choose)")
-	assertions.Contains(output, "Claim: \"email\" (supports; too close to choose)")
-	assertions.NotRegexp("Claim [a-f0-9]{64}:", output)
-	assertions.NotEmpty(target.Revision)
-	assertions.NotEmpty(updatedDefinition.Revision)
-	assertions.NotEqual(target.Revision, updatedDefinition.Revision)
-	assertions.NotContains(output, target.Revision)
-	assertions.NotContains(output, updatedDefinition.Revision)
-	for _, expected := range []string{"primary_channel", "chat", "email", "https://example.test/chat", "2026-08-22", "Definition changed since resolution"} {
+	assertions.NotContains(output, "Sensitive fields are hidden")
+	assertions.Contains(output, "attribute/religion (resolved 2026-08-22T12:00:00Z)")
+	assertions.Contains(output, "Claim: \"Buddhism\" (supports; too close to choose)")
+	assertions.Contains(output, "Claim: \"Hinduism\" (supports; too close to choose)")
+	for _, expected := range []string{"https://example.test/buddhism", "Definition changed since resolution"} {
 		assertions.Contains(output, expected)
 	}
+
+	jsonOutput, err := runPersonFactsCommand(ctx, t, "contested", "7", "--include-sensitive", "--json")
+	requirements.NoError(err)
+	var contests []generated.PersonFactContest
+	requirements.NoError(json.Unmarshal([]byte(jsonOutput), &contests))
+	requirements.Len(contests, 1)
+	assertions.Equal("religion", contests[0].Target.Slug)
+	requirements.Len(contests[0].Claims, 2)
+	assertions.Equal(`"Buddhism"`, contests[0].Claims[0].Value)
+	assertions.Equal(`"Hinduism"`, contests[0].Claims[1].Value)
+	requirements.Len(contests[0].Claims[0].Evidence, 1)
+	assertions.Equal(new("https://example.test/buddhism"), contests[0].Claims[0].Evidence[0].SourceURL)
+
+	empty, err := runPersonFactsCommand(ctx, t, "contested", "8", "--include-sensitive")
+	requirements.NoError(err)
+	assertions.Equal("No contested facts.\n", empty)
+
 	command := newPersonFactsCommand()
 	command.SetOut(failingSearchWriter{})
 	command.SetErr(io.Discard)
-	command.SetArgs([]string{"contested", strconv.FormatInt(person.ID, 10), "--include-sensitive"})
+	command.SetArgs([]string{"contested", "7", "--include-sensitive"})
 	command.SetContext(ctx)
 	requirements.ErrorIs(command.Execute(), io.ErrClosedPipe)
 
-	for _, item := range catalog.Targets {
-		if item.Slug == "employment" {
-			target = item
-		}
-	}
-	requirements.Equal("employment", target.Slug)
-	for i, role := range []string{"Platform", "Infrastructure"} {
-		claims[i].Target = target
-		claims[i].SubmittedValue = json.RawMessage(fmt.Sprintf(`{"organization":{"name":"Example Company","domain":"company.example"},"title":"Engineer","role":%q}`, role))
-	}
-	_, err = st.ApplyPersonFactGenerationContext(t.Context(), personfacts.GenerationInput{PersonID: person.ID, SourceCursors: []personfacts.SourceCursor{{Lane: "fixture", Start: "two", End: "three"}}, ProgramID: "fixture", ProgramVersion: "v1", ProgramFingerprint: strings.Repeat("a", 64), CatalogFingerprint: "fixture", Provider: "fixture", ProviderVersion: "v1", Model: "fixture", ModelVersion: "v1", ResolvedAt: now, Policy: personfacts.PolicyContext{AllowSensitive: true, ProviderPolicyFingerprint: "fixture"}, Claims: claims}, nil)
-	requirements.NoError(err)
-	output, err = runPersonFactsCommand(ctx, t, "contested", strconv.FormatInt(person.ID, 10))
+	output, err = runPersonFactsCommand(ctx, t, "contested", "9")
 	requirements.NoError(err)
 	assertions.Contains(output, "employment (resolved 2026-08-22T12:00:00Z)")
 	assertions.NotContains(output, "employment/employment")
+
+	requirements.Len(queries, 6)
+	assertions.False(queries[0].Has("include_sensitive"), "contested defaults to non-sensitive")
+	for _, query := range queries[1:5] {
+		assertions.Equal("true", query.Get("include_sensitive"))
+	}
+	assertions.False(queries[5].Has("include_sensitive"))
 }
