@@ -38,8 +38,8 @@ func (s *Store) SetBeeperAttachmentClassifications(
 			  )
 		`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata"))
 		resetArgs := []any{
-			nullIfEmpty(""), string(AttachmentRoleUnknown), string(AttachmentRoleSourceUnknown),
-			messageID, nullIfEmpty(""), string(AttachmentRoleUnknown), string(AttachmentRoleSourceUnknown),
+			NullIfEmpty(""), string(AttachmentRoleUnknown), string(AttachmentRoleSourceUnknown),
+			messageID, NullIfEmpty(""), string(AttachmentRoleUnknown), string(AttachmentRoleSourceUnknown),
 		}
 		if len(classifications) > 0 {
 			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(classifications)), ",")
@@ -83,8 +83,8 @@ func (s *Store) SetBeeperAttachmentClassifications(
 				      OR role_source != ?
 				  )
 			`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata")),
-				nullIfEmpty(classification.Metadata), string(role), string(roleSource),
-				messageID, sourceAttachmentID, nullIfEmpty(classification.Metadata), string(role), string(roleSource))
+				NullIfEmpty(classification.Metadata), string(role), string(roleSource),
+				messageID, sourceAttachmentID, NullIfEmpty(classification.Metadata), string(role), string(roleSource))
 			if err != nil {
 				return fmt.Errorf("classify Beeper attachment %s: %w", sourceAttachmentID, err)
 			}

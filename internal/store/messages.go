@@ -2193,29 +2193,8 @@ func (s *Store) PersistMessageWithParticipantsContext(
 	if build == nil {
 		return 0, errors.New("persist message requires a participant builder")
 	}
-	if tx, ok := ctx.Value(calendarResourceTransactionKey{s}).(*loggedTx); ok {
-		return s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, build, nil, nil)
-	}
 	// The source is known only after build runs, so this entry locks none.
-	// Meeting archives are the only caller and meeting rows are not derived.
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{}, nil, participants, build, nil, nil)
-}
-
-type calendarResourceTransactionKey struct{ store *Store }
-
-// WithCalendarResourceTransactionContext commits a resource's participant-backed
-// messages, metadata, and tombstone clears together. The callback must use its
-// context and this Store for every write, and return any write error.
-func (s *Store) WithCalendarResourceTransactionContext(ctx context.Context, fn func(context.Context) error) error {
-	return s.withAttributionTxContext(ctx, attributionLock{}, func(tx *loggedTx) error {
-		// A resource can persist several events. Acquire the directory lock before
-		// the callback so an earlier event cannot hold a participant row while a
-		// later event waits for the lock that participant batches acquire first.
-		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
-			return fmt.Errorf("lock participant directory for calendar resource: %w", err)
-		}
-		return fn(context.WithValue(ctx, calendarResourceTransactionKey{s}, tx))
-	})
 }
 
 // PersistRepairMessageWithParticipantsContext atomically replaces one
@@ -2832,7 +2811,7 @@ func replaceMessageRecipientsTx(tx querier, messageID int64, rs RecipientSet) er
 		for i := start; i < end; i++ {
 			values[i-start] = "(?, ?, ?, ?, ?)"
 			row := recipients[i]
-			args = append(args, messageID, row.participantID, rs.Type, row.displayName, nullIfEmpty(row.email))
+			args = append(args, messageID, row.participantID, rs.Type, row.displayName, NullIfEmpty(row.email))
 		}
 		return values, args
 	})
@@ -6556,7 +6535,8 @@ func (s *Store) replaceMessageAttachmentsWhereTxContext(ctx context.Context,
 	return nil
 }
 
-func nullIfEmpty(s string) sql.NullString {
+// NullIfEmpty represents an empty string as SQL NULL.
+func NullIfEmpty(s string) sql.NullString {
 	return sql.NullString{String: s, Valid: s != ""}
 }
 
@@ -6682,7 +6662,7 @@ func (s *Store) beeperAttachmentMetadataChangedTx(
 			SELECT COUNT(*) FROM attachments
 			WHERE message_id = ? AND source_attachment_id = ?
 			  AND NOT (%s)`, s.dialect.JSONIsDistinctExpr("attachment_metadata")),
-			messageID, sourceAttachmentID, nullIfEmpty(metadata)).Scan(&same); err != nil {
+			messageID, sourceAttachmentID, NullIfEmpty(metadata)).Scan(&same); err != nil {
 			return false, fmt.Errorf("compare existing Beeper attachment metadata: %w", err)
 		}
 		if same == 0 {

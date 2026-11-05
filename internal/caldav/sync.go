@@ -17,7 +17,6 @@ import (
 	"go.kenn.io/msgvault/internal/calsync"
 	"go.kenn.io/msgvault/internal/carddav"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/gcal"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
@@ -55,10 +54,6 @@ func accountEmail(username string) string {
 		return ""
 	}
 	return email
-}
-
-func nullString(value string) *sql.NullString {
-	return &sql.NullString{String: value, Valid: value != ""}
 }
 
 // Sync discovers and archives the selected calendars. It never writes to the
@@ -339,6 +334,24 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	if err != nil {
 		return result, err
 	}
+	finalize := func(ctx context.Context) error {
+		var repairErr, statsErr error
+		if _, err := base.RepairAccountAttributionContext(ctx, src.ID, nil); err != nil {
+			repairErr = fmt.Errorf("repair CalDAV account attribution: %w", err)
+		}
+		if err := st.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
+			statsErr = fmt.Errorf("recompute CalDAV conversation statistics: %w", err)
+		}
+		return errors.Join(repairErr, statsErr)
+	}
+	finalized := false
+	defer func() {
+		if retErr != nil && !finalized {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
+			defer cancel()
+			retErr = errors.Join(retErr, finalize(cleanup))
+		}
+	}()
 	if err := st.UpdateSourceSyncConfigContext(ctx, src.ID, string(configJSON)); err != nil {
 		return result, err
 	}
@@ -387,24 +400,6 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	if len(b.live) > limit {
 		return result, fmt.Errorf("CalDAV calendar %q has %d live events; increase max_events (currently %d)", cal.DisplayName, len(b.live), limit)
 	}
-	finalize := func(ctx context.Context) error {
-		var repairErr, statsErr error
-		if _, err := base.RepairAccountAttributionContext(ctx, src.ID, nil); err != nil {
-			repairErr = fmt.Errorf("repair CalDAV account attribution: %w", err)
-		}
-		if err := st.RecomputeConversationStatsContext(ctx, src.ID); err != nil {
-			statsErr = fmt.Errorf("recompute CalDAV conversation statistics: %w", err)
-		}
-		return errors.Join(repairErr, statsErr)
-	}
-	finalized := false
-	defer func() {
-		if retErr != nil && !finalized && result.Events > 0 {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Minute)
-			defer cancel()
-			retErr = errors.Join(retErr, finalize(cleanup))
-		}
-	}()
 	for _, skip := range b.skipped {
 		slog.WarnContext(ctx, "Skipping CalDAV resource", "href", skip.href, "error", skip.err)
 		result.Skipped++
@@ -434,32 +429,27 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 	}
 	for _, href := range slices.Sorted(maps.Keys(resources)) {
 		r := resources[href]
-		if err := st.WithCalendarResourceTransactionContext(ctx, func(ctx context.Context) error {
-			for _, p := range r.items {
-				if err := persistEvent(ctx, st, src.ID, ownerEmail, p.event, p.member); err != nil {
-					return err
-				}
-				if err := st.ClearMessageDeletedFromSourceContext(ctx, src.ID, p.event.Event.ProviderEventID); err != nil {
-					return err
-				}
-			}
-			for _, update := range r.metadataUpdates {
-				if err := st.SetMessageMetadataContext(ctx, update.messageID, update.metadata); err != nil {
-					return fmt.Errorf("mark removed CalDAV override: %w", err)
-				}
-			}
-			return nil
-		}); err != nil {
-			checkpoint.ErrorsCount++
-			return result, err
-		}
 		for _, p := range r.items {
+			if err := persistEvent(ctx, st, src.ID, ownerEmail, p.event, p.member); err != nil {
+				checkpoint.ErrorsCount++
+				return result, err
+			}
 			result.Events++
 			checkpoint.MessagesProcessed++
 			if _, exists := existing[p.event.Event.ProviderEventID]; exists {
 				checkpoint.MessagesUpdated++
 			} else {
 				checkpoint.MessagesAdded++
+			}
+			if err := st.ClearMessageDeletedFromSourceContext(ctx, src.ID, p.event.Event.ProviderEventID); err != nil {
+				checkpoint.ErrorsCount++
+				return result, err
+			}
+		}
+		for _, update := range r.metadataUpdates {
+			if err := st.SetMessageMetadataContext(ctx, update.messageID, update.metadata); err != nil {
+				checkpoint.ErrorsCount++
+				return result, fmt.Errorf("mark removed CalDAV override: %w", err)
 			}
 		}
 		if err := st.UpdateSyncCheckpointContext(ctx, runID, checkpoint); err != nil {
@@ -490,7 +480,7 @@ func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal cardda
 
 func eventMetadata(item calevent.CalDAVEvent, member carddav.Member, account string) calevent.CalDAVMetadata {
 	e := item.Event
-	meta := calevent.CalDAVMetadata{EventID: e.ProviderEventID, Href: member.Href, ETag: member.ETag, AccountEmail: account, Status: e.Status}
+	meta := calevent.CalDAVMetadata{EventID: e.ProviderEventID, Href: member.Href, ETag: member.ETag, AccountEmail: account, Status: e.Status, ICalUID: item.ICalUID, Sequence: item.Sequence}
 	meta.SetEventTimes(e)
 	return meta
 }
@@ -502,93 +492,47 @@ func persistEvent(ctx context.Context, st *store.Store, sourceID int64, account 
 	if err != nil {
 		return err
 	}
-	organizer, attendees := calsync.MapParticipants(gcalmodel.Person{Email: item.OrganizerEmail, DisplayName: item.OrganizerName}, item.ExplicitAttendees, true)
+	ev, err := item.MessageEvent()
+	if err != nil {
+		return err
+	}
+	body := calevent.SerializeBody(ev)
+	ev.Organizer, ev.Attendees = calsync.MapParticipants(gcalmodel.Person{Email: item.OrganizerEmail, DisplayName: item.OrganizerName}, item.ExplicitAttendees, true)
+	conversation := e.ProviderEventID
+	if e.SeriesProviderID != "" {
+		conversation = e.SeriesProviderID
+	}
+	data := &store.MessagePersistData{
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: e.ProviderEventID, SizeEstimate: int64(len(raw))},
+		Conversation: &store.ConversationPersistData{SourceConversationID: conversation},
+		Metadata:     new(store.NullIfEmpty(string(meta))),
+		BodyText:     store.NullIfEmpty(body),
+		RawMIME:      raw, RawFormat: calevent.CalDAVRawFormat,
+	}
 	var people []store.ParticipantPersistData
 	fromIndex := -1
-	var toIndexes []int
-	var toNames, toEmails []string
-	if organizer.Email != "" {
+	if ev.Organizer.Email != "" {
 		fromIndex = len(people)
-		people = append(people, store.ParticipantPersistData{EmailAddress: organizer.Email, DisplayName: organizer.DisplayName, Domain: calsync.EmailDomain(organizer.Email)})
+		people = append(people, store.ParticipantPersistData{EmailAddress: ev.Organizer.Email, DisplayName: ev.Organizer.DisplayName, Domain: calsync.EmailDomain(ev.Organizer.Email)})
 	}
-	for _, a := range attendees {
+	var toIndexes []int
+	for _, a := range ev.Attendees {
+		if a.Email == "" {
+			continue
+		}
 		toIndexes = append(toIndexes, len(people))
-		toNames = append(toNames, a.DisplayName)
-		toEmails = append(toEmails, a.Email)
 		people = append(people, store.ParticipantPersistData{EmailAddress: a.Email, DisplayName: a.DisplayName, Domain: calsync.EmailDomain(a.Email)})
 	}
-	bodyEvent := gcal.Event{Summary: item.Summary, Description: item.Description, Location: item.Location}
-	if e.AllDay {
-		bodyEvent.Start.Date, bodyEvent.End.Date = e.StartDate, e.EndDate
-	} else {
-		zoneName := e.EventTimeZone
-		if zoneName == "" {
-			zoneName = e.CalendarTimeZone
-		}
-		zone := time.UTC
-		if zoneName != "" {
-			zone, err = time.LoadLocation(zoneName)
-			if err != nil {
-				return fmt.Errorf("CalDAV body time zone: %w", err)
-			}
-		}
-		if e.Start != nil {
-			bodyEvent.Start.DateTime = e.Start.In(zone)
-		}
-		if e.End != nil {
-			bodyEvent.End.DateTime = e.End.In(zone)
-		}
-	}
-	for _, a := range e.Attendees {
-		bodyEvent.Attendees = append(bodyEvent.Attendees, gcal.Attendee{DisplayName: a.DisplayName})
-	}
-	body := calsync.SerializeBody(bodyEvent)
-	sent := sql.NullTime{}
-	if e.AllDay {
-		startDate := e.StartDate
-		if startDate == "" && e.Original != nil && e.Original.AllDay {
-			startDate = e.Original.Date
-		}
-		if startDate != "" {
-			parsed, err := time.Parse(time.DateOnly, startDate)
-			if err != nil {
-				return fmt.Errorf("parse CalDAV all-day start date: %w", err)
-			}
-			sent = sql.NullTime{Time: parsed, Valid: true}
-		}
-	} else {
-		startAt := e.Start
-		if startAt == nil && e.Original != nil && !e.Original.AllDay {
-			startAt = &e.Original.Instant
-		}
-		if startAt != nil {
-			sent = sql.NullTime{Time: *startAt, Valid: true}
-		}
-	}
-	isFromMe := item.OrganizerEmail != "" && strings.EqualFold(item.OrganizerEmail, account)
 	_, err = st.PersistMessageWithParticipantsContext(ctx, people, func(ids []int64) *store.MessagePersistData {
-		sender := sql.NullInt64{}
-		var fromIDs []int64
-		var fromNames, fromEmails []string
+		senderID := int64(0)
 		if fromIndex >= 0 {
-			sender = sql.NullInt64{Int64: ids[fromIndex], Valid: true}
-			fromIDs = []int64{ids[fromIndex]}
-			fromNames = []string{item.OrganizerName}
-			fromEmails = []string{item.OrganizerEmail}
+			senderID = ids[fromIndex]
 		}
 		toIDs := make([]int64, len(toIndexes))
 		for i, index := range toIndexes {
 			toIDs[i] = ids[index]
 		}
-		conversation := e.ProviderEventID
-		title := item.Summary
-		if e.SeriesProviderID != "" {
-			conversation = e.SeriesProviderID
-		}
-		if e.Kind == "exception" {
-			title = ""
-		}
-		return &store.MessagePersistData{Message: &store.Message{SourceID: sourceID, SourceMessageID: e.ProviderEventID, MessageType: gcal.MessageTypeCalendarEvent, Subject: *nullString(item.Summary), Snippet: *nullString(calsync.Snippet(body)), SentAt: sent, SenderID: sender, IsFromMe: isFromMe, IdentityDerivedIsFromMe: isFromMe, SizeEstimate: int64(len(raw))}, Conversation: &store.ConversationPersistData{SourceConversationID: conversation, ConversationType: "calendar", Title: title}, Metadata: nullString(string(meta)), BodyText: *nullString(body), RawMIME: raw, RawFormat: calevent.CalDAVRawFormat, Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: fromIDs, DisplayNames: fromNames, EmailAddresses: fromEmails}, {Type: "to", ParticipantIDs: toIDs, DisplayNames: toNames, EmailAddresses: toEmails}}, FTS: &store.FTSDoc{Subject: item.Summary, Body: body, FromAddr: item.OrganizerEmail, ToAddrs: strings.Join(toEmails, " ")}}
+		return calsync.MapEventMessage(ev, account, data, senderID, toIDs)
 	})
 	if err != nil {
 		return fmt.Errorf("persist CalDAV event: %w", err)

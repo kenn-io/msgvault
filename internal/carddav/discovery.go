@@ -466,7 +466,7 @@ func resolveDiscoveryHref(ctx context.Context, client *Client, base *url.URL, hr
 		return nil, ErrUnsafeHref
 	}
 	resolved, err := base.Parse(href)
-	if err != nil || resolved.User != nil || resolved.Fragment != "" || !sameOrigin(client.origin, resolved) {
+	if err != nil || resolved.User != nil || resolved.Fragment != "" || !netguard.SameOrigin(client.origin, resolved) {
 		return nil, ErrUnsafeHref
 	}
 	if _, err := client.validateTarget(ctx, resolved); err != nil {

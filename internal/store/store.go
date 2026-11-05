@@ -923,9 +923,6 @@ func (s *Store) withTx(fn func(tx *loggedTx) error) error {
 // connection acquisition and every context-aware statement in the
 // transaction.
 func (s *Store) withTxContext(ctx context.Context, fn func(tx *loggedTx) error) error {
-	if tx, ok := ctx.Value(calendarResourceTransactionKey{s}).(*loggedTx); ok {
-		return fn(tx)
-	}
 	return s.withTxOptionsContext(ctx, nil, fn)
 }
 

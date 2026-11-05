@@ -587,7 +587,7 @@ func (s *Store) SetDiscordAttachmentMetadataContext(ctx context.Context,
 			      %s
 			  )
 		`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata"))
-		resetArgs := []any{nullIfEmpty(""), messageID, nullIfEmpty("")}
+		resetArgs := []any{NullIfEmpty(""), messageID, NullIfEmpty("")}
 		if len(metadata) > 0 {
 			placeholders := strings.TrimSuffix(strings.Repeat("?,", len(metadata)), ",")
 			resetQuery += " AND source_attachment_id NOT IN (" + placeholders + ")"
@@ -612,7 +612,7 @@ func (s *Store) SetDiscordAttachmentMetadataContext(ctx context.Context,
 				WHERE message_id = ? AND source_attachment_id = ?
 				  AND %s
 			`, s.dialect.JSONBindExpr(), s.dialect.JSONIsDistinctExpr("attachment_metadata")),
-				nullIfEmpty(value), messageID, sourceAttachmentID, nullIfEmpty(value))
+				NullIfEmpty(value), messageID, sourceAttachmentID, NullIfEmpty(value))
 			if err != nil {
 				return fmt.Errorf("update Discord attachment metadata %s: %w", sourceAttachmentID, err)
 			}
