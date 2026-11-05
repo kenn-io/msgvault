@@ -15,18 +15,7 @@ func explainSearchPlan(t *testing.T, env *testEnv, q *search.Query) string {
 	t.Helper()
 	conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
 	sqlText := searchResultsSQL(ftsJoin, strings.Join(conditions, " AND "))
-	rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+sqlText, append(args, 50, 0)...)
-	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, notused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &notused, &detail))
-		plan.WriteString(detail + "\n")
-	}
-	require.NoError(t, rows.Err())
-	return plan.String()
+	return explainQueryPlan(t, env.DB, sqlText, append(args, 50, 0)...)
 }
 
 // Choose the FTS result page before looking up sender and conversation details.

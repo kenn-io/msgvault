@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/mattn/go-isatty"
+	"go.kenn.io/kit/consolewindow"
 )
 
 const secretCommandTimeout = 30 * time.Second
@@ -69,6 +70,9 @@ func runSecretCommand(
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Stderr = secretCommandStderr()
+	if cmd.Stderr == nil {
+		consolewindow.Hide(cmd)
+	}
 	// Closing inherited pipes bounds waiting even if a wrapper leaves descendants.
 	cmd.WaitDelay = time.Second
 	output := &secretOutput{cancel: cancel}

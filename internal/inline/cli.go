@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/kit/consolewindow"
 )
 
 const (
@@ -72,6 +74,7 @@ func (c *CLIClient) run(ctx context.Context, args ...string) ([]byte, error) {
 	stdout := &cliBoundedBuffer{limit: c.maxStdout, cancel: cancel}
 	stderr := &cliBoundedBuffer{limit: c.maxStderr, cancel: cancel}
 	cmd.Stdout, cmd.Stderr = stdout, stderr
+	consolewindow.Hide(cmd)
 	err := cmd.Run()
 	if stdout.overflow || stderr.overflow {
 		return nil, errors.New("inline CLI output exceeds the bounded response limit")

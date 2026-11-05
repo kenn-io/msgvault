@@ -1943,7 +1943,11 @@ func TestPinnedResolverCannotBeRedirectedByIntermediateSymlinkSwap(t *testing.T)
 		require.NoError(os.Symlink("second", link))
 	})
 	if err == nil {
-		assert.Equal(first, resolved)
+		// The resolver also follows system symlinks above the temp dir, such
+		// as /var -> /private/var on macOS.
+		resolvedFirst, evalErr := filepath.EvalSymlinks(first)
+		require.NoError(evalErr)
+		assert.Equal(resolvedFirst, resolved)
 	}
 	assert.True(swapped)
 	assert.Equal("[web]\ntheme = \"system\"\n", string(mustReadFile(t, first)))
