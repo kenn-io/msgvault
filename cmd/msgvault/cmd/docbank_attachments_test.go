@@ -107,16 +107,10 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 			want:     "Folder: /msgvault\nDelivered: 1\nSending: 4\nFiles left to examine: 2\nFailed: 3\nforbidden: 3\nretrying: 4",
 		},
 		{
-			name: "error_without_profile", args: []string{"attachments", "status"},
-			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
-			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"upload unavailable"}`,
-			want:     "Last error: upload unavailable",
-		},
-		{
 			name: "processing", args: []string{"attachments", "status"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
-			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":9,"sending":0,"remaining":0,"failed":0,"reasons":{}},"processing":{"profile":"documents","waiting":3,"requested":1,"extracted":2,"outcomes":{"provider_timeout":1,"unsupported_format":2}}}`,
-			want:     "Document profile: documents\nText extracted: 2\nProcessing: 1\nWaiting: 3\nWithout text (provider_timeout): 1\nWithout text (unsupported_format): 2",
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":9,"sending":0,"remaining":0,"failed":0,"reasons":{}},"last_error":"upload unavailable","processing":{"profile":"documents","waiting":3,"requested":1,"extracted":2,"outcomes":{"provider_timeout":1,"unsupported_format":2}}}`,
+			want:     "Last error: upload unavailable\nDocument profile: documents\nText extracted: 2\nProcessing: 1\nWaiting: 3\nWithout text (provider_timeout): 1\nWithout text (unsupported_format): 2",
 		},
 		{
 			name: "no_counts", args: []string{"attachments", "status"},
@@ -127,7 +121,7 @@ func TestDocbankAttachmentStatusCLI(t *testing.T) {
 		{
 			name: "json", args: []string{"attachments", "status", "--json"},
 			method: http.MethodGet, path: "/api/v1/integrations/docbank/attachments", status: http.StatusOK,
-			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}},"last_error":"upload failed"}`,
+			response: `{"state":"running","upload_consent":true,"folder":"/msgvault","counts":{"delivered":1,"sending":4,"remaining":2,"failed":3,"reasons":{"forbidden":3,"retrying":4}},"last_error":"upload failed","processing":{"profile":"documents","waiting":0,"requested":0,"extracted":1,"outcomes":{}}}`,
 			want:     `"last_error":"upload failed"`,
 		},
 		{
