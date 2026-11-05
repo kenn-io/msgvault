@@ -229,11 +229,10 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 		pidMap, err := s.EnsureParticipantsBatch(
 			[]mime.Address{{Email: "me@imessage.local", Name: "Me"}},
 		)
-		if err == nil {
-			if id, ok := pidMap["me@imessage.local"]; ok {
-				ownerPID = id
-			}
+		if err != nil {
+			return nil, fmt.Errorf("resolve default owner: %w", err)
 		}
+		ownerPID = pidMap["me@imessage.local"]
 	}
 
 	// Track resolved participants to avoid repeated DB calls

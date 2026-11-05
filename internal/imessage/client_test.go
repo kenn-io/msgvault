@@ -513,9 +513,11 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 		name          string
 		isFromMe      int
 		recipientType string
+		failOwner     bool
 	}{
 		{name: "outgoing", isFromMe: 1, recipientType: "to"},
 		{name: "incoming", isFromMe: 0, recipientType: "from"},
+		{name: "default owner", isFromMe: 0, recipientType: "to", failOwner: true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assert, require := assert.New(t), require.New(t)
@@ -536,16 +538,28 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 			query := `SELECT p.email_address FROM message_recipients r JOIN participants p ON p.id = r.participant_id WHERE r.recipient_type = ?`
 			var recipient string
 			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
-			require.Equal("peer@example.test", recipient)
+			originalRecipient := "peer@example.test"
+			if tt.failOwner {
+				originalRecipient = "me@imessage.local"
+			}
+			require.Equal(originalRecipient, recipient)
 			_, err = db.Exec(`UPDATE handle SET id = 'new-peer@example.test'`)
 			require.NoError(err)
-			_, err = st.DB().Exec(`CREATE TRIGGER fail_participant BEFORE INSERT ON participants BEGIN SELECT RAISE(ABORT, 'synthetic recipient failure'); END`)
+			trigger := `CREATE TRIGGER fail_participant BEFORE INSERT ON participants WHEN NEW.email_address = 'new-peer@example.test' BEGIN SELECT RAISE(ABORT, 'synthetic recipient failure'); END`
+			if tt.failOwner {
+				trigger = `CREATE TRIGGER fail_participant BEFORE INSERT ON participants WHEN NEW.email_address = 'me@imessage.local' BEGIN SELECT RAISE(ABORT, 'synthetic recipient failure'); END`
+			}
+			_, err = st.DB().Exec(trigger)
 			require.NoError(err)
 			summary, err := client.Import(t.Context(), st, src.ID)
-			require.NoError(err)
-			assert.Equal(1, summary.Skipped)
+			if tt.failOwner {
+				require.ErrorContains(err, "resolve default owner")
+			} else {
+				require.NoError(err)
+				assert.Equal(1, summary.Skipped)
+			}
 			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
-			assert.Equal("peer@example.test", recipient)
+			assert.Equal(originalRecipient, recipient)
 			_, err = st.DB().Exec(`DROP TRIGGER fail_participant`)
 			require.NoError(err)
 			retried, err := client.Import(t.Context(), st, src.ID)
@@ -553,7 +567,11 @@ func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
 			assert.Zero(retried.Skipped)
 			assert.Equal(1, retried.MessagesUpdated)
 			require.NoError(st.DB().QueryRow(query, tt.recipientType).Scan(&recipient))
-			assert.Equal("new-peer@example.test", recipient)
+			if tt.failOwner {
+				assert.Equal("me@imessage.local", recipient)
+			} else {
+				assert.Equal("new-peer@example.test", recipient)
+			}
 		})
 	}
 }
