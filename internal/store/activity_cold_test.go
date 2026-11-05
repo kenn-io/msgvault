@@ -52,11 +52,10 @@ func retractTimelineActivity(t *testing.T, f *timelineActivityFixture, messageID
 	require.NoError(t, err)
 }
 
-// A recipient alias inherits the person's strongest role for contact counting,
-// but only an actual sender exclusion makes the message noise.
-func TestColdAdapterExcludedRecipientAliasIsNotSenderNoise(t *testing.T) {
-	for _, excludedSender := range []bool{false, true} {
-		t.Run(fmt.Sprintf("excluded-sender=%t", excludedSender), func(t *testing.T) {
+// A saved person's human address keeps automated aliases visible in either role.
+func TestColdAdapterSavedAliasesMatchWarmSenderNoise(t *testing.T) {
+	for _, automatedSender := range []bool{false, true} {
+		t.Run(fmt.Sprintf("automated-sender=%t", automatedSender), func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
 			f := newTimelineActivityFixture(t)
 			alias := f.EnsureParticipant("no-reply@example.com", "Automated alias", "example.com")
@@ -66,7 +65,7 @@ func TestColdAdapterExcludedRecipientAliasIsNotSenderNoise(t *testing.T) {
 			requirements.NoError(err)
 			id := f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
 			sender, recipient := f.peer, alias
-			if excludedSender {
+			if automatedSender {
 				sender, recipient = alias, f.peer
 			}
 			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, id)
@@ -79,30 +78,19 @@ func TestColdAdapterExcludedRecipientAliasIsNotSenderNoise(t *testing.T) {
 			q.Filters.Exclusions = persontiers.DefaultConfig()
 			warm, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
-			want := 1
-			if excludedSender {
-				want = 0
-			}
-			requirements.Len(warm.Bursts, want)
+			requirements.Len(warm.Bursts, 1)
 			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
 			retractTimelineActivity(t, f, id)
 			for _, includeNoise := range []bool{false, true} {
 				q.Filters.IncludeNoise = includeNoise
 				cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 				requirements.NoError(err)
-				expected := want
-				if includeNoise {
-					expected = 1
-				}
-				assertions.Len(cold.Bursts, expected)
+				requirements.Len(cold.Bursts, 1)
 				count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
 				requirements.NoError(err)
-				assertions.Equal(expected, count)
-				if expected == 1 {
-					requirements.Len(cold.Bursts, 1)
-					assertions.Equal(id, cold.Bursts[0].AnchorMessageID)
-					assertions.Equal(1, cold.Bursts[0].Inbound)
-				}
+				assertions.Equal(1, count)
+				assertions.Equal(id, cold.Bursts[0].AnchorMessageID)
+				assertions.Equal(1, cold.Bursts[0].Inbound)
 			}
 		})
 	}

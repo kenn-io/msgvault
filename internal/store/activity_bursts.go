@@ -195,6 +195,12 @@ func (s *Store) listActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 
 // hydrateActivityCounterpartsContext reads the same classified facts as totals.
 func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages []activityReadMessage, f ActivityFilters) error {
+	return s.hydrateActivityCounterpartsWithCTEContext(ctx, messages, f, func(ids []int64) (string, []any, error) {
+		return s.activityReadCTE(ctx, activityReadWindow{MessageIDs: ids}, f)
+	})
+}
+
+func (s *Store) hydrateActivityCounterpartsWithCTEContext(ctx context.Context, messages []activityReadMessage, f ActivityFilters, readCTE func([]int64) (string, []any, error)) error {
 	indices := make(map[int64]int, len(messages))
 	for i := range messages {
 		messages[i].Counterparts = []ActivityMessageCounterpart{}
@@ -207,7 +213,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 	}
 	for start := 0; start < len(ids); start += activityCandidateIDChunk {
 		batch := ids[start:min(start+activityCandidateIDChunk, len(ids))]
-		cte, args, err := s.activityReadCTE(ctx, activityReadWindow{MessageIDs: batch}, f)
+		cte, args, err := readCTE(batch)
 		if err != nil {
 			return err
 		}
@@ -217,7 +223,8 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 		}
 		counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "f.direction", RefKind: "f.ref_kind", ListExcluded: listExcluded, LargeInbound: "f.large_inbound"})
 		rows, err := s.db.QueryContext(ctx, s.Rebind(cte+`, counterpart_flags AS (
- SELECT f.*,MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END) OVER (PARTITION BY f.message_id) AS excluded_sender,
+ SELECT f.*,CASE WHEN MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END) OVER (PARTITION BY f.message_id)=1
+ AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded='' THEN 1 ELSE 0 END) OVER (PARTITION BY f.message_id)=0 THEN 1 ELSE 0 END AS excluded_sender,
  CASE WHEN f.contact_eligible=1 AND f.encrypted=0 AND f.excluded='' AND `+counted+` THEN 1 ELSE 0 END AS counterpart_counted
  FROM facts f WHERE f.participant_id IS NOT NULL
  ), ranked_counterparts AS (

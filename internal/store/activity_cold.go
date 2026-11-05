@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/activitydate"
-	"go.kenn.io/msgvault/internal/archivemarker"
 )
 
 type coldActivityMessage struct {
@@ -160,11 +159,11 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	// classification. Otherwise SQLite can evaluate those correlated queries for
 	// every archived message, even when no cold conversation matches.
 	warm, warmArgs := s.coldWarmCopyClause(ctx, copyKey)
-	args = slices.Concat(args, []any{archivemarker.EncryptedMessagePlaceholder}, subjectArgs, warmArgs)
+	args = slices.Concat(args, subjectArgs, warmArgs)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH cold_window AS MATERIALIZED (
  SELECT m.id FROM messages m WHERE `+where+`
  ) SELECT m.id,`+copyKey+`,m.list_id IS NOT NULL,
- (src.source_type='matrix' AND COALESCE(m.snippet,'')=?)
+ `+matrixPendingEncryptedSQL("m")+`
  FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id
  WHERE `+s.activityLiveEligibleSQL()+subject+warm+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
@@ -227,7 +226,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	for i, m := range classifiedMessages {
 		facts[i] = m.activityReadMessage
 	}
-	if err = s.hydrateActivityCounterpartsContext(ctx, facts, filters); err != nil {
+	if err = s.hydrateColdActivityCounterpartsContext(ctx, facts, filters); err != nil {
 		return nil, filters, err
 	}
 	// Prefer counted contact, then non-noise, after scoped copies have their
@@ -300,6 +299,39 @@ func (s *Store) coldWarmCopyClause(ctx context.Context, copyKey string) (string,
  WHERE ` + s.activityLiveEligibleSQL() + scope + `) warm JOIN activity_events ae ON ae.message_id=warm.id
  WHERE ` + s.dialect.RFC822CanonicalIDExpr("warm.rfc822_message_id") + `=` + s.dialect.RFC822CanonicalIDExpr("m.rfc822_message_id") + `
  AND ` + FullActivityEventWhere("ae") + ` AND ` + s.activityCopyKeySQL("ae.channel", "warm.rfc822_message_id", "warm.id") + `=` + copyKey + `)`, args
+}
+
+// Cold messages have no projection rows. Supply their live classification to
+// the shared counterpart query instead of reading eligible activity_events.
+func (s *Store) hydrateColdActivityCounterpartsContext(ctx context.Context, messages []activityReadMessage, filters ActivityFilters) error {
+	byID := make(map[int64]activityReadMessage, len(messages))
+	for _, m := range messages {
+		byID[m.ID] = m
+	}
+	return s.hydrateActivityCounterpartsWithCTEContext(ctx, messages, filters, func(ids []int64) (string, []any, error) {
+		values := make([]string, 0, len(ids))
+		args := make([]any, 0, len(ids)*5)
+		for _, id := range ids {
+			m := byID[id]
+			refKind := RefKindMessage
+			if m.Meeting {
+				refKind = RefKindMeeting
+			}
+			eligible, encrypted := 0, 0
+			if m.ContactEligible {
+				eligible = 1
+			}
+			if m.Encrypted {
+				encrypted = 1
+			}
+			values = append(values, `(CAST(? AS BIGINT),CAST(? AS TEXT),CAST(? AS TEXT),CAST(? AS INTEGER),CAST(? AS INTEGER))`)
+			args = append(args, id, m.Direction, refKind, eligible, encrypted)
+		}
+		classification, addressArgs := s.activityClassificationCTE(ctx, filters)
+		return `WITH RECURSIVE cold_facts(message_id,direction,ref_kind,contact_eligible,encrypted) AS (VALUES ` + strings.Join(values, ",") + `), eligible AS (
+ SELECT f.*,m.list_id FROM cold_facts f JOIN messages m ON m.id=f.message_id
+ ), ` + classification, append(args, addressArgs...), nil
+	})
 }
 
 func coldActivityNonNoise(m coldActivityMessage, filters ActivityFilters) bool {

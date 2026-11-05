@@ -226,7 +226,7 @@ func TestColdEmailCopiesPreferCountedContact(t *testing.T) {
 				full, err := f.Store.ListColdActivityBurstsContext(t.Context(), fullQuery)
 				requirements.NoError(err)
 				requirements.Len(full.Bursts, 1)
-				assertions.Equal(received, full.Bursts[0].AnchorMessageID)
+				assertions.Equal(sent, full.Bursts[0].AnchorMessageID)
 				for _, scope := range []struct {
 					sources       []int64
 					count, copies int
