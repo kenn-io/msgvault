@@ -202,6 +202,8 @@
   const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
+  let returningViewerKey: string | null = null;
+  let previousRestorationEpoch = untrack(() => restorationEpoch);
   let controller: AbortController | undefined;
   let cacheBuildRetry: ReturnType<typeof setTimeout> | undefined;
   let generation = 0;
@@ -290,6 +292,8 @@
     if (signature === requestSignature && !submitted) return;
     const isInitialLoad = requestSignature === '';
     requestSignature = signature;
+    const restoring = restorationEpoch !== previousRestorationEpoch;
+    previousRestorationEpoch = restorationEpoch;
     unacknowledgedRestorationEpoch = restorationEpoch;
     // The refreshed context may exclude the file the viewer is showing —
     // close it rather than let its download/open actions keep targeting a
@@ -299,6 +303,7 @@
     // The initial load is exempt: there is no stale viewer yet, and deep
     // restoration owns resolving a mount-time controlled selection.
     if (!isInitialLoad) {
+      if (restoring && !selectedKey) returningViewerKey = untrack(() => viewerFile?.key) ?? null;
       viewerFile = undefined;
       pendingViewerKey = untrack(() => selectedKey) ?? null;
     }
@@ -599,7 +604,8 @@
     signal: AbortSignal | undefined,
   ): Promise<void> {
     if (epoch === undefined || !signal) return;
-    const targets = [providedActiveKey, selectedKey].filter((key): key is string => Boolean(key));
+    const focusKey = returningViewerKey ?? providedActiveKey;
+    const targets = [focusKey, selectedKey].filter((key): key is string => Boolean(key));
     while (
       currentGeneration === generation &&
       !signal.aborted &&
@@ -610,13 +616,13 @@
       if (!(await loadPage(currentGeneration, nextCursor, signal))) return;
     }
     if (currentGeneration !== generation || signal.aborted) return;
-    if (providedActiveKey && rows.some((row) => row.key === providedActiveKey)) {
-      activeKey = providedActiveKey;
+    if (focusKey && rows.some((row) => row.key === focusKey)) {
+      activeKey = focusKey;
     }
     pendingRestoration = {
       generation: currentGeneration,
       epoch,
-      activeKey: providedActiveKey,
+      activeKey: focusKey,
     };
   }
   async function completeDeepRestoration(
@@ -639,6 +645,11 @@
         if (!isCurrentRestoration(pending) || !renderedRows.some((row) => row.key === target.key)) return;
         if (!grid?.querySelector(`#${rowID(target)}`)) return;
       }
+      if (returningViewerKey && target) {
+        onActiveKey?.(target.key);
+        grid.focus();
+      }
+      returningViewerKey = null;
       pendingRestoration = undefined;
       if (unacknowledgedRestorationEpoch === pending.epoch) unacknowledgedRestorationEpoch = undefined;
       onRestorationComplete?.(pending.epoch);
@@ -1215,7 +1226,7 @@
     overflow-anchor: none;
     outline: none;
   }
-  .files-grid:focus-visible { box-shadow: inset 0 0 0 2px var(--accent-blue); }
+  .files-grid:focus-visible .data-row--active { box-shadow: inset 0 0 0 2px var(--accent-blue); }
   .table-header,
   .data-row {
     display: grid;

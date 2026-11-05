@@ -308,7 +308,7 @@
     return 'none';
   }
   function unavailableDescription(value: FileMetadata): string {
-    if (value.content_state === 'missing_blob') return "The archive has this file's record, but its bytes are missing from storage.";
+    if (value.content_state === 'missing_blob') return "The archive has this file's record, but its bytes are missing.";
     if (value.content_state === 'url_only') return "This file is a link, and msgvault didn't download it.";
     return "The import saved this file's name and size, not its contents.";
   }
@@ -371,7 +371,7 @@
       <div class="pdf-controls" role="group" aria-label="PDF reading controls">
         <span class="data-mono">Page {pdfPage} of {pdfPages}</span>
         <IconButton size="sm" ariaLabel="Zoom out" disabled={pdfZoom === zoomSteps[0]} onclick={() => zoomPDF(zoomSteps[zoomSteps.indexOf(pdfZoom) - 1]!)}><Minus size={14} /></IconButton>
-        <Button size="sm" surface={pdfZoom === 1 ? 'soft' : 'outline'} label="Fit" onclick={() => zoomPDF(1)} />
+        <Button size="sm" surface={pdfZoom === 1 ? 'soft' : 'outline'} label="Fit width" onclick={() => zoomPDF(1)} />
         <IconButton size="sm" ariaLabel="Zoom in" disabled={pdfZoom === zoomSteps.at(-1)} onclick={() => zoomPDF(zoomSteps[zoomSteps.indexOf(pdfZoom) + 1]!)}><Plus size={14} /></IconButton>
       </div>
     {/if}
@@ -432,7 +432,11 @@
       <div class="metadata" title={metadata?.mime_type ?? file.mime_type}>{footerMeta}</div>
       <div class="actions">
         <Menu align="end">
-          <MenuTrigger ariaLabel="More file actions" title="More actions"><Ellipsis size={16} /></MenuTrigger>
+          <MenuTrigger ariaLabel="More file actions" title="More actions">
+            {#snippet child({ attachment })}
+              <IconButton size="sm" ariaLabel="More file actions" title="More actions" {@attach attachment}><Ellipsis size={16} /></IconButton>
+            {/snippet}
+          </MenuTrigger>
           <MenuContent ariaLabel="File actions">
             <MenuItem disabled={!metadata && !file.entry_key} onselect={openConversation}>Open conversation</MenuItem>
           </MenuContent>
@@ -554,10 +558,11 @@
     height: calc(100svh - 64px);
     outline: none;
   }
-  :global(.kit-modal-body:has(.file-viewer)) {
+  :global(:root:root .kit-modal-body:has(.file-viewer)) {
     display: flex;
     flex: 1;
     min-height: 0;
+    padding-top: var(--space-3);
     overflow: hidden;
   }
   .context-group {
@@ -583,6 +588,7 @@
     align-items: center;
     gap: var(--space-2);
     margin-left: auto;
+    margin-right: calc(-1 * var(--space-3));
     flex-shrink: 0;
     color: var(--text-muted);
     font-size: var(--font-size-xs);
