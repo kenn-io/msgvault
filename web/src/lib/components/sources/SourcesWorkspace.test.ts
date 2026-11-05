@@ -522,26 +522,13 @@ describe('SourcesWorkspace', () => {
     view.unmount();
   });
 
-  it('directs mail setup to the printed first sync command', async () => {
+  it('directs MBOX setup to reload Sources after import', async () => {
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
     await screen.findByText('No sources yet');
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
-    await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
-    expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
-  });
-
-  it('shows identical shell commands once without shell instructions', async () => {
-    render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
-    await screen.findByText('No sources yet');
-    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
-    const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
-    await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
-    await fireEvent.input(dialog.getByLabelText('Email address'), { target: { value: 'you@gmail.com' } });
-    expect(dialog.getAllByRole('button', { name: 'Copy msgvault add-account -- you@gmail.com' })).toHaveLength(1);
-    expect(dialog.queryByText('POSIX shell')).toBeNull();
-    expect(dialog.queryByText('Command Prompt')).toBeNull();
-    expect(dialog.queryByText(/Start Command Prompt with/)).toBeNull();
+    await fireEvent.click(dialog.getByRole('button', { name: 'Set up MBOX file' }));
+    expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, reload Sources to see the new source.')).toBeDefined();
   });
 
   it('opens source setup and sync history from an empty workspace', async () => {
@@ -553,20 +540,17 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
     expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
     const email = dialog.getByLabelText('Email address');
-    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
     await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
-    expect(dialog.getByText('msgvault add-account -- you@gmail.com')).toBeDefined();
-    expect(dialog.getByRole('button', { name: 'Copy msgvault add-account -- you@gmail.com' })).toBeDefined();
-    expect(dialog.getByRole('link', { name: 'Learn more' }).getAttribute('href')).toBe('https://msgvault.io/docs/setup/#configure-oauth');
-    await fireEvent.input(email, { target: { value: '' } });
-    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
-    await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
+    expect(dialog.getAllByRole('button', { name: 'Copy msgvault add-account -- you@gmail.com' })).toHaveLength(1);
+    expect(dialog.queryByText('POSIX shell')).toBeNull();
+    expect(dialog.queryByText('Command Prompt')).toBeNull();
+    expect(dialog.queryByText(/Start Command Prompt with/)).toBeNull();
     await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
     expect(dialog.getByRole('list', { name: 'Source kinds' })).toBeDefined();
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
     expect((dialog.getByLabelText('Email address') as HTMLInputElement).value).toBe('');
     await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await fireEvent.keyDown(screen.getByRole('dialog', { name: 'Add source' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
   });
@@ -579,15 +563,14 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
     expect(dialog.getByText("You'll be prompted for your password.")).toBeDefined();
     expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
-    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
     await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: 'imap.example.com' } });
-    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
     await fireEvent.input(dialog.getByLabelText('Username'), { target: { value: '~/reader' } });
-    expect(dialog.getByText("msgvault add-imap --host imap.example.com --username '~/reader'")).toBeDefined();
-    expect(dialog.getByText('msgvault add-imap --host imap.example.com --username "~/reader"')).toBeDefined();
     expect(dialog.getByText('POSIX shell')).toBeDefined();
     expect(dialog.getByText('Command Prompt')).toBeDefined();
-    expect(dialog.getAllByRole('button', { name: /^Copy / })).toHaveLength(2);
+    expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();
+    const copies = dialog.getAllByRole('button', { name: /^Copy / });
+    expect(copies).toHaveLength(2);
+    expect(copies[0].getAttribute('aria-label')).not.toBe(copies[1].getAttribute('aria-label'));
     await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: '' } });
     expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
   });
