@@ -97,6 +97,10 @@ These tools run the matching CLI commands through your selected daemon. They req
 
 Recipient parameters `to`, `cc`, and `bcc` are arrays of strings. Use `draft_get` to read the current revision before editing, deleting, or recovering a draft. Conversation lists return a `data` array. `draft_send_as` returns a `send_as` list.
 
+On unreleased `main`, successful draft creation and edit receipts include `sensitive_content` when the submitted subject or body contains a likely `payment_card`, `iban`, `us_ssn`, `api_key`, or `password`. Each entry has a `kind` and an optional `hint` showing the last four characters of a card or IBAN, or the first four characters of a prefixed key. Review these values before sending. The draft is still written unchanged.
+
+Cards need 13 to 19 digits that pass the checksum, with a first digit of 2 to 6 or 8. IBANs need a registered country length and a valid checksum. Unlabelled keys are recognized only for common provider prefixes. A labelled value needs at least eight characters with a letter and a digit or one of `!@#$%^&*+/=~`; a quoted multi-word passphrase also counts under a password label. Labels and values must be on the same line, separated by `:` or `=`; `Bearer` values also count. An absent finding does not mean the content is safe. Stored drafts, server-appended history, and attachments are outside this scan.
+
 Owner sessions expose all eight tools alongside the archive tools. Delegated sessions expose only `draft_reply`, `draft_compose`, `draft_get`, `draft_edit`, `draft_delete`, and `draft_recover` from this list, alongside scoped read tools on daemons with API schema 3.9.0 or newer and the [calendar tools](#calendar-control). Each call uses the agent token, and the daemon checks its permissions and source scope.
 
 For a delegated Claude Desktop session, use these arguments with the daemon URL and token file you received from the owner:
