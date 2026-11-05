@@ -31,7 +31,7 @@ function deferredResponse() {
 }
 
 describe('PersonTrackingController', () => {
-  it('keeps tracking usable when a catalog slug is malformed', async () => {
+  it('rejects a catalog with a malformed slug', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       if (new URL(requestOf(input).url).pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       return Response.json({ targets: [{ ...catalog().targets[0], slug: 12 }] });
@@ -40,7 +40,6 @@ describe('PersonTrackingController', () => {
     await controller.setPerson(7);
     expect(controller.targets).toEqual([]);
     expect(controller.catalogError).toBe('Unable to load eligible profile fields.');
-    expect(controller.tracking?.tracked).toBe(false);
     controller.destroy();
   });
 

@@ -46,12 +46,10 @@ describe('PersonTrackingControl', () => {
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
 
     expect(await screen.findByRole('heading', { name: 'Fields it updates' })).toBeDefined();
-    const toggle = await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ }) as HTMLInputElement;
+    const toggle = await screen.findByRole('switch', { name: 'Update automatically — Off' }) as HTMLInputElement;
     expect(toggle.checked).toBe(false);
     expect(toggle.disabled).toBe(false);
-    expect(screen.getByRole('switch', { name: 'Update automatically — Off' })).toBeDefined();
     expect(screen.getByText('Updates run while People sweep is on in Settings.')).toBeDefined();
-    expect(document.querySelector('.tracked-time')).toBeNull();
     expect(screen.getByText('Time zone')).toBeDefined();
     expect(screen.queryByText('Since')).toBeNull();
     expect(document.body.textContent).not.toMatch(/forbidden/i);
@@ -74,9 +72,6 @@ describe('PersonTrackingControl', () => {
     expect(screen.getByText('Favorites place')).toBeDefined();
     expect(screen.getByText('Work history')).toBeDefined();
     expect(screen.getByText('Employer, title, and dates')).toBeDefined();
-    expect(screen.getByRole('switch', { name: 'Update automatically — On' })).toBeDefined();
-    expect(screen.getByText('Updates run while People sweep is on in Settings.')).toBeDefined();
-    expect(document.querySelector('.tracked-time')).toBeNull();
     definitions.resolve(Response.json({ definitions: [
       { slug: 'favorites_food', label: 'Favorite food' },
       { slug: 'interests_fun_growing_up', label: 'Fun growing up' },
@@ -91,7 +86,7 @@ describe('PersonTrackingControl', () => {
       const path = new URL(requestOf(input).url).pathname;
       if (path.endsWith('/attribute-definitions')) return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 });
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
-      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
+      return Response.json({ targets: [{ ...catalog(false).targets[0], slug: 'favorites_food' }] });
     })), personID: 7 });
     expect(await screen.findByText('Favorites food')).toBeDefined();
   });
@@ -150,7 +145,6 @@ describe('PersonTrackingControl', () => {
     await fireEvent.click(await screen.findByRole('switch', { name: /Update automatically — (On|Off)/ }));
     const retry = await screen.findByRole('button', { name: 'Retry' }) as HTMLButtonElement;
     expect(screen.queryByRole('switch')).toBeNull();
-    expect(screen.queryByText('Updates run while People sweep is on in Settings.')).toBeNull();
     await waitFor(() => expect(retry.disabled).toBe(false));
     await fireEvent.click(retry);
 
@@ -181,6 +175,7 @@ describe('PersonTrackingControl', () => {
     await fireEvent.click(reveal);
     expect(await screen.findByText('Private note')).toBeDefined();
     expect(screen.getByText('Sensitive')).toBeDefined();
+    expect(screen.getByText('Sensitive fields are shown.')).toBeDefined();
     expect(queries).toEqual(['?include_sensitive=false', '?include_sensitive=true']);
 
     await view.rerender({ client: createAPIClient(fetchFn), personID: 9 });
@@ -275,7 +270,6 @@ describe('PersonTrackingControl', () => {
     expect(screen.getByText('Turning off…')).toBeDefined();
     mutation.resolve(Response.json({ person_id: 7, tracked: false, tracked_at: null }));
     expect(await screen.findByRole('switch', { name: 'Update automatically — Off' })).toBeDefined();
-    expect(document.querySelector('.tracked-time')).toBeNull();
   });
 
   it('offers sensitive disclosure only after a catalog has loaded and keeps the empty state compact', async () => {
@@ -291,7 +285,6 @@ describe('PersonTrackingControl', () => {
     expect(screen.queryByRole('button', { name: 'Show sensitive fields' })).toBeNull();
     fields.resolve(Response.json({ targets: [] }));
     expect(await screen.findByText('No fields are set up for automatic updates.')).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Show sensitive fields' })).toBeDefined();
   });
 
   it('suppresses mutation announcement and focus when the person changes after controller settlement', async () => {

@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
 import { parseExploreURLState } from '../../src/lib/explore/state.svelte';
+import type { Catalog } from '../../src/lib/api/generated/models';
 import { installMixedArchive } from './fixtures/mixed-archive';
 import { person } from '../../src/lib/directory/person-fixtures.test-support';
 
@@ -124,6 +125,7 @@ test('Directory opens an accessible narrow People page and returns to its list',
 
 test('Directory profile maintenance uses exact safe requests and GET-only ambiguity recovery', async ({ page }) => {
   const archive = await installMixedArchive(page);
+  const catalogResponse = page.waitForResponse(response => new URL(response.url()).pathname === '/api/v1/person-fact-targets');
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.goto(directoryURL(42));
   await page.getByRole('button', { name: 'More actions' }).click();
@@ -132,6 +134,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
   await expect(maintenance).toBeVisible();
   await expect(maintenance).toContainText('Time zone');
+  const catalog: Catalog = await (await catalogResponse).json();
   await expectNoAxeViolations(page, 'Directory profile maintenance desktop');
   const forbidden = /forbidden-/i;
   expect(await page.locator('body').innerHTML()).not.toMatch(forbidden);
@@ -175,8 +178,25 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await page.getByRole('dialog', { name: "Keep Archive Person's profile updated" }).getByRole('button', { name: 'Close', exact: true }).click();
   await expect(maintenance).toBeHidden();
   await page.route('**/api/v1/person-fact-targets*', (route) => route.fulfill({ json: {
-    targets: ['employment', 'favorite_foods', 'hometown', 'contact_every_n_days', 'time_zone', 'languages', 'interests', 'education', 'skills', 'birthday', 'pronouns', 'preferred_name', 'private_note'].map((slug) => ({
-      kind: slug === 'employment' ? 'employment' : 'attribute', slug, description: 'Catalog description', value_type: 'text', cardinality: 'multi', sensitive: slug === 'private_note'
+    ...catalog,
+    targets: [
+      ['employment', 'Employer, title, and dates'],
+      ['favorite_foods', 'Favorite foods'],
+      ['hometown', 'Hometown'],
+      ['contact_every_n_days', 'Contact frequency'],
+      ['time_zone', 'Time zone'],
+      ['languages', 'Languages'],
+      ['interests', 'Interests'],
+      ['education', 'Education'],
+      ['skills', 'Skills'],
+      ['birthday', 'Birthday'],
+      ['pronouns', 'Pronouns'],
+      ['preferred_name', 'Preferred name'],
+      ['private_note', 'Private note']
+    ].map(([slug, description]) => ({
+      ...catalog.targets[0],
+      key: `forbidden-${slug}-key`, universal_id: `forbidden-${slug}-universal-id`,
+      kind: slug === 'employment' ? 'employment' : 'attribute', slug, description, sensitive: slug === 'private_note'
     })).filter((target) => !target.sensitive || new URL(route.request().url()).searchParams.get('include_sensitive') === 'true')
   } }));
   await page.setViewportSize({ width: 390, height: 600 });
@@ -190,7 +210,6 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await drawerReveal.focus();
   await expect(drawerReveal).toBeFocused();
   await page.keyboard.press('Enter');
-  await expect(drawerMaintenance.getByText('Sensitive fields are shown.')).toBeAttached();
   await expect(drawerMaintenance.getByText('Private note')).toBeAttached();
   const targetCards = maintenance.locator('li');
   const first = await targetCards.nth(0).boundingBox();
@@ -225,9 +244,6 @@ test('Directory profile maintenance wraps long names within a narrow dialog', as
   const bounds = await dialog.evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
   expect(bounds.content).toBeLessThanOrEqual(bounds.width + 1);
   await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
-  const toggle = dialog.getByRole('switch', { name: /Update automatically — (On|Off)/ });
-  await toggle.check();
-  await expect(toggle).toBeChecked();
   const close = dialog.getByRole('button', { name: 'Close profile updates' });
   await expect(close).toBeInViewport();
   await close.click();

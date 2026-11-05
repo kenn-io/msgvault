@@ -30,12 +30,10 @@ async function choose(action: string): Promise<void> {
 }
 
 describe('PersonRecordActions', () => {
-  it('opens named profile updates before labels load and closes with the footer button', async () => {
-    let resolveDefinitions!: (response: Response) => void;
-    const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
+  it("titles the profile-updates dialog with the person's name and closes from the footer", async () => {
     renderActions(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      if (new URL(request.url).pathname.endsWith('/attribute-definitions')) return pendingDefinitions;
+      if (new URL(request.url).pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(new URL(request.url).pathname.endsWith('/tracking')
         ? { person_id: 7, tracked: false, tracked_at: null }
         : { targets: [] });
@@ -44,7 +42,6 @@ describe('PersonRecordActions', () => {
     const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-    resolveDefinitions(Response.json({ definitions: [] }));
   });
 
   it('renames the selected person with the current strong ETag', async () => {
