@@ -262,8 +262,8 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		name, mime, body string
 		blocked          bool
 	}{
-		{"ordinary.txt", "text/plain", "Ordinary attachment", true},
-		{"mail.eml", "message/rfc822", "Subject: Your code\r\n\r\nYour code is 482913", true},
+		{"ordinary.txt", "text/plain", "\x00Ordinary attachment", true},
+		{"mail.bin", "message/rfc822", "\x00Ordinary mail", true},
 		{"x.eml", "application/octet-stream", "\x00Ordinary email", true},
 		{"data.bin", "application/octet-stream", "Ordinary text", true},
 		{"image.png", "image/png", "\x89PNG\r\n\x1a\n\x00Ordinary image", false},
@@ -277,7 +277,12 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			requirements.NoError(err)
 			requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 			requirements.NoError(os.WriteFile(path, []byte(tc.body), 0600))
-			requirements.NoError(st.UpsertAttachment(id, tc.name, tc.mime, "", hash, len(tc.body)))
+			messageID := id
+			if tc.name == "x.eml" {
+				_, messageID, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", "withheld-eml", "Your verification code is 482913", "")
+				requirements.NoError(err)
+			}
+			requirements.NoError(st.UpsertAttachment(messageID, tc.name, tc.mime, "", hash, len(tc.body)))
 			for _, blob := range []bool{false, true} {
 				srv.blobStore = nil
 				if blob {
@@ -418,8 +423,8 @@ func TestAgentVerificationSearchOmitsMatches(t *testing.T) {
 						assertions.Contains(ids, hidden)
 					}
 					for _, count := range []*int64{response.Total, response.TotalCount} {
-						if count != nil {
-							assertions.Equal(int64(len(ids)), *count)
+						if count != nil && mode == "delegate" {
+							assertions.Equal(int64(-1), *count)
 						}
 					}
 					if mode == "delegate" {
@@ -454,7 +459,11 @@ func TestAgentVerificationSearchOmitsMatches(t *testing.T) {
 				if mode == "delegate" {
 					assertions.Empty(response.Rows)
 					assertions.Zero(response.MessageCount)
-					assertions.Zero(response.TotalCount)
+					if strings.HasPrefix(route, "/search/") {
+						assertions.Equal(int64(-1), response.TotalCount)
+					} else {
+						assertions.Zero(response.TotalCount)
+					}
 				} else if strings.HasPrefix(route, "/search/") {
 					assertions.Equal(int64(2), response.TotalCount)
 				} else if strings.HasPrefix(route, "/stats/") {
@@ -465,5 +474,113 @@ func TestAgentVerificationSearchOmitsMatches(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAgentVerificationAttachmentFallback(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, first, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "first", "Ordinary", "Ordinary")
+	requirements.NoError(err)
+	_, later, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "later", "Your verification code", "Your code is 482913")
+	requirements.NoError(err)
+	body := []byte("\x89PNG\r\n\x1a\n\x00shared image")
+	hash := fmt.Sprintf("%x", sha256.Sum256(body))
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	requirements.NoError(os.MkdirAll(cfg.AttachmentsDir(), 0700))
+	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "later.png"), body, 0600))
+	requirements.NoError(st.UpsertAttachment(first, "ordinary.png", "image/png", "missing.png", hash, len(body)))
+	requirements.NoError(st.UpsertAttachment(later, "code-482913.png", "image/png", "later.png", hash, len(body)))
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
+	req.Header.Set(apiprotocol.AgentTokenHeader, token)
+	w := httptest.NewRecorder()
+	srv.Router().ServeHTTP(w, req)
+	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+	assertions.Equal(body, w.Body.Bytes())
+	assertions.Contains(w.Header().Get("Content-Disposition"), "verification content masked")
+	assertions.NotContains(w.Header().Get("Content-Disposition"), "482913")
+}
+
+func TestAgentVerificationSearchPagination(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	var source *store.Source
+	var eligible []int64
+	for i := range 105 {
+		subject := "Pagination verification code is 482913"
+		ordinary := i == 100 || i == 102 || i == 103 || i == 104
+		if ordinary {
+			subject = fmt.Sprintf("Pagination ordinary %d", i)
+		}
+		createdSource, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", fmt.Sprintf("page-%d", i), subject, subject)
+		requirements.NoError(err)
+		source = createdSource
+		_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sent_at=? WHERE id=?"), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Duration(i)*time.Hour), id)
+		requirements.NoError(err)
+		if ordinary {
+			eligible = append(eligible, id)
+		}
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	for _, route := range []string{"/search?q=pagination&page_size=2&page=%d", "/search/fast?q=pagination&limit=2&offset=%d", "/search/deep?q=pagination&limit=2&offset=%d", "/search/deep?scope=body&q=pagination&limit=2&offset=%d", "/cli/search?q=pagination&include_snippet=true&limit=2&offset=%d"} {
+		t.Run(route, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			for page := range 3 {
+				position := page * 2
+				if strings.HasPrefix(route, "/search?") {
+					position = page + 1
+				}
+				req := httptest.NewRequest(http.MethodGet, "/api/v1"+fmt.Sprintf(route, position), nil)
+				req.Header.Set(apiprotocol.AgentTokenHeader, token)
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+				type searchRow struct {
+					ID int64 `json:"id"`
+				}
+				var response struct {
+					Messages     []searchRow         `json:"messages"`
+					Results      []searchRow         `json:"results"`
+					Total        *int64              `json:"total"`
+					TotalCount   *int64              `json:"total_count"`
+					HasMore      bool                `json:"has_more"`
+					Count        int                 `json:"count"`
+					BodyContexts []BodySearchContext `json:"body_contexts"`
+				}
+				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+				rows := response.Messages
+				if rows == nil {
+					rows = response.Results
+				}
+				ids := make([]int64, 0, len(rows))
+				for _, row := range rows {
+					ids = append(ids, row.ID)
+				}
+				assertions.Equal(eligible[page*2:min(page*2+2, 4)], ids)
+				for _, total := range []*int64{response.Total, response.TotalCount} {
+					if total != nil {
+						assertions.Equal(int64(-1), *total)
+					}
+				}
+				if strings.HasPrefix(route, "/search/deep?") {
+					assertions.Equal(page == 0, response.HasMore)
+					assertions.Equal(len(ids), response.Count)
+				}
+				if strings.Contains(route, "scope=body") {
+					contextIDs := make([]int64, 0, len(response.BodyContexts))
+					for _, item := range response.BodyContexts {
+						contextIDs = append(contextIDs, item.MessageID)
+					}
+					assertions.Equal(ids, contextIDs)
+				}
+			}
+		})
 	}
 }

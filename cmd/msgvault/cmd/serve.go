@@ -2286,8 +2286,8 @@ func (a *storeAPIAdapter) ListMessagesContext(
 
 var _ api.MessageBodyLoader = (*storeAPIAdapter)(nil)
 
-func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
-	return a.store.PopulateMessageBodiesContext(ctx, messages)
+func (a *storeAPIAdapter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage, maxFieldBytes int) (map[int64]bool, error) {
+	return a.store.PopulateMessageBodiesContext(ctx, messages, maxFieldBytes)
 }
 
 func (a *storeAPIAdapter) GetMessageContext(ctx context.Context, id int64) (*api.APIMessage, error) {
