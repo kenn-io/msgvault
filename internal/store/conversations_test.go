@@ -15,7 +15,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestConversationWindowRoomRecipientsStayPlainText(t *testing.T) {
+func TestConversationWindowRoomRecipientsRespectIdentityLinks(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gcal", "archive@example.com")
@@ -36,14 +36,25 @@ func TestConversationWindowRoomRecipientsStayPlainText(t *testing.T) {
 		{ParticipantID: 0, Display: "Room <room@resource.calendar.google.com>"},
 		{ParticipantID: alice, Display: "Alice <alice@example.com>"},
 	}, window.Messages[0].ToParticipants)
+	_, err = st.LinkParticipants(room, alice)
+	requirements.NoError(err)
+	window, err = st.GetConversationWindow(conversation, message, 0, 0)
+	requirements.NoError(err)
+	requirements.Len(window.Messages, 1)
+	assertions.ElementsMatch([]store.ParticipantDisplay{
+		{ParticipantID: room, Display: "Room <room@resource.calendar.google.com>"},
+		{ParticipantID: alice, Display: "Alice <alice@example.com>"},
+	}, window.Messages[0].ToParticipants)
 }
 
-func TestConversationWindowRoomSenderStaysPlainText(t *testing.T) {
+func TestConversationWindowRoomSenderRespectsIdentityLinks(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := testutil.NewTestStore(t)
 	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
 	requirements.NoError(err)
 	conversation, err := st.EnsureConversation(source.ID, "room-declined", "Declined: Planning")
+	requirements.NoError(err)
+	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
 	requirements.NoError(err)
 	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
 	requirements.NoError(err)
@@ -56,6 +67,12 @@ func TestConversationWindowRoomSenderStaysPlainText(t *testing.T) {
 	assertions.Zero(window.Messages[0].FromParticipantID)
 	assertions.Equal("room@resource.calendar.google.com", window.Messages[0].FromEmail)
 	assertions.Equal("Room <room@resource.calendar.google.com>", window.Messages[0].From)
+	_, err = st.LinkParticipants(alice, room)
+	requirements.NoError(err)
+	window, err = st.GetConversationWindow(conversation, message, 0, 0)
+	requirements.NoError(err)
+	requirements.Len(window.Messages, 1)
+	assertions.Equal(room, window.Messages[0].FromParticipantID)
 }
 
 func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *testing.T) {

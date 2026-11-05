@@ -1305,7 +1305,8 @@ func (s *Store) fetchRecipientsInto(
 	args = append(args, recipientType)
 
 	query := fmt.Sprintf(`
-		SELECT mr.message_id, p.id, %s, COALESCE(p.domain, '')
+		SELECT mr.message_id, p.id, %s, COALESCE(p.domain, ''),
+		       EXISTS (SELECT 1 FROM participant_links l WHERE l.participant_a = p.id OR l.participant_b = p.id)
 		FROM message_recipients mr
 		JOIN participants p ON p.id = mr.participant_id
 		WHERE mr.message_id IN (%s) AND mr.recipient_type = ?
@@ -1321,10 +1322,11 @@ func (s *Store) fetchRecipientsInto(
 		var msgID int64
 		var recipient ParticipantDisplay
 		var domain string
-		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display, &domain); err != nil {
+		var hasIdentityLink bool
+		if err := rows.Scan(&msgID, &recipient.ParticipantID, &recipient.Display, &domain, &hasIdentityLink); err != nil {
 			return fmt.Errorf("scan recipient: %w", err)
 		}
-		if calevent.IsRoomAttendee("@"+domain, false) {
+		if !hasIdentityLink && calevent.IsRoomAttendee("@"+domain, false) {
 			recipient.ParticipantID = 0
 		}
 		if recipient.Display != "" {

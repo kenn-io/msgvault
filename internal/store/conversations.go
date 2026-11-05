@@ -254,6 +254,7 @@ func (s *Store) GetConversationWindowContext(
 			COALESCE(m.message_type, ''),
 			%s,
 			COALESCE(p.id, 0),
+			EXISTS (SELECT 1 FROM participant_links l WHERE l.participant_a = p.id OR l.participant_b = p.id),
 			COALESCE(m.sent_at, m.received_at, m.internal_date),
 			COALESCE(m.snippet, ''),
 			m.has_attachments,
@@ -294,6 +295,7 @@ func (s *Store) GetConversationWindowContext(
 		var isFromMe sql.NullBool
 		var metadata sql.NullString
 		var bodySize int64
+		var hasIdentityLink bool
 		if err := rows.Scan(
 			&message.ID,
 			&message.SourceID,
@@ -307,6 +309,7 @@ func (s *Store) GetConversationWindowContext(
 			&message.FromName,
 			&message.FromPhone,
 			&message.FromParticipantID,
+			&hasIdentityLink,
 			&sentAt,
 			&message.Snippet,
 			&message.HasAttachments,
@@ -319,7 +322,7 @@ func (s *Store) GetConversationWindowContext(
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)
 		}
-		if calevent.IsRoomAttendee(message.FromEmail, false) {
+		if !hasIdentityLink && calevent.IsRoomAttendee(message.FromEmail, false) {
 			message.FromParticipantID = 0
 		}
 		message.RelatedMessageID = RelatedMessageCandidate(message.ID, message.MessageType, metadata.String)
