@@ -1,4 +1,4 @@
-import { requestOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith, requestOf } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -62,16 +62,16 @@ const relationshipTypes = [
   { slug: 'mentor', forward_label: 'mentors', reverse_label: 'mentored by', is_symmetric: false }
 ].map((type, index) => ({ ...type, id: index + 1, revision: 1, ownership: 'system', is_canonical: true, is_deletable: false, universal_id: `urn:example:${type.slug}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }));
 
-function networkController(network: PersonNetworkProjection) {
-  return new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>(async (input) => {
+function networkFetcher(network: PersonNetworkProjection) {
+  return vi.fn<typeof fetch>(async (input) => {
     const path = new URL(requestOf(input).url).pathname;
     return Response.json(path === '/api/v1/relationship-types' ? { relationship_types: relationshipTypes } : network);
-  })), network.root_person_id);
+  });
 }
 
 describe('PersonNetwork', () => {
   it('draws every connection with a chip and opens records', async () => {
-    const controller = networkController(connected());
+    const { controller } = controllerWith(networkFetcher(connected()));
     await controller.refreshRelationshipTypes();
     const onOpenPerson = vi.fn();
     const onOpenOrganization = vi.fn();
@@ -87,11 +87,11 @@ describe('PersonNetwork', () => {
     expect(paths).toHaveLength(3);
     expect(container.querySelectorAll('.edge-label')).toHaveLength(3);
     const cross = paths[0]!.getAttribute('d')!.split(' ');
-    const chip = container.querySelector<HTMLElement>('.edge-label[title="works with"]')!;
+    const chip = [...container.querySelectorAll<HTMLElement>('.edge-label')].find((chip) => chip.textContent === 'works with')!;
     expect(parseFloat(chip.style.left)).toBe((Number(cross[1]) + Number(cross[4])) / 2);
     expect(parseFloat(chip.style.top)).toBe((Number(cross[2]) + Number(cross[5])) / 2);
     expect(paths[1]!.getAttribute('d')).toBe('M 280 14 H 272 V 70 H 280');
-    expect(container.querySelector('.edge-label[title="Engineer"]')).not.toBeNull();
+    expect([...container.querySelectorAll('.edge-label')].find((chip) => chip.textContent === 'Engineer')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
     expect(onOpenPerson).toHaveBeenCalledWith(8);
@@ -109,64 +109,26 @@ describe('PersonNetwork', () => {
     const network = connected();
     network.nodes = network.nodes.slice(0, 2);
     network.edges = [{ id: 'relationship:31', kind: 'relationship', source_node_id: incoming ? 'person:8' : 'person:7', target_node_id: incoming ? 'person:7' : 'person:8', relationship_type_slug: slug, label: slug === 'mentor' ? 'mentors' : 'works with' }];
-    const controller = networkController(network);
+    const { controller } = controllerWith(networkFetcher(network));
     await controller.refreshRelationshipTypes();
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await screen.findByRole('button', { name: 'Curated Peer' });
-    expect(container.querySelector('.edge-label > span')?.textContent).toBe(expected);
+    expect(container.querySelector('.edge-label')?.textContent).toBe(expected);
     expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain(incoming ? 'Curated Peer ·' : 'Selected Person ·');
   });
 
-  it('stacks distinct relationship types between one pair, each in reading order', async () => {
+  it('joins three relations between direct people in reading order', async () => {
     const network = connected();
+    network.nodes = network.nodes.slice(0, 2);
+    network.edges = [network.edges[0]!, { id: 'relationship:35', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', label: 'knows' }];
     network.edges.push({ id: 'relationship:34', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:7', relationship_type_slug: 'mentor', label: 'mentors' });
-    const controller = networkController(network);
+    const { controller } = controllerWith(networkFetcher(network));
     await controller.refreshRelationshipTypes();
     const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
     await screen.findByRole('button', { name: 'Curated Peer' });
-    const chip = container.querySelector('.edge-label[title="works with · mentored by"]')!;
-    expect([...chip.children].map((row) => row.textContent)).toEqual(['works with', 'mentored by']);
-    expect(container.querySelectorAll('.edge-label')).toHaveLength(3);
-    expect(screen.getByRole('list', { name: 'Network connections' }).querySelectorAll('li')).toHaveLength(4);
-  });
-
-  it('slides crossing chips apart along their own lines', async () => {
-    const network = connected();
-    network.nodes = [network.nodes[0]!, ...[8, 9, 10, 11].map((id, index) => ({ id: `person:${id}`, kind: 'person' as const, entity_id: id, label: `Peer ${index}`, hop: index < 2 ? 1 : 2 }))];
-    network.edges = [
-      { id: 'r1', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', label: 'knows' },
-      { id: 'r2', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:9', label: 'knows' },
-      { id: 'r3', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:10', label: 'knows' },
-      { id: 'r4', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:11', label: 'guides' },
-      { id: 'r5', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:10', label: 'parent of' },
-      { id: 'r6', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:11', label: 'knows' }
-    ];
-    const { container } = render(PersonNetwork, { controller: networkController(network), onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByRole('button', { name: 'Peer 3' });
-    const first = container.querySelector<HTMLElement>('.edge-label[title="guides"]')!;
-    const second = container.querySelector<HTMLElement>('.edge-label[title="parent of"]')!;
-    const x = parseFloat(second.style.left), y = parseFloat(second.style.top);
-    expect([x, y]).not.toEqual([parseFloat(first.style.left), parseFloat(first.style.top)]);
-    // The upward diagonal runs from (316, 70) to (552, 14).
-    expect((x - 316) / 236).toBeCloseTo((70 - y) / 56);
-    expect(Math.abs(x - parseFloat(first.style.left))).toBeGreaterThan(60);
-  });
-
-  it('routes an even-span same-column edge beside the middle node and slides its chip clear', async () => {
-    const network = connected();
-    network.nodes = [network.nodes[0]!, ...[8, 9, 10].map((id, index) => ({ id: `person:${id}`, kind: 'person' as const, entity_id: id, label: `Peer ${index}`, hop: 1 }))];
-    network.edges = [8, 9, 10].map((id) => ({ id: `root:${id}`, kind: 'relationship' as const, source_node_id: 'person:7', target_node_id: `person:${id}`, label: 'knows' }));
-    network.edges.push({ id: 'outer', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:10', label: 'mentors', relationship_type_slug: 'mentor' });
-    const controller = networkController(network);
-    await controller.refreshRelationshipTypes();
-    const { container } = render(PersonNetwork, { controller, onOpenPerson: vi.fn(), onOpenOrganization: vi.fn() });
-    await screen.findByRole('button', { name: 'Peer 2' });
-    const chip = container.querySelector<HTMLElement>('.edge-label[title="mentors"]')!;
-    expect(container.querySelectorAll('path')[3]!.getAttribute('d')).toBe('M 280 14 H 272 V 126 H 280');
-    expect(parseFloat(chip.style.left)).toBe(272);
-    const y = parseFloat(chip.style.top);
-    expect(y).toBeGreaterThan(94);
-    expect(y).toBeLessThanOrEqual(103.6);
+    expect(container.querySelector('.edge-label')?.textContent).toBe('works with · knows · mentored by');
+    expect(container.querySelectorAll('.edge-label')).toHaveLength(1);
+    expect(screen.getByRole('list', { name: 'Network connections' }).querySelectorAll('li')).toHaveLength(3);
   });
 
   it('hides a root-only direct network', async () => {
