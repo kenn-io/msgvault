@@ -64,7 +64,6 @@ func TestLineReplyAdmissionFreezesRevision(t *testing.T) {
 	assert.Equal(attempt.RetryKey, repeated.RetryKey)
 	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
 	require.ErrorIs(err, store.ErrChatDraftFrozen)
-	require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1), store.ErrChatDraftFrozen)
 	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 2, "stale")
 	require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
 	_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 2, now, allowLineReply)
@@ -112,43 +111,36 @@ func TestLineReplyAcceptanceAndBackoffNeverRegress(t *testing.T) {
 	assert.Equal(store.LineReplyAcceptedUnresolved, attempt.State)
 	assert.Equal("original-request", attempt.RequestID)
 	assert.Equal(now.Add(3*time.Minute), attempt.NextRetryAt)
-	require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1), store.ErrChatDraftFrozen)
 }
 
-func TestLineReplyRejectedReceiptSurvivesDraftDeletion(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, draft, _ := replyStoreFixture(t)
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-	require.NoError(err)
-	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
-	require.NoError(err)
-	rejected, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true})
-	require.NoError(err)
-	assert.Equal(store.LineReplyProviderRejected, rejected.State)
-	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "edited after rejection")
-	require.ErrorIs(err, store.ErrChatDraftFrozen)
-	_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 2, now, allowLineReply)
-	require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
-	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
-	repeated, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-	require.NoError(err)
-	assert.Equal(rejected, repeated)
-}
-
-func TestLineReplyRecoveredUnknownCannotBecomeRejected(t *testing.T) {
-	require := require.New(t)
-	st, draft, _ := replyStoreFixture(t)
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-	require.NoError(err)
-	_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
-	require.NoError(err)
-	attempt, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400})
-	require.NoError(err)
-	assert.Equal(t, store.LineReplyRemoteUnknown, attempt.State)
-	require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1), store.ErrChatDraftFrozen)
+func TestLineReplyRejectionFlagDeterminesReceipt(t *testing.T) {
+	for _, definite := range []bool{true, false} {
+		t.Run(map[bool]string{true: "definite rejection", false: "no definite rejection flag"}[definite], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Now().UTC().Truncate(time.Microsecond)
+			_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+			require.NoError(err)
+			receipt, err := st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: definite})
+			require.NoError(err)
+			want := store.LineReplyRemoteUnknown
+			if definite {
+				want = store.LineReplyProviderRejected
+			}
+			assert.Equal(want, receipt.State)
+			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "edited after rejection")
+			require.ErrorIs(err, store.ErrChatDraftFrozen)
+			_, err = st.AdmitLineReplyContext(t.Context(), draft.DraftID, 2, now, allowLineReply)
+			require.ErrorIs(err, store.ErrChatDraftRevisionConflict)
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			repeated, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			assert.Equal(receipt, repeated)
+		})
+	}
 }
 
 func acceptedReply(t *testing.T, st *store.Store, draft store.ChatDraft) store.LineReplyAttempt {
@@ -254,19 +246,34 @@ func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
 }
 
 func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, draft, _ := replyStoreFixture(t)
-	now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
-	original, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-	require.NoError(err)
-	expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour+30*time.Second))
-	require.ErrorIs(err, store.ErrLineReplyExpired)
-	assert.Equal(store.LineReplyRemoteUnknownExpired, expired.State)
-	repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
-	require.ErrorIs(err, store.ErrLineReplyExpired)
-	assert.Equal(original.RetryKey, repeated.RetryKey)
-	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+	for _, submitted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "admitted", true: "unknown"}[submitted], func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			original, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			if submitted {
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+			}
+			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour+30*time.Second))
+			require.ErrorIs(err, store.ErrLineReplyExpired)
+			assert.Equal(store.LineReplyRemoteUnknownExpired, expired.State)
+			repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
+			require.ErrorIs(err, store.ErrLineReplyExpired)
+			assert.Equal(original.RetryKey, repeated.RetryKey)
+			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+			require.ErrorIs(err, store.ErrChatDraftFrozen)
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+			require.ErrorIs(err, store.ErrChatDraftNotFound)
+			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(expired, receipt)
+		})
+	}
 }
 
 func TestLineReplyBindingChangesFailClosed(t *testing.T) {
@@ -309,6 +316,14 @@ func TestLineReplyAcceptedExpiryPreservesAcceptance(t *testing.T) {
 	require.ErrorIs(err, store.ErrLineReplyExpired)
 	assert.Equal(store.LineReplyAcceptedUnresolvedExpired, expired.State)
 	assert.Equal("original-request", expired.RequestID)
+	_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+	require.ErrorIs(err, store.ErrChatDraftFrozen)
+	require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+	_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+	require.ErrorIs(err, store.ErrChatDraftNotFound)
+	receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+	require.NoError(err)
+	assert.Equal(expired, receipt)
 }
 
 func TestLineReplyReceiptCannotOverwriteInboundMessage(t *testing.T) {
@@ -332,10 +347,6 @@ func TestLineReplyUnresolvedAttemptPreventsSourceRetirement(t *testing.T) {
 	require := require.New(t)
 	st, draft, _ := replyStoreFixture(t)
 	_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, time.Now(), allowLineReply)
-	require.NoError(err)
-	// Receipts deliberately outlive drafts. Even a missing local draft cannot
-	// make unresolved provider work safe to retire.
-	_, err = st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM chat_drafts WHERE draft_id=?`), draft.DraftID)
 	require.NoError(err)
 	target, err := st.GetOrCreateSource("line", "2000000002")
 	require.NoError(err)
@@ -374,36 +385,6 @@ func TestLineReplyCompletionUpdatesConversationSummary(t *testing.T) {
 	require.NoError(err)
 	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
 	assert.Equal(int64(2), count)
-}
-
-func TestLineReplyExpiredDraftDeletion(t *testing.T) {
-	for _, accepted := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unknown", true: "accepted"}[accepted], func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st, draft, _ := replyStoreFixture(t)
-			now := time.Now().UTC().Truncate(time.Microsecond)
-			_, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
-			require.NoError(err)
-			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-			require.NoError(err)
-			if accepted {
-				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{Accepted: true, StatusCode: 200})
-				require.NoError(err)
-			}
-			expired, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(23*time.Hour))
-			require.ErrorIs(err, store.ErrLineReplyExpired)
-			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
-			require.ErrorIs(err, store.ErrChatDraftFrozen)
-			err = st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1)
-			require.NoError(err)
-			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
-			require.ErrorIs(err, store.ErrChatDraftNotFound)
-			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-			require.NoError(err)
-			assert.Equal(expired, receipt)
-		})
-	}
 }
 
 func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
@@ -451,13 +432,34 @@ func TestLineReplyTerminalReceiptAllowsSourceMerge(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			st, draft, _ := replyStoreFixture(t)
-			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, time.Now(), allowLineReply)
+			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 			require.NoError(err)
-			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE line_reply_attempts SET state=? WHERE draft_id=?`), state, draft.DraftID)
+			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
 			require.NoError(err)
-			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
-			require.ErrorIs(err, store.ErrChatDraftFrozen)
-			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			outcome := store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
+			if state == store.LineReplyAcceptedUnresolvedExpired || state == store.LineReplySent {
+				outcome = store.LineReplyOutcome{StatusCode: 200, Accepted: true}
+				if state == store.LineReplySent {
+					outcome.MessageID = "200"
+				}
+			}
+			if state != store.LineReplyRemoteUnknownExpired {
+				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
+				require.NoError(err)
+			}
+			if state == store.LineReplySent {
+				_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+			} else {
+				if state != store.LineReplyProviderRejected {
+					_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
+					require.ErrorIs(err, store.ErrLineReplyExpired)
+				}
+				_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+				require.ErrorIs(err, store.ErrChatDraftFrozen)
+				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			}
 			target, err := st.GetOrCreateSource("line", "2000000002")
 			require.NoError(err)
 			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
@@ -466,6 +468,48 @@ func TestLineReplyTerminalReceiptAllowsSourceMerge(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(state, receipt.State)
 			assert.Equal(attempt.RetryKey, receipt.RetryKey)
+		})
+	}
+}
+
+func TestLineReplyDraftDeletionPreservesEveryAttemptState(t *testing.T) {
+	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyRemoteUnknown, store.LineReplyAcceptedUnresolved, store.LineReplyRemoteAccepted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired} {
+		t.Run(state, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			st, draft, _ := replyStoreFixture(t)
+			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
+			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
+			require.NoError(err)
+			if state != store.LineReplyAdmitted {
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+				outcome := store.LineReplyOutcome{StatusCode: 503}
+				switch state {
+				case store.LineReplyAcceptedUnresolved, store.LineReplyAcceptedUnresolvedExpired:
+					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200}
+				case store.LineReplyRemoteAccepted:
+					outcome = store.LineReplyOutcome{Accepted: true, StatusCode: 200, MessageID: "200"}
+				case store.LineReplyProviderRejected:
+					outcome = store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
+				}
+				attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
+				require.NoError(err)
+				if state == store.LineReplyRemoteUnknownExpired || state == store.LineReplyAcceptedUnresolvedExpired {
+					attempt, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
+					require.ErrorIs(err, store.ErrLineReplyExpired)
+				}
+			}
+			assert.Equal(state, attempt.State)
+			_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
+			require.ErrorIs(err, store.ErrChatDraftFrozen)
+			require.ErrorIs(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 2), store.ErrChatDraftRevisionConflict)
+			require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
+			_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+			require.ErrorIs(err, store.ErrChatDraftNotFound)
+			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+			require.NoError(err)
+			assert.Equal(attempt, receipt)
 		})
 	}
 }

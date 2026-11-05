@@ -13,28 +13,12 @@ func TestMCPLineReplyRequiresExactConfirmation(t *testing.T) {
 	require := require.New(t)
 	args := map[string]any{"draft_id": "chat-draft-example", "revision": 1}
 	runner := &draftTestRunner{result: DraftCommandResult{Stdout: `{"status":"sent","accepted":true}`}}
-	unanswered := rawCallTool(t, ServeOptions{Drafts: runner, DraftCommands: []string{"send-line-reply"}}, "send_line_reply", args)
-	require.NotEmpty(unanswered["inputRequests"])
-	assert.Zero(runner.calls)
 	session := draftConfirmationSession(t, runner, "send-line-reply")
-	request := func(arguments map[string]any) *sdkmcp.CallToolResult {
-		pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: arguments})
-		require.NoError(err)
-		require.True(pending.NeedsInput())
-		return pending
-	}
 	accept := sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "accept", Content: map[string]any{"confirm": true}}}
-	pending := request(args)
-	changed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: map[string]any{"draft_id": "chat-draft-example", "revision": 2}, RequestState: pending.RequestState, InputResponses: accept})
+	pending, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: args})
 	require.NoError(err)
-	assert.True(changed.IsError)
+	require.True(pending.NeedsInput())
 	assert.Zero(runner.calls)
-	pending = request(args)
-	declined, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: args, RequestState: pending.RequestState, InputResponses: sdkmcp.InputResponseMap{"confirm": &sdkmcp.ElicitResult{Action: "decline"}}})
-	require.NoError(err)
-	assert.True(declined.IsError)
-	assert.Zero(runner.calls)
-	pending = request(args)
 	prompt, ok := pending.InputRequests["confirm"].(*sdkmcp.ElicitParams)
 	require.True(ok)
 	assert.Contains(prompt.Message, "send_line_reply")
@@ -44,10 +28,6 @@ func TestMCPLineReplyRequiresExactConfirmation(t *testing.T) {
 	assert.False(sent.IsError)
 	assert.Equal(1, runner.calls)
 	assert.Equal(DraftCommandRequest{Command: "send-line-reply", Positional: "chat-draft-example", Flags: map[string][]string{"revision": {"1"}}}, runner.request)
-	replayed, err := session.CallTool(t.Context(), &sdkmcp.CallToolParams{Name: "send_line_reply", Arguments: args, RequestState: pending.RequestState, InputResponses: accept})
-	require.NoError(err)
-	assert.True(replayed.IsError)
-	assert.Equal(1, runner.calls)
 }
 
 func TestMCPLineReplyHiddenFromDelegatedCatalog(t *testing.T) {

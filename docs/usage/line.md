@@ -201,15 +201,22 @@ The JSON result includes `draft_id`, `revision`, `source_id`, `conversation_id`,
 | `sent` | The sent message is archived in the original chat. Its parent link is empty if archive cleanup removed the original message. The draft is removed; repeat calls return the same receipt. |
 | `sent_archive_pending` | LINE accepted the message and its ID is saved. Repeat the same command to repair the archive locally. This recovery does not send again, even after policy revocation or retry expiry. |
 | `accepted_receipt_pending` | LINE accepted the request, but msgvault could not save its receipt. Keep any returned IDs. Repeat the same command after `retry_after`, before the cutoff, with sending still enabled and credentials available. Recovery can call LINE with the same key; it is not local-only and may remain unarchived if policy is revoked or the window expires. |
-| `admitted` or `remote_unknown` | A send may have reached LINE. Keep the draft frozen and repeat the same command after `retry_after`. |
-| `accepted_unresolved` | LINE accepted the request but supplied no usable single-message ID. Repeat the same command after `retry_after` to recover the receipt. |
+| `admitted` or `remote_unknown` | A send may have reached LINE. Repeat the same command after `retry_after`; the draft can be deleted and its receipt is kept. |
+| `accepted_unresolved` | LINE accepted the request but supplied no usable single-message ID. Repeat the same command after `retry_after` to recover the receipt. The draft can be deleted; its receipt is kept. |
 | `provider_rejected` | The first submission was definitively rejected. The draft stays frozen for edits and can be deleted. This draft ID keeps its terminal receipt; a new send requires a new reviewed draft. |
 | `remote_unknown_expired` | Provider retries have stopped without acceptance evidence. The draft can be deleted; its receipt is retained. Sending a replacement could duplicate a message already accepted by LINE. |
-| `accepted_unresolved_expired` | Provider retries have stopped after known acceptance. The draft stays frozen. |
+| `accepted_unresolved_expired` | Provider retries have stopped after known acceptance. The draft can be deleted; its receipt is kept. |
 | `credentials_unavailable` error | LINE returned HTTP 401 or 403, or local credentials are unavailable. Fix credentials or channel permissions, then repeat the same reviewed send with its original retry key. |
 | HTTP 429 | A rate limit on the first submission produces `provider_rejected`. A rate limit during recovery keeps the attempt retryable with the same key after `retry_after`. |
 
-An admitted draft keeps one persisted UUID and immutable text, recipient, and
+Every admitted LINE draft can be deleted, even after sending is disabled.
+Deletion keeps the attempt and receipt; it does not cancel a request that may
+have reached LINE. Editing stays refused once admitted. Repeat
+`send-line-reply` with the deleted draft ID and reviewed revision to recover
+the saved attempt or return its receipt. Provider retries still require
+sending to be enabled and credentials to be available.
+
+An admitted attempt keeps one persisted UUID and immutable text, recipient, and
 quote token. Explicit retries reuse that UUID. LINE remembers retry keys for
 24 hours; msgvault stops provider retries 23 hours after admission and waits
 at least 30 seconds between attempts, honoring longer rate-limit or service

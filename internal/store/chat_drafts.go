@@ -253,7 +253,7 @@ func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, rev
 	if draft.Revision != revision {
 		return ErrChatDraftRevisionConflict
 	}
-	if draft.SourceType != lineSourceType {
+	if draft.SourceType != lineSourceType || deleting {
 		return nil
 	}
 	var state string
@@ -263,9 +263,6 @@ func requireMutableChatDraftTx(ctx context.Context, tx *loggedTx, id string, rev
 	}
 	if err != nil {
 		return err
-	}
-	if deleting && (lineReplyTerminal(state) || lineReplyExpired(state)) {
-		return nil
 	}
 	return ErrChatDraftFrozen
 }

@@ -266,7 +266,7 @@ Mistral retired the pinned `mistral-ocr-4-0` model. 0.23.0 fixes this.
 - Create, update, delete and move calendar events, respond to invitations and check availability from the CLI, HTTP API and MCP. Write consent and source permissions are opt-in, and guest notifications default to `none`.
 - Read and edit Gmail labels, IMAP keywords and Microsoft Graph categories on an archived message with `msgvault message-tags`, HTTP or MCP. Microsoft Graph sync now archives categories, so the first sync of an existing Microsoft account walks every folder once.
 - Quote an exact passage from a message, transcript or file in a Kata issue from the Web UI, `msgvault kata`, HTTP or MCP (`--allow-kata-writes`). `msgvault kata issues` finds issues that already cite a message or file, and `msgvault kata context` reads back each cited passage.
-- Prepare and manage drafts through MCP with the caller's own daemon permissions, including restricted agent grants. msgvault never sends.
+- Manage MCP drafts with caller permissions, including agent grants. Only owners can send reviewed LINE replies.
 - List the email addresses, phone numbers and chat IDs your archive holds for a person with `msgvault person identities` or `GET /api/v1/people/{id}/identities`, to pick an address for `draft-compose --to`.
 - Find people by name and read the messaging routes your archive has verified for a person through MCP `find_contact_candidates` and `get_person_messaging_routes`, or the matching `/api/v1/people/` routes.
 - Let MCP clients check source status and scheduler work, request syncs, change Slack conversation selection and edit display names. Source writes need `--allow-source-writes`, display-name edits need `--allow-profile-writes`, and HTTP also needs `--http-allow-writes`.

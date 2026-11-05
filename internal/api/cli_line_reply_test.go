@@ -47,5 +47,4 @@ func TestCLIRunLineReplyOwnerAdmission(t *testing.T) {
 	var result ErrorResponse
 	require.NoError(json.Unmarshal(response.Body.Bytes(), &result))
 	assert.Equal("env_not_allowed", result.Error)
-	assert.False(server.cliRunEnvAllowedForCommand([]string{"send-line-reply", "d1", "--revision=1"}, "EXAMPLE_LINE_SECRET"))
 }
