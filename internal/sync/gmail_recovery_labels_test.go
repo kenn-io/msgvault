@@ -88,8 +88,6 @@ func (f *recoveryLabelsTransport) RoundTrip(r *http.Request) (*http.Response, er
 					body = map[string]any{"error": map[string]any{"code": status, "message": "synthetic label read failure"}}
 				case "identity":
 					body = map[string]any{"id": "different-message"}
-				case "catalogue":
-					body = map[string]any{"id": id, "labelIds": []string{"Label_unknown"}}
 				case "cancel":
 					f.cancel()
 					return nil, r.Context().Err()
@@ -175,7 +173,7 @@ func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 }
 
 func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
-	for _, fault := range []string{"read", "identity", "catalogue", "write", "cancel"} {
+	for _, fault := range []string{"read", "identity", "write", "cancel"} {
 		t.Run(fault, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -196,10 +194,9 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 					require.ErrorIs(err, context.Canceled)
 				} else {
 					require.ErrorContains(err, map[string]string{
-						"read":      "synthetic label read failure",
-						"identity":  "unexpected message identity",
-						"catalogue": "gmail returned an unknown label",
-						"write":     "synthetic acquisition write failure",
+						"read":     "synthetic label read failure",
+						"identity": "unexpected message identity",
+						"write":    "synthetic acquisition write failure",
 					}[fault], "required metadata reconciliation cannot report success")
 				}
 				reopenAcquisitionStore(t, e)

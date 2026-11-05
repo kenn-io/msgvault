@@ -802,14 +802,6 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 
 			existing := existingMap[sourceMessageID]
-			if s.requireLabelRefresh {
-				for _, id := range labelResult.LabelIDs {
-					if _, known := labelMap[id]; !known {
-						checkpoint.MessagesUpdated += result.updated
-						return nil, fmt.Errorf("gmail returned an unknown label %q for message %s", id, sourceMessageID)
-					}
-				}
-			}
 			labelIDs := labelIDsFor(labelResult.LabelIDs, labelMap)
 			if s.opts.SourceType == sourceTypeIMAP {
 				matcher, ok := s.client.(fetchedSourceMessageMatcher)
