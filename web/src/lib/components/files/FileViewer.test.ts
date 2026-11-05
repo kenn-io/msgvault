@@ -475,3 +475,9 @@ it.each(['ArrowLeft', 'ArrowRight'])('keeps %s inside the open file actions menu
   expect(onStep).not.toHaveBeenCalled();
   expect(screen.getByRole('menu', { name: 'File actions' })).toBeDefined();
 });
+
+it('discloses the CSV preview column limit', async () => {
+  const content = Array(101).fill('Header').join(',') + '\nValue';
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'text/csv', filename: 'wide.csv' }, new TextEncoder().encode(content))), file: file({ filename: 'wide.csv', mime_type: 'text/csv' }) });
+  expect(await screen.findByText('Preview stops at 100 columns.')).toBeDefined();
+});
