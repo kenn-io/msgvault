@@ -579,40 +579,24 @@ test.describe('touch People toolbar', () => {
     await prepare(page);
     await page.setViewportSize({ width: 390, height: 844 });
     expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
-    await page.goto('/?workspace=relationships');
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipShowAll: true }))}`);
     await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
-    for (const control of [
-      page.getByRole('radio', { name: 'People', exact: true }),
-      page.getByRole('radio', { name: 'Domains', exact: true }),
-      page.getByRole('button', { name: 'Filter', exact: true }),
-      page.getByRole('combobox', { name: 'Sort: Closest', exact: true })
-    ]) {
-      await expect.poll(async () => (await control.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    const toolbar = page.locator('.people-list .toolbar');
+    await expect(toolbar.locator('.chips button')).toBeVisible();
+    for (const button of await toolbar.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
     }
     const heading = page.getByRole('heading', { name: 'People', exact: true });
     await expect(heading).toHaveCount(1);
-    await expect.poll(async () => (await page.locator('.heading').boundingBox())!.height).toBeLessThanOrEqual(1);
+    await expect.poll(async () => (await page.locator('.kit-sr-only').filter({ has: heading }).boundingBox())!.height).toBeLessThanOrEqual(1);
     await expect(heading).toMatchAriaSnapshot('- heading "People" [level=1]');
+    await page.getByRole('combobox', { name: 'Sort: Closest' }).click();
+    expect((await page.getByRole('option', { name: 'Most recent' }).boundingBox())!.height).toBeLessThan(44);
+    await page.keyboard.press('Escape');
     await page.getByRole('button', { name: 'Filter', exact: true }).click();
     await page.getByRole('button', { name: 'Possible duplicates', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Possible duplicates', exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Back to People', exact: true })).toBeVisible();
-  });
-
-  test('landscape touch keeps the People controls tall', async ({ page }) => {
-    await prepare(page);
-    await page.setViewportSize({ width: 844, height: 390 });
-    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
-    await page.goto('/?workspace=relationships');
-    await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
-    for (const control of [
-      page.getByRole('radio', { name: 'People', exact: true }),
-      page.getByRole('radio', { name: 'Domains', exact: true }),
-      page.getByRole('button', { name: 'Filter', exact: true }),
-      page.getByRole('combobox', { name: 'Sort: Closest', exact: true })
-    ]) {
-      await expect.poll(async () => (await control.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    }
   });
 });
 

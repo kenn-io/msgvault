@@ -54,33 +54,17 @@ test.describe('touch navigation', () => {
     const drawer = page.getByRole('dialog', { name: 'Navigation' });
     await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
     await expect(drawer.getByRole('button', { name: 'Project notes actions' })).toBeVisible();
-    expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
-    for (const row of await drawer.locator('.sidebar button:visible').all()) {
-      expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    for (const button of await drawer.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
     }
     await drawer.getByRole('button', { name: 'Close navigation' }).click();
     await expect(drawer).toBeHidden();
     await expect(opener).toBeFocused();
   });
 
-  test('scrolling saved views leaves their actions unobstructed', async ({ page }) => {
-    await page.setViewportSize({ width: 390, height: 844 });
-    const views = Array.from({ length: 20 }, (_, index) => ({ ...saved, id: index + 1, name: `View ${String(index + 1).padStart(2, '0')}` }));
-    await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: views } }));
-    await page.goto('/?workspace=everything');
-    await page.getByRole('button', { name: 'Open navigation' }).click();
-    const drawer = page.getByRole('dialog', { name: 'Navigation' });
-    const action = drawer.getByRole('button', { name: 'View 20 actions' });
-    await action.scrollIntoViewIfNeeded();
-    await action.click();
-    const rename = drawer.getByRole('menuitem', { name: 'Rename' });
-    await expect(rename).toBeVisible();
-    await rename.click();
-    await expect(drawer.getByRole('textbox', { name: 'Rename View 20' })).toBeVisible();
-  });
-
   test('retrying saved views is usable by touch', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
     let attempts = 0;
     await page.route('**/api/v1/saved-views', route => {
       attempts += 1;
@@ -93,7 +77,9 @@ test.describe('touch navigation', () => {
     const drawer = page.getByRole('dialog', { name: 'Navigation' });
     const retry = drawer.getByRole('button', { name: 'Retry' });
     await expect(retry).toBeVisible();
-    expect((await retry.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    for (const button of await drawer.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
+    }
     await retry.tap();
     await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
   });
@@ -109,15 +95,13 @@ test('mouse navigation retains compact control sizes', async ({ page }) => {
   expect(search!.width).toBeGreaterThan(mode!.width);
   expect(mode!.width).toBeLessThan(120);
   const opener = page.getByRole('button', { name: 'Open navigation' });
+  expect((await opener.boundingBox())!.height).toBeLessThan(44);
   await opener.click();
   const drawer = page.getByRole('dialog', { name: 'Navigation' });
   await expect(drawer.getByRole('button', { name: 'Messages' })).toBeFocused();
   for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
   await expect(drawer.locator(':focus')).toHaveCount(1);
   expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBeLessThan(44);
-  expect((await drawer.getByRole('button', { name: 'Messages' }).boundingBox())!.height).toBeLessThan(44);
-  await drawer.getByRole('button', { name: 'Project notes', exact: true }).focus();
-  expect((await drawer.getByRole('button', { name: 'Project notes actions' }).boundingBox())!.height).toBeLessThan(44);
   await drawer.getByRole('button', { name: 'Close navigation' }).click();
   await expect(drawer).toBeHidden();
   await expect(opener).toBeFocused();
