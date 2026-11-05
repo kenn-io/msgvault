@@ -20,14 +20,9 @@ func TestSearchMetadataSnippetQueryPlan(t *testing.T) {
 	t.Cleanup(func() { req.NoError(st.Close()) })
 	req.NoError(st.InitSchema())
 	query := fmt.Sprintf(searchMetadataSnippetSQL, "?, ?, ?")
-	rows, err := st.DB().Query("EXPLAIN QUERY PLAN "+query, `"project"* "meeting"*`, 1, 3, 1, 2, 3)
-	req.NoError(err)
-	defer func() { req.NoError(rows.Close()) }()
+	plan := dbtest.ExplainQueryPlan(t, st.DB(), query, `"project"* "meeting"*`, 1, 3, 1, 2, 3)
 	var ftsScans int
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		req.NoError(rows.Scan(&id, &parent, &unused, &detail))
+	for detail := range strings.SplitSeq(plan, "\n") {
 		if strings.Contains(detail, "SCAN messages_fts VIRTUAL TABLE INDEX") {
 			ftsScans++
 			_, constraints, ok := strings.Cut(detail, ":")
@@ -38,6 +33,5 @@ func TestSearchMetadataSnippetQueryPlan(t *testing.T) {
 			assert.NotContains(constraints, "=", "FTS scan must avoid one MATCH per ID: %s", detail)
 		}
 	}
-	req.NoError(rows.Err())
 	assert.Positive(ftsScans, "query must scan the full-text index")
 }
