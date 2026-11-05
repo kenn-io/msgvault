@@ -14,6 +14,12 @@ All notable changes to msgvault, grouped by release.
   incremental sync catches mail that arrived meanwhile. A full sync interrupted
   under an earlier release starts from the first page once; previously archived
   messages aren't downloaded again.
+- Recovering from an expired Gmail History cursor now refreshes the labels of
+  messages already in the archive, so a message moved from Inbox to Trash in
+  Gmail no longer stays in the archive's Inbox.
+- A Gmail incremental sync that cannot save a label change or deletion now
+  fails and keeps its History position, so the next sync retries the change
+  instead of skipping it.
 
 ## 0.23.0
 <small>2026-11-04</small>
