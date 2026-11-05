@@ -277,6 +277,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 	}{
 		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 		{"ordinary.txt", "text/plain", "Ordinary attachment", false, false, false},
+		{"order.txt", "text/plain", "Order 1234567 shipped. Read about your verification code\n", false, false, false},
 		{"table.csv", "text/csv", "name,value\nexample,42\n", false, false, false},
 		{"mail.bin", "message/rfc822", "Ordinary mail", true, false, false},
 		{"x.eml", "application/octet-stream", "Ordinary email", true, false, false},
