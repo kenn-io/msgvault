@@ -17,12 +17,14 @@
   let {
     client,
     filters,
+    extraActive = false,
     lockedFilter = undefined,
     onChange,
     extra = undefined,
     onClear = undefined,
   }: {
     extra?: Snippet;
+    extraActive?: boolean;
     onClear?: () => void;
     client: APIClient;
     filters: ExploreFilter[];
@@ -31,6 +33,8 @@
   } = $props();
 
   const api = createExploreAPI(untrack(() => client));
+  const visualStatusId = $props.id();
+  const filterCount = $derived(filters.length + Number(extraActive));
   let open = $state(false);
   let triggerElement = $state<HTMLSpanElement>();
   let panelElement = $state<HTMLDivElement>();
@@ -137,13 +141,15 @@
 
 <span class="filter-trigger" bind:this={triggerElement}>
   <Button
-    surface={open || filters.length > 0 ? 'soft' : 'outline'}
-    label={filters.length > 0 ? `Filter · ${filters.length}` : 'Filter'}
+    surface={open || filterCount > 0 ? 'soft' : 'outline'}
+    label={filterCount > 0 ? `Filter · ${filterCount}` : 'Filter'}
     ariaLabel="Filter"
+    ariaDescribedby={extraActive ? visualStatusId : undefined}
     ariaExpanded={open}
     onclick={() => void toggle()}
   />
 </span>
+{#if extraActive}<span id={visualStatusId} class="kit-sr-only">Visual search active</span>{/if}
 
 {#if open}
   <div class="filter-panel kit-popover-card" role="dialog" aria-label="Filter" bind:this={panelElement} style={panelStyle}>

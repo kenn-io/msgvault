@@ -120,6 +120,8 @@ One toolbar sits above the results:
 - **Sort** shows the fixed newest-first Messages order.
 - The count at the end reports items, or groups when the view is grouped.
 
+On a phone-width window, **View** holds Show as, Group by, and Sort.
+
 Each active search, filter, and grouping appears as a removable chip below the
 toolbar. Select the chip's remove button, such as **Remove search** or **Remove
 Person filter**, to drop it. **Save view…** in the page header saves the current
@@ -272,6 +274,9 @@ PNG, or WebP query image. The UI discloses that the query goes to the
 configured provider. It requires the separate
 [visual index](/docs/usage/vector-search/#visual-attachment-search); ordinary
 filename browsing does not use that provider.
+
+On a phone-width window, Visual search is in **Filter**.
+**Clear filters** also clears the visual query and query image there.
 
 ### Images in email
 
