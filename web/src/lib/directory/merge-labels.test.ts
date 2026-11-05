@@ -11,6 +11,17 @@ const detail: PersonMergeDetail = {
 };
 
 describe('loadMergeLabels', () => {
+  it('distinguishes same-named participants without addresses', async () => {
+    const labels = await loadMergeLabels(createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      return Response.json(path.includes('/participants/')
+        ? { display_name: 'Alex Example', identifiers: [] }
+        : {});
+    }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
+    expect(labels.addresses.get(701)).toEqual([{ title: 'Alex Example', subtitle: '', detail: 'Participant 701' }]);
+    expect(labels.addresses.get(702)).toEqual([{ title: 'Alex Example', subtitle: '', detail: 'Participant 702' }]);
+  });
+
   it('keeps each participant’s own identifiers, all addresses, and member fallbacks', async () => {
     const fetchFn = vi.fn<typeof fetch>(async input => {
       const path = new URL((input as Request).url).pathname;

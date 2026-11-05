@@ -485,12 +485,13 @@ export class PersonMergeHistoryController {
           'The split was stale, but the current source and merge detail could not both be reloaded. Try again.';
         return false;
       }
-      void loadMergeLabels(this.client, merge.data, owner.signal).then(labels => {
-        if (this.ownsSplit(owner, generation, context, target.mergeID)) this.labels = { for: target.mergeID, ...labels };
-      });
       this.sourcePerson = source.data;
       this.sourceETag = etag;
       this.detail = merge.data;
+      const detail = this.detail;
+      void loadMergeLabels(this.client, detail, this.detailAbort!.signal).then(labels => {
+        if (this.detail === detail) this.labels = { for: target.mergeID, ...labels };
+      });
       this.selectedParticipantIDs = [];
       this.clearConfirmation();
       this.splitNeedsFreshState = false;

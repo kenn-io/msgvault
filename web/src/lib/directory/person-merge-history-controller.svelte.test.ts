@@ -121,12 +121,11 @@ describe('PersonMergeHistoryController', () => {
         await vi.waitFor(() => expect(controller.splitBusy).toBe(false));
         controller.closeSplit();
         expect(controller.splitOpen).toBe(false);
-        expect(labelSignal!.aborted).toBe(true);
       } finally {
         late.resolve(Response.json(person(7, 4, [], 'Late Name')));
         await submission;
       }
-      expect(controller.labels?.names.get(7)).not.toBe('Late Name');
+      await vi.waitFor(() => expect(controller.labels?.names.get(7)).toBe('Late Name'));
     } finally {
       controller.destroy();
     }

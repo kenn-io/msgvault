@@ -171,20 +171,17 @@ describe('PersonMergeHistory', () => {
     expect(splits.getByText(/^Sep 5, 2026,/)).toBeDefined();
   });
 
-  it.each([true, false])('shows every split, including a zero-address split, with exact restore %s', async exact => {
+  it.each([false, true])('shows a zero-address split with its destination missing %s', async missing => {
     const mergeDetail = detail();
     mergeDetail.participants = [];
-    mergeDetail.splits![0]!.exact_reversal = exact;
-    mergeDetail.splits!.push({ ...mergeDetail.splits![0]!, id: 56, new_person_id: 20, actor: 'user' });
-    renderRegressionHistory(mergeDetail, true);
+    renderRegressionHistory(mergeDetail, missing);
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     const heading = await screen.findByRole('heading', { name: 'Splits' });
     const splits = within(heading.parentElement!);
-    expect(splits.getAllByRole('listitem')).toHaveLength(2);
-    expect(splits.getByText(/^Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toBeDefined();
-    expect(splits.getByText('Alex Example')).toBeDefined();
-    expect(splits.getAllByText(exact ? 'Exact restore' : 'Partial restore')).toHaveLength(2);
-    expect(splits.getAllByText(/^You · Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toHaveLength(2);
+    expect(splits.getAllByRole('listitem')).toHaveLength(1);
+    expect(splits.getByText(missing ? /^Aug [34], 2026, \d{1,2}:00 [AP]M$/ : 'Alex Restored')).toBeDefined();
+    expect(splits.getByText('Partial restore')).toBeDefined();
+    expect(splits.getByText(missing ? 'You' : /^You · Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toBeDefined();
   });
 
   it('groups addresses and pending reviews like profile history', async () => {

@@ -28,5 +28,12 @@ export async function loadMergeLabels(client: APIClient, detail: PersonMergeDeta
     }),
   ]);
   incomplete ||= results.some(result => result.status === 'rejected');
+  for (const [id, labels] of addresses) {
+    for (const label of labels) {
+      if (!label.subtitle && !label.detail && [...addresses].some(([otherID, others]) => otherID !== id && others.some(other => other.title === label.title))) {
+        label.detail = `Participant ${id}`;
+      }
+    }
+  }
   return { names, addresses, incomplete };
 }

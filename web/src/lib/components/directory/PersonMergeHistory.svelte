@@ -81,7 +81,7 @@
       id: split.id,
       value: labels?.names.get(split.new_person_id) ?? historyTime(split.created_at),
       detail: split.exact_reversal ? 'Exact restore' : 'Partial restore',
-      meta: `${historySource(split.actor)} · ${historyTime(split.created_at)}`
+      meta: labels?.names.has(split.new_person_id) ? `${historySource(split.actor)} · ${historyTime(split.created_at)}` : historySource(split.actor)
     }));
   }
 
