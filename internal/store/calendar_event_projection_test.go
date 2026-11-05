@@ -297,7 +297,7 @@ func TestCopySubsetRebuildsCalendarEvents(t *testing.T) {
 	assert.Equal(t, "event-example", rows[0].Event.ProviderEventID)
 }
 
-func TestCalDAVSubsetOmitsEventsKeepsGoogle(t *testing.T) {
+func TestCalDAVSubsetIncludesEventsAndGoogle(t *testing.T) {
 	if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
 		t.Skip("SQLite subset copy")
 	}
@@ -315,6 +315,7 @@ func TestCalDAVSubsetOmitsEventsKeepsGoogle(t *testing.T) {
 	events, err := calevent.ParseCalDAVResource(t.Context(), []byte(resource), "UTC")
 	requirements.NoError(err)
 	requirements.Len(events, 2)
+	var wantIDs []int64
 	for _, item := range events {
 		metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: item.Event.ProviderEventID})
 		requirements.NoError(err)
@@ -325,17 +326,19 @@ func TestCalDAVSubsetOmitsEventsKeepsGoogle(t *testing.T) {
 			Metadata: &sql.NullString{String: string(metadata), Valid: true},
 		})
 		requirements.NoError(err)
+		wantIDs = append(wantIDs, id)
 		rows := calendarRows(t, st, id)
 		requirements.Len(rows, 1)
 		assertions.Equal(item.Event.ProviderEventID, rows[0].Event.ProviderEventID)
 		assertions.Equal("confirmed", rows[0].Event.Status)
 	}
 	_, googleID := calendarFixture(t, st, "google", calendarRaw)
+	wantIDs = append(wantIDs, googleID)
 	requirements.NoError(st.Close())
 	destination := filepath.Join(t.TempDir(), "subset")
 	result, err := CopySubsetWithOptions(sourcePath, destination, 10, CopySubsetOptions{})
 	requirements.NoError(err)
-	assertions.Equal(int64(1), result.Messages)
+	assertions.Equal(int64(3), result.Messages)
 	copied, err := OpenForTest(filepath.Join(destination, "msgvault.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { _ = copied.Close() })
@@ -352,12 +355,13 @@ func TestCalDAVSubsetOmitsEventsKeepsGoogle(t *testing.T) {
 		formats = append(formats, format)
 	}
 	requirements.NoError(rows.Err())
-	assertions.Equal([]int64{googleID}, ids)
-	assertions.Equal([]string{"gcal_json"}, formats)
+	assertions.ElementsMatch(wantIDs, ids)
+	assertions.ElementsMatch([]string{"caldav_ics", "caldav_ics", "gcal_json"}, formats)
 	requirements.NoError(rows.Close())
 	var calDAVMessages int
 	requirements.NoError(copied.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE source_id = ?`, source.ID).Scan(&calDAVMessages))
-	assertions.Zero(calDAVMessages)
+	assertions.Equal(2, calDAVMessages)
+	assertions.Len(calendarRows(t, copied, wantIDs...), 3)
 }
 
 func TestCalendarSourceZoneRefreshKeepsConcurrentRawUpdate(t *testing.T) {

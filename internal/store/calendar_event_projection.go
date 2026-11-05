@@ -22,19 +22,37 @@ const calendarEventProjectionVersion = 2
 // single kind so unknown bounds remain candidates for the occurrence reader.
 const calendarEventDecodeFailureStatus = "decode_error"
 
-// CalendarEventTimesMatchContext compares decoded times with the stored
-// projection, which may predate a time zone database update.
-func (s *Store) CalendarEventTimesMatchContext(ctx context.Context, messageID int64, event calevent.Event) (bool, error) {
-	var start, end, original sql.NullTime
-	var startDate, endDate, originalDate string
-	var allDay bool
-	err := s.db.QueryRowContext(ctx, `SELECT start_at, end_at, start_date, end_date, all_day, original_start_at, original_start_date FROM calendar_events WHERE message_id = ?`, messageID).Scan(&start, &end, &startDate, &endDate, &allDay, &original, &originalDate)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
+// CalendarEventTimes holds the projected bounds used to detect time zone updates.
+type CalendarEventTimes struct {
+	start, end, original             sql.NullTime
+	startDate, endDate, originalDate string
+	allDay                           bool
+}
+
+// SourceCalendarEventTimesContext reads all archived projection times in one query.
+func (s *Store) SourceCalendarEventTimesContext(ctx context.Context, sourceID int64) (map[int64]CalendarEventTimes, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT e.message_id, e.start_at, e.end_at, e.start_date, e.end_date, e.all_day, e.original_start_at, e.original_start_date FROM calendar_events e JOIN messages m ON m.id = e.message_id WHERE m.source_id = ?`, sourceID)
 	if err != nil {
-		return false, fmt.Errorf("read calendar projection times: %w", err)
+		return nil, fmt.Errorf("read calendar projection times: %w", err)
 	}
+	defer func() { _ = rows.Close() }()
+	times := make(map[int64]CalendarEventTimes)
+	for rows.Next() {
+		var id int64
+		var t CalendarEventTimes
+		if err := rows.Scan(&id, &t.start, &t.end, &t.startDate, &t.endDate, &t.allDay, &t.original, &t.originalDate); err != nil {
+			return nil, fmt.Errorf("scan calendar projection times: %w", err)
+		}
+		times[id] = t
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate calendar projection times: %w", err)
+	}
+	return times, nil
+}
+
+// Match compares decoded bounds with times that may predate a zone database update.
+func (t CalendarEventTimes) Match(event calevent.Event) bool {
 	matches := func(stored sql.NullTime, decoded *time.Time) bool {
 		if decoded == nil {
 			return !stored.Valid
@@ -50,8 +68,8 @@ func (s *Store) CalendarEventTimesMatchContext(ctx context.Context, messageID in
 			originalAt = &event.Original.Instant
 		}
 	}
-	return matches(start, event.Start) && matches(end, event.End) && matches(original, originalAt) &&
-		startDate == event.StartDate && endDate == event.EndDate && allDay == event.AllDay && originalDate == decodedOriginalDate, nil
+	return matches(t.start, event.Start) && matches(t.end, event.End) && matches(t.original, originalAt) &&
+		t.startDate == event.StartDate && t.endDate == event.EndDate && t.allDay == event.AllDay && t.originalDate == decodedOriginalDate
 }
 
 func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *loggedTx, messageID int64) error {

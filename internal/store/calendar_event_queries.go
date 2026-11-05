@@ -356,12 +356,11 @@ func currentCalendarExceptions(ctx context.Context, r *loggedDB, master Calendar
 	}
 	var stored []byte
 	var compression sql.NullString
-	var format string
-	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, master.MessageID).Scan(&stored, &compression, &format); err != nil {
-		return nil, fmt.Errorf("read calendar master evidence: %w", err)
-	}
-	if format != calevent.CalDAVRawFormat {
+	// Filter before fetching bytes so Google series keep using their projection.
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression FROM message_raw WHERE message_id = ? AND raw_format = ?`, master.MessageID, calevent.CalDAVRawFormat).Scan(&stored, &compression); errors.Is(err, sql.ErrNoRows) {
 		return exceptions, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("read calendar master evidence: %w", err)
 	}
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	if err != nil {
