@@ -11,6 +11,41 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func TestActivityEmailCopiesKeepCountedExchangeInOneMailbox(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	workOwner := f.EnsureParticipant("work@example.com", "Work owner", "example.com")
+	work, err := f.Store.GetOrCreateSource("gmail", "work@example.com")
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(work.ID, "work@example.com", "manual"))
+	require.Less(f.Source.ID, work.ID)
+	workThread, err := f.Store.EnsureConversationWithType(work.ID, "exchange", "email_thread", "Exchange")
+	require.NoError(err)
+	for _, mailbox := range []struct {
+		source, conversation int64
+		outbound             bool
+	}{{f.Source.ID, f.ConvID, false}, {work.ID, workThread, true}} {
+		sent := f.add(t, mailbox.conversation, mailbox.source, at, mailbox.outbound, "<exchange-start@example.com>")
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), workOwner, sent)
+		require.NoError(err)
+		require.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{workOwner}, nil))
+		require.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.peer}, nil))
+		require.NoError(f.Store.ReplaceMessageRecipients(sent, "cc", []int64{f.owner}, nil))
+		reply := f.add(t, mailbox.conversation, mailbox.source, at.Add(time.Hour), false, "<exchange-reply@example.com>")
+		require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{workOwner, f.owner}, nil))
+	}
+	projectTierSignals(t, f.Fixture, "UTC", 0)
+	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+	require.NoError(err)
+	require.Len(page.Bursts, 1)
+	assert.Equal(work.ID, page.Bursts[0].SourceID)
+	assert.Equal(workThread, page.Bursts[0].ConversationID)
+	assert.Equal(1, page.Bursts[0].Inbound)
+	assert.Equal(1, page.Bursts[0].Outbound)
+}
+
 // A lower-ID observed copy must not suppress the owned copy's real contact.
 func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 	for _, tc := range []struct {

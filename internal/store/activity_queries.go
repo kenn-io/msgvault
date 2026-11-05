@@ -525,38 +525,21 @@ func (s *Store) attachActivityCounterpartsQueryerContext(
 		return candidates, nil
 	}
 
-	ids := make([]int64, len(candidates))
-	for i := range candidates {
-		ids[i] = candidates[i].MessageID
-	}
-	counterparts, err := s.loadActivityCounterpartsContext(ctx, queryer, ids)
-	if err != nil {
-		return nil, err
-	}
-	for i := range candidates {
-		candidates[i].Counterparts = counterparts[candidates[i].MessageID]
-	}
-	return candidates, nil
-}
-
-// loadActivityCounterpartsContext is shared by projection and read-time classification.
-func (s *Store) loadActivityCounterpartsContext(ctx context.Context, queryer contextRowsQuerier, ids []int64) (map[int64][]ActivityCounterpart, error) {
-	byMessageID := make(map[int64]*ActivityCandidate, len(ids))
-	messageIDs := make([]any, 0, len(ids))
-	for _, id := range ids {
-		byMessageID[id] = &ActivityCandidate{MessageID: id}
-		messageIDs = append(messageIDs, id)
+	byMessageID := make(map[int64]*ActivityCandidate, len(candidates))
+	messageIDs := make([]any, 0, len(candidates))
+	for index := range candidates {
+		byMessageID[candidates[index].MessageID] = &candidates[index]
+		messageIDs = append(messageIDs, candidates[index].MessageID)
 	}
 	for start := 0; start < len(messageIDs); start += activityCounterpartIDChunk {
-		if err := s.attachActivityCounterpartChunkContext(ctx, queryer, byMessageID, messageIDs[start:min(start+activityCounterpartIDChunk, len(messageIDs))]); err != nil {
+		end := min(start+activityCounterpartIDChunk, len(messageIDs))
+		if err := s.attachActivityCounterpartChunkContext(
+			ctx, queryer, byMessageID, messageIDs[start:end],
+		); err != nil {
 			return nil, err
 		}
 	}
-	result := make(map[int64][]ActivityCounterpart, len(ids))
-	for id, c := range byMessageID {
-		result[id] = c.Counterparts
-	}
-	return result, nil
+	return candidates, nil
 }
 
 func (s *Store) attachActivityCounterpartChunkContext(
