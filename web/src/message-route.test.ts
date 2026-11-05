@@ -24,7 +24,17 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
     if (url.pathname === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
     if (url.pathname === '/api/v1/explore') {
       exploreRequests.push(await request.json());
-      return Response.json({ rows: [], total_count: 0, cache_revision: 'links', search_provenance: {} });
+      return Response.json({
+        rows: Array.from({ length: 100 }, (_, index) => ({
+          key: `message:${index + 1}`, kind: 'message', title: `Recent message ${index + 1}`,
+          preview: 'Recent excerpt', message_type: 'email', conversation_type: 'email',
+          occurred_at: '2026-01-01T12:00:00Z', source_id: 3, source_type: 'synthetic',
+          source_identifier: 'archive@example.com', participant_labels: [], participant_ids: [],
+          attachment_count: 0, attachment_size: 0, has_attachments: false,
+          deleted_from_source: false, message_count: 1, match: {},
+        })),
+        total_count: 100000, next_cursor: 'page:2', cache_revision: 'links', search_provenance: {},
+      });
     }
     if (url.pathname === '/api/v1/messages/42001') return Response.json(message);
     if (url.pathname === '/api/v1/conversations/71') {
@@ -58,6 +68,7 @@ it('keeps a missing linked message in the shell and closes its reader', async ()
   });
   render(App, { session });
   expect(await screen.findByText('This message is no longer available.')).toBeDefined();
+  expect(screen.getByRole('complementary', { name: 'Reading pane: Message' })).toBeDefined();
   expect(screen.getByRole('navigation', { name: 'Primary' })).toBeDefined();
   await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
   await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
