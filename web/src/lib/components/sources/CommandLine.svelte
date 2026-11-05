@@ -15,6 +15,7 @@
     display: flex;
     box-sizing: border-box;
     width: 100%;
+    min-width: 0;
     max-width: 100%;
     min-height: var(--control-h);
     align-items: center;
