@@ -386,6 +386,11 @@ func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, expl
 	if err != nil {
 		return explore, err
 	}
+	// An empty filter means all participants; retain a match-none filter when
+	// every requested participant was a room. Participant IDs are positive.
+	if len(explore.Context.ParticipantIDs) > 0 && len(expanded) == 0 {
+		expanded = []int64{0}
+	}
 	explore.Context.ParticipantIDs = expanded
 	// AdditionalParticipantGroups carries conjunctive drill-down groups (see
 	// query.Context doc comment); each group gets the same identity-cluster
@@ -396,6 +401,9 @@ func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, expl
 		expandedGroup, err := e.expandParticipantClusterMembers(ctx, group)
 		if err != nil {
 			return explore, err
+		}
+		if len(group) > 0 && len(expandedGroup) == 0 {
+			expandedGroup = []int64{0}
 		}
 		explore.Context.AdditionalParticipantGroups[i] = expandedGroup
 	}
@@ -462,10 +470,16 @@ func (e *DuckDBEngine) expandParticipantClusterMembers(ctx context.Context, ids 
 	queryText := fmt.Sprintf(`
 WITH clusters AS (
 	SELECT participant_id, canonical_id FROM read_parquet('%s')
+), participants AS (
+	SELECT * FROM read_parquet('%s')
+), canon AS (
+	%s
 ), requested AS (
 	SELECT v.id, COALESCE(c.canonical_id, v.id) AS canonical_id
 	FROM (VALUES %s) AS v(id)
 	LEFT JOIN clusters c ON c.participant_id = v.id
+	WHERE EXISTS (SELECT 1 FROM canon WHERE participant_id = v.id)
+	   OR NOT EXISTS (SELECT 1 FROM participants WHERE id = v.id)
 )
 SELECT DISTINCT member_id FROM (
 	SELECT id AS member_id FROM requested
@@ -474,8 +488,10 @@ SELECT DISTINCT member_id FROM (
 	UNION ALL
 	SELECT c.participant_id AS member_id FROM clusters c
 	WHERE c.canonical_id IN (SELECT canonical_id FROM requested)
-)
-ORDER BY member_id`, e.parquetPath(datasetParticipantClusters), strings.Join(placeholders, ","))
+) members
+WHERE EXISTS (SELECT 1 FROM canon WHERE participant_id = members.member_id)
+   OR NOT EXISTS (SELECT 1 FROM participants WHERE id = members.member_id)
+ORDER BY member_id`, e.parquetPath(datasetParticipantClusters), e.parquetPath(datasetParticipants), identityindex.CanonicalParticipantsSQL("participants", "clusters"), strings.Join(placeholders, ","))
 	rows, err := e.db.QueryContext(ctx, queryText, args...)
 	if err != nil {
 		return nil, fmt.Errorf("expand participant filter clusters: %w", err)

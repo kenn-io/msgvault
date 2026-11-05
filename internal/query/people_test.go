@@ -165,6 +165,15 @@ func TestRoomPersonDetailAndLinkedActivity(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Equal(alice, resolved)
 			members := []int64{alice, room}
+			fast, legacy := runExploreBothPaths(t, engine, ExploreRequest{Context: Context{ParticipantIDs: members}})
+			for _, timeline := range []*ExploreResponse{fast, legacy} {
+				requirements.Len(timeline.Rows, 1)
+				requirements.NotNil(timeline.Rows[0].AnchorMessageID)
+				assertions.Equal(humanMessage, *timeline.Rows[0].AnchorMessageID)
+			}
+			fast, legacy = runExploreBothPaths(t, engine, ExploreRequest{Context: Context{ParticipantIDs: []int64{room}}})
+			assertions.Empty(fast.Rows)
+			assertions.Empty(legacy.Rows)
 			for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
 				people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: filter}, Page: PageSpec{Limit: 25}})
 				requirements.NoError(err)

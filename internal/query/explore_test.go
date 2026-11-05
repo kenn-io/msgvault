@@ -1380,10 +1380,6 @@ func entryKinds(rows []EntryRow) []EntryKind {
 	return kinds
 }
 
-// TestExploreCounterpartParticipantIDExcludesOwner verifies
-// counterpart_participant_id is the smallest NON-owner participant on the
-// entry, not simply participant_ids[0]: the owner is added first (so it has
-// the smallest raw ID) and would be picked by that naive heuristic.
 func TestExploreCounterpartExcludesRoom(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -1406,6 +1402,10 @@ func TestExploreCounterpartExcludesRoom(t *testing.T) {
 	}
 }
 
+// TestExploreCounterpartParticipantIDExcludesOwner verifies
+// counterpart_participant_id is the smallest NON-owner participant on the
+// entry, not simply participant_ids[0]: the owner is added first (so it has
+// the smallest raw ID) and would be picked by that naive heuristic.
 func TestExploreCounterpartParticipantIDExcludesOwner(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)

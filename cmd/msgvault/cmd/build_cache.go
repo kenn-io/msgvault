@@ -940,9 +940,11 @@ func (s *cacheSourceSnapshot) participantsExportSelectSQL() string {
 			COALESCE(%s, '') AS domain,
 			COALESCE(%s, '') AS display_name,
 			COALESCE(%s, '') AS phone_number,
-			EXISTS (SELECT 1 FROM sqlite_db.calendar_event_attendees a
-				WHERE a.role = 'room' AND lower(a.email) = lower(participants.email_address)) AS is_room
-		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"))
+			(%s OR EXISTS (SELECT 1 FROM sqlite_db.calendar_event_attendees a
+				WHERE a.role = 'room' AND lower(%s) = lower(%s))) AS is_room
+		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"),
+		identityindex.RoomDomainSQL("lower(coalesce("+cacheIdentityTextSQL("participants.domain")+", ''))"),
+		cacheIdentityTextSQL("a.email"), cacheIdentityTextSQL("participants.email_address"))
 }
 
 // personDisplayNamesExportSelectSQL keeps full and derived-only exports identical.
@@ -1455,6 +1457,17 @@ func buildCacheLockedAttempt(
 	}
 	if err := runExport(tableParticipants, copyDataset(tableParticipants, sourceSnapshot.participantsExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participants: %w", err)
+	}
+	if !replaceAll {
+		var roomsChanged bool
+		err := exportDB.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM read_parquet(?) old JOIN read_parquet(?) current USING (id)
+			WHERE old.is_room IS DISTINCT FROM current.is_room
+		)`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), filepath.Join(staging.root, tableParticipants, "*.parquet")).Scan(&roomsChanged)
+		if err != nil {
+			return nil, fmt.Errorf("compare participant room classifications: %w", err)
+		}
+		repairActivity = repairActivity || roomsChanged
 	}
 	if err := runExport(tableParticipantIdentifiers, copyDataset(tableParticipantIdentifiers, sourceSnapshot.participantIdentifiersExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participant identifiers: %w", err)
