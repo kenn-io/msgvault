@@ -218,7 +218,7 @@ func credentialLink(raw string, cue bool) bool {
 		return false
 	}
 	excluded := false
-	for _, word := range []string{"unsubscribe", "preferences", "track", "click"} {
+	for _, word := range []string{"unsubscribe", "preferences"} {
 		excluded = excluded || strings.Contains(strings.ToLower(u.Path), word)
 	}
 	hasToken, credentialKey := false, false
