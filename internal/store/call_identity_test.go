@@ -121,6 +121,8 @@ func TestLogicalCallsOutcomeIndependentOfParticipantCredit(t *testing.T) {
 		{name: "conflicting group without roster", owner: "joined", conflicting: true, want: "conflicting"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
 			f := newLogicalCallFixture(t)
 			f.put(t, "one", func(o *callhistory.Observation) {
 				o.OwnerParticipation = tc.owner
@@ -138,14 +140,14 @@ func TestLogicalCallsOutcomeIndependentOfParticipantCredit(t *testing.T) {
 				})
 			}
 			calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
-			require.NoError(t, err)
-			require.Len(t, calls, 1)
-			assert.Equal(t, tc.want, calls[0].Outcome)
+			require.NoError(err)
+			require.Len(calls, 1)
+			assert.Equal(tc.want, calls[0].Outcome)
 			if tc.participation == "" {
-				assert.Empty(t, calls[0].Participants)
+				assert.Empty(calls[0].Participants)
 			} else {
-				require.Len(t, calls[0].Participants, 1)
-				assert.False(t, calls[0].Participants[0].Credited)
+				require.Len(calls[0].Participants, 1)
+				assert.False(calls[0].Participants[0].Credited)
 			}
 		})
 	}
