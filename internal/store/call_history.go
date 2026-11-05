@@ -121,6 +121,7 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 				FTS:      &FTSDoc{Subject: text, Body: text},
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
+				PreserveLabels: true,
 			}
 		}, prepare, s.refreshCallConversationStatsWith)
 }

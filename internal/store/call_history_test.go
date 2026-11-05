@@ -57,6 +57,28 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	}
 }
 
+func TestCallReimportPreservesLabels(t *testing.T) {
+	st := storetest.New(t).Store
+	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
+	}
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(t, err)
+	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	require.NoError(t, err)
+	labelID, err := st.EnsureLabel(src.ID, "important", "Important", "user")
+	require.NoError(t, err)
+	require.NoError(t, st.AddMessageLabels(id, []int64{labelID}))
+
+	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	require.NoError(t, err)
+	assert.Equal(t, id, again)
+	labels, err := st.MessageLabelIDsContext(t.Context(), again)
+	require.NoError(t, err)
+	assert.Equal(t, []int64{labelID}, labels)
+}
+
 func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
