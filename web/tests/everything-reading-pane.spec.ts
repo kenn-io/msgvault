@@ -188,6 +188,26 @@ test('the bottom reading pane opens on a single click, resizes, and persists its
   await expect(restored).toHaveCount(0);
 });
 
+test('the bottom reading pane stays within a short Messages viewport', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 400 });
+  await page.route('**/api/session', route => route.fulfill({
+    json: { auth_mode: 'loopback', https: false, plain_http_warning: false }
+  }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [entry(1), entry(2)], total_count: 2,
+    cache_revision: 'cache-reading-pane', search_provenance: {}
+  } }));
+
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'everything' }))}`);
+  await page.getByRole('grid', { name: 'Messages results' }).getByText('Synthetic subject 1').click();
+  const reading = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1' });
+  await expect(reading).toBeVisible();
+  await expect.poll(async () => {
+    const box = (await reading.boundingBox())!;
+    return box.y + box.height;
+  }).toBeLessThanOrEqual(400);
+});
+
 test('a direct multi-target reading-pane URL restores through refresh, Back, and Forward', async ({ page }) => {
   const requests: Array<{ cursor?: string; limit?: number }> = [];
   await page.route('**/api/session', (route) =>

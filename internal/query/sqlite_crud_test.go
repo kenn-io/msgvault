@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
@@ -126,6 +127,59 @@ func TestMessageFilter_HasEmptyTargets(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.filter.HasEmptyTargets())
+		})
+	}
+}
+
+func TestListMessagesBySourceUsesSourceTimelineIndex(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+	for _, tc := range []struct {
+		name   string
+		filter MessageFilter
+		index  string
+		scoped bool
+	}{
+		{"source", MessageFilter{}, "idx_messages_source_sent_at", true},
+		{"conversation", MessageFilter{ConversationID: new(int64(1))}, "idx_messages_conversation", false},
+		{"date range", MessageFilter{After: new(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))}, "idx_messages_source_sent_at", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			dialect := &rebindRecordingDialect{Dialect: SQLiteQueryDialect{}}
+			engine := NewEngineWithDialect(env.DB, dialect)
+			if !tc.scoped {
+				tc.filter.SourceID = new(int64(1))
+			}
+			tc.filter.Sorting = MessageSorting{Field: MessageSortByDate, Direction: SortDesc}
+			tc.filter.Pagination = Pagination{Limit: 100}
+			ctx := env.Ctx
+			if tc.scoped {
+				ctx = sourcescope.WithSourceIDs(ctx, []int64{1})
+			}
+			_, err := engine.ListMessages(ctx, tc.filter)
+			require.NoError(err)
+			require.NotEmpty(dialect.queries)
+			args := make([]any, strings.Count(dialect.queries[0], "?"))
+			for i := range args {
+				args[i] = 1
+			}
+			rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+dialect.queries[0], args...)
+			require.NoError(err)
+			defer func() { require.NoError(rows.Close()) }()
+			var plan []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(rows.Scan(&id, &parent, &unused, &detail))
+				if parent == 0 {
+					plan = append(plan, detail)
+				}
+			}
+			require.NoError(rows.Err())
+			assert.Contains(strings.Join(plan, "\n"), "USING INDEX "+tc.index)
+			assert.NotContains(strings.Join(plan, "\n"), "USE TEMP B-TREE FOR ORDER BY")
 		})
 	}
 }

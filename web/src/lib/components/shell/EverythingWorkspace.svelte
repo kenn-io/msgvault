@@ -37,6 +37,7 @@
   import GroupTable from '../explore/GroupTable.svelte';
   import SelectionBar from '../explore/SelectionBar.svelte';
   import SplitPane from '../layout/SplitPane.svelte';
+  import { splitHandleSize } from '../layout/split-handle';
   import PersonTimeline from '../people/PersonTimeline.svelte';
   import SearchCoverage from '../search/SearchCoverage.svelte';
   import TranscriptHits from '../search/TranscriptHits.svelte';
@@ -52,6 +53,7 @@
   import type { EverythingSessionState } from './EverythingSessionState.svelte';
 
   type ExplorePreflight = GeneratedExplorePreflightResponse;
+  const stackedListMin = 120, stackedReaderMin = 160;
 
   interface Props {
     meetingContext?: { scope?: import('../../meetings/controller.svelte').MeetingPanelScope; error?: string };
@@ -740,6 +742,7 @@
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
     class:results-split--solo={solo}
+    style:min-height={scope && readingTargetKey && !previewRight && !solo ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
     bind:this={resultsSplit}
     bind:clientWidth={resultsWidth}
   >
@@ -748,8 +751,8 @@
       storageKey={previewRight ? 'msgvault.reading-pane.right-size' : 'msgvault.reading-pane.size'}
       orientation={previewRight ? 'horizontal' : 'vertical'}
       initialFraction={previewRight ? 0.45 : 0.55}
-      minPrimary={previewRight ? 360 : 120}
-      minSecondary={previewRight ? 400 : 160}
+      minPrimary={previewRight ? 360 : stackedListMin}
+      minSecondary={previewRight ? 400 : stackedReaderMin}
       collapsed={!readingTargetKey}
     >
       {#snippet primary()}
@@ -941,6 +944,7 @@
   }
 
   .results-split {
+    contain: size;
     display: flex;
     min-width: 0;
     min-height: 200px;
