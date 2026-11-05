@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/archivemarker"
 	"go.kenn.io/msgvault/internal/sourcescope"
+	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -27,10 +27,10 @@ func TestMessageDisplayCarriesHiddenTextAndEncrypted(t *testing.T) {
 	m.SourceID = matrix.ID
 	m.ConversationID = conv
 	m.MessageType = "matrix"
-	m.Snippet = sql.NullString{String: archivemarker.EncryptedMessagePlaceholder, Valid: true}
-	encrypted, err := f.Store.UpsertMessage(m)
+	m.Snippet = sql.NullString{String: store.MatrixEncryptedPlaceholder, Valid: true}
+	encrypted, err := f.Store.PersistMatrixMessageContext(t.Context(), &store.MessagePersistData{Message: m}, store.MatrixPersist{SessionID: "synthetic-session"})
 	requirements.NoError(err)
-	// The production Matrix writer persists the complete short marker as snippet.
+	// The production Matrix writer persists recovery state alongside the snippet.
 	// Display hydration must work without a message body.
 	got, err := f.Store.MessageDisplayContext(t.Context(), []int64{hidden, encrypted})
 	requirements.NoError(err)

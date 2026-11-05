@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/archivemarker"
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
@@ -93,9 +92,9 @@ func exclusionPatternsSQL(expr string, patterns []string) (string, []any) {
 }
 
 // activityAddressExclusionsCTE applies the tier evaluator's address rules to
-// every identity bound to a saved person, or to the unsaved participant alone.
+// visible identities bound to a saved person or linked to an unsaved contact.
 // subjects must return participant_id and nullable person_id once per participant.
-func (s *Store) activityAddressExclusionsCTE(subjects string, f ActivityFilters) (string, []any) {
+func (s *Store) activityAddressExclusionsCTE(ctx context.Context, subjects string, f ActivityFilters) (string, []any) {
 	at := `INSTR(address,'@')`
 	if s.IsPostgreSQL() {
 		at = `STRPOS(address,'@')`
@@ -104,13 +103,29 @@ func (s *Store) activityAddressExclusionsCTE(subjects string, f ActivityFilters)
 	if s.IsPostgreSQL() {
 		valid = strings.ReplaceAll(valid, "CHAR(", "CHR(")
 	}
-	domain, args := exclusionPatternsSQL(`SUBSTR(address,`+at+`+1)`, f.Exclusions.ExcludeDomainPatterns)
+	scope, args := sourceScopeClause(ctx, "observed.source_id")
+	visible := ""
+	if scope != "" {
+		visible = ` WHERE EXISTS(SELECT 1 FROM messages observed WHERE ` + activityParticipantMatchSQL("observed", "p.id") + scope + `)`
+	}
+	domain, domainArgs := exclusionPatternsSQL(`SUBSTR(address,`+at+`+1)`, f.Exclusions.ExcludeDomainPatterns)
 	local, localArgs := exclusionPatternsSQL(`SUBSTR(address,1,CASE WHEN `+at+`>0 THEN `+at+`-1 ELSE 0 END)`, f.Exclusions.ExcludeAddressPatterns)
+	args = append(args, domainArgs...)
 	args = append(args, localArgs...)
-	return `exclusion_subjects AS MATERIALIZED (` + subjects + `), exclusion_members AS MATERIALIZED (
- SELECT subject.participant_id,p.email_address,p.phone_number,pi.identifier_type,pi.identifier_value
- FROM exclusion_subjects subject LEFT JOIN person_participants bound ON bound.person_id=subject.person_id
- JOIN participants p ON p.id=COALESCE(bound.participant_id,subject.participant_id)
+	return `exclusion_subjects AS MATERIALIZED (` + subjects + `), exclusion_visible AS MATERIALIZED (
+ SELECT p.*,pp.person_id FROM participants p LEFT JOIN person_participants pp ON pp.participant_id=p.id` + visible + `
+ ), exclusion_links(participant_id,member_id) AS (
+ SELECT subject.participant_id,p.id FROM exclusion_subjects subject
+ LEFT JOIN person_participants bound ON bound.person_id=subject.person_id
+ JOIN exclusion_visible p ON p.id=COALESCE(bound.participant_id,subject.participant_id)
+ UNION
+ SELECT member.participant_id,p.id FROM exclusion_links member
+ JOIN exclusion_subjects subject ON subject.participant_id=member.participant_id AND subject.person_id IS NULL
+ JOIN participant_links l ON l.participant_a=member.member_id OR l.participant_b=member.member_id
+ JOIN exclusion_visible p ON p.id=CASE WHEN l.participant_a=member.member_id THEN l.participant_b ELSE l.participant_a END AND p.person_id IS NULL
+ ), exclusion_members AS MATERIALIZED (
+ SELECT member.participant_id,p.email_address,p.phone_number,pi.identifier_type,pi.identifier_value
+ FROM exclusion_links member JOIN exclusion_visible p ON p.id=member.member_id
  LEFT JOIN participant_identifiers pi ON pi.participant_id=p.id
  ), exclusion_addresses AS (
  SELECT participant_id,LOWER(TRIM(COALESCE(email_address,''))) AS address,
@@ -156,7 +171,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 		windowWhere = append(windowWhere, `ae.local_date BETWEEN ? AND ?`)
 		windowArgs = append(windowArgs, w.FromDate, w.ToDate)
 	}
-	prefix, events := "WITH ", "activity_events"
+	prefix, events := "WITH RECURSIVE ", "activity_events"
 	if len(windowArgs) > 0 {
 		// Fence the indexed activity window or conversation IDs before live policy.
 		// Otherwise SQLite can start from sources and scan every live message
@@ -177,7 +192,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	args = append(args, subjectArgs...)
 	maxDirect := f.directLimit()
 	maxSQL := strconv.Itoa(maxDirect)
-	addressCTE, addressArgs := s.activityAddressExclusionsCTE(`SELECT participant_id,person_id FROM population GROUP BY participant_id,person_id`, f)
+	addressCTE, addressArgs := s.activityAddressExclusionsCTE(ctx, `SELECT participant_id,person_id FROM population GROUP BY participant_id,person_id`, f)
 	args = append(args, addressArgs...)
 	exclusion := `CASE WHEN cp.link_owner=1 THEN 'owner' ELSE ax.excluded END`
 	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
@@ -212,7 +227,8 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	// for the requested subject when copies differ, then keep stable IDs.
 	query := prefix + `eligible AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
- m.message_type,m.rfc822_message_id,m.list_id,src.source_type,COALESCE(m.snippet,'') AS snippet,
+ m.message_type,m.rfc822_message_id,m.list_id,src.source_type,
+ CASE WHEN ` + matrixPendingEncryptedSQL("m") + ` THEN 1 ELSE 0 END AS encrypted,
  CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
  ), population AS MATERIALIZED (` + s.activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), owner_population AS (
@@ -235,18 +251,19 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  CASE raw_role WHEN 'sender' THEN 0 WHEN 'organizer' THEN 1 WHEN 'addressed' THEN 2 WHEN 'attendee' THEN 3 WHEN 'member' THEN 4 ELSE 5 END)
  ), scored AS (
  SELECT f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
- f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.snippet,f.contact_eligible,
+ f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,
  MAX(f.large_inbound) AS large_inbound,
- CASE WHEN f.source_type='matrix' AND f.snippet='` + archivemarker.EncryptedMessagePlaceholder + `' THEN 1 ELSE 0 END AS encrypted,
- CASE WHEN f.contact_eligible=1 AND NOT (f.source_type='matrix' AND f.snippet='` + archivemarker.EncryptedMessagePlaceholder + `')
+ CASE WHEN f.contact_eligible=1 AND f.encrypted=0
  THEN MAX(CASE WHEN f.excluded=''` + countedSubject + ` AND ` + counted + ` THEN 1 ELSE 0 END) ELSE 0 END AS counted,
  CASE WHEN ` + listExcluded + `=1 OR MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END)=1 THEN 0 ELSE 1 END AS non_noise
  FROM facts f GROUP BY f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
- f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.snippet,f.contact_eligible
+ f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible
+ ), thread_sizes AS (
+ SELECT e.*,COUNT(*) OVER (PARTITION BY source_id,conversation_id) AS thread_messages FROM scored e
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT))") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,source_id,message_id) AS copy_rank,
- COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("COALESCE(NULLIF(rfc822_message_id,''),'id:'||CAST(message_id AS TEXT))") + ` ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
- FROM scored e
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,thread_messages DESC,source_id,message_id) AS copy_rank,
+ COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
+ FROM thread_sizes e
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
 	return query, args, nil
 }

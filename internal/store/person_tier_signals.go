@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/archivemarker"
 	"go.kenn.io/msgvault/internal/persontiers"
 )
 
@@ -146,7 +145,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  AND ((`+countedMessageTypeSQL("m", "c")+`
  AND NOT `+s.activityUnsentSQL()+`)
  OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?))))
- AND NOT (src.source_type='matrix' AND COALESCE(m.snippet,'')='`+archivemarker.EncryptedMessagePlaceholder+`')
+ AND NOT `+matrixPendingEncryptedSQL("m")+`
  ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)

@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/activity"
-	"go.kenn.io/msgvault/internal/archivemarker"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"maunium.net/go/mautrix"
@@ -48,8 +47,8 @@ func TestImportedEncryptedMarkerDrivesTimelineDisplayAndVolume(t *testing.T) {
 	requirements.NotZero(messageID)
 	var snippet string
 	requirements.NoError(s.DB().QueryRowContext(t.Context(), s.Rebind(`SELECT snippet FROM messages WHERE id=?`), messageID).Scan(&snippet))
-	assertions.Equal(archivemarker.EncryptedMessagePlaceholder, snippet)
-	// Hydration and volume use the stored marker even after the body is absent.
+	assertions.Equal(store.MatrixEncryptedPlaceholder, snippet)
+	// Hydration and volume use recovery state even after the body is absent.
 	_, err = s.DB().ExecContext(t.Context(), s.Rebind(`DELETE FROM message_bodies WHERE message_id=?`), messageID)
 	requirements.NoError(err)
 	display, err := s.MessageDisplayContext(t.Context(), []int64{messageID})

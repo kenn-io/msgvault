@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/activitydate"
-	"go.kenn.io/msgvault/internal/archivemarker"
 )
 
 // MessageDisplay carries scoped metadata for the text and anchor of an entry.
@@ -33,7 +32,7 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		// Undated anchors still carry safety and identity metadata.
 		eligible := strings.Replace(s.activityLiveEligibleSQL("m", "src"), "COALESCE(m.sent_at,m.received_at,m.internal_date) IS NOT NULL", "TRUE", 1)
 		rows, err := s.db.QueryContext(ctx, s.Rebind(`SELECT m.id,COALESCE(m.subject,''),COALESCE(m.snippet,''),m.hidden_text_present,
-   m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,src.source_type
+   m.sent_at,m.received_at,m.internal_date,COALESCE(m.conversation_id,0),m.source_id,`+matrixPendingEncryptedSQL("m")+`
    FROM messages m JOIN sources src ON src.id=m.source_id WHERE m.id IN (`+marks+`) AND `+eligible+scope), args...)
 		if err != nil {
 			return nil, fmt.Errorf("read message display: %w", err)
@@ -41,8 +40,7 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 		for rows.Next() {
 			var d MessageDisplay
 			var sent, received, internal nullableTimestamp
-			var sourceType string
-			if err = rows.Scan(&d.MessageID, &d.Subject, &d.Snippet, &d.HiddenText, &sent, &received, &internal, &d.ConversationID, &d.SourceID, &sourceType); err != nil {
+			if err = rows.Scan(&d.MessageID, &d.Subject, &d.Snippet, &d.HiddenText, &sent, &received, &internal, &d.ConversationID, &d.SourceID, &d.Encrypted); err != nil {
 				_ = rows.Close()
 				return nil, fmt.Errorf("scan message display: %w", err)
 			}
@@ -50,7 +48,6 @@ func (s *Store) MessageDisplayContext(ctx context.Context, ids []int64) (map[int
 			if dateErr == nil {
 				d.OccurredAt = &date.OccurredAt
 			}
-			d.Encrypted = sourceType == "matrix" && d.Snippet == archivemarker.EncryptedMessagePlaceholder
 			if d.HiddenText || d.Encrypted {
 				d.Snippet = ""
 			}

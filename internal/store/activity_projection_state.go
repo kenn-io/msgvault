@@ -18,11 +18,18 @@ func (s *Store) ActivityProjectionStateContext(ctx context.Context) (ActivityPro
 	var result ActivityProjectionState
 	var oldest nullableTimestamp
 	scope, args := sourceScopeClause(ctx, "m.source_id")
-	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*),MIN(q.queued_at) FROM activity_projection_queue q JOIN messages m ON m.id=q.message_id WHERE q.revision>q.processed_revision`+scope), args...).Scan(&result.Queued, &oldest)
+	conversationScope, conversationArgs := sourceScopeClause(ctx, "c.source_id")
+	queueArgs := append(append([]any{}, args...), conversationArgs...)
+	// Roster markers have no timestamp until expansion queues their messages.
+	err := s.db.QueryRowContext(ctx, s.Rebind(`SELECT COUNT(*),MIN(queued_at) FROM (
+ SELECT q.queued_at FROM activity_projection_queue q JOIN messages m ON m.id=q.message_id WHERE q.revision>q.processed_revision`+scope+`
+ UNION ALL SELECT NULL AS queued_at FROM activity_projection_conversation_queue q JOIN conversations c ON c.id=q.conversation_id WHERE TRUE`+conversationScope+`
+ ) pending`), queueArgs...).Scan(&result.Queued, &oldest)
 	if err != nil {
 		return result, fmt.Errorf("read activity projection queue state: %w", err)
 	}
 	result.OldestQueuedAt = nullableTimePointer(oldest)
+	result.Reconciling = result.Queued > 0
 	zone, err := s.ActivityTimezoneTransitionContext(ctx)
 	if err != nil {
 		return result, err
@@ -37,7 +44,7 @@ func (s *Store) ActivityProjectionStateContext(ctx context.Context) (ActivityPro
 		if err != nil {
 			return result, fmt.Errorf("scope activity reconciliation state: %w", err)
 		}
-		result.Reconciling = visible
+		result.Reconciling = result.Reconciling || visible
 	}
 	// A global identity epoch is meaningful for the owner only. A hidden source
 	// must not change a delegated projection report through global revision keys.

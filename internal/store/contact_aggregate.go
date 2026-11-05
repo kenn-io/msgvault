@@ -56,7 +56,8 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	}
 	now := q.Now.In(loc)
 	monthEnd := now.Format("2006-01")
-	monthStart := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc).AddDate(0, -11, 0).Format("2006-01")
+	firstMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -11, 0)
+	monthStart := firstMonth.Format("2006-01")
 	gap := `julianday(occurred_at)-julianday(previous_at)>=7`
 	if s.IsPostgreSQL() {
 		gap = `EXTRACT(EPOCH FROM (occurred_at-previous_at))>=604800`
@@ -64,14 +65,23 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	// Build civil month boundaries in the caller's zone, including its DST
 	// transitions. Comparing instants works identically on both databases.
 	months := make([]string, 12)
-	firstMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc).AddDate(0, -11, 0)
+	boundaries := make([]time.Time, 13)
+	for i := range boundaries {
+		civil := firstMonth.AddDate(0, i, 0)
+		start := time.Date(civil.Year(), civil.Month(), 1, 0, 0, 0, 0, loc)
+		// A skipped midnight can normalize into the previous month. The
+		// transition ends that zone interval and starts the requested month.
+		if start.Year() != civil.Year() || start.Month() != civil.Month() {
+			_, start = start.ZoneBounds()
+		}
+		boundaries[i] = start.UTC()
+	}
 	for i := range months {
-		start := firstMonth.AddDate(0, i, 0)
 		months[i] = "(?,?,?)"
 		if s.IsPostgreSQL() {
 			months[i] = "(?,CAST(? AS TIMESTAMPTZ),CAST(? AS TIMESTAMPTZ))"
 		}
-		args = append(args, start.Format("2006-01"), start.UTC(), start.AddDate(0, 1, 0).UTC())
+		args = append(args, firstMonth.AddDate(0, i, 0).Format("2006-01"), boundaries[i], boundaries[i+1])
 	}
 	initiation := `(previous_at IS NULL OR ` + gap + `) AND bucket.month IS NOT NULL`
 	query := cte + activityBurstGroupsCTE + `, contact_messages AS (

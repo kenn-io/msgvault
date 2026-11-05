@@ -211,9 +211,9 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 	for start := 0; start < len(participantIDs); start += activityCandidateIDChunk {
 		batch := participantIDs[start:min(start+activityCandidateIDChunk, len(participantIDs))]
 		predicate, args := messageExportInClause("p.id", batch)
-		exclusionCTE, exclusionArgs := s.activityAddressExclusionsCTE(`SELECT p.id AS participant_id,pp.person_id FROM participants p LEFT JOIN person_participants pp ON pp.participant_id=p.id WHERE `+predicate, f)
+		exclusionCTE, exclusionArgs := s.activityAddressExclusionsCTE(ctx, `SELECT p.id AS participant_id,pp.person_id FROM participants p LEFT JOIN person_participants pp ON pp.participant_id=p.id WHERE `+predicate, f)
 		args = append(args, exclusionArgs...)
-		rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+exclusionCTE+` SELECT p.id,COALESCE(p.display_name,''),COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),p.phone_number,''),ax.excluded
+		rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH RECURSIVE `+exclusionCTE+` SELECT p.id,COALESCE(p.display_name,''),COALESCE(NULLIF(p.email_address,''),(SELECT MIN(pi.identifier_value) FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email'),p.phone_number,''),ax.excluded
  FROM participants p JOIN address_exclusions ax ON ax.participant_id=p.id`), args...)
 		if err != nil {
 			return fmt.Errorf("read activity participant display: %w", err)
