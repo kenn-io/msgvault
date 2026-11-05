@@ -176,22 +176,10 @@ func TestRelationshipTimelineOverHTTP(t *testing.T) {
 	burst := page.Rows[0]
 	assert.Equal("chat_burst", burst.Kind)
 	assert.Equal(int64(3), burst.MessageCount)
+	assert.Empty(burst.SenderLabel)
+	assert.Equal("Pat", page.Rows[1].SenderLabel)
 	assert.Equal("email", page.Rows[1].Kind)
 	assert.Equal("event", page.Rows[2].Kind)
-}
-
-func TestRelationshipTimelineIncludesSenderLabel(t *testing.T) {
-	now := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
-	engine, _ := newRelationshipTimelineDuckDBFixture(t, now)
-	srv := newTestServerWithEngine(t, engine)
-	response := postExploreJSON(t, srv, fmt.Sprintf("/api/v1/relationships/%d/timeline", rtPatID), `{"timezone":"America/Chicago"}`)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	var page struct {
-		Rows []map[string]any `json:"rows"`
-	}
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &page))
-	require.Len(t, page.Rows, 3)
-	assert.Equal(t, "Pat", page.Rows[1]["sender_label"])
 }
 
 func TestRelationshipTimelineResolvesSourceScopedIdentityBeforeAnalyzerWork(t *testing.T) {

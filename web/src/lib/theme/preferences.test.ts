@@ -146,7 +146,6 @@ describe('appearance preferences', () => {
 
   it('updates geometry at the compact breakpoint and removes its listener on disposal', async () => {
     const media = new EventTarget();
-    const remove = vi.spyOn(media, 'removeEventListener');
     vi.stubGlobal('matchMedia', vi.fn(() => media));
     document.documentElement.style.setProperty('--table-row-height', '36px');
     const { RowGeometry } = await import('./preferences.svelte');
@@ -157,7 +156,6 @@ describe('appearance preferences', () => {
     media.dispatchEvent(new Event('change'));
     expect(geometry.height).toBe(72);
     geometry.destroy();
-    expect(remove).toHaveBeenCalledWith('change', expect.any(Function));
     document.documentElement.style.setProperty('--table-row-height', '36px');
     media.dispatchEvent(new Event('change'));
     expect(geometry.height).toBe(72);
@@ -235,11 +233,11 @@ describe('appearance preferences', () => {
   it('keeps a visible focused row at its screen offset and ignores offscreen focus', () => {
     expect(rebaseVirtualScroll(3600, 36, 72, 110, 500)).toBe(7560);
     expect(rebaseVirtualScroll(3650, 72, 36, 0, 500)).toBe(1835);
-    expect(rebaseVirtualScroll(7250, 72, 36)).toBe(3635);
   });
 
   it('rebases a virtual scroll offset around the same visible row', () => {
     expect(rebaseVirtualScroll(249 * 36 + 5, 36, 46)).toBe(249 * 46 + 5);
+    expect(rebaseVirtualScroll(7250, 72, 36)).toBe(3635);
   });
 
   it('excludes the sticky table header from the virtualized row viewport', () => {

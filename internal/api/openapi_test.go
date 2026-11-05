@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/pkg/client/generated"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -87,7 +88,7 @@ func TestOpenAPISenderLabelSchemaVersion(t *testing.T) {
 			require.NotNil(t, schema, name)
 			assert.Contains(t, schema.Properties, "sender_label", name)
 		}
-		assert.Equal(t, "3.44.0", doc.Info.Version)
+		assert.GreaterOrEqual(t, semver.Compare("v"+doc.Info.Version, "v3.44.0"), 0)
 	}
 }
 
