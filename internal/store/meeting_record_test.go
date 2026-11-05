@@ -30,6 +30,21 @@ func TestMeetingRecordIncludesNotesOnMovedCopy(t *testing.T) {
 	}
 }
 
+func TestMeetingRecordAllDayCopiesShareNotesAcrossCalendarZones(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	raw := `{"id":"series","iCalUID":"all-day@example.org","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+	_, utc := calendarFixture(t, st, "utc", raw)
+	tokyoData, tokyo := calendarFixture(t, st, "tokyo", raw, "copy@example.com")
+	requirements.NoError(st.UpdateSourceSyncConfig(tokyoData.Message.SourceID, `{"calendar_id":"copy@example.com","time_zone":"Asia/Tokyo"}`))
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"all-day@example.org","startsAt":"2027-03-14T00:00:00Z"}}`)
+	for _, id := range []int64{utc, tokyo} {
+		record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "evt", MessageID: id, Key: "20270314"})
+		requirements.NoError(err)
+		assert.Equal(t, []int64{note}, record.MessageIDs, "calendar copy %d", id)
+	}
+}
+
 func TestMeetingRecordNotesAndCopies(t *testing.T) {
 	require, assert := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
