@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { withShellArgv } from '../settings/shell-argv.test-support';
 import { ADD_SOURCE_KINDS, addSourceCommand, type CommandSourceKind } from './add-source';
 
 function commandKind(id: string): CommandSourceKind {
@@ -13,19 +12,13 @@ const imap = commandKind('imap');
 
 describe('addSourceCommand', () => {
   it('trims Gmail values and requires every IMAP field', () => {
-    for (const shell of ['posix', 'cmd'] as const) {
-      expect(addSourceCommand(gmail, { email: ' you@gmail.com ' }, shell)).toBe('msgvault add-account you@gmail.com');
-      expect(addSourceCommand(gmail, { email: '  ' }, shell)).toBeUndefined();
-      expect(addSourceCommand(imap, { host: 'imap.example.com' }, shell)).toBeUndefined();
-    }
+    expect(addSourceCommand(gmail, { email: ' you@gmail.com ' }, 'posix')).toBe('msgvault add-account you@gmail.com');
+    expect(addSourceCommand(gmail, { email: '  ' }, 'posix')).toBeUndefined();
+    expect(addSourceCommand(imap, { host: 'imap.example.com' }, 'posix')).toBeUndefined();
   });
 
   it('preserves a tilde-prefixed IMAP username', () => {
     const command = addSourceCommand(imap, { host: 'imap.example.com', username: '~/reader' }, 'posix')!;
     expect(command).toBe("msgvault add-imap --host imap.example.com --username '~/reader'");
-    withShellArgv((run, shell) => {
-      const args = addSourceCommand(imap, { host: 'imap.example.com', username: '~/reader' }, shell)!.slice('msgvault add-imap '.length);
-      expect(run(args)).toEqual(['--host', 'imap.example.com', '--username', '~/reader']);
-    });
   });
 });

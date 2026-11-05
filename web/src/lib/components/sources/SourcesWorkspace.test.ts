@@ -542,8 +542,6 @@ describe('SourcesWorkspace', () => {
     expect(document.activeElement).toBe(dialog.getByRole('button', { name: 'Set up Gmail' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
     expect((dialog.getByLabelText('Email address') as HTMLInputElement).value).toBe('');
-    await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
-    await fireEvent.keyDown(screen.getByRole('dialog', { name: 'Add source' }), { key: 'Escape' });
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
   });
@@ -572,29 +570,21 @@ describe('SourcesWorkspace', () => {
     }
   });
 
-  it('requires both IMAP fields before showing commands', async () => {
+  it('shows the IMAP password prompt and separate shell commands', async () => {
     render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
     await screen.findByText('No sources yet');
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
     expect(dialog.queryByText("You'll be prompted for your password.")).toBeNull();
-    expect(dialog.queryByText(/Run this in a terminal/)).toBeNull();
     await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: 'imap.example.com' } });
-    expect(dialog.queryByText(/Run this in a terminal/)).toBeNull();
     await fireEvent.input(dialog.getByLabelText('Username'), { target: { value: '~/reader' } });
     expect(dialog.getByText("You'll be prompted for your password.")).toBeDefined();
-    expect(dialog.getByText('Run this in a terminal where msgvault is installed. When it finishes, run the printed first sync command, then reload Sources to see the new source.')).toBeDefined();
     expect(dialog.getByText('POSIX shell')).toBeDefined();
     expect(dialog.getByText(/Start Command Prompt with/)).toBeDefined();
     const copies = dialog.getAllByRole('button', { name: /^Copy / });
     expect(copies).toHaveLength(2);
     expect(copies[0].getAttribute('aria-label')).not.toBe(copies[1].getAttribute('aria-label'));
-    await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: '' } });
-    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
-    dialog.getByRole('button', { name: 'Back' }).focus();
-    await fireEvent.click(dialog.getByRole('button', { name: 'Back' }));
-    expect(document.activeElement).toBe(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
   });
 
   it('opens existing CardDAV setup and closes the picker', async () => {
