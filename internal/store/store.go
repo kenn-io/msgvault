@@ -627,21 +627,29 @@ func (s *Store) optimizeSQLite(ctx context.Context) error {
 
 // optimizeSQLiteWithin is optimizeSQLite with a caller-chosen budget covering
 // the pool reservation and sampled refresh. Full message analysis has its own budget.
-func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration, full bool) (result error) {
+func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration, full bool) error {
+	return s.sqlitePlannerStatisticsWithin(ctx, timeout, full, false)
+}
+
+// ReloadSQLitePlannerStatistics loads committed statistics on every serving connection.
+func (s *Store) ReloadSQLitePlannerStatistics(ctx context.Context) {
+	logSQLiteOptimizeError("child exit", s.sqlitePlannerStatisticsWithin(context.WithoutCancel(ctx), sqliteOptimizeTimeout, false, true))
+}
+
+func (s *Store) sqlitePlannerStatisticsWithin(ctx context.Context, timeout time.Duration, full, reloadOnly bool) (result error) {
 	if s.IsPostgreSQL() || s.readOnly {
 		return nil
 	}
 	// Maintenance is best-effort, and an active call is already performing the
 	// same update. Skip duplicates instead of making cancellation wait on it.
-	if !s.sqliteOptimizeMu.TryLock() {
-		return nil
+	if !reloadOnly {
+		if !s.sqliteOptimizeMu.TryLock() {
+			return nil
+		}
+		defer s.sqliteOptimizeMu.Unlock()
 	}
-	defer s.sqliteOptimizeMu.Unlock()
-	// Reserve every pool slot for sampled maintenance and reload. ANALYZE loads its
-	// results only into the SQLite connection that runs it; holding every slot
-	// lets us reload each existing connection and prevents database/sql from
-	// opening an unrefreshed one concurrently. Connections opened after this
-	// point load the persistent sqlite_stat tables when they read the schema.
+	// Hold every pool slot to reload each connection's in-memory statistics.
+	// Connections opened later load the persistent statistics with the schema.
 	poolSize := max(1, s.db.Stats().MaxOpenConnections)
 	connections := make([]*sql.Conn, 0, poolSize)
 	defer func() {
@@ -666,9 +674,18 @@ func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration,
 	for len(connections) < poolSize {
 		conn, err := s.db.Conn(ctx)
 		if err != nil {
+			if reloadOnly {
+				return err
+			}
 			return errors.Join(result, fmt.Errorf("reserve SQLite connection pool for planner statistics: %w", err))
 		}
 		connections = append(connections, conn)
+		if reloadOnly {
+			logSQLiteOptimizeError("child exit", reloadSQLiteConnection(ctx, conn))
+		}
+	}
+	if reloadOnly {
+		return nil
 	}
 
 	// Bound each ANALYZE to a sample so a large archive refreshes its
@@ -683,36 +700,16 @@ func (s *Store) optimizeSQLiteWithin(ctx context.Context, timeout time.Duration,
 	}
 	result = errors.Join(result, dropFTSDataStatistics(ctx, connections[0]))
 	for _, conn := range connections {
-		if _, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema"); err != nil {
+		if err := reloadSQLiteConnection(ctx, conn); err != nil {
 			return errors.Join(result, fmt.Errorf("reload SQLite planner statistics: %w", err))
 		}
 	}
 	return result
 }
 
-// ReloadSQLitePlannerStatistics loads committed statistics on every serving connection.
-func (s *Store) ReloadSQLitePlannerStatistics(ctx context.Context) {
-	if s.IsPostgreSQL() || s.readOnly {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sqliteOptimizeTimeout)
-	defer cancel()
-	var connections []*sql.Conn
-	defer func() {
-		for _, conn := range connections {
-			_ = conn.Close()
-		}
-	}()
-	for range max(1, s.db.Stats().MaxOpenConnections) {
-		conn, err := s.db.Conn(ctx)
-		if err != nil {
-			logSQLiteOptimizeError("child exit", err)
-			return
-		}
-		connections = append(connections, conn)
-		_, err = conn.ExecContext(ctx, "ANALYZE sqlite_schema")
-		logSQLiteOptimizeError("child exit", err)
-	}
+func reloadSQLiteConnection(ctx context.Context, conn *sql.Conn) error {
+	_, err := conn.ExecContext(ctx, "ANALYZE sqlite_schema")
+	return err
 }
 
 // dropFTSDataStatistics keeps planner statistics off FTS5 _data shadow tables.
