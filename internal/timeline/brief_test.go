@@ -25,7 +25,7 @@ func TestBriefLimits(t *testing.T) {
 		f.calendar(strconv.Itoa(hour), fmt.Sprintf(`{"id":%q,"summary":"Upcoming","start":{"dateTime":%q},"end":{"dateTime":%q}}`, strconv.Itoa(hour), at.Format(time.RFC3339), at.Add(time.Hour).Format(time.RFC3339)))
 	}
 	f.project()
-	req := Request{Brief: true, Days: 10, Scope: Scope{Owner: true}, Format: "markdown"}
+	req := Request{Brief: true, Scope: Scope{Owner: true}, Format: "markdown"}
 	got, err := Build(t.Context(), f.src, req)
 	requirements.NoError(err)
 	assertions.LessOrEqual(len(Markdown(got)), 6144)

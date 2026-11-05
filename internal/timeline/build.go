@@ -123,12 +123,12 @@ func normalizeRequest(req Request) (Request, error) {
 	if req.Around != "" && req.Mode != ModeAnchor {
 		return req, fmt.Errorf("%w: around conflicts with mode=%s", ErrInvalidRequest, req.Mode)
 	}
-	if req.Date != "" {
+	if req.Date != "" || req.Days != 0 || req.From != "" || req.To != "" {
 		if req.Mode == ModeRelationship {
-			return req, fmt.Errorf("%w: date conflicts with with in relationship mode", ErrInvalidRequest)
+			return req, fmt.Errorf("%w: date/days/from/to conflict with with in relationship mode", ErrInvalidRequest)
 		}
 		if req.Mode == ModeAnchor {
-			return req, fmt.Errorf("%w: date conflicts with around", ErrInvalidRequest)
+			return req, fmt.Errorf("%w: date/days/from/to conflict with around", ErrInvalidRequest)
 		}
 	}
 	if req.Format == "" {
@@ -143,7 +143,7 @@ func normalizeRequest(req Request) (Request, error) {
 			req.Budget = 6144
 		}
 	}
-	if req.Budget < 2048 || req.Budget > 65536 || req.Before < 0 || req.Before > 50 || req.After < 0 || req.After > 50 || req.Days < 0 {
+	if req.Budget < 2048 || req.Budget > 65536 || req.Before < 0 || req.Before > 50 || req.After < 0 || req.After > 50 || req.Days < 0 || req.Brief && req.Days != 0 {
 		return req, ErrInvalidRequest
 	}
 	if req.Before == 0 && !req.BeforeSet {

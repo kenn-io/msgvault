@@ -21,7 +21,7 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 	}
 	// Validate the wire values once; cloning the typed payloads preserves int64
 	// opener arguments without a lossy JSON-to-float round trip.
-	if _, err := json.Marshal(t); err != nil {
+	if _, err := json.Marshal(t, jsontext.AllowInvalidUTF8(true)); err != nil {
 		return nil, fmt.Errorf("encode timeline: %w", err)
 	}
 	original := cloneTimeline(t)
@@ -340,7 +340,7 @@ func timelineSize(t *Timeline, format string) (int, error) {
 	if format == "markdown" {
 		return len(Markdown(t)), nil
 	}
-	b, err := json.Marshal(t, jsontext.EscapeForHTML(true))
+	b, err := json.Marshal(t, jsontext.EscapeForHTML(true), jsontext.AllowInvalidUTF8(true))
 	return len(b), err
 }
 func boundText(t *UntrustedText, n int) {
