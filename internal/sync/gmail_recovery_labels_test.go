@@ -88,6 +88,8 @@ func (f *recoveryLabelsTransport) RoundTrip(r *http.Request) (*http.Response, er
 					body = map[string]any{"error": map[string]any{"code": status, "message": "synthetic label read failure"}}
 				case "identity":
 					body = map[string]any{"id": "different-message"}
+				case "unknown":
+					body = map[string]any{"id": id, "labelIds": append([]string{"Label_unknown"}, f.labels[id]...)}
 				case "cancel":
 					f.cancel()
 					return nil, r.Context().Err()
@@ -173,7 +175,7 @@ func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 }
 
 func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
-	for _, fault := range []string{"read", "identity", "write", "cancel"} {
+	for _, fault := range []string{"read", "identity", "write", "cancel", "unknown"} {
 		t.Run(fault, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -186,6 +188,9 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 				f.fault = fault
 			}
 			for range 2 {
+				if fault == "unknown" {
+					break
+				}
 				ctx, cancel := context.WithCancel(t.Context())
 				f.cancel = cancel
 				_, err := e.Syncer.IncrementalWithHistoryRecovery(ctx, gmailCoverageSource(t, e), nil)
@@ -215,7 +220,9 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 				assert.Empty(debt, "metadata failures must not trigger RAW acquisition replay")
 			}
 			removeFault()
-			f.fault = ""
+			if fault != "unknown" {
+				f.fault = ""
+			}
 			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
 			require.NoError(err)
 			assert.Zero(summary.Errors)
