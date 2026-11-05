@@ -408,6 +408,36 @@ func TestImportRerunWritesOnlyChanges(t *testing.T) {
 	assert.Equal("edited", body)
 }
 
+func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'shared');
+		INSERT INTO chat (guid) VALUES ('any;-;one'), ('any;-;two');
+		INSERT INTO chat_message_join VALUES (1,1), (2,1)`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+	client, err := NewClient(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	first, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	assert.Equal(1, first.MessagesAdded)
+	assert.Zero(first.MessagesUpdated)
+	var conversation string
+	query := st.Rebind(`SELECT c.source_conversation_id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.source_id = ?`)
+	require.NoError(st.DB().QueryRow(query, src.ID).Scan(&conversation))
+	assert.Equal("any;-;two", conversation)
+	idle, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	assert.Zero(idle.MessagesAdded)
+	assert.Zero(idle.MessagesUpdated)
+	require.NoError(st.DB().QueryRow(query, src.ID).Scan(&conversation))
+	assert.Equal("any;-;two", conversation)
+}
+
 func TestImportOwnerChangeRefreshesRecipients(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

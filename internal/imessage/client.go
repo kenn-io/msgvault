@@ -276,7 +276,11 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 			return summary, fmt.Errorf("load stored messages: %w", err)
 		}
 
-		for _, msg := range rows {
+		for i, msg := range rows {
+			// Rows are ordered by message ID. Keep the last chat placement once.
+			if i+1 < len(rows) && msg.ROWID == rows[i+1].ROWID {
+				continue
+			}
 			if err := ctx.Err(); err != nil {
 				return summary, err
 			}
