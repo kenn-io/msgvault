@@ -5,7 +5,7 @@
 
   let { commands, onclose, onOpenCommands }: { commands: AppCommand[]; onclose: () => void; onOpenCommands: (query: string) => void } = $props();
   let query = $state('');
-  const shortcuts = $derived(commands.filter((command) => command.keys.length > 0));
+  const shortcuts = $derived(commands.filter((command) => command.keys.length > 0 && command.id !== 'open-command-palette'));
   const palette = $derived(commands.find(({ id }) => id === 'open-command-palette'));
   const filtered = $derived.by(() => {
     const needle = query.trim().toLowerCase();
@@ -32,7 +32,8 @@
         oninput={(value) => { query = value; }}
       />
     </div>
-    <div class="keyboard-help-list" aria-live="polite">
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable shortcut lists need keyboard access.) -->
+    <div class="keyboard-help-list" role="region" aria-label="Keyboard shortcut list" tabindex="0" aria-live="polite">
       {#if filtered.length === 0}
         <EmptyState title={`No shortcuts match "${query.trim()}"`}>
           <Button label="Search commands instead" onclick={() => onOpenCommands(query)} />

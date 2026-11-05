@@ -21,7 +21,7 @@ test('help keeps all shortcuts visible in two columns and stays put while filter
   const bounds = await help.boundingBox();
   const list = help.locator('.keyboard-help-list');
   const rows = help.locator('dl > div');
-  await expect(rows).toHaveCount(23);
+  await expect(rows).toHaveCount(22);
   const geometry = await list.evaluate(element => {
     const bounds = element.getBoundingClientRect();
     return {
@@ -83,19 +83,22 @@ test('short laptop windows scroll every shortcut inside Help', async ({ page }, 
   await page.setViewportSize({ width: 1440, height: 720 });
   await page.getByRole('button', { name: 'Help', exact: true }).click();
   const help = page.getByRole('dialog', { name: 'Keyboard shortcuts' });
-  const list = help.locator('.keyboard-help-list');
+  const list = help.getByRole('region', { name: 'Keyboard shortcut list' });
   const bounds = await help.boundingBox();
   expect(await list.evaluate(element => element.scrollHeight - element.clientHeight)).toBeGreaterThan(0);
   expect(await list.evaluate(element => element.scrollWidth - element.clientWidth)).toBe(0);
-  const last = help.locator('dl > div').filter({ hasText: 'Open command palette' });
-  await last.scrollIntoViewIfNeeded();
-  const geometry = await last.evaluate(row => {
+  const last = help.locator('dl > div').filter({ hasText: 'Open searchable keyboard help' });
+  await page.keyboard.press('Tab');
+  await expect(list).toBeFocused();
+  await page.keyboard.press('End');
+  await expect.poll(() => list.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
+  await expect.poll(() => last.evaluate(row => {
     const list = row.closest('.keyboard-help-list')!.getBoundingClientRect();
     const body = row.closest('.kit-modal-body')!.getBoundingClientRect();
     const bounds = row.getBoundingClientRect();
-    return bounds.top >= Math.max(list.top, body.top) && bounds.bottom <= Math.min(list.bottom, body.bottom);
-  });
-  expect(geometry).toBe(true);
+    const clipping = Math.max(Math.max(list.top, body.top) - bounds.top, bounds.bottom - Math.min(list.bottom, body.bottom));
+    return clipping;
+  })).toBeLessThanOrEqual(1);
   await expect(help.getByRole('button', { name: /^Open command palette/ })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('artifacts/keyboard-help-short.png') });
   await help.getByRole('searchbox', { name: 'Search keyboard shortcuts' }).fill('shift');

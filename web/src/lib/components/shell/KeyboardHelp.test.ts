@@ -57,7 +57,7 @@ describe('keyboard command registry', () => {
       onclose: vi.fn()
     });
 
-    const command = screen.getByText('Open command palette', { selector: 'dt' }).closest('div');
+    const command = screen.getByRole('button', { name: /^Open command palette/ });
     expect(command).not.toBeNull();
     expect(command?.querySelector('[aria-label="Ctrl K"]')).not.toBeNull();
     expect(command?.querySelectorAll('.kit-kbd-badge__key')).toHaveLength(2);
@@ -72,10 +72,7 @@ describe('keyboard command registry', () => {
 
   it.each([
     ['shift', 'Extend selection to focused row'],
-    ['enter', 'Open or drill into focused row'],
-    ['ctrl', 'Open command palette'],
-    ['Ctrl K', 'Open command palette'],
-    ['cmd', 'Open command palette']
+    ['enter', 'Open or drill into focused row']
   ])('finds shortcuts by the readable key name %s', async (query, label) => {
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
