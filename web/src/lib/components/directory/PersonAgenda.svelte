@@ -216,11 +216,11 @@
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
   {#each items as item (item.uid)}
     <DetailRow>
-      <div class="task-row">
-        <span class="task-title">{#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}</span>
-        {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info"><span class="list-label" title={item.list}>{item.list}</span></Chip>{/if}
-      </div>
-      {#snippet actions()}<IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton>{/snippet}
+      {#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}
+      {#snippet actions()}
+        <span class="unlink"><IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton></span>
+        {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info" title={item.list}>{item.list}</Chip>{/if}
+      {/snippet}
     </DetailRow>
   {/each}
   {#if mutationReady}
@@ -250,20 +250,21 @@
   h3 { font-size: var(--font-size-md); }
   form { flex-wrap: wrap; justify-content: flex-start; }
   form :global(.kit-text-input) { min-width: 0; flex: 1; }
-  .task-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--field-gap); }
-  .task-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
-  .task-row :global(.kit-chip) { box-sizing: border-box; max-width: min(12rem, 100%); flex: none; margin-left: auto; }
-  .list-label { white-space: nowrap; }
+  .person-agenda :global(.kit-chip) { max-width: 12rem; min-width: 0; align-self: center; }
   .list-picker { max-width: 9rem; --typeahead-min-width: 0; --typeahead-max-width: 9rem; --typeahead-panel-min-width: 16rem; }
-  .list-picker :global(.kit-typeahead) { min-width: var(--typeahead-min-width); max-width: var(--typeahead-max-width); }
-  .list-trigger { display: flex; align-items: center; gap: var(--space-1); max-width: 100%; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
+  .list-trigger { display: flex; align-items: center; gap: var(--space-1); max-width: 9rem; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
   .trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .list-trigger:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
   .list-trigger:disabled { cursor: not-allowed; }
   a { color: var(--link-ink); }
   .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .person-agenda :global(.detail-row) { flex-wrap: wrap; }
+  .person-agenda :global(.value) { flex-basis: 12rem; }
+  .person-agenda :global(.actions) { opacity: 1; max-width: 100%; margin-left: auto; }
+  .unlink { display: flex; }
   @media (hover: hover) {
-    .person-agenda :global(.detail-row) { position: relative; }
-    .person-agenda :global(.detail-row:not(:hover):not(:focus-within) .actions) { position: absolute; right: 0; }
+    .unlink { opacity: 0; }
+    :global(.detail-row:hover) .unlink,
+    :global(.detail-row:focus-within) .unlink { opacity: 1; }
   }
 </style>

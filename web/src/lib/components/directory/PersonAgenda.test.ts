@@ -1,3 +1,4 @@
+import { openTypeahead } from '../../../test/kit-ui';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -54,12 +55,12 @@ describe('PersonAgenda', () => {
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
     for (const label of ['follow-up', 'follow_up', 'follow up', 'istanbul', 'ıstanbul']) expect(screen.getByText(label)).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'List: agenda' }));
+    await openTypeahead('List');
     for (const label of ['follow-up', 'follow_up', 'follow up', 'istanbul', 'ıstanbul']) {
       expect(screen.getByRole('option', { name: label })).toBeDefined();
     }
     await fireEvent.mouseDown(screen.getByRole('option', { name: 'follow-up' }));
-    await fireEvent.click(await screen.findByRole('button', { name: 'List: follow-up' }));
+    await openTypeahead('List');
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'ArrowDown' });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'ArrowDown' });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
@@ -72,7 +73,7 @@ describe('PersonAgenda', () => {
     expect(post).toBeDefined();
     expect(post!.headers.get('Idempotency-Key')).toBeTruthy();
     expect(await post!.clone().json()).toMatchObject({ title: 'Send notes', list: 'waiting' });
-    await fireEvent.click(screen.getByRole('button', { name: 'List: waiting' }));
+    await openTypeahead('List');
     expect(screen.getAllByRole('option', { name: 'waiting' })).toHaveLength(1);
   });
 
@@ -199,10 +200,10 @@ describe('PersonAgenda', () => {
     await screen.findByText('No tasks yet');
 
     await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
-    await fireEvent.click(screen.getByRole('button', { name: 'List: agenda' }));
+    await openTypeahead('List');
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Gift  Ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
-    await fireEvent.click(await screen.findByRole('button', { name: 'List: gift ideas' }));
+    await openTypeahead('List');
     expect(screen.getAllByRole('option', { name: 'gift ideas' })).toHaveLength(1);
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: gift ideas' });
@@ -212,7 +213,7 @@ describe('PersonAgenda', () => {
 
     // Selecting either spelling canonicalizes the draft list before creation.
     await waitFor(() => expect((screen.getByRole('button', { name: 'Add' }) as HTMLButtonElement).disabled).toBe(false));
-    await fireEvent.click(screen.getByRole('button', { name: 'List: gift ideas' }));
+    await openTypeahead('List');
     await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'gift ideas' } });
     await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
     await screen.findByRole('button', { name: 'List: gift ideas' });

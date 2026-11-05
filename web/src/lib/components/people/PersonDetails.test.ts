@@ -1,3 +1,4 @@
+import { openTypeahead } from '../../../test/kit-ui';
 import { emptyProfile } from '../../directory/profile-fixtures.test-support';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { expect, it, onTestFinished, vi } from 'vitest';
@@ -94,7 +95,7 @@ it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation wh
   const { person, directory } = await renderDetails([5], { taskChange: operation });
   await screen.findByText(operation === 'merge' ? 'No tasks yet' : 'Ask about the proposal');
   await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send meeting notes' } });
-  await fireEvent.click(screen.getByRole('button', { name: 'List: agenda' }));
+  await openTypeahead('List');
   await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Follow-up' } });
   await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
   await screen.findByRole('button', { name: 'List: follow-up' });
