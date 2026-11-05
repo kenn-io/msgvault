@@ -398,7 +398,7 @@ func (c *Client) fetchPage(
 		LEFT JOIN handle h ON h.ROWID = m.handle_id
 		LEFT JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
 		LEFT JOIN chat c ON c.ROWID = cmj.chat_id
-		ORDER BY m.ROWID ASC`
+		ORDER BY m.ROWID ASC, cmj.chat_id ASC`
 	args = append(args, pageSize)
 
 	dbRows, err := c.db.QueryContext(ctx, sqlQuery, args...)
