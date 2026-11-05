@@ -323,7 +323,7 @@ type ClientInterface interface {
 	GetCLIMessageRaw(ctx context.Context, options *GetCLIMessageRawRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageRawResponse, error)
 	GetCLIMessageRawWithResponse(ctx context.Context, options *GetCLIMessageRawRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageRawResp, error)
 
-	// GetCLIMessageThread List one conversation in chronological order for export
+	// GetCLIMessageThread List one conversation in chronological order for export. SQLite compares instants to the millisecond, with ties in message-ID order.
 	GetCLIMessageThread(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResponse, error)
 	GetCLIMessageThreadWithResponse(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResp, error)
 
@@ -5736,7 +5736,7 @@ func (c *Client) GetCLIMessageRaw(ctx context.Context, options *GetCLIMessageRaw
 	return responseParser(ctx, resp)
 }
 
-// GetCLIMessageThread List one conversation in chronological order for export
+// GetCLIMessageThread List one conversation in chronological order for export. SQLite compares instants to the millisecond, with ties in message-ID order.
 func (c *Client) GetCLIMessageThread(ctx context.Context, options *GetCLIMessageThreadRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCLIMessageThreadResponse, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

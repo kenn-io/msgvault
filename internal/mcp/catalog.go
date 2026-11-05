@@ -725,6 +725,7 @@ func listThreadDefinition() toolDefinition {
 	return readDefinition(
 		ToolListThread,
 		"List visible archived messages in one conversation in chronological order (sent_at, undated last, then id). "+
+			"SQLite compares instants to the millisecond, with ties in message-ID order. "+
 			"Pass exactly one of id or source_message_id (any message in the thread) or thread_id (provider conversation ID, such as a Gmail threadId); "+
 			"add account when a provider ID exists in more than one account. "+
 			"Page with offset until has_more is false; total counts the whole conversation. "+

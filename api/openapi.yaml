@@ -20587,7 +20587,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: List one conversation in chronological order for export
+      summary: List one conversation in chronological order for export. SQLite compares instants to the millisecond, with ties in message-ID order.
       tags:
         - API
   /api/v1/cli/rebuild-fts:

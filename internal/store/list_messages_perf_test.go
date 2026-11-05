@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
 // seedLiveMessages inserts n messages (one source, conversation, participant,
@@ -61,19 +62,7 @@ func seedLiveMessages(tb testing.TB, s *Store, n int) {
 
 func explainPlan(t *testing.T, s *Store, sql string, args ...any) string {
 	t.Helper()
-	rows, err := s.db.Query("EXPLAIN QUERY PLAN "+sql, args...)
-	require.NoError(t, err)
-	defer func() { _ = rows.Close() }()
-	var b strings.Builder
-	for rows.Next() {
-		var a, c, d int
-		var detail string
-		require.NoError(t, rows.Scan(&a, &c, &d, &detail))
-		b.WriteString(detail)
-		b.WriteString("\n")
-	}
-	require.NoError(t, rows.Err())
-	return b.String()
+	return dbtest.ExplainQueryPlan(t, s.DB(), sql, args...)
 }
 
 // TestListMessages_UsesLiveIndex verifies the ListMessages COUNT and page

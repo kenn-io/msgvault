@@ -2071,6 +2071,13 @@ func (s *Store) InitSchemaContext(ctx context.Context) error {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `
+				CREATE INDEX IF NOT EXISTS idx_messages_conversation_sent_at_julianday
+				    ON messages(conversation_id, NULLIF(julianday(sent_at), `+sqliteutil.ZeroTimeJulianDay+`), id, source_id)
+				    WHERE deleted_at IS NULL
+			`); err != nil {
+				return err
+			}
+			if _, err := tx.ExecContext(ctx, `
 				CREATE INDEX IF NOT EXISTS idx_messages_live_sent_at
 				    ON messages(COALESCE(sent_at, received_at, internal_date) DESC, id DESC)
 				    WHERE deleted_at IS NULL AND deleted_from_source_at IS NULL

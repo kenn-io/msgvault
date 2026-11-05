@@ -42,23 +42,7 @@ func metadataSearchDB(tb testing.TB) *sql.DB {
 func metadataPlan(t *testing.T, e *SQLiteEngine, q *search.Query) string {
 	t.Helper()
 	conditions, args, join := e.buildFilteredMetadataSearchQueryParts(t.Context(), q, MessageFilter{})
-	return explainQueryPlan(t, e.db, searchResultsSQL(join, strings.Join(conditions, " AND ")), append(args, 50, 0)...)
-}
-
-func explainQueryPlan(t *testing.T, db *sql.DB, sqlText string, args ...any) string {
-	t.Helper()
-	rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+sqlText, args...)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		plan.WriteString(detail + "\n")
-	}
-	require.NoError(t, rows.Err())
-	return plan.String()
+	return dbtest.ExplainQueryPlan(t, e.db, searchResultsSQL(join, strings.Join(conditions, " AND ")), append(args, 50, 0)...)
 }
 
 func TestMetadataSearchIndexedPlan(t *testing.T) {

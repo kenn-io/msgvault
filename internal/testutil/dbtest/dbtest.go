@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -27,6 +28,24 @@ type TestDB struct {
 	nextParticipantID   int64
 	nextMessageID       int64
 	nextConversationSeq int64
+}
+
+// ExplainQueryPlan returns SQLite's plan for a statement and its bound arguments.
+func ExplainQueryPlan(tb testing.TB, db *sql.DB, statement string, args ...any) string {
+	tb.Helper()
+	must := require.New(tb)
+	rows, err := db.QueryContext(tb.Context(), "EXPLAIN QUERY PLAN "+statement, args...)
+	must.NoError(err)
+	defer func() { must.NoError(rows.Close()) }()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		must.NoError(rows.Scan(&id, &parent, &unused, &detail))
+		plan.WriteString(detail + "\n")
+	}
+	must.NoError(rows.Err())
+	return plan.String()
 }
 
 // Templates live for the test binary's lifetime. Their single connection also

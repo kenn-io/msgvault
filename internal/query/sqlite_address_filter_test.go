@@ -15,7 +15,7 @@ func explainSearchPlan(t *testing.T, env *testEnv, q *search.Query) string {
 	t.Helper()
 	conditions, args, ftsJoin := env.Engine.buildSearchQueryParts(env.Ctx, q)
 	sqlText := searchResultsSQL(ftsJoin, strings.Join(conditions, " AND "))
-	return explainQueryPlan(t, env.DB, sqlText, append(args, 50, 0)...)
+	return dbtest.ExplainQueryPlan(t, env.DB, sqlText, append(args, 50, 0)...)
 }
 
 // Choose the FTS result page before looking up sender and conversation details.

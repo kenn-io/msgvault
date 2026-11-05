@@ -100,7 +100,7 @@ func aggregatePlan(t *testing.T, env *testEnv, opts AggregateOptions) string {
 	sort, err := sortClause(opts)
 	require.NoError(t, err)
 	sqlText := buildAggregateSQL(dim, "", conditions, sort)
-	return explainQueryPlan(t, env.DB, sqlText, append(args, 100)...)
+	return dbtest.ExplainQueryPlan(t, env.DB, sqlText, append(args, 100)...)
 }
 
 func TestAggregateByLabel_AttachmentFields(t *testing.T) {
