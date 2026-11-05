@@ -1179,8 +1179,6 @@ func writeSetupProvidersResult(
 	return nil
 }
 
-// setupFollowUps orders consent before restart so startup loads the consented
-// document search service, then builds indexes with the new configuration.
 func setupFollowUps(ctx context.Context, deps setupProvidersDeps, loaded *config.Config, plan *setupProvidersPlan, applied bool) []string {
 	var steps []string
 	seen := map[string]bool{}
@@ -1215,7 +1213,7 @@ func followUpRank(step string) int {
 		return 1
 	case step == "msgvault daemon restart":
 		return 2
-	case strings.Contains(step, "setup providers"), strings.Contains(step, "documents vectors status"), strings.Contains(step, "documents vectors retire"):
+	case strings.Contains(step, "setup providers"):
 		return 3
 	case strings.Contains(step, " build"):
 		return 4
