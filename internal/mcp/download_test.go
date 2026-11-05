@@ -59,7 +59,7 @@ func TestChunkDownloadsThroughDaemon(t *testing.T) {
 	must.NoError(err)
 	t.Cleanup(func() { checks.NoError(client.Close()) })
 	server := newMCPHTTPServer(ServeOptions{Engine: daemonclient.NewEngineAdapter(client), AttachmentReader: client}, HTTPOptions{})
-	t.Cleanup(func() { checks.NoError(server.Shutdown(t.Context())) })
+	t.Cleanup(func() { checks.NoError(server.Shutdown(context.WithoutCancel(t.Context()))) })
 	chunk := func(t *testing.T, name string, args map[string]any) exportChunkResp {
 		t.Helper()
 		must := require.New(t)

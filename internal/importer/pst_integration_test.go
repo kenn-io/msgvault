@@ -457,29 +457,17 @@ func TestImportPst_CancelAfterHeaderRepairRestoresFolderLabel(t *testing.T) {
 	queryCtx := context.WithoutCancel(t.Context())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	handler := &cancelAfterMessageCommitHandler{
-		Handler: slog.DiscardHandler,
-		cancel:  cancel,
-		messageCommitted: func() bool {
-			var repaired int
-			require.NoError(db.QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages
-				WHERE source_id = ? AND rfc822_message_id IS NOT NULL`, first.SourceID).Scan(&repaired))
-			return repaired > 0
-		},
-	}
-	// A commit over the slow threshold logs "sql tx slow" in place of the
-	// line the handler waits for.
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	previous := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var repaired int
+		require.NoError(db.QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages
+			WHERE source_id = ? AND rfc822_message_id IS NOT NULL`, first.SourceID).Scan(&repaired))
+		return repaired > 0
+	})
 
 	interrupted, err := ImportPst(ctx, st, pstPath, opts)
 	require.NoError(err, "an interrupted import reports through the summary, not an error")
-	require.True(handler.canceled, "the cancel must land after a header repair commits")
+	require.True(canceled(), "the cancel must land after a header repair commits")
 	require.Less(interrupted.MessagesProcessed, first.MessagesProcessed, "the cancel must stop the import")
-	slog.SetDefault(previous)
 
 	resumed, err := ImportPst(t.Context(), st, pstPath, opts)
 	require.NoError(err)

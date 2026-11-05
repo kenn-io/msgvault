@@ -3,42 +3,12 @@ package imazingcsv
 import (
 	"context"
 	"database/sql"
-	"log/slog"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-// cancelAfterMessageCommitHandler cancels on the first committed transaction
-// that leaves a message row behind, so the rest of the import runs with a
-// cancelled context.
-type cancelAfterMessageCommitHandler struct {
-	slog.Handler
-
-	mu               sync.Mutex
-	cancel           context.CancelFunc
-	messageCommitted func() bool
-	canceled         bool
-}
-
-func (*cancelAfterMessageCommitHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *cancelAfterMessageCommitHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message != "sql tx commit" {
-		return nil
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.canceled && h.messageCommitted() {
-		h.cancel()
-		h.canceled = true
-	}
-	return nil
-}
 
 // A cancel that stops persistence after the first message commits must still
 // recompute conversation statistics. If the recompute ran on the cancelled
@@ -56,26 +26,15 @@ func TestImporterCancelAfterFirstMessageRecomputesConversationStats(t *testing.T
 	queryCtx := context.WithoutCancel(t.Context())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	handler := &cancelAfterMessageCommitHandler{
-		Handler: slog.DiscardHandler,
-		cancel:  cancel,
-		messageCommitted: func() bool {
-			var count int
-			require.NoError(st.DB().QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages`).Scan(&count))
-			return count > 0
-		},
-	}
-	// A commit over the slow threshold logs "sql tx slow" in place of the
-	// line the handler waits for.
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	previous := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var count int
+		require.NoError(st.DB().QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages`).Scan(&count))
+		return count > 0
+	})
 
 	_, err := NewImporter(st, Options{Owner: "+15550000001", Timezone: "UTC"}).ImportPath(ctx, exportDir)
 	require.ErrorIs(err, context.Canceled)
-	require.True(handler.canceled, "the cancel must land after the first message commits")
+	require.True(canceled(), "the cancel must land after the first message commits")
 
 	source, err := st.GetSourceByTypeAndIdentifier(t.Context(), SourceType, "+15550000001")
 	require.NoError(err)

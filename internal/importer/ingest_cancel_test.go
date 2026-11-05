@@ -4,43 +4,14 @@ import (
 	"context"
 	"log/slog"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
-
-// cancelAfterMessageCommitHandler cancels synchronously on the first committed
-// transaction that leaves a message row behind, which is the message persist.
-// The writes that follow it then run with an already-canceled context.
-type cancelAfterMessageCommitHandler struct {
-	slog.Handler
-
-	mu               sync.Mutex
-	cancel           context.CancelFunc
-	messageCommitted func() bool
-	canceled         bool
-}
-
-func (*cancelAfterMessageCommitHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *cancelAfterMessageCommitHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message != "sql tx commit" {
-		return nil
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.canceled && h.messageCommitted() {
-		h.cancel()
-		h.canceled = true
-	}
-	return nil
-}
 
 // Not parallel: it replaces the process-wide slog default and SQL log options.
 func TestIngestRawMessage_CanceledAfterMessageCommitFinishesAttachmentAndSearch(t *testing.T) {
@@ -60,22 +31,11 @@ func TestIngestRawMessage_CanceledAfterMessageCommitFinishesAttachmentAndSearch(
 	queryCtx := context.WithoutCancel(t.Context())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	handler := &cancelAfterMessageCommitHandler{
-		Handler: slog.DiscardHandler,
-		cancel:  cancel,
-		messageCommitted: func() bool {
-			var count int
-			require.NoError(db.QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages`).Scan(&count))
-			return count > 0
-		},
-	}
-	// A commit over the slow threshold logs "sql tx slow" in place of the
-	// line the handler waits for.
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	previous := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var count int
+		require.NoError(db.QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages`).Scan(&count))
+		return count > 0
+	})
 
 	err = IngestRawMessage(
 		ctx, st,
@@ -84,7 +44,7 @@ func TestIngestRawMessage_CanceledAfterMessageCommitFinishesAttachmentAndSearch(
 		raw, time.Time{}, slog.New(slog.DiscardHandler),
 	)
 	require.ErrorIs(err, context.Canceled, "reply-header write still observes the cancellation")
-	require.True(handler.canceled, "cancellation landed after the message commit")
+	require.True(canceled(), "cancellation landed after the message commit")
 
 	var messageID int64
 	var hasAttachments bool

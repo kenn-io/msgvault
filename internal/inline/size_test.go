@@ -5,10 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +14,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil"
 )
 
 func assertInlineMessageSize(t *testing.T, imp *Importer, messageID, wantSize int64) {
@@ -186,33 +184,6 @@ func TestMediaSizeIncludesPendingExcludedAndFailedOccurrences(t *testing.T) {
 	}
 }
 
-// cancelAfterCommitHandler cancels synchronously on the first committed
-// transaction after which committed reports true. The writes that follow it
-// then run with an already-canceled context.
-type cancelAfterCommitHandler struct {
-	slog.Handler
-
-	mu        sync.Mutex
-	cancel    context.CancelFunc
-	committed func() bool
-	canceled  bool
-}
-
-func (*cancelAfterCommitHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *cancelAfterCommitHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message != "sql tx commit" {
-		return nil
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.canceled && h.committed() {
-		h.cancel()
-		h.canceled = true
-	}
-	return nil
-}
-
 // A cancel that lands after a backfill commits the downloaded attachment row
 // must still leave the message size counting the downloaded bytes. Later
 // backfills skip the message because its media is complete.
@@ -241,29 +212,17 @@ func TestMediaBackfillCancelAfterStoredRowKeepsMessageSize(t *testing.T) {
 	queryCtx := context.WithoutCancel(t.Context())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	handler := &cancelAfterCommitHandler{
-		Handler: slog.DiscardHandler,
-		cancel:  cancel,
-		committed: func() bool {
-			var stored int
-			requires.NoError(imp.store.DB().QueryRowContext(queryCtx, imp.store.Rebind(`SELECT COUNT(*) FROM attachments
-				WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash <> ''`), id).Scan(&stored))
-			return stored > 0
-		},
-	}
-	// A commit over the slow threshold logs "sql tx slow" in place of the
-	// line the handler waits for.
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	previous := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var stored int
+		requires.NoError(imp.store.DB().QueryRowContext(queryCtx, imp.store.Rebind(`SELECT COUNT(*) FROM attachments
+			WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash <> ''`), id).Scan(&stored))
+		return stored > 0
+	})
 
 	opts.NoMedia = false
 	_, err = imp.BackfillMedia(ctx, opts)
 	requires.ErrorIs(err, context.Canceled)
-	requires.True(handler.canceled, "the cancel must land after the downloaded row commits")
-	slog.SetDefault(previous)
+	requires.True(canceled(), "the cancel must land after the downloaded row commits")
 
 	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
 	requires.NoError(err)
