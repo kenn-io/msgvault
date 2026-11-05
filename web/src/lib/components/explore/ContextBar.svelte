@@ -256,7 +256,7 @@
   }
 
   .popover-extra {
-    :global(.file-controls > label:has(input[type="search"], input[type="file"])) {
+    :global(.file-controls > label:has(.kit-search-input, input[type="file"])) {
       display: grid;
       width: 100%;
       grid-template-columns: minmax(0, 1fr);
