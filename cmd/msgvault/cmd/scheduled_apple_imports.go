@@ -76,12 +76,14 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 			return err
 		}
 	}
-	client, err := imessage.NewClient(path, opts...)
-	if err != nil {
-		return fmt.Errorf("open iMessage database: %w", err)
-	}
-	defer func() { _ = client.Close() }()
-	summary, err := importImessageRecorded(ctx, s, client, src.ID)
+	summary, err := recordImessageImport(ctx, s, src.ID, func(scoped *store.Store, progress func(imessage.ImportSummary)) (*imessage.ImportSummary, error) {
+		client, err := imessage.NewClient(path, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("open iMessage database: %w", err)
+		}
+		defer func() { _ = client.Close() }()
+		return client.ImportWithProgress(ctx, scoped, src.ID, progress)
+	})
 	if attachmentImportOnly(err) {
 		state.logger.Warn("imessage attachment import warning", "error", err)
 	} else if err != nil {

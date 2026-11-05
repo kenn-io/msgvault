@@ -261,6 +261,49 @@ func TestImportImessageRecordedCompletesWithAttachmentErrors(t *testing.T) {
 	assert.Equal("failed", run.Status)
 }
 
+func TestScheduledAppleOpenFailureRecordsRun(t *testing.T) {
+	for _, provider := range []string{"apple_messages", "whatsapp"} {
+		t.Run(provider, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = t.TempDir()
+			cfg.Analytics.AutoBuildCache = false
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			var path, identifier string
+			var run func() error
+			if provider == "apple_messages" {
+				var chat *sql.DB
+				path, chat = testutil.NewIMessageChatDB(t)
+				_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT); CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER)`)
+				require.NoError(err)
+				cfg.IMessage.DBPath = path
+				identifier = "local"
+				run = func() error { return runScheduledIMessage(ctx, st, cfg.IMessage) }
+			} else {
+				path = createWhatsAppIdentityFixture(t, false, false)
+				identifier = "+15550000000"
+				run = func() error {
+					return runScheduledWhatsAppApple(ctx, st, config.WhatsAppAppleSource{Phone: identifier, Path: path})
+				}
+			}
+			require.NoError(run())
+			src, err := st.GetSourceByTypeAndIdentifier(provider, identifier)
+			require.NoError(err)
+			first, err := st.GetLatestSync(src.ID)
+			require.NoError(err)
+			require.Equal("completed", first.Status)
+			require.NoError(os.Remove(path))
+			require.Error(run())
+			latest, err := st.GetLatestSync(src.ID)
+			require.NoError(err)
+			assert.Greater(latest.ID, first.ID)
+			assert.Equal("failed", latest.Status)
+		})
+	}
+}
+
 func TestScheduledAppleImportsRecordFailures(t *testing.T) {
 	for _, source := range []string{"whatsapp", "apple_messages"} {
 		t.Run(source, func(t *testing.T) {
