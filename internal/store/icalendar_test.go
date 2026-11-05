@@ -51,8 +51,13 @@ func TestICalendarPersistenceRevisionsAndRebuild(t *testing.T) {
 	later := strings.Replace(string(raw), "20270301T120000Z", "20270301T130000Z", 1)
 	later = strings.Replace(later, "20270302T120000Z", "20270302T140000Z", 1)
 	later = strings.Replace(later, "20270302T130000Z", "20270302T150000Z", 1)
+	before, err := st.DerivedDataRevisionContext(t.Context())
+	requirements.NoError(err)
 	_, err = st.PersistICalendarContext(t.Context(), source, []byte(later))
 	requirements.NoError(err)
+	after, err := st.DerivedDataRevisionContext(t.Context())
+	requirements.NoError(err)
+	assertions.Greater(after, before)
 	assertions.Equal("2027-03-02T14:00:00Z", calendarRows(t, st, id)[0].Event.Start.Format(time.RFC3339))
 
 	stored, err = st.GetMessageRaw(id)

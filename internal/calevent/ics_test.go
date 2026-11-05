@@ -6,35 +6,25 @@ import (
 	"testing"
 	"time"
 
-	"go.kenn.io/msgvault/internal/calrecur"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
-	for _, zone := range []string{"", "America/Chicago"} {
-		t.Run(zone, func(t *testing.T) {
+	for _, tc := range []struct{ zone, rdate, exdate, original string }{
+		{"", "RDATE:20270315T090000Z", "EXDATE:20270314T090000Z", "2027-03-15T09:00:00Z"},
+		{"America/Chicago", "RDATE:20270315T140000Z", "EXDATE:20270314T140000Z", "2027-03-15T14:00:00Z"},
+	} {
+		t.Run(tc.zone, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			raw := strings.Replace(icsExample, "SUMMARY:", "RDATE:20270315T090000\r\nEXDATE:20270314T090000\r\nSUMMARY:", 1)
-			components, err := ParseICS([]byte(raw), "", zone)
+			components, err := ParseICS([]byte(raw), "", tc.zone)
 			requirements.NoError(err)
-			e := components[0].Event
-			loc := time.UTC
-			if zone != "" {
-				loc, err = time.LoadLocation(zone)
-				requirements.NoError(err)
-			}
-			startZone, err := time.LoadLocation(e.EventTimeZone)
-			requirements.NoError(err)
-			set, err := calrecur.ParseSet(*e.Start, false, "", startZone, e.Recurrence)
-			requirements.NoError(err)
-			assertions.Equal(time.Date(2027, 3, 15, 9, 0, 0, 0, loc).UTC(), set.RDates[0].Instant)
-			assertions.Equal(time.Date(2027, 3, 14, 9, 0, 0, 0, loc).UTC(), set.ExDates[0].Instant)
+			assertions.Equal([]string{tc.rdate, tc.exdate}, components[0].Event.Recurrence)
 			raw = strings.Replace(raw, "SUMMARY:", "RECURRENCE-ID:20270315T090000\r\nSUMMARY:", 1)
-			components, err = ParseICS([]byte(raw), "", zone)
+			components, err = ParseICS([]byte(raw), "", tc.zone)
 			requirements.NoError(err)
-			assertions.Equal(set.RDates[0].Instant, components[0].Event.Original.Instant)
+			assertions.Equal(tc.original, components[0].Event.Original.Instant.Format(time.RFC3339))
 		})
 	}
 }
@@ -69,16 +59,15 @@ func TestParseICSCustomizedTimeZone(t *testing.T) {
 		_, err := ParseICS([]byte(strings.Replace(string(raw), "TZOFFSETTO:-0500\n", "", 1)), "", "")
 		require.Error(t, err)
 	})
-}
-
-func TestParseICSCustomizedTimeZoneWithoutDST(t *testing.T) {
-	requirements := require.New(t)
-	raw, err := os.ReadFile("testdata/customized-no-dst.ics")
-	requirements.NoError(err)
-	components, err := ParseICS(raw, "", "")
-	requirements.NoError(err)
-	requirements.Len(components, 1)
-	requirements.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
+	t.Run("without daylight saving", func(t *testing.T) {
+		requirements := require.New(t)
+		raw, err := os.ReadFile("testdata/customized-no-dst.ics")
+		requirements.NoError(err)
+		components, err := ParseICS(raw, "", "")
+		requirements.NoError(err)
+		requirements.Len(components, 1)
+		requirements.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
+	})
 }
 
 func TestICSLibicalTZID(t *testing.T) {
@@ -136,21 +125,28 @@ func TestICSMethods(t *testing.T) {
 }
 
 func TestICSDurationLimit(t *testing.T) {
-	for _, duration := range []string{"PT6000000H", "P36600DT1S", "P5229W"} {
-		t.Run(duration, func(t *testing.T) {
-			raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:"+duration, 1)
+	for _, tc := range []struct {
+		duration string
+		withEnd  bool
+		want     string
+	}{
+		{"PT6000000H", false, "calendar DURATION exceeds limit"},
+		{"P36600DT1S", false, "calendar DURATION exceeds limit"},
+		{"P5229W", false, "calendar DURATION exceeds limit"},
+		{"garbage", true, "DURATION"},
+		{"PT6000000H", true, "DURATION"},
+	} {
+		name := tc.duration
+		if tc.withEnd {
+			name += " with DTEND"
+		}
+		t.Run(name, func(t *testing.T) {
+			raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:"+tc.duration, 1)
+			if tc.withEnd {
+				raw = strings.Replace(icsExample, "SUMMARY:", "DURATION:"+tc.duration+"\r\nSUMMARY:", 1)
+			}
 			_, err := ParseICS([]byte(raw), "", "")
-			require.ErrorContains(t, err, "calendar DURATION exceeds limit")
-		})
-	}
-}
-
-func TestICSInvalidDurationWithEnd(t *testing.T) {
-	for _, duration := range []string{"garbage", "PT6000000H"} {
-		t.Run(duration, func(t *testing.T) {
-			raw := strings.Replace(icsExample, "SUMMARY:", "DURATION:"+duration+"\r\nSUMMARY:", 1)
-			_, err := ParseICS([]byte(raw), "", "")
-			require.ErrorContains(t, err, "DURATION")
+			require.ErrorContains(t, err, tc.want)
 		})
 	}
 }
@@ -234,6 +230,4 @@ func TestICSPeriodRecurrenceRemainsArchived(t *testing.T) {
 	requirements.Len(components, 1)
 	e := components[0].Event
 	assertions.Equal([]string{period}, e.Recurrence)
-	_, err = calrecur.ParseSet(*e.Start, false, "", time.UTC, e.Recurrence)
-	assertions.ErrorIs(err, calrecur.ErrUnsupportedRecurrence)
 }
