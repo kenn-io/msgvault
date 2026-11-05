@@ -112,7 +112,12 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
 			}
-		}, prepare, nil)
+		}, prepare, s.refreshCallConversationStatsWith)
+}
+
+// Imported calls keep their conversation's denormalized stats current.
+func (s *Store) refreshCallConversationStatsWith(ctx context.Context, tx *loggedTx, _ *MessagePersistData, id int64) error {
+	return s.recomputeConversationStatsWith(boundQuerier{ctx: ctx, q: tx}, "id = (SELECT conversation_id FROM messages WHERE id = ?)", id)
 }
 
 // Scalar projections share the message lock and transaction of their metadata.
