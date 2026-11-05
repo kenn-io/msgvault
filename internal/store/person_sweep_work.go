@@ -689,17 +689,17 @@ func (s *Store) personSweepJournalGapTx(
 	var dirtyThrough int64
 	gap := false
 	for _, cursor := range cursors {
-		var laneHighWater int64
+		var highWater int64
 		err := tx.QueryRowContext(ctx, s.Rebind(`
 			SELECT COALESCE(MAX(sequence), 0) FROM person_sweep_changes
-			WHERE person_id = ? AND source_lane = ?`), personID, cursor.Key.SourceLane).Scan(&laneHighWater)
+			WHERE person_id = ?`), personID).Scan(&highWater)
 		if err != nil {
-			return 0, false, fmt.Errorf("read person sweep lane high water: %w", err)
+			return 0, false, fmt.Errorf("read person sweep journal high water: %w", err)
 		}
-		if laneHighWater > dirtyThrough {
-			dirtyThrough = laneHighWater
+		if highWater > dirtyThrough {
+			dirtyThrough = highWater
 		}
-		if laneHighWater > cursor.OptimisticSequence {
+		if highWater > cursor.OptimisticSequence {
 			gap = true
 		}
 	}

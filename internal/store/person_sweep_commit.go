@@ -913,7 +913,7 @@ func (s *Store) finishPersonSweepWorkTx(
 		AND (c.backstop_upper_key <> '' OR
 		(c.reconciliation_complete = FALSE AND c.reconcile_after_key <> c.reconcile_upper_key) OR EXISTS (
 			SELECT 1 FROM person_sweep_changes ch WHERE ch.person_id = c.person_id
-			AND ch.source_lane = c.source_lane AND ch.sequence > c.optimistic_sequence)))`,
+			AND ch.sequence > c.optimistic_sequence)))`,
 			request.Lease.PersonID, request.ProgramFingerprint,
 			request.CatalogFingerprint).Scan(&remaining)
 	}
