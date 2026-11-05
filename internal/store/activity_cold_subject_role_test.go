@@ -10,9 +10,9 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// A coauthor who is also addressed retains the projector's stronger sender
+// A coauthor who is also addressed retains the stronger sender
 // role, including unsaved participants and explicit effective-limit overrides.
-func TestColdActivityStrongestRoleMatchesProjector(t *testing.T) {
+func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
 			requirements := require.New(t)

@@ -36,6 +36,8 @@ func TestColdEmailCopiesPreferNonNoiseWithoutCountedContact(t *testing.T) {
 				requirements.NoError(err)
 			} else {
 				sender := f.EnsureParticipant("no-reply@example.com", "Automated sender", "example.com")
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, noisyID)
+				requirements.NoError(err)
 				requirements.NoError(f.Store.ReplaceMessageRecipients(noisyID, "from", []int64{sender}, nil))
 			}
 			setTimelineConversationTier(t, f, noisySource.ID, "noisy-copy", conversationpolicy.Cold)

@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
-func TestColdEmailCopiesPreferEligibleWarmCopy(t *testing.T) {
+func TestColdEmailCopiesPreferProjectedWarmCopy(t *testing.T) {
 	f := newTimelineActivityFixture(t)
 	warmSource, err := f.Store.GetOrCreateSource("gmail", "warm@example.com")
 	require.NoError(t, err)
