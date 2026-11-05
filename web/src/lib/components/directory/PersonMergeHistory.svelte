@@ -10,7 +10,6 @@
   } from '../../directory/person-merge-history-controller.svelte';
   import HistorySection from './HistorySection.svelte';
   import { historySource } from './history-format';
-  import { reviewStateChip } from '../../directory/labels';
   import PersonSplitModal from './PersonSplitModal.svelte';
 
   interface Props {
@@ -57,7 +56,7 @@
     if (splitTrigger?.isConnected) splitTrigger.focus();
   }
 
-  const labels = $derived(controller.labels?.for === controller.detail ? controller.labels : null);
+  const labels = $derived(controller.labels?.for === controller.detail?.merge.id ? controller.labels : null);
   const survivor = $derived(controller.detail ? labels?.names.get(controller.detail.merge.survivor_person_id) : undefined);
   function addressRows(side: string) {
     return (controller.detail?.participants ?? []).filter(participant => participant.origin_side === side).flatMap(participant => {
@@ -72,10 +71,9 @@
     const split = controller.detail?.splits?.find(split => split.id === splitID);
     return split ? `Split out to ${labels?.names.get(split.new_person_id) ?? 'a profile'}` : 'Split out';
   }
-  function reviewRows(pending: boolean) {
-    return (controller.detail?.review_candidates ?? []).filter(candidate => (candidate.state === 'pending') === pending).map(candidate => ({
-      id: candidate.id, value: definitions.find(definition => definition.id === candidate.definition_id)?.label ?? 'Field',
-      meta: pending ? '' : [reviewStateChip(candidate.state).label, candidate.reviewed_by ? historySource(candidate.reviewed_by) : '', candidate.reviewed_at ? historyTime(candidate.reviewed_at) : ''].filter(Boolean).join(' · ')
+  function reviewRows() {
+    return (controller.detail?.review_candidates ?? []).filter(candidate => candidate.state === 'pending').map(candidate => ({
+      id: candidate.id, value: definitions.find(definition => definition.id === candidate.definition_id)?.label ?? 'Field'
     }));
   }
 
@@ -104,7 +102,7 @@
       <ul class="merges" aria-label="Person merge history">
         {#each controller.history as item (item.merge.id)}
           <li>
-            <span>{item.merge.survivor_person_id === personID ? 'Another profile merged into this profile' : 'Two profiles merged'}
+            <span>Person {item.merge.absorbed_person_id} merged into person {item.merge.survivor_person_id}
               <small>{historyTime(item.merge.created_at)} · {item.participant_count} {item.participant_count === 1 ? 'address' : 'addresses'}{item.split_count ? ` · split ${item.split_count}×` : ''}{item.pending_candidate_count ? ` · ${item.pending_candidate_count} to review` : ''}</small>
             </span>
             <Button label="Inspect" ariaLabel={`Inspect merge ${item.merge.id}`} size="sm" onclick={() => void controller.selectMerge(item.merge.id)} />
@@ -140,10 +138,7 @@
           {#if rows.length}<HistorySection level={5} title={side === 'absorbed' ? 'Message addresses from the merged-in profile' : `Message addresses from ${survivor ?? 'the surviving profile'}`} {rows} />{/if}
         {/each}
         {#if !controller.detail.participants?.length}<p class="muted">No message addresses were linked to this merge.</p>{/if}
-        {#if controller.detail.splits?.length}
-          <HistorySection level={5} title="Splits" rows={controller.detail.splits.map(split => ({ id: split.id, value: labels?.names.get(split.new_person_id) ?? 'A profile', detail: split.exact_reversal ? 'Exact restore' : 'Partial restore', meta: `${historySource(split.actor)} · ${historyTime(split.created_at)}` }))} />
-        {/if}
-        {#if controller.detail.review_candidates?.length}<HistorySection level={5} title={controller.detail.review_candidates.some(candidate => candidate.state === 'pending') ? 'Needs review' : 'Review decisions'} rows={reviewRows(true)} earlier={reviewRows(false)} earlierNoun="decision" />{/if}
+        {#if reviewRows().length}<HistorySection level={5} title="Needs review" rows={reviewRows()} />{/if}
       {/if}
 
       {#if controller.snapshot}

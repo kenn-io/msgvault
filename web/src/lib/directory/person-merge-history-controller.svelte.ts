@@ -54,7 +54,7 @@ export class PersonMergeHistoryController {
   pendingHistoryOffset = $state<number | null>(null);
   selectedMergeID = $state<number | null>(null);
   detail = $state<MergeDetail | null>(null);
-  labels = $state<({ for: MergeDetail } & Awaited<ReturnType<typeof loadMergeLabels>>) | null>(null);
+  labels = $state<({ for: number } & Awaited<ReturnType<typeof loadMergeLabels>>) | null>(null);
   detailLoading = $state(false);
   detailError = $state<string | null>(null);
   snapshot = $state<MergeSnapshot | null>(null);
@@ -212,7 +212,7 @@ export class PersonMergeHistoryController {
         this.detailLoading = false;
         const detail = this.detail;
         const labels = await loadMergeLabels(this.client, detail, request.signal);
-        if (this.ownsDetail(request, generation, context, mergeID) && this.detail === detail) this.labels = { for: detail, ...labels };
+        if (this.ownsDetail(request, generation, context, mergeID)) this.labels = { for: mergeID, ...labels };
       } else {
         this.detail = retainedDetail;
         this.detailError = failureMessage(response.error, response.response.status);
@@ -454,10 +454,21 @@ export class PersonMergeHistoryController {
     owner: AbortController,
   ): Promise<boolean> {
     try {
-      const options = { ...this.client, signal: owner.signal };
       const [source, merge] = await Promise.all([
-        generatedGetPersonProfile({ id: target.sourcePersonID }, options),
-        generatedGetPersonMerge({ mergeId: target.mergeID }, options),
+        generatedGetPersonProfile(
+          { id: target.sourcePersonID },
+          {
+            ...this.client,
+            signal: owner.signal,
+          },
+        ),
+        generatedGetPersonMerge(
+          { mergeId: target.mergeID },
+          {
+            ...this.client,
+            signal: owner.signal,
+          },
+        ),
       ]);
       if (!this.ownsSplit(owner, generation, context, target.mergeID)) return false;
       const etag = source.response.headers.get('ETag');
@@ -477,14 +488,11 @@ export class PersonMergeHistoryController {
       this.sourcePerson = source.data;
       this.sourceETag = etag;
       this.detail = merge.data;
-      const detail = this.detail;
       this.selectedParticipantIDs = [];
       this.clearConfirmation();
       this.splitNeedsFreshState = false;
       this.staleReloadTarget = null;
       this.splitError = 'The source changed while you were reviewing it. Confirm the current lineage before splitting.';
-      const labels = await loadMergeLabels(this.client, detail, owner.signal);
-      if (this.ownsSplit(owner, generation, context, target.mergeID)) this.labels = { for: detail, ...labels };
       return true;
     } catch {
       if (this.ownsSplit(owner, generation, context, target.mergeID)) {

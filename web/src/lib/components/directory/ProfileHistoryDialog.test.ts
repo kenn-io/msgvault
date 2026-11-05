@@ -226,7 +226,7 @@ describe('ProfileHistoryDialog', () => {
       for (const value of ['Moved alias', 'moved@example.com', 'observed@example.com']) expect(await screen.findByText(value)).toBeDefined();
       await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
       await fireEvent.click(await screen.findByRole('button', { name: 'Split merged profile' }));
-      await fireEvent.click(await screen.findByRole('checkbox', { name: 'observed@example.com' }));
+      await fireEvent.click(await screen.findByRole('checkbox', { name: 'Participant 1' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: /I confirm splitting/ }));
       await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
       await waitFor(() => {

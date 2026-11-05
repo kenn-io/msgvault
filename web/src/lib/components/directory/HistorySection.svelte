@@ -1,7 +1,7 @@
 <script lang="ts">
   interface Row { id: number | string; value: string; detail?: string | null; meta?: string }
-  interface Props { title: string; level?: 3 | 5; rows: Row[]; earlier?: Row[]; earlierNoun?: 'value' | 'decision' }
-  let { title, level = 3, rows, earlier = [], earlierNoun = 'value' }: Props = $props();
+  interface Props { title: string; level?: 3 | 5; rows: Row[]; earlier?: Row[] }
+  let { title, level = 3, rows, earlier = [] }: Props = $props();
 </script>
 
 {#snippet row(item: Row)}
@@ -15,7 +15,7 @@
   {#if rows.length}<ul>{#each rows as item (item.id)}{@render row(item)}{/each}</ul>{/if}
   {#if earlier.length}
     <details>
-      <summary>{earlier.length} earlier {earlierNoun}{earlier.length === 1 ? '' : 's'}</summary>
+      <summary>{earlier.length} earlier value{earlier.length === 1 ? '' : 's'}</summary>
       <ul>{#each earlier as item (item.id)}{@render row(item)}{/each}</ul>
     </details>
   {/if}

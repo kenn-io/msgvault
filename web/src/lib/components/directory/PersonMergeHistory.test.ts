@@ -134,18 +134,6 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = 
 }
 
 describe('PersonMergeHistory', () => {
-  it.each([
-    [7, 'Another profile merged into this profile'],
-    [12, 'Two profiles merged'],
-  ])('describes a merge with survivor %i relative to the open profile', async (survivorID, label) => {
-    const mergeDetail = detail();
-    mergeDetail.merge.survivor_person_id = survivorID;
-    const { requests } = renderRegressionHistory(mergeDetail);
-    const history = await screen.findByRole('list', { name: 'Person merge history' });
-    expect(within(history).getByText(label)).toBeDefined();
-    expect(requests).toEqual(['/api/v1/people/7/merges']);
-  });
-
   it('ties split addresses to a profile when its destination was deleted', async () => {
     renderRegressionHistory(detail(), true);
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
@@ -153,25 +141,14 @@ describe('PersonMergeHistory', () => {
     expect(within(heading.parentElement!).getByText('Split out to a profile')).toBeDefined();
   });
 
-  it('titles a section containing only decided candidates Review decisions', async () => {
-    const mergeDetail = detail();
-    mergeDetail.review_candidates = mergeDetail.review_candidates!.filter(candidate => candidate.state !== 'pending');
-    renderRegressionHistory(mergeDetail);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
-    expect(await screen.findByRole('heading', { name: 'Review decisions' })).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Needs review' })).toBeNull();
-  });
-
-  it('groups addresses, splits, and review decisions like profile history', async () => {
+  it('groups addresses and pending reviews like profile history', async () => {
     renderHistory();
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     await screen.findByRole('heading', { name: 'Another profile merged into Alex Example' });
-    expect(screen.getByText('Another profile merged into this profile')).toBeDefined();
     expect(screen.getByText(/2 addresses · split 1×/)).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Previous merge history page' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Next merge history page' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'Needs review' })).toBeDefined();
-    expect(screen.queryByRole('heading', { name: 'Review decisions' })).toBeNull();
     expect(screen.getByText(/^You · Aug [23], 2026, \d{1,2}:00 [AP]M$/, { selector: 'p' })).toBeDefined();
     const absorbed = screen.getByRole('heading', { name: 'Message addresses from the merged-in profile' }).parentElement!;
     expect(within(absorbed).getByText('address701@example.org')).toBeDefined();
@@ -179,13 +156,8 @@ describe('PersonMergeHistory', () => {
     const survivor = screen.getByRole('heading', { name: 'Message addresses from Alex Example' }).parentElement!;
     expect(within(survivor).getByText('address702@example.org')).toBeDefined();
     expect(within(survivor).getByText('Split out to Alex Restored')).toBeDefined();
-    expect(screen.getByText('Alex Restored')).toBeDefined();
-    expect(screen.getByText('Partial restore')).toBeDefined();
     expect(screen.queryByText('Waiting for review')).toBeNull();
     expect(screen.getByText('Field')).toBeDefined();
-    await fireEvent.click(screen.getByText('1 earlier decision'));
-    expect(screen.getByText('Role')).toBeDefined();
-    expect(screen.getByText(/^Accepted · You ·/)).toBeDefined();
     expect(screen.queryByRole('table')).toBeNull();
     expect(document.body.textContent).not.toContain('opaque-row-key-must-not-appear');
     expect(document.body.textContent).not.toContain('private/snapshot/path-must-not-appear');

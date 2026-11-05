@@ -99,54 +99,19 @@ function result(exactReversal: boolean) {
 }
 
 describe('PersonSplitModal', () => {
-  it('distinguishes service identities by value and scope in choices and confirmation', async () => {
+  it('names the actual source and selection in confirmation, then shows two fresh navigation actions with partial copy', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path.startsWith('/api/v1/participants/')) {
-        const id = Number(path.split('/').at(-1));
-        return Response.json({ identifiers: [{
-          participant_id: id, type: 'beeper', service_label: 'Matrix',
-          value: id === 702 ? 'user-b' : 'user-a',
-          scope_kind: 'network', scope_value: id === 703 ? 'example.net' : 'example.org',
-        }] });
-      }
-      if (path === '/api/v1/people/7') return Response.json(person(7));
-      return sourceResponse();
-    });
-    const { controller } = await preparedController(fetchFn, [
-      { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
-      { merge_id: 41, participant_id: 702, origin_side: 'absorbed' },
-      { merge_id: 41, participant_id: 703, origin_side: 'absorbed' },
-    ]);
-    render(PersonSplitModal, { controller, onClose: vi.fn(), onOpenPerson: vi.fn() });
-
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Matrix · user-a · network: example.org' }));
-    expect(screen.getByRole('checkbox', { name: 'Matrix · user-b · network: example.org' })).toHaveProperty('checked', false);
-    expect(screen.getByRole('checkbox', { name: 'Matrix · user-a · network: example.net' })).toHaveProperty('checked', false);
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'I confirm splitting Matrix · user-a · network: example.org from Synthetic Source (Person 12).' }));
-    expect(controller.confirmedParticipantIDs).toEqual([701]);
-    controller.destroy();
-  });
-
-  it.each([false, true])('names the actual source and selection in confirmation, then shows two fresh navigation actions with partial copy, missing address %s', async missingAddress => {
-    const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const path = new URL(request.url).pathname;
-      if (path === '/api/v1/participants/701') return Response.json({ identifiers: missingAddress ? [] : [
-        { participant_id: 701, type: 'email', value: 'alex@example.org' },
-        { participant_id: 701, type: 'phone', value: '+12025550101' },
-      ] });
-      if (path === '/api/v1/people/7') return Response.json(person(7));
       return request.method === 'GET' ? sourceResponse() : Response.json(result(false));
     });
     const { controller } = await preparedController(fetchFn);
     const onOpenPerson = vi.fn();
     render(PersonSplitModal, { controller, onClose: vi.fn(), onOpenPerson });
 
-    const label = missingAddress ? 'Participant 701' : 'alex@example.org, +12025550101';
-    await fireEvent.click(screen.getByRole('checkbox', { name: label }));
-    await fireEvent.click(screen.getByRole('checkbox', { name: `I confirm splitting ${label} from Synthetic Source (Person 12).` }));
+    await fireEvent.click(screen.getByRole('checkbox', { name: /Participant 701/ }));
+    await fireEvent.click(
+      screen.getByRole('checkbox', { name: /I confirm splitting Participant 701 from Synthetic Source \(Person 12\)/ }),
+    );
     await fireEvent.click(screen.getByRole('button', { name: 'Create restored person' }));
 
     expect(await screen.findByRole('heading', { name: 'Split completed' })).toBeDefined();
