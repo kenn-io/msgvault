@@ -333,7 +333,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
-			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
+			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
@@ -1102,25 +1102,15 @@ func imapRFC822MessageIDCandidates(messageID string) []string {
 	return candidates
 }
 
-func imapMembershipMailboxesQuery(sqlite bool) string {
-	index := ""
-	if sqlite {
-		// Small, stale statistics can favor the primary key's source prefix
-		// for grouping, reading the whole source for each affected message.
-		index = " INDEXED BY idx_imap_message_memberships_source_message"
-	}
-	return `
-		SELECT mailbox FROM imap_message_memberships` + index + `
+func imapMembershipMailboxes(
+	ctx context.Context, tx *loggedTx, sourceID, messageID int64,
+) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT mailbox FROM imap_message_memberships
 		WHERE source_id = ? AND message_id = ?
 		GROUP BY mailbox
 		ORDER BY mailbox
-	`
-}
-
-func (s *Store) imapMembershipMailboxes(
-	ctx context.Context, tx *loggedTx, sourceID, messageID int64,
-) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, imapMembershipMailboxesQuery(!s.IsPostgreSQL()), sourceID, messageID)
+	`, sourceID, messageID)
 	if err != nil {
 		return nil, fmt.Errorf("query memberships for IMAP message %d: %w", messageID, err)
 	}
@@ -1218,7 +1208,7 @@ func (s *Store) RepairIMAPSourceLabels(
 			if s.imapLabelRepairPerMessageHook != nil {
 				s.imapLabelRepairPerMessageHook(messageID)
 			}
-			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
+			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
