@@ -77,7 +77,7 @@ func TestExploreUnavailableReturnsNamedReadinessAndRecovery(t *testing.T) {
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	assertions.Equal("analytical_cache_unavailable", body.Error)
 	assertions.Equal(query.CacheAbsent, body.Readiness)
-	assertions.NotEmpty(body.RecoveryAction)
+	assertions.Equal("Retry when any running cache rebuild finishes; otherwise run msgvault build-cache --full-rebuild", body.RecoveryAction)
 }
 
 func TestExploreReportsTransientCacheInitialization(t *testing.T) {

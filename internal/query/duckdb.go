@@ -1728,7 +1728,6 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 	if strings.TrimSpace(opts.SearchQuery) != "" && e.sqliteEngine != nil {
 		return e.sqliteEngine.SubAggregate(ctx, filter, groupBy, opts)
 	}
-	originalFilter := filter
 	if opts.SourceIDs != nil || opts.SourceID != nil {
 		filter.SourceID = nil
 		filter.SourceIDs = nil
@@ -1737,7 +1736,7 @@ func (e *DuckDBEngine) SubAggregate(ctx context.Context, filter MessageFilter, g
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		if e.useLiveSQL(err) {
-			return e.sqliteEngine.SubAggregate(ctx, originalFilter, groupBy, opts)
+			return e.sqliteEngine.SubAggregate(ctx, filter, groupBy, opts)
 		}
 		return nil, err
 	}

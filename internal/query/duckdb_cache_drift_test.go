@@ -123,6 +123,12 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, sender_id)
 				VALUES (801, 701, 7, 'live-message', 'email', '2024-01-15 10:00:00', 'live subject', 'live snippet', 11);
 				INSERT INTO message_recipients (message_id, participant_id, recipient_type) VALUES (801, 11, 'from');
+				INSERT INTO sources (id, source_type, identifier) VALUES (8, 'whatsapp', 'chat-a'), (9, 'whatsapp', 'chat-b');
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type, title)
+				VALUES (702, 8, 'live-chat', 'direct_chat', 'Live chat'), (703, 9, 'other-chat', 'direct_chat', 'Other chat');
+				INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, snippet, sender_id)
+				VALUES (802, 702, 8, 'live-text', 'whatsapp', '2024-01-15 10:00:00', 'live text', 11),
+				       (803, 703, 9, 'other-text', 'whatsapp', '2024-01-15 10:00:00', 'other text', 11);
 			`)
 			requirements.NoError(err)
 			engine, err := NewDuckDBEngine(analyticsDir, "", db.DB, DuckDBOptions{
@@ -137,19 +143,30 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 			requirements.NoError(os.Remove(CacheStatePath(analyticsDir)))
 			sourceID := int64(7)
 			filter := MessageFilter{SourceID: &sourceID}
-			for _, method := range []string{"Aggregate", "SubAggregate", "GetTotalStats", "ListMessages", "SearchFastWithStats"} {
+			textSourceID := int64(8)
+			textFilter := TextFilter{SourceID: &textSourceID, Pagination: Pagination{Limit: 1}}
+			for _, method := range []string{
+				"Aggregate", "SubAggregate", "SubAggregateSourceOverride", "GetTotalStats", "ListMessages", "SearchFastWithStats",
+				"ListConversations", "ListConversationsSnapshot", "TextAggregate", "GetTextStats", "TextSnapshotRevision",
+			} {
 				t.Run(method, func(t *testing.T) {
 					require := require.New(t)
 					assert := assert.New(t)
 					ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 					defer cancel()
 					switch method {
-					case "Aggregate", "SubAggregate":
+					case "Aggregate", "SubAggregate", "SubAggregateSourceOverride":
 						var rows []AggregateRow
 						var err error
-						if method == "Aggregate" {
+						switch method {
+						case "Aggregate":
 							rows, err = engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
-						} else {
+						case "SubAggregateSourceOverride":
+							opts := DefaultAggregateOptions()
+							opts.SourceID = &sourceID
+							otherSourceID := int64(9)
+							rows, err = engine.SubAggregate(ctx, MessageFilter{SourceID: &otherSourceID}, ViewSenders, opts)
+						default:
 							rows, err = engine.SubAggregate(ctx, filter, ViewSenders, DefaultAggregateOptions())
 						}
 						if !enabled {
@@ -188,6 +205,59 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						assert.Equal(int64(1), result.TotalCount)
 						require.NotNil(result.Stats)
 						assert.Equal(int64(1), result.Stats.MessageCount)
+					case "ListConversations", "ListConversationsSnapshot":
+						var rows []ConversationRow
+						var revision string
+						var err error
+						if method == "ListConversations" {
+							rows, err = engine.ListConversations(ctx, textFilter)
+						} else {
+							rows, revision, err = engine.ListConversationsSnapshot(ctx, textFilter)
+						}
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						require.Len(rows, 1)
+						assert.Equal(int64(702), rows[0].ConversationID)
+						assert.Equal("Live chat", rows[0].Title)
+						if method == "ListConversationsSnapshot" {
+							want, err := engine.sqliteEngine.TextSnapshotRevision(ctx, TextSnapshotScope{Filter: textFilter})
+							require.NoError(err)
+							assert.NotEmpty(revision)
+							assert.Equal(want, revision)
+						}
+					case "TextAggregate":
+						rows, err := engine.TextAggregate(ctx, TextViewContactNames, TextAggregateOptions{SourceID: &textSourceID})
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						require.Len(rows, 1)
+						assert.Equal("Live", rows[0].Key)
+						assert.Equal(int64(1), rows[0].Count)
+					case "GetTextStats":
+						stats, err := engine.GetTextStats(ctx, TextStatsOptions{SourceID: &textSourceID})
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						assert.Equal(int64(1), stats.MessageCount)
+					case "TextSnapshotRevision":
+						scope := TextSnapshotScope{Filter: textFilter}
+						revision, err := engine.TextSnapshotRevision(ctx, scope)
+						if !enabled {
+							require.ErrorIs(err, ErrCacheUnavailable)
+							return
+						}
+						require.NoError(err)
+						want, err := engine.sqliteEngine.TextSnapshotRevision(ctx, scope)
+						require.NoError(err)
+						assert.NotEmpty(revision)
+						assert.Equal(want, revision)
 					}
 				})
 			}

@@ -1303,8 +1303,10 @@ The `[activity].max_direct_counterparts` broadcast threshold continues to govern
 the activity projection; changing it does not change relationship membership.
 
 The daemon starts HTTP health and API routing before analytics cache
-maintenance. In auto mode, message analytics answer from live SQL while the cache
+maintenance. In auto mode, message and text analytics answer from live SQL while the cache
 is unusable, including while `remove-account` or a repair command rebuilds it.
+Cache-only views (Explore, Files, and people) report the cache unavailable until
+the rebuild publishes.
 With `engine = "duckdb"`, analytics remain unavailable until a
 usable cache is ready. If no usable cache can be built or opened, `msgvault serve`
 fails instead of silently falling back. A failed automatic refresh after a sync
