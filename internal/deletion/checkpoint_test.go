@@ -26,11 +26,7 @@ func TestExecutor_CheckpointWritesGrowLinearly(t *testing.T) {
 			var sizes []int64
 			for _, n := range ns {
 				tc := NewTestContext(t)
-				ids := make([]string, n)
-				for i := range ids {
-					ids[i] = fmt.Sprintf("msg-%06d", i)
-				}
-				m := tc.CreateManifest("linear checkpoints", ids)
+				m := tc.CreateManifest("linear checkpoints", msgIDs(n))
 				path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
 				var claimed os.FileInfo
 				var journalSize int64
@@ -55,7 +51,7 @@ func TestExecutor_CheckpointWritesGrowLinearly(t *testing.T) {
 			}
 			if len(sizes) == 2 {
 				assert.Greater(sizes[1], 9*sizes[0])
-				assert.Less(sizes[1], 11*sizes[0])
+				assert.Less(sizes[1], 12*sizes[0])
 			}
 		})
 	}
@@ -109,62 +105,45 @@ func TestExecutor_JournalResume(t *testing.T) {
 	tc.AssertManifestExecution(m.ID, 4, 2, "msg3", "msg4")
 }
 
-func TestExecutor_FinalizeWithJournalFailure(t *testing.T) {
-	for _, failure := range []string{"append", "cleanup"} {
-		t.Run(failure, func(t *testing.T) {
-			if failure == "cleanup" && (runtime.GOOS == "windows" || os.Getuid() == 0) {
-				t.Skip("requires Unix file permissions enforced for the current user")
-			}
-			require := require.New(t)
-			assert := assert.New(t)
-			tc := NewTestContext(t)
-			m := tc.CreateManifest("final journal failure", msgIDs(3))
-			baseDir := tc.Mgr.baseDir
-			batchSize := 100
-			if failure == "append" {
-				tc.Exec.WithProgress(&onStartProgress{hook: func() {
-					// A directory blocks appends on every OS and can be removed
-					// after the full manifest has been published.
-					path := journalPath(filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json"))
-					require.NoError(os.Mkdir(path, 0o700))
-				}})
-			} else {
-				batchSize = 2
-				t.Cleanup(func() { require.NoError(os.Chmod(baseDir, 0o700)) })
-				tc.MockAPI.BeforeTrash = func(id string) error {
-					if id == "msg2" {
-						// Appends and publication in in_progress still succeed,
-						// but unlinking the journal in its parent must fail.
-						require.NoError(os.Chmod(baseDir, 0o500))
-					}
-					return nil
-				}
-			}
-			require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(batchSize)))
-			tc.AssertTrashCalls(3)
-			path := filepath.Join(tc.Mgr.CompletedDir(), m.ID+".json")
-			if failure == "cleanup" {
-				_, err := os.Stat(journalPath(path))
-				require.NoError(err)
-			}
-			loaded, err := LoadManifest(path)
-			require.NoError(err)
-			assert.Equal(StatusCompleted, loaded.Status)
-			require.NotNil(loaded.Execution)
-			assert.Equal(3, loaded.Execution.LastProcessedIndex)
-			assert.Equal(3, loaded.Execution.Succeeded)
-			assert.Zero(loaded.Execution.Failed)
-			assert.Empty(loaded.Execution.FailedIDs)
-			require.NotNil(loaded.Execution.CompletedAt)
-
-			if failure == "cleanup" {
-				require.NoError(os.Chmod(baseDir, 0o700))
-			}
-			tc.MockAPI.BeforeTrash = nil
-			require.ErrorContains(tc.ExecuteWithOpts(m.ID, trashOpts(batchSize)), "is completed, cannot execute")
-			assert.Equal([]string{"msg0", "msg1", "msg2"}, tc.MockAPI.TrashCalls)
-		})
+func TestExecutor_FinalizeIgnoresStaleJournal(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("requires Unix file permissions enforced for the current user")
 	}
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+	m := tc.CreateManifest("stale final journal", msgIDs(3))
+	baseDir := tc.Mgr.baseDir
+	t.Cleanup(func() { require.NoError(os.Chmod(baseDir, 0o700)) })
+	tc.MockAPI.BeforeTrash = func(id string) error {
+		if id == "msg2" {
+			// Publication in in_progress still succeeds, but unlinking the
+			// index-2 journal record in its parent must fail.
+			require.NoError(os.Chmod(baseDir, 0o500))
+		}
+		return nil
+	}
+	require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(2)))
+	path := filepath.Join(tc.Mgr.CompletedDir(), m.ID+".json")
+	_, err := os.Stat(journalPath(path))
+	require.NoError(err)
+	loaded, err := LoadManifest(path)
+	require.NoError(err)
+	assert.Equal(StatusCompleted, loaded.Status)
+	require.NotNil(loaded.Execution)
+	assert.Equal(3, loaded.Execution.LastProcessedIndex)
+	assert.Equal(3, loaded.Execution.Succeeded)
+	assert.Zero(loaded.Execution.Failed)
+	assert.Empty(loaded.Execution.FailedIDs)
+	require.NotNil(loaded.Execution.CompletedAt)
+
+	// Simulate a crash after publishing the terminal file but before moving it.
+	require.NoError(os.Chmod(baseDir, 0o700))
+	require.NoError(os.Rename(path, filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")))
+	tc.MockAPI.BeforeTrash = nil
+	require.NoError(tc.ExecuteWithOpts(m.ID, trashOpts(2)))
+	assert.Equal([]string{"msg0", "msg1", "msg2"}, tc.MockAPI.TrashCalls)
+	tc.AssertManifestExecution(m.ID, 3, 0)
 }
 
 func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {

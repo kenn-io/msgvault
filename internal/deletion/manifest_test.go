@@ -1132,6 +1132,12 @@ func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
 	require.NoError(err, "reload checkpoint")
 	require.NotNil(loaded.Execution)
 	assert.Equal(7, loaded.Execution.LastProcessedIndex)
+	// No stray temp files left in the status directory.
+	entries, err := os.ReadDir(mgr.InProgressDir())
+	require.NoError(err, "ReadDir")
+	for _, e := range entries {
+		assert.False(strings.HasPrefix(e.Name(), "."), "leftover temp file %s", e.Name())
+	}
 }
 
 // TestManager_WriteInProgressCheckpoint_Cancelled verifies that a checkpoint on
@@ -1152,6 +1158,7 @@ func TestManager_WriteInProgressCheckpoint_Cancelled(t *testing.T) {
 	loaded, err := LoadManifest(filepath.Join(mgr.dirForStatus(StatusCancelled), m.ID+".json"))
 	require.NoError(err, "cancelled manifest parseable")
 	assert.Equal(StatusCancelled, loaded.Status)
+	assertSingleValidManifest(t, mgr, m.ID)
 }
 
 // TestManager_FinalizeInProgress_Cancelled verifies that a finalize losing to a

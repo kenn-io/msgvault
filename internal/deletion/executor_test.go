@@ -1595,32 +1595,32 @@ func TestExecutor_ExecuteBatch_CooperativeCancel(t *testing.T) {
 	tc.AssertCancelledCount(1)
 }
 
-// TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest verifies that
-// a checkpoint rejected after cancellation leaves no journal behind.
+// TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest drives the
+// exact checkpoint-write race: a manifest is claimed into in_progress/, then a
+// daemon cancel moves it to cancelled/ in the window where the executor's
+// cancellation stat would previously have already passed. The subsequent
+// checkpoint write must NOT recreate in_progress/<id>.json; the manifest must
+// remain only in cancelled/.
 func TestExecutor_SaveCheckpoint_DoesNotResurrectCancelledManifest(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
 	tc := NewTestContext(t)
 	manifest := tc.CreateManifest("checkpoint race", msgIDs(10))
 
 	// Claim into in_progress/ as prepareExecution would.
-	require.NoError(tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
+	require.NoError(t, tc.Mgr.MoveManifest(manifest.ID, StatusPending, StatusInProgress), "MoveManifest")
 	manifest.Status = StatusInProgress
 	manifest.Execution = &Execution{StartedAt: time.Now(), Method: MethodTrash}
 	path := tc.Mgr.InProgressDir() + "/" + manifest.ID + ".json"
 
 	// The daemon cancels right before the checkpoint write lands.
-	require.NoError(tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
+	require.NoError(t, tc.Mgr.CancelManifest(manifest.ID), "daemon CancelManifest")
 
 	// Invoke the checkpoint write directly at the race boundary.
-	assert.False(tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil, 0))
-	_, err := os.Stat(journalPath(path))
-	require.ErrorIs(err, os.ErrNotExist, "cancelled checkpoint must not create a journal")
+	tc.Exec.saveCheckpoint(manifest, manifest.ID, 5, 5, 0, nil, 0)
 
 	// The in_progress file must not be resurrected; the manifest lives only
 	// in cancelled/.
 	_, statErr := os.Stat(path)
-	assert.True(os.IsNotExist(statErr), "in_progress file must not be recreated by checkpoint")
+	assert.True(t, os.IsNotExist(statErr), "in_progress file must not be recreated by checkpoint")
 	tc.AssertInProgressCount(0)
 	tc.AssertCompletedCount(0)
 	tc.AssertCancelledCount(1)

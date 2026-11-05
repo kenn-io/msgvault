@@ -57,6 +57,10 @@ func appendCheckpoint(manifest *Manifest, path string, failedFrom int) error {
 }
 
 func applyJournal(m *Manifest, data []byte) {
+	// A terminal manifest was published with every journaled record folded in.
+	if m.Status == StatusCompleted || m.Status == StatusFailed || m.Status == StatusCancelled {
+		return
+	}
 	if m.Execution == nil {
 		return
 	}

@@ -388,9 +388,6 @@ func (e *Executor) persistTerminalManifest(manifestID string, manifest *Manifest
 		return ErrManifestCancelled
 	}
 	manifest.Status = status
-	if err := e.manager.WriteInProgressCheckpoint(manifest, manifestID, 0); err != nil {
-		e.logger.Error("failed to persist final checkpoint", "manifest", manifestID, "error", err)
-	}
 	if err := e.manager.WriteInProgressManifest(manifest, manifestID); err != nil {
 		if errors.Is(err, ErrManifestCancelled) {
 			e.logger.Info("manifest cancelled during finalize; not completing", "manifest", manifestID)
