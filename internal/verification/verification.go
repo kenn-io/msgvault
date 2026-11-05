@@ -235,8 +235,10 @@ func credentialLink(raw string, cue bool) bool {
 			for _, part := range strings.FieldsFunc(value, func(r rune) bool { return r == '&' || r == '=' }) {
 				if tokenValue(part) {
 					hasToken = true
-					switch strings.ToLower(key) {
-					case "token", "otp", "code", "oobcode", "magic", "reset", "verify":
+					key = strings.ToLower(key)
+					credentialKey = credentialKey || strings.Contains(key, "token")
+					switch key {
+					case "otp", "code", "oobcode", "magic", "reset", "verify":
 						credentialKey = true
 					}
 				}
