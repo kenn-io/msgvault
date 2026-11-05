@@ -1,10 +1,13 @@
 <script lang="ts">
-  import { Button } from '@kenn-io/kit-ui';
-  import { onDestroy, untrack } from 'svelte';
+  import { Button, Menu, MenuContent, MenuItem, MenuTrigger } from '@kenn-io/kit-ui';
+  import Ellipsis from '@lucide/svelte/icons/ellipsis';
+  import { getContext, onDestroy, tick, untrack } from 'svelte';
 
   import type { APIClient } from '../../api/client';
   import { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
   import FactLedger from '../directory/FactLedger.svelte';
+
+  import { personDirectoryContext, type PersonDirectoryGetter } from '../../directory/person-directory-context';
 
   interface Props {
     client: APIClient;
@@ -16,13 +19,22 @@
 
   let { client, personID, refreshKey, onSetUp = undefined }: Props = $props();
 
+  const getDirectory = getContext<PersonDirectoryGetter | undefined>(personDirectoryContext);
+  const directory = $derived(getDirectory?.());
+  const profile = $derived(directory?.selectedPersonID === personID ? directory.profile : null);
+  const entity = $derived(directory?.selectedPersonID === personID ? directory.entity : null);
   const controller = new FactLedgerController(untrack(() => client));
   let open = $state(false);
 
   // Nothing loads until the section opens.
   $effect(() => {
     const id = personID, shown = open; refreshKey;
-    untrack(() => { if (shown && controller.active && controller.personID === id) void controller.retrySection(controller.selectedSection); else controller.applyContext(shown, id); });
+    untrack(() => {
+      if (shown && controller.active && controller.personID === id) {
+        void controller.retrySection('pins');
+        if (controller.selectedSection !== 'pins') void controller.retrySection(controller.selectedSection);
+      } else controller.applyContext(shown, id);
+    });
   });
 
   onDestroy(() => controller.destroy());
@@ -32,10 +44,10 @@
   <header>
     <h3 id={`facts-${personID}`}>Facts</h3>
     <span class="spacer"></span>
-    {#if onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Facts" onclick={onSetUp} />{/if}
+    {#if onSetUp}<Menu align="end"><MenuTrigger ariaLabel="Facts actions"><Ellipsis size={16} aria-hidden="true" /></MenuTrigger><MenuContent ariaLabel="Facts actions"><MenuItem textValue="Set up" onselect={async () => { await tick(); onSetUp?.(); }}>Set up</MenuItem></MenuContent></Menu>{/if}
     <Button size="sm" label={open ? 'Hide' : 'Show'} ariaExpanded={open} onclick={() => (open = !open)} />
   </header>
-  {#if open}<FactLedger {controller} />{/if}
+  {#if open}<FactLedger {controller} {profile} {entity} />{/if}
 </section>
 
 <style>

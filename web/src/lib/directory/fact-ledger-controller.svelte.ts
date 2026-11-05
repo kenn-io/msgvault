@@ -9,10 +9,12 @@ import {
 import { SvelteSet } from 'svelte/reactivity';
 import type { APIClient } from '../api/client';
 import type {
+  AttributeDefinition,
   PersonFactClaim as GeneratedPersonFactClaim,
   PersonFactDecision as GeneratedPersonFactDecision,
   PersonFactEvidence as GeneratedPersonFactEvidence,
 } from '../api/generated/models';
+import { sentenceCase } from '../explore/labels';
 import { encodeFactTargetRef } from './fact-target-ref';
 export const FACT_LEDGER_PAGE_LIMIT = 50;
 export type FactLedgerSection = 'evidence' | 'claims' | 'decisions' | 'pins';
@@ -28,6 +30,8 @@ type RawClaim = GeneratedPersonFactClaim;
 type RawDecision = GeneratedPersonFactDecision;
 export interface FactTargetOption {
   optionID: string;
+  name: string;
+  targetKey?: string;
   description: string;
   kind: string;
   valueType: string;
@@ -37,6 +41,7 @@ export interface FactTargetOption {
 }
 export interface FactEvidenceRow {
   rowToken: string;
+  sourceURL: string | null;
   sourceClass: string;
   directness: string;
   authority: string;
@@ -52,7 +57,10 @@ export interface FactEvidenceRow {
 export interface FactClaimRow {
   rowToken: string;
   submittedValue: string;
+  displayValue: string;
+  targetKey?: string;
   normalizedValue: string | null;
+  normalizedDisplayValue: string | null;
   relation: string;
   origin: string;
   validFrom: string | null;
@@ -82,6 +90,7 @@ export interface FactPinRow {
   pinned: boolean;
   kind: string;
   description: string;
+  targetKey?: string;
   readonly targetCanonical: string | undefined;
 }
 export interface FactEvidenceStatusRow {
@@ -124,7 +133,7 @@ export function evidenceStatusReasonLabel(reason: string): string {
 export class FactLedgerController {
   active = $state(false);
   personID = $state<number | null>(null);
-  selectedSection = $state<FactLedgerSection>('evidence');
+  selectedSection = $state<FactLedgerSection>('claims');
   selectedTargetOption = $state('all');
   targets = $state<FactTargetOption[]>([]);
   catalogLoading = $state(false);
@@ -247,6 +256,11 @@ export class FactLedgerController {
     if (!target) return 'unknown';
     return target.sensitive ? 'sensitive' : 'non_sensitive';
   }
+  fieldName(row: { targetKey?: string; targetCanonical: string | undefined }, definitions: Pick<AttributeDefinition, 'universal_id' | 'label'>[] = []): string {
+    return definitions.find(definition => definition.universal_id === row.targetKey)?.label
+      ?? this.targets.find(target => target.canonical === row.targetCanonical)?.name
+      ?? sentenceCase(row.targetKey ?? 'Unknown field');
+  }
   async openEvidenceHistory(rowToken: string): Promise<void> {
     const row = this.evidence.rows.find((candidate) => candidate.rowToken === rowToken);
     if (!row || !this.active || this.personID === null) return;
@@ -300,7 +314,7 @@ export class FactLedgerController {
   private resetContext(): void {
     ++this.contextGeneration;
     for (const name of Object.keys(this.lanes) as Array<keyof typeof this.lanes>) this.abortLane(name);
-    this.selectedSection = 'evidence';
+    this.selectedSection = 'claims';
     this.selectedTargetOption = 'all';
     this.targets = [];
     this.targetByOption.clear();
@@ -391,6 +405,8 @@ export class FactLedgerController {
           continue;
         targets.push({
           optionID: `target-${targets.length}`,
+          name: sentenceCase(raw.slug),
+          targetKey: raw.key,
           description: raw.description,
           kind: raw.kind,
           valueType: raw.value_type,
@@ -403,7 +419,7 @@ export class FactLedgerController {
       this.targetByOption = new Map(targets.map((target) => [target.optionID, target]));
       this.pins.rows = this.pins.rows.map((pin) => ({
         ...pin,
-        description: targets.find((target) => target.canonical === pin.targetCanonical)?.description ?? pin.description,
+        description: targets.find((target) => target.canonical === pin.targetCanonical)?.name ?? pin.description,
       }));
     } catch {
       if (this.owns('catalog', abort, generation, context)) this.catalogError = 'Unable to load fact targets.';
@@ -438,7 +454,8 @@ export class FactLedgerController {
           rowToken: `pin-${index}`,
           pinned: pin.pinned,
           kind: pin.target.kind,
-          description: descriptor?.description ?? 'Eligible fact target',
+          description: descriptor?.name ?? sentenceCase(pin.target.key),
+          targetKey: pin.target.key,
           targetCanonical: canonical,
         };
       });
@@ -459,7 +476,7 @@ export class FactLedgerController {
     page.retryOffset = undefined;
     const query = {
       ...(this.selectedTarget ? { target: this.selectedTarget } : {}),
-      limit: FACT_LEDGER_PAGE_LIMIT,
+      limit: FACT_LEDGER_PAGE_LIMIT + 1,
       offset: targetOffset,
     };
     try {
@@ -501,9 +518,9 @@ export class FactLedgerController {
         this.requestFocus(`${section}-next`);
         return;
       }
-      page.rows = projected as never[];
+      page.rows = projected.slice(0, FACT_LEDGER_PAGE_LIMIT) as never[];
       page.offset = targetOffset;
-      page.endReached = projected.length < FACT_LEDGER_PAGE_LIMIT;
+      page.endReached = projected.length <= FACT_LEDGER_PAGE_LIMIT;
       this.revealedEvidence.clear();
       this.revealedClaims.clear();
     } catch {
@@ -583,6 +600,7 @@ export class FactLedgerController {
 function projectEvidence(row: RawEvidence, index: number): FactEvidenceRow {
   return {
     rowToken: `evidence-${index}`,
+    sourceURL: row.source_url,
     sourceClass: row.source_class,
     directness: row.directness,
     authority: row.authority,
@@ -602,7 +620,10 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
   return {
     rowToken: `claim-${index}`,
     submittedValue: row.submitted_value,
+    displayValue: readableValue(row.submitted_value),
+    targetKey: row.target.key,
     normalizedValue: row.normalized_value ?? null,
+    normalizedDisplayValue: row.normalized_value == null ? null : readableValue(row.normalized_value),
     relation: row.relation,
     origin: row.origin,
     validFrom: row.valid_from ?? null,
@@ -629,4 +650,11 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
     projectionKind: row.projection?.kind ?? null,
     createdAt: row.created_at,
   };
+}
+
+function readableValue(value: string): string {
+  try {
+    const decoded: unknown = JSON.parse(value);
+    return typeof decoded === 'string' && decoded.trim() ? decoded : value;
+  } catch { return value; }
 }

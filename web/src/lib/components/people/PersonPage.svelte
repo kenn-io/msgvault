@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { setContext, untrack } from 'svelte';
+  import { personDirectoryContext, type PersonDirectoryGetter } from '../../directory/person-directory-context';
   import { Button, EmptyState, SegmentedControl } from '@kenn-io/kit-ui';
   import type { APIClient } from '../../api/client';
   import type { DirectoryController } from '../../directory/controller.svelte';
@@ -38,6 +39,7 @@
       onFiltersChange: (filters: ExploreFilter[]) => void;
       onMessagesTableChange?: (table: MessagesTable | undefined) => void;
       onPersonFilePresentationChange?: (value: 'media' | 'files') => void; onPersonFileDirectionsChange?: (value: PersonFileDirection[]) => void } = $props();
+  setContext<PersonDirectoryGetter>(personDirectoryContext, () => directory);
   const context = $derived(contextPredicate(predicate));
   const domain = $derived(target?.startsWith('domain:') ? target.slice(7) : undefined);
   const detail = $derived(controller.target === target ? controller.detail : null);

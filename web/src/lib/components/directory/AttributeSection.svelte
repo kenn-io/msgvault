@@ -6,7 +6,8 @@
   import type { DirectoryProfileController } from '../../directory/profile-controller.svelte';
   import { displayAttributeValue, joinDefinitions, isAttributeRevealed } from './attribute-value';
 
-  let { controller }: { controller: DirectoryProfileController } = $props();
+  let { controller, universalIDs }: { controller: DirectoryProfileController; universalIDs?: string[] } = $props();
+  const headingID = $props.id();
   let revealed = $state<Record<string, boolean>>({});
   let owner = untrack(() => controller);
   $effect(() => {
@@ -14,7 +15,7 @@
     owner = controller;
     revealed = {};
   });
-  const visibleFields = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).filter(field => field.current.length > 0 || field.history.length > 0));
+  const visibleFields = $derived(joinDefinitions(controller.definitions, controller.attributes?.attributes ?? []).filter(field => (!universalIDs || universalIDs.includes(field.definition.universal_id)) && (field.current.length > 0 || field.history.length > 0)));
   function isRevealed(definition: AttributeDefinition): boolean { return isAttributeRevealed(definition, revealed); }
   function toggleReveal(definition: AttributeDefinition): void {
     revealed = { ...revealed, [definition.universal_id]: !revealed[definition.universal_id] };
@@ -23,9 +24,9 @@
 
   {#each visibleFields as field (field.definition.universal_id)}
     {@const shown = isRevealed(field.definition)}
-    <section class="history-field" aria-labelledby={`attribute-title-${field.definition.id}`}>
+    <section class="history-field" aria-labelledby={`${headingID}-attribute-title-${field.definition.id}`}>
       <header class="section-header">
-        <h3 id={`attribute-title-${field.definition.id}`}>{field.definition.label}</h3>
+        <h3 id={`${headingID}-attribute-title-${field.definition.id}`}>{field.definition.label}</h3>
         {#if field.definition.is_sensitive}
           <Button size="sm" label={shown ? 'Hide' : 'Show'} ariaLabel={`${shown ? 'Hide' : 'Reveal'} ${field.definition.label} values`} onclick={() => toggleReveal(field.definition)} />
         {/if}
