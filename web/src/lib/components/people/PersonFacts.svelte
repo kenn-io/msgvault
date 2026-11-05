@@ -44,7 +44,7 @@
   <header>
     <h3 id={`facts-${personID}`}>Facts</h3>
     <span class="spacer"></span>
-    {#if onSetUp}<Menu align="end"><MenuTrigger ariaLabel="Facts actions"><Ellipsis size={16} aria-hidden="true" /></MenuTrigger><MenuContent ariaLabel="Facts actions"><MenuItem textValue="Set up" onselect={async () => { await tick(); onSetUp?.(); }}>Set up</MenuItem></MenuContent></Menu>{/if}
+    {#if onSetUp}<Menu align="end"><MenuTrigger ariaLabel="Facts actions"><Ellipsis size={16} aria-hidden="true" /></MenuTrigger><MenuContent ariaLabel="Facts actions"><MenuItem textValue="Set up Facts…" onselect={async () => { await tick(); onSetUp?.(); }}>Set up Facts…</MenuItem></MenuContent></Menu>{/if}
     <Button size="sm" label={open ? 'Hide' : 'Show'} ariaExpanded={open} onclick={() => (open = !open)} />
   </header>
   {#if open}<FactLedger {controller} {profile} {entity} />{/if}

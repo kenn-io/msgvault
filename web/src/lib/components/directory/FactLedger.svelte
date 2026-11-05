@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Button, EmptyState, SegmentedControl, Typeahead, Spinner } from '@kenn-io/kit-ui';
   import Lock from '@lucide/svelte/icons/lock';
-  import { formatShortDate } from '../../util/format';
+  import { formatDateTime, formatShortDate } from '../../util/format';
   import { onDestroy, tick } from 'svelte';
 
   import type { FactLedgerController, FactLedgerSection } from '../../directory/fact-ledger-controller.svelte';
@@ -9,7 +9,7 @@
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import AttributeSection from './AttributeSection.svelte';
   import { displayAttributeValue, joinDefinitions } from './attribute-value';
-  import { historyProvenance } from './history-format';
+  import { historyProvenance, historySource } from './history-format';
   import { employmentText, organizationName } from './organization-name';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
 
@@ -25,7 +25,7 @@
   const pins = $derived(controller.pins.rows.filter(pin => pin.pinned && (controller.selectedSection === 'pins' || !selectedTarget || pin.targetCanonical === selectedTarget.canonical)));
   const unpins = $derived(controller.pins.rows.filter(pin => !pin.pinned && (controller.selectedSection === 'pins' || !selectedTarget || pin.targetCanonical === selectedTarget.canonical)));
   const attributeIDs = $derived(pins.filter(pin => pin.kind === 'attribute').flatMap(pin => pin.targetKey ? [pin.targetKey] : []));
-  function emptyTitle(section: string): string { return selectedField ? `No ${section} for ${selectedField} yet.` : `No ${section} yet`; }
+  function emptyTitle(section: string): string { return selectedField ? `No ${section} for ${selectedField} yet` : `No ${section} yet`; }
   const originLabels: Record<string, string> = {
     extraction: 'From a message', enrichment: 'From enrichment', brief: 'From a brief',
     system: 'Added by msgvault', invalid: 'Invalid submission',
@@ -81,12 +81,10 @@
 
   {#if controller.selectedSection === 'evidence'}
     <section id="fact-evidence-section" aria-label="Evidence" tabindex="-1">
-      <h3>Evidence</h3>
       {#if controller.evidence.loading && controller.evidence.rows.length === 0}<p class="loading" role="status"><Spinner size={12} label="Loading fact evidence" /> Loading evidence…</p>
       {:else if controller.evidence.error}<div class="message" role="alert"><p>{controller.evidence.error}</p><Button label="Retry evidence" size="sm" onclick={() => void controller.retrySection('evidence')} /></div>
       {:else}
         {#if controller.evidence.loading}<p class="loading" role="status"><Spinner size={12} label="Loading requested evidence page" /> Loading evidence page…</p>{/if}
-        {#if controller.evidence.pageError}<div class="message" role="alert"><p>{controller.evidence.pageError}</p><Button label="Retry evidence" size="sm" onclick={() => void controller.retrySection('evidence')} /></div>{/if}
         <div class="rows" aria-busy={controller.evidence.loading}>
           {#each controller.evidence.rows as row (row.rowToken)}
             <div class="row" aria-label="Fact evidence">
@@ -95,12 +93,13 @@
                 {#if controller.revealedEvidence.has(row.rowToken)}<p class="revealed"><strong>Evidence excerpt</strong><span>{row.excerpt}</span></p>
                 {:else}<Button label="Reveal evidence excerpt" size="sm" onclick={() => controller.revealEvidence(row.rowToken)} />{/if}
               {/if}
-              <details><summary>Details</summary><dl><div><dt>Authority</dt><dd>{row.authority}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{formatShortDate(row.eventTime)}</dd></div><div><dt>Recorded time</dt><dd>{formatShortDate(row.recordedTime)}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div></dl>
+              <details><summary>Details</summary><dl><div><dt>Authority</dt><dd>{row.authority}</dd></div><div><dt>Identity score</dt><dd>{row.identityScore}</dd></div><div><dt>Event time</dt><dd>{formatDateTime(row.eventTime)}</dd></div><div><dt>Recorded time</dt><dd>{formatDateTime(row.recordedTime)}</dd></div><div><dt>Current support status</dt><dd>{row.currentSupportLabel}</dd></div></dl>
               <span data-fact-focus={`history-trigger:${row.rowToken}`}><Button label="View support history" size="sm" onclick={() => void controller.openEvidenceHistory(row.rowToken)} /></span></details></div>
-              <span class="meta">{row.supported ? 'Supported' : 'Unsupported'} · {formatShortDate(row.createdAt)}{#if row.sourceURL} · <a href={row.sourceURL} target="_blank" rel="noreferrer">Source</a>{/if}</span>
+              <span class="meta">{row.supported ? 'Supported' : 'Unsupported'} · <time datetime={row.createdAt}>{formatShortDate(row.createdAt)}</time>{#if row.sourceURL}{' · '}<a href={row.sourceURL} target="_blank" rel="noreferrer">Source</a>{/if}</span>
             </div>
           {:else}<EmptyState title={emptyTitle('evidence')} />{/each}
         </div>
+        {#if controller.evidence.pageError}<div class="message" role="alert"><p>{controller.evidence.pageError}</p><Button label="Retry evidence" size="sm" onclick={() => void controller.retrySection('evidence')} /></div>{/if}
         {@render Pagination(controller, 'evidence')}
       {/if}
     </section>
@@ -110,7 +109,6 @@
       {:else if controller.claims.error}<div class="message" role="alert"><p>{controller.claims.error}</p><Button label="Retry claims" size="sm" onclick={() => void controller.retrySection('claims')} /></div>
       {:else}
         {#if controller.claims.loading}<p class="loading" role="status"><Spinner size={12} label="Loading requested claims page" /> Loading claims page…</p>{/if}
-        {#if controller.claims.pageError}<div class="message" role="alert"><p>{controller.claims.pageError}</p><Button label="Retry claims" size="sm" onclick={() => void controller.retrySection('claims')} /></div>{/if}
         <div class="rows" aria-busy={controller.claims.loading}>
           {#each controller.claims.rows as row (row.rowToken)}
             {@const definition = definitions.find(field => field.universal_id === row.targetKey)}
@@ -120,40 +118,42 @@
             <div class="row" aria-label="Fact claim">
               <div class="value">
                 <strong>{controller.fieldName(row, definitions)}</strong>
+                <div class="claim-content">
                 {#if sensitivity === 'unknown'}
                   <p role="status" aria-label="Fact value hidden until target sensitivity is verified.">Fact value hidden until target sensitivity is verified.</p>
                 {:else if !shown}
                   <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
                 {:else}<span>{definition ? displayAttributeValue(definition, { type: 'text', text: row.displayValue }) : row.displayValue}</span>{/if}
+                </div>
                 <details><summary>Details</summary>
                   <dl><div><dt>Relation</dt><dd>{row.relation}</dd></div><div><dt>Origin</dt><dd>{row.origin}</dd></div><div><dt>Reported confidence</dt><dd>{row.reportedScore}</dd></div></dl>
-                  {#if row.validFrom || row.validUntil}<p>{row.validFrom ? formatShortDate(row.validFrom) : 'No start'} – {row.validUntil ? formatShortDate(row.validUntil) : 'No end'}</p>{/if}
+                  <dl><div><dt>Created</dt><dd>{formatDateTime(row.createdAt)}</dd></div></dl>{#if row.validFrom || row.validUntil}<p>{row.validFrom ? formatDateTime(row.validFrom) : 'No start'} – {row.validUntil ? formatDateTime(row.validUntil) : 'No end'}</p>{/if}
                   {#if shown}<dl><div><dt>Submitted JSON</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized JSON</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}</dl>{/if}
                 </details>
               </div>
-              <span class="meta">{relation}{originLabels[row.origin] ?? 'Unknown source'} · {formatShortDate(row.createdAt)}</span>
+              <span class="meta">{relation}{originLabels[row.origin] ?? 'Unknown source'} · <time datetime={row.createdAt}>{formatShortDate(row.createdAt)}</time></span>
             </div>
-          {:else}<EmptyState title={emptyTitle('claims')} description={selectedField ? undefined : "Facts appear as msgvault reads this person's messages."} />{/each}
+          {:else}<EmptyState title={emptyTitle('claims')} description="Facts appear as msgvault reads this person's messages." />{/each}
         </div>
+        {#if controller.claims.pageError}<div class="message" role="alert"><p>{controller.claims.pageError}</p><Button label="Retry claims" size="sm" onclick={() => void controller.retrySection('claims')} /></div>{/if}
         {@render Pagination(controller, 'claims')}
       {/if}
     </section>
   {:else if controller.selectedSection === 'decisions'}
     <section id="fact-decisions-section" aria-label="Decisions" tabindex="-1">
-      <h3>Decisions</h3>
       {#if controller.decisions.loading && controller.decisions.rows.length === 0}<p class="loading" role="status"><Spinner size={12} label="Loading fact decisions" /> Loading decisions…</p>
       {:else if controller.decisions.error}<div class="message" role="alert"><p>{controller.decisions.error}</p><Button label="Retry decisions" size="sm" onclick={() => void controller.retrySection('decisions')} /></div>
       {:else}
         {#if controller.decisions.loading}<p class="loading" role="status"><Spinner size={12} label="Loading requested decisions page" /> Loading decisions page…</p>{/if}
-        {#if controller.decisions.pageError}<div class="message" role="alert"><p>{controller.decisions.pageError}</p><Button label="Retry decisions" size="sm" onclick={() => void controller.retrySection('decisions')} /></div>{/if}
         <div class="rows" aria-busy={controller.decisions.loading}>
           {#each controller.decisions.rows as row (row.rowToken)}
             <div class="row" aria-label="Historical fact decision">
               <div class="value"><strong>{row.action}</strong><small>{row.reason}</small>{#if row.projectionKind}<small>Projection {row.projectionKind}</small>{/if}
-              <details><summary>Score details</summary><dl><div><dt>Authority</dt><dd>{row.score.authority}</dd></div><div><dt>Confidence</dt><dd>{row.score.confidence}</dd></div><div><dt>Corroboration</dt><dd>{row.score.corroboration}</dd></div><div><dt>Directness</dt><dd>{row.score.directness}</dd></div><div><dt>Freshness</dt><dd>{row.score.freshness}</dd></div><div><dt>Source class</dt><dd>{row.score.sourceClass}</dd></div></dl></details></div><span class="meta">Total {row.score.total} · {formatShortDate(row.createdAt)}</span>
+              <details><summary>Score details</summary><dl><div><dt>Authority</dt><dd>{row.score.authority}</dd></div><div><dt>Confidence</dt><dd>{row.score.confidence}</dd></div><div><dt>Corroboration</dt><dd>{row.score.corroboration}</dd></div><div><dt>Directness</dt><dd>{row.score.directness}</dd></div><div><dt>Freshness</dt><dd>{row.score.freshness}</dd></div><div><dt>Source class</dt><dd>{row.score.sourceClass}</dd></div></dl></details></div><span class="meta">Total {row.score.total} · <time datetime={row.createdAt}>{formatShortDate(row.createdAt)}</time></span>
             </div>
           {:else}<EmptyState title={emptyTitle('decisions')} />{/each}
         </div>
+        {#if controller.decisions.pageError}<div class="message" role="alert"><p>{controller.decisions.pageError}</p><Button label="Retry decisions" size="sm" onclick={() => void controller.retrySection('decisions')} /></div>{/if}
         {@render Pagination(controller, 'decisions')}
       {/if}
     </section>
@@ -180,12 +180,12 @@
     {#if pins.length}
       <h3>Saved pinned values</h3>
       {#if attributeIDs.length}
-        {#if profile?.reloadPending}<p role="status">Loading saved values…</p>{/if}
-        {#if !profile || profile.attributesError || !profile.attributes}
+        {#if profile?.reloadPending}<p role="status">Loading saved values…</p>
+        {:else if !profile || profile.attributesError || !profile.attributes}
           <div class="message" role="alert"><p>Saved values unavailable.</p>{#if profile}<Button label="Retry saved values" size="sm" onclick={() => void profile?.reload()} />{/if}</div>
         {/if}
         {#if profile?.attributes}
-          <AttributeSection controller={profile} universalIDs={attributeIDs} />
+          <AttributeSection controller={profile} universalIDs={attributeIDs} compact />
           {#each pins.filter(pin => pin.kind === 'attribute') as pin (pin.targetKey)}
             {@const field = fields.find(field => field.definition.universal_id === pin.targetKey)}
             {#if !field || (!field.current.length && !field.history.length && !profile.attributesError && !profile.reloadPending)}
@@ -196,13 +196,15 @@
       {/if}
       {#each pins.filter(pin => pin.kind === 'employment') as pin (pin.targetKey)}
         <section aria-label="Saved employment">
-          <h3>{controller.fieldName(pin, definitions)}</h3>
+          {#if entity && !entity.employments.length && !entity.errors.employments && !entity.employmentsLoading}
+            <div class="row"><h3>{controller.fieldName(pin, definitions)}</h3><span class="meta">No saved value</span></div>
+          {:else}<h3>{controller.fieldName(pin, definitions)}</h3>{/if}
           {#if entity?.employmentsLoading}<p role="status">Loading employment…</p>{/if}
           {#if !entity || entity.errors.employments}<div class="message" role="alert"><p>Saved employment unavailable.</p>{#if entity}<Button label="Retry employment" size="sm" onclick={() => void entity?.refreshEmployments()} />{/if}</div>{/if}
           {#if entity}
             {#each entity.employments.filter(value => value.is_current) as value (value.id)}
               {@render EmploymentRow(value)}
-            {:else}{#if !entity.employments.length && !entity.errors.employments && !entity.employmentsLoading}<div class="row"><span>No saved value</span></div>{/if}{/each}
+            {/each}
             {@const history = entity.employments.filter(value => !value.is_current)}
             {#if history.length}
               <details><summary>{history.length} earlier {history.length === 1 ? 'value' : 'values'}</summary>
@@ -212,7 +214,7 @@
           {/if}
         </section>
       {/each}
-    {:else if controller.selectedSection === 'pins' && !controller.pins.loading && !controller.pins.error}<EmptyState title="No pinned fields yet" />{/if}
+    {:else if controller.selectedSection === 'pins' && !controller.pins.loading && !controller.pins.error}<EmptyState title="No pinned fields yet" description="Facts appear as msgvault reads this person's messages." />{/if}
     {#if unpins.length}
       <details><summary>{unpins.length} unpinned {unpins.length === 1 ? 'field' : 'fields'}</summary>
         {#each unpins as pin (pin.targetCanonical)}<div class="row"><strong>{controller.fieldName(pin, definitions)}</strong><span class="meta">Unpinned</span></div>{/each}
@@ -223,7 +225,7 @@
 {/snippet}
 
 {#snippet EmploymentRow(value: import('../../directory/models').Employment)}
-  <div class="row"><span>{employmentText(value, organizationName(entity, value.organization_id))}</span><span class="meta">{historyProvenance(value)}</span></div>
+  <div class="row saved-value"><span>{employmentText(value, organizationName(entity, value.organization_id))}</span><span class="meta">{historySource(value.source)} · <time datetime={value.updated_at ?? value.created_at}>{formatShortDate(value.updated_at ?? value.created_at)}</time></span><details><summary>Details</summary><p>{historyProvenance(value)}</p></details></div>
 {/snippet}
 
 {#if controller.historyOpen}<FactEvidenceHistoryDialog {controller} onClose={() => controller.closeEvidenceHistory()} />{/if}
@@ -231,10 +233,14 @@
 {#snippet Pagination(controller: FactLedgerController, section: 'evidence' | 'claims' | 'decisions')}
   {#if controller.hasNext(section) || controller.hasPrevious(section)}
   <nav class="pagination" aria-label={`${section} pages`}>
-    <Button label={`First ${section} page`} size="sm" disabled={page(section).loading || !controller.hasPrevious(section)} onclick={() => void controller.firstPage(section)} />
-    <Button label={`Previous ${section} page`} size="sm" disabled={page(section).loading || !controller.hasPrevious(section)} onclick={() => void controller.previousPage(section)} />
     <span>{page(section).offset + 1}–{page(section).offset + page(section).rows.length}</span>
-    <span data-fact-focus={`${section}-next`}><Button label={`Next ${section} page`} size="sm" disabled={page(section).loading || !controller.hasNext(section)} onclick={() => void controller.nextPage(section)} /></span>
+    <div class="page-actions">
+      {#if controller.hasPrevious(section)}
+        <Button label={`First ${section} page`} size="sm" disabled={page(section).loading} onclick={() => void controller.firstPage(section)} />
+        <Button label={`Previous ${section} page`} size="sm" disabled={page(section).loading} onclick={() => void controller.previousPage(section)} />
+      {/if}
+      <span data-fact-focus={`${section}-next`}><Button label={`Next ${section} page`} size="sm" disabled={page(section).loading || !controller.hasNext(section)} onclick={() => void controller.nextPage(section)} /></span>
+    </div>
   </nav>
   {/if}
 {/snippet}
@@ -242,17 +248,31 @@
 <style>
   .ledger, section, .message { display: grid; gap: var(--space-3); min-width: 0; }
   .toolbar, .pagination { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
-  .field { margin-left: auto; display: grid; gap: var(--label-gap); min-width: 0; font-size: var(--font-size-sm); color: var(--text-secondary); --typeahead-min-width: 180px; }
+  .field { --typeahead-max-width: none; margin-left: auto; display: grid; gap: var(--label-gap); min-width: 0; font-size: var(--font-size-sm); color: var(--text-secondary); --typeahead-min-width: 180px; }
   /* kit-ui-check-ignore: Typeahead owns this span, so its accessible metadata needs the local equivalent of kit-sr-only. */
   .field :global(.kit-typeahead__option-meta) { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .field :global(.kit-typeahead__icon:not(:has(svg))) { display: none; }
+  .page-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+  .row:has(> .value), .saved-value { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--field-gap); row-gap: var(--space-1); }
+  .row > .value { display: contents; }
+  .value > strong, .value > details, .saved-value > details { grid-column: 1 / -1; }
+  .row:has(> .value) > .meta { grid-column: 2; grid-row: 2; }
+  .row:has(> .value) > .meta, .saved-value > .meta { max-width: none; }
+  .saved-value > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+  .claim-content { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
+  .claim-content :global(button) { justify-self: start; }
+  time { white-space: nowrap; }
   .row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); min-width: 0; }
   .value { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
   .meta { text-align: right; max-width: 55%; }
-  .meta, small, dt, summary, .pagination { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+  .meta, small, dt, summary, .pagination { color: var(--text-muted); font-size: var(--font-size-sm); }
   h3, p, dl, dd, ul { margin: 0; }
   h3 { font-size: var(--font-size-sm); color: var(--text-secondary); }
   .schema { padding: 0; list-style: none; }
-  dl { display: grid; gap: var(--space-2); padding: var(--space-2) 0; }
+  dl { padding: var(--space-2) 0; }
+  dl > div { display: grid; grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr); gap: var(--space-2); padding: var(--space-1) 0; border-bottom: 1px solid var(--border-muted); }
+  dd, details p { overflow-wrap: anywhere; }
+  .ledger > .message { margin-bottom: var(--space-2); }
   summary { cursor: pointer; }
   .about { padding: var(--space-2) 0; }
   .about > summary { width: fit-content; text-decoration: underline; }
@@ -266,6 +286,9 @@
   @media (max-width: 760px) { .toolbar { flex-direction: column; align-items: stretch; } .field { margin-left: 0; } .pagination { flex-wrap: wrap; } }
   @media (max-width: 640px) {
     .ledger :global(.history-rows li) { flex-direction: column; align-items: stretch; gap: var(--space-1); overflow-wrap: anywhere; }
+    .row:has(> .value), .saved-value { grid-template-columns: minmax(0, 1fr); }
+    .row:has(> .value) > .meta { grid-column: 1; grid-row: 3; }
+    .value > details { grid-row: 4; }
     .row { flex-direction: column; gap: var(--space-1); }
     .meta { text-align: left; max-width: 100%; }
   }

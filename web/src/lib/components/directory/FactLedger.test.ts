@@ -220,7 +220,7 @@ it.each(['claims', 'evidence', 'decisions'] as const)('names the field in empty 
   value.selectedTargetOption = 'target-0';
   value[section].rows = [];
   render(FactLedger, { controller: value });
-  expect(screen.getByText(`No ${section} for Private note yet.`)).toBeDefined();
+  expect(screen.getByText(`No ${section} for Private note yet`)).toBeDefined();
 });
 
 it.each([
@@ -249,7 +249,7 @@ it.each([
     expect(disclosure.closest('details')?.open).toBe(true);
   }
   expect(screen.getByText('Engineer · Synthetic Org')).toBeDefined();
-  expect(screen.getByText(/You · Updated:/)).toBeDefined();
+  expect(screen.getByText(/You ·/, { selector: '.meta' })).toBeDefined();
   entity.destroy();
 });
 
@@ -289,7 +289,8 @@ it('distinguishes unavailable employment from an empty successful read and retri
   expect(screen.queryByText('No saved value')).toBeNull();
   failed = false;
   await fireEvent.click(screen.getByRole('button', { name: 'Retry employment' }));
-  await screen.findByText('No saved value');
+  const empty = await screen.findByText('No saved value');
+  expect(empty.parentElement?.textContent).toContain('Employment');
   entity.destroy();
 });
 
@@ -421,4 +422,49 @@ it('retains saved attributes and employment alongside loading and independent er
   expect(screen.getByText('Engineer · Synthetic Org')).toBeDefined();
   expect(screen.queryByText('No saved value')).toBeNull();
   profile.destroy(); entity.destroy();
+});
+
+it('places a retained-page failure next to its pager and hides backward actions on page one', async () => {
+  const value = controller();
+  value.claims.rows = Array.from({ length: 50 }, (_, index) => ({ ...value.claims.rows[0]!, rowToken: `claim-${index}` }));
+  value.claims.pageError = 'Unable to load the requested claims page.';
+  const view = render(FactLedger, { controller: value });
+  const pager = screen.getByRole('navigation', { name: 'claims pages' });
+  expect(pager.previousElementSibling?.textContent).toContain('Retry claims');
+  expect(view.container.querySelectorAll('[aria-label="Fact claim"]')).toHaveLength(50);
+  expect(screen.queryByRole('button', { name: 'First claims page' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Previous claims page' })).toBeNull();
+  value.claims.offset = 50;
+  await tick();
+  expect(screen.getByRole('button', { name: 'First claims page' })).toBeDefined();
+});
+
+it('replaces the saved-value error with loading during a retry', async () => {
+  const value = controller();
+  const profile = savedProfile();
+  profile.attributesError = 'Unavailable';
+  render(FactLedger, { controller: value, profile });
+  expect(screen.getByRole('button', { name: 'Retry saved values' })).toBeDefined();
+  profile.reloadPending = true;
+  await tick();
+  expect(screen.getByText('Loading saved values…')).toBeDefined();
+  expect(screen.queryByText('Saved values unavailable.')).toBeNull();
+  profile.destroy();
+});
+
+it('names saved employment when the catalog is unavailable', () => {
+  const value = controller();
+  value.targets = [];
+  value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'system:employment', targetCanonical: `employment:system:employment:${revision}` }];
+  render(FactLedger, { controller: value });
+  expect(screen.getByRole('heading', { name: 'Employment' })).toBeDefined();
+});
+
+it('separates the evidence date from its source link', async () => {
+  const value = controller();
+  value.selectedSection = 'evidence';
+  value.evidence.rows[0]!.sourceURL = 'https://example.org/messages/1';
+  value.evidence.rows[0]!.createdAt = '2026-08-03T12:00:00Z';
+  const view = render(FactLedger, { controller: value });
+  expect(view.container.querySelector('[aria-label="Fact evidence"] > .meta')?.textContent).toBe('Supported · Aug 3 · Source');
 });

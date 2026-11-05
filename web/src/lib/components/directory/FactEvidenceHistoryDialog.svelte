@@ -1,5 +1,6 @@
 <script lang="ts">
   import { appShortcuts, Button, Modal, Spinner } from '@kenn-io/kit-ui';
+  import { formatShortDate } from '../../util/format';
   import { onDestroy, onMount } from 'svelte';
 
   import type { FactLedgerController } from '../../directory/fact-ledger-controller.svelte';
@@ -42,17 +43,21 @@
             <li>
               <strong>{event.supported ? 'Supported' : 'Unsupported'}</strong>
               <span>{event.reasonLabel}</span>
-              <time datetime={event.createdAt}>{event.createdAt}</time>
+              <time datetime={event.createdAt}>{formatShortDate(event.createdAt)}</time>
             </li>
           {/each}
         </ul>
       {/if}
+      {#if controller.history.rows.length > 0}<p class="range">{controller.history.offset + 1}–{controller.history.offset + controller.history.rows.length}{!controller.hasHistoryNext ? ` of ${controller.history.offset + controller.history.rows.length}` : ''}</p>{/if}
+      {#if controller.hasHistoryNext || controller.history.offset > 0}
       <nav aria-label="Evidence support-history pages">
+        {#if controller.history.offset > 0}
         <Button label="First support-history page" size="sm" disabled={controller.history.loading || controller.history.offset === 0} onclick={() => void controller.firstHistoryPage()} />
         <Button label="Previous support-history page" size="sm" disabled={controller.history.loading || controller.history.offset === 0} onclick={() => void controller.previousHistoryPage()} />
-        <span>Offset {controller.history.offset}</span>
+        {/if}
         <Button label="Next support-history page" size="sm" disabled={controller.history.loading || !controller.hasHistoryNext} onclick={() => void controller.nextHistoryPage()} />
       </nav>
+      {/if}
     {/if}
   </div>
   {#snippet footer()}<Button label="Close" onclick={onClose} />{/snippet}
@@ -64,7 +69,7 @@
   ul, p { margin: 0; }
   ul { padding-left: var(--space-5); }
   li { gap: var(--space-1); overflow-wrap: anywhere; }
-  li span, li time, nav { color: var(--text-muted); font-size: var(--font-size-sm); }
+  .range, li span, li time, nav { color: var(--text-muted); font-size: var(--font-size-sm); }
   nav { display: flex; align-items: center; justify-content: center; gap: var(--space-3); flex-wrap: wrap; }
   .message { justify-items: start; }
 </style>

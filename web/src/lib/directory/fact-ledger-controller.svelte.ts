@@ -256,7 +256,7 @@ export class FactLedgerController {
   fieldName(row: { targetKey?: string; targetCanonical: string | undefined }, definitions: Pick<AttributeDefinition, 'universal_id' | 'label'>[] = []): string {
     return definitions.find(definition => definition.universal_id === row.targetKey)?.label
       ?? this.targets.find(target => target.canonical === row.targetCanonical)?.name
-      ?? sentenceCase(row.targetKey ?? 'Unknown field');
+      ?? sentenceCase(row.targetKey?.replace(/^system:/, '') ?? 'Unknown field');
   }
   async openEvidenceHistory(rowToken: string): Promise<void> {
     const row = this.evidence.rows.find((candidate) => candidate.rowToken === rowToken);

@@ -30,6 +30,22 @@ for (const width of [1440, 390]) {
     const savedBounds = await saved.boundingBox();
     const columnBounds = await facts.locator('.ledger').boundingBox();
     expect(savedBounds!.x + savedBounds!.width).toBeLessThanOrEqual(columnBounds!.x + columnBounds!.width);
+    const pickerGeometry = await facts.locator('.kit-typeahead__trigger').evaluate(trigger => {
+      const label = trigger.querySelector('.kit-typeahead__value-text')!;
+      return { left: trigger.getBoundingClientRect().left, labelLeft: label.getBoundingClientRect().left, width: trigger.getBoundingClientRect().width, parentWidth: trigger.parentElement!.parentElement!.getBoundingClientRect().width };
+    });
+    expect(pickerGeometry.labelLeft - pickerGeometry.left).toBeLessThan(20);
+    if (width === 390) expect(pickerGeometry.width).toBe(pickerGeometry.parentWidth);
+    const savedRow = saved.locator('..');
+    const provenance = await savedRow.locator('.meta').boundingBox();
+    const details = await savedRow.locator('summary').boundingBox();
+    expect(provenance!.y + provenance!.height).toBeLessThanOrEqual(details!.y);
+    if (width === 390) {
+      const claim = facts.locator('[aria-label="Fact claim"]').first();
+      const claimSource = await claim.locator('.meta').boundingBox();
+      const claimDetails = await claim.locator('summary').boundingBox();
+      expect(claimSource!.y + claimSource!.height).toBeLessThanOrEqual(claimDetails!.y);
+    }
     if (width === 1440) {
       const tabs = await facts.getByRole('radiogroup').boundingBox();
       const picker = await facts.getByRole('button', { name: 'Search fields: All fields' }).boundingBox();

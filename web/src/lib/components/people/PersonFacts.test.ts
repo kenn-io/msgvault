@@ -24,7 +24,7 @@ it('loads Claims only after Show and opens setup from its menu', async () => {
   render(PersonFacts, { props: { client, personID: 42, onSetUp }, context: new Map([[personDirectoryContext, () => directory]]) });
   expect(fetchFn).toHaveBeenCalledTimes(0);
   await fireEvent.click(screen.getByRole('button', { name: 'Facts actions' }));
-  await fireEvent.click(screen.getByRole('menuitem', { name: 'Set up' }));
+  await fireEvent.click(screen.getByRole('menuitem', { name: 'Set up Facts…' }));
   await vi.waitFor(() => expect(onSetUp).toHaveBeenCalledOnce());
   await fireEvent.click(screen.getByRole('button', { name: 'Show' }));
   await screen.findByText('No claims yet');
