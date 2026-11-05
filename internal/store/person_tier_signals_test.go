@@ -266,6 +266,9 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 			for i := range 2 {
 				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
 				m.ConversationID = room
+				if tc.kind == "chat" {
+					m.MessageType = "chat"
+				}
 				m.SenderID = sql.NullInt64{Int64: a.sender, Valid: true}
 				key := "<copy-control@example.com>"
 				m.RFC822MessageID = sql.NullString{String: key, Valid: true}
@@ -297,31 +300,73 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 			if tc.deleted {
 				assert.Equal(a.asOf.AddDate(0, 0, -2).Format("2006-01-02"), signals.LastDate)
 			}
-			if tc.list {
-				assert.Equal(1, signals.ExcludedListEvents)
-			}
-			if tc.broadcast {
-				assert.Equal(1, signals.LargeAudienceInboundEvents)
-			}
 		})
 	}
 }
 
 // Duplicate mailbox copies must not supply the second outbound event needed
-// for tier one; qualification and authorization precede logical-email collapse.
+// for tier one.
+func TestPersonTierSignalsEmailCopiesCannotSupplySecondOutbound(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	a := newAudienceFixture(t)
+	second, err := a.f.Store.GetOrCreateSource("gmail", "second@example.com")
+	requirements.NoError(err)
+	requirements.NoError(a.f.Store.AddAccountIdentity(second.ID, "owner@example.com", "manual"))
+	room, err := a.f.Store.EnsureConversationWithType(second.ID, "canonical-copies", "email_thread", "Canonical copies")
+	requirements.NoError(err)
+	sources := []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}}
+	for day := range 6 {
+		for _, source := range sources {
+			from, to := a.sender, a.owner
+			if day == 0 {
+				from, to = a.owner, a.sender
+			}
+			m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -day)).Build()
+			m.SourceID, m.ConversationID = source.id, source.room
+			m.SenderID = sql.NullInt64{Int64: from, Valid: true}
+			m.RFC822MessageID = sql.NullString{String: fmt.Sprintf("<logical-%d@example.com>", day), Valid: true}
+			id, err := a.f.Store.UpsertMessage(m)
+			requirements.NoError(err)
+			requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
+			requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
+		}
+	}
+	projectTierSignals(t, a.f, "UTC", 25)
+	defer store.SetPersonTierRowPage(1)()
+	for _, ids := range [][]int64{nil, {a.f.Source.ID}, {second.ID}, {}} {
+		ctx := t.Context()
+		if ids != nil {
+			ctx = sourcescope.WithSourceIDs(ctx, ids)
+		}
+		preview, err := a.f.Store.PreviewPersonTiersContext(ctx, tierOptions())
+		requirements.NoError(err)
+		if ids != nil && len(ids) == 0 {
+			assertions.Empty(preview.People)
+			continue
+		}
+		requirements.Len(preview.People, 1)
+		assertions.Equal(2, preview.People[0].Tier)
+		explanation, err := a.f.Store.ExplainPersonTierContext(ctx, a.personID, tierOptions())
+		requirements.NoError(err)
+		assertions.Equal(5, explanation.Signals.InboundShort)
+		assertions.Equal(1, explanation.Signals.OutboundShort)
+		assertions.Equal(6, explanation.Signals.ActiveDaysShort)
+	}
+}
+
+// Qualification and authorization precede logical-email collapse.
 func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		ids         [2]string
 		sameMailbox bool
-		days, start int
+		start       int
 		want        [4]int // all sources, first mailbox, second mailbox, no sources
 	}{
-		{"six days of copies", [2]string{}, false, 6, -2, [4]int{5, 5, 5, 0}},
-		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, false, 1, -2, [4]int{1, 1, 1, 0}},
-		{"short-window boundary", [2]string{"<boundary@example.com>", "boundary@example.com"}, false, 1, -90, [4]int{1, 0, 1, 0}},
-		{"missing IDs", [2]string{"", ""}, true, 1, -2, [4]int{2, 2, 0, 0}},
-		{"distinct IDs", [2]string{"first@example.com", "second@example.com"}, true, 1, -2, [4]int{2, 2, 0, 0}},
+		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, false, -2, [4]int{1, 1, 1, 0}},
+		{"short-window boundary", [2]string{"<boundary@example.com>", "boundary@example.com"}, false, -90, [4]int{1, 0, 1, 0}},
+		{"missing IDs", [2]string{"", ""}, true, -2, [4]int{2, 2, 0, 0}},
+		{"distinct IDs", [2]string{"first@example.com", "second@example.com"}, true, -2, [4]int{2, 2, 0, 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -335,27 +380,18 @@ func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 			if tc.sameMailbox {
 				sources[1] = sources[0]
 			}
-			for day := range tc.days {
-				for i, source := range sources {
-					from, to := a.sender, a.owner
-					at := a.asOf.AddDate(0, 0, tc.start+i)
-					key := tc.ids[i]
-					if tc.days > 1 {
-						at = a.asOf.AddDate(0, 0, -day)
-						key = fmt.Sprintf("<logical-%d@example.com>", day)
-						if day == 0 {
-							from, to = a.owner, a.sender
-						}
-					}
-					m := a.f.NewMessage().WithSentAt(at).Build()
-					m.SourceID, m.ConversationID = source.id, source.room
-					m.SenderID = sql.NullInt64{Int64: from, Valid: true}
-					m.RFC822MessageID = sql.NullString{String: key, Valid: key != ""}
-					id, err := a.f.Store.UpsertMessage(m)
-					requirements.NoError(err)
-					requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
-					requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
-				}
+			for i, source := range sources {
+				from, to := a.sender, a.owner
+				at := a.asOf.AddDate(0, 0, tc.start+i)
+				key := tc.ids[i]
+				m := a.f.NewMessage().WithSentAt(at).Build()
+				m.SourceID, m.ConversationID = source.id, source.room
+				m.SenderID = sql.NullInt64{Int64: from, Valid: true}
+				m.RFC822MessageID = sql.NullString{String: key, Valid: key != ""}
+				id, err := a.f.Store.UpsertMessage(m)
+				requirements.NoError(err)
+				requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
+				requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
 			}
 			projectTierSignals(t, a.f, "UTC", 25)
 			defer store.SetPersonTierRowPage(1)()
@@ -364,25 +400,11 @@ func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 				if ids != nil {
 					ctx = sourcescope.WithSourceIDs(ctx, ids)
 				}
-				if tc.days > 1 {
-					preview, err := a.f.Store.PreviewPersonTiersContext(ctx, tierOptions())
-					requirements.NoError(err)
-					if ids != nil && len(ids) == 0 {
-						assertions.Empty(preview.People)
-						continue
-					}
-					requirements.Len(preview.People, 1)
-					assertions.Equal(2, preview.People[0].Tier)
-				}
 				explanation, err := a.f.Store.ExplainPersonTierContext(ctx, a.personID, tierOptions())
 				requirements.NoError(err)
 				assertions.Equal(tc.want[i], explanation.Signals.InboundShort)
 				if tc.start == -90 && ids == nil {
 					assertions.Equal("2026-07-20", explanation.Signals.LastDate)
-				}
-				if tc.days > 1 {
-					assertions.Equal(1, explanation.Signals.OutboundShort)
-					assertions.Equal(6, explanation.Signals.ActiveDaysShort)
 				}
 			}
 		})

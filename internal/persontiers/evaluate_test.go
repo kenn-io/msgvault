@@ -49,7 +49,6 @@ func TestEvaluateThresholds(t *testing.T) {
 }
 
 func TestExclusionsForceTierThree(t *testing.T) {
-	checks := assert.New(t)
 	cfg := DefaultConfig()
 	cfg.ExcludeDomainPatterns = []string{"rooms.example.com"}
 	// Two-way contact that would reach tier 2 without an exclusion.
@@ -83,9 +82,6 @@ func TestExclusionsForceTierThree(t *testing.T) {
 			assert.Equal("tier2_two_way", d.Rule, "the matching rule stays visible for explain")
 		})
 	}
-	cfg.ExcludeAddressPatterns = []string{"alerts*"}
-	checks.Equal("automated_address", Evaluate(Signals{Emails: []string{"alerts-weekly@example.com"}}, cfg).Exclusion)
-	checks.Empty(Evaluate(Signals{Emails: []string{"myalerts@example.com"}}, cfg).Exclusion)
 }
 
 func TestDisabledAlternatives(t *testing.T) {

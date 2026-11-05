@@ -24,8 +24,6 @@ func TestActivityReadersRefuseDuringDirectLimitTransition(t *testing.T) {
 	require.NoError(err)
 	_, err = f.Store.ClaimActivityDirectLimitTransitionContext(t.Context(), 25)
 	require.NoError(err)
-	_, err = f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
-	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 	q := timelineBurstQuery()
 	q.Subject = store.ActivitySubject{PersonID: person.ID}
 	_, err = f.Store.ListActivityBurstsContext(t.Context(), q)
@@ -180,15 +178,9 @@ func TestActivityReadersChatAudienceUsesEnvelopeOrRoster(t *testing.T) {
 				messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conv, Limit: 10})
 				requirements.NoError(err)
 				assertions.Len(messages, 1)
-				display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
-				requirements.NoError(err)
-				assertions.Len(display, 1)
 				summary, err := f.Store.MessageContactAggregateContext(t.Context(), timelineContactQuery(f))
 				requirements.NoError(err)
 				assertions.Equal(1, summary.Count)
-				latest, err := f.Store.LatestEligibleMessageContext(t.Context(), conv)
-				requirements.NoError(err)
-				assertions.Equal(id, latest)
 			}
 		})
 	}

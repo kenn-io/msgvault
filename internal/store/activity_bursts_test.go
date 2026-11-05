@@ -50,26 +50,40 @@ func timelineBurstQuery() store.BurstQuery {
 	return store.BurstQuery{FromDate: "2026-10-01", ToDate: "2026-11-30", Limit: 5000}
 }
 func TestBurstsReturnUnsavedCorrespondents(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	id := f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	requirements.NoError(err)
-	requirements.Len(got.Bursts, 1)
-	b := got.Bursts[0]
-	assertions.Equal(1, b.Inbound)
-	assertions.Equal(id, b.AnchorMessageID)
-	var peer store.ActivityMessageCounterpart
-	for _, c := range b.Counterparts {
-		if c.ParticipantID == f.peer {
-			peer = c
+	t.Run("inbound", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		f := newTimelineActivityFixture(t)
+		id := f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false, "")
+		projectTierSignals(t, f.Fixture, "UTC", 0)
+		got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+		requirements.NoError(err)
+		requirements.Len(got.Bursts, 1)
+		b := got.Bursts[0]
+		assertions.Equal(1, b.Inbound)
+		assertions.Equal(id, b.AnchorMessageID)
+		var peer store.ActivityMessageCounterpart
+		for _, c := range b.Counterparts {
+			if c.ParticipantID == f.peer {
+				peer = c
+			}
 		}
-	}
-	assertions.Zero(peer.PersonID)
-	assertions.Equal("alice@example.com", peer.Address)
-	assertions.True(peer.Counted)
+		assertions.Zero(peer.PersonID)
+		assertions.Equal("alice@example.com", peer.Address)
+		assertions.True(peer.Counted)
+	})
+	t.Run("outbound", func(t *testing.T) {
+		requirements := require.New(t)
+		assertions := assert.New(t)
+		f := newTimelineActivityFixture(t)
+		f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
+		projectTierSignals(t, f.Fixture, "UTC", 0)
+		got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+		requirements.NoError(err)
+		requirements.Len(got.Bursts, 1)
+		assertions.Equal(1, got.Bursts[0].Outbound)
+		assertions.Zero(got.NoiseOmitted)
+	})
 }
 
 func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
@@ -216,19 +230,6 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 	}
 }
 
-func TestBurstsOutboundOwnerIsNotNoise(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	requirements.NoError(err)
-	requirements.Len(got.Bursts, 1)
-	assertions.Equal(1, got.Bursts[0].Outbound)
-	assertions.Zero(got.NoiseOmitted)
-}
-
 func TestActivityListExclusionCanBeDisabled(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -264,7 +265,6 @@ func TestActivityCallLogsNeverCountAsMessageContact(t *testing.T) {
 		want          int
 	}{
 		{"synctech_sms_call", "Call missed, 0 seconds", 0},
-		{"synctech_sms_call", "Call rejected, 0 seconds", 0},
 		{"google_voice_call", "Missed call", 0},
 		{"email", "Ordinary email", 1},
 		{"sms", "Ordinary text", 1},

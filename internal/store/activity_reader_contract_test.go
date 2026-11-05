@@ -123,51 +123,6 @@ func TestCoauthorExclusionsPreserveHumanCredit(t *testing.T) {
 	assert.Equal(1, page.Bursts[0].Inbound)
 }
 
-func TestCopyWinnerIndependentOfWindow(t *testing.T) {
-	requirements := require.New(t)
-	f := newTimelineActivityFixture(t)
-	day := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
-	shared := f.add(t, f.ConvID, f.Source.ID, day, false, "<shared@example.com>")
-	f.add(t, f.ConvID, f.Source.ID, day.AddDate(0, 0, 1), true, "<reply1@example.com>")
-	f.add(t, f.ConvID, f.Source.ID, day.AddDate(0, 0, 1).Add(time.Hour), false, "<reply2@example.com>")
-	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-	requirements.NoError(err)
-	requirements.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
-	conv, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
-	requirements.NoError(err)
-	f.add(t, conv, other.ID, day, false, "<shared@example.com>")
-	f.add(t, conv, other.ID, day.Add(time.Hour), true, "<other@example.com>")
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	for _, to := range []string{"2026-10-20", "2026-10-21"} {
-		t.Run(to, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-20", ToDate: to, Limit: 10})
-			require.NoError(err)
-			found := false
-			for _, b := range page.Bursts {
-				if b.ConversationID == f.ConvID && b.LocalDate == "2026-10-20" {
-					found = true
-					assert.Equal([]int64{shared}, b.LatestMessageIDs)
-					assert.Equal(1, b.Inbound)
-					assert.Equal(2, b.CopyCounts[shared])
-				}
-			}
-			assert.True(found, "the full three-message thread wins in every window")
-		})
-	}
-}
-
-func TestPersonReferenceRejectsMalformedEmail(t *testing.T) {
-	f := newTimelineActivityFixture(t)
-	for _, value := range []string{"", "alice", "alice@", "@example.com", "Alice <alice@example.com>", "alice@example.com,other@example.com"} {
-		t.Run(value, func(t *testing.T) {
-			_, err := f.Store.ResolvePersonReferenceContext(t.Context(), "email", value, nil, 10)
-			assert.ErrorIs(t, err, store.ErrInvalidActivityRequest)
-		})
-	}
-}
-
 func TestActivityWindowDateAndTimestampBounds(t *testing.T) {
 	f := newTimelineActivityFixture(t)
 	day := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
@@ -175,17 +130,27 @@ func TestActivityWindowDateAndTimestampBounds(t *testing.T) {
 	f.add(t, f.ConvID, f.Source.ID, day, false, "")
 	projectTierSignals(t, f.Fixture, "UTC", 0)
 	before := day.Add(-time.Hour)
+	invalidBefore := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
 	for _, tc := range []struct {
 		name, from, to, want string
 		before               *time.Time
+		invalid              bool
 	}{
-		{"date range", "2026-10-22", "2026-10-22", "2026-10-22", nil},
-		{"timestamp cuts admitted date", "2026-10-21", "2026-10-22", "2026-10-21", &before},
-		{"both bounds exclude", "2026-10-22", "2026-10-22", "", &before},
+		{"date range", "2026-10-22", "2026-10-22", "2026-10-22", nil, false},
+		{"timestamp cuts admitted date", "2026-10-21", "2026-10-22", "2026-10-21", &before, false},
+		{"both bounds exclude", "2026-10-22", "2026-10-22", "", &before, false},
+		{"invalid date", "bad", "2026-10-22", "", &invalidBefore, true},
+		{"missing end", "2026-10-22", "", "", &invalidBefore, true},
+		{"missing start", "", "2026-10-22", "", &invalidBefore, true},
+		{"reversed dates", "2026-10-23", "2026-10-22", "", &invalidBefore, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require, assert := require.New(t), assert.New(t)
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: tc.from, ToDate: tc.to, Before: tc.before, Limit: 10})
+			if tc.invalid {
+				assert.ErrorIs(err, store.ErrInvalidActivityRequest)
+				return
+			}
 			require.NoError(err)
 			if tc.want == "" {
 				assert.Empty(page.Bursts)
@@ -194,16 +159,6 @@ func TestActivityWindowDateAndTimestampBounds(t *testing.T) {
 				assert.Equal(tc.want, page.Bursts[0].LocalDate)
 			}
 		})
-	}
-}
-
-func TestActivityWindowValidatesDatesWithTimestamps(t *testing.T) {
-	assert := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	before := time.Date(2026, 10, 23, 0, 0, 0, 0, time.UTC)
-	for _, dates := range [][2]string{{"bad", "2026-10-22"}, {"2026-10-22", ""}, {"", "2026-10-22"}, {"2026-10-23", "2026-10-22"}} {
-		_, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: dates[0], ToDate: dates[1], Before: &before, Limit: 10})
-		assert.ErrorIs(err, store.ErrInvalidActivityRequest)
 	}
 }
 

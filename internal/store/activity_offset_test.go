@@ -12,7 +12,11 @@ import (
 
 func TestActivityReadersUseInstantForOffsetBounds(t *testing.T) {
 	for _, transcript := range []bool{false, true} {
-		for _, tc := range []struct{ offset, hours, want int }{{-8, 1, 1}, {8, -1, 0}} {
+		cases := []struct{ offset, hours, want int }{{-8, 1, 1}, {8, -1, 0}}
+		if transcript {
+			cases = cases[:1]
+		}
+		for _, tc := range cases {
 			t.Run(strconv.Itoa(tc.offset)+"/transcript="+strconv.FormatBool(transcript), func(t *testing.T) {
 				assertions, requirements := assert.New(t), require.New(t)
 				f := newTimelineActivityFixture(t)

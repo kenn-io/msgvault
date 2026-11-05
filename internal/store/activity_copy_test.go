@@ -11,92 +11,127 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestActivityEmailCopiesKeepCountedExchangeInOneMailbox(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	workOwner := f.EnsureParticipant("work@example.com", "Work owner", "example.com")
-	work, err := f.Store.GetOrCreateSource("gmail", "work@example.com")
-	require.NoError(err)
-	require.NoError(f.Store.AddAccountIdentity(work.ID, "work@example.com", "manual"))
-	require.Less(f.Source.ID, work.ID)
-	workThread, err := f.Store.EnsureConversationWithType(work.ID, "exchange", "email_thread", "Exchange")
-	require.NoError(err)
-	for _, mailbox := range []struct {
-		source, conversation int64
-		outbound             bool
-	}{{f.Source.ID, f.ConvID, false}, {work.ID, workThread, true}} {
-		sent := f.add(t, mailbox.conversation, mailbox.source, at, mailbox.outbound, "<exchange-start@example.com>")
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), workOwner, sent)
-		require.NoError(err)
-		require.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{workOwner}, nil))
-		require.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.peer}, nil))
-		require.NoError(f.Store.ReplaceMessageRecipients(sent, "cc", []int64{f.owner}, nil))
-		reply := f.add(t, mailbox.conversation, mailbox.source, at.Add(time.Hour), false, "<exchange-reply@example.com>")
-		require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{workOwner, f.owner}, nil))
-	}
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(err)
-	require.Len(page.Bursts, 1)
-	assert.Equal(work.ID, page.Bursts[0].SourceID)
-	assert.Equal(workThread, page.Bursts[0].ConversationID)
-	assert.Equal(1, page.Bursts[0].Inbound)
-	assert.Equal(1, page.Bursts[0].Outbound)
-}
-
 func TestActivityEmailCopyWinnerStableWhenEndDateWidens(t *testing.T) {
-	requirements := require.New(t)
-	f := newTimelineActivityFixture(t)
-	day1 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	workOwner := f.EnsureParticipant("work@example.com", "Work owner", "example.com")
-	work, err := f.Store.GetOrCreateSource("gmail", "work@example.com")
-	requirements.NoError(err)
-	requirements.NoError(f.Store.AddAccountIdentity(work.ID, "work@example.com", "manual"))
-	workThread, err := f.Store.EnsureConversationWithType(work.ID, "exchange", "email_thread", "Exchange")
-	requirements.NoError(err)
-	for _, mailbox := range []struct {
-		source, conversation int64
-		work                 bool
-	}{{f.Source.ID, f.ConvID, false}, {work.ID, workThread, true}} {
-		sent := f.add(t, mailbox.conversation, mailbox.source, day1, mailbox.work, "<exchange-start@example.com>")
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), workOwner, sent)
-		requirements.NoError(err)
-		requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{workOwner}, nil))
-		requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.peer}, nil))
-		requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "cc", []int64{f.owner}, nil))
-		reply := f.add(t, mailbox.conversation, mailbox.source, day1.Add(time.Hour), false, "<exchange-reply@example.com>")
-		requirements.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{workOwner, f.owner}, nil))
-		// Both threads have four messages, but only the personal mailbox counts
-		// these later sent messages. They must not change the day-one winner.
-		for i := range 2 {
-			id := f.add(t, mailbox.conversation, mailbox.source, day1.AddDate(0, 0, 2).Add(time.Duration(i)*time.Hour), !mailbox.work, fmt.Sprintf("<personal-sent-%d@example.com>", i))
-			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), f.owner, id)
-			requirements.NoError(err)
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner}, nil))
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer}, nil))
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "cc", []int64{workOwner}, nil))
-		}
-	}
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	for _, to := range []string{"2026-10-22", "2026-10-24"} {
-		t.Run(to, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-22", ToDate: to, Limit: 10})
+	t.Run("counted exchange", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		f := newTimelineActivityFixture(t)
+		at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+		workOwner := f.EnsureParticipant("work@example.com", "Work owner", "example.com")
+		work, err := f.Store.GetOrCreateSource("gmail", "work@example.com")
+		require.NoError(err)
+		require.NoError(f.Store.AddAccountIdentity(work.ID, "work@example.com", "manual"))
+		require.Less(f.Source.ID, work.ID)
+		workThread, err := f.Store.EnsureConversationWithType(work.ID, "exchange", "email_thread", "Exchange")
+		require.NoError(err)
+		for _, mailbox := range []struct {
+			source, conversation int64
+			outbound             bool
+		}{{f.Source.ID, f.ConvID, false}, {work.ID, workThread, true}} {
+			sent := f.add(t, mailbox.conversation, mailbox.source, at, mailbox.outbound, "<exchange-start@example.com>")
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), workOwner, sent)
 			require.NoError(err)
-			var day1Sources []int64
-			for _, burst := range page.Bursts {
-				if burst.LocalDate == "2026-10-22" {
-					day1Sources = append(day1Sources, burst.SourceID)
-					assert.Equal(1, burst.Inbound)
-					assert.Equal(1, burst.Outbound)
-				}
+			require.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{workOwner}, nil))
+			require.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.peer}, nil))
+			require.NoError(f.Store.ReplaceMessageRecipients(sent, "cc", []int64{f.owner}, nil))
+			reply := f.add(t, mailbox.conversation, mailbox.source, at.Add(time.Hour), false, "<exchange-reply@example.com>")
+			require.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{workOwner, f.owner}, nil))
+		}
+		projectTierSignals(t, f.Fixture, "UTC", 0)
+		page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+		require.NoError(err)
+		require.Len(page.Bursts, 1)
+		assert.Equal(work.ID, page.Bursts[0].SourceID)
+		assert.Equal(workThread, page.Bursts[0].ConversationID)
+		assert.Equal(1, page.Bursts[0].Inbound)
+		assert.Equal(1, page.Bursts[0].Outbound)
+	})
+	t.Run("daily counted messages", func(t *testing.T) {
+		requirements := require.New(t)
+		f := newTimelineActivityFixture(t)
+		day1 := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+		workOwner := f.EnsureParticipant("work@example.com", "Work owner", "example.com")
+		work, err := f.Store.GetOrCreateSource("gmail", "work@example.com")
+		requirements.NoError(err)
+		requirements.NoError(f.Store.AddAccountIdentity(work.ID, "work@example.com", "manual"))
+		workThread, err := f.Store.EnsureConversationWithType(work.ID, "exchange", "email_thread", "Exchange")
+		requirements.NoError(err)
+		for _, mailbox := range []struct {
+			source, conversation int64
+			work                 bool
+		}{{f.Source.ID, f.ConvID, false}, {work.ID, workThread, true}} {
+			sent := f.add(t, mailbox.conversation, mailbox.source, day1, mailbox.work, "<exchange-start@example.com>")
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), workOwner, sent)
+			requirements.NoError(err)
+			requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{workOwner}, nil))
+			requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.peer}, nil))
+			requirements.NoError(f.Store.ReplaceMessageRecipients(sent, "cc", []int64{f.owner}, nil))
+			reply := f.add(t, mailbox.conversation, mailbox.source, day1.Add(time.Hour), false, "<exchange-reply@example.com>")
+			requirements.NoError(f.Store.ReplaceMessageRecipients(reply, "to", []int64{workOwner, f.owner}, nil))
+			// Both threads have four messages, but only the personal mailbox counts
+			// these later sent messages. They must not change the day-one winner.
+			for i := range 2 {
+				id := f.add(t, mailbox.conversation, mailbox.source, day1.AddDate(0, 0, 2).Add(time.Duration(i)*time.Hour), !mailbox.work, fmt.Sprintf("<personal-sent-%d@example.com>", i))
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), f.owner, id)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner}, nil))
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer}, nil))
+				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "cc", []int64{workOwner}, nil))
 			}
-			assert.Equal([]int64{work.ID}, day1Sources)
-		})
-	}
+		}
+		projectTierSignals(t, f.Fixture, "UTC", 0)
+		for _, to := range []string{"2026-10-22", "2026-10-24"} {
+			t.Run(to, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-22", ToDate: to, Limit: 10})
+				require.NoError(err)
+				var day1Sources []int64
+				for _, burst := range page.Bursts {
+					if burst.LocalDate == "2026-10-22" {
+						day1Sources = append(day1Sources, burst.SourceID)
+						assert.Equal(1, burst.Inbound)
+						assert.Equal(1, burst.Outbound)
+					}
+				}
+				assert.Equal([]int64{work.ID}, day1Sources)
+			})
+		}
+	})
+	t.Run("full thread size", func(t *testing.T) {
+		requirements := require.New(t)
+		f := newTimelineActivityFixture(t)
+		day := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
+		shared := f.add(t, f.ConvID, f.Source.ID, day, false, "<shared@example.com>")
+		f.add(t, f.ConvID, f.Source.ID, day.AddDate(0, 0, 1), true, "<reply1@example.com>")
+		f.add(t, f.ConvID, f.Source.ID, day.AddDate(0, 0, 1).Add(time.Hour), false, "<reply2@example.com>")
+		other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+		requirements.NoError(err)
+		requirements.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
+		conv, err := f.Store.EnsureConversation(other.ID, "other-thread", "Other")
+		requirements.NoError(err)
+		f.add(t, conv, other.ID, day, false, "<shared@example.com>")
+		f.add(t, conv, other.ID, day.Add(time.Hour), true, "<other@example.com>")
+		projectTierSignals(t, f.Fixture, "UTC", 0)
+		for _, to := range []string{"2026-10-20", "2026-10-21"} {
+			t.Run(to, func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: "2026-10-20", ToDate: to, Limit: 10})
+				require.NoError(err)
+				found := false
+				for _, b := range page.Bursts {
+					if b.ConversationID == f.ConvID && b.LocalDate == "2026-10-20" {
+						found = true
+						assert.Equal([]int64{shared}, b.LatestMessageIDs)
+						assert.Equal(1, b.Inbound)
+						assert.Equal(2, b.CopyCounts[shared])
+					}
+				}
+				assert.True(found, "the full three-message thread wins in every window")
+			})
+		}
+	})
 }
 
 // A lower-ID observed copy must not suppress the owned copy's real contact.

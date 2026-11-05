@@ -23,7 +23,11 @@ func TestMessageDisplayCarriesHiddenTextAndEncrypted(t *testing.T) {
 	requirements.NoError(err)
 	conv, err := f.Store.EnsureConversation(matrix.ID, "matrix-thread", "Matrix")
 	requirements.NoError(err)
-	m := f.NewMessage().Build()
+	undatedMessage := f.NewMessage().Build()
+	undatedMessage.SentAt, undatedMessage.ReceivedAt, undatedMessage.InternalDate = sql.NullTime{}, sql.NullTime{}, sql.NullTime{}
+	undated, err := f.Store.UpsertMessage(undatedMessage)
+	requirements.NoError(err)
+	m := f.NewMessage().WithSentAt(time.Date(2026, 10, 22, 13, 0, 0, 0, time.UTC)).Build()
 	m.SourceID = matrix.ID
 	m.ConversationID = conv
 	m.MessageType = "matrix"
@@ -32,13 +36,15 @@ func TestMessageDisplayCarriesHiddenTextAndEncrypted(t *testing.T) {
 	requirements.NoError(err)
 	// The production Matrix writer persists recovery state alongside the snippet.
 	// Display hydration must work without a message body.
-	got, err := f.Store.MessageDisplayContext(t.Context(), []int64{hidden, encrypted})
+	got, err := f.Store.MessageDisplayContext(t.Context(), []int64{hidden, encrypted, undated})
 	requirements.NoError(err)
 	assertions.True(got[hidden].HiddenText)
 	assertions.NotNil(got[hidden].OccurredAt)
 	assertions.True(got[encrypted].Encrypted)
-	assertions.Nil(got[encrypted].OccurredAt)
-	got, err = f.Store.MessageDisplayContext(sourcescope.WithSourceIDs(t.Context(), []int64{}), []int64{hidden, encrypted})
+	assertions.NotNil(got[encrypted].OccurredAt)
+	requirements.Contains(got, undated)
+	assertions.Nil(got[undated].OccurredAt)
+	got, err = f.Store.MessageDisplayContext(sourcescope.WithSourceIDs(t.Context(), []int64{}), []int64{hidden, encrypted, undated})
 	requirements.NoError(err)
 	assertions.Empty(got)
 }

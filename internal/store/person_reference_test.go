@@ -86,7 +86,7 @@ func TestResolvePersonReferenceNeverCreates(t *testing.T) {
 	assert.Equal(t, before, counts())
 }
 
-func TestResolvePersonReferenceUnsavedClusterAndGrantBeforeLimit(t *testing.T) {
+func TestResolvePersonReferenceUnsavedCluster(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
@@ -100,6 +100,12 @@ func TestResolvePersonReferenceUnsavedClusterAndGrantBeforeLimit(t *testing.T) {
 	members, err := f.Store.ClusterMembers(other)
 	requirements.NoError(err)
 	assertions.Equal(members, got[0].ParticipantIDs)
+}
+
+func TestResolvePersonReferenceGrantBeforeLimit(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newTimelineActivityFixture(t)
 	var wanted int64
 	for i := range 12 {
 		participant := f.EnsureParticipant(fmt.Sprintf("candidate%d@example.com", i), "Alex", "example.com")
@@ -107,8 +113,52 @@ func TestResolvePersonReferenceUnsavedClusterAndGrantBeforeLimit(t *testing.T) {
 		requirements.NoError(err)
 		wanted = person.ID
 	}
-	got, err = f.Store.ResolvePersonReferenceContext(t.Context(), "name", "Alex", []int64{wanted}, 1)
+	got, err := f.Store.ResolvePersonReferenceContext(t.Context(), "name", "Alex", []int64{wanted}, 1)
 	requirements.NoError(err)
 	requirements.Len(got, 1)
 	assertions.Equal(wanted, got[0].PersonID)
+}
+
+func TestPersonReferenceRejectsMalformedEmail(t *testing.T) {
+	f := newTimelineActivityFixture(t)
+	for _, value := range []string{"", "alice", "alice@", "@example.com", "Alice <alice@example.com>", "alice@example.com,other@example.com"} {
+		t.Run(value, func(t *testing.T) {
+			_, err := f.Store.ResolvePersonReferenceContext(t.Context(), "email", value, nil, 10)
+			assert.ErrorIs(t, err, store.ErrInvalidActivityRequest)
+		})
+	}
+}
+
+func TestResolvePersonReferenceUnicodeCase(t *testing.T) {
+	for _, field := range []string{"email", "identifier", "participant name", "saved name"} {
+		t.Run(field, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			kind, value := store.PersonRefKind("name"), "büro"
+			var personID int64
+			switch field {
+			case "email":
+				kind, value = "email", "büro@example.com"
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address='BÜRO@example.com' WHERE id=?`), f.peer)
+				requirements.NoError(err)
+			case "identifier":
+				kind, value = "email", "büro@example.com"
+				requirements.NoError(f.Store.SetParticipantIdentifier(f.peer, "email", "BÜRO@example.com"))
+			case "participant name":
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET display_name='BÜRO' WHERE id=?`), f.peer)
+				requirements.NoError(err)
+			case "saved name":
+				person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+				requirements.NoError(err)
+				personID = person.ID
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE persons SET display_name='BÜRO' WHERE id=?`), personID)
+				requirements.NoError(err)
+			}
+			got, err := f.Store.ResolvePersonReferenceContext(t.Context(), kind, value, nil, 10)
+			requirements.NoError(err)
+			requirements.Len(got, 1)
+			assertions.Equal(personID, got[0].PersonID)
+			assertions.Equal([]int64{f.peer}, got[0].ParticipantIDs)
+		})
+	}
 }
