@@ -83,7 +83,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			attendees = []calevent.Attendee{}
 		}
 		ref := OccurrenceRef{MessageID: row.MessageID}
-		if seriesID != 0 && o.Original != (calrecur.Identity{}) && !isFractionalCalendarIdentity(&o.Original) {
+		if seriesID != 0 && o.Original != (calrecur.Identity{}) {
 			ref = OccurrenceRef{MessageID: seriesID, Key: o.Original.Key()}
 		}
 		page.Occurrences = append(page.Occurrences, CalendarOccurrence{Ref: formatMeetingOccurrence(ref), MessageID: row.MessageID, SeriesMessageID: seriesID, SourceID: row.SourceID, Subject: row.Subject, Start: o.Start, End: o.End, AllDay: o.AllDay, StartDate: o.StartDate, EndDate: o.EndDate, Status: status, DeletedFromSource: row.DeletedFromSource, Attendees: attendees})
@@ -215,7 +215,7 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 				return nil, bounded, err
 			}
 			bounded = append(bounded, o)
-			if e.Original == nil || isFractionalCalendarIdentity(e.Original) || set != nil && e.Original.AllDay != set.AllDay {
+			if e.Original == nil || set != nil && e.Original.AllDay != set.AllDay {
 				resolved = append(resolved, bounded[len(bounded)-1])
 			}
 		}
@@ -258,7 +258,7 @@ func calendarRecurrenceExceptions(rows []CalendarEventRow) ([]calrecur.Exception
 	exceptions := make([]calrecur.Exception, 0, len(rows))
 	for _, row := range rows {
 		e := row.Event
-		if e.Original == nil || isFractionalCalendarIdentity(e.Original) {
+		if e.Original == nil {
 			continue
 		}
 		// Explicit dates use the event or calendar zone; omitted bounds inherit the master.
@@ -348,8 +348,4 @@ func materializeCalendarOccurrence(ctx context.Context, r loggedReader, master C
 		effective.Event.Status = meetingCancelledStatus
 	}
 	return effective, o, nil
-}
-
-func isFractionalCalendarIdentity(identity *calrecur.Identity) bool {
-	return identity != nil && !identity.AllDay && identity.Instant.Nanosecond() != 0
 }

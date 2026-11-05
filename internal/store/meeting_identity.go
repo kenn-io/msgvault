@@ -315,7 +315,7 @@ func ParseMeetingIdentityRef(value string) (OccurrenceRef, error) {
 		return OccurrenceRef{}, fmt.Errorf("invalid meeting occurrence reference %q", value)
 	}
 	if strings.Contains(text, "@") {
-		if _, identity, ok := calrecur.ParseInstanceID("event_" + key); !ok || key == "" || identity.Key() != key {
+		if _, identity, ok := calrecur.ParseInstanceID("event_" + key); !ok || identity.Key() != key {
 			return OccurrenceRef{}, fmt.Errorf("invalid meeting occurrence key %q", key)
 		}
 	}

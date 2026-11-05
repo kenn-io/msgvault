@@ -97,22 +97,16 @@ func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 		key = row.Event.Original.Key()
 	}
 	id := meetingIdentity{ICalUID: row.ICalUID, OccurrenceKey: key}
-	fractionalException := row.Event.Kind == meetingExceptionKind && isFractionalCalendarIdentity(row.Event.Original)
 	unidentifiedException := row.Event.Kind == meetingExceptionKind && row.Event.Original == nil
 	// An unidentified exception has no occurrence identity to share with other
 	// rows, even when the provider gave the series an iCalUID.
-	if row.Event.Kind == meetingExceptionKind && (unidentifiedException || fractionalException) {
+	if unidentifiedException {
 		id = meetingIdentity{EventMessageID: row.MessageID}
-	}
-	if fractionalException {
-		id.OccurrenceKey = row.Event.Original.Key()
 	}
 	if id.ICalUID == "" {
 		id.EventMessageID = row.MessageID
 	}
-	if fractionalException || unidentifiedException {
-		// Occurrence keys are whole-second Google identities, so expose a
-		// fractional or unidentified exception through its own message reference.
+	if unidentifiedException {
 		refKey = ""
 	}
 	o := linkOccurrence{Ref: OccurrenceRef{MessageID: row.MessageID, Key: refKey}, Row: row, Identity: id}
@@ -156,7 +150,7 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 			return nil, err
 		}
 		refRow := master
-		if instance.HasException && (instance.Original == (calrecur.Identity{}) || isFractionalCalendarIdentity(effective.Event.Original)) {
+		if instance.HasException && instance.Original == (calrecur.Identity{}) {
 			refRow = effective
 		}
 		o := occurrenceFromRow(refRow, instance.Original.Key())
@@ -183,12 +177,6 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 		}
 		if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
 			row.Event.Status = meetingCancelledStatus
-		}
-		if isFractionalCalendarIdentity(row.Event.Original) {
-			if row.Event.Start == nil || row.Event.End == nil {
-				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
-			}
-			return occurrenceFromRow(row, ""), nil
 		}
 		if row.Event.Original != nil && len(masters) == 1 {
 			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
@@ -380,8 +368,8 @@ func meetingCalendarSources(ctx context.Context, r reboundReader) (map[string][]
 	if r.batch != nil && r.batch.calendarSources != nil {
 		return r.batch.calendarSources, nil
 	}
-	scope, args := sourceScopeClause(ctx, "id")
-	rows, err := r.QueryContext(ctx, `SELECT id,sync_config FROM sources WHERE source_type = 'gcal'`+scope, args...)
+	scope, args := sourceScopeClause(ctx, "m.source_id")
+	rows, err := r.QueryContext(ctx, `SELECT id,sync_config FROM sources WHERE source_type = 'gcal' AND EXISTS (SELECT 1 FROM messages m WHERE m.deleted_at IS NULL AND COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id=m.id),m.source_id)=sources.id`+scope+`)`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -495,17 +483,6 @@ candidatesLoop:
 		if len(matching) > 0 {
 			out = matching
 		}
-	}
-	return out, nil
-}
-
-func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader, key meetingLinkKey, budget *int) ([]linkOccurrence, error) {
-	out, err := s.automaticMeetingCandidates(ctx, r, key, budget)
-	if err != nil {
-		return nil, err
-	}
-	if !meetingOccurrencesExact(out) {
-		return nil, nil
 	}
 	return out, nil
 }

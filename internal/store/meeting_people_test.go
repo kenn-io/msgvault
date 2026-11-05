@@ -45,6 +45,26 @@ func TestParticipantsByEmailMapsSavedAndUnsaved(t *testing.T) {
 	assert.Zero(id)
 }
 
+func TestEmailParticipantNonASCIIAddress(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	participant, err := st.EnsureParticipant("Élodie@example.com", "Example", "example.com")
+	require.NoError(err)
+	_, err = st.db.Exec(`INSERT INTO participant_identifiers (participant_id,identifier_type,identifier_value,is_primary) VALUES (?,'email','Álias@example.com',FALSE)`, participant)
+	require.NoError(err)
+	for _, address := range []string{"Élodie@EXAMPLE.com", "Álias@EXAMPLE.com"} {
+		id, err := st.EmailParticipantContext(t.Context(), address)
+		require.NoError(err)
+		assert.Equal(participant, id)
+	}
+	got, err := st.ParticipantsByEmailContext(t.Context(), []string{" Élodie@EXAMPLE.com ", "Álias@EXAMPLE.com"})
+	require.NoError(err)
+	assert.Equal(map[string]AddressParticipant{
+		"élodie@example.com": {ParticipantID: participant},
+		"álias@example.com":  {ParticipantID: participant},
+	}, got)
+}
+
 func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {
 	t.Run("visibility", func(t *testing.T) {
 		assert, require := assert.New(t), require.New(t)

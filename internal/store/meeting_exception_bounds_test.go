@@ -64,6 +64,7 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 	original := `"originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}`
 	calendarFixture(t, st, "confirmed", `{"id":"edited","iCalUID":"weekly@example.org","recurringEventId":"series",`+original+`,"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"},"updated":"2027-03-10T12:00:00Z","sequence":7}`)
 	_, cancelled := calendarFixture(t, st, "cancelled", `{"id":"cancelled","iCalUID":"weekly@example.org","recurringEventId":"series",`+original+`,"status":"cancelled"}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
 
 	from := time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.Add(time.Hour))
@@ -79,13 +80,10 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 	requirements.NoError(err)
 	defer release()
 	budget := calrecur.RequestReadBudget
-	occurrences, err := st.automaticMeetingOccurrences(ctx, st.meetingReader(), meetingLinkKey{
-		Kind:        "ical_uid",
-		Value:       "weekly@example.org",
-		ScheduledAt: &from,
-	}, &budget)
+	occurrences, err := st.meetingMemberCandidates(ctx, st.meetingReader(), note, &budget)
 	requirements.NoError(err)
 	requirements.Len(occurrences, 1)
+	assertions.True(occurrences[0].Exact)
 	assertions.Equal(cancelled, occurrences[0].Row.MessageID)
 	assertions.Equal("cancelled", occurrences[0].Row.Event.Status)
 }

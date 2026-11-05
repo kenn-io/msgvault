@@ -20,7 +20,7 @@ func (s *Store) ParticipantsByEmailContext(ctx context.Context, emails []string)
 	result := map[string]AddressParticipant{}
 	unique := map[string]bool{}
 	for _, email := range emails {
-		if email = strings.ToLower(strings.TrimSpace(email)); email != "" {
+		if email = strings.TrimSpace(email); email != "" {
 			unique[email] = true
 		}
 	}
