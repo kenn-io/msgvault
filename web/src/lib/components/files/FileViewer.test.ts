@@ -254,7 +254,7 @@ describe('FileViewer', () => {
     render(FileViewer, { client: createAPIClient(fetchFn), file: file() });
 
     expect((await screen.findByRole('alert')).textContent).toContain('network unreachable');
-    expect(screen.queryByText('Loading file metadata…')).toBeNull();
+    expect(screen.queryByText('Loading file…')).toBeNull();
   });
 
   it('ignores a stale metadata failure after the viewed file changes', async () => {
@@ -306,6 +306,7 @@ describe('FileViewer', () => {
       file: file({ filename: 'archive.zip', mime_type: 'application/zip', mime_family: 'archive' })
     });
     const downloadButton = await screen.findByRole('button', { name: 'Download archive.zip' });
+    await waitFor(() => expect(downloadButton.hasAttribute('disabled')).toBe(false));
 
     let capturedHref: string | undefined;
     let capturedDownload: string | undefined;
@@ -354,12 +355,21 @@ it('bounds large CSV previews to 200 rows', async () => {
   expect(screen.queryByText('Row 200')).toBeNull();
 });
 
-it('streams audio directly and leaves seeking keys with the player', async () => {
+it('buffers authenticated audio for seeking and revokes its blob URL on close', async () => {
   const onStep = vi.fn();
-  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'audio/wav' })), file: file(), position: { index: 0, total: 2 }, onStep });
-  await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('/api/v1/files/7/content'));
+  const create = vi.fn((_blob: Blob) => 'blob:audio-preview');
+  const revoke = vi.fn();
+  Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: create });
+  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: revoke });
+  const fetchFn = viewerFetch({ ...file(), mime_type: 'audio/wav' });
+  render(FileViewer, { client: createAPIClient(fetchFn), file: file(), position: { index: 0, total: 2 }, onStep });
+  await waitFor(() => expect(document.querySelector('audio')?.getAttribute('src')).toBe('blob:audio-preview'));
+  expect(fetchFn).toHaveBeenCalledTimes(2);
+  expect(create.mock.calls[0]?.[0]).toBeInstanceOf(Blob);
   await fireEvent.keyDown(document.querySelector('audio')!, { key: 'ArrowRight' });
   expect(onStep).not.toHaveBeenCalled();
+  await fireEvent.click(screen.getByRole('button', { name: 'Close file viewer' }));
+  expect(revoke).toHaveBeenCalledExactlyOnceWith('blob:audio-preview');
 });
 
 it('names spreadsheets and keeps Download in the footer', async () => {
@@ -392,4 +402,29 @@ it('renders the start of a text file beyond the byte limit', async () => {
   await screen.findByText('Showing the start of this file.');
   expect(document.querySelector('pre')?.textContent?.length).toBe(2 * 1024 * 1024);
   expect(screen.queryByRole('alert')).toBeNull();
+});
+
+it('keeps an exact-limit text file complete', async () => {
+  const content = new Uint8Array(2 * 1024 * 1024).fill(65);
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type: 'text/plain', size_bytes: content.length }, content)), file: file() });
+  await waitFor(() => expect(document.querySelector('pre')?.textContent?.length).toBe(content.length));
+  expect(screen.queryByText('Showing the start of this file.')).toBeNull();
+});
+it.each([
+  ['table.csv', 'application/vnd.ms-excel', 'Name,Value\nExample,42', 'table'],
+  ['table.tsv', 'application/octet-stream', 'Name\tValue\nExample\t42', 'table'],
+  ['notes.txt', 'application/x-unknown', 'Example text', 'pre'],
+])('previews a generic MIME using %s', async (filename, mime_type, content, tag) => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename, mime_type }, new TextEncoder().encode(content))), file: file() });
+  await waitFor(() => expect(document.querySelector(tag)?.textContent).toContain('Example'));
+});
+it('uses the response charset for the rendered text', async () => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'notes.txt', mime_type: 'text/plain; charset=windows-1252' }, new Uint8Array([0x43, 0x61, 0x66, 0xe9]))), file: file() });
+  expect(await screen.findByText('Café')).toBeDefined();
+});
+it('keeps Download disabled while availability is unknown', async () => {
+  render(FileViewer, { client: createAPIClient(() => new Promise<Response>(() => undefined)), file: file() });
+  expect(screen.getByRole('button', { name: 'Download preview.png' }).hasAttribute('disabled')).toBe(true);
+  expect(screen.getByText('Loading file…')).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Open message' }).className).toContain('outline');
 });

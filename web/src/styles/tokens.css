@@ -564,5 +564,3 @@ body :is(.kit-typeahead__empty.kit-typeahead__empty, .kit-typeahead__status.kit-
     animation-iteration-count: 1 !important;
   }
 }
-
-.kit-modal-panel:focus-visible { outline: none; }

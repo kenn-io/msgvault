@@ -1367,8 +1367,9 @@ it.each([false, true])('steps across loaded pages and keeps the current file on 
   expect(screen.getByRole('button', { name: 'Previous file' }).hasAttribute('disabled')).toBe(true);
   await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
   if (failPage) {
-    await screen.findByText('Page unavailable');
-    expect(screen.getByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
+    const dialog = screen.getByRole('dialog', { name: 'View fixture.pdf' });
+    expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'Page unavailable');
+    expect(within(dialog).getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(false);
     expect(onSelectedKey).toHaveBeenCalledTimes(1);
   } else {
     await screen.findByRole('dialog', { name: 'View second.txt' });

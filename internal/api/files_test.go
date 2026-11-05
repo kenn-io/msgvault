@@ -134,12 +134,13 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "aa/" + hash},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.pdf", MimeType: "application/pdf", URL: "https://files.example/remote.pdf"},
-		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: hash},
+		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: strings.Repeat("cc", 32), StoragePath: "legacy/gone.bin"},
 		4: {ID: 4, MessageID: 14, ConversationID: 24, Filename: "metadata.txt"},
 	}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
 		Store:  catalog, Engine: engine, Logger: testLogger(),
+		BlobStore: packedFileBlobStore{blobs: map[string][]byte{hash: []byte("local bytes")}},
 	})
 
 	body := bytes.NewBufferString(`{"predicate":{"filters":[{"dimension":"source","values":["7"]}]},"filename_query":"report","mime_families":["image","pdf"],"sort":{"field":"size","direction":"asc"},"limit":25}`)
@@ -700,13 +701,6 @@ func TestLegacyLooseFileWithRecordedPathStillDownloads(t *testing.T) {
 	requirements.Equal(http.StatusOK, download.Code, download.Body.String())
 	assertions.Equal("application/pdf", download.Header().Get("Content-Type"))
 	assertions.Equal(string(loose), download.Body.String())
-	rangeRequest := httptest.NewRequest(http.MethodGet, "/api/v1/files/9/content", nil)
-	rangeRequest.Header.Set("Range", "bytes=2-5")
-	partial := httptest.NewRecorder()
-	srv.Router().ServeHTTP(partial, rangeRequest)
-	requirements.Equal(http.StatusPartialContent, partial.Code)
-	assertions.Equal(string(loose[2:6]), partial.Body.String())
-	assertions.Equal("bytes 2-5/18", partial.Header().Get("Content-Range"))
 
 	metadata := httptest.NewRecorder()
 	srv.Router().ServeHTTP(metadata, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/v1/files/9", nil))

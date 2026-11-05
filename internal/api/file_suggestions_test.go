@@ -318,15 +318,16 @@ func TestFileSuggestionsHTTPContentStates(t *testing.T) {
 
 	_, f, ids := suggestionFixture(t, []string{"report.pdf", "report.pdf", "report.pdf", "report.pdf"}, true)
 	hash := strings.Repeat("a", 64)
+	localHash := strings.Repeat("c", 64)
 	for _, tc := range []struct {
 		id         int64
 		path, hash string
-	}{{ids[1], "https://files.example.test/report.pdf", strings.Repeat("b", 64)}, {ids[2], "", hash}, {ids[3], "aa/" + hash, ""}} {
+	}{{ids[1], "https://files.example.test/report.pdf", strings.Repeat("b", 64)}, {ids[2], "", hash}, {ids[3], "cc/" + localHash, ""}} {
 		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE attachments SET storage_path=?,content_hash=? WHERE id=?`), tc.path, tc.hash, tc.id)
 		require.NoError(err)
 	}
 	dir := t.TempDir()
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}, Store: f.Store, Logger: testLogger()})
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: dir, Data: config.DataConfig{DataDir: dir}}, Store: f.Store, Logger: testLogger(), BlobStore: packedFileBlobStore{blobs: map[string][]byte{localHash: []byte("local bytes")}}})
 	w := suggestionPost(t, srv, "/api/v1/files/suggest", `{"filename_query":"report.pdf"}`)
 	require.Equal(200, w.Code, w.Body.String())
 	rows := suggestionRows(t, suggestionBody(t, w))
