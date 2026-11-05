@@ -3915,18 +3915,14 @@ func TestHandleSourceStatusNoSyncRuns(t *testing.T) {
 	assert.Equal("scheduler_unavailable", resp.Sources[0].SyncUnavailableReason)
 }
 
-// TestHandleSourceStatusGenericJobScheduled is a regression test for a MEDIUM
-// finding: sourceStatus only consulted the account scheduler, so non-account
-// sources (synctech-sms, gcal, granola, circleback, beeper) always reported
-// scheduled=false / sync_not_configured even when a generic scheduler job
-// governed them. A granola source whose matching generic job is idle and
-// scheduled must report Scheduled=true, surface the job's schedule/next-run,
-// and set CanSync=true.
-func TestHandleSourceStatusGenericJobScheduled(t *testing.T) {
+// Sources backed by a scheduler job report its schedule and next run,
+// and allow syncing while the job is idle.
+func TestHandleSourceStatusMappedJobScheduled(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ sourceType, identifier, job string }{
 		{"granola", "acct-1", "granola:acct-1"},
 		{"whatsapp", "+15550000000", "whatsapp:+15550000000"},
+		{"apple_messages", "local", "apple-messages"},
 	} {
 		t.Run(tc.sourceType, func(t *testing.T) {
 			require := require.New(t)
@@ -4003,6 +3999,22 @@ func TestHandleSourceStatusGenericJobRunning(t *testing.T) {
 // sync_not_configured, rather than falling through to some other reason.
 func TestHandleSourceStatusGenericJobUnscheduled(t *testing.T) {
 	t.Parallel()
+	t.Run("whatsapp status and trigger without schedule", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		st := testutil.NewTestStore(t)
+		src, err := st.GetOrCreateSource("whatsapp", "+15550000000")
+		require.NoError(err)
+		sched := newMockScheduler()
+		srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
+		status, err := srv.sourceStatus(t.Context(), st, src, nil)
+		require.NoError(err)
+		assert.False(status.CanSync)
+		assert.Equal("sync_not_configured", status.SyncUnavailableReason)
+		response := servePOSTTestRequest(srv, "/api/v1/sync/+15550000000?source_type=whatsapp")
+		assert.Equal(http.StatusNotFound, response.Code)
+	})
+
 	require := require.New(t)
 	assert := assert.New(t)
 	st := testutil.NewTestStore(t)
@@ -9287,7 +9299,7 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 	}{
 		{name: "first import", trigger: "local", wantCode: http.StatusAccepted},
 		{name: "local source", identifiers: []string{"local"}, trigger: "local", wantCode: http.StatusAccepted, wantSelected: "local"},
-		{name: "selected newest nonlocal", identifiers: []string{"older", "selected", "local"}, trigger: "selected", wantCode: http.StatusAccepted, wantSelected: "selected"},
+		{name: "selected source accepts trigger", identifiers: []string{"older", "selected", "local"}, trigger: "selected", wantCode: http.StatusAccepted, wantSelected: "selected"},
 		{name: "unselected", identifiers: []string{"local", "selected"}, trigger: "local", wantCode: http.StatusBadRequest, wantSelected: "selected"},
 		{name: "merged newest", identifiers: []string{"local", "selected", "retired"}, merged: true, trigger: "retired", wantCode: http.StatusBadRequest, wantSelected: "selected"},
 	} {
@@ -9319,24 +9331,7 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 					assert.Equal("source_not_schedulable", status.SyncUnavailableReason)
 				}
 			}
-			if tc.name == "local source" {
-				sched.scheduledJobs = nil
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status", nil))
-				require.Equal(http.StatusOK, w.Code, w.Body.String())
-				var response SourceStatusResponse
-				require.NoError(json.NewDecoder(w.Body).Decode(&response))
-				require.Len(response.Sources, 1)
-				got := response.Sources[0]
-				assert.Equal(sources[0].ID, got.ID)
-				assert.True(got.Scheduled)
-				assert.Equal("0 */6 * * *", got.Schedule)
-				require.NotNil(got.NextSyncAt)
-				assert.Equal("2026-07-20T00:00:00Z", *got.NextSyncAt)
-				assert.True(got.CanSync)
-				assert.Empty(got.SyncUnavailableReason)
-				sched.scheduledJobs = map[string]bool{"apple-messages": true}
-			}
+
 			response := servePOSTTestRequest(srv, "/api/v1/sync/"+tc.trigger+"?source_type=apple_messages")
 			assert.Equal(tc.wantCode, response.Code, response.Body.String())
 			if tc.wantCode == http.StatusAccepted {
@@ -9369,20 +9364,4 @@ func TestAppleSourceStatusReusesLoadedSources(t *testing.T) {
 		require.Equal(http.StatusOK, w.Code)
 		assert.Equal(int32(1), st.sourceLists.Load())
 	}
-}
-
-func TestWhatsAppSourceWithoutSchedule(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("whatsapp", "+15550000000")
-	require.NoError(err)
-	sched := newMockScheduler()
-	srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
-	status, err := srv.sourceStatus(t.Context(), st, src, nil)
-	require.NoError(err)
-	assert.False(status.CanSync)
-	assert.Equal("sync_not_configured", status.SyncUnavailableReason)
-	response := servePOSTTestRequest(srv, "/api/v1/sync/+15550000000?source_type=whatsapp")
-	assert.Equal(http.StatusNotFound, response.Code)
 }
