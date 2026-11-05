@@ -59,6 +59,28 @@ describe('PDF preview resource bounds', () => {
     }
   });
 
+  it('preserves all 40 mixed-size PDF pages within the canvas budget', async () => {
+    const task = loadingTask(Array.from({ length: 40 }, (_, index) => ({ width: 612, height: index === 39 ? 3200 : 792 })));
+    const pdfDocument = await task.promise;
+    pdfDocument.getPage.mockImplementation(async (number: number) => ({
+      getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: (number === 40 ? 3200 : 792) * scale, scale, userUnit: 1 }),
+      render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
+      getTextContent: async () => ({ items: [] }),
+      cleanup: task.cleanup
+    }));
+    pdf.getDocument.mockReturnValue(task);
+    const host = window.document.createElement('div');
+    Object.defineProperty(host, 'clientWidth', { value: 1200 });
+    // Baseline allocation is 32,596,650 pixels, below the document limit.
+    const pending = renderPDF(new TextEncoder().encode('%PDF-1.4'), host, new AbortController().signal);
+    await expect(pending).resolves.toMatchObject({ pages: 40 });
+    const canvases = [...host.querySelectorAll('canvas')];
+    expect(canvases).toHaveLength(40);
+    expect(canvases.every((canvas) => canvas.width * canvas.height <= 16_000_000)).toBe(true);
+    expect(canvases.reduce((sum, canvas) => sum + canvas.width * canvas.height, 0)).toBeLessThanOrEqual(64_000_000);
+    (await pending).destroy();
+  });
+
   it('destroys a document with too many pages exactly once', async () => {
     const task = loadingTask(Array.from({ length: MAX_PDF_PAGES + 1 }, () => ({ width: 10, height: 10 })));
     pdf.getDocument.mockReturnValue(task);
