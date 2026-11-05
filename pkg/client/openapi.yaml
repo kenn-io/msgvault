@@ -1678,6 +1678,9 @@ components:
         record:
           additionalProperties: true
           type: object
+          x-go-type: jsontext.Value
+          x-go-type-import:
+            path: encoding/json/jsontext
       required:
         - format
         - account

@@ -65,10 +65,10 @@ type PersonCallSummary struct {
 // seconds as answered contact, while calls without connected time stay unknown.
 func (s *Store) callRowsSQL() string {
 	seconds := s.callConnectedSecondsSQL()
-	return `SELECT message_id, projection_version, canonical_key, kind, direction,
+	return `SELECT message_id, canonical_key, kind, direction,
 		outcome, owner_participation, occurred_at, duration_seconds, withdrawn FROM call_details
 		UNION ALL
-		SELECT m.id, 1, '', 'call',
+		SELECT m.id, '', 'call',
 			CASE WHEN m.is_from_me THEN 'outgoing' ELSE 'incoming' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'answered' ELSE 'unknown' END,
 			CASE WHEN ` + seconds + ` > 0 THEN 'joined' ELSE 'unknown' END,
