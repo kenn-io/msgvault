@@ -74,7 +74,7 @@ Reading the native store may require Full Disk Access for your terminal in
 **System Settings → Privacy & Security**.
 
 To keep it current with the daemon, add a scheduled
-[`[[whatsapp_apple]]` entry](https://msgvault.io/docs/configuration/#apple-whatsapp-sources) and run
+[`[[whatsapp_apple]]` entry](/docs/configuration/#apple-whatsapp-sources) and run
 `msgvault serve`. Grant Full Disk Access to the process running the daemon too.
 The first run reads the whole store; later runs pick up changed messages.
 
@@ -133,11 +133,11 @@ that reports recoverable message errors.
 Import messages from the local iMessage database on macOS.
 
 To keep Messages current with the daemon, enable a schedule under
-[`[imessage]`](https://msgvault.io/docs/configuration/#imessage) and run `msgvault serve`.
+[`[imessage]`](/docs/configuration/#imessage) and run `msgvault serve`.
 Grant Full Disk Access to the process running the daemon. Every run re-reads
-all of `chat.db` and writes only what changed, including late arrivals,
-edits, and unsends. Choose an interval that allows for the time it takes to
-read your database. Sources shows run history and offers **Sync now**.
+all of `chat.db` and writes only what changed, including late arrivals
+and edits. An idle rerun measured about 5 seconds per 20,000 messages.
+Choose an interval that allows for the time it takes to read your database. Sources shows run history and offers **Sync now**.
 
 ```bash
 msgvault import-imessage
