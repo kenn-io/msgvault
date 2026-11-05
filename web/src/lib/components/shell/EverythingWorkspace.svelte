@@ -724,7 +724,7 @@
     class="results-split"
     class:results-split--open={Boolean(readingTargetKey)}
     class:results-split--right={previewRight}
-    style:min-height={readingTargetKey && !previewRight ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
+    style:min-height={scope && readingTargetKey && !previewRight ? `${stackedListMin + stackedReaderMin + splitHandleSize}px` : undefined}
     bind:clientWidth={resultsWidth}
   >
     <SplitPane
