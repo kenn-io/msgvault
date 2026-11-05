@@ -117,7 +117,6 @@ func TestImportIdempotencyEditsAndSourceExpiry(t *testing.T) {
 	raw, err = st.GetMessageRaw(id)
 	must.NoError(err)
 	check.Contains(meetingcontent.Decode(RawFormat, raw, nil).Transcript.Text, "Synthetic transcript")
-
 }
 func TestImportMetadataOnlyAndFilters(t *testing.T) {
 	t.Run("metadata import filters", func(t *testing.T) {

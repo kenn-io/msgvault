@@ -94,6 +94,7 @@ func TestRecorderScheduledScanRechecksCacheAfterEarlierImport(t *testing.T) {
 		prepare               func(*testing.T, *store.Store) func() error
 	}{
 		{"Hex", hex.SourceType, "hex:recorder", &rebuildHexCacheAfterScheduledSync, func(t *testing.T, st *store.Store) func() error {
+			t.Helper()
 			must := require.New(t)
 			root := t.TempDir()
 			dir := filepath.Join(root, "fixture")
@@ -106,6 +107,7 @@ func TestRecorderScheduledScanRechecksCacheAfterEarlierImport(t *testing.T) {
 			return func() error { return runConfiguredHexSync(t.Context(), st, source, t.TempDir()) }
 		}},
 		{"Muesli", muesli.SourceType, "muesli:recorder", &rebuildMuesliCacheAfterScheduledSync, func(t *testing.T, st *store.Store) func() error {
+			t.Helper()
 			must := require.New(t)
 			path := filepath.Join(t.TempDir(), "muesli.db")
 			db, err := sql.Open("sqlite3", path)
@@ -132,7 +134,7 @@ func TestRecorderScheduledScanRechecksCacheAfterEarlierImport(t *testing.T) {
 			original := *tc.hook
 			t.Cleanup(func() { *tc.hook = original })
 			var requested []string
-			*tc.hook = func(_ context.Context, key string) error { requested = append(requested, key); return nil }
+			*tc.hook = func(ctx context.Context, key string) error { requested = append(requested, key); return ctx.Err() }
 			must.NoError(run())
 			check.Equal([]string{tc.key}, requested, "unchanged scan rechecks deferred cache through the actual provider adapter")
 		})

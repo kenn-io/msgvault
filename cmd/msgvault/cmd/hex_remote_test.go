@@ -78,5 +78,4 @@ func TestHexRecorderToHTTPArchiveAndMeetingContext(t *testing.T) {
 	packet, err := client.GetMeetingContext(t.Context(), generated.GetMeetingContextBody{MessageIds: &ids, IncludeTranscript: &include, Format: &format})
 	must.NoError(err)
 	check.Contains(packet.Content, "HTTP fixture transcript")
-
 }

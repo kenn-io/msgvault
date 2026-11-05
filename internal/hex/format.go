@@ -16,11 +16,16 @@ func (m Meeting) ArchiveSnapshot(sourceID int64, identifier, email string) (meet
 		return meetingarchive.Snapshot{}, err
 	}
 	v := m.Manifest
-	lines := []string{v.DisplayTitle(), "Manifest title: " + v.Title, "Status: " + v.Status}
-	if v.ProvisionalTitle != "" {
+	title := strings.TrimSpace(v.DisplayTitle())
+	lines := []string{v.DisplayTitle()}
+	if strings.TrimSpace(v.Title) != title {
+		lines = append(lines, "Manifest title: "+v.Title)
+	}
+	lines = append(lines, "Status: "+v.Status)
+	if v.ProvisionalTitle != "" && strings.TrimSpace(v.ProvisionalTitle) != title {
 		lines = append(lines, "Provisional title: "+v.ProvisionalTitle)
 	}
-	if v.Notes != nil {
+	if v.Notes != nil && strings.TrimSpace(v.Notes.Title) != title {
 		lines = append(lines, "Notes title: "+v.Notes.Title)
 	}
 	if v.Calendar != nil {
