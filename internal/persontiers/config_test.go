@@ -23,13 +23,10 @@ func TestConfigValidation(t *testing.T) {
 		{"negative alternative", func(c *Config) { c.Tier2.MinMeetingDaysLong = -1 }, "meeting thresholds must be 0"},
 		{"one channel", func(c *Config) { c.Tier1.BreadthMinChannelsLong = 1 }, "breadth_min_channels_long must be 0 or at least 2"},
 		{"negative call length", func(c *Config) { c.MinCallSeconds = -1 }, "min_call_seconds must be 0"},
-		{"address subdomain wildcard", func(c *Config) { c.ExcludeAddressPatterns = []string{"*.bot"} }, `exclusion pattern "*.bot"`},
 		{"empty pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{""} }, `exclusion pattern ""`},
 		{"upper pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"Alert"} }, `exclusion pattern "Alert"`},
 		{"address pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"alert@example.com"} }, `exclusion pattern "alert@example.com"`},
 		{"middle wildcard", func(c *Config) { c.ExcludeDomainPatterns = []string{"resource.*.example.com"} }, `exclusion pattern "resource.*.example.com"`},
-		{"empty subdomain suffix", func(c *Config) { c.ExcludeDomainPatterns = []string{"*."} }, `exclusion pattern "*."`},
-		{"mixed domain wildcards", func(c *Config) { c.ExcludeDomainPatterns = []string{"*.rooms.*"} }, `exclusion pattern "*.rooms.*"`},
 		{"double wildcard", func(c *Config) { c.ExcludeAddressPatterns = []string{"alerts**"} }, `exclusion pattern "alerts**"`},
 		{"first bad threshold in fixed order", func(c *Config) {
 			c.Tier2.MinActiveDaysLong = 0

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ type gmailAuditSnapshotGateKey struct{}
 
 type gmailAuditSnapshotGate struct {
 	targetID    int64
+	query       string
 	pauseOnce   sync.Once
 	releaseOnce sync.Once
 	paused      chan struct{}
@@ -104,7 +106,7 @@ func (c *gmailAuditSnapshotConn) QueryContext(
 		return nil, driver.ErrSkip
 	}
 	if gate, armed := ctx.Value(gmailAuditSnapshotGateKey{}).(*gmailAuditSnapshotGate); armed &&
-		gate == c.gate && gate.gatesTargetQuery(args) {
+		gate == c.gate && ((gate.query != "" && strings.Contains(query, gate.query)) || (gate.query == "" && gate.gatesTargetQuery(args))) {
 		if err := gate.hold(ctx); err != nil {
 			return nil, err
 		}

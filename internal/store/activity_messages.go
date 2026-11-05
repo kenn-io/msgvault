@@ -29,6 +29,17 @@ type ActivityKey struct {
 }
 
 func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery) ([]ActivityMessage, error) {
+	var result []ActivityMessage
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
+		var err error
+		result, err = s.listActivityMessagesContext(snapshotCtx, q)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) listActivityMessagesContext(ctx context.Context, q MessageQuery) ([]ActivityMessage, error) {
 	if q.ConversationID <= 0 || q.Limit < 1 || q.Limit > 500 {
 		return nil, fmt.Errorf("%w: messages require a conversation and limit 1..500", ErrInvalidActivityRequest)
 	}

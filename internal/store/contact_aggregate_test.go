@@ -25,6 +25,8 @@ func TestMessageAggregateCountsOnlyCountedInScope(t *testing.T) {
 	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(2, got.Count)
+	assertions.Equal(1, got.InitiatedByContact)
+	assertions.Equal(1, got.InitiatedByOwner)
 	requirements.NotNil(got.FirstAt)
 	assertions.Equal(q.Now.AddDate(-2, 0, 0), *got.FirstAt)
 	assertions.Equal([]store.ActivityChannel{store.ChannelEmail}, got.Channels)
@@ -82,7 +84,7 @@ func TestMessageAggregateUsesQueryTimezone(t *testing.T) {
 			require.NoError(err)
 			assert.Equal(5, got.Count)
 			assert.Equal([12]int{2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}, got.Monthly)
-			assert.Equal(1, got.InitiatedByContact)
+			assert.Equal(2, got.InitiatedByContact)
 			assert.Equal(1, got.InitiatedByOwner)
 		})
 	}

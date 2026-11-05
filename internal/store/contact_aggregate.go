@@ -75,7 +75,7 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 		}
 		args = append(args, firstMonth.AddDate(0, i, 0).Format("2006-01"), boundaries[i], boundaries[i+1])
 	}
-	initiation := `(previous_at IS NULL OR ` + gap + `) AND bucket.month IS NOT NULL`
+	initiation := `(previous_at IS NULL OR ` + gap + `)`
 	query := cte + `, contact_messages AS (
  SELECT * FROM representatives WHERE ref_kind='message' AND counted=1
  ), contact_months(month,start_at,end_at) AS (VALUES ` + strings.Join(months, ",") + `), exchanges AS (

@@ -56,6 +56,17 @@ type activityReadMessage struct {
 }
 
 func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
+	var result BurstPage
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
+		var err error
+		result, err = s.listActivityBurstsContext(snapshotCtx, q)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) listActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
 	page := BurstPage{Bursts: []ActivityBurst{}}
 	if q.Limit < 1 || q.Limit > 5000 {
 		return page, fmt.Errorf("%w: burst limit must be 1..5000", ErrInvalidActivityRequest)
