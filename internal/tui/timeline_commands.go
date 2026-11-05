@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"go.kenn.io/msgvault/internal/query"
@@ -38,6 +39,9 @@ func (m *Model) startTimelineRequest(req timeline.Request, remember bool) tea.Cm
 	}
 	m.cancelTimelineRequest()
 	req.Format = "json"
+	if req.Budget == 0 {
+		req.Budget = 65536
+	}
 	m.timelineState.request = req
 	m.timelineState.needsLoad = true
 	// Pending requests have no selectable stale entries. Esc restores the
@@ -189,8 +193,16 @@ func (m *Model) activateTimeline() tea.Cmd {
 		return m.loadTimelineReader(m.timelineState.reader, m.timelineState.readerID)
 	}
 	if m.timelineState.result != nil && !m.timelineState.needsLoad {
-		m.loading = false
-		return nil
+		req, result := m.timelineState.request, m.timelineState.result
+		loc, err := time.LoadLocation(result.Timezone)
+		if err != nil {
+			loc = time.UTC
+		}
+		if req.Mode != "" && req.Mode != timeline.ModeDay || req.Date != "" || req.From != "" || result.Now.In(loc).Format(time.DateOnly) == time.Now().In(loc).Format(time.DateOnly) {
+			m.loading = false
+			return nil
+		}
+		m.timelineState.request.Cursor = ""
 	}
 	req := m.timelineState.request
 	if req.Mode == "" {

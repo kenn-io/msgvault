@@ -166,7 +166,7 @@ func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
 			if saved {
 				ref = fmt.Sprintf("person:%d", f.savePerson())
 			}
-			f.src.Loops = nil
+
 			for i, group := range []struct {
 				cold, noise bool
 				count       int
@@ -174,7 +174,7 @@ func TestSharedColdNoiseAcrossTimelineModes(t *testing.T) {
 				{false, false, 1}, {false, true, 2}, {true, false, 2}, {true, true, 2},
 			} {
 				key := fmt.Sprintf("shared-flags-%d", i)
-				conv, err := f.Store.EnsureConversation(f.Source.ID, key, "Shared flags")
+				conv, err := f.Store.EnsureConversationWithType(f.Source.ID, key, "direct_chat", "Shared flags")
 				requirements.NoError(err)
 				for n := range group.count {
 					f.add(f.now.Add(-time.Duration(60+i*5+n)*time.Minute), false, func(m *store.Message) {

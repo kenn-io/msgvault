@@ -4402,9 +4402,6 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 	if err != nil {
 		return nil, false, err
 	}
-
-	// Collect first occurrence of each syncable type.
-	seen := make(map[string]*store.Source, 4)
 	retiredMatch := false
 	for _, src := range rows {
 		if src.MergedIntoSourceID != 0 {
@@ -4412,30 +4409,9 @@ func findScheduledSyncSources(s *store.Store, identifier string) ([]*store.Sourc
 			case "", sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams, sourceTypeDiscord:
 				retiredMatch = true
 			}
-			continue
-		}
-		switch src.SourceType {
-		case sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams:
-			if _, dup := seen[src.SourceType]; !dup {
-				seen[src.SourceType] = src
-			}
-		case sourceTypeDiscord:
-			// Guild display names are not stable or unique. Scheduled Discord
-			// jobs must use the exact guild snowflake as their key.
-			if src.Identifier == identifier {
-				seen[src.SourceType] = src
-			}
 		}
 	}
-
-	// Return in stable order: gmail, imap, msmail, teams, discord.
-	var result []*store.Source
-	for _, t := range []string{sourceTypeGmail, sourceTypeIMAP, sourceTypeMSMail, sourceTypeTeams, sourceTypeDiscord} {
-		if src, ok := seen[t]; ok {
-			result = append(result, src)
-		}
-	}
-	return result, retiredMatch, nil
+	return store.SelectScheduledSyncSources(rows, identifier), retiredMatch, nil
 }
 
 // scheduledSyncPreemptible disables scheduler-job preemption when an account

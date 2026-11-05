@@ -338,7 +338,7 @@ func normalizedMeetingDeletion(value string) string {
 }
 
 func encodeMeetingActionsCursor(cursor meetingActionsCursor) (string, error) {
-	encoded, err := encodeReadCursor(cursor)
+	encoded, err := EncodeReadCursor(cursor, meetingActionsCursorBytes)
 	if errors.Is(err, errEncodedReadCursorTooLarge) {
 		return "", &MeetingCursorError{Reason: "encoded position is too large"}
 	}
@@ -350,7 +350,7 @@ func encodeMeetingActionsCursor(cursor meetingActionsCursor) (string, error) {
 
 func decodeMeetingActionsCursor(value string) (meetingActionsCursor, error) {
 	var cursor meetingActionsCursor
-	if err := decodeReadCursor(value, &cursor); err != nil {
+	if err := DecodeReadCursor(value, &cursor, meetingActionsCursorBytes); err != nil {
 		return meetingActionsCursor{}, &MeetingCursorError{Reason: err.Error()}
 	}
 	if cursor.Version != meetingActionsCursorV1 || !validMeetingFilterHash(cursor.ArchiveUID) ||

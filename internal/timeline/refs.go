@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 var fullRefPattern = regexp.MustCompile(`^(msg|conv|evt):([1-9][0-9]*)(?:@([0-9TZ]+))?$`)
@@ -81,11 +83,7 @@ func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 			if m[1] != "evt" {
 				return a, ErrUnknownReference
 			}
-			layout := "20060102T150405Z"
-			if len(m[3]) == 8 {
-				layout = "20060102"
-			}
-			if _, err := time.Parse(layout, m[3]); err != nil {
+			if _, ok := calrecur.ParseKey(m[3]); !ok {
 				return a, ErrUnknownReference
 			}
 		}

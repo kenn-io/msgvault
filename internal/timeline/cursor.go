@@ -4,15 +4,14 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/store"
 )
 
 const cursorMaxBytes = 512
@@ -93,30 +92,19 @@ func EncodeCursor(b CursorBinding, positions map[string]string) (string, error) 
 	sections := copyMap(positions)
 	delete(sections, "open_loops")
 	wire := cursorWire{Version: 1, Archive: archive, Filter: filter, Now: b.Now.Unix(), Nanos: b.Now.Nanosecond(), Sections: sections}
-	data, err := json.Marshal(wire, json.Deterministic(true))
+	encoded, err := store.EncodeReadCursor(wire, cursorMaxBytes, json.Deterministic(true))
 	if err != nil {
-		return "", err
-	}
-	if len(data) > cursorMaxBytes {
 		return "", fmt.Errorf("%w: cursor exceeds 512 bytes", ErrInvalidRequest)
 	}
-	return base64.RawURLEncoding.EncodeToString(data), nil
+	return encoded, nil
 }
 func DecodeCursor(value string, b CursorBinding) (Cursor, error) {
 	fail := func() (Cursor, error) { return Cursor{}, ErrCursorExpired }
 	if b.ArchiveUID == "" || len(value) > base64.RawURLEncoding.EncodedLen(cursorMaxBytes) {
 		return fail()
 	}
-	data, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil || len(data) > cursorMaxBytes {
-		return fail()
-	}
-	decoder := jsontext.NewDecoder(strings.NewReader(string(data)))
 	var wire cursorWire
-	if err = json.UnmarshalDecode(decoder, &wire, json.RejectUnknownMembers(true)); err != nil {
-		return fail()
-	}
-	if _, err = decoder.ReadValue(); !errors.Is(err, io.EOF) {
+	if err := store.DecodeReadCursor(value, &wire, cursorMaxBytes); err != nil {
 		return fail()
 	}
 	if wire.Nanos < 0 || wire.Nanos >= 1000000000 {

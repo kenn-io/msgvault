@@ -170,8 +170,11 @@ func allDayEntries(t *Timeline) []Entry {
 	return entries
 }
 
-// The policy producer is staged upstream; seed its effective result explicitly.
+// Seed a chat conversation and its effective cold policy.
 func (f *timelineFixture) seedConversationPolicy(ctx context.Context, sourceID int64, key string) error {
+	if _, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE conversations SET conversation_type='direct_chat' WHERE source_id=? AND source_conversation_id=?`), sourceID, key); err != nil {
+		return err
+	}
 	if err := f.Store.SetConversationPolicyOverride(ctx, sourceID, key, conversationpolicy.Cold); err != nil {
 		return err
 	}

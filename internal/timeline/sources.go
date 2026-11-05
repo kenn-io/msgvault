@@ -9,8 +9,8 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// Sources separates archive readers from composition. Missing sources produce
-// unavailable gaps. Source authorization always travels in the request context.
+// Sources supplies the required archive readers for composition. Agenda is optional.
+// Source authorization always travels in the request context.
 type Sources struct {
 	Activity    ActivitySource
 	Cold        ColdSource

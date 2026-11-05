@@ -29,6 +29,7 @@ func TestBuildRejectsInvalidRequests(t *testing.T) {
 		{"anchor days", Request{Around: "2026-10-22", Days: 7}, nil, ErrInvalidRequest},
 		{"anchor range", Request{Around: "2026-10-22", From: "2026-10-21", To: "2026-10-22"}, nil, ErrInvalidRequest},
 		{"brief days", Request{Brief: true, Days: 7}, nil, ErrInvalidRequest},
+		{"brief range", Request{Brief: true, From: "2026-10-19", To: "2026-10-22"}, []string{"brief", "days/from/to"}, ErrInvalidRequest},
 		{"too many days", Request{Days: 32}, nil, ErrWindowTooLarge},
 		{"too many neighbours", Request{Before: 51}, nil, ErrInvalidRequest},
 		{"negative neighbours", Request{After: -1}, nil, ErrInvalidRequest},

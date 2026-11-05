@@ -22,23 +22,25 @@ func readFilterHash(filter any) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
-func encodeReadCursor(cursor any) (string, error) {
-	data, err := json.Marshal(cursor)
+// EncodeReadCursor encodes an opaque read position within the supplied byte limit.
+func EncodeReadCursor(cursor any, maxBytes int, options ...json.Options) (string, error) {
+	data, err := json.Marshal(cursor, options...)
 	if err != nil {
 		return "", err
 	}
-	if len(data) > meetingActionsCursorBytes {
+	if len(data) > maxBytes {
 		return "", errEncodedReadCursorTooLarge
 	}
 	return base64.RawURLEncoding.EncodeToString(data), nil
 }
 
-func decodeReadCursor(value string, cursor any, options ...json.Options) error {
-	if len(value) > base64.RawURLEncoding.EncodedLen(meetingActionsCursorBytes) {
+// DecodeReadCursor reads one strict base64url JSON position within the byte limit.
+func DecodeReadCursor(value string, cursor any, maxBytes int, options ...json.Options) error {
+	if len(value) > base64.RawURLEncoding.EncodedLen(maxBytes) {
 		return errors.New("cursor is too large")
 	}
 	data, err := base64.RawURLEncoding.DecodeString(value)
-	if err != nil || len(data) > meetingActionsCursorBytes {
+	if err != nil || len(data) > maxBytes {
 		return errors.New("cursor is not valid base64url JSON")
 	}
 	decoder := jsontext.NewDecoder(strings.NewReader(string(data)))

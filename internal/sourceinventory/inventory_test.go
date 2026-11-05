@@ -43,7 +43,7 @@ func TestConfiguredIMAPDisplayNamePreservesFreshness(t *testing.T) {
 			}
 			report, err := freshness.Build(t.Context(), freshness.Inputs{Sources: items, Now: now, StaleAfter: 24 * time.Hour})
 			requirements.NoError(err)
-			assertions.False(report.Stale, "a healthy or disabled resolved account must not falsely block ranked views")
+			assertions.Empty(report.Sources[0].Reason, "a healthy or disabled resolved account must not falsely block ranked views")
 		})
 	}
 }
@@ -263,7 +263,7 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 				Sources: items, Now: time.Date(2025, time.January, 2, 0, 0, 0, 0, time.UTC), StaleAfter: 24 * time.Hour,
 			})
 			requirements.NoError(err)
-			assertions.Equal(tc.wantStale, report.Stale)
+			assertions.Equal(tc.wantStale, report.Sources[0].Reason != "")
 		})
 	}
 }
@@ -290,7 +290,7 @@ func TestImportOnlySourcesAreStatic(t *testing.T) {
 				StaleAfter: 24 * time.Hour,
 			})
 			requirements.NoError(err)
-			assertions.False(report.Stale, "an import-only archive cannot be refreshed by a sync command")
+			assertions.Empty(report.Sources[0].Reason, "an import-only archive cannot be refreshed by a sync command")
 		})
 	}
 }
@@ -420,7 +420,7 @@ func TestAttachmentSyncRunsDoNotReplaceSourceFreshness(t *testing.T) {
 				StaleAfter: 24 * time.Hour,
 			})
 			requirements.NoError(err)
-			assertions.True(report.Stale, "media completion must not make an old source sync appear fresh")
+			assertions.Equal("stale", report.Sources[0].Reason, "media completion must not make an old source sync appear fresh")
 		})
 	}
 }

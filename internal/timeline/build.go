@@ -144,7 +144,10 @@ func normalizeRequest(req Request) (Request, error) {
 			req.Budget = 6144
 		}
 	}
-	if req.Budget < 2048 || req.Budget > 65536 || req.Before < 0 || req.Before > 50 || req.After < 0 || req.After > 50 || req.Days < 0 || req.Brief && req.Days != 0 {
+	if req.Brief && (req.Days != 0 || req.From != "" || req.To != "") {
+		return req, fmt.Errorf("%w: brief conflicts with days/from/to", ErrInvalidRequest)
+	}
+	if req.Budget < 2048 || req.Budget > 65536 || req.Before < 0 || req.Before > 50 || req.After < 0 || req.After > 50 || req.Days < 0 {
 		return req, ErrInvalidRequest
 	}
 	if req.Before == 0 && !req.BeforeSet {
@@ -328,7 +331,7 @@ func (c *composer) loadTiers(ids []int64) {
 			missing = append(missing, id)
 		}
 	}
-	if c.src.People == nil || len(missing) == 0 {
+	if len(missing) == 0 {
 		return
 	}
 	slices.Sort(missing)
@@ -376,6 +379,6 @@ func (c *composer) collectLoops(personID int64) readResult[loops.Result] {
 		limit = 5
 	}
 	return readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
-		return c.src.Loops.List(ctx, loops.Options{PersonID: personID, Limit: limit}, c.t.Now)
+		return c.src.Loops.List(ctx, loops.Options{PersonID: personID, ParticipantIDs: c.subject.ParticipantIDs, Limit: limit}, c.t.Now)
 	})
 }

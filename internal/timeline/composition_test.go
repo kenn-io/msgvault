@@ -68,12 +68,14 @@ func TestIncludeColdCollapsesEmailCopiesBeforeGrouping(t *testing.T) {
 	source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
 	requirements.NoError(err)
 	requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
-	conv, err := f.Store.EnsureConversationWithType(source.ID, "cold-copy", "email_thread", "Cold copy")
+	conv, err := f.Store.EnsureConversationWithType(source.ID, "email-copy", "email_thread", "Email copy")
 	requirements.NoError(err)
 	f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
 		m.SourceID, m.ConversationID = source.ID, conv
 		m.RFC822MessageID = sql.NullString{String: "shared@example.com", Valid: true}
 	})
+	conv, err = f.Store.EnsureConversationWithType(source.ID, "cold-copy", "direct_chat", "Cold chat")
+	requirements.NoError(err)
 	coldTail := f.add(f.now.Add(-20*time.Minute), false, func(m *store.Message) {
 		m.SourceID, m.ConversationID = source.ID, conv
 	})
@@ -101,13 +103,16 @@ func TestIncludeColdCollapsesEmailCopiesBeforeGrouping(t *testing.T) {
 			requirements.Len(entries, 2)
 			inbound := 0
 			copies := map[int64]int{}
+			var ids []int64
 			for _, e := range entries {
 				requirements.NotNil(e.Burst)
 				inbound += e.Burst.Inbound
 				maps.Copy(copies, e.Burst.Copies)
+				ids = append(ids, e.Burst.LatestMessageIDs...)
 			}
 			assertions.Equal(3, inbound)
-			assertions.Equal(map[int64]int{warm: 2, warmTail: 1, coldTail: 1}, copies)
+			assertions.Equal(map[int64]int{warm: 2, warmTail: 1}, copies)
+			assertions.Contains(ids, coldTail)
 		})
 	}
 }

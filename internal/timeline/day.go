@@ -66,64 +66,54 @@ type dayRead struct {
 
 func (c *composer) collectDay() dayRead {
 	from, to := c.bounds()
-	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), IncludeCold: c.req.IncludeCold && c.src.Cold != nil, Limit: maxBursts}
+	query := store.BurstQuery{FromDate: c.t.Window.From, ToDate: c.t.Window.To, Subject: c.subject, Filters: c.filters(), Limit: maxBursts}
 	var r dayRead
 	parallel(c.ctx,
 		func() {
-			if c.src.Activity != nil {
-				r.activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
-					cc := *c
-					cc.ctx = ctx
-					return cc.readActivity(query)
+			r.activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+				cc := *c
+				cc.ctx = ctx
+				return cc.readActivity(query)
+			})
+		},
+		func() {
+			if c.req.IncludeCold {
+				r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+					return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
 				})
+			} else {
+				r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
 			}
 		},
 		func() {
-			if c.src.Cold != nil {
-				if c.req.IncludeCold && c.src.Activity == nil {
-					r.cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, query)
-					})
-				} else if !c.req.IncludeCold {
-					r.coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) { return c.src.Cold.CountColdActivityMessagesContext(ctx, query) })
-				}
-			}
+			r.calendar = c.readCalendar(from, to)
 		},
 		func() {
-			if c.src.Calendar != nil {
-				r.calendar = c.readCalendar(from, to)
+			hours := 48
+			if c.req.Brief {
+				hours = 24
 			}
+			r.upcoming = c.readCalendar(c.t.Now, c.t.Now.Add(time.Duration(hours)*time.Hour))
 		},
 		func() {
-			if c.src.Calendar != nil {
-				hours := 48
-				if c.req.Brief {
-					hours = 24
-				}
-				r.upcoming = c.readCalendar(c.t.Now, c.t.Now.Add(time.Duration(hours)*time.Hour))
-			}
-		},
-		func() {
-			if c.req.Scope.Owner && c.src.Calls != nil {
+			if c.req.Scope.Owner {
 				r.calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
 					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, ParticipantIDs: c.participants, Limit: 500})
 				})
 			}
 		},
 		func() {
-			if c.req.Scope.Owner && c.src.Loops != nil {
+			if c.req.Scope.Owner {
 				r.loops = c.collectLoops(c.subject.PersonID)
 			}
 		},
 		func() {
-			if c.req.Scope.Owner && c.src.Notes != nil {
+			if c.req.Scope.Owner {
 				r.notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) { return c.readNotes(ctx, from, to) })
 			}
 		},
 		func() {
-			if c.src.Inventory != nil {
-				r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
-			}
+			r.inventory = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
 		},
 	)
 	return r
@@ -182,24 +172,17 @@ func (c *composer) readNotes(ctx context.Context, from, to time.Time) ([]store.D
 
 func (c *composer) buildDay() {
 	r := c.collectDay()
-	if c.src.Activity == nil {
-		c.unavailable("days")
-	}
+
 	c.gap("days", r.activity.err, len(r.activity.value.bursts) > 0)
 	c.gap("cold", r.cold.err, len(r.cold.value.Bursts) > 0)
 	c.gap("cold", r.coldCount.err, false)
-	if c.src.Cold == nil {
-		c.unavailable("cold")
-	}
 	c.t.Omitted.Noise = r.activity.value.noise
 	c.t.Omitted.Cold = r.coldCount.value
 	c.t.Omitted.Noise += r.cold.value.NoiseOmitted
 	if r.activity.value.more || r.cold.value.NextKey != nil {
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: "days", Code: "partial"})
 	}
-	if c.src.Inventory == nil {
-		c.unavailable("freshness")
-	} else if r.inventory.err == nil {
+	if r.inventory.err == nil {
 		c.t.Freshness = r.inventory.value
 	} else {
 		c.gap("freshness", r.inventory.err, false)
@@ -208,17 +191,7 @@ func (c *composer) buildDay() {
 	c.calendarGaps(r.upcoming, "upcoming")
 	c.gap("calls", r.calls.err, len(r.calls.value) > 0)
 	c.gap("notes", r.notes.err, len(r.notes.value) > 0)
-	if c.req.Scope.Owner {
-		if c.src.Calls == nil {
-			c.unavailable("calls")
-		}
-		if c.src.Notes == nil {
-			c.unavailable("notes")
-		}
-		if c.src.Loops == nil {
-			c.unavailable("loops")
-		}
-	} else {
+	if !c.req.Scope.Owner {
 		c.ownerGaps()
 	}
 	bursts := mergeBursts(r.activity.value.bursts, r.cold.value.Bursts)
@@ -228,7 +201,7 @@ func (c *composer) buildDay() {
 	c.sortAndContinue("upcoming", c.t.Upcoming, false)
 	c.t.Upcoming = c.afterPosition("upcoming", c.t.Upcoming)
 	c.groupDays(c.filterSubject(entries))
-	if c.req.Scope.Owner && c.src.Loops != nil {
+	if c.req.Scope.Owner {
 		c.addLoops(r.loops)
 		if c.t.OpenLoops != nil {
 			c.t.OpenLoops.Items = c.filterSubject(c.t.OpenLoops.Items)
@@ -236,10 +209,6 @@ func (c *composer) buildDay() {
 	}
 }
 func (c *composer) calendarGaps(r readResult[store.CalendarOccurrencePage], section string) {
-	if c.src.Calendar == nil {
-		c.unavailable(section)
-		return
-	}
 	c.gap(section, r.err, len(r.value.Occurrences) > 0)
 	if len(r.value.Unexpandable) > 0 {
 		items := []string{}

@@ -9,7 +9,24 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/store"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
+
+func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	for i := range 12 {
+		f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("other-%d", i), From: "other@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the invoice?", SentAt: f.now.Add(-96 * time.Hour)})
+	}
+	id := f.PersistEmail(storetest.EmailSpec{Thread: "unsaved-loop", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the contract?", SentAt: f.now.Add(-48 * time.Hour)})
+	f.project()
+	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+	requirements.NoError(err)
+	requirements.NotNil(got.OpenLoops)
+	requirements.Len(got.OpenLoops.Items, 1)
+	assertions.Equal(messageRef(id), got.OpenLoops.Items[0].Ref)
+	assertions.False(got.OpenLoops.Truncated)
+}
 
 func relationshipRequest(ref string) Request {
 	return Request{With: ref, Scope: Scope{Owner: true}, Format: "json", Budget: 65536}
@@ -57,7 +74,7 @@ func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions.Equal("2025-11-05", got.Person.FirstAt.Format(time.DateOnly))
 	assertions.Equal([]string{"email"}, got.Person.Channels)
 }
-func TestRelationshipUnsavedClusterHasNoTierNoLoops(t *testing.T) {
+func TestRelationshipUnsavedClusterHasNoTier(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	f := newTimelineFixture(t)
@@ -68,8 +85,8 @@ func TestRelationshipUnsavedClusterHasNoTierNoLoops(t *testing.T) {
 	requirements.NotNil(got.Person)
 	assertions.Zero(got.Person.Person.PersonID)
 	assertions.Zero(got.Person.Person.Tier)
-	assertions.Nil(got.OpenLoops)
-	assertions.Contains(got.Gaps, Gap{Section: "loops", Code: "no-person"})
+	requirements.NotNil(got.OpenLoops)
+	assertions.Empty(got.OpenLoops.Items)
 	requirements.Len(got.History, 1)
 }
 func TestRelationshipHistoryLastTwentyAnyAge(t *testing.T) {
@@ -112,21 +129,6 @@ func TestRelationshipCuratedProfileIncludesFreshness(t *testing.T) {
 	assertions.Empty(got.History)
 	assertions.Contains(got.Gaps, Gap{Section: "history", Code: "no-linked-contacts"})
 }
-func TestRelationshipMissingSourcesProduceUnavailableGaps(t *testing.T) {
-	f := newTimelineFixture(t)
-	p := f.savePerson()
-	f.add(f.now, false)
-	f.project()
-	f.src.Activity = nil
-	f.src.Calls = nil
-	got, err := Build(t.Context(), f.src, relationshipRequest(fmt.Sprintf("person:%d", p)))
-	require.NoError(t, err)
-	for _, section := range []string{"contact", "history", "calls"} {
-		assert.Contains(t, got.Gaps, Gap{Section: section, Code: "unavailable"})
-	}
-	require.NotEmpty(t, got.Freshness.Sources)
-}
-
 func TestRelationshipTranscriptLinkedToTwoMeetings(t *testing.T) {
 	f := newTimelineFixture(t)
 	first := f.calendar("first", singleDayEvent)

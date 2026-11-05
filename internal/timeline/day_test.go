@@ -571,7 +571,7 @@ func TestBuildSummaryCountsLinkedPersonOnce(t *testing.T) {
 		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	}
 	f.project()
-	f.src.Loops, f.src.Inventory = nil, nil
+
 	req := dayRequest()
 	req.Date, req.Days = "", 5
 	got, err := Build(t.Context(), f.src, req)

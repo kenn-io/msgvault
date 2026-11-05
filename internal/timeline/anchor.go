@@ -24,18 +24,12 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		return anchorTarget{}, err
 	}
 	target := anchorTarget{ref: ref, at: ref.Time}
-	if (ref.Kind == entryKindMessage || ref.Kind == "conversation" || ref.Kind == entryKindBurst) && c.src.Activity == nil {
-		c.unavailable("anchor")
-		return target, nil
-	}
+
 	switch ref.Kind {
 	case "date", "datetime":
 		return target, nil
 	case "meeting":
-		if c.src.Calendar == nil {
-			c.unavailable("anchor")
-			return target, nil
-		}
+
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.CalendarOccurrenceDetail, error) {
 			return c.src.Calendar.GetCalendarOccurrenceContext(ctx, ref.Ref)
 		})
@@ -47,17 +41,17 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 			return target, nil
 		}
 		o := r.value.CalendarOccurrence
-		if c.src.Meetings != nil {
-			identity := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
-				return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: []string{o.Ref}})
-			})
-			c.gap("meetings", identity.err, false)
-			var ok bool
-			o, ok = c.canonicalOccurrence(o, identity.value.ByOccurrence[o.Ref])
-			if !ok {
-				return target, nil
-			}
+
+		identity := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
+			return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: []string{o.Ref}})
+		})
+		c.gap("meetings", identity.err, false)
+		var ok bool
+		o, ok = c.canonicalOccurrence(o, identity.value.ByOccurrence[o.Ref])
+		if !ok {
+			return target, nil
 		}
+
 		target.occurrence = &o
 		target.at = o.Start
 		if o.AllDay {
@@ -83,14 +77,14 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		c.gap("anchor", r.err, false)
 		failed := r.err != nil
 		candidates := r.value.Bursts
-		if c.src.Cold != nil {
-			cold := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-				return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
-			})
-			c.gap("anchor", cold.err, false)
-			failed = failed || cold.err != nil
-			candidates = append(candidates, cold.value.Bursts...)
-		}
+
+		cold := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+			return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
+		})
+		c.gap("anchor", cold.err, false)
+		failed = failed || cold.err != nil
+		candidates = append(candidates, cold.value.Bursts...)
+
 		for _, b := range candidates {
 			if b.Key == ref.Ref {
 				target.messageID = b.AnchorMessageID
@@ -130,7 +124,7 @@ func (c *composer) conversationAnchor(id int64) readResult[int64] {
 	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
 		return c.src.Activity.LatestEligibleMessageContext(ctx, id)
 	})
-	if r.err != nil || r.value > 0 || !c.req.IncludeCold || c.src.Cold == nil {
+	if r.err != nil || r.value > 0 || !c.req.IncludeCold {
 		return r
 	}
 	q := store.MessageQuery{ConversationID: id, Descending: true, Limit: 1, Filters: c.filters()}
@@ -151,7 +145,7 @@ func anchorWindow(at time.Time, loc *time.Location) Window {
 func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	from := target.at.In(c.loc).AddDate(0, 0, -days)
 	to := target.at.In(c.loc).AddDate(0, 0, days).Add(time.Nanosecond)
-	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), IncludeCold: c.req.IncludeCold && c.src.Cold != nil, Limit: maxBursts}
+	q := store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters(), Limit: maxBursts}
 	if c.req.Conversation {
 		q.ConversationID = target.conversationID
 	}
@@ -163,45 +157,41 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	var notes readResult[[]store.DailyNoteEntry]
 	parallel(c.ctx,
 		func() {
-			if c.src.Activity != nil {
-				activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
-					if c.req.Conversation {
-						page, err := c.src.Activity.ListActivityBurstsContext(ctx, q)
-						return activityWindow{noise: page.NoiseOmitted, more: page.NextKey != nil}, err
-					}
-					cc := *c
-					cc.ctx = ctx
-					return cc.readActivity(q)
+			activity = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+				if c.req.Conversation {
+					page, err := c.src.Activity.ListActivityBurstsContext(ctx, q)
+					return activityWindow{noise: page.NoiseOmitted, more: page.NextKey != nil}, err
+				}
+				cc := *c
+				cc.ctx = ctx
+				return cc.readActivity(q)
+			})
+		},
+		func() {
+			if c.req.IncludeCold {
+				cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+					return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
+				})
+			} else {
+				coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
+					return c.src.Cold.CountColdActivityMessagesContext(ctx, q)
 				})
 			}
 		},
 		func() {
-			if c.src.Cold != nil {
-				if c.req.IncludeCold && c.src.Activity == nil {
-					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, q)
-					})
-				} else if !c.req.IncludeCold {
-					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
-						return c.src.Cold.CountColdActivityMessagesContext(ctx, q)
-					})
-				}
-			}
-		},
-		func() {
-			if c.src.Calendar != nil && !c.req.Conversation {
+			if !c.req.Conversation {
 				calendar = c.readCalendar(from, to)
 			}
 		},
 		func() {
-			if c.req.Scope.Owner && c.src.Calls != nil && !c.req.Conversation {
+			if c.req.Scope.Owner && !c.req.Conversation {
 				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
 					return c.readCalls(ctx, store.LogicalCallQuery{After: from, Before: to, ParticipantIDs: c.participants, Limit: 500})
 				})
 			}
 		},
 		func() {
-			if c.req.Scope.Owner && c.src.Notes != nil && !c.req.Conversation {
+			if c.req.Scope.Owner && !c.req.Conversation {
 				notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
 					start, _ := time.ParseInLocation(time.DateOnly, from.Format(time.DateOnly), c.loc)
 					end, _ := time.ParseInLocation(time.DateOnly, to.Format(time.DateOnly), c.loc)
@@ -213,9 +203,6 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 	c.gap("history", activity.err, len(activity.value.bursts) > 0)
 	c.gap("cold", cold.err, false)
 	c.gap("cold", coldCount.err, false)
-	if c.src.Cold == nil {
-		c.unavailable("cold")
-	}
 	c.calendarGaps(calendar, "meetings")
 	c.gap("calls", calls.err, false)
 	c.gap("notes", notes.err, false)
@@ -261,20 +248,7 @@ func (c *composer) anchorFallback(target anchorTarget) Entry {
 }
 func (c *composer) buildAnchor(target anchorTarget) {
 	c.loadFreshness()
-	if c.src.Activity == nil {
-		c.unavailable("history")
-	}
-	if c.src.Calendar == nil {
-		c.unavailable("meetings")
-	}
-	if c.req.Scope.Owner {
-		if c.src.Calls == nil {
-			c.unavailable("calls")
-		}
-		if c.src.Notes == nil {
-			c.unavailable("notes")
-		}
-	} else {
+	if !c.req.Scope.Owner {
 		c.ownerGaps()
 	}
 	if target.at.IsZero() {
@@ -318,16 +292,19 @@ func (c *composer) buildAnchor(target anchorTarget) {
 		entries = append(entries, c.anchorFallback(target))
 	}
 	c.sortAndContinue("history", entries, false)
-	pivot := slices.IndexFunc(entries, func(e Entry) bool { return e.Anchor })
-	if pivot >= 0 {
-		entries = entries[max(0, pivot-c.req.Before):min(len(entries), pivot+1+c.req.After)]
-	} else {
-		pivot = 0
-		for pivot < len(entries) && entries[pivot].Time.Before(target.at) {
-			pivot++
+	var before, after, anchors []Entry
+	for _, e := range entries {
+		if e.Anchor {
+			anchors = append(anchors, e)
+		} else if e.Time.Before(target.at) {
+			before = append(before, e)
+		} else {
+			after = append(after, e)
 		}
-		entries = entries[max(0, pivot-c.req.Before):min(len(entries), pivot+c.req.After)]
 	}
+	entries = append(before[max(0, len(before)-c.req.Before):], anchors...)
+	entries = append(entries, after[:min(len(after), c.req.After)]...)
+	c.sortAndContinue("history", entries, false)
 	c.t.History = c.afterPosition("history", entries)
 	if !c.req.Scope.Owner {
 		c.ownerGaps()
@@ -335,9 +312,6 @@ func (c *composer) buildAnchor(target anchorTarget) {
 }
 
 func (c *composer) conversationEntries(conversation int64, from, to time.Time) ([]Entry, error) {
-	if c.src.Activity == nil {
-		return nil, nil
-	}
 	readMessages := func(ctx context.Context, read func(context.Context, store.MessageQuery) ([]store.ActivityMessage, error)) ([]store.ActivityMessage, error) {
 		messages := []store.ActivityMessage{}
 		q := store.MessageQuery{ConversationID: conversation, After: &from, Before: &to, Limit: 500, Filters: c.filters()}
@@ -362,7 +336,7 @@ func (c *composer) conversationEntries(conversation int64, from, to time.Time) (
 			})
 		},
 		func() {
-			if c.req.IncludeCold && c.src.Cold != nil {
+			if c.req.IncludeCold {
 				cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.ActivityMessage, error) {
 					return readMessages(ctx, c.src.Cold.ListColdActivityMessagesContext)
 				})

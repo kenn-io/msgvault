@@ -14,22 +14,22 @@ func TestSourceFreshnessPolicy(t *testing.T) {
 	for _, tt := range []struct {
 		name, scheduling, outcome string
 		age                       time.Duration
-		success, stale, warn      bool
+		success, warn             bool
 		reason                    string
 	}{
-		{"fresh", "scheduled", "completed", time.Hour, true, false, false, ""},
-		{"boundary", "manual", "completed", 24 * time.Hour, true, false, false, ""},
-		{"old", "scheduled", "completed", 24*time.Hour + time.Second, true, true, false, "source_stale:owner@example.test"},
-		{"never", "scheduled", "never", 0, false, true, false, "source_never_synced:owner@example.test"},
-		{"partial", "scheduled", "partial", time.Hour, true, false, false, ""},
-		{"failed recently", "scheduled", "failed", time.Hour, true, false, true, ""},
-		{"cancelled", "manual", "cancelled", time.Hour, true, false, true, ""},
-		{"paused", "manual", "paused", time.Hour, true, false, true, ""},
-		{"running", "scheduled", "running", time.Hour, true, false, false, ""},
-		{"failed never", "scheduled", "failed", 0, false, true, true, "source_never_synced:owner@example.test"},
-		{"unmeasured", "scheduled", "unmeasured", time.Hour, true, true, false, "source_unmeasured:owner@example.test"},
-		{"static", "static", "never", 0, false, false, false, ""},
-		{"disabled", "disabled", "never", 0, false, false, true, ""},
+		{"fresh", "scheduled", "completed", time.Hour, true, false, ""},
+		{"boundary", "manual", "completed", 24 * time.Hour, true, false, ""},
+		{"old", "scheduled", "completed", 24*time.Hour + time.Second, true, false, "stale"},
+		{"never", "scheduled", "never", 0, false, false, "never_synced"},
+		{"partial", "scheduled", "partial", time.Hour, true, false, ""},
+		{"failed recently", "scheduled", "failed", time.Hour, true, true, ""},
+		{"cancelled", "manual", "cancelled", time.Hour, true, true, ""},
+		{"paused", "manual", "paused", time.Hour, true, true, ""},
+		{"running", "scheduled", "running", time.Hour, true, false, ""},
+		{"failed never", "scheduled", "failed", 0, false, true, "never_synced"},
+		{"unmeasured", "scheduled", "unmeasured", time.Hour, true, false, "unmeasured"},
+		{"static", "static", "never", 0, false, false, ""},
+		{"disabled", "disabled", "never", 0, false, true, ""},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -41,15 +41,9 @@ func TestSourceFreshnessPolicy(t *testing.T) {
 			}
 			got, err := Build(t.Context(), Inputs{Now: now, StaleAfter: 24 * time.Hour, Sources: []SourceInventoryItem{source}})
 			requirements.NoError(err)
-			assertions.Equal(tt.stale, got.Stale)
 			requirements.Len(got.Sources, 1)
-			assertions.Equal(tt.stale, got.Sources[0].Stale)
 			assertions.Equal(tt.warn, len(got.Warnings) > 0)
-			if tt.reason != "" {
-				assertions.Equal([]string{tt.reason}, got.StaleReasons)
-			} else {
-				assertions.Empty(got.StaleReasons)
-			}
+			assertions.Equal(tt.reason, got.Sources[0].Reason)
 		})
 	}
 }
@@ -72,7 +66,6 @@ func TestFreshnessWarningsAndClockSkew(t *testing.T) {
 		{SourceType: "gmail", Identifier: "owner@example.test", Scheduling: "disabled", Outcome: "failed", LastSuccessfulSyncAt: &future},
 	}})
 	requirements.NoError(err)
-	assertions.False(got.Stale)
-	assertions.Equal(int64(0), *got.Sources[0].AgeSeconds)
+	assertions.Empty(got.Sources[0].Reason)
 	assertions.Equal([]string{"Sync is disabled for gmail source owner@example.test.", "The latest sync failed for gmail source owner@example.test."}, got.Warnings)
 }

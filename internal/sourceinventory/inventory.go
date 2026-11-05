@@ -50,27 +50,18 @@ func Build(ctx context.Context, cfg *config.Config, st *store.Store) ([]Item, er
 		if err != nil {
 			return nil, fmt.Errorf("resolve freshness account: %w", err)
 		}
-		// Follow findScheduledSyncSources: resolve through the Store's casefolded
-		// identifier/display-name/alias lookup, then take one row per syncable type.
-		seen := map[string]bool{}
 		for _, row := range rows {
+			if row.MergedIntoSourceID == 0 {
+				continue
+			}
 			switch row.SourceType {
 			case "gmail", "imap", "msmail", "teams":
-			case "discord":
-				if row.Identifier != entry.identifier {
-					continue
-				}
-			default:
-				continue
-			}
-			if row.MergedIntoSourceID != 0 {
 				matched[i] = true
-				continue
+			case "discord":
+				matched[i] = matched[i] || row.Identifier == entry.identifier
 			}
-			if seen[row.SourceType] {
-				continue
-			}
-			seen[row.SourceType] = true
+		}
+		for _, row := range store.SelectScheduledSyncSources(rows, entry.identifier) {
 			configured[i].accountSourceIDs = append(configured[i].accountSourceIDs, row.ID)
 		}
 	}

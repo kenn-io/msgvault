@@ -14,10 +14,6 @@ import (
 )
 
 func (c *composer) resolvePerson() (store.PersonCandidate, error) {
-	if c.src.People == nil {
-		c.unavailable("person")
-		return store.PersonCandidate{}, nil
-	}
 	kind, value := "name", strings.TrimSpace(c.req.With)
 	if k, v, ok := strings.Cut(value, ":"); ok {
 		kind, value = k, v
@@ -80,13 +76,6 @@ func (c *composer) filterSubject(entries []Entry) []Entry {
 }
 func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.setSubject(p)
-	if c.src.Activity == nil {
-		c.unavailable("contact")
-		c.unavailable("history")
-	}
-	if c.req.Scope.Owner && c.src.Calls == nil {
-		c.unavailable("calls")
-	}
 	if !c.req.Scope.Owner {
 		c.ownerGaps()
 	}
@@ -117,42 +106,38 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	var coldCount readResult[int]
 	var logicalCalls readResult[[]store.LogicalCall]
 	var upcoming readResult[store.CalendarOccurrencePage]
-	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, IncludeCold: c.req.IncludeCold && c.src.Cold != nil, Limit: maxBursts}
+	historyQuery := store.BurstQuery{Subject: c.subject, Filters: c.filters(), After: new(time.Time), Descending: true, Limit: maxBursts}
 	parallel(c.ctx,
 		func() {
-			if c.src.Activity != nil {
-				messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
-					return c.src.Activity.MessageContactAggregateContext(ctx, q)
-				})
-				transcripts = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]int64, error) {
-					ids, more, err := c.src.Activity.AttendedTranscriptIDsContext(ctx, q, 2000)
-					if more && err == nil {
-						err = errors.New("attended meeting limit reached")
-					}
-					return ids, err
-				})
-				history = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
-					cc := *c
-					cc.ctx = ctx
-					return cc.readActivity(historyQuery)
-				})
-			}
-		},
-		func() {
-			if c.src.Cold != nil {
-				if c.req.IncludeCold && c.src.Activity == nil {
-					cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
-						return c.src.Cold.ListColdActivityBurstsContext(ctx, historyQuery)
-					})
-				} else if !c.req.IncludeCold {
-					coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
-						return c.src.Cold.CountColdActivityMessagesContext(ctx, historyQuery)
-					})
+			messages = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+				return c.src.Activity.MessageContactAggregateContext(ctx, q)
+			})
+			transcripts = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]int64, error) {
+				ids, more, err := c.src.Activity.AttendedTranscriptIDsContext(ctx, q, 2000)
+				if more && err == nil {
+					err = errors.New("attended meeting limit reached")
 				}
+				return ids, err
+			})
+			history = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (activityWindow, error) {
+				cc := *c
+				cc.ctx = ctx
+				return cc.readActivity(historyQuery)
+			})
+		},
+		func() {
+			if c.req.IncludeCold {
+				cold = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.BurstPage, error) {
+					return c.src.Cold.ListColdActivityBurstsContext(ctx, historyQuery)
+				})
+			} else {
+				coldCount = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int, error) {
+					return c.src.Cold.CountColdActivityMessagesContext(ctx, historyQuery)
+				})
 			}
 		},
 		func() {
-			if c.req.Scope.Owner && c.src.Calls != nil {
+			if c.req.Scope.Owner {
 				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
 					return c.src.Calls.CallContactAggregateContext(ctx, q)
 				})
@@ -162,9 +147,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			}
 		},
 		func() {
-			if c.src.Calendar != nil {
-				upcoming = c.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
-			}
+			upcoming = c.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
 		},
 		func() { c.loadFreshness() },
 	)
@@ -174,9 +157,6 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.gap("history", history.err, len(history.value.bursts) > 0)
 	c.gap("cold", cold.err, len(cold.value.Bursts) > 0)
 	c.gap("cold", coldCount.err, false)
-	if c.src.Cold == nil {
-		c.unavailable("cold")
-	}
 	c.t.Omitted.Noise = history.value.noise + cold.value.NoiseOmitted
 	c.t.Omitted.Cold = coldCount.value
 	c.gap("calls", logicalCalls.err, false)
@@ -187,7 +167,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 		c.ownerGaps()
 	}
 	occurrences := slices.Clone(upcoming.value.Occurrences)
-	if c.src.Meetings != nil && len(transcripts.value) > 0 {
+	if len(transcripts.value) > 0 {
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
 			return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{TranscriptIDs: transcripts.value})
 		})
@@ -205,9 +185,6 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			}
 			resolved := false
 			for _, ref := range info.ExactOccurrenceRefs {
-				if c.src.Calendar == nil {
-					continue
-				}
 				d, err := c.src.Calendar.GetCalendarOccurrenceContext(c.ctx, ref)
 				if err != nil {
 					c.gap("meetings", err, false)
@@ -259,8 +236,8 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	if !c.req.Scope.Owner {
 		return
 	}
+	c.addLoops(c.collectLoops(p.PersonID))
 	if p.PersonID == 0 {
-		c.t.Gaps = append(c.t.Gaps, Gap{Section: "loops", Code: "no-person"})
 		return
 	}
 	c.relationshipExtras(p.PersonID)
@@ -305,10 +282,6 @@ func (c *composer) mergeContact(a store.ContactAggregate, call bool) {
 	}
 }
 func (c *composer) loadFreshness() {
-	if c.src.Inventory == nil {
-		c.unavailable("freshness")
-		return
-	}
 	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (Freshness, error) { return c.src.Inventory.Build(ctx, c.t.Now) })
 	if r.err != nil {
 		c.gap("freshness", r.err, false)
@@ -317,29 +290,18 @@ func (c *composer) loadFreshness() {
 	}
 }
 func (c *composer) relationshipExtras(person int64) {
-	if c.src.Activity == nil {
-		c.unavailable("cadence")
-	} else {
-		status, due, err := c.src.Activity.CadenceForPersonContext(c.ctx, person, c.t.Person.LastAt, c.t.Now)
-		c.gap("cadence", err, false)
-		c.t.Person.CadenceStatus, c.t.Person.DueAt = status, due
+	status, due, err := c.src.Activity.CadenceForPersonContext(c.ctx, person, c.t.Person.LastAt, c.t.Now)
+	c.gap("cadence", err, false)
+	c.t.Person.CadenceStatus, c.t.Person.DueAt = status, due
+
+	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (*store.PersonBrief, error) {
+		return c.src.Briefs.GetPersonBriefContext(ctx, person, 0)
+	})
+	c.gap("brief", r.err, false)
+	if r.value != nil {
+		c.t.Person.Brief = &UntrustedText{Text: r.value.RenderedText}
 	}
-	if c.src.Loops == nil {
-		c.unavailable("loops")
-	} else {
-		c.addLoops(c.collectLoops(person))
-	}
-	if c.src.Briefs == nil {
-		c.unavailable("brief")
-	} else {
-		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (*store.PersonBrief, error) {
-			return c.src.Briefs.GetPersonBriefContext(ctx, person, 0)
-		})
-		c.gap("brief", r.err, false)
-		if r.value != nil {
-			c.t.Person.Brief = &UntrustedText{Text: r.value.RenderedText}
-		}
-	}
+
 	if c.src.Agenda == nil {
 		c.unavailable("agenda")
 	} else {

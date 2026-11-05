@@ -95,6 +95,27 @@ func snapshotAnchorBurstReads(ctx context.Context, t *testing.T, src Sources, re
 	return snapshotActivityBurstReads(ctx, t, src, queries...)
 }
 
+func TestAnchorNeighboursUseRequestedMoment(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newTimelineFixture(t)
+	anchor := f.add(f.now.Add(-3*time.Hour), false)
+	f.add(f.now.Add(-time.Hour), false)
+	for _, hour := range []int{4, 2} {
+		conv, err := f.Store.EnsureConversation(f.Source.ID, fmt.Sprintf("neighbor-%d", hour), "Neighbor")
+		requirements.NoError(err)
+		f.add(f.now.Add(-time.Duration(hour)*time.Hour), false, func(m *store.Message) { m.ConversationID = conv })
+	}
+	f.project()
+	req := anchorRequest(messageRef(anchor))
+	req.Before, req.After = 1, 1
+	got, err := Build(t.Context(), f.src, req)
+	requirements.NoError(err)
+	requirements.Len(got.History, 3)
+	assertions.WithinDuration(f.now.Add(-4*time.Hour), got.History[0].Time, time.Microsecond)
+	assertions.WithinDuration(f.now.Add(-2*time.Hour), got.History[1].Time, time.Microsecond)
+	assertions.True(got.History[2].Anchor)
+}
+
 func TestAnchorNeighboursChronologicalWithProbeGrowth(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -229,24 +250,6 @@ func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 				}
 				assert.True(t, found)
 			}
-		})
-	}
-}
-
-func TestAnchorMissingSourcesProduceUnavailableGaps(t *testing.T) {
-	for _, ref := range []string{"2026-10-22", "msg:1"} {
-		t.Run(ref, func(t *testing.T) {
-			f := newTimelineFixture(t)
-			f.src.Activity = nil
-			f.src.Calls = nil
-			f.src.Calendar = nil
-			f.src.Notes = nil
-			got, err := Build(t.Context(), f.src, anchorRequest(ref))
-			require.NoError(t, err)
-			for _, section := range []string{"history", "calls", "meetings", "notes"} {
-				assert.Contains(t, got.Gaps, Gap{Section: section, Code: "unavailable"})
-			}
-			require.NotEmpty(t, got.Freshness.Sources)
 		})
 	}
 }

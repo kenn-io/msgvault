@@ -36,6 +36,7 @@ const (
 // LoopQuery selects the conversations a loop request reads.
 type LoopQuery struct {
 	PersonID       int64
+	ParticipantIDs []int64
 	ConversationID int64
 }
 
@@ -212,6 +213,17 @@ func (s *Store) loopConversationQuery(q LoopQuery) (string, []any) {
 			OR EXISTS (SELECT 1 FROM conversation_participants cp
 				WHERE cp.conversation_id = c.id AND cp.participant_id = pp.participant_id)))`
 		args = append(args, q.PersonID)
+	}
+	if len(q.ParticipantIDs) > 0 {
+		marks := placeholders(len(q.ParticipantIDs))
+		query += ` AND (EXISTS (SELECT 1 FROM messages pm WHERE pm.conversation_id = c.id AND pm.sender_id IN (` + marks + `))
+			OR EXISTS (SELECT 1 FROM message_recipients pr JOIN messages pm ON pm.id = pr.message_id WHERE pm.conversation_id = c.id AND pr.participant_id IN (` + marks + `))
+			OR EXISTS (SELECT 1 FROM conversation_participants cp WHERE cp.conversation_id = c.id AND cp.participant_id IN (` + marks + `)))`
+		for range 3 {
+			for _, id := range q.ParticipantIDs {
+				args = append(args, id)
+			}
+		}
 	}
 	query += ` GROUP BY m.conversation_id, c.source_id, c.conversation_type`
 	return query, args

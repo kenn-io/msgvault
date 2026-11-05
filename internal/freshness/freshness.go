@@ -23,7 +23,7 @@ func Build(ctx context.Context, in Inputs) (Report, error) {
 		return Report{}, errors.New("freshness: as-of time is required")
 	}
 	r := Report{AsOf: in.Now.UTC(), StaleAfterSeconds: int64(in.StaleAfter / time.Second),
-		StaleReasons: []string{}, Warnings: []string{}, Sources: []SourceFreshness{}}
+		Warnings: []string{}, Sources: []SourceFreshness{}}
 	sources := slices.Clone(in.Sources)
 	slices.SortStableFunc(sources, func(a, b SourceInventoryItem) int {
 		if c := cmp.Compare(a.SourceType, b.SourceType); c != 0 {
@@ -37,7 +37,7 @@ func Build(ctx context.Context, in Inputs) (Report, error) {
 		}
 		s := SourceFreshness{SourceID: item.SourceID, SourceType: item.SourceType, Identifier: item.Identifier,
 			Scheduling: item.Scheduling, LastSuccessfulSyncAt: item.LastSuccessfulSyncAt, LastSyncErrors: item.LastSyncErrors,
-			Outcome: item.Outcome, SyncCommand: item.SyncCommand, AgeSeconds: age(in.Now, item.LastSuccessfulSyncAt)}
+			Outcome: item.Outcome, SyncCommand: item.SyncCommand}
 		if s.Outcome == "" {
 			s.Outcome = "never"
 		}
@@ -52,33 +52,16 @@ func Build(ctx context.Context, in Inputs) (Report, error) {
 			r.Warnings = append(r.Warnings, fmt.Sprintf("The latest sync %s for %s source %s.", s.Outcome, s.SourceType, s.Identifier))
 		}
 		if s.Scheduling != "static" && s.Scheduling != "disabled" {
-			prefix := ""
 			switch {
 			case s.Outcome == "unmeasured":
 				s.Reason = "unmeasured"
-				prefix = "source_unmeasured:"
 			case s.LastSuccessfulSyncAt == nil:
 				s.Reason = "never_synced"
-				prefix = "source_never_synced:"
 			case in.Now.Sub(*s.LastSuccessfulSyncAt) > in.StaleAfter:
 				s.Reason = "stale"
-				prefix = "source_stale:"
-			}
-			if prefix != "" {
-				s.Stale = true
-				r.Stale = true
-				r.StaleReasons = append(r.StaleReasons, prefix+s.Identifier)
 			}
 		}
 		r.Sources = append(r.Sources, s)
 	}
 	return r, nil
-}
-
-func age(now time.Time, at *time.Time) *int64 {
-	if at == nil {
-		return nil
-	}
-	seconds := max(int64(0), int64(now.Sub(*at)/time.Second))
-	return &seconds
 }

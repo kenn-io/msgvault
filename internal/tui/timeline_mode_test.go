@@ -55,6 +55,47 @@ func timelineModeModel() Model {
 	m.loading = false
 	return m
 }
+
+func TestTimelineRequestDefaultBudget(t *testing.T) {
+	for _, budget := range []int{0, 4096} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			m := timelineModeModel()
+			defer m.cancelTimelineRequest()
+			cmd := m.startTimelineRequest(timeline.Request{Budget: budget}, false)
+			require.NotNil(t, cmd)
+			cmd()
+			want := budget
+			if want == 0 {
+				want = 65536
+			}
+			assert.Equal(t, want, m.timelineBackend.(*timelineModeBackend).requests[0].Budget)
+		})
+	}
+}
+
+func TestTimelineReentryReloadsRelativeDayAfterMidnight(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		req    timeline.Request
+		reload bool
+	}{
+		{"default", timeline.Request{Mode: timeline.ModeDay}, true},
+		{"days", timeline.Request{Mode: timeline.ModeDay, Days: 7}, true},
+		{"date", timeline.Request{Mode: timeline.ModeDay, Date: "2026-10-22"}, false},
+		{"range", timeline.Request{Mode: timeline.ModeDay, From: "2026-10-19", To: "2026-10-22"}, false},
+		{"relationship", timeline.Request{Mode: timeline.ModeRelationship, With: "person:42"}, false},
+		{"anchor", timeline.Request{Mode: timeline.ModeAnchor, Around: "msg:7"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := timelineModeModel()
+			defer m.cancelTimelineRequest()
+			m.timelineState.request = tc.req
+			m.timelineState.result.Now = time.Now().AddDate(0, 0, -1)
+			cmd := m.activateTimeline()
+			assert.Equal(t, tc.reload, cmd != nil)
+		})
+	}
+}
 func TestNextModeIncludesTimelineWhenAvailable(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

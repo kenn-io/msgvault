@@ -44,6 +44,7 @@ in the anchor's conversation.
 `--tier 1,2` filters people by applied or observed tier. Noise and older cold
 activity are omitted by default; use `--include-noise` or `--include-cold` to
 include them. `--brief` uses a smaller budget and shorter upcoming window.
+It accepts `--date` and rejects `--days`, `--from`, and `--to`.
 
 Markdown is the default. JSON returns the same timeline envelope with entries,
 gaps, freshness, omission counts, and `open` targets. The byte budget

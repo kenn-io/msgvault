@@ -1484,16 +1484,24 @@ func (s *Store) GetLatestSync(sourceID int64) (*SyncRun, error) {
 
 // GetLatestSyncContext is the request-aware form of GetLatestSync. A nonzero
 // excludeID leaves that run out, so a running sync can find the one before it.
-func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64) (*SyncRun, error) {
+func (s *Store) GetLatestSyncContext(ctx context.Context, sourceID, excludeID int64, excludedTypes ...string) (*SyncRun, error) {
+	whereType := ""
+	args := []any{sourceID, excludeID}
+	if len(excludedTypes) > 0 {
+		whereType = " AND sync_type NOT IN (" + placeholders(len(excludedTypes)) + ")"
+		for _, syncType := range excludedTypes {
+			args = append(args, syncType)
+		}
+	}
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, source_id, started_at, completed_at, status,
 		       messages_processed, messages_added, messages_updated, errors_count,
 		       error_message, cursor_before, cursor_after, request_fingerprint
 		FROM sync_runs
-		WHERE source_id = ? AND id <> ?
+		WHERE source_id = ? AND id <> ?`+whereType+`
 		ORDER BY started_at DESC, id DESC
 		LIMIT 1
-	`, sourceID, excludeID)
+	`, args...)
 
 	run, err := scanSyncRun(row)
 	if errors.Is(err, sql.ErrNoRows) {
