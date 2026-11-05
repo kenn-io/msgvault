@@ -37,12 +37,12 @@ type sourceConfig struct {
 	AccountEmail string `json:"account_email,omitempty"`
 }
 
-func sourceIdentifier(name, collection string) (string, error) {
+func sourceIdentifier(username, collection string) (string, error) {
 	u, err := url.Parse(collection)
 	if err != nil {
 		return "", fmt.Errorf("parse CalDAV collection URL: %w", err)
 	}
-	raw, err := json.Marshal([2]string{name, carddav.CollectionURLIdentity(u)})
+	raw, err := json.Marshal([2]string{username, carddav.CollectionURLIdentity(u)})
 	return string(raw), err
 }
 
@@ -78,7 +78,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Resul
 	found := make([]bool, len(configured))
 	discovered := make(map[string]bool, len(calendars))
 	for _, cal := range calendars {
-		identifier, err := sourceIdentifier(opts.Name, cal.URL.String())
+		identifier, err := sourceIdentifier(opts.Username, cal.URL.String())
 		if err != nil {
 			return result, err
 		}
@@ -113,7 +113,7 @@ func (c *Client) Sync(ctx context.Context, st *store.Store, opts Options) (Resul
 		}
 		for _, src := range sources {
 			var identity [2]string
-			if json.Unmarshal([]byte(src.Identifier), &identity) != nil || identity[0] != opts.Name || discovered[src.Identifier] || src.HistoryOnly || src.MergedIntoSourceID != 0 {
+			if json.Unmarshal([]byte(src.Identifier), &identity) != nil || identity[0] != opts.Username || discovered[src.Identifier] || src.HistoryOnly || src.MergedIntoSourceID != 0 {
 				continue
 			}
 			removed, err := st.ReconcileSourceMessageSnapshot(ctx, src.ID, map[string]struct{}{})
@@ -225,7 +225,7 @@ func prepare(ctx context.Context, plan carddav.MemberPlan, inventory map[string]
 }
 
 func (c *Client) syncCalendar(ctx context.Context, base *store.Store, cal carddav.DiscoveredBook, opts Options, budget *carddav.Budget) (result Result, retErr error) {
-	identifier, err := sourceIdentifier(opts.Name, cal.URL.String())
+	identifier, err := sourceIdentifier(opts.Username, cal.URL.String())
 	if err != nil {
 		return result, fmt.Errorf("CalDAV source identity: %w", err)
 	}
