@@ -102,6 +102,13 @@ func TestCalendarSchedulingIsNeverAttendance(t *testing.T) {
 		assertions.NotContains(point.Value, "evil.example")
 	}
 	assertions.JSONEq(raw, string(got.Raw))
+	cancelled, err := (ImportRequest{
+		Format: "google_calendar", Account: "calendar@example.com", Record: []byte(`{"id":"e1","status":"cancelled"}`),
+	}).Observation()
+	requirements.NoError(err)
+	assertions.Equal("cancelled", cancelled.Outcome)
+	assertions.True(cancelled.OccurredAt.IsZero())
+	assertions.Empty(cancelled.Participants)
 }
 
 func TestImportMissingAndUnsupportedFields(t *testing.T) {
@@ -113,7 +120,7 @@ func TestImportMissingAndUnsupportedFields(t *testing.T) {
 		{"signal_desktop", `{"callId":"x","timestamp":null}`},
 		{"signal_desktop", `{"callId":"x"}`},
 		{"signal_desktop", `{"callId":"x","timestamp":"1790841600000"}`},
-		{"google_calendar", `{"id":"x","status":"cancelled"}`},
+		{"google_calendar", `{"id":"x"}`},
 		{"google_calendar", `{"id":"x","start":{"date":"2026-10-01"},"recurrence":["RRULE:FREQ=WEEKLY"]}`},
 		{"unsupported", `{}`},
 	} {

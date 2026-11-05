@@ -53,9 +53,14 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 	if err := json.Unmarshal(r.Record, &event, json.MatchCaseInsensitiveNames(true)); err != nil || len(event.Recurrence) != 0 {
 		return Observation{}, invalid("calendar event; recurring masters require expanded instances")
 	}
-	start, precision, err := event.Start.parse()
-	if err != nil {
-		return Observation{}, invalid("calendar start requires a date or RFC3339 offset")
+	var start time.Time
+	var precision string
+	if event.Status != "cancelled" || event.Start != (calendarTime{}) {
+		var err error
+		start, precision, err = event.Start.parse()
+		if err != nil {
+			return Observation{}, invalid("calendar start requires a date or RFC3339 offset")
+		}
 	}
 	o := Observation{
 		RecordID: event.ID,
@@ -78,7 +83,7 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 	}
 	used := make(map[string]bool)
 	for _, attendee := range event.Attendees {
-		if id, ok := r.Bindings[attendee.Email]; ok {
+		if id, ok := r.Bindings[attendee.Email]; ok && !start.IsZero() {
 			o.Participants = append(o.Participants, Participant{ID: id, Participation: "invited"})
 			used[attendee.Email] = true
 		}

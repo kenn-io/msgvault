@@ -82,6 +82,45 @@ func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
 	requirements.ErrorIs(err, context.Canceled)
 }
 
+func TestSparseCalendarCancellationKeepsEvent(t *testing.T) {
+	st := storetest.New(t).Store
+	peer, err := st.EnsureParticipant("attendee@example.com", "Example", "example.com")
+	require.NoError(t, err)
+	person, _, err := st.CreatePersonFromParticipant(peer)
+	require.NoError(t, err)
+	o, err := (callhistory.ImportRequest{
+		Format: "google_calendar", Account: "calendar@example.com",
+		Record:   []byte(`{"id":"e1","start":{"dateTime":"2026-10-01T09:00:00Z"},"attendees":[{"email":"attendee@example.com"}]}`),
+		Bindings: map[string]int64{"attendee@example.com": peer},
+	}).Observation()
+	require.NoError(t, err)
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(t, err)
+	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	require.NoError(t, err)
+	cancelled, err := (callhistory.ImportRequest{
+		Format: "google_calendar", Account: "calendar@example.com", Record: []byte(`{"id":"e1","status":"cancelled"}`),
+	}).Observation()
+	require.NoError(t, err)
+	again, err := st.PutCallObservationContext(t.Context(), src.ID, cancelled)
+	require.NoError(t, err)
+	assert.Equal(t, id, again)
+	summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{PersonID: person.ID})
+	require.NoError(t, err)
+	require.Len(t, summary, 1)
+	assert.Equal(t, 1, summary[0].Scheduled)
+	assert.Equal(t, 1, summary[0].ScheduledCancelled)
+	items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	assert.True(t, o.OccurredAt.Equal(items[0].OccurredAt))
+	assert.Equal(t, "cancelled", items[0].Outcome)
+	assert.Equal(t, []callhistory.Participant{{ID: peer, Participation: "invited"}}, items[0].Participants)
+	raw, err := st.GetMessageRawContext(t.Context(), id)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(o.Raw), string(raw))
+}
+
 func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {
 	assertions := assert.New(t)
 	personID := int64(7)

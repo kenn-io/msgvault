@@ -93,6 +93,7 @@ func validID(s string) bool {
 }
 
 func (e Evidence) Validate() error {
+	sparseCancellation := e.Kind == "scheduled_meeting" && e.Outcome == "cancelled" && e.OccurredAt.IsZero()
 	if e.Version != 1 || !validID(e.Provider) || !validID(e.Account) ||
 		(e.NativeCallID != "" && !validID(e.NativeCallID)) {
 		return invalid("version or provenance")
@@ -101,10 +102,10 @@ func (e Evidence) Validate() error {
 		!slices.Contains([]string{"incoming", "outgoing", unknown}, e.Direction) ||
 		!slices.Contains([]string{"answered", "missed", "declined", "cancelled", unknown}, e.Outcome) ||
 		!slices.Contains([]string{"joined", "not_joined", unknown}, e.OwnerParticipation) ||
-		!slices.Contains([]string{"instant", "day"}, e.Precision) {
+		(!slices.Contains([]string{"instant", "day"}, e.Precision) && !(sparseCancellation && e.Precision == "")) {
 		return invalid("evidence classification")
 	}
-	if e.OccurredAt.IsZero() || e.OccurredAt.Year() < 1 || e.OccurredAt.Year() > 9999 ||
+	if (e.OccurredAt.IsZero() && !sparseCancellation) || e.OccurredAt.Year() < 1 || e.OccurredAt.Year() > 9999 ||
 		(e.EndedAt != nil && (e.EndedAt.Before(e.OccurredAt) || e.EndedAt.Year() > 9999)) {
 		return invalid("timestamps")
 	}
