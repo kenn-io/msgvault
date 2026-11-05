@@ -222,10 +222,11 @@
     font-size: var(--font-size-sm);
   }
   label :global(.kit-text-input__control), label :global(.kit-select-dropdown__trigger), textarea { font-size: 16px; }
+  label :global(.kit-select-dropdown__trigger) { font-weight: 400; }
   textarea {
     min-height: 6rem;
     resize: vertical;
-    padding: var(--space-2);
+    padding: var(--space-2) calc(var(--space-3) + 1px);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm);
     background: var(--bg-canvas);

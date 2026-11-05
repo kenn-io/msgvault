@@ -8,10 +8,11 @@
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
-  let { client, selector, defaultTitle = '', onclose = () => undefined, oncreated = () => undefined, embedded = false, busy = $bindable(false) }: {
+  let { client, selector, defaultTitle = '', onclose = () => undefined, oncreated = () => undefined, embedded = false, busy = $bindable(false), receipt = $bindable(undefined) }: {
     client: APIClient;
     embedded?: boolean;
     busy?: boolean;
+    receipt?: KataIssueReceipt;
     selector: EvidenceSelector;
     defaultTitle?: string;
     onclose?: () => void;
@@ -32,7 +33,6 @@
   let preview = $state<PreparedEvidence>();
   let loading = $state(false);
   let error = $state('');
-  let receipt = $state<KataIssueReceipt>();
   let replayed = $state(false);
   // The key whose issue was deleted in Kata; filing again salts from it.
   let deletedKey = $state('');
@@ -174,7 +174,7 @@
       {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
-        <SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} />
+        <div class="issue-mode"><span>Issue</span><SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} /></div>
         {#if mode === 'create'}
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
@@ -200,7 +200,7 @@
         {#if error}<p role="alert">{error}</p>{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
         <div class="actions"><Button label="Cancel" surface="soft" disabled={busy} onclick={onclose} />
-        <Button type="submit" tone="info" surface="solid" label={mode === 'create' ? 'Create issue' : 'Add quote'} disabled={!canSubmit} /></div>
+        <Button type="submit" tone={canSubmit ? 'info' : 'neutral'} surface={canSubmit ? 'solid' : 'soft'} label={mode === 'create' ? 'Create issue' : 'Add quote'} disabled={!canSubmit} /></div>
       </form>
     {/if}
     {#if receipt}<div class="actions"><Button label="Done" tone="info" surface="solid" disabled={busy} onclick={onclose} /></div>{/if}
@@ -212,11 +212,14 @@
   .kata-dialog { width: 100%; }
   p { margin: 0; }
   .disclosure { color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .issue-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .issue-mode :global(.kit-segmented) { justify-self: start; }
   label { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
   label :global(.kit-text-input__control), textarea { font-size: 16px; }
   textarea { resize: vertical; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
   section { display: grid; gap: var(--space-2); }
-  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; font: inherit; padding: var(--space-2); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
-  .passage-controls { display: flex; gap: var(--space-2); justify-content: flex-end; margin-top: var(--space-2); }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; font: inherit; font-size: 16px; padding: var(--space-2) calc(var(--space-3) + 1px); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
+  .passage-controls { display: flex; gap: var(--space-2); justify-content: flex-start; margin-top: var(--space-2); }
+  .passage-controls :global(button:disabled) { opacity: 0.35; }
   .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>

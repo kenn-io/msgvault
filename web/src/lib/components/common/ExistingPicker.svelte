@@ -43,16 +43,22 @@
   {:else if error}<p role="alert">{error}</p>
   {:else if items.length === 0}<p>{listedQuery ? `No ${noun} match "${listedQuery}".` : empty}</p>
   {:else}
-    <div class="results">
-      <RadioGroup legend={noun} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
+    <div class="results" class:overflowing={items.length > 5}>
+      <RadioGroup legend={noun[0].toUpperCase() + noun.slice(1)} options={items.map(item => ({ value: item.id, label: item.detail ? `${item.label} · ${item.detail}` : item.label }))} value={selected} {disabled} onchange={(value) => selected = value ?? ''} />
     </div>
   {/if}
-  {#if !loading && query.trim() === listedQuery && !error && truncated}<p>{moreNote}</p>{/if}
+  {#if !loading && query.trim() === listedQuery && !error && truncated}<p class="more-note">{moreNote}</p>{/if}
 </div>
 
 <style>
   .picker { display: grid; gap: var(--space-2); min-width: 0; }
   .picker :global(.kit-text-input__control) { font-size: 16px; }
-  .results { max-height: 16rem; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: var(--space-2); }
-  p { margin: 0; color: var(--text-secondary); }
+  .picker :global(.kit-text-input:has(.kit-text-input__control:focus-visible)) { outline-width: 1px; border-color: var(--border-default); }
+  :global(:root.high-contrast) .picker :global(.kit-text-input:has(.kit-text-input__control:focus-visible)) { outline-width: 3px; }
+  .results { max-height: 16rem; overflow: auto; border: 1px solid var(--border-muted); border-radius: var(--radius-sm); padding: 12px; }
+  .results.overflowing { mask-image: linear-gradient(to bottom, black calc(100% - 16px), transparent); }
+  .results :global(.kit-radio-group__legend) { font-weight: 400; }
+  .results :global(.kit-radio-group__option) { min-height: 32px; }
+  p { margin: 0; color: var(--text-secondary); font-size: 12px; }
+  .more-note { margin-top: var(--space-2); }
 </style>

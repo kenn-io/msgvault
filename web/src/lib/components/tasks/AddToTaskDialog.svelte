@@ -2,6 +2,7 @@
   import { SegmentedControl } from '@kenn-io/kit-ui';
   import { untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
+  import type { KataIssueReceipt } from '../../api/generated/models';
   import { kataReadiness } from '../../kata/kata-ready.svelte';
   import { EVIDENCE_WINDOW } from '../../kata/evidence';
   import Dialog from '../common/Dialog.svelte';
@@ -15,6 +16,7 @@
   let provider = $state(untrack(() => email ? 'tasks' : 'kata'));
   let kataInitialized = $state(untrack(() => !email));
   let kataBusy = $state(false);
+  let kataReceipt = $state<KataIssueReceipt>();
   let busy = $state(false);
   const options = $derived([
     ...(email ? [{ value: 'tasks', label: 'Tasks' }] : []),
@@ -22,16 +24,16 @@
   ]);
 </script>
 
-<Dialog title="Add to task" onclose={() => { if (!busy && !kataBusy) onclose(); }}>
+<Dialog title={provider === 'kata' ? 'Add to Kata' : 'Add to task'} onclose={() => { if (!busy && !kataBusy) onclose(); }}>
   <div class="task-dialog">
-    {#if options.length > 1}
+    {#if options.length > 1 && !kataReceipt}
       <div class="provider"><span>Send to</span><SegmentedControl ariaLabel="Send to" disabled={busy || kataBusy} {options} value={provider} onchange={(value) => { provider = value; if (value === 'kata') kataInitialized = true; }} /></div>
     {/if}
     {#if email}<div hidden={provider !== 'tasks'}>
       <TaskLinks {client} {messageId} {title} {onsettings} mode="add" bind:busy oncancel={onclose} oncomplete={onclose} />
     </div>{/if}
     {#if kataInitialized && (email || kata?.ready)}<div hidden={provider !== 'kata'}>
-      <KataEvidenceDialog embedded {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} bind:busy={kataBusy} {onclose} />
+      <KataEvidenceDialog embedded {client} selector={{ kind: 'message', message_id: messageId, start_rune: 0, max_chars: EVIDENCE_WINDOW }} defaultTitle={title} bind:busy={kataBusy} bind:receipt={kataReceipt} {onclose} />
     </div>{/if}
   </div>
 </Dialog>
@@ -39,4 +41,5 @@
 <style>
   .task-dialog { display: grid; gap: var(--space-6); }
   .provider { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .provider :global(.kit-segmented) { justify-self: start; }
 </style>

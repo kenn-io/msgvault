@@ -278,14 +278,14 @@
     {:else if complete}<p>No linked tasks.</p>{/if}
     {/if}
     {#if mutationReady && mode === 'add'}
-      <SegmentedControl disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} />
+      <div class="task-mode"><span>Task</span><SegmentedControl disabled={busy || mutating} ariaLabel="Task" options={[{ value: 'create', label: 'New' }, { value: 'existing', label: 'Existing' }]} value={action} onchange={(value) => action = value} /></div>
       {#if action !== 'create'}
       <ExistingPicker load={loadTasks} noun="tasks" moreNote="Showing the first 25 tasks. Type to search the rest." empty={`No tasks in ${project} yet.`} disabled={busy} bind:selected />
       {#if error}<p role="alert">{error}</p>{/if}
       <p class="disclosure">Bodies and attachments are never sent.</p>
       <div class="actions">
         <Button surface="soft" label="Cancel" disabled={busy} onclick={oncancel} />
-        <Button tone="info" surface="solid" label="Link task" disabled={busy || !mutationReady || !selected} onclick={() => void linkExisting(selected)} />
+        <Button tone={selected ? 'info' : 'neutral'} surface={selected ? 'solid' : 'soft'} label="Link task" disabled={busy || !mutationReady || !selected} onclick={() => void linkExisting(selected)} />
       </div>
       {/if}
     {/if}
@@ -326,6 +326,8 @@
   .task-links.add { padding: 0; gap: var(--space-6); }
   .creating { margin-bottom: var(--space-6); }
   .disclosure { color: var(--text-secondary); font-size: 12px; }
+  .task-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .task-mode :global(.kit-segmented) { justify-self: start; }
   .actions { display: flex; justify-content: flex-end; gap: var(--space-4); }
   header,
   li {
