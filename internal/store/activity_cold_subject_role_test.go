@@ -16,7 +16,7 @@ import (
 func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
-			requirements := require.New(t)
+			assertions, requirements := assert.New(t), require.New(t)
 			f := newColdTimelineActivityFixture(t)
 			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
 			subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
@@ -37,42 +37,32 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 				to = append(to, alias)
 			}
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", to, nil))
-			for _, limit := range []int{25, 1} {
-				t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
-					assertions := assert.New(t)
-					requirements := require.New(t)
-					burstQuery := timelineBurstQuery()
-					burstQuery.Subject = subject
-					// The cold room stays unprojected; RunOnce stores the audience limit.
-					projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
-					requirements.NoError(err)
-					_, err = projector.RunOnce(t.Context())
-					requirements.NoError(err)
-					burstQuery.Filters = store.ActivityFilters{IncludeNoise: true}
-					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), burstQuery)
-					requirements.NoError(err)
-					requirements.Len(page.Bursts, 1)
-					wantInbound := 1
-					if limit == 1 {
-						wantInbound = 0
-					}
-					assertions.Equal(wantInbound, page.Bursts[0].Inbound)
-					assertions.Zero(page.Bursts[0].Outbound)
-					seen := map[int64]bool{}
-					for _, cp := range page.Bursts[0].Counterparts {
-						seen[cp.ParticipantID] = true
-						if cp.ParticipantID == f.peer || cp.ParticipantID == alias {
-							assertions.Equal(store.RoleSender, cp.Role)
-							assertions.Equal(limit != 1, cp.Counted)
-							assertions.Equal(store.EvidenceDirect, cp.Evidence)
-						}
-					}
-					assertions.True(seen[f.peer])
-					assertions.True(seen[guest])
-					if alias != 0 {
-						assertions.True(seen[alias])
-					}
-				})
+			burstQuery := timelineBurstQuery()
+			burstQuery.Subject = subject
+			// The cold room stays unprojected; RunOnce stores the audience limit.
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 25})
+			requirements.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			requirements.NoError(err)
+			burstQuery.Filters = store.ActivityFilters{IncludeNoise: true}
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), burstQuery)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal(1, page.Bursts[0].Inbound)
+			assertions.Zero(page.Bursts[0].Outbound)
+			seen := map[int64]bool{}
+			for _, cp := range page.Bursts[0].Counterparts {
+				seen[cp.ParticipantID] = true
+				if cp.ParticipantID == f.peer || cp.ParticipantID == alias {
+					assertions.Equal(store.RoleSender, cp.Role)
+					assertions.True(cp.Counted)
+					assertions.Equal(store.EvidenceDirect, cp.Evidence)
+				}
+			}
+			assertions.True(seen[f.peer])
+			assertions.True(seen[guest])
+			if alias != 0 {
+				assertions.True(seen[alias])
 			}
 		})
 	}

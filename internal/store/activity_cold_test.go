@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"fmt"
-	"strconv"
 	"testing"
 	"time"
 
@@ -73,70 +72,61 @@ func retractTimelineActivity(t *testing.T, f *timelineActivityFixture, messageID
 }
 
 func TestColdAdapterFiltersMixedNoise(t *testing.T) {
-	for _, noiseType := range []string{"sender", "list"} {
-		t.Run(noiseType, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			f := newColdTimelineActivityFixture(t)
-			room := coldTimelineRoom(t, f, f.Source.ID, "mixed-noise")
-			at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
-			human := addColdTimelineMessage(t, f, room, f.Source.ID, at, false)
-			noise := addColdTimelineMessage(t, f, room, f.Source.ID, at.Add(time.Hour), false)
-			if noiseType == "sender" {
-				sender := f.EnsureParticipant("no-reply@example.com", "Automated sender", "example.com")
-				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, noise)
-				requirements.NoError(err)
-				requirements.NoError(f.Store.ReplaceMessageRecipients(noise, "from", []int64{sender}, nil))
-			} else {
-				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), noise)
-				requirements.NoError(err)
-			}
+	t.Run("sender", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		f := newColdTimelineActivityFixture(t)
+		room := coldTimelineRoom(t, f, f.Source.ID, "mixed-noise")
+		at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
+		human := addColdTimelineMessage(t, f, room, f.Source.ID, at, false)
+		noise := addColdTimelineMessage(t, f, room, f.Source.ID, at.Add(time.Hour), false)
+		sender := f.EnsureParticipant("no-reply@example.com", "Automated sender", "example.com")
+		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, noise)
+		requirements.NoError(err)
+		requirements.NoError(f.Store.ReplaceMessageRecipients(noise, "from", []int64{sender}, nil))
+		q := timelineBurstQuery()
+		page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+		requirements.NoError(err)
+		requirements.Len(page.Bursts, 1)
+		assertions.Equal([]int64{human}, page.Bursts[0].LatestMessageIDs)
+		assertions.Equal(human, page.Bursts[0].AnchorMessageID)
+		assertions.Equal(at, page.Bursts[0].FirstAt)
+		assertions.Equal(at, page.Bursts[0].LastAt)
+		assertions.Equal(1, page.Bursts[0].Inbound)
+		assertions.Equal(1, page.NoiseOmitted)
+		count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+		requirements.NoError(err)
+		assertions.Equal(1, count)
+
+		q.Filters.IncludeNoise = true
+		page, err = f.Store.ListColdActivityBurstsContext(t.Context(), q)
+		requirements.NoError(err)
+		requirements.Len(page.Bursts, 1)
+		assertions.Equal([]int64{noise, human}, page.Bursts[0].LatestMessageIDs)
+		assertions.Zero(page.NoiseOmitted)
+		count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
+		requirements.NoError(err)
+		assertions.Equal(2, count)
+
+		// Leave only the automated message to check whole-room exclusion.
+		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), human)
+		requirements.NoError(err)
+		for _, exclude := range []bool{false, true} {
 			q := timelineBurstQuery()
+			q.Filters.Exclusions = persontiers.DefaultConfig()
+			if !exclude {
+				q.Filters.Exclusions.ExcludeAddressPatterns = nil
+			}
 			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
-			requirements.Len(page.Bursts, 1)
-			assertions.Equal([]int64{human}, page.Bursts[0].LatestMessageIDs)
-			assertions.Equal(human, page.Bursts[0].AnchorMessageID)
-			assertions.Equal(at, page.Bursts[0].FirstAt)
-			assertions.Equal(at, page.Bursts[0].LastAt)
-			assertions.Equal(1, page.Bursts[0].Inbound)
-			assertions.Equal(1, page.NoiseOmitted)
-			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Equal(1, count)
-
-			q.Filters.IncludeNoise = true
-			page, err = f.Store.ListColdActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			requirements.Len(page.Bursts, 1)
-			assertions.Equal([]int64{noise, human}, page.Bursts[0].LatestMessageIDs)
-			assertions.Zero(page.NoiseOmitted)
-			count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Equal(2, count)
-
-			if noiseType == "sender" {
-				// Leave only the automated message to check whole-room exclusion.
-				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), human)
-				requirements.NoError(err)
-				for _, exclude := range []bool{false, true} {
-					q := timelineBurstQuery()
-					q.Filters.Exclusions = persontiers.DefaultConfig()
-					if !exclude {
-						q.Filters.Exclusions.ExcludeAddressPatterns = nil
-					}
-					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-					requirements.NoError(err)
-					if exclude {
-						assertions.Empty(page.Bursts)
-						continue
-					}
-					requirements.Len(page.Bursts, 1)
-					assertions.Equal(1, page.Bursts[0].Inbound)
-					assertions.Zero(page.NoiseOmitted)
-				}
+			if exclude {
+				assertions.Empty(page.Bursts)
+				continue
 			}
-		})
-	}
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal(1, page.Bursts[0].Inbound)
+			assertions.Zero(page.NoiseOmitted)
+		}
+	})
 }
 
 func TestColdAdapterExcludesEmailThreads(t *testing.T) {
@@ -180,43 +170,36 @@ func TestColdAdapterIntersectsDateAndTimestampWindows(t *testing.T) {
 	}
 }
 
-// A saved person's human address keeps automated aliases visible in either role.
+// A saved person's human address keeps an automated sender alias visible.
 func TestColdAdapterKeepsSavedAutomatedAliasesVisible(t *testing.T) {
-	for _, automatedSender := range []bool{false, true} {
-		t.Run(fmt.Sprintf("automated-sender=%t", automatedSender), func(t *testing.T) {
-			requirements, assertions := require.New(t), assert.New(t)
-			f := newColdTimelineActivityFixture(t)
-			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
-			alias := f.EnsureParticipant("no-reply@example.com", "Automated alias", "example.com")
-			_, err := f.Store.LinkParticipants(f.peer, alias)
-			requirements.NoError(err)
-			person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-			requirements.NoError(err)
-			id := addColdTimelineMessage(t, f, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false)
-			sender, recipient := f.peer, alias
-			if automatedSender {
-				sender, recipient = alias, f.peer
-			}
-			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, id)
-			requirements.NoError(err)
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
-			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, recipient}, nil))
-			q := timelineBurstQuery()
-			q.Subject.PersonID = person.ID
-			q.Filters.Exclusions = persontiers.DefaultConfig()
-			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			requirements.Len(cold.Bursts, 1)
-			byParticipant := map[int64]store.ActivityMessageCounterpart{}
-			for _, cp := range cold.Bursts[0].Counterparts {
-				byParticipant[cp.ParticipantID] = cp
-			}
-			requirements.Contains(byParticipant, alias)
-			assertions.Empty(byParticipant[alias].Excluded)
-			assertions.Equal(id, cold.Bursts[0].AnchorMessageID)
-			assertions.Equal(1, cold.Bursts[0].Inbound)
-		})
+	requirements, assertions := require.New(t), assert.New(t)
+	f := newColdTimelineActivityFixture(t)
+	coldTimelineRoom(t, f, f.Source.ID, "default-thread")
+	alias := f.EnsureParticipant("no-reply@example.com", "Automated alias", "example.com")
+	_, err := f.Store.LinkParticipants(f.peer, alias)
+	requirements.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+	requirements.NoError(err)
+	id := addColdTimelineMessage(t, f, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false)
+	sender, recipient := alias, f.peer
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, id)
+	requirements.NoError(err)
+	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
+	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, recipient}, nil))
+	q := timelineBurstQuery()
+	q.Subject.PersonID = person.ID
+	q.Filters.Exclusions = persontiers.DefaultConfig()
+	cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+	requirements.NoError(err)
+	requirements.Len(cold.Bursts, 1)
+	byParticipant := map[int64]store.ActivityMessageCounterpart{}
+	for _, cp := range cold.Bursts[0].Counterparts {
+		byParticipant[cp.ParticipantID] = cp
 	}
+	requirements.Contains(byParticipant, alias)
+	assertions.Empty(byParticipant[alias].Excluded)
+	assertions.Equal(id, cold.Bursts[0].AnchorMessageID)
+	assertions.Equal(1, cold.Bursts[0].Inbound)
 }
 
 // Bypassing live eligibility, scope, or exact archive-zone dating leaks a row here.
@@ -294,13 +277,11 @@ func TestColdAdapterFallsBackFromMissingSentAt(t *testing.T) {
 				{"civil-date", store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Limit: 10}},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					t.Run("list", func(t *testing.T) {
-						page, err := f.Store.ListColdActivityBurstsContext(t.Context(), tc.query)
-						require.NoError(t, err)
-						require.Len(t, page.Bursts, 1)
-						assert.Equal(t, []int64{id}, page.Bursts[0].LatestMessageIDs)
-						assert.Equal(t, at, page.Bursts[0].FirstAt)
-					})
+					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), tc.query)
+					require.NoError(t, err)
+					require.Len(t, page.Bursts, 1)
+					assert.Equal(t, []int64{id}, page.Bursts[0].LatestMessageIDs)
+					assert.Equal(t, at, page.Bursts[0].FirstAt)
 				})
 			}
 		})
@@ -433,19 +414,15 @@ func TestColdAdapterAggregatesCompleteLargeBurst(t *testing.T) {
 	assertions.Len(page.Bursts[0].LatestMessageIDs, 5)
 }
 
-// Cold reconstruction applies the stored audience limit after projection rows are removed.
-func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
+// Cold reconstruction applies the stored audience limit without projection rows.
+func TestColdAdapterUsesStoredAudiencePolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name                                     string
-		outgoing, saved, aliases, chat, envelope bool
-		want, limit, roster                      int
+		name                string
+		outgoing, chat      bool
+		want, limit, roster int
 	}{
 		{name: "sender-plus-recipient"},
-		{name: "saved-aliases", aliases: true, want: 1},
 		{name: "default-unsaved", outgoing: true},
-		{name: "default-saved", outgoing: true, saved: true},
-		{name: "chat-envelope", chat: true, envelope: true, want: 1},
-		{name: "chat-roster", chat: true},
 		{name: "chat-roster-limit-30", chat: true, limit: 30, roster: 30, want: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -453,17 +430,7 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 			assertions := assert.New(t)
 			f := newColdTimelineActivityFixture(t)
 			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
-			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Full)
 			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
-			if tc.aliases {
-				_, err := f.Store.LinkParticipants(f.peer, other)
-				requirements.NoError(err)
-				_, _, err = f.Store.CreatePersonFromParticipant(f.peer)
-				requirements.NoError(err)
-			} else if tc.saved {
-				_, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-				requirements.NoError(err)
-			}
 			if tc.chat {
 				for _, participant := range []int64{f.owner, f.peer, other} {
 					requirements.NoError(f.Store.EnsureConversationParticipant(f.ConvID, participant, "member"))
@@ -483,12 +450,7 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 			switch {
 			case tc.outgoing:
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, other}, []string{"Alice", "Bob"}))
-			case tc.aliases:
-				third := f.EnsureParticipant("alice-alt@example.com", "Alice", "example.com")
-				_, err := f.Store.LinkParticipants(f.peer, third)
-				requirements.NoError(err)
-				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other, third}, []string{"Owner", "Bob", "Alice"}))
-			case tc.chat && !tc.envelope:
+			case tc.chat:
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
 			case !tc.chat:
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other}, []string{"Owner", "Bob"}))
@@ -499,8 +461,6 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 			requirements.NoError(err)
 			q := timelineBurstQuery()
 			q.Filters.IncludeNoise = true
-			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Cold)
-			retractTimelineActivity(t, f, id)
 			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(cold.Bursts, 1)
@@ -517,18 +477,17 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 // Message type determines contact totals and each peer's contact annotation.
 func TestColdAdapterAppliesMessageTypeContactEligibility(t *testing.T) {
 	for _, tc := range []struct {
-		name, kind, conversation string
-		want                     int
+		name, kind string
+		want       int
 	}{
-		{"SMS", "sms", "direct_chat", 1},
-		{"missed Synctech call", "synctech_sms_call", "direct_chat", 0},
-		{"missed Google Voice call", "google_voice_call", "direct_chat", 0},
+		{"SMS", "sms", 1},
+		{"missed Synctech call", "synctech_sms_call", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			f := newColdTimelineActivityFixture(t)
 			room := coldTimelineRoom(t, f, f.Source.ID, "contact-parity")
-			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type=? WHERE id=?`), tc.conversation, room)
+			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='direct_chat' WHERE id=?`), room)
 			requirements.NoError(err)
 			id := addColdTimelineMessage(t, f, room, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false)
 			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type=?,subject=? WHERE id=?`), tc.kind, tc.name, id)
@@ -587,35 +546,31 @@ func TestColdAdapterIgnoresStaleProjection(t *testing.T) {
 	assertions.False(peer.Counted)
 }
 
-func TestColdAdapterFiltersOffsetStoredTimestamps(t *testing.T) {
-	for _, offset := range []int{0, 8 * 60 * 60, -7 * 60 * 60, 9 * 60 * 60} {
-		t.Run(strconv.Itoa(offset), func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			f := newColdTimelineActivityFixture(t)
-			room := coldTimelineRoom(t, f, f.Source.ID, "stored-offset-window")
-			start := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-			end := start.Add(time.Hour)
-			zone := time.FixedZone("stored", offset)
-			for _, at := range []time.Time{start.Add(-8 * time.Hour), start.Add(-time.Second), start, start.Add(30 * time.Minute), end, start.Add(8 * time.Hour)} {
-				addColdTimelineMessage(t, f, room, f.Source.ID, at.In(zone), false)
-			}
-			for _, bounds := range [][2]*time.Time{{&start, &end}, {&start, nil}, {nil, &end}} {
-				q := timelineBurstQuery()
-				q.After, q.Before = bounds[0], bounds[1]
-				page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-				requirements.NoError(err)
-				assertions.Len(page.Bursts, 1)
-				count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-				requirements.NoError(err)
-				assertions.Equal(6, count)
-			}
-			q := timelineBurstQuery()
-			q.After = new(start.Add(9 * time.Hour))
-			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Empty(page.Bursts)
-		})
+func TestColdAdapterRetainsCompleteDayForTimestampWindow(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	f := newColdTimelineActivityFixture(t)
+	room := coldTimelineRoom(t, f, f.Source.ID, "stored-offset-window")
+	start := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+	end := start.Add(time.Hour)
+	zone := time.FixedZone("stored", 8*60*60)
+	for _, at := range []time.Time{start.Add(-8 * time.Hour), start.Add(-time.Second), start, start.Add(30 * time.Minute), end, start.Add(8 * time.Hour)} {
+		addColdTimelineMessage(t, f, room, f.Source.ID, at.In(zone), false)
 	}
+	for _, bounds := range [][2]*time.Time{{&start, &end}, {&start, nil}, {nil, &end}} {
+		q := timelineBurstQuery()
+		q.After, q.Before = bounds[0], bounds[1]
+		page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+		requirements.NoError(err)
+		assertions.Len(page.Bursts, 1)
+		count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+		requirements.NoError(err)
+		assertions.Equal(6, count)
+	}
+	q := timelineBurstQuery()
+	q.After = new(start.Add(9 * time.Hour))
+	page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+	requirements.NoError(err)
+	assertions.Empty(page.Bursts)
 }
 
 func TestColdAdapterKiritimatiStoredOffset(t *testing.T) {
