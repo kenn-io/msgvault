@@ -939,7 +939,16 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 	if err := imp.store.UpsertMessageBodyContext(ctx, messageID, sql.NullString{String: text, Valid: text != ""}, bodyHTML); err != nil {
 		return 0, false, err
 	}
-	inlineImagesChanged := imp.downloadInlineImages(ctx, messageID, gm.Body.Content, opts, sum)
+	if imp.downloadInlineImages(ctx, messageID, gm.Body.Content, opts, sum) {
+		// The attachment rows are already replaced; refresh the message's
+		// attachment flags on every later exit, even after a cancel, so they
+		// match those rows.
+		defer func() {
+			if err := imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
+				sum.Errors++
+			}
+		}()
+	}
 	// Archive the exact original message JSON. gm.Raw is captured verbatim at
 	// decode time (ChatMessage.UnmarshalJSON), so it preserves every Graph field
 	// including ones we do not model; fall back to re-marshalling only if a
@@ -1070,13 +1079,6 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		sum.Errors++
 	} else {
 		sum.AttachmentsFound += int64(len(linkAttachments))
-	}
-	if inlineImagesChanged {
-		// The attachment rows are already replaced; refresh the message's
-		// attachment flags even after a cancel so they match those rows.
-		if err := imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
-			sum.Errors++
-		}
 	}
 	return messageID, true, nil
 }

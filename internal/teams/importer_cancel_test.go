@@ -3,11 +3,9 @@ package teams
 import (
 	"context"
 	"database/sql"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,33 +13,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
-
-// cancelAfterCommitHandler cancels synchronously on the first committed
-// transaction after which committed reports true. The writes that follow it
-// then run with an already-canceled context.
-type cancelAfterCommitHandler struct {
-	slog.Handler
-
-	mu        sync.Mutex
-	cancel    context.CancelFunc
-	committed func() bool
-	canceled  bool
-}
-
-func (*cancelAfterCommitHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *cancelAfterCommitHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message != "sql tx commit" {
-		return nil
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.canceled && h.committed() {
-		h.cancel()
-		h.canceled = true
-	}
-	return nil
-}
 
 func messageAttachmentFlags(t *testing.T, st *store.Store, messageID int64) (bool, int) {
 	t.Helper()
@@ -86,29 +57,18 @@ func TestBackfillInlineMediaCancelAfterReplaceRefreshesFlags(t *testing.T) {
 	queryCtx := context.WithoutCancel(t.Context())
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	handler := &cancelAfterCommitHandler{
-		Handler: slog.DiscardHandler,
-		cancel:  cancel,
-		committed: func() bool {
-			var rows int
-			require.NoError(st.DB().QueryRowContext(queryCtx, st.Rebind(
-				`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), msgID).Scan(&rows))
-			return rows > 0
-		},
-	}
-	// A commit over the slow threshold logs "sql tx slow" in place of the
-	// line the handler waits for.
-	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
-	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
-	previous := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var rows int
+		require.NoError(st.DB().QueryRowContext(queryCtx, st.Rebind(
+			`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), msgID).Scan(&rows))
+		return rows > 0
+	})
 
 	client := NewClient(srv.URL+"/v1.0", func(context.Context) (string, error) { return "t", nil }, 50)
 	sum, _ := NewImporter(st, client).BackfillInlineMedia(ctx, ImportOptions{
 		Email: "me@example.com", AttachmentsDir: t.TempDir(),
 	})
-	require.True(handler.canceled, "the cancel must land after the attachment rows commit")
+	require.True(canceled(), "the cancel must land after the attachment rows commit")
 	assert.EqualValues(1, sum.InlineImagesCopied)
 
 	hasAttachments, attachmentCount := messageAttachmentFlags(t, st, msgID)
@@ -174,4 +134,69 @@ func TestImportCancelAfterInlineImageRefreshesFlags(t *testing.T) {
 	hasAttachments, attachmentCount := messageAttachmentFlags(t, st, msgID)
 	assert.True(hasAttachments, "has_attachments must match the stored inline image")
 	assert.Equal(1, attachmentCount, "attachment_count must match the stored inline image")
+}
+
+// A cancel that lands right after a synced message's inline image rows commit
+// fails the raw-archive write that follows, which ends the message's persist
+// early. The attachment flags must still be refreshed on that exit. The body
+// shows one image twice: the message row counts both references until the
+// refresh counts the single stored row.
+//
+// Not parallel: it replaces the process-wide slog default and SQL log options.
+func TestImportCancelAfterInlineImageCommitRefreshesFlags(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	serverURL := ""
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if selfChatAbsent(w, r) {
+			return
+		}
+		switch {
+		case r.URL.Path == "/me/chats":
+			_, _ = w.Write([]byte(`{"value":[]}`))
+		case r.URL.Path == "/me/joinedTeams":
+			_, _ = w.Write([]byte(`{"value":[{"id":"team1","displayName":"Acme"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/channels"):
+			_, _ = w.Write([]byte(`{"value":[{"id":"chanA","displayName":"General"}]}`))
+		case strings.HasSuffix(r.URL.Path, "/hostedContents/1/$value"):
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("PNGDATA"))
+		case strings.HasSuffix(r.URL.Path, "/messages"):
+			img := serverURL + `/teams/team1/channels/chanA/messages/root/hostedContents/1/$value`
+			_, _ = w.Write([]byte(`{"value":[{"id":"root","createdDateTime":"2025-02-01T00:00:00Z","lastModifiedDateTime":"2025-02-01T00:00:00Z",
+			  "body":{"contentType":"html","content":"<img src=\"` + img + `\"><img src=\"` + img + `\">"}}]}`))
+		default:
+			http.Error(w, "404", http.StatusNotFound)
+		}
+	}))
+	serverURL = srv.URL
+	defer srv.Close()
+	st := testutil.NewTestStore(t)
+	client := NewClient(srv.URL, func(context.Context) (string, error) { return "t", nil }, 50)
+
+	queryCtx := context.WithoutCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	canceled := testutil.CancelAfterCommit(t, cancel, func() bool {
+		var rows int
+		require.NoError(st.DB().QueryRowContext(queryCtx,
+			`SELECT COUNT(*) FROM attachments WHERE content_hash <> ''`).Scan(&rows))
+		return rows > 0
+	})
+
+	_, err := NewImporter(st, client).Import(ctx, ImportOptions{
+		Email: "me@example.com", IncludeChannels: true, AttachmentsDir: t.TempDir(),
+	})
+	require.ErrorIs(err, context.Canceled)
+	require.True(canceled(), "the cancel must land after the inline image rows commit")
+
+	var msgID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT id FROM messages WHERE source_message_id LIKE ?`), "%root").Scan(&msgID))
+	var rows int
+	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(
+		`SELECT COUNT(*) FROM attachments WHERE message_id = ?`), msgID).Scan(&rows))
+	require.Equal(1, rows, "the inline image row commits before the cancel")
+	hasAttachments, attachmentCount := messageAttachmentFlags(t, st, msgID)
+	assert.True(hasAttachments, "has_attachments must match the stored inline image")
+	assert.Equal(rows, attachmentCount, "attachment_count must match the stored inline image")
 }

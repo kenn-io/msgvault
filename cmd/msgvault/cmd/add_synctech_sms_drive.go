@@ -296,9 +296,11 @@ func runSynctechSMSDriveSourceWithClient(ctx context.Context, st *store.Store, s
 			break
 		}
 	}
-	if summary.FilesImported > 0 {
-		// Files imported before a cancel or failure are committed, so their
-		// conversations need current statistics either way.
+	if summary.FilesImported > 0 || len(summary.MessageIDs) > 0 {
+		// Records commit one at a time, so a cancel or failure partway
+		// through a file, even the first, still leaves saved messages whose
+		// conversations need current statistics. MessageIDs also holds an
+		// MMS message whose attachments failed after its row committed.
 		if err := st.RecomputeConversationStatsContext(context.WithoutCancel(ctx), source.ID); err != nil {
 			return summary, errors.Join(importErr, fmt.Errorf("recompute conversation stats: %w", err))
 		}

@@ -567,3 +567,41 @@ func TestSynctechSMSDriveCancelRecomputesStatsForImportedFiles(t *testing.T) {
 	assertSourceConversationMessageCount(t, f.Store, source.ID, 1)
 	assert.Equal(store.SyncStatusFailed, getOnlySyncRun(t, f.Store, source.ID).Status, "sync status")
 }
+
+// A backup that fails partway through the first file still leaves the records
+// committed before the failure, so their conversation needs current
+// statistics. If the recompute waited for a whole file to import,
+// message_count would stay at zero for a conversation holding a saved message.
+func TestSynctechSMSDriveFailureInFirstFileRecomputesStatsForSavedRecords(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	home := t.TempDir()
+	cfg := config.NewDefaultConfig()
+	testCtx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	cfg.HomeDir = home
+	cfg.Data.DataDir = home
+	f := storetest.New(t)
+	src := synctechDriveTestSource()
+	// The download stops mid-record, as a truncated backup would, after the
+	// first message is complete.
+	client := fakeSynctechDriveClient{
+		files: []synctechsms.DriveFile{
+			{ID: "backup-1", Name: "sms-1.xml", Checksum: "sum-1", Size: 128, ModifiedTime: time.Now().Add(-30 * time.Minute)},
+		},
+		downloads: map[string]string{
+			"backup-1": `<smses count="2">
+  <sms address="+15551234567" date="1717214400000" type="1" body="saved before the failure" read="1" status="-1" contact_name="Alice" />
+  <sms address="+15551234567" date="17172`,
+		},
+	}
+
+	summary, err := runSynctechSMSDriveSourceWithClient(testCtx, f.Store, src, synctechImportOptions(src, invocationFromContext(testCtx).cfg), client)
+	require.ErrorContains(err, "unexpected EOF", "runSynctechSMSDriveSourceWithClient")
+	require.Equal(0, summary.FilesImported, "the truncated file does not finish importing")
+	require.Equal(1, summary.SMSImported, "one record commits before the failure")
+
+	source := getSynctechSource(t, f.Store, src.OwnerPhone)
+	assertSourceMessageCount(t, f.Store, source.ID, 1)
+	assertSourceConversationMessageCount(t, f.Store, source.ID, 1)
+	assert.Equal(store.SyncStatusFailed, getOnlySyncRun(t, f.Store, source.ID).Status, "sync status")
+}

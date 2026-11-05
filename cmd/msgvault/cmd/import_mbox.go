@@ -314,15 +314,21 @@ Examples:
 			}
 		}
 
+		// An interrupted import has already created the source and committed
+		// messages, so both post-import steps run on an uncancelled context.
+		postImportCtx := context.WithoutCancel(ctx)
+
 		// Auto-default-identity must run BEFORE the legacy migration
 		// retry — see comment in account_identity.go. Earlier shape
 		// ran the migration first and confirmDefaultIdentity later,
 		// which suppressed the source's own account identifier
 		// whenever the legacy [identity] block had populated rows.
+		// That applies to interrupted imports too: the migration below
+		// runs for them, so the identity has to be confirmed first.
 		// A Google Groups identifier names a shared archive, not its owner.
-		if ctx.Err() == nil && !hadHardErrors && !noDefaultIdentityImportMbox && importMboxSourceType != "google-groups" {
+		if !hadHardErrors && !noDefaultIdentityImportMbox && importMboxSourceType != "google-groups" {
 			if sourceID != 0 {
-				confirmDefaultIdentity(ctx, cmd.OutOrStdout(), st, sourceID, identifier, identifier, "account-identifier", state.logger)
+				confirmDefaultIdentity(postImportCtx, cmd.OutOrStdout(), st, sourceID, identifier, identifier, "account-identifier", state.logger)
 			}
 		}
 
@@ -340,7 +346,7 @@ Examples:
 		// tracked in
 		// private/drafts/2026-05-02-issue-import-migration-error-ux.md.
 		if sourceID != 0 {
-			if err := runPostSourceCreateMigrationsForInvocation(ctx, st, state); err != nil {
+			if err := runPostSourceCreateMigrationsForInvocation(postImportCtx, st, state); err != nil {
 				return fmt.Errorf("post-source-create migrations: %w", err)
 			}
 		}
