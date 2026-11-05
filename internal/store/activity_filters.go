@@ -266,3 +266,65 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  ), copies AS (
  SELECT e.*,` + copyKey + ` AS copy_key,ROW_NUMBER() OVER (PARTITION BY ` + copyKey + ` ORDER BY counted DESC,invitation DESC,non_noise DESC,COALESCE(ts.thread_messages,1) DESC,COALESCE(dc.counted_messages,0) DESC,e.source_id,message_id) AS copy_rank,
  COUNT(*) OVER (PARTITION BY ` + copyKey + `) AS copy_count
+ FROM scored e LEFT JOIN thread_sizes ts ON ts.source_id=e.source_id AND ts.conversation_id=e.conversation_id
+ JOIN day_counts dc ON dc.source_id=e.source_id AND dc.conversation_id=e.conversation_id AND dc.local_date=e.local_date
+ ), representatives AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1)`
+	return query, args, nil
+}
+
+// activityClassificationCTE owns the counterpart facts used by totals and flags.
+// The caller supplies eligible messages before applying copy or page selection.
+func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters, projected bool) (string, []any) {
+	maxDirect := f.directLimit()
+	maxSQL := strconv.Itoa(maxDirect)
+	addressCTE, addressArgs := s.activityAddressExclusionsCTE(ctx, `SELECT participant_id,person_id FROM population GROUP BY participant_id,person_id`, f)
+	exclusion := `CASE WHEN cp.link_owner=1 THEN 'owner' ELSE ax.excluded END`
+	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
+	evidence := `CASE WHEN e.direction='outbound' AND cp.audience_n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END`
+	projectionJoin := ""
+	if projected {
+		// Persisted person links carry the projector's strongest saved-person role.
+		role = `COALESCE(aep.role,` + role + `)`
+		evidence = `COALESCE(aep.evidence,` + evidence + `)`
+		projectionJoin = ` LEFT JOIN activity_event_persons aep ON aep.message_id=e.message_id AND aep.person_id=cp.person_id`
+	}
+	large := `CASE WHEN e.direction='inbound' AND COALESCE(cp.audience_n,0)>` + maxSQL + ` THEN 1 ELSE 0 END`
+	return `population AS MATERIALIZED (` + s.activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), owner_population AS (
+ SELECT *,MAX(is_owner) OVER person_link AS link_owner,ROW_NUMBER() OVER person_link AS link_rank
+ FROM population WINDOW person_link AS (PARTITION BY message_id,person_id,CASE WHEN person_id IS NULL THEN participant_id ELSE 0 END)
+ ), ` + addressCTE + `, exclusions AS (
+ SELECT cp.*,` + exclusion + ` AS excluded FROM owner_population cp JOIN address_exclusions ax ON ax.participant_id=cp.participant_id
+ ), audience_facts AS (
+ SELECT *,SUM(CASE WHEN link_owner=0 AND link_rank=1 THEN 1 ELSE 0 END) OVER (PARTITION BY message_id) AS audience_n FROM exclusions
+ ), raw_facts AS MATERIALIZED (
+ SELECT e.*,cp.participant_id,cp.person_id,cp.recipient_type,cp.excluded,
+ ` + large + ` AS large_inbound,` + role + ` AS raw_role,` + evidence + ` AS raw_evidence
+ FROM eligible e LEFT JOIN audience_facts cp ON cp.message_id=e.message_id
+ ` + projectionJoin + `
+ ), facts AS MATERIALIZED (
+ SELECT cp.*,FIRST_VALUE(raw_role) OVER strongest_link AS role,FIRST_VALUE(raw_evidence) OVER strongest_link AS evidence
+ FROM raw_facts cp WINDOW strongest_link AS (
+ PARTITION BY message_id,person_id,CASE WHEN person_id IS NULL THEN participant_id ELSE 0 END
+ ORDER BY CASE WHEN raw_evidence='direct' THEN 0 ELSE 1 END,
+ CASE raw_role WHEN 'sender' THEN 0 WHEN 'organizer' THEN 1 WHEN 'addressed' THEN 2 WHEN 'attendee' THEN 3 WHEN 'member' THEN 4 ELSE 5 END)
+ )`, addressArgs
+}
+
+func activityBurstGroupsCTE(f ActivityFilters) string {
+	where := ""
+	if !f.IncludeNoise {
+		where = " WHERE non_noise=1 OR invitation=1"
+	}
+	return `, displayed AS (
+ SELECT * FROM representatives` + where + `
+ ), burst_groups AS (
+ SELECT source_id,conversation_id,local_date,MIN(channel) AS channel,
+ 'burst:'||CAST(source_id AS TEXT)||':'||CAST(conversation_id AS TEXT)||':'||local_date AS key,
+ MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
+ SUM(CASE WHEN direction='inbound' THEN counted ELSE 0 END) AS inbound,
+ SUM(CASE WHEN direction='outbound' THEN counted ELSE 0 END) AS outbound,
+ COUNT(*) AS message_count,CASE WHEN MAX(invitation)=1 THEN 0
+ WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
+ FROM displayed GROUP BY source_id,conversation_id,local_date
+)`
+}
