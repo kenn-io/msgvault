@@ -40,7 +40,6 @@
   import {
     Button,
     Checkbox,
-    MEDIA,
     SearchInput,
     SegmentedControl,
     Toggle,
@@ -48,7 +47,6 @@
     virtualSlice,
   } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
-  import { MediaQuery } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
@@ -187,10 +185,8 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state('');
-  let visualImageError = $state('');
-  const compact = new MediaQuery(MEDIA.compact);
   let rejectedImages = $state(0);
-  $effect(() => { rejectedImages; if (error || visualImageError || pageError || unavailable && unavailable.readiness !== 'building') return reportError(() => client, () => predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'); });
+  $effect(() => { rejectedImages; if (error || pageError || unavailable && unavailable.readiness !== 'building') return reportError(() => client, () => predicate.query?.trim() || hostedVisualSearch ? 'search' : 'other'); });
   let pageError = $state('');
   let unavailable = $state<ExploreCacheUnavailable>();
   let grid = $state<HTMLDivElement>();
@@ -762,10 +758,8 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
-    visualImageError = '';
     if (file.size > 20 * 1024 * 1024) {
-      if (compact.current) visualImageError = 'Visual query images must be 20 MiB or smaller.';
-      else error = 'Visual query images must be 20 MiB or smaller.';
+      error = 'Visual query images must be 20 MiB or smaller.';
       rejectedImages += 1;
       input.value = '';
       return;
@@ -866,9 +860,6 @@
           onchange={(event) => void chooseVisualImage(event)}
         />
       </label>
-      {#if compact.current && visualImageError}
-        <span class="visual-image-error" role="alert">{visualImageError}</span>
-      {/if}
       {#if visualImageName}
         <span>{visualImageName}</span>
         <Button size="sm" surface="outline" label="Remove query image" onclick={removeVisualImage} />
@@ -1150,10 +1141,6 @@
   .hosted-disclosure {
     color: var(--text-muted);
     font-size: var(--font-size-2xs);
-  }
-  .visual-image-error {
-    width: 100%;
-    color: var(--text-danger);
   }
   .files-table {
     display: flex;

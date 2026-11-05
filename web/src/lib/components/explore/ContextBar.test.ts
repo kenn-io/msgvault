@@ -73,6 +73,15 @@ describe('ContextBar compact View menu', () => {
     expect(screen.queryByRole('menuitem', { name: 'Year' })).toBeNull();
   });
 
+  it('omits View for a locked grouped scope without sort', () => {
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: ['year'], countLabel: '',
+      lockedFilter: { dimension: 'participant', values: ['1'] },
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
+  });
+
   it('keeps grouping controls and the removable chip when grouped without sort', async () => {
     const onRemoveGroup = vi.fn();
     render(ContextBar, {

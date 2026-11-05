@@ -73,6 +73,7 @@
 
   let filtersOpen = $state(false);
   const compact = new MediaQuery(MEDIA.compact);
+  const extraInPopover = $derived(compact.current && Boolean(extraControls));
   const groupOptions = $derived(groupingOptions({ excluded: groupingChain, includeUnavailable: true }));
   const canGroup = $derived(groupOptions.some((option) => !option.disabled));
   // The triggers carry their own names (no kit `title`), so the visible text says what each control is.
@@ -113,13 +114,13 @@
 
 {#snippet popoverExtra()}
   {@render filterExtra?.()}
-  {@render extraControls?.()}
+  <div class="popover-extra">{@render extraControls?.()}</div>
 {/snippet}
 
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={compact.current && extraControls ? popoverExtra : filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={extraInPopover ? popoverExtra : filterExtra} />
     {:else}
     <Button
       size="sm"
@@ -131,7 +132,9 @@
     />
     {/if}
     {#if compact.current}
-      <ViewMenu scoped={Boolean(lockedFilter)} {presentation} {presentationOptions} {groupOptions} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
+      {#if !lockedFilter || sort}
+        <ViewMenu scoped={Boolean(lockedFilter)} {presentation} {presentationOptions} {groupOptions} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
+      {/if}
     {:else}
     {#if !lockedFilter}
     <SelectDropdown
@@ -158,7 +161,7 @@
       </div>
     {/if}
     {/if}
-    {#if !compact.current}{@render extraControls?.()}{/if}
+    {#if !extraInPopover}{@render extraControls?.()}{/if}
     <span class="context-count" aria-live="polite" data-mono>{countLabel}</span>
   </div>
 
@@ -250,6 +253,12 @@
 
   .group-picker {
     width: 172px;
+  }
+
+  .popover-extra :global(.file-controls > label:has(input[type="search"], input[type="file"])) {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .context-chips :global(.chip) {

@@ -230,18 +230,4 @@
     display: flex;
     justify-content: flex-end;
   }
-
-  .filter-panel :global(.file-controls label:has(input[type="search"], input[type="file"])) {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .filter-panel :global(.file-controls .kit-search-input) {
-    width: 100%;
-  }
-
-  .filter-panel :global(.file-controls input[type="file"]) {
-    max-width: 100%;
-  }
 </style>
