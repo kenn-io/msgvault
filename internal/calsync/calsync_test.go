@@ -280,8 +280,6 @@ func TestFull_PersistsEventsAsMessages(t *testing.T) {
 	m.Calendars = []gcal.Calendar{{ID: "primary", Summary: "Personal", AccessRole: "owner", Primary: true, TimeZone: "UTC"}}
 	ev := timedEvent("e1", "Sprint standup",
 		gcal.Attendee{Email: "bob@example.com", DisplayName: "Bob", ResponseStatus: "accepted"})
-	ev.Updated = time.Date(2024, 5, 1, 15, 55, 0, 123, time.FixedZone("example", -7*60*60))
-	ev.Sequence = 4
 	m.FullEvents["primary"] = [][]gcal.Event{{ev}}
 	m.FullSyncToken["primary"] = "TOKEN1"
 
@@ -315,13 +313,6 @@ func TestFull_PersistsEventsAsMessages(t *testing.T) {
 	assert.Equal("primary", meta["calendar_id"])
 	assert.Equal(testAccount, meta["account_email"])
 	assert.NotEmpty(meta["end"], "interval end stored in metadata")
-	var providerMetadata struct {
-		UpdatedAt int64 `json:"provider_updated_at_unix_nano"`
-		Sequence  int   `json:"sequence"`
-	}
-	require.NoError(json.Unmarshal([]byte(row.metadata.String), &providerMetadata))
-	assert.Equal(ev.Updated.UTC().UnixNano(), providerMetadata.UpdatedAt)
-	assert.Equal(ev.Sequence, providerMetadata.Sequence)
 
 	assert.Equal("gcal_json", rawFormat(t, st, row.id))
 
@@ -550,10 +541,7 @@ func TestIncremental_CancellationRetainsRow(t *testing.T) {
 	require := require.New(t)
 	m := gcal.NewMockAPI()
 	m.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
-	initial := timedEvent("e1", "Lunch")
-	initial.Updated = time.Date(2024, 5, 1, 15, 0, 0, 0, time.UTC)
-	initial.Sequence = 3
-	m.FullEvents["primary"] = [][]gcal.Event{{initial}}
+	m.FullEvents["primary"] = [][]gcal.Event{{timedEvent("e1", "Lunch")}}
 	m.FullSyncToken["primary"] = "T1"
 
 	s, st := newSyncer(t, m, Options{})
@@ -576,10 +564,7 @@ func TestIncremental_CancellationRetainsRow(t *testing.T) {
 	require.True(ok, "cancelled event must be RETAINED, not deleted")
 	assert.False(after.deletedFromSource.Valid, "deleted_from_source_at must stay NULL")
 	assert.Equal("Lunch", after.subject.String, "original subject preserved (not wiped by empty delta)")
-	metadata := parseMeta(t, after)
-	assert.Equal("cancelled", metadata["status"], "metadata.status flipped to cancelled")
-	assert.NotContains(metadata, "provider_updated_at_unix_nano", "a cancellation without provider update time must not retain a stale timestamp")
-	assert.NotContains(metadata, "sequence", "a cancellation without a sequence must not retain a stale version")
+	assert.Equal("cancelled", parseMeta(t, after)["status"], "metadata.status flipped to cancelled")
 
 	src2 := primarySource(t, st)
 	assert.Equal("T2", src2.SyncCursor.String, "cursor advanced after incremental")

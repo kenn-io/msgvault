@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-	"unicode"
 
 	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/calrecur"
@@ -39,7 +38,7 @@ type suggestMember struct {
 
 func titleTokenSet(title string) map[string]bool {
 	tokens := map[string]bool{}
-	for _, token := range strings.FieldsFunc(strings.ToLower(title), func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+	for _, token := range directoryTokens(title) {
 		tokens[token] = true
 	}
 	return tokens

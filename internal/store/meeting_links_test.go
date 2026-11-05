@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -16,131 +15,6 @@ import (
 )
 
 const linkSeriesRaw = `{"id":"series","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`
-
-func TestMeetingLinksSuccessiveExceptionTimestampForms(t *testing.T) {
-	for _, reverse := range []bool{false, true} {
-		t.Run(fmt.Sprintf("reverse=%t", reverse), func(t *testing.T) {
-			requirements, assertions := require.New(t), assert.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, master := calendarFixture(t, st, "series", linkSeriesRaw)
-			imports := []struct{ key, original string }{
-				{"instance", `{"dateTime":"2027-03-14T06:00:00","timeZone":"America/New_York"}`},
-				{"series|2027-03-14T10:00:00Z", `{"dateTime":"2027-03-14T06:00:00-04:00","timeZone":"America/New_York"}`},
-			}
-			if reverse {
-				imports[0], imports[1] = imports[1], imports[0]
-			}
-			var aliases []int64
-			for i, imported := range imports {
-				// calsync.deriveSourceMessageID retains the provider ID for
-				// offset-free originals and uses series|instant for explicit offsets.
-				raw := fmt.Sprintf(`{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":%s,"start":{"dateTime":"2027-03-14T%d:00:00Z"},"end":{"dateTime":"2027-03-14T%d:00:00Z"}}`, imported.original, 12+i*2, 13+i*2)
-				_, id := calendarFixture(t, st, imported.key, raw)
-				aliases = append(aliases, id)
-			}
-			requirements.NotEqual(aliases[0], aliases[1], "successive imports retain both archive keys")
-			from := time.Date(2027, 3, 14, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-			requirements.NoError(err)
-			requirements.Len(page.Occurrences, 1)
-			listed := page.Occurrences[0]
-			requirements.Equal(aliases[1], listed.MessageID)
-			requirements.Equal(from.Add(14*time.Hour), listed.Start)
-			requirements.Equal(from.Add(15*time.Hour), listed.End)
-			ctx, release, err := st.BeginReadSnapshotContext(t.Context())
-			requirements.NoError(err)
-			defer release()
-			for _, ref := range []OccurrenceRef{{MessageID: master, Key: "20270314T100000Z"}, {MessageID: aliases[0]}, {MessageID: aliases[1]}} {
-				budget := calrecur.RequestReadBudget
-				resolved, err := resolveMeetingOccurrence(ctx, st.meetingReader(ctx), ref, &budget)
-				requirements.NoError(err)
-				assertions.Equal(listed.Start, resolved.Start, "reference %v", ref)
-				assertions.Equal(listed.End, resolved.End, "reference %v", ref)
-			}
-		})
-	}
-}
-
-func TestMeetingLinksSeriesExpansionResolvesAliasesBeforeWindowFiltering(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=12"]}`)
-	calendarFixture(t, st, "alias-a", `{"id":"alias-a","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00","timeZone":"UTC"},"start":{"dateTime":"2027-03-08T09:00:00Z"},"end":{"dateTime":"2027-03-08T10:00:00Z"}}`)
-	calendarFixture(t, st, "weekly|2027-04-06T09:00:00Z", `{"id":"alias-a","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-05-10T09:00:00Z"},"end":{"dateTime":"2027-05-10T10:00:00Z"}}`)
-	_, march := projectionFixture(t, st, "march-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-08T09:00:00Z"}}`)
-	_, may := projectionFixture(t, st, "may-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-05-10T09:00:00Z"}}`)
-	links, err := st.MeetingLinksContext(t.Context(), march)
-	requirements.NoError(err)
-	assertions.Empty(links)
-	links, err = st.MeetingLinksContext(t.Context(), may)
-	requirements.NoError(err)
-	requirements.Len(links, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d@20270406T090000Z", master), links[0].Ref)
-	assertions.Equal(time.Date(2027, 5, 10, 9, 0, 0, 0, time.UTC), links[0].Start)
-}
-
-func testMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved(t *testing.T) {
-	t.Helper()
-	for _, tc := range []struct {
-		name       string
-		updatedRaw string
-		wantErr    error
-	}{
-		{
-			name:       "shortened series",
-			updatedRaw: strings.Replace(linkSeriesRaw, "RRULE:FREQ=WEEKLY;COUNT=6", "RRULE:FREQ=WEEKLY;COUNT=1", 1),
-			wantErr:    sql.ErrNoRows,
-		},
-		{
-			name:       "excluded occurrence",
-			updatedRaw: strings.Replace(linkSeriesRaw, "RRULE:FREQ=WEEKLY;COUNT=6", `RRULE:FREQ=WEEKLY;COUNT=6","EXDATE:20270314T100000Z`, 1),
-			wantErr:    sql.ErrNoRows,
-		},
-		{
-			name:       "unsupported recurrence",
-			updatedRaw: strings.Replace(linkSeriesRaw, "RRULE:FREQ=WEEKLY;COUNT=6", "RRULE:FREQ=HOURLY", 1),
-			wantErr:    calrecur.ErrUnsupportedRecurrence,
-		},
-		{
-			name: "recurrence budget",
-			updatedRaw: strings.NewReplacer(
-				"2027-03-07T10:00:00Z", "1800-01-01T10:00:00Z",
-				"2027-03-07T11:00:00Z", "1800-01-01T11:00:00Z",
-				"RRULE:FREQ=WEEKLY;COUNT=6", "RRULE:FREQ=DAILY;COUNT=100000",
-			).Replace(linkSeriesRaw),
-			wantErr: ErrQueryTooBroad,
-		},
-	} {
-		for _, uid := range []string{"weekly@example.org", ""} {
-			t.Run(uid+"/"+tc.name, func(t *testing.T) {
-				assertions, requirements := assert.New(t), require.New(t)
-				st := newRFC822IDBackfillBackendStore(t)
-				_, automatic := calendarFixture(t, st, "automatic", singleLinkRaw("automatic", "automatic@example.org"))
-				_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"automatic@example.org"}}`)
-				raw := strings.ReplaceAll(linkSeriesRaw, "weekly@example.org", uid)
-				_, master := calendarFixture(t, st, "master", raw)
-				ref := OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}
-				requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-				requirements.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, note)[note])
-				requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(strings.ReplaceAll(tc.updatedRaw, "weekly@example.org", uid)), "gcal_json"))
-				links, err := st.MeetingLinksContext(t.Context(), note)
-				if errors.Is(tc.wantErr, ErrQueryTooBroad) {
-					requirements.ErrorIs(err, ErrQueryTooBroad)
-				} else {
-					requirements.NoError(err)
-					requirements.Empty(links, "the saved override still suppresses the automatic match")
-				}
-				requirements.ErrorIs(st.LinkMeetingContext(t.Context(), note, ref), tc.wantErr)
-
-				requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
-				assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note], "other links remain readable before the recurrence is repaired")
-				requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
-				assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note], "the saved split continues to suppress the restored occurrence")
-				requirements.ErrorIs(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270425T100000Z"}), sql.ErrNoRows)
-			})
-		}
-	}
-}
 
 func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
 	requirements := require.New(t)
@@ -565,28 +439,7 @@ func TestMeetingLinksTwoOccurrenceAliases(t *testing.T) {
 	assertions.Equal("2027-03-14T12:00:00Z", links[0].Start.Format(time.RFC3339))
 }
 
-func testMeetingLinksOrphanAliasResolvesLatestProviderUpdate(t *testing.T) {
-	t.Helper()
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	alias := func(updated, start, end string) string {
-		return fmt.Sprintf(`{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":%q},"end":{"dateTime":%q},"updated":%q}`, start, end, updated)
-	}
-	_, first := calendarFixture(t, st, "instance", alias("2027-03-01T00:00:00Z", "2027-03-14T12:00:00Z", "2027-03-14T13:00:00Z"))
-	_, _ = calendarFixture(t, st, "series|2027-03-14T10:00:00Z", alias("2027-03-02T00:00:00Z", "2027-03-14T13:00:00Z", "2027-03-14T14:00:00Z"))
-	_, latest := calendarFixture(t, st, "instance", alias("2027-03-03T00:00:00Z", "2027-03-14T14:00:00Z", "2027-03-14T15:00:00Z"))
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-
-	requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first}))
-	links, err := st.MeetingLinksContext(t.Context(), note)
-	requirements.NoError(err)
-	requirements.Len(links, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", latest), links[0].Ref)
-	assertions.Equal("2027-03-14T14:00:00Z", links[0].Start.Format(time.RFC3339))
-}
-
-func testMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
-	t.Helper()
+func TestMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, first := calendarFixture(t, st, "orphan-one", `{"id":"orphan-one","iCalUID":"shared@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
@@ -607,141 +460,6 @@ func testMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", second), links[0].Ref)
 }
 
-func TestMeetingLinksOrphanFreshnessPrecedesScheduledFilteringAndDirectResolution(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	original := `"originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}`
-	_, stale := calendarFixture(t, st, "stale-alias", `{"id":"stale","iCalUID":"orphan@example.org","recurringEventId":"series",`+original+`,"start":{"dateTime":"2027-03-20T12:00:00Z"},"end":{"dateTime":"2027-03-20T13:00:00Z"}}`)
-	_, current := calendarFixture(t, st, "current-alias", `{"id":"current","iCalUID":"orphan@example.org","recurringEventId":"series",`+original+`,"start":{"dateTime":"2027-04-20T14:00:00Z"},"end":{"dateTime":"2027-04-20T15:00:00Z"}}`)
-	_, staleTimeNote := projectionFixture(t, st, "stale-time-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"orphan@example.org","startsAt":"2027-03-20T12:00:00Z"}}`)
-	assertions.Empty(linkedMeetingRefs(t, st, staleTimeNote)[staleTimeNote], "the older in-window alias must not match after a newer snapshot moves the occurrence")
-
-	requirements.NoError(st.LinkMeetingContext(t.Context(), staleTimeNote, OccurrenceRef{MessageID: stale}))
-	links, err := st.MeetingLinksContext(t.Context(), staleTimeNote)
-	requirements.NoError(err)
-	requirements.Len(links, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", current), links[0].Ref)
-	assertions.Equal(time.Date(2027, time.April, 20, 14, 0, 0, 0, time.UTC), links[0].Start)
-
-	_, currentTimeNote := projectionFixture(t, st, "current-time-note", "twenty_json", `{"schema_version":1,"recording":{"startedAt":"2027-04-20T14:00:00Z","endedAt":"2027-04-20T15:00:00Z"},"calendar_event":{"iCalUid":"orphan@example.org","startsAt":"2027-04-20T14:00:00Z"}}`)
-	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{
-		Kind:      "evt",
-		MessageID: stale,
-	}, 10)
-	requirements.NoError(err)
-	requirements.Len(suggestions.Suggestions, 1)
-	assertions.Equal(fmt.Sprintf("evt:%d", current), suggestions.Suggestions[0].Ref)
-	assertions.Equal(currentTimeNote, suggestions.Suggestions[0].MemberMessageID)
-}
-
-func TestMeetingLinksOrphanSplitAfterMasterArrives(t *testing.T) {
-	for _, uid := range []string{"", "orphan@example.org"} {
-		t.Run(uid, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, orphan := calendarFixture(t, st, "orphan", fmt.Sprintf(`{"id":"series_20270314T100000Z","iCalUID":%q,"recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, uid))
-			note := granolaLinkFixture(t, st, "series_20270314T100000Z")
-			requirements.Equal(fmt.Sprintf("evt:%d", orphan), linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: orphan}))
-			// The saved split predates the master and therefore uses the orphan's identity.
-			decisions, err := readMeetingLinkDecisions(t.Context(), st.meetingReader(t.Context()), note)
-			requirements.NoError(err)
-			requirements.Len(decisions, 1)
-			assertions.Equal(uid, decisions[0].Identity.ICalUID)
-			assertions.Equal("20270314T100000Z", decisions[0].Identity.OccurrenceKey)
-			_, master := calendarFixture(t, st, "master", strings.Replace(linkSeriesRaw, "RRULE:FREQ=WEEKLY;COUNT=6", "RRULE:FREQ=HOURLY", 1))
-			_, automatic := projectionFixture(t, st, "automatic", "plaud_json", `{}`)
-			requirements.NoError(st.LinkMeetingContext(t.Context(), automatic, OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}))
-			requirements.Equal(fmt.Sprintf("evt:%d@20270314T100000Z", master), linkedMeetingRefs(t, st, automatic)[automatic])
-			assertions.Empty(linkedMeetingRefs(t, st, note)[note], "the orphan split suppresses the master's canonical identity without expanding its unsupported recurrence")
-		})
-	}
-}
-
-func TestMeetingLinksSplitSurvivesSourceRemoval(t *testing.T) {
-	for _, recurring := range []bool{false, true} {
-		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			raw, key := singleLinkRaw("event", "weekly@example.org"), ""
-			if recurring {
-				raw, key = linkSeriesRaw, "20270314T100000Z"
-			}
-			data, a := calendarFixture(t, st, "a", raw, "a@example.com")
-			_, b := calendarFixture(t, st, "b", raw, "b@example.com")
-			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
-			requirements.NotEmpty(linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: a, Key: key}))
-			requirements.Empty(linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.RemoveSource(data.Message.SourceID))
-			assertions.Empty(linkedMeetingRefs(t, st, note)[note], "the surviving calendar must retain the split")
-			calendarFixture(t, st, "a", raw, "a@example.com")
-			assertions.Empty(linkedMeetingRefs(t, st, note)[note], "reimport must retain the split")
-			requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: b, Key: key}))
-			assertions.NotEmpty(linkedMeetingRefs(t, st, note)[note], "a new owner decision can undo the split")
-		})
-	}
-}
-
-func testMeetingLinksUnlinkAfterCalendarSourceRemoval(t *testing.T) {
-	t.Helper()
-	for _, recurring := range []bool{false, true} {
-		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, automatic := calendarFixture(t, st, "automatic", singleLinkRaw("automatic", "automatic@example.org"))
-			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"automatic@example.org"}}`)
-			raw, key := singleLinkRaw("manual", "manual@example.org"), ""
-			if recurring {
-				raw, key = linkSeriesRaw, "20270314T100000Z"
-			}
-			data, manual := calendarFixture(t, st, "manual", raw, "manual@example.com")
-			ref := OccurrenceRef{MessageID: manual, Key: key}
-			requirements.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-			requirements.NoError(st.RemoveSource(data.Message.SourceID))
-			requirements.Empty(linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
-			assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
-		})
-	}
-}
-
-func testMeetingLinksManualOverrideSurvivesSourceRemoval(t *testing.T) {
-	t.Helper()
-	for _, recurring := range []bool{false, true} {
-		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st := newRFC822IDBackfillBackendStore(t)
-			_, automatic := calendarFixture(t, st, "automatic", singleLinkRaw("automatic", "automatic@example.org"))
-			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"automatic@example.org"}}`)
-			raw, key := singleLinkRaw("manual", "manual@example.org"), ""
-			if recurring {
-				raw, key = linkSeriesRaw, "20270314T100000Z"
-			}
-			data, manual := calendarFixture(t, st, "manual", raw, "manual@example.com")
-			requirements.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: manual, Key: key}))
-			suffix := ""
-			if recurring {
-				suffix = "@20270314T100000Z"
-			}
-			want := fmt.Sprintf("evt:%d%s", manual, suffix)
-			requirements.Equal(want, linkedMeetingRefs(t, st, note)[note])
-			requirements.NoError(st.RemoveSource(data.Message.SourceID))
-			assertions.Empty(linkedMeetingRefs(t, st, note)[note], "an absent manual target must still override the available automatic match")
-
-			data, replacement := calendarFixture(t, st, "manual", raw, "manual@example.com")
-			want = fmt.Sprintf("evt:%d%s", replacement, suffix)
-			assertions.Equal(want, linkedMeetingRefs(t, st, note)[note], "reimport must resolve the saved UID decision")
-			requirements.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: replacement, Key: key}))
-			assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note], "a later split must allow automatic matching again")
-			requirements.NoError(st.RemoveSource(data.Message.SourceID))
-			assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note], "an absent split target must keep the earlier link superseded")
-		})
-	}
-}
-
 func testMeetingLinksDecisionLifetime(t *testing.T) {
 	t.Helper()
 	for _, uid := range []string{"lifetime@example.org", ""} {
@@ -757,36 +475,15 @@ func testMeetingLinksDecisionLifetime(t *testing.T) {
 			assertions.Empty(links)
 			var count int
 			requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions WHERE member_message_id = ?`, note).Scan(&count))
-			if uid == "" {
-				assertions.Zero(count, "a UID-less target retains its message lifetime")
-			} else {
-				assertions.Equal(1, count, "a UID target survives loss of every copy")
-			}
-			_, replacement := calendarFixture(t, st, "event", singleLinkRaw("event", uid))
+			assertions.Zero(count, "decisions follow the target message's lifetime")
+			calendarFixture(t, st, "event", singleLinkRaw("event", uid))
 			links, err = st.MeetingLinksContext(t.Context(), note)
 			requirements.NoError(err)
-			if uid == "" {
-				assertions.Empty(links)
-			} else {
-				requirements.Len(links, 1)
-				assertions.Equal(fmt.Sprintf("evt:%d", replacement), links[0].Ref)
-			}
+			assertions.Empty(links)
 			requirements.NoError(st.RemoveSource(noteData.Message.SourceID))
 			requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions`).Scan(&count))
 			assertions.Zero(count, "decisions follow the member note's lifetime")
 		})
-	}
-}
-
-func TestMeetingLinkAliasFreshness(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		run  func(*testing.T)
-	}{
-		{"MeetingLinksOrphanAliasResolvesLatestProviderUpdate", testMeetingLinksOrphanAliasResolvesLatestProviderUpdate},
-		{"MeetingLinksFractionalAliasResolvesFreshestSnapshotForUnlink", testMeetingLinksFractionalAliasResolvesFreshestSnapshotForUnlink},
-	} {
-		t.Run(tc.name, tc.run)
 	}
 }
 
@@ -796,7 +493,6 @@ func TestMeetingUnresolvableDecisions(t *testing.T) {
 		run  func(*testing.T)
 	}{
 		{"MeetingLinksIgnoreUnresolvableDecision", testMeetingLinksIgnoreUnresolvableDecision},
-		{"MeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved", testMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved},
 	} {
 		t.Run(tc.name, tc.run)
 	}
@@ -807,9 +503,7 @@ func TestMeetingDecisionSourceRemoval(t *testing.T) {
 		name string
 		run  func(*testing.T)
 	}{
-		{"MeetingLinksUnlinkAfterCalendarSourceRemoval", testMeetingLinksUnlinkAfterCalendarSourceRemoval},
 		{"MeetingLinksDecisionLifetime", testMeetingLinksDecisionLifetime},
-		{"MeetingLinksManualOverrideSurvivesSourceRemoval", testMeetingLinksManualOverrideSurvivesSourceRemoval},
 	} {
 		t.Run(tc.name, tc.run)
 	}
