@@ -129,6 +129,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if err := config.ValidateConfigTableEdits(snapshot, lane.edits); err != nil {
 		return err
 	}
+	var builtinEndpoint string
 	if !useOllama {
 		installation, err := c.install(ctx, embedlocal.InstallOptions{DataDir: dir,
 			Confirm: func(context.Context, int64) (bool, error) { return true, nil },
@@ -139,7 +140,8 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		if err != nil {
 			return err
 		}
-		if _, err := localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true}); err != nil {
+		builtinEndpoint, err = localEmbeddingEndpoint(ctx, embedlocal.Options{DataDir: installation.DataDir, Executable: installation.Executable, SkipOllama: true})
+		if err != nil {
 			return err
 		}
 	}
@@ -169,9 +171,8 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 	if err != nil {
 		return err
 	}
-	vecCfg, err = resolveLocalVectorConfig(nextCtx, vecCfg)
-	if err != nil {
-		return err
+	if !useOllama {
+		vecCfg.Embeddings.Endpoint = builtinEndpoint
 	}
 	var vf *vectorFeatures
 	if c.handle.vf == nil {
