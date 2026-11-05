@@ -59,15 +59,27 @@ func TestParseICSCustomizedTimeZone(t *testing.T) {
 		_, err := ParseICS([]byte(strings.Replace(string(raw), "TZOFFSETTO:-0500\n", "", 1)), "", "")
 		require.Error(t, err)
 	})
-	t.Run("without daylight saving", func(t *testing.T) {
-		requirements := require.New(t)
-		raw, err := os.ReadFile("testdata/customized-no-dst.ics")
-		requirements.NoError(err)
-		components, err := ParseICS(raw, "", "")
-		requirements.NoError(err)
-		requirements.Len(components, 1)
-		requirements.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
-	})
+	noDST, err := os.ReadFile("testdata/customized-no-dst.ics")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name, raw string
+		wantError bool
+	}{
+		{"without daylight saving", string(noDST), false},
+		{"one-time offset change", strings.Replace(strings.Replace(string(noDST), "BEGIN:DAYLIGHT\nDTSTART:16010101T000000\nTZOFFSETFROM:+0530\nTZOFFSETTO:+0530\nEND:DAYLIGHT\n", "", 1), "TZOFFSETFROM:+0530", "TZOFFSETFROM:+0430", 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements := require.New(t)
+			components, err := ParseICS([]byte(tc.raw), "", "")
+			if tc.wantError {
+				requirements.ErrorContains(err, "unsupported VTIMEZONE")
+				return
+			}
+			requirements.NoError(err)
+			requirements.Len(components, 1)
+			requirements.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
+		})
+	}
 }
 
 func TestICSLibicalTZID(t *testing.T) {
