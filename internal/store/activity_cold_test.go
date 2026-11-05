@@ -432,8 +432,8 @@ func TestColdAdapterMatchesSavedPersonRoles(t *testing.T) {
 	q.Filters.IncludeNoise = false
 	filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 	requirements.NoError(err)
-	assertions.Empty(filtered.Bursts)
-	assertions.Equal(1, filtered.NoiseOmitted)
+	assertions.Equal(cold.Bursts, filtered.Bursts)
+	assertions.Zero(filtered.NoiseOmitted)
 }
 
 // Explicit limits retain the classifier's strongest role in both readers.
@@ -476,11 +476,11 @@ func TestColdAdapterCustomLimitMatchesSpineSavedPersonRoles(t *testing.T) {
 			q.Filters.IncludeNoise = false
 			quiet, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
-			assertions.Empty(quiet.Bursts)
-			assertions.Equal(1, quiet.NoiseOmitted)
+			assertions.Equal(cold.Bursts, quiet.Bursts)
+			assertions.Zero(quiet.NoiseOmitted)
 			count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
 			requirements.NoError(err)
-			assertions.Zero(count)
+			assertions.Equal(1, count)
 		})
 	}
 }
@@ -563,8 +563,8 @@ func TestColdAdapterAudienceAndProjectionPolicyParity(t *testing.T) {
 			q.Filters.IncludeNoise = false
 			filtered, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
-			assertions.Len(filtered.Bursts, tc.want)
-			assertions.Equal(1-tc.want, filtered.NoiseOmitted)
+			assertions.Equal(cold.Bursts, filtered.Bursts)
+			assertions.Zero(filtered.NoiseOmitted)
 		})
 	}
 }

@@ -217,7 +217,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	if err = s.hydrateActivityCounterpartsContext(ctx, facts, filters); err != nil {
 		return nil, filters, err
 	}
-	// Match the spine: prefer counted contact after scoped copies have their
+	// Prefer counted contact, then non-noise, after scoped copies have their
 	// complete counterpart facts. SQL source/message ordering breaks ties.
 	representatives := []coldActivityMessage{}
 	representativeIndex := map[string]int{}
@@ -226,7 +226,10 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		m.activityReadMessage = facts[i]
 		copies[m.copyKey]++
 		if index, found := representativeIndex[m.copyKey]; found {
-			if coldActivityCounted(m, q.Subject) && !coldActivityCounted(representatives[index], q.Subject) {
+			current := representatives[index]
+			counted, currentCounted := coldActivityCounted(m, q.Subject), coldActivityCounted(current, q.Subject)
+			if (counted && !currentCounted) ||
+				(counted == currentCounted && coldActivityNonNoise(m, filters) && !coldActivityNonNoise(current, filters)) {
 				representatives[index] = m
 			}
 			continue
@@ -257,9 +260,6 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 			g.burst.Channel = m.channel
 		}
 		counted := coldActivityCounted(m, q.Subject)
-		// A saved person's recipient aliases inherit the strongest contact
-		// role; noise follows original sender membership, as in the warm SQL.
-		nonNoise := (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender
 		if counted {
 			if m.Direction == DirectionInbound {
 				g.burst.Inbound++
@@ -268,13 +268,19 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 				g.burst.Outbound++
 			}
 		}
-		g.nonNoise = g.nonNoise || nonNoise
+		g.nonNoise = g.nonNoise || coldActivityNonNoise(m, filters)
 		g.messages = append(g.messages, m)
 	}
 	for _, g := range groups {
 		finishColdActivityGroup(g)
 	}
 	return groups, filters, nil
+}
+
+func coldActivityNonNoise(m coldActivityMessage, filters ActivityFilters) bool {
+	// Recipient aliases inherit the strongest contact role; noise follows
+	// original sender membership, as in the warm SQL.
+	return (!m.List || !filters.Exclusions.ExcludeListMessages) && !m.ExcludedSender
 }
 
 // Hydrated counterparts already apply strongest-link arbitration and live

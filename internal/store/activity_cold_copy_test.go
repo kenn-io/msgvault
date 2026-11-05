@@ -8,9 +8,82 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/conversationpolicy"
+	"go.kenn.io/msgvault/internal/persontiers"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
+
+func TestColdEmailCopiesPreferNonNoiseWithoutCountedContact(t *testing.T) {
+	for _, noise := range []string{"list", "excluded-sender"} {
+		t.Run(noise, func(t *testing.T) {
+			requirements := require.New(t)
+			f := newTimelineActivityFixture(t)
+			noisySource, err := f.Store.GetOrCreateSource("mbox", "noisy@example.com")
+			requirements.NoError(err)
+			cleanSource, err := f.Store.GetOrCreateSource("mbox", "clean@example.com")
+			requirements.NoError(err)
+			requirements.Less(noisySource.ID, cleanSource.ID)
+			noisyRoom, err := f.Store.EnsureConversationWithType(noisySource.ID, "noisy-copy", "email_thread", "Noisy copy")
+			requirements.NoError(err)
+			cleanRoom, err := f.Store.EnsureConversationWithType(cleanSource.ID, "clean-copy", "email_thread", "Clean copy")
+			requirements.NoError(err)
+			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			noisyID := f.add(t, noisyRoom, noisySource.ID, at, false, "<quiet-copy@example.com>")
+			cleanID := f.add(t, cleanRoom, cleanSource.ID, at, false, "<quiet-copy@example.com>")
+			if noise == "list" {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), noisyID)
+				requirements.NoError(err)
+			} else {
+				sender := f.EnsureParticipant("no-reply@example.com", "Automated sender", "example.com")
+				requirements.NoError(f.Store.ReplaceMessageRecipients(noisyID, "from", []int64{sender}, nil))
+			}
+			setTimelineConversationTier(t, f, noisySource.ID, "noisy-copy", conversationpolicy.Cold)
+			setTimelineConversationTier(t, f, cleanSource.ID, "clean-copy", conversationpolicy.Cold)
+			projectColdTimeline(t, f, "UTC")
+			retractTimelineActivity(t, f, noisyID)
+			retractTimelineActivity(t, f, cleanID)
+			for _, scope := range []struct {
+				name    string
+				sources []int64
+				id      int64
+				copies  int
+				omitted int
+			}{
+				{"clean only", []int64{cleanSource.ID}, cleanID, 1, 0},
+				{"noisy only", []int64{noisySource.ID}, noisyID, 1, 1},
+				{"both", []int64{noisySource.ID, cleanSource.ID}, cleanID, 2, 0},
+			} {
+				t.Run(scope.name, func(t *testing.T) {
+					assertions, requirements := assert.New(t), require.New(t)
+					ctx := sourcescope.WithSourceIDs(t.Context(), scope.sources)
+					q := timelineBurstQuery()
+					q.Filters.Exclusions = persontiers.DefaultConfig()
+					q.Filters.IncludeNoise = true
+					full, err := f.Store.ListColdActivityBurstsContext(ctx, q)
+					requirements.NoError(err)
+					requirements.Len(full.Bursts, 1)
+					burst := full.Bursts[0]
+					assertions.Equal(scope.id, burst.AnchorMessageID)
+					assertions.Equal(scope.copies, burst.CopyCounts[scope.id])
+					assertions.Zero(burst.Inbound)
+					assertions.Zero(burst.Outbound)
+					requirements.NotEmpty(burst.Counterparts)
+					for _, cp := range burst.Counterparts {
+						assertions.False(cp.Counted)
+					}
+					q.Filters.IncludeNoise = false
+					filtered, err := f.Store.ListColdActivityBurstsContext(ctx, q)
+					requirements.NoError(err)
+					assertions.Len(filtered.Bursts, 1-scope.omitted)
+					assertions.Equal(scope.omitted, filtered.NoiseOmitted)
+					count, err := f.Store.CountColdActivityMessagesContext(ctx, q)
+					requirements.NoError(err)
+					assertions.Equal(1-scope.omitted, count)
+				})
+			}
+		})
+	}
+}
 
 // Collapsing copies before classification and hydration loses owned contact.
 func TestColdEmailCopiesPreferCountedContact(t *testing.T) {
@@ -115,10 +188,11 @@ func TestColdEmailCopiesPreferCountedContact(t *testing.T) {
 							q.Filters.IncludeNoise = false
 							quiet, err := f.Store.ListColdActivityBurstsContext(ctx, q)
 							requirements.NoError(err)
-							assertions.Len(quiet.Bursts, scope.count)
+							assertions.Equal(page.Bursts, quiet.Bursts)
+							assertions.Zero(quiet.NoiseOmitted)
 							count, err = f.Store.CountColdActivityMessagesContext(ctx, q)
 							requirements.NoError(err)
-							assertions.Equal(scope.count, count)
+							assertions.Equal(1, count)
 						})
 					}
 				})
