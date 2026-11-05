@@ -144,7 +144,68 @@ describe('AppShell', () => {
   }
 
 
-  it('carries the Help search into the command palette', async () => {
+  it('searches the archive from People when a palette query matches no command', async () => {
+    window.history.replaceState(null, '', '/?workspace=relationships');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    const input = within(palette).getByRole('combobox');
+    await fireEvent.input(input, { target: { value: 'zzzxxyy' } });
+    expect(within(palette).getByRole('option', { name: /Search archive for "zzzxxyy"/ }).getAttribute('aria-selected')).toBe('true');
+    await fireEvent.keyDown(input, { key: 'Enter' });
+    expect(state.current.workspace).toBe('everything');
+    expect(state.current.query).toBe('zzzxxyy');
+    rendered.unmount(); state.destroy();
+  });
+
+  it('finds people using the palette query', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'Example' } });
+    await fireEvent.click(within(palette).getByRole('option', { name: 'Find person…' }));
+    expect(state.current.workspace).toBe('relationships');
+    expect(state.current.identityQuery).toBe('Example');
+    expect(screen.getByRole('searchbox', { name: 'Filter people' })).toHaveProperty('value', 'Example');
+    rendered.unmount(); state.destroy();
+  });
+
+  it('opens the palette on Messages and remembers People across remounts', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const client = createAPIClient(vi.fn());
+    let rendered = render(AppShell, { client, state, enabled: false });
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    let palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    expect(within(palette).getAllByRole('option')[0]).toHaveProperty('textContent', expect.stringContaining('Messages'));
+    expect(within(palette).getByRole('option', { name: 'Messages' }).getAttribute('aria-selected')).toBe('true');
+    await fireEvent.click(within(palette).getByRole('option', { name: 'People' }));
+    rendered.unmount();
+    rendered = render(AppShell, { client, state, enabled: false });
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    expect(within(palette).getByText('Recent')).toBeDefined();
+    expect(within(palette).getAllByRole('option')[0]).toHaveProperty('textContent', expect.stringContaining('People'));
+    rendered.unmount(); state.destroy();
+  });
+
+  it('finds Sources and Group by Source at the palette root and runs the child', async () => {
+    window.history.replaceState(null, '', '/?workspace=everything');
+    const state = new ExploreState(window);
+    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
+    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
+    await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'source' } });
+    expect(within(palette).getByRole('option', { name: 'Sources' })).toBeDefined();
+    await fireEvent.click(within(palette).getByRole('option', { name: 'Group by Source' }));
+    expect(state.current.groupingChain).toEqual(['source']);
+    rendered.unmount(); state.destroy();
+  });
+
+  it('carries the Help search into the command palette and filters its commands', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
@@ -2285,9 +2346,12 @@ describe('AppShell', () => {
     await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
     const palette = screen.getByRole('dialog', { name: 'Messages commands' });
     expect(palette).toBeDefined();
-    expect(within(palette).getByRole('option', { name: /Group by Labels \(not available yet\)/ })
-      .getAttribute('aria-disabled'))
-      .toBe('true');
+    await fireEvent.click(within(palette).getByRole('option', { name: /Group by…/ }));
+    expect(within(palette).getAllByRole('option').map(option => option.textContent?.trim())).toEqual([
+      'Group by People', 'Group by Domains', 'Group by Year', 'Group by Month',
+      'Group by Source', 'Group by Modality', 'Group by Entry kind', 'Group by Lists',
+    ]);
+    expect(within(palette).getByRole('option', { name: 'Group by People' }).getAttribute('aria-disabled')).toBe('true');
     const paletteInput = within(palette).getByRole('combobox');
     paletteInput.focus();
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('everything-editable'));
@@ -2296,6 +2360,8 @@ describe('AppShell', () => {
     expect(screen.getByRole('dialog', { name: 'Messages commands' })).toBeDefined();
     expect((paletteInput as HTMLInputElement).value).toBe('');
     expect(appShortcuts.activeScope()).toBe('everything-editable');
+    await fireEvent.keyDown(paletteInput, { key: 'Escape' });
+    expect(within(palette).getByRole('option', { name: 'Messages' })).toBeDefined();
     await fireEvent.keyDown(paletteInput, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Messages commands' })).toBeNull());
     await waitFor(() => expect(appShortcuts.activeScope()).toBe('root'));
