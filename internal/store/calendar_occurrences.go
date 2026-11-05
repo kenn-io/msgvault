@@ -111,9 +111,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if e.Kind == meetingExceptionKind && e.Original == nil {
 			report(row.MessageID, "exception has no original start")
 		}
-		if e.Kind == meetingExceptionKind && e.Original != nil && !e.Original.AllDay && e.Original.Instant.Nanosecond() != 0 {
-			report(row.MessageID, "exception original start must have whole-second precision")
-		}
 		switch e.Kind {
 		case meetingExceptionKind, "single":
 			if e.Kind == meetingExceptionKind && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
@@ -157,19 +154,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	return page, nil
-}
-
-func isFractionalCalendarIdentity(identity *calrecur.Identity) bool {
-	return identity != nil && !identity.AllDay && identity.Instant.Nanosecond() != 0
-}
-
-// Keep subsecond exception snapshots distinct from the whole-second recurrence
-// key used by Google instance references.
-func calendarExceptionIdentityKey(identity calrecur.Identity) string {
-	if isFractionalCalendarIdentity(&identity) {
-		return "fractional:" + identity.Instant.UTC().Format(time.RFC3339Nano)
-	}
-	return identity.Key()
 }
 
 func calendarMissingBoundsReason(event calevent.Event) string {
@@ -223,11 +207,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 // Keep unidentified edits and edits of a former series type alongside resolved overrides.
 // Preserve all bounded edits for generation failures.
 func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []CalendarEventRow, duration time.Duration, days int) (resolved, bounded []calrecur.Occurrence, err error) {
-	exceptions := calendarExceptionRows(rows)
-	for _, row := range exceptions {
-		if err := ctx.Err(); err != nil {
-			return nil, bounded, err
-		}
+	for _, row := range rows {
 		e := row.Event
 		if e.Start != nil && e.End != nil {
 			o, err := exceptionBoundsFor(set, duration, days, row)
@@ -235,7 +215,7 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 				return nil, bounded, err
 			}
 			bounded = append(bounded, o)
-			if e.Original == nil || set != nil && e.Original.AllDay != set.AllDay || !e.Original.AllDay && e.Original.Instant.Nanosecond() != 0 {
+			if e.Original == nil || isFractionalCalendarIdentity(e.Original) || set != nil && e.Original.AllDay != set.AllDay {
 				resolved = append(resolved, bounded[len(bounded)-1])
 			}
 		}
@@ -243,79 +223,56 @@ func resolveCalendarExceptions(ctx context.Context, set *calrecur.Set, rows []Ca
 	if set == nil {
 		return nil, bounded, nil
 	}
+	exceptions, err := calendarRecurrenceExceptions(rows)
+	if err != nil {
+		return nil, bounded, err
+	}
+	overrides := make(map[string]calrecur.Exception, len(exceptions))
 	for _, exception := range exceptions {
+		overrides[exception.Original.Key()] = exception
+	}
+	for _, exception := range overrides {
 		if err := ctx.Err(); err != nil {
 			return nil, bounded, err
 		}
-		if exception.Event.Original == nil {
-			continue
-		}
-		// A retained edit's old value type or fractional precision cannot identify a current instance.
+		// A retained edit's old value type cannot identify a current instance.
 		// Its recorded bounds were already kept above.
-		if exception.Event.Original.AllDay != set.AllDay || !exception.Event.Original.AllDay && exception.Event.Original.Instant.Nanosecond() != 0 {
+		if exception.Original.AllDay != set.AllDay {
 			continue
 		}
-		o, err := exceptionBoundsFor(set, duration, days, exception)
+		o, err := calrecur.EffectiveException(*set, exception, duration, days)
 		if err != nil {
 			return nil, bounded, err
 		}
 		resolved = append(resolved, o)
-		set.ExDates = append(set.ExDates, *exception.Event.Original)
+		set.ExDates = append(set.ExDates, exception.Original)
 	}
 	return resolved, bounded, nil
 }
 
-// Freshness follows provider-observation order. Message IDs break ties when
-// multiple snapshots share the same migrated order.
-func calendarExceptionOverrides(rows []CalendarEventRow) map[string]CalendarEventRow {
-	overrides := make(map[string]CalendarEventRow, len(rows))
-	for _, row := range rows {
-		if row.Event.Original == nil {
-			continue
-		}
-		key := calendarExceptionIdentityKey(*row.Event.Original)
-		current, exists := overrides[key]
-		if !exists || calendarEventSnapshotNewer(row, current) {
-			overrides[key] = row
-		}
-	}
-	return overrides
-}
-
-// Identified snapshots collapse to their freshest alias. Exceptions without
-// an original identity remain independent bounded occurrences.
-func calendarExceptionRows(rows []CalendarEventRow) []CalendarEventRow {
-	type identity struct {
-		sourceID int64
-		seriesID string
-		key      string
-	}
-	identified := make(map[identity]CalendarEventRow, len(rows))
-	byID := make(map[int64]CalendarEventRow, len(rows))
-	for _, row := range rows {
-		if row.Event.Original == nil {
-			byID[row.MessageID] = row
-			continue
-		}
-		key := identity{sourceID: row.SourceID, seriesID: row.Event.SeriesProviderID, key: calendarExceptionIdentityKey(*row.Event.Original)}
-		current, exists := identified[key]
-		if !exists || calendarEventSnapshotNewer(row, current) {
-			identified[key] = row
-		}
-	}
-	for _, row := range identified {
-		byID[row.MessageID] = row
-	}
-	exceptions := make([]CalendarEventRow, 0, len(byID))
-	for _, row := range byID {
-		exceptions = append(exceptions, row)
-	}
-	slices.SortFunc(exceptions, func(a, b CalendarEventRow) int { return cmp.Compare(a.MessageID, b.MessageID) })
-	return exceptions
-}
-
 func calendarRecurrenceBudgetError() error {
 	return fmt.Errorf("%w; long-running series count steps from their start; a narrower window may not reduce the work", ErrQueryTooBroad)
+}
+
+func calendarRecurrenceExceptions(rows []CalendarEventRow) ([]calrecur.Exception, error) {
+	exceptions := make([]calrecur.Exception, 0, len(rows))
+	for _, row := range rows {
+		e := row.Event
+		if e.Original == nil || isFractionalCalendarIdentity(e.Original) {
+			continue
+		}
+		// Explicit dates use the event or calendar zone; omitted bounds inherit the master.
+		var zone *time.Location
+		if e.EventTimeZone != "" || e.StartDate != "" || e.EndDate != "" {
+			var err error
+			zone, err = calendarEventZone(e)
+			if err != nil {
+				return nil, err
+			}
+		}
+		exceptions = append(exceptions, calrecur.Exception{Original: *e.Original, Start: e.Start, End: e.End, StartDate: e.StartDate, EndDate: e.EndDate, Zone: zone, Cancelled: e.Status == "cancelled", Ref: row.MessageID})
+	}
+	return exceptions, nil
 }
 
 func calendarEventZone(e calevent.Event) (*time.Location, error) {
@@ -391,4 +348,14 @@ func materializeCalendarOccurrence(ctx context.Context, r loggedReader, master C
 		effective.Event.Status = meetingCancelledStatus
 	}
 	return effective, o, nil
+}
+
+func isFractionalCalendarIdentity(identity *calrecur.Identity) bool {
+	return identity != nil && !identity.AllDay && identity.Instant.Nanosecond() != 0
+}
+func calendarExceptionIdentityKey(identity calrecur.Identity) string {
+	if isFractionalCalendarIdentity(&identity) {
+		return "fractional:" + identity.Instant.UTC().Format(time.RFC3339Nano)
+	}
+	return identity.Key()
 }

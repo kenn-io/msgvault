@@ -2,13 +2,15 @@ package store
 
 import (
 	"database/sql"
- "fmt"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/meetingcontent"
+	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
 func TestMeetingLinksDedupUndoAndPurge(t *testing.T) {

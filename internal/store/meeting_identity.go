@@ -187,20 +187,14 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if !r.batch.visible[id] {
 				continue
 			}
-			// Manual decisions replace automatic evidence, including absent targets.
-			manual := false
 			for _, d := range r.batch.decisions[id] {
-				predicate, args := s.meetingIdentityPredicate(d.Identity)
-				candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
-				manual = manual || d.Decision == "link"
+				candidateQueries = append(candidateQueries, meetingEventQuery{"e.message_id = ?", []any{d.Ref.MessageID}})
 			}
-			if !manual {
-				predicate, args, err := s.automaticMeetingPredicate(ctx, r, r.batch.keys[id])
-				if err != nil {
-					return result, err
-				}
-				candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
+			predicate, args, err := s.automaticMeetingPredicate(ctx, r, r.batch.keys[id])
+			if err != nil {
+				return result, err
 			}
+			candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
 		}
 		if err := s.preloadMeetingQueries(ctx, r, candidateQueries, &budget); err != nil {
 			return result, err
@@ -215,11 +209,13 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if err != nil {
 				return result, fmt.Errorf("resolve meeting transcript %d: %w", id, err)
 			}
-			exact := len(candidates) > 0 && candidates[0].Exact
 			if !explicit[id] {
 				relevant := false
-				if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
+				if len(candidates) > 0 {
 					for _, candidate := range candidates {
+						if !candidate.Exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
+							continue
+						}
 						if g := groups[candidate.Identity]; g != nil && requestedGroups[g] {
 							relevant = true
 						}
@@ -231,8 +227,11 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				}
 			}
 			resolvedMembers[id] = candidates
-			if exact || req.IncludeSuggestions && !sourcescope.Restricted(ctx) {
+			if len(candidates) > 0 {
 				for _, candidate := range candidates {
+					if !candidate.Exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
+						continue
+					}
 					predicate, args := s.meetingIdentityPredicate(candidate.Identity)
 					memberCopies = append(memberCopies, meetingEventQuery{predicate, args})
 				}
@@ -247,9 +246,8 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 				continue
 			}
 			info := MeetingIdentityInfo{Key: fmt.Sprintf("msg:%d", id)}
-			exact := len(candidates) > 0 && candidates[0].Exact
 			for _, candidate := range candidates {
-				if !exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
+				if !candidate.Exact && (!req.IncludeSuggestions || sourcescope.Restricted(ctx)) {
 					continue
 				}
 				g, err := groupFor(candidate.linkOccurrence)
@@ -257,7 +255,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 					return result, fmt.Errorf("resolve transcript occurrence: %w", err)
 				}
 				value := publicMeetingOccurrenceRef(g.occurrence)
-				if exact {
+				if candidate.Exact {
 					info.ExactOccurrenceRefs = append(info.ExactOccurrenceRefs, value)
 					g.linked = append(g.linked, id)
 				} else {
@@ -364,8 +362,8 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 			}
 		}
 	}
-	clauses := []string{`(d.target_ical_uid=? AND d.target_ical_uid<>'' AND d.occurrence_key=?)`}
-	args := []any{o.Identity.ICalUID, o.Identity.OccurrenceKey}
+	clauses := []string{"1=0"}
+	args := []any{}
 	keyClauses, keyArgs, err := meetingIdentityUIDMemberClauses(ctx, r, o, copies, budget)
 	if err != nil {
 		return "", nil, err

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -48,31 +47,4 @@ func TestCalendarFractionalOriginalKeepsWholeSecondCancellation(t *testing.T) {
 	assertions.Equal(meetingIdentity{EventMessageID: fractional, OccurrenceKey: "20270309T170000Z"}, fractionalOccurrence.Identity)
 	assertions.Equal(from.Add(19*time.Hour), fractionalOccurrence.Start)
 	assertions.Equal(from.Add(20*time.Hour), fractionalOccurrence.End)
-}
-
-func TestCalendarExceptionAliasQueryKeepsOriginalPrecision(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	raw := func(id, series, fraction, hour string) string {
-		return fmt.Sprintf(`{"id":%q,"recurringEventId":%q,"originalStartTime":{"dateTime":"2027-03-09T17:00:00%sZ"},"start":{"dateTime":"2027-03-09T%s:00:00Z"},"end":{"dateTime":"2027-03-09T23:00:00Z"}}`, id, series, fraction, hour)
-	}
-	_, whole := calendarFixture(t, st, "whole", raw("whole", "weekly", "", "17"))
-	_, wholeAlias := calendarFixture(t, st, "whole-alias", raw("whole-alias", "weekly", "", "18"))
-	_, fraction := calendarFixture(t, st, "fraction", raw("fraction", "weekly", ".123456", "19"))
-	_, fractionAlias := calendarFixture(t, st, "fraction-alias", raw("fraction-alias", "weekly", ".123456", "20"))
-	_, otherSeries := calendarFixture(t, st, "other-series", raw("other-series", "other-weekly", "", "21"))
-	_, otherSource := calendarFixture(t, st, "other-source", raw("other-source", "weekly", ".123456", "21"), "other@example.com")
-	seeds := calendarRows(t, st, whole, fraction)
-	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
-	requirements.NoError(err)
-	defer release()
-	aliases, err := queryCalendarExceptionAliases(ctx, st.meetingReader(), seeds, 20)
-	requirements.NoError(err)
-	var ids []int64
-	for _, row := range aliases {
-		ids = append(ids, row.MessageID)
-	}
-	assertions.ElementsMatch([]int64{whole, wholeAlias, fraction, fractionAlias}, ids)
-	assertions.NotContains(ids, otherSeries)
-	assertions.NotContains(ids, otherSource)
 }
