@@ -389,7 +389,7 @@ func (e *Executor) persistTerminalManifest(manifestID string, manifest *Manifest
 	}
 	manifest.Status = status
 	if err := e.manager.WriteInProgressCheckpoint(manifest, manifestID, 0); err != nil {
-		return fmt.Errorf("persist final checkpoint for manifest %s: %w", manifestID, err)
+		e.logger.Error("failed to persist final checkpoint", "manifest", manifestID, "error", err)
 	}
 	if err := e.manager.WriteInProgressManifest(manifest, manifestID); err != nil {
 		if errors.Is(err, ErrManifestCancelled) {

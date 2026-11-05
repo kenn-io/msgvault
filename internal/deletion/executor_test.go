@@ -988,6 +988,34 @@ func TestExecutor_Finalize_TerminalFileCarriesFinalState(t *testing.T) {
 	require.NotNil(loaded.Execution.CompletedAt, "CompletedAt persisted before the move")
 }
 
+func TestExecutor_Finalize_WithoutJournalWrite(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+
+	manifest := tc.CreateManifest("journal write failure", msgIDs(3))
+	tc.Exec.WithProgress(&onStartProgress{hook: func() {
+		// An empty directory blocks the append on every OS while allowing
+		// the full manifest writer to remove it after publication.
+		path := journalPath(filepath.Join(tc.Mgr.InProgressDir(), manifest.ID+".json"))
+		require.NoError(os.Mkdir(path, 0o700))
+	}})
+
+	require.NoError(tc.ExecuteWithOpts(manifest.ID, trashOpts(100)))
+	tc.AssertTrashCalls(3)
+
+	loaded, err := LoadManifest(filepath.Join(tc.Mgr.CompletedDir(), manifest.ID+".json"))
+	require.NoError(err)
+	assert.Equal(StatusCompleted, loaded.Status)
+	require.NotNil(loaded.Execution)
+	assert.Equal(3, loaded.Execution.Succeeded)
+	assert.Equal(3, loaded.Execution.LastProcessedIndex)
+	assert.NotNil(loaded.Execution.CompletedAt)
+
+	require.Error(tc.ExecuteWithOpts(manifest.ID, trashOpts(100)))
+	assert.Len(tc.MockAPI.TrashCalls, 3, "rerunning a completed manifest must make no additional Trash calls")
+}
+
 // TestExecutor_Finalize_CompletedFileIsSelfConsistent verifies the ordinary
 // path: the file in completed/ carries its own final status and counters, so
 // readers never depend on the directory to correct a stale inline status.
