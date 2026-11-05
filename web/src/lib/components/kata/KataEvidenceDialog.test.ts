@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import { createAPIClient } from '../../api/client';
 import KataEvidenceDialog from './KataEvidenceDialog.svelte';
@@ -175,7 +175,7 @@ describe('KataEvidenceDialog', () => {
       const request = input as Request;
       if (request.url.endsWith('/open-issues')) {
         reads();
-        return Response.json({ issues: [{ ...issue, title: 'Send the budget', ref: 'k3f9', qualified_ref: 'example#k3f9' }, { ...issue, title: 'C# guide' }], truncated: true });
+        return Response.json({ issues: [{ ...issue, title: 'Send the budget', ref: 'k3f9', qualified_ref: 'example#k3f9' }, { ...issue, title: 'C# guide mentions example#older' }], truncated: true });
       }
       if (request.url.endsWith('/prepare')) return Response.json({ evidence: [passages[0]] });
       posts.push(request);
@@ -187,14 +187,18 @@ describe('KataEvidenceDialog', () => {
     await screen.findByRole('radio', { name: 'Send the budget · example#k3f9' });
     expect(screen.getByText("Showing the 25 newest open issues. Type an issue's ref to add it.")).toBeDefined();
     const filter = screen.getByRole('searchbox', { name: 'Filter open issues' });
-    for (const text of ['bud', 'K3F9', 'example#k3f9', 'C# guide']) {
+    for (const text of ['bud', 'K3F9', 'C# guide']) {
       await fireEvent.input(filter, { target: { value: text } });
-      const title = text === 'C# guide' ? 'C# guide · example#abcd' : 'Send the budget · example#k3f9';
+      const title = text === 'C# guide' ? 'C# guide mentions example#older · example#abcd' : 'Send the budget · example#k3f9';
       await screen.findByRole('radio', { name: title });
-      await waitFor(() => expect(screen.getByRole('group', { name: 'open issues' }).querySelectorAll('input[type=radio]')).toHaveLength(1));
+      await screen.findByRole('radio', { name: `Add quote to ${text}` });
     }
     expect(reads).toHaveBeenCalledOnce();
+    await fireEvent.input(filter, { target: { value: 'EXAMPLE#K3F9' } });
+    await screen.findByRole('radio', { name: 'Send the budget · example#k3f9' });
+    expect(screen.queryByRole('radio', { name: 'Add quote to EXAMPLE#K3F9' })).toBeNull();
     await fireEvent.input(filter, { target: { value: ' example#older ' } });
+    await screen.findByRole('radio', { name: 'C# guide mentions example#older · example#abcd' });
     await fireEvent.click(await screen.findByRole('radio', { name: 'Add quote to example#older' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Add quote' }));
     await screen.findByText('example#abcd');

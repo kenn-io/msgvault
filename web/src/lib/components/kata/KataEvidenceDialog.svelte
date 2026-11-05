@@ -61,7 +61,7 @@
     const filter = text.toLowerCase();
     const items = data.issues.filter(issue => issue.title.toLowerCase().includes(filter) || issue.qualified_ref.toLowerCase().includes(filter))
       .map(issue => ({ id: issue.qualified_ref, label: issue.title, detail: issue.qualified_ref }));
-    if (text && items.length === 0) items.push({ id: text, label: `Add quote to ${text}`, detail: '' });
+    if (text && !data.issues.some(issue => issue.qualified_ref.toLowerCase() === filter)) items.push({ id: text, label: `Add quote to ${text}`, detail: '' });
     return { items, truncated: data.truncated };
   }
 
