@@ -157,6 +157,8 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 	require.NoError(err)
 	assert.Equal("completed", run.Status)
 	assert.Equal(int64(1), run.MessagesAdded)
+	require.True(run.CompletedAt.Valid)
+	assert.Equal(run.CompletedAt.Time, src.LastSyncAt.Time)
 	identities, err := st.ListAccountIdentities(src.ID)
 	require.NoError(err)
 	require.Len(identities, 1)

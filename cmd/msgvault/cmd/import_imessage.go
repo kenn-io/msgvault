@@ -204,10 +204,6 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 		mutated = true
 	}
 
-	return refreshImessageCache(state, mutated, summary)
-}
-
-func refreshImessageCache(state *invocation, mutated bool, summary *imessage.ImportSummary) error {
 	cfg := state.cfg
 	dbPath := cfg.DatabaseDSN()
 	if !store.IsPostgresURL(dbPath) && (mutated || (summary != nil && summary.DatesCleared > 0)) {

@@ -135,7 +135,7 @@ func (imp *Importer) importApple(
 			_ = imp.store.FailSync(syncID, retErr.Error())
 			return
 		}
-		if err := imp.store.CompleteSync(syncID, ""); err != nil {
+		if err := imp.store.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, source.ID, ""); err != nil {
 			retErr = fmt.Errorf("complete sync: %w", err)
 		}
 	}()

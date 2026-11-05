@@ -42,9 +42,6 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	if err != nil {
 		return fmt.Errorf("whatsapp apple source %q: %w", src.Name, err)
 	}
-	if err := s.TouchSourceLastSyncAt(summary.SourceID); err != nil {
-		return fmt.Errorf("update source freshness: %w", err)
-	}
 	confirmDefaultIdentity(io.Discard, s, summary.SourceID, src.Phone, src.Phone, "phone-e164", state.logger)
 	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
 		return fmt.Errorf("post-source-create migrations: %w", err)

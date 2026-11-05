@@ -2,6 +2,7 @@ package whatsapp
 
 import (
 	"context"
+	"encoding/json/v2"
 	"path/filepath"
 	"testing"
 
@@ -28,6 +29,36 @@ const appleMarkerSchema = `
 	ALTER TABLE ZWAGROUPMEMBER ADD COLUMN Z_OPT INTEGER DEFAULT 1;
 	CREATE TABLE Z_METADATA (Z_VERSION INTEGER PRIMARY KEY, Z_UUID VARCHAR(255), Z_PLIST BLOB);
 `
+
+func TestImportAppleCompletesWithFreshnessAndChatMarkers(t *testing.T) {
+	require := require.New(t)
+	st := testutil.NewTestStore(t)
+	opts := appleTestOptions()
+	source, err := st.GetOrCreateSource("whatsapp", opts.Phone)
+	require.NoError(err)
+	_, err = st.DB().Exec(`UPDATE sources SET last_sync_at = '2000-01-01 00:00:00' WHERE id = ?`, source.ID)
+	require.NoError(err)
+	before, err := st.GetSourceByID(source.ID)
+	require.NoError(err)
+	require.True(before.LastSyncAt.Valid)
+
+	_, err = NewImporter(st, nil).Import(context.Background(), createAppleMarkerFixture(t), opts)
+	require.NoError(err)
+	after, err := st.GetSourceByID(source.ID)
+	require.NoError(err)
+	require.True(after.LastSyncAt.Valid)
+	assert.True(t, after.LastSyncAt.Time.After(before.LastSyncAt.Time))
+	run, err := st.GetLatestSync(source.ID)
+	require.NoError(err)
+	assert.Equal(t, "completed", run.Status)
+	var markers appleChatMarkerState
+	require.NoError(json.Unmarshal([]byte(after.SyncCursor.String), &markers))
+	assert.Equal(t, run.ID, markers.SyncID)
+	require.Len(markers.Chats, 3)
+	for _, chatID := range []int64{1, 2, 3} {
+		assert.NotEmpty(t, markers.Chats[chatID])
+	}
+}
 
 func TestImportAppleRerunSkipsUnchangedChats(t *testing.T) {
 	require := require.New(t)
