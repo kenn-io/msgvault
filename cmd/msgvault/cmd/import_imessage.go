@@ -162,7 +162,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	summary, err := importImessageRecorded(ctx, s, client, src.ID, "imessage_import")
+	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
@@ -345,10 +345,8 @@ func defaultChatDBPath() (string, error) {
 }
 
 // importImessageRecorded preserves partial progress even when an import fails.
-//
-//nolint:unparam // CLI and scheduled imports intentionally share the same sync type.
-func importImessageRecorded(ctx context.Context, s *store.Store, client *imessage.Client, sourceID int64, syncType string) (summary *imessage.ImportSummary, retErr error) {
-	syncID, err := s.StartSync(sourceID, syncType)
+func importImessageRecorded(ctx context.Context, s *store.Store, client *imessage.Client, sourceID int64) (summary *imessage.ImportSummary, retErr error) {
+	syncID, err := s.StartSync(sourceID, "imessage_import")
 	if err != nil {
 		return nil, fmt.Errorf("start sync: %w", err)
 	}

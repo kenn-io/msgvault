@@ -2602,3 +2602,14 @@ func TestLoadAppleImportPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadApplePhoneRequiresPlus(t *testing.T) {
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(os.WriteFile(path, []byte("[[whatsapp_apple]]\nphone = '15550000000'\n"), 0600))
+	_, err := Load(path, "")
+	require.ErrorContains(err, "whatsapp_apple[0].phone must start with +")
+	cfg, err := LoadClientWithOverrides(path, "", RuntimeOverrides{})
+	require.NoError(err)
+	require.ErrorContains(cfg.DaemonConfigError(), "whatsapp_apple[0].phone must start with +")
+}

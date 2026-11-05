@@ -1201,6 +1201,9 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	cfg.IMessage.DBPath = expandPath(cfg.IMessage.DBPath)
 	for i := range cfg.WhatsAppApple {
 		cfg.WhatsAppApple[i].Path = expandPath(cfg.WhatsAppApple[i].Path)
+		if !strings.HasPrefix(cfg.WhatsAppApple[i].Phone, "+") {
+			cfg.deferDaemonError(fmt.Errorf("whatsapp_apple[%d].phone must start with +", i))
+		}
 	}
 	cfg.Backup.Repo = expandPath(cfg.Backup.Repo)
 	for i := range cfg.Muesli {

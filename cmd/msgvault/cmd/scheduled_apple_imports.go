@@ -90,7 +90,7 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 		return fmt.Errorf("open iMessage database: %w", err)
 	}
 	defer func() { _ = client.Close() }()
-	summary, err := importImessageRecorded(ctx, s, client, src.ID, "imessage_import")
+	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	if attachmentImportOnly(err) {
 		state.logger.Warn("imessage attachment import warning", "error", err)
 	} else if err != nil {
@@ -101,7 +101,6 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 		state.logger.Warn("could not refresh iMessage chat titles", "error", err)
 	} else if count > 0 {
 		state.logger.Info("imessage chat titles refreshed", "count", count)
-		return refreshImessageCache(state, true, summary)
 	}
 	return nil
 }

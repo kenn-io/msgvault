@@ -498,10 +498,6 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 	}
 	for _, source := range cfg.ScheduledWhatsAppAppleSources() {
-		if !strings.HasPrefix(source.Phone, "+") {
-			logger.Error("whatsapp apple phone must start with +", "source", source.Name)
-			continue
-		}
 		jobName, _ := api.SchedulerJobNameForSource("whatsapp", source.Phone)
 		if err := sched.AddJob(scheduler.Job{
 			Name:     jobName,
