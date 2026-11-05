@@ -75,7 +75,7 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "window@example.org"))
 	// Enough historical notes make a narrow range cheaper than a population scan.
-	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"window@example.org","startsAt":"2027-03-14T10:00:00Z"}}`)
+	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T10:00:00Z"}}`)
 	_, err := st.db.Exec(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,sent_at) SELECT source_id,conversation_id, 'history-' || n, 'meeting_transcript', '2020-01-01 00:00:00+00:00' FROM messages CROSS JOIN `+func() string {
 		if st.IsPostgreSQL() {
 			return `generate_series(1,3000) AS n`
