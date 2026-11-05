@@ -24,13 +24,13 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 		}
 		offsets, rules := make(map[string]string), make(map[string]string)
 		for _, part := range zone.Children {
-			offset, start, rule := part.Props.Get("TZOFFSETTO"), part.Props.Get("DTSTART"), part.Props.Get("RRULE")
+			offset, from, start, rule := part.Props.Get("TZOFFSETTO"), part.Props.Get("TZOFFSETFROM"), part.Props.Get("DTSTART"), part.Props.Get("RRULE")
 			if (part.Name != "STANDARD" && part.Name != "DAYLIGHT") || offsets[part.Name] != "" || offset == nil || start == nil {
 				return nil, fmt.Errorf("VTIMEZONE %q requires distinct STANDARD or DAYLIGHT observances with TZOFFSETTO and DTSTART", id)
 			}
 			_, offsetErr := time.Parse("-0700", offset.Value)
 			wall, startErr := time.Parse("20060102T150405", start.Value)
-			if offsetErr != nil || startErr != nil {
+			if offsetErr != nil || startErr != nil || rule == nil && (from == nil || from.Value != offset.Value) {
 				return nil, fmt.Errorf("unsupported VTIMEZONE %q offset or start", id)
 			}
 			offsets[part.Name] = strings.NewReplacer("+", "-", "-", "+").Replace(offset.Value[:3]) + ":" + offset.Value[3:]
