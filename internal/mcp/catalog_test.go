@@ -1096,6 +1096,7 @@ func TestOfficialSDKInMemoryRoundTrip(t *testing.T) {
 
 func TestGetMessageSegmentsSchema(t *testing.T) {
 	assert := assert.New(t)
+	require := require.New(t)
 	tools := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false)
 	var tool map[string]any
 	for _, candidate := range tools {
@@ -1104,20 +1105,28 @@ func TestGetMessageSegmentsSchema(t *testing.T) {
 			break
 		}
 	}
-	require.NotNil(t, tool)
-	schema := tool["outputSchema"].(map[string]any)
-	properties := schema["properties"].(map[string]any)
+	require.NotNil(tool)
+	schema, ok := tool["outputSchema"].(map[string]any)
+	require.True(ok, "outputSchema: %#v", tool["outputSchema"])
+	properties, ok := schema["properties"].(map[string]any)
+	require.True(ok, "properties: %#v", schema)
 	for name, typ := range map[string]string{"segments_version": "string", "segments_truncated": "boolean", "segments_unavailable": "string"} {
-		property := properties[name].(map[string]any)
+		property, ok := properties[name].(map[string]any)
+		require.True(ok, "%s property in %#v", name, properties)
 		assert.Equal(typ, property["type"], name)
 		assert.NotContains(schema["required"], name)
 	}
-	segments := properties["segments"].(map[string]any)
-	items := segments["items"].(map[string]any)
-	fields := items["properties"].(map[string]any)
+	segments, ok := properties["segments"].(map[string]any)
+	require.True(ok, "segments: %#v", properties)
+	items, ok := segments["items"].(map[string]any)
+	require.True(ok, "items: %#v", segments)
+	fields, ok := items["properties"].(map[string]any)
+	require.True(ok, "properties: %#v", items)
 	for _, name := range []string{"kind", "start", "end", "depth"} {
 		assert.Contains(fields, name)
 	}
-	assert.Equal("integer", fields["depth"].(map[string]any)["type"])
+	depth, ok := fields["depth"].(map[string]any)
+	require.True(ok, "depth: %#v", fields)
+	assert.Equal("integer", depth["type"])
 	assert.NotContains(items["required"], "depth")
 }

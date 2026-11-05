@@ -61,7 +61,7 @@ func outlookHistory(lines []string) bool {
 		}
 	}
 	if len(lines) < 3 || !headerValue(lines[0], "from:") ||
-		!(headerValue(lines[1], "sent:") || divider && headerValue(lines[1], "date:")) {
+		!headerValue(lines[1], "sent:") && (!divider || !headerValue(lines[1], "date:")) {
 		return false
 	}
 	for _, line := range lines[2:min(8, len(lines))] {
