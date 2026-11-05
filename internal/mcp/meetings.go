@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/jsonschema-go/jsonschema"
+	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/pkg/client/generated"
@@ -332,7 +333,7 @@ func (h *handlers) getMeetingRecord(ctx context.Context, req toolRequest) (*tool
 	}
 	record, err := h.meetings.MeetingRecord(ctx, ref)
 	if err != nil {
-		return nil, newInternalError("get meeting record", err)
+		return meetingLinkError("get meeting record", err)
 	}
 	return jsonResult(record)
 }
@@ -344,7 +345,7 @@ func (h *handlers) suggestMeetingLinks(ctx context.Context, req toolRequest) (*t
 	}
 	page, err := h.meetings.SuggestMeetingLinks(ctx, ref)
 	if err != nil {
-		return nil, newInternalError("suggest meeting links", err)
+		return meetingLinkError("suggest meeting links", err)
 	}
 	return jsonResult(page)
 }
@@ -368,7 +369,7 @@ func (h *handlers) decideMeetingLink(ctx context.Context, req toolRequest, decis
 		return toolErrorResult("message_id and event are required"), nil
 	}
 	if err := h.meetings.DecideMeetingLink(ctx, id, event, decision); err != nil {
-		return nil, newInternalError("decide meeting link", err)
+		return meetingLinkError("decide meeting link", err)
 	}
 	return jsonResult(generated.MeetingLinkDecisionResponse{MessageID: id, Event: event, Decision: decision})
 }
@@ -399,4 +400,11 @@ func meetingLinkDecisionDefinition(unlink bool) toolDefinition {
 		outputSchemaFor[generated.MeetingLinkDecisionResponse](), handler)
 	definition.availability = meetingsAvailable
 	return definition
+}
+
+func meetingLinkError(operation string, err error) (*toolResult, error) {
+	if apiErr, ok := errors.AsType[*daemonclient.APIError](err); ok && apiErr.Status >= 400 && apiErr.Status < 500 {
+		return toolErrorResult(apiErr.Code + ": " + apiErr.Message), nil
+	}
+	return nil, newInternalError(operation, err)
 }

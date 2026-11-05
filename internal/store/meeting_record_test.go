@@ -27,7 +27,7 @@ func TestMeetingRecordNotesAndCopies(t *testing.T) {
 	}
 	record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: automatic})
 	require.NoError(err)
-	assert.Equal([]int64{automatic}, record.MessageIDs)
+	assert.Equal([]int64{automatic, manual}, record.MessageIDs)
 	require.Len(record.Links, 1)
 	assert.Equal(formatMeetingOccurrence(OccurrenceRef{MessageID: event}), record.Links[0].Ref)
 }

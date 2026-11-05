@@ -321,7 +321,7 @@ func (s *Store) automaticMeetingOccurrences(ctx context.Context, r reboundReader
 		if len(sourceIDs) == 0 {
 			return nil, nil
 		}
-		predicate = `m.source_id IN (` + placeholders(len(sourceIDs)) + `) AND (e.provider_event_id = ? OR (e.kind = 'series' AND e.provider_event_id = ?))`
+		predicate = `COALESCE((SELECT sm.original_source_id FROM source_merge_messages sm WHERE sm.message_id = m.id), m.source_id) IN (` + placeholders(len(sourceIDs)) + `) AND (e.provider_event_id = ? OR (e.kind = 'series' AND e.provider_event_id = ?))`
 		args = sourceIDs
 		args = append(args, key.Value, base)
 	} else if key.ScheduledAt != nil {
@@ -417,7 +417,6 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 	}
 	var out []linkOccurrence
 	splits := map[meetingIdentity]bool{}
-	hasManualLink := false
 	for _, d := range decisions {
 		if d.Decision == "split" {
 			rows, err := meetingEventRows(ctx, r, "e.message_id = ?", []any{d.Ref.MessageID}, budget)
@@ -429,7 +428,6 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			}
 			continue
 		}
-		hasManualLink = true
 		o, err := resolveMeetingOccurrence(ctx, r, d.Ref, budget)
 		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
 			continue
@@ -438,9 +436,6 @@ func (s *Store) meetingMemberOccurrences(ctx context.Context, r reboundReader, m
 			return nil, err
 		}
 		out = append(out, o)
-	}
-	if hasManualLink {
-		return uniqueMeetingOccurrences(out), nil
 	}
 	key, err := memberLinkKey(ctx, r, memberID)
 	if err != nil {
@@ -478,4 +473,23 @@ func uniqueMeetingOccurrences(out []linkOccurrence) []linkOccurrence {
 		seen[o.Identity] = true
 		return false
 	})
+}
+
+func (s *Store) meetingIdentityRows(ctx context.Context, r reboundReader, identity meetingIdentity, budget *int) ([]CalendarEventRow, error) {
+	predicate, args := s.calendarUIDPredicate(), []any{identity.ICalUID}
+	if identity.OccurrenceKey == "" {
+		predicate += ` AND (e.kind = 'single' OR (e.kind = 'exception' AND e.original_start_at IS NULL AND e.original_start_date = ''))`
+	} else {
+		_, id, ok := calrecur.ParseInstanceID("event_" + identity.OccurrenceKey)
+		if !ok {
+			return nil, nil
+		}
+		column, value := "e.original_start_at", any(id.Instant)
+		if id.AllDay {
+			column, value = "e.original_start_date", id.Date
+		}
+		predicate += ` AND (e.kind IN ('series', 'single') OR (e.kind = 'exception' AND ` + column + ` = ?))`
+		args = append(args, value)
+	}
+	return meetingEventRows(ctx, r, predicate, args, budget)
 }
