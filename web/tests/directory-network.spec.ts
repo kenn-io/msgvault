@@ -65,8 +65,8 @@ for (const scenario of ['shared organization', 'nested same-column relations', '
     const nested = scenario === 'nested same-column relations';
     const count = nested ? 4 : scenario === 'shared organization' ? 3 : 1;
     const nodes = [
-      { id: 'person:42', kind: 'person', entity_id: 42, label: 'Archive Person', hop: 0 },
-      ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: `Curated Peer ${index + 1}`, hop: 1 })),
+      { id: 'person:42', kind: 'person', entity_id: 42, label: scenario === 'long employment title' ? 'Archive Person With A Very Long Full Name Here' : 'Archive Person', hop: 0 },
+      ...Array.from({ length: count }, (_, index) => ({ id: `person:${43 + index}`, kind: 'person', entity_id: 43 + index, label: scenario === 'long employment title' ? 'Curated Peer With A Very Long Full Name Here' : `Curated Peer ${index + 1}`, hop: 1 })),
       ...nested ? [] : [{ id: 'organization:21', kind: 'organization', entity_id: 21, label: 'Shared Organization', hop: 2 }]
     ];
     const edges: NetworkEdge[] = Array.from({ length: count }, (_, index) => ({
@@ -102,6 +102,15 @@ for (const scenario of ['shared organization', 'nested same-column relations', '
         const box = button.getBoundingClientRect();
         return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === button;
       })).toBe(true);
+    }
+    if (scenario === 'long employment title') {
+      for (const chip of await network.locator('.edge-label').all()) {
+        await chip.scrollIntoViewIfNeeded();
+        for (const fraction of [0.1, 0.5, 0.9]) expect(await chip.evaluate((element, fraction) => {
+          const box = element.getBoundingClientRect();
+          return document.elementFromPoint(box.x + box.width * fraction, box.y + box.height / 2) === element;
+        }, fraction)).toBe(true);
+      }
     }
     if (nested) {
       const rails = await network.locator('svg path').evaluateAll((paths) => paths
