@@ -8,6 +8,7 @@ All notable changes to msgvault, grouped by release.
 
 ## Unreleased
 
+- Operators can require client approval before sensitive draft content reaches a provider with `msgvault mcp --confirm-sensitive-drafts` or `msgvault serve --mcp-allow-writes --mcp-confirm-sensitive-drafts`. The option is off by default and grants no tools.
 - MCP draft creation and edit receipts now include advisory `sensitive_content` findings for likely card numbers, IBANs, US Social Security numbers, API keys, and passwords in the submitted subject or body. Drafts are still written unchanged.
 
 ## 0.23.0

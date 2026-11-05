@@ -109,6 +109,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	savedAllowPersonMerges := mcpAllowPersonMerges
 	savedAllowCardDAVWrites := mcpAllowCardDAVWrites
 	savedAllowCalendarWrites := mcpAllowCalendarWrites
+	savedConfirmSensitiveDrafts := mcpConfirmSensitiveDrafts
 	savedServeHTTP := serveMCPHTTPWithOptions
 	allowWritesFlag := mcpCmd.Flags().Lookup("http-allow-writes")
 	require.NotNil(allowWritesFlag, "mcp command must define --http-allow-writes")
@@ -116,6 +117,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	allowCalendarWritesFlag := mcpCmd.Flags().Lookup("allow-calendar-writes")
 	require.NotNil(allowCalendarWritesFlag, "mcp command must define --allow-calendar-writes")
 	require.NoError(allowCalendarWritesFlag.Value.Set("true"))
+	require.NoError(mcpCmd.Flags().Set("confirm-sensitive-drafts", "true"))
 	mcpHTTPAddr = "0.0.0.0:8081"
 	mcpHTTPAllowInsecure = true
 	mcpAllowProfileWrites = true
@@ -134,6 +136,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 		mcpAllowPersonMerges = savedAllowPersonMerges
 		mcpAllowCardDAVWrites = savedAllowCardDAVWrites
 		mcpAllowCalendarWrites = savedAllowCalendarWrites
+		mcpConfirmSensitiveDrafts = savedConfirmSensitiveDrafts
 		serveMCPHTTPWithOptions = savedServeHTTP
 	})
 
@@ -156,6 +159,7 @@ func TestMCPCommandForwardsHTTPPolicy(t *testing.T) {
 	assert.True(gotServeOpts.AllowPersonMerges)
 	assert.True(gotServeOpts.AllowCardDAVWrites)
 	assert.True(gotServeOpts.AllowCalendarWrites)
+	assert.True(gotServeOpts.ConfirmSensitiveDrafts)
 	assert.Equal(mcpserver.HTTPOptions{
 		Addr:               "0.0.0.0:8081",
 		DiscoveryDirectory: filepath.Join(home, "mcp"),

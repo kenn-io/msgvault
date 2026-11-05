@@ -181,6 +181,8 @@ type ServeOptions struct {
 	Calendar CalendarBackend
 	// DelegatedOnly limits an agent-delegated caller to scoped reads, calendars and drafts.
 	DelegatedOnly bool
+	// ConfirmSensitiveDrafts requires client approval before writing flagged draft content.
+	ConfirmSensitiveDrafts bool
 	// GrantPermissions holds the agent grant's permissions. In DelegatedOnly
 	// mode, a read tool is listed only when the grant holds its permission.
 	GrantPermissions []string
@@ -386,6 +388,7 @@ func newMCPServerWithPolicy(
 	h := &handlers{
 		embeddingStatus:      opts.EmbeddingStatus,
 		delegatedOnly:        opts.DelegatedOnly,
+		sensitiveConfirm:     opts.ConfirmSensitiveDrafts,
 		downloads:            opts.downloads,
 		engine:               opts.Engine,
 		archiveSQLQuerier:    opts.ArchiveSQLQuerier,
