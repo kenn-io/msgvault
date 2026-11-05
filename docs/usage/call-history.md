@@ -3,7 +3,7 @@
 Import call observations and inspect how often you called each person. The
 daemon keeps original evidence, explicit participant bindings and uncertain
 fields. An invitation or conference link never counts as an answered call.
-These commands require daemon API schema 3.44.0 or newer.
+These commands require daemon API schema 3.45.0 or newer.
 
 ## Import a supplied record
 
