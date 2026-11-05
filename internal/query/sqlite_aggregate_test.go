@@ -2,7 +2,6 @@ package query
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -100,19 +99,7 @@ func aggregatePlan(t *testing.T, env *testEnv, opts AggregateOptions) string {
 	sort, err := sortClause(opts)
 	require.NoError(t, err)
 	sqlText := buildAggregateSQL(dim, "", conditions, sort)
-	rows, err := env.DB.QueryContext(env.Ctx, "EXPLAIN QUERY PLAN "+sqlText, append(args, 100)...)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-
-	var plan strings.Builder
-	for rows.Next() {
-		var id, parent, notused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &notused, &detail))
-		plan.WriteString(detail + "\n")
-	}
-	require.NoError(t, rows.Err())
-	return plan.String()
+	return explainQueryPlan(t, env.DB, sqlText, append(args, 100)...)
 }
 
 func TestAggregateByLabel_AttachmentFields(t *testing.T) {

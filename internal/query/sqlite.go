@@ -232,7 +232,7 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterConditions []
 		allJoins += "\n" + filterJoins
 	}
 
-	narrowed := filterJoins != ""
+	narrowed := false
 	for _, condition := range filterConditions {
 		if _, baseline := aggregateBaselineConditions[condition]; !baseline {
 			narrowed = true
@@ -253,10 +253,7 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterConditions []
 			) att ON att.message_id = m.id`
 	}
 
-	allWhere := "1=1"
-	if len(filterConditions) > 0 {
-		allWhere = strings.Join(filterConditions, " AND ")
-	}
+	allWhere := strings.Join(filterConditions, " AND ")
 	if dim.whereExpr != "" {
 		allWhere += " AND " + dim.whereExpr
 	}
