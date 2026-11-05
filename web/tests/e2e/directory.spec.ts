@@ -136,7 +136,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   const forbidden = /forbidden-/i;
   expect(await page.locator('body').innerHTML()).not.toMatch(forbidden);
 
-  const toggle = maintenance.getByRole('switch', { name: 'Update automatically' });
+  const toggle = maintenance.getByRole('switch', { name: /Update automatically — (On|Off)/ });
   await toggle.focus();
   await page.keyboard.press('Space');
   await expect(toggle).toBeChecked();
@@ -192,7 +192,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await page.keyboard.press('Enter');
   await expect(drawerMaintenance.getByText('Sensitive fields are shown.')).toBeAttached();
   await expect(drawerMaintenance.getByText('Private note')).toBeAttached();
-  await expect(drawerMaintenance.getByRole('switch')).toBeInViewport();
+  await expect(drawerMaintenance.getByRole('switch', { name: 'Update automatically — Off', exact: true })).toBeInViewport();
   const targetCards = maintenance.locator('li');
   const first = await targetCards.nth(0).boundingBox();
   const second = await targetCards.nth(1).boundingBox();
@@ -202,13 +202,12 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   const geometry = await page.getByRole('dialog').evaluate((dialog) => {
     const body = dialog.querySelector('.kit-modal-body')!;
     const rows = [...dialog.querySelectorAll('li')].map((row) => row.getBoundingClientRect());
-    return { height: dialog.getBoundingClientRect().height, overflow: body.scrollWidth > body.clientWidth, scrolls: body.scrollHeight > body.clientHeight, scrollTop: body.scrollTop, statusLeft: dialog.querySelector('.tracked-time')!.getBoundingClientRect().left, labelLeft: dialog.querySelector('.kit-toggle__label')!.getBoundingClientRect().left, lefts: rows.map((row) => row.left), heights: rows.map((row) => row.height) };
+    return { height: dialog.getBoundingClientRect().height, overflow: body.scrollWidth > body.clientWidth, scrolls: body.scrollHeight > body.clientHeight, scrollTop: body.scrollTop, lefts: rows.map((row) => row.left), heights: rows.map((row) => row.height) };
   });
   expect(geometry.height).toBeLessThanOrEqual(720);
   expect(geometry.overflow).toBe(false);
   expect(geometry.scrolls).toBe(true);
   expect(geometry.scrollTop).toBe(0);
-  expect(geometry.statusLeft).toBe(geometry.labelLeft);
   expect(new Set(geometry.lefts).size).toBe(1);
   expect(Math.max(...geometry.heights)).toBeLessThanOrEqual(60);
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
@@ -228,7 +227,7 @@ test('Directory profile maintenance wraps long names within a narrow dialog', as
   const bounds = await dialog.evaluate(element => ({ width: element.clientWidth, content: element.scrollWidth }));
   expect(bounds.content).toBeLessThanOrEqual(bounds.width + 1);
   await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeInViewport();
-  const toggle = dialog.getByRole('switch', { name: 'Update automatically' });
+  const toggle = dialog.getByRole('switch', { name: /Update automatically — (On|Off)/ });
   await toggle.check();
   await expect(toggle).toBeChecked();
   const close = dialog.getByRole('button', { name: 'Close profile updates' });

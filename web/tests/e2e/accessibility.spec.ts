@@ -370,7 +370,7 @@ test('Directory profile maintenance is accessible at desktop and narrow widths',
     await page.getByRole('menuitem', { name: 'Keep this profile updated', exact: true }).click();
     const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
     await expect(maintenance.getByRole('switch', {
-      name: 'Update automatically'
+      name: /Update automatically — (On|Off)/
     })).toBeEnabled();
     const reveal = maintenance.getByRole('button', { name: 'Show sensitive fields' });
     await reveal.focus();

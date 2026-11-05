@@ -86,20 +86,22 @@
     {/if}
     {#if controller.tracking}
       <div class="tracking-row">
-        <Toggle label="Update automatically" checked={controller.tracking.tracked} disabled={controller.trackingLoading || controller.pending || controller.stateUnknown} onchange={(checked) => void changeTracking(checked)} />
-        <span class="tracked-time" role="status" aria-busy={controller.pending}>
-          {#if controller.pending}
-            {controller.tracking.tracked ? 'Turning off…' : 'Turning on…'}
-          {:else if controller.tracking.tracked && controller.tracking.tracked_at}
-            On since <time datetime={controller.tracking.tracked_at}>{formatDateTime(controller.tracking.tracked_at)}</time>
-          {:else}{controller.tracking.tracked ? 'On' : 'Off'}{/if}
-        </span>
+        <Toggle label={`Update automatically — ${controller.tracking.tracked ? 'On' : 'Off'}`} checked={controller.tracking.tracked} disabled={controller.trackingLoading || controller.pending || controller.stateUnknown} onchange={(checked) => void changeTracking(checked)} />
+        {#if controller.pending || (controller.tracking.tracked && controller.tracking.tracked_at)}
+          <span class="tracked-time" role="status" aria-busy={controller.pending}>
+            {#if controller.pending}
+              {controller.tracking.tracked ? 'Turning off…' : 'Turning on…'}
+            {:else if controller.tracking.tracked && controller.tracking.tracked_at}
+              Since <time datetime={controller.tracking.tracked_at}>{formatDateTime(controller.tracking.tracked_at)}</time>
+            {/if}
+          </span>
+        {/if}
       </div>
     {:else if !controller.trackingLoading && !controller.trackingError}
       <p>Profile maintenance state is unavailable.</p>
     {/if}
     {#if controller.tracking && !controller.trackingError}
-      <p class="helper">Uses archived conversations when a people sweep runs.</p>
+      <p class="helper">Uses archived conversations when updates run.</p>
     {/if}
   </div>
 
