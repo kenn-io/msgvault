@@ -96,15 +96,13 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	case http.StatusNotFound, http.StatusGone:
 		return save(attachmentpolicy.StateUnavailable, attachmentpolicy.SkipSourceUnavailable)
 	}
-	if response.ContentLength > p.mediaPolicy.MaxBytes {
-		return save(attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap)
-	}
 	if parsed, _, parseErr := mime.ParseMediaType(response.Header.Get("Content-Type")); parseErr == nil {
 		write.MIMEType = parsed
 	}
 	source := &export.SourceReader{R: response.Body}
-	path, hash, size, err := export.StoreAttachmentStream(ctx, p.attachmentsDir, source, p.mediaPolicy.MaxBytes)
+	path, hash, size, err := p.storeMediaBody(ctx, source, response.ContentLength)
 	if errors.Is(err, export.ErrAttachmentTooLarge) {
+		write.Size = size
 		return save(attachmentpolicy.StateSkipped, attachmentpolicy.SkipSizeCap)
 	}
 	if err != nil {
@@ -120,6 +118,20 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	write.ContentHash = hash
 	write.Size = size
 	return save(attachmentpolicy.StateStored, "")
+}
+
+// storeMediaBody streams fetched bytes into storage. An oversized body reports
+// ErrAttachmentTooLarge with the size the skip marker should record.
+func (p *Processor) storeMediaBody(ctx context.Context, source *export.SourceReader, contentLength int64) (string, string, int64, error) {
+	maxBytes := p.mediaPolicy.MaxBytes
+	if contentLength > maxBytes {
+		return "", "", int64(attachmentpolicy.OversizeMarkerSize(maxBytes, contentLength)), export.ErrAttachmentTooLarge
+	}
+	path, hash, size, err := export.StoreAttachmentStream(ctx, p.attachmentsDir, source, maxBytes)
+	if errors.Is(err, export.ErrAttachmentTooLarge) {
+		size = int64(attachmentpolicy.OversizeMarkerSize(maxBytes, 0))
+	}
+	return path, hash, size, err
 }
 
 func (p *Processor) finishUnstoredMedia(ctx context.Context, messageID int64, state attachmentpolicy.DownloadState, reason attachmentpolicy.SkipReason) error {
