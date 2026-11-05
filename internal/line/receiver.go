@@ -180,25 +180,17 @@ func receiverEvent(raw jsontext.Value) (store.LineWebhookEvent, error) {
 	}
 	// Future event types own their native payload shapes. Validate only common
 	// routing fields until the type is known to require a message or unsend.
-	var common struct {
-		Type           string `json:"type"`
-		WebhookEventID string `json:"webhookEventId"`
-		Timestamp      int64  `json:"timestamp"`
+	var event Event
+	if err := json.Unmarshal(clean, &event); err != nil {
+		return store.LineWebhookEvent{}, err
 	}
-	if err := json.Unmarshal(clean, &common); err != nil {
-		return store.LineWebhookEvent{}, errors.New("line: invalid webhook fields")
-	}
-	if common.Type == "" || common.WebhookEventID == "" || len(common.WebhookEventID) > 200 || common.Timestamp <= 0 {
+	if event.Type == "" || event.WebhookEventID == "" || len(event.WebhookEventID) > 200 || event.Timestamp <= 0 {
 		return store.LineWebhookEvent{}, errors.New("line: invalid webhook event")
 	}
 	target := ""
-	switch common.Type {
+	switch event.Type {
 	case "message", "messageEdited", "unsend":
-		var event Event
-		if err := json.Unmarshal(clean, &event); err != nil {
-			return store.LineWebhookEvent{}, err
-		}
-		if common.Type == "unsend" {
+		if event.Type == "unsend" {
 			if event.Unsend == nil || event.Unsend.MessageID == "" {
 				return store.LineWebhookEvent{}, errors.New("line: invalid unsend event")
 			}
@@ -210,5 +202,5 @@ func receiverEvent(raw jsontext.Value) (store.LineWebhookEvent, error) {
 			target = event.Message.ID
 		}
 	}
-	return store.LineWebhookEvent{WebhookEventID: common.WebhookEventID, EventType: common.Type, EventTimestamp: common.Timestamp, TargetMessageID: target, RawJSON: string(clean)}, nil
+	return store.LineWebhookEvent{WebhookEventID: event.WebhookEventID, EventType: event.Type, EventTimestamp: event.Timestamp, TargetMessageID: target, RawJSON: string(clean)}, nil
 }
