@@ -3515,9 +3515,10 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 	t.Helper()
 	require.NoError(t, os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
 	state := syncState{
-		LastMessageID: lastMessageID,
-		LastSyncAt:    syncAt,
-		SchemaVersion: cacheSchemaVersion,
+		LastMessageID:        lastMessageID,
+		LastSyncAt:           syncAt,
+		SchemaVersion:        cacheSchemaVersion,
+		LastRelatedChangeSeq: fixtureJournalSequence(t, filepath.Join(filepath.Dir(analyticsDir), "test.db")),
 		// These fingerprints hash zero rows in these fixtures, so they are
 		// the empty-input sha256 digest.
 		ConversationParticipantsFingerprint: "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -3527,6 +3528,22 @@ func writeSyncStateAt(t *testing.T, analyticsDir string, lastMessageID int64, sy
 	data, err := json.Marshal(state)
 	require.NoError(t, err, "marshal sync state")
 	require.NoError(t, os.WriteFile(filepath.Join(analyticsDir, "_last_sync.json"), data, 0644), "write sync state")
+}
+
+func fixtureJournalSequence(t *testing.T, path string) int64 {
+	t.Helper()
+	require := require.New(t)
+	info, err := os.Stat(path)
+	if os.IsNotExist(err) || (err == nil && !info.Mode().IsRegular()) {
+		return 0
+	}
+	require.NoError(err)
+	db, err := sql.Open(sqliteutil.DriverName(), path+"?mode=ro")
+	require.NoError(err)
+	defer func() { require.NoError(db.Close()) }()
+	var seq int64
+	require.NoError(db.QueryRow(`SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='cache_related_change_journal'), 0)`).Scan(&seq))
+	return seq
 }
 
 // createFakeParquet creates fake parquet files for all required directories
@@ -3818,7 +3835,7 @@ func TestCacheNeedsBuild_IdentityRevisionChangeRequiresIncrementalBuild(t *testi
 
 	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '1')`)
+	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('identity_revision', '1') ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
 	require.NoError(err, "bump identity revision")
 	require.NoError(db.Close())
 
@@ -3847,7 +3864,7 @@ func TestCacheNeedsBuild_AccountIdentityRevisionChangeForcesFullRebuild(t *testi
 
 	db, err := sql.Open(sqliteutil.DriverName(), dbPath)
 	require.NoError(err, "open db")
-	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('account_identity_revision', '1')`)
+	_, err = db.Exec(`INSERT INTO archive_metadata (key, value) VALUES ('account_identity_revision', '1') ON CONFLICT(key) DO UPDATE SET value=excluded.value`)
 	require.NoError(err, "bump account identity revision")
 	require.NoError(db.Close())
 
@@ -4096,6 +4113,7 @@ func TestCacheNeedsBuild_IgnoresAlreadyProcessedUpdatedSyncRun(t *testing.T) {
 	require.NoError(os.MkdirAll(analyticsDir, 0755), "MkdirAll analytics")
 	state := syncState{
 		LastMessageID:                       5,
+		LastRelatedChangeSeq:                fixtureJournalSequence(t, dbPath),
 		LastSyncAt:                          stateTime,
 		LastCompletedSyncRunID:              7,
 		LastCacheUpdateCount:                2,

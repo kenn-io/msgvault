@@ -1187,8 +1187,8 @@ func TestFullBuildForcedWhenTypeDriftCoincidesWithNewMessages(t *testing.T) {
 	requirements.NoError(err)
 	_, err = st.DB().Exec(`
 		UPDATE conversations SET conversation_type = 'group_chat' WHERE id = 102;
-		INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at, subject, snippet)
-			VALUES (99, 102, 1, 'msg99', '2026-07-21 10:00:00', 'Late', 'Preview');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at, subject, snippet, message_type)
+			VALUES (99, 102, 1, 'msg99', '2026-07-21 10:00:00', 'Late', 'Preview', 'email');
 	`)
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
@@ -1455,8 +1455,8 @@ func TestIncrementalBuildRepairsParticipantIdentifierDriftWithNewMessages(t *tes
 	requirements.NoError(err)
 	requirements.NoError(st.SetParticipantIdentifier(3, "email", "carol.alias@example.net"))
 	_, err = st.DB().Exec(`
-		INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at, subject, snippet)
-			VALUES (99, 102, 1, 'msg99', '2026-07-21 10:00:00', 'Late', 'Preview');
+		INSERT INTO messages (id, conversation_id, source_id, source_message_id, sent_at, subject, snippet, message_type)
+			VALUES (99, 102, 1, 'msg99', '2026-07-21 10:00:00', 'Late', 'Preview', 'email');
 	`)
 	requirements.NoError(err)
 	requirements.NoError(st.Close())
