@@ -88,7 +88,7 @@ func TestOpenAPISenderLabelSchemaVersion(t *testing.T) {
 			require.NotNil(t, schema, name)
 			assert.Contains(t, schema.Properties, "sender_label", name)
 		}
-		assert.GreaterOrEqual(t, semver.Compare("v"+doc.Info.Version, "v3.44.0"), 0)
+		assert.GreaterOrEqual(t, semver.Compare("v"+doc.Info.Version, "v3.45.0"), 0)
 	}
 }
 
