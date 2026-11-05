@@ -694,7 +694,7 @@ func TestDaemonMCPDocbankProbeFailureIsLogged(t *testing.T) {
 }
 
 func TestCalendarArchiveMCPVersionGates(t *testing.T) {
-	for _, version := range []string{"3.42.0", calendarEventsMinAPISchemaVersion} {
+	for _, version := range []string{"3.44.0", calendarEventsMinAPISchemaVersion} {
 		t.Run(version, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			client := newMCPDaemonClient(t, func(w http.ResponseWriter, r *http.Request) {
