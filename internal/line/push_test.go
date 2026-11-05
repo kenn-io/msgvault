@@ -17,46 +17,52 @@ const replyRetryKey = "00000000-0000-4000-8000-000000000001"
 const replyUser = "U00000000000000000000000000000002"
 
 func TestPushTextReceiptAndDedupe(t *testing.T) {
-	t.Run("receipt received", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		client, fake := newClient(t)
-		request := line.PushTextRequest{To: replyUser, Text: "Thanks! 🌍", QuoteToken: "synthetic-parent-quote"}
-		receipt, err := client.PushText(t.Context(), replyRetryKey, request)
-		require.NoError(err)
-		assert.True(receipt.Accepted)
-		assert.Equal("900000000000000001", receipt.MessageID)
-		assert.Equal(200, receipt.StatusCode)
-		repeated, err := client.PushText(t.Context(), replyRetryKey, request)
-		require.NoError(err)
-		assert.True(repeated.Accepted)
-		assert.Equal(409, repeated.StatusCode)
-		assert.Equal(receipt.MessageID, repeated.MessageID)
-		assert.Equal(receipt.QuoteToken, repeated.QuoteToken)
-		assert.Equal(receipt.RequestID, repeated.RequestID)
-		assert.Equal(1, fake.AcceptedPushes())
-		for _, r := range fake.Requests() {
-			if r.Path != "/v2/bot/message/push" {
-				continue
+	for _, tc := range []struct {
+		name       string
+		disconnect bool
+		request    line.PushTextRequest
+		payload    string
+	}{
+		{"receipt received", false, line.PushTextRequest{To: replyUser, Text: "Thanks! 🌍", QuoteToken: "synthetic-parent-quote"}, `{"to":"U00000000000000000000000000000002","messages":[{"type":"text","text":"Thanks! 🌍","quoteToken":"synthetic-parent-quote"}]}`},
+		{"first response disconnected", true, line.PushTextRequest{To: replyUser, Text: "hello"}, `{"to":"U00000000000000000000000000000002","messages":[{"type":"text","text":"hello"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			client, fake := newClient(t)
+			if tc.disconnect {
+				fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
 			}
-			assert.Equal(replyRetryKey, r.Header.Get("X-Line-Retry-Key"))
-			assert.JSONEq(`{"to":"U00000000000000000000000000000002","messages":[{"type":"text","text":"Thanks! 🌍","quoteToken":"synthetic-parent-quote"}]}`, string(r.Body))
-		}
-	})
-	t.Run("first response disconnected", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		client, fake := newClient(t)
-		fake.Enqueue("POST", "/v2/bot/message/push", lineapi.Response{Accept: true, Disconnect: true})
-		_, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
-		require.Error(err)
-		assert.Equal(1, fake.AcceptedPushes())
-		receipt, err := client.PushText(t.Context(), replyRetryKey, line.PushTextRequest{To: replyUser, Text: "hello"})
-		require.NoError(err)
-		assert.Equal(409, receipt.StatusCode)
-		assert.Equal("900000000000000001", receipt.MessageID)
-		assert.Equal(1, fake.AcceptedPushes())
-	})
+			receipt, err := client.PushText(t.Context(), replyRetryKey, tc.request)
+			if tc.disconnect {
+				require.Error(err)
+			} else {
+				require.NoError(err)
+				assert.True(receipt.Accepted)
+				assert.Equal("900000000000000001", receipt.MessageID)
+				assert.Equal(200, receipt.StatusCode)
+			}
+			assert.Equal(1, fake.AcceptedPushes())
+			repeated, err := client.PushText(t.Context(), replyRetryKey, tc.request)
+			require.NoError(err)
+			assert.True(repeated.Accepted)
+			assert.Equal(409, repeated.StatusCode)
+			assert.Equal("900000000000000001", repeated.MessageID)
+			if !tc.disconnect {
+				assert.Equal(receipt.MessageID, repeated.MessageID)
+				assert.Equal(receipt.QuoteToken, repeated.QuoteToken)
+				assert.Equal(receipt.RequestID, repeated.RequestID)
+			}
+			assert.Equal(1, fake.AcceptedPushes())
+			for _, r := range fake.Requests() {
+				if r.Path != "/v2/bot/message/push" {
+					continue
+				}
+				assert.Equal(replyRetryKey, r.Header.Get("X-Line-Retry-Key"))
+				assert.JSONEq(tc.payload, string(r.Body))
+			}
+		})
+	}
 }
 
 func TestPushRefreshKeepsRetryKeyAndPayload(t *testing.T) {

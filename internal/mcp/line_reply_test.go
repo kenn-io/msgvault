@@ -38,9 +38,10 @@ func TestMCPLineReplyHiddenFromDelegatedCatalog(t *testing.T) {
 	}
 }
 
-func TestMCPLineReplyOwnerCatalogDestructiveHint(t *testing.T) {
+func TestMCPLineReplyOwnerCatalog(t *testing.T) {
 	assert := assert.New(t)
-	owner := operationCatalog(ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: []string{"send-line-reply"}}, nil)
+	opts := ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: []string{"send-line-reply"}}
+	owner := operationCatalog(opts, nil)
 	found := false
 	for _, definition := range owner {
 		if definition.name == "send_line_reply" {
@@ -50,11 +51,6 @@ func TestMCPLineReplyOwnerCatalogDestructiveHint(t *testing.T) {
 		}
 	}
 	assert.True(found)
-}
-
-func TestMCPLineReplyCatalogRequiresAllowWrites(t *testing.T) {
-	assert := assert.New(t)
-	opts := ServeOptions{Drafts: &draftTestRunner{}, DraftCommands: []string{"send-line-reply"}}
 	assert.NotContains(toolsByName(t, rawListTools(t, opts, false)), "send_line_reply")
 	assert.Contains(toolsByName(t, rawListTools(t, opts, true)), "send_line_reply")
 }

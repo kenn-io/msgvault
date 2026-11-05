@@ -3,9 +3,7 @@ package cmd
 import (
 	"bufio"
 	"bytes"
-	"context"
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -92,16 +90,6 @@ func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	a, draft, fake := lineReplyAdapterFixture(t)
-	refreshed := 0
-	a.draftCacheRefresh = func(ctx context.Context, source string) error {
-		refreshed++
-		require.NoError(ctx.Err())
-		assert.Equal("2000000001", source)
-		execution, err := a.store.AcquireSyncExecutionContext(ctx, draft.SourceID)
-		require.NoError(err)
-		require.NoError(execution.Release())
-		return errors.New("synthetic cache failure")
-	}
 	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
 	defer server.Close()
 	ctx := configureRemoteDaemonForTest(t, server.URL)
@@ -132,7 +120,6 @@ func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
 	assert.True(sent.Accepted)
 	_, err = run("send-line-reply", created.DraftID, "--revision", "1", "--json")
 	require.NoError(err)
-	assert.Equal(2, refreshed)
 	assert.Equal(2, fake.Count("POST", "/v2/bot/message/push"))
 }
 

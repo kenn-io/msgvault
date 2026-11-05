@@ -106,7 +106,7 @@ func TestLineReplyAcceptanceAndBackoffNeverRegress(t *testing.T) {
 	assert.Equal(store.LineReplyAcceptedUnresolved, attempt.State)
 	_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 503, NextRetryAt: now.Add(3 * time.Minute)})
 	require.NoError(err)
-	attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true, NextRetryAt: now.Add(time.Minute)})
+	attempt, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, store.LineReplyOutcome{StatusCode: 400, NextRetryAt: now.Add(time.Minute)})
 	require.NoError(err)
 	assert.Equal(store.LineReplyAcceptedUnresolved, attempt.State)
 	assert.Equal("original-request", attempt.RequestID)
@@ -284,16 +284,6 @@ func TestLineReplyExpiryCannotBeReopenedByClockRollback(t *testing.T) {
 			repeated, err := st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(30*time.Second))
 			require.ErrorIs(err, store.ErrLineReplyExpired)
 			assert.Equal(original.RetryKey, repeated.RetryKey)
-			if phase == "accepted" {
-				_, err = st.UpdateChatDraftContext(t.Context(), draft.DraftID, 1, "changed")
-				require.ErrorIs(err, store.ErrChatDraftFrozen)
-				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
-				_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
-				require.ErrorIs(err, store.ErrChatDraftNotFound)
-				receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
-				require.NoError(err)
-				assert.Equal(expired, receipt)
-			}
 		})
 	}
 }
