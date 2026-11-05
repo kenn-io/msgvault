@@ -75,3 +75,15 @@ func TestFilesSenderLookupFailureKeepsRows(t *testing.T) {
 	assert.Empty(t, result.Files[0].SenderLabel)
 	assert.Equal(t, []string{"Example Sender"}, result.Files[0].ParticipantLabels)
 }
+
+type engineWithoutSenderLabeler struct{ query.Engine }
+
+func TestSenderLabelsWithoutCapability(t *testing.T) {
+	srv := NewServerWithOptions(testServerOptions(t, nil))
+	ctx := context.WithValue(t.Context(), analyticsEngineContextKey{}, &analyticsEngineState{engine: engineWithoutSenderLabeler{&querytest.MockEngine{}}})
+	var labels map[int64]string
+	var err error
+	require.NotPanics(t, func() { labels, err = srv.pageSenderLabels(ctx, []int64{1}) })
+	require.NoError(t, err)
+	assert.Empty(t, labels[1])
+}

@@ -127,10 +127,10 @@ test.describe('phone width', () => {
         const row = grid.locator('[aria-rowindex="2"]');
         await expect(row).toBeVisible();
         const left = await row.evaluate((el, workspace) => {
-          const item = el.querySelector(workspace === 'everything' ? '.cell--title' : workspace === 'files' ? '.cell--name' : 'strong')!;
+          const item = el.querySelector(workspace === 'everything' ? '.cell--title' : workspace === 'files' ? '.file-kind' : 'strong')!;
           return Math.round(item.getBoundingClientRect().left - el.getBoundingClientRect().left);
         }, workspace);
-        expect.soft(left, 'primary text shares a 12px inset').toBe(12);
+        expect.soft(left, 'primary content shares a 12px inset').toBe(12);
         if (workspace === 'everything') {
           const header = grid.locator('.table-header');
           const checkbox = header.getByRole('checkbox');
@@ -311,9 +311,11 @@ for (const workspace of ['everything', 'files', 'groups'] as const) {
     else await expect(grid).toHaveAttribute('aria-activedescendant', /250/);
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(row).toHaveCSS('height', workspace === 'everything' ? '72px' : '58px');
+    if (workspace === 'files') await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 58);
     await expect(row).toBeInViewport();
     await page.setViewportSize({ width: 1280, height: 720 });
     await expect(row).toHaveCSS('height', '36px');
+    if (workspace === 'files') await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 36);
     await expect(row).toBeInViewport();
     await setTemporaryDensity(page, 'Comfortable');
     await expect(row).toHaveCSS('height', '46px');
@@ -387,27 +389,6 @@ function file(index: number) {
   };
 }
 
-test('review: Files anchor stays fixed across breakpoint and density', async ({ page }) => {
-  await page.route('**/api/v1/files/search', route => route.fulfill({ json: {
-    files: Array.from({ length: total }, (_, i) => file(i + 1)), total_count: total, cache_revision: 'anchor-review'
-  } }));
-  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace: 'files' })))}`);
-  const grid = page.getByRole('grid', { name: 'Files results' });
-  await grid.locator('[aria-rowindex="2"]').waitFor();
-  await grid.evaluate(el => { el.scrollTop = 249 * 36; el.dispatchEvent(new Event('scroll')); });
-  const row = grid.locator('[aria-rowindex="251"]');
-  await expect(row).toBeInViewport();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await expect(row).toHaveCSS('height', '58px');
-  await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 58);
-  await page.setViewportSize({ width: 1280, height: 720 });
-  await expect(row).toHaveCSS('height', '36px');
-  await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 36);
-  await setTemporaryDensity(page, 'Comfortable');
-  await expect(row).toHaveCSS('height', '46px');
-  await expect.poll(() => grid.evaluate(el => el.scrollTop)).toBe(249 * 46);
-});
-
 for (const workspace of ['everything', 'groups', 'files'] as const) {
   test(`review: phone headers remain accessible in ${workspace}`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
@@ -435,4 +416,16 @@ test('review: Files desktop people text aligns with its cell', async ({ page }) 
     return Math.round(range.getBoundingClientRect().left - el.getBoundingClientRect().left);
   });
   expect(inset).toBe(6);
+});
+
+test('Files places the icon before the filename on a phone', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [file(1)], total_count: 1, cache_revision: 'icon-order' } }));
+  await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreState({ workspace: 'files' })))}`);
+  const row = page.getByRole('grid', { name: 'Files results' }).locator('[aria-rowindex="2"]');
+  await expect(row).toBeVisible();
+  const [icon, filename, date] = await Promise.all([row.locator('.file-kind').boundingBox(), row.locator('.cell--name').boundingBox(), row.locator('.cell--date').boundingBox()]);
+  expect(icon!.x + icon!.width).toBeLessThanOrEqual(filename!.x);
+  expect(Math.abs(icon!.y - filename!.y)).toBeLessThan(8);
+  expect(date!.y).toBeGreaterThan(filename!.y);
 });

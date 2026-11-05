@@ -15,9 +15,6 @@ type SenderLabeler interface {
 // messages deleted from their source, which stay visible in Explore and Files.
 func (e *DuckDBEngine) SenderLabels(ctx context.Context, messageIDs []int64) (map[int64]string, error) {
 	labels := make(map[int64]string, len(messageIDs))
-	if e.analyticsDir == "" || len(messageIDs) == 0 {
-		return labels, nil
-	}
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
 		return nil, err

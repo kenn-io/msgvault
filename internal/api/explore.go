@@ -420,7 +420,10 @@ func (s *Server) pageSenderLabels(ctx context.Context, messageIDs []int64) (map[
 	if len(ids) == 0 {
 		return labels, nil
 	}
-	labeler := s.queryEngineForContext(ctx).(query.SenderLabeler)
+	labeler, ok := s.queryEngineForContext(ctx).(query.SenderLabeler)
+	if !ok {
+		return labels, nil
+	}
 	return labeler.SenderLabels(ctx, ids)
 }
 

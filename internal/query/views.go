@@ -696,7 +696,7 @@ LEFT JOIN (
 // sqlVMessages: messages with sender resolved via dual-path
 // (message_recipients for email, messages.sender_id for chat)
 // and labels as sorted JSON array.
-const sqlVMessages = `
+var sqlVMessages = `
 CREATE OR REPLACE VIEW v_messages AS
 SELECT
     m.id,
@@ -739,7 +739,7 @@ LEFT JOIN (
     SELECT
         msg.id AS message_id,
         COALESCE(p.email_address, '') AS from_email,
-        COALESCE(p.display_name, '') AS from_name,
+        COALESCE(` + participantNameExpr("p") + `, '') AS from_name,
         COALESCE(p.domain, '') AS from_domain,
         COALESCE(p.phone_number, '') AS from_phone
     FROM messages msg

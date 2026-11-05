@@ -375,18 +375,18 @@
       suppressedScrollTop = undefined;
       if (isProgrammaticRestoration) return;
     }
-    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
-    const row = rows[first];
+    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
     if (row && !restoring) {
       const lastVisible = Math.min(
         rows.length - 1,
         Math.ceil((scrollTop + viewport) / height) - 1
       );
-      if (activeIndex < first || activeIndex > lastVisible) {
+      if (activeIndex < index || activeIndex > lastVisible) {
         activeKey = row.key;
         onActiveKey?.(row.key);
       }
-      persistAnchor(height);
+      onScrollAnchor?.(row.key, offset);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
   }

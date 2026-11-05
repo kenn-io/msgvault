@@ -391,3 +391,18 @@ func TestReviewSenderPrefersFromRecipient(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "Alice", labels[id])
 }
+
+func TestReviewSenderLabelUsesKnownIdentifier(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	sender := b.AddPhoneParticipant("+12025550123", "")
+	other := b.AddPhoneParticipant("+12025550124", "Recipient")
+	id := b.AddMessage(MessageOpt{SenderID: &sender, MessageType: "whatsapp", HasAttachments: true})
+	b.AddTo(id, other, "Recipient")
+	b.AddAttachment(id, 37, "example.txt")
+	e := b.BuildEngine()
+	t.Cleanup(func() { _ = e.Close() })
+	labels, err := e.SenderLabels(t.Context(), []int64{id})
+	require.NoError(t, err)
+	assert.Equal(t, "+12025550123", labels[id])
+}

@@ -1287,8 +1287,8 @@
     .table-header > span { padding: 0; }
     .table-header button { width: auto; height: 26px; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
     .data-row {
-      grid-template-columns: auto auto minmax(0, 1fr) 16px auto;
-      grid-template-areas: 'name name name icon avail' 'date size people people avail';
+      grid-template-columns: 22px auto auto minmax(0, 1fr) auto;
+      grid-template-areas: 'icon name name name avail' 'date date size people people';
       align-content: center;
       gap: var(--space-1) 0;
       padding: var(--pane-pad-y) var(--pane-pad-x);

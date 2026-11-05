@@ -262,12 +262,12 @@
       suppressedScrollTop = undefined;
       if (isProgrammaticRestoration) return;
     }
-    const first = Math.min(rows.length - 1, Math.max(0, Math.floor(scrollTop / height)));
-    const row = rows[first];
+    const { index, offset } = scrollPositionAnchor(scrollTop, height, rows.length);
+    const row = rows[index];
     if (row && !restoring) {
       activeKey = stableKey(row);
       onActiveKey?.(activeKey);
-      persistAnchor(height);
+      onScrollAnchor?.(stableKey(row), offset);
     }
     if (!restoring && hasMore && !loadingMore && slice.end >= rows.length - OVERSCAN) void onLoadMore?.();
   }
