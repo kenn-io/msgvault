@@ -340,14 +340,14 @@ func timelineSize(t *Timeline, format string) (int, error) {
 }
 func boundText(t *UntrustedText, n int) {
 	prefix := textutil.PrefixRunes(t.Text, n)
-	if len(prefix) < len(t.Text) {
+	if prefix != t.Text {
 		t.Text = prefix
 		t.Truncated = true
 	}
 }
 func boundPerson(p Person) Person {
 	prefix := textutil.PrefixRunes(p.Name, 80)
-	if len(prefix) < len(p.Name) {
+	if prefix != p.Name {
 		p.Name = prefix
 		p.Truncated = true
 	}

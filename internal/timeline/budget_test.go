@@ -339,3 +339,16 @@ func TestFitSameEntryUsesSectionSortKeys(t *testing.T) {
 	assertions.Equal("day-order", cursor.Positions["days"])
 	assertions.Equal("upcoming-order", cursor.Positions["upcoming"])
 }
+
+func TestFitMarksClippedInvalidUTF8(t *testing.T) {
+	v := budgetTimeline(1)
+	v.History[0].Message.Snippet.Text = strings.Repeat("\xff", 81)
+	v.History[0].Message.People[0].Name = strings.Repeat("\xff", 81)
+	out, err := Fit(v, "json", 8192)
+	require.NoError(t, err)
+	require.Len(t, out.History, 1)
+	assert.True(t, out.History[0].Message.Snippet.Truncated)
+	assert.Equal(t, strings.Repeat("\ufffd", 80), out.History[0].Message.Snippet.Text)
+	assert.True(t, out.History[0].Message.People[0].Truncated)
+	assert.Equal(t, strings.Repeat("\ufffd", 80), out.History[0].Message.People[0].Name)
+}
