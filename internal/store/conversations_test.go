@@ -410,3 +410,39 @@ func TestConversationWindowOrderAndCounts(t *testing.T) {
 		assertions.Zero(window.Total)
 	}
 }
+
+func TestPopulateMessageBodiesContextBounded(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	for _, tc := range []struct {
+		name, text, html string
+		oversized        bool
+	}{
+		{"below", strings.Repeat("x", 15), "html", false},
+		{"boundary", strings.Repeat("x", 16), "html", true},
+		{"multibyte", strings.Repeat("é", 8), "", true},
+		{"html", "small", strings.Repeat("x", 16), true},
+		{"NUL", "x\x00" + strings.Repeat("x", 14), "", true},
+		{"empty", "", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			if tc.name == "NUL" && st.IsPostgreSQL() {
+				t.Skip("PostgreSQL text fields reject embedded NULs")
+			}
+			_, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", tc.name, "Ordinary", "")
+			requirements.NoError(err)
+			requirements.NoError(st.UpsertMessageBody(id, sql.NullString{String: tc.text, Valid: tc.text != ""}, sql.NullString{String: tc.html, Valid: tc.html != ""}))
+			messages := []store.APIMessage{{ID: id}}
+			oversized, err := st.PopulateMessageBodiesContext(t.Context(), messages, 16)
+			requirements.NoError(err)
+			assertions.Equal(tc.oversized, oversized[id])
+			if tc.oversized {
+				assertions.Empty(messages[0].BodyText)
+				assertions.Empty(messages[0].BodyHTML)
+			} else {
+				assertions.Equal(tc.text, messages[0].BodyText)
+				assertions.Equal(tc.html, messages[0].BodyHTML)
+			}
+		})
+	}
+}
