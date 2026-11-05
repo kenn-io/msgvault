@@ -349,7 +349,7 @@ export async function installMixedArchive(page: Page): Promise<InstalledMixedArc
           {
             ...common,
             key: 'forbidden-target-key',
-            slug: 'timezone',
+            slug: 'time_zone',
             universal_id: 'forbidden-universal-id',
             description: 'Time zone',
             sensitive: false,

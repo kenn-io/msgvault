@@ -7,6 +7,7 @@ import { createAPIClient } from '../../api/client';
 import type { DirectoryReadBundle } from '../../directory/models';
 import { DirectoryProfileController } from '../../directory/profile-controller.svelte';
 import PersonRecordActions from './PersonRecordActions.svelte';
+import PersonFields from '../people/PersonFields.svelte';
 
 const when = '2026-08-01T00:00:00Z';
 
@@ -46,53 +47,30 @@ describe('PersonRecordActions', () => {
     expect(document.activeElement).toBe(trigger);
   });
 
-  it('opens immediately with embedded labels while the definition endpoint is unresolved', async () => {
-    let resolveDefinitions!: (response: Response) => void;
-    const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
-    renderActions(vi.fn<typeof fetch>(async (input) => {
-      const request = input instanceof Request ? input : new Request(input);
-      const url = new URL(request.url);
-      if (url.pathname.endsWith('/attribute-definitions')) {
-        return pendingDefinitions;
-      }
-      if (url.pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
-      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', description: 'Food preferences from conversations', value_type: 'text', cardinality: 'multi', sensitive: false }] });
-    }), '"person-7-r3"', {
-      attributes: { person_id: 7, attributes: [{ definition: definition({ slug: 'favorites_food', label: 'Favorite food' }), current: [], history: [] }] }
-    });
-
-    try {
-      await choose('Keep this profile updated');
-      const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
-      expect(await within(dialog).findByText('Favorite food')).toBeDefined();
-    } finally {
-      resolveDefinitions(Response.json({ definitions: [] }));
-    }
-  });
-
-  it('keeps publication selected when an earlier definition request completes', async () => {
-    let resolveDefinitions!: (response: Response) => void;
-    const pendingDefinitions = new Promise<Response>(resolve => resolveDefinitions = resolve);
-    const controller = renderActions(vi.fn<typeof fetch>(async input => {
+  it('opens with embedded labels and preserves loaded fields when the registry is unavailable', async () => {
+    const fetchFn = vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
-      if (path.endsWith('/attribute-definitions')) return pendingDefinitions;
+      if (path.endsWith('/attribute-definitions')) return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 });
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
-      return Response.json({ targets: [] });
-    }));
-    const reload = controller.reloadDefinitions();
-    try {
-      await choose('Keep this profile updated');
-      const tracking = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
-      await fireEvent.click(within(tracking).getByRole('button', { name: 'Close' }));
-      await choose('Publish to address book');
-      expect(await screen.findByRole('dialog', { name: 'Publish to address book' })).toBeDefined();
-    } finally {
-      resolveDefinitions(Response.json({ definitions: [] }));
-      await reload;
-    }
-    expect(screen.getByRole('dialog', { name: 'Publish to address book' })).toBeDefined();
-    expect(screen.queryByRole('dialog', { name: "Keep Test User's profile updated" })).toBeNull();
+      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
+    });
+    const controller = renderActions(fetchFn, '"person-7-r3"', {
+      structuredProfile: emptyProfile(person()),
+      attributes: { person_id: 7, attributes: [{ definition: definition({ slug: 'favorites_food', label: 'Favorite food', is_sensitive: false }), current: [], history: [] }] }
+    });
+    render(PersonFields, { controller });
+    await choose('Keep this profile updated');
+    const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
+    expect(await within(dialog).findByText('Favorite food')).toBeDefined();
+    expect(fetchFn.mock.calls.map(([input]) => new URL((input as Request).url).pathname).sort()).toEqual([
+      '/api/v1/people/7/tracking', '/api/v1/person-fact-targets'
+    ]);
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Retry fields' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
+    expect(screen.getByRole('menuitem', { name: 'Favorite food' })).toBeDefined();
   });
 
   it('prefers registry labels over embedded labels for the same definition', async () => {
@@ -109,7 +87,7 @@ describe('PersonRecordActions', () => {
     expect(screen.queryByText('Favorite food')).toBeNull();
   });
 
-  it('loads labels for catalog fields without embedded attribute definitions', async () => {
+  it('uses the slug fallback when attribute definitions are unavailable', async () => {
     renderActions(vi.fn<typeof fetch>(async input => {
       const request = input instanceof Request ? input : new Request(input);
       const path = new URL(request.url).pathname;
@@ -119,8 +97,7 @@ describe('PersonRecordActions', () => {
     }));
     await choose('Keep this profile updated');
     const dialog = await screen.findByRole('dialog', { name: "Keep Test User's profile updated" });
-    expect(await within(dialog).findByText('Favorite food')).toBeDefined();
-    expect(within(dialog).queryByText('Favorites food')).toBeNull();
+    expect(await within(dialog).findByText('Favorites food')).toBeDefined();
   });
 
   it('renames the selected person with the current strong ETag', async () => {

@@ -131,7 +131,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
 
   const maintenance = page.getByRole('region', { name: 'Profile maintenance' });
   await expect(maintenance).toBeVisible();
-  await expect(maintenance).toContainText('Timezone');
+  await expect(maintenance).toContainText('Time zone');
   await expectNoAxeViolations(page, 'Directory profile maintenance desktop');
   const forbidden = /forbidden-/i;
   expect(await page.locator('body').innerHTML()).not.toMatch(forbidden);
@@ -175,7 +175,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await page.getByRole('dialog', { name: "Keep Archive Person's profile updated" }).getByRole('button', { name: 'Close', exact: true }).click();
   await expect(maintenance).toBeHidden();
   await page.route('**/api/v1/person-fact-targets*', (route) => route.fulfill({ json: {
-    targets: ['employment', 'favorite_foods', 'hometown', 'contact_every_n_days', 'timezone', 'languages', 'interests', 'education', 'skills', 'birthday', 'pronouns', 'preferred_name', 'private_note'].map((slug) => ({
+    targets: ['employment', 'favorite_foods', 'hometown', 'contact_every_n_days', 'time_zone', 'languages', 'interests', 'education', 'skills', 'birthday', 'pronouns', 'preferred_name', 'private_note'].map((slug) => ({
       kind: slug === 'employment' ? 'employment' : 'attribute', slug, description: 'Catalog description', value_type: 'text', cardinality: 'multi', sensitive: slug === 'private_note'
     })).filter((target) => !target.sensitive || new URL(route.request().url()).searchParams.get('include_sensitive') === 'true')
   } }));
@@ -184,7 +184,7 @@ test('Directory profile maintenance uses exact safe requests and GET-only ambigu
   await drawer.getByRole('button', { name: 'More actions' }).click();
   await page.getByRole('menuitem', { name: 'Keep this profile updated' }).click();
   const drawerMaintenance = page.getByRole('region', { name: 'Profile maintenance' });
-  await expect(drawerMaintenance.getByText('Timezone')).toBeVisible();
+  await expect(drawerMaintenance.getByText('Time zone')).toBeVisible();
   const drawerReveal = drawerMaintenance.getByRole('button', { name: 'Show sensitive fields' });
   await expect(drawerReveal).toBeEnabled();
   await drawerReveal.focus();
