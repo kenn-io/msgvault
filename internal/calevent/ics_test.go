@@ -92,6 +92,26 @@ func TestICSMethods(t *testing.T) {
 	assertions.Equal("cancelled", components[0].Event.Status)
 }
 
+func TestICSDurationLimit(t *testing.T) {
+	for _, duration := range []string{"PT6000000H", "P36600DT1S", "P5229W"} {
+		t.Run(duration, func(t *testing.T) {
+			raw := strings.Replace(icsExample, "DTEND;TZID=America/New_York:20270314T100000", "DURATION:"+duration, 1)
+			_, err := ParseICS([]byte(raw), "", "")
+			require.ErrorContains(t, err, "calendar DURATION exceeds limit")
+		})
+	}
+}
+
+func TestICSInvalidDurationWithEnd(t *testing.T) {
+	for _, duration := range []string{"garbage", "PT6000000H"} {
+		t.Run(duration, func(t *testing.T) {
+			raw := strings.Replace(icsExample, "SUMMARY:", "DURATION:"+duration+"\r\nSUMMARY:", 1)
+			_, err := ParseICS([]byte(raw), "", "")
+			require.ErrorContains(t, err, "DURATION")
+		})
+	}
+}
+
 func TestICSRetainsEachEventWithItsTimeZones(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	components, err := ParseICS([]byte(icsExample), "", "")
