@@ -92,14 +92,13 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		accepted, err := acceptedICSSnapshot(q, sourceID, []preparedICS{item}, summary)
+		item, accepted, err := acceptedICSSnapshot(q, sourceID, item, summary)
 		if err != nil {
 			return err
 		}
-		if len(accepted) == 0 {
+		if !accepted {
 			continue
 		}
-		item = accepted[0]
 		e := item.component.Event
 		sourceMessageID := e.ProviderEventID
 		var id int64
