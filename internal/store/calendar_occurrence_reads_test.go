@@ -164,6 +164,10 @@ type calendarOccurrenceReadCase struct {
 	count                                 int
 	orphan, missingRaw, metadataCancelled bool
 	content                               calevent.Content
+	standalone, sparseDetail              bool
+	unexpandableReason                    string
+	exceptionStart, exceptionEnd          string
+	fractionalBounds                      bool
 }
 
 func calendarOccurrenceReadFixture(t *testing.T, tc calendarOccurrenceReadCase) (*Store, int64, int64, string) {
@@ -194,7 +198,10 @@ func calendarOccurrenceReadFixture(t *testing.T, tc calendarOccurrenceReadCase) 
 	if tc.state == "series budget" || tc.state == "request budget" {
 		raw = strings.Replace(raw, `"start":{"dateTime":`, `"start":{"timeZone":"America/New_York","dateTime":`, 1)
 	}
-	_, master := calendarFixture(t, st, "master", raw)
+	var master int64
+	if !tc.orphan && tc.state != "late master" {
+		_, master = calendarFixture(t, st, "master", raw)
+	}
 	if tc.state == "single damaged" {
 		calendarFixture(t, st, "damaged", `{`)
 	}
@@ -234,19 +241,12 @@ func calendarOccurrenceReadFixture(t *testing.T, tc calendarOccurrenceReadCase) 
 		_, err := st.db.Exec(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`, master)
 		require.NoError(t, err)
 	}
-	if tc.state == "late master" {
-		tc.orphan = true
-	}
 	if tc.metadataCancelled {
 		// Sync preserves the archived raw snapshot when a cancellation arrives.
 		require.NoError(t, st.SetMessageMetadata(exception, sql.NullString{String: `{"calendar_id":"calendar@example.com","status":"cancelled"}`, Valid: true}))
 	}
 	if tc.missingRaw {
 		_, err := st.db.Exec(`DELETE FROM message_raw WHERE message_id = ?`, exception)
-		require.NoError(t, err)
-	}
-	if tc.orphan {
-		_, err := st.db.Exec(`DELETE FROM calendar_events WHERE message_id = ?`, master)
 		require.NoError(t, err)
 	}
 	if tc.state == "cancelled master" {
@@ -266,16 +266,16 @@ func calendarOccurrenceReadCases() []calendarOccurrenceReadCase {
 		{count: 2, name: "single cancelled at own start", state: "single overridden", fields: `"status":"cancelled"`, content: masterContent},
 		{count: 2, name: "cleared timed recurrence", state: "cleared timed", fields: `"status":"cancelled"`, content: masterContent},
 		{count: 2, name: "cleared all-day recurrence", state: "cleared all-day", fields: `"status":"cancelled"`, content: masterContent},
-		{count: 1, name: "single with undecodable event", state: "single damaged"},
-		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
-		{count: 0, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: masterContent},
+		{count: 1, name: "single with undecodable event", state: "single damaged", standalone: true},
+		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`, unexpandableReason: "unsupported recurrence"},
+		{count: 0, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: masterContent, sparseDetail: true, unexpandableReason: "unsupported recurrence"},
 		{count: 1, name: "cancelled with bounds under bad master", state: "unsupported", fields: `"status":"cancelled","start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}`},
 		{count: 2, name: "unresolvable exception", state: "unresolvable", fields: `"status":"cancelled"`},
-		{count: 3, name: "fractional original", state: "fractional original", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
-		{count: 1, name: "fractional master", state: "fractional master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
+		{count: 3, name: "fractional original", state: "fractional original", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, fractionalBounds: true},
+		{count: 1, name: "fractional master", state: "fractional master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, fractionalBounds: true},
 		{count: 2, name: "archive-only master", state: "archive-only", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{count: 1, name: "master arrives later", state: "late master", fields: `"start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}`},
-		{count: 2, name: "retyped master", state: "retyped", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
+		{count: 2, name: "retyped master", state: "retyped", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`, exceptionStart: "2027-03-03T00:00:00Z", exceptionEnd: "2027-03-04T00:00:00Z"},
 		{count: 2, name: "retyped original", state: "retyped original", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
 		{count: 2, name: "cancelled with bounds", fields: `"status":"cancelled","start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}`},
 		{count: 2, name: "moved", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"},"location":"Other room"`, content: calevent.Content{Location: "Other room"}},
@@ -296,7 +296,7 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 	for _, tc := range calendarOccurrenceReadCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			st, _, exception, _ := calendarOccurrenceReadFixture(t, tc)
+			st, master, exception, _ := calendarOccurrenceReadFixture(t, tc)
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			requirements.NoError(err)
@@ -307,9 +307,18 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				detail, err := st.GetCalendarOccurrenceContext(t.Context(), listed.Ref)
 				requirements.NoError(err)
 				assertions.Equal(listed, detail.CalendarOccurrence)
+				if tc.standalone {
+					assertions.Equal(master, listed.MessageID)
+					assertions.Zero(listed.SeriesMessageID)
+					assertions.Zero(detail.SeriesMessageID)
+				}
 				want := masterContent
 				if listed.MessageID == exception {
 					assertions.Equal(fmt.Sprintf("evt:%d", exception), listed.Ref)
+					if tc.exceptionStart != "" {
+						assertions.Equal(tc.exceptionStart, listed.Start.UTC().Format(time.RFC3339))
+						assertions.Equal(tc.exceptionEnd, listed.End.UTC().Format(time.RFC3339))
+					}
 					want = tc.content
 					if tc.metadataCancelled {
 						assertions.Equal("cancelled", detail.Status)
@@ -317,25 +326,40 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				}
 				assertions.Equal(want, detail.Content)
 			}
+			if tc.fractionalBounds {
+				type occurrence struct{ Ref, Start, End string }
+				var got []occurrence
+				for _, listed := range page.Occurrences {
+					got = append(got, occurrence{listed.Ref, listed.Start.Format(time.RFC3339Nano), listed.End.Format(time.RFC3339Nano)})
+				}
+				want := []occurrence{{fmt.Sprintf("evt:%d", exception), "2027-03-12T19:00:00Z", "2027-03-12T20:00:00Z"}}
+				if tc.state == "fractional original" {
+					want = []occurrence{
+						{fmt.Sprintf("evt:%d@20270302T170000Z", master), "2027-03-02T17:00:00Z", "2027-03-02T18:00:00Z"},
+						{fmt.Sprintf("evt:%d@20270309T170000Z", master), "2027-03-09T17:00:00Z", "2027-03-09T18:00:00Z"},
+						{fmt.Sprintf("evt:%d", exception), "2027-03-12T19:00:00Z", "2027-03-12T20:00:00Z"},
+					}
+				}
+				assertions.Equal(want, got)
+			}
+			if tc.unexpandableReason != "" {
+				assertions.Equal([]CalendarUnexpandable{{MessageID: master, Reason: tc.unexpandableReason}}, page.Unexpandable)
+			}
+			if tc.sparseDetail {
+				detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", exception))
+				requirements.NoError(err)
+				assertions.Equal(master, detail.SeriesMessageID)
+				assertions.Equal("cancelled", detail.Status)
+				assertions.Equal("2027-03-09T17:00:00Z", detail.Start.Format(time.RFC3339))
+				assertions.Equal("2027-03-09T18:00:00Z", detail.End.Format(time.RFC3339))
+				assertions.Equal("Example event", detail.Subject)
+				assertions.Equal([]calevent.Attendee{{Email: "guest@example.com", Role: "required", RSVP: "accepted"}}, detail.Attendees)
+			}
 			if tc.fields != "" && tc.count > 0 && tc.state != "unresolvable" {
 				assertions.Contains(listedIDs, exception)
 			}
 		})
 	}
-}
-
-func TestCalendarOccurrenceSparseCancellationDetail(t *testing.T) {
-	tc := calendarOccurrenceReadCase{count: 0, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/master"}}
-	assertions, requirements := assert.New(t), require.New(t)
-	st, master, exception, _ := calendarOccurrenceReadFixture(t, tc)
-	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", exception))
-	requirements.NoError(err)
-	assertions.Equal(master, detail.SeriesMessageID)
-	assertions.Equal("cancelled", detail.Status)
-	assertions.Equal("2027-03-09T17:00:00Z", detail.Start.Format(time.RFC3339))
-	assertions.Equal("2027-03-09T18:00:00Z", detail.End.Format(time.RFC3339))
-	assertions.Equal("Example event", detail.Subject)
-	assertions.Equal([]calevent.Attendee{{Email: "guest@example.com", Role: "required", RSVP: "accepted"}}, detail.Attendees)
 }
 
 func TestCalendarOccurrenceUnresolvableRefs(t *testing.T) {
@@ -353,10 +377,8 @@ func TestCalendarOccurrenceUnresolvableRefs(t *testing.T) {
 		{name: "fractional original", state: "fractional original", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{name: "fractional master", state: "fractional master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{name: "archive-only master", state: "archive-only", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
-		{name: "master arrives later", state: "late master", fields: `"start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}`},
 		{name: "retyped master", state: "retyped", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
 		{name: "retyped original", state: "retyped original", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
-		{name: "orphan", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`, orphan: true},
 		{state: "series budget", name: "series budget"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -365,6 +387,9 @@ func TestCalendarOccurrenceUnresolvableRefs(t *testing.T) {
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			requirements.NoError(err)
+			if tc.state == "missing bounds" {
+				requirements.Len(page.Unexpandable, 1)
+			}
 			for _, unsupported := range page.Unexpandable {
 				if unsupported.MessageID == exception || tc.state == "missing bounds" {
 					_, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", unsupported.MessageID))
@@ -387,39 +412,8 @@ func TestCalendarOccurrenceUnresolvableRefs(t *testing.T) {
 	}
 }
 
-func TestCalendarOccurrenceFractionalRefs(t *testing.T) {
-	for _, tc := range []calendarOccurrenceReadCase{
-		{count: 3, name: "fractional original", state: "fractional original", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
-		{count: 1, name: "fractional master", state: "fractional master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			assertions, requirements := assert.New(t), require.New(t)
-			st, master, exception, _ := calendarOccurrenceReadFixture(t, tc)
-			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
-			requirements.NoError(err)
-			type occurrence struct{ Ref, Start, End string }
-			var got []occurrence
-			for _, listed := range page.Occurrences {
-				got = append(got, occurrence{listed.Ref, listed.Start.Format(time.RFC3339Nano), listed.End.Format(time.RFC3339Nano)})
-			}
-			want := []occurrence{{fmt.Sprintf("evt:%d", exception), "2027-03-12T19:00:00Z", "2027-03-12T20:00:00Z"}}
-			if tc.state == "fractional original" {
-				want = []occurrence{
-					{fmt.Sprintf("evt:%d@20270302T170000Z", master), "2027-03-02T17:00:00Z", "2027-03-02T18:00:00Z"},
-					{fmt.Sprintf("evt:%d@20270309T170000Z", master), "2027-03-09T17:00:00Z", "2027-03-09T18:00:00Z"},
-					{fmt.Sprintf("evt:%d", exception), "2027-03-12T19:00:00Z", "2027-03-12T20:00:00Z"},
-				}
-			}
-			assertions.Equal(want, got)
-		})
-	}
-}
-
 func TestCalendarOccurrenceExpansionReasons(t *testing.T) {
 	for _, tc := range []calendarOccurrenceReadCase{
-		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
-		{count: 0, name: "sparse cancellation under unsupported master", state: "unsupported", fields: `"status":"cancelled"`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/master"}},
 		{count: 1, name: "series budget", state: "series budget", fields: `"status":"cancelled","start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 1, name: "request budget", state: "request budget", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 	} {
@@ -435,28 +429,22 @@ func TestCalendarOccurrenceExpansionReasons(t *testing.T) {
 			} else {
 				requirements.Len(page.Unexpandable, 1)
 				assertions.Equal(master, page.Unexpandable[0].MessageID)
-				reason := "unsupported recurrence"
-				if tc.state == "series budget" {
-					reason = "recurrence generation budget exceeded"
-				}
-				assertions.Equal(reason, page.Unexpandable[0].Reason)
+				assertions.Equal("recurrence generation budget exceeded", page.Unexpandable[0].Reason)
 			}
-			if tc.state == "series budget" || tc.state == "request budget" {
-				for _, listed := range page.Occurrences {
-					detail, err := st.GetCalendarOccurrenceContext(t.Context(), listed.Ref)
-					requirements.NoError(err)
-					assertions.Equal(listed, detail.CalendarOccurrence)
-					assertions.Empty(detail.Content)
-				}
-				requirements.Len(page.Occurrences, 1)
-				listed := page.Occurrences[0]
-				assertions.Equal(exception, listed.MessageID)
-				if tc.state == "series budget" {
-					assertions.Equal("cancelled", listed.Status)
-				}
-				assertions.Equal("2027-03-12T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-				assertions.Equal("2027-03-13T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
+			for _, listed := range page.Occurrences {
+				detail, err := st.GetCalendarOccurrenceContext(t.Context(), listed.Ref)
+				requirements.NoError(err)
+				assertions.Equal(listed, detail.CalendarOccurrence)
+				assertions.Empty(detail.Content)
 			}
+			requirements.Len(page.Occurrences, 1)
+			listed := page.Occurrences[0]
+			assertions.Equal(exception, listed.MessageID)
+			if tc.state == "series budget" {
+				assertions.Equal("cancelled", listed.Status)
+			}
+			assertions.Equal("2027-03-12T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
+			assertions.Equal("2027-03-13T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
 		})
 	}
 }
@@ -464,7 +452,7 @@ func TestCalendarOccurrenceExpansionReasons(t *testing.T) {
 func TestCalendarOccurrenceLateMasterReopening(t *testing.T) {
 	tc := calendarOccurrenceReadCase{count: 1, name: "master arrives later", state: "late master", fields: `"start":{"dateTime":"2027-03-09T17:00:00Z"},"end":{"dateTime":"2027-03-09T18:00:00Z"}`}
 	assertions, requirements := assert.New(t), require.New(t)
-	st, master, _, raw := calendarOccurrenceReadFixture(t, tc)
+	st, _, _, raw := calendarOccurrenceReadFixture(t, tc)
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 	requirements.NoError(err)
@@ -472,7 +460,7 @@ func TestCalendarOccurrenceLateMasterReopening(t *testing.T) {
 	listed := page.Occurrences[0]
 	detail, err := st.GetCalendarOccurrenceContext(t.Context(), listed.Ref)
 	requirements.NoError(err)
-	requirements.NoError(st.UpsertMessageRawWithFormat(master, []byte(raw), "gcal_json"))
+	_, master := calendarFixture(t, st, "master", raw)
 	reopened, err := st.GetCalendarOccurrenceContext(t.Context(), listed.Ref)
 	requirements.NoError(err)
 	detail.SeriesMessageID = master
@@ -481,8 +469,6 @@ func TestCalendarOccurrenceLateMasterReopening(t *testing.T) {
 
 func TestCalendarOccurrenceAliasRefs(t *testing.T) {
 	for _, tc := range []calendarOccurrenceReadCase{
-		{count: 2, name: "single overridden at own start", state: "single overridden", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
-		{count: 2, name: "single cancelled at own start", state: "single overridden", fields: `"status":"cancelled"`, content: calevent.Content{Location: "Example room", Description: "Agenda", JoinURL: "https://meet.example.com/master"}},
 		{count: 1, name: "unsupported master", state: "unsupported", fields: `"start":{"date":"2027-03-12"},"end":{"date":"2027-03-13"}`},
 		{count: 1, name: "cancelled with bounds under bad master", state: "unsupported", fields: `"status":"cancelled","start":{"dateTime":"2027-03-04T19:00:00Z"},"end":{"dateTime":"2027-03-04T20:00:00Z"}`},
 		{count: 2, name: "retyped original", state: "retyped original", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`},
@@ -490,33 +476,12 @@ func TestCalendarOccurrenceAliasRefs(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			st, master, exception, _ := calendarOccurrenceReadFixture(t, tc)
-			if tc.state == "single overridden" {
-				_, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", master))
-				requirements.NoError(err)
-				return
-			}
 			detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", exception))
 			requirements.NoError(err)
 			alias, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@20270309T170000Z", master))
 			requirements.NoError(err)
 			assertions.Equal(detail, alias)
 		})
-	}
-}
-
-func TestCalendarOccurrenceRetypedBounds(t *testing.T) {
-	tc := calendarOccurrenceReadCase{count: 2, name: "retyped master", state: "retyped", fields: `"start":{"date":"2027-03-03"},"end":{"date":"2027-03-04"}`}
-	assertions, requirements := assert.New(t), require.New(t)
-	st, _, exception, _ := calendarOccurrenceReadFixture(t, tc)
-	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 2)
-	for _, listed := range page.Occurrences {
-		if listed.MessageID == exception {
-			assertions.Equal("2027-03-03T00:00:00Z", listed.Start.UTC().Format(time.RFC3339))
-			assertions.Equal("2027-03-04T00:00:00Z", listed.End.UTC().Format(time.RFC3339))
-		}
 	}
 }
 
@@ -538,22 +503,6 @@ func TestCalendarOccurrenceCancelledMasterRemovesGeneratedRef(t *testing.T) {
 	requirements.Len(page.Occurrences, 1)
 	_, err = st.GetCalendarOccurrenceContext(t.Context(), removedRef)
 	requirements.ErrorIs(err, ErrCalendarOccurrenceNotFound)
-}
-
-func TestCalendarOccurrenceDamagedNeighborKeepsStandalone(t *testing.T) {
-	tc := calendarOccurrenceReadCase{count: 1, name: "single with undecodable event", state: "single damaged"}
-	assertions, requirements := assert.New(t), require.New(t)
-	st, master, _, _ := calendarOccurrenceReadFixture(t, tc)
-	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	listed := page.Occurrences[0]
-	assertions.Equal(master, listed.MessageID)
-	detail, err := st.GetCalendarOccurrenceContext(t.Context(), listed.Ref)
-	requirements.NoError(err)
-	assertions.Zero(listed.SeriesMessageID)
-	assertions.Zero(detail.SeriesMessageID)
 }
 
 func TestCalendarOccurrenceRefLookupErrors(t *testing.T) {

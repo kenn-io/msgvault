@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json/v2"
-	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"testing"
@@ -50,11 +49,11 @@ func TestCalendarEventsCommand(t *testing.T) {
 		want, wantErr, wantWarning string
 		err                        error
 	}{
-		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
+		{name: "table", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)"},
 		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
 		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "next cursor: next-page"},
 		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
-		{name: "json", args: []string{"--json", "--limit", "1"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:377@20270302T170000Z", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}, NextCursor: "next-page"}, want: `"message_id":378`},
+		{name: "json", args: []string{"--json", "--limit", "1"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}, NextCursor: "next-page"}, want: `"message_id":378`},
 		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
 		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
@@ -68,12 +67,6 @@ func TestCalendarEventsCommand(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
 			fake := &calendarEventsFakeClient{page: tc.page, version: tc.version, err: tc.err}
-			if tc.name == "cursor only" {
-				fake.page.Occurrences = nil
-				for i := range 100 {
-					fake.page.Occurrences = append(fake.page.Occurrences, store.CalendarOccurrence{Ref: fmt.Sprintf("evt:%d", i+1), MessageID: int64(i + 1), Subject: "Planning", Start: start, End: start.Add(time.Hour)})
-				}
-			}
 			if fake.version == "" {
 				fake.version = calendarEventsMinAPISchemaVersion
 			}
@@ -128,12 +121,13 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Contains(out.String(), "2027-03-03")
 				assertions.Contains(out.String(), "2027-03-04")
 				assertions.Contains(out.String(), "ID")
-				assertions.Regexp(`378  evt:377@20270302T170000Z  Standup`, out.String())
+				assertions.Regexp(`378  evt:378  Standup`, out.String())
 			}
 			if tc.name == "json" {
 				var page store.CalendarOccurrencePage
 				requirements.NoError(json.Unmarshal(out.Bytes(), &page))
 				requirements.Len(page.Occurrences, 1)
+				assertions.Equal("evt:378", page.Occurrences[0].Ref)
 				assertions.Equal("Standup", page.Occurrences[0].Subject)
 				assertions.Equal(int64(378), page.Occurrences[0].MessageID)
 				assertions.Equal(int64(377), page.Occurrences[0].SeriesMessageID)
