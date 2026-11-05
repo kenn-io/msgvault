@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { shellQuote } from './shell-quote';
-import { withShellArgv } from './shell-argv.test-helper';
+import { withShellArgv } from './shell-argv.test-support';
 
 const roundTripValues = [
   'you@example.com',

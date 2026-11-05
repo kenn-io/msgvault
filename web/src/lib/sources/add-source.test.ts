@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { withShellArgv } from '../settings/shell-argv.test-helper';
+import { withShellArgv } from '../settings/shell-argv.test-support';
 import { ADD_SOURCE_KINDS, addSourceCommand, type CommandSourceKind } from './add-source';
 
 function commandKind(id: string): CommandSourceKind {
