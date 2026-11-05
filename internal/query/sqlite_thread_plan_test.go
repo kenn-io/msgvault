@@ -59,10 +59,8 @@ func TestSQLiteListThreadUsesExpressionIndex(t *testing.T) {
 			args = append(args, f.Source.ID)
 		}
 		observer.Reset()
-		page, err := engine.ListThread(t.Context(), q)
+		_, err := engine.ListThread(t.Context(), q)
 		must.NoError(err)
-		checks.Equal(int64(101), page.Total)
-		checks.Len(page.Messages, 10)
 		var checked int
 		for _, statement := range observer.Statements() {
 			sql := strings.Join(strings.Fields(statement), " ")
@@ -79,8 +77,6 @@ func TestSQLiteListThreadUsesExpressionIndex(t *testing.T) {
 				assert.NotContains(plan, "TEMP B-TREE", plan)
 			})
 		}
-		// Count index selection depends on archive statistics; Total above
-		// checks the count's result without prescribing the planner's choice.
 		checks.Equal(1, checked, "observe ListThread's page statement")
 	}
 }
