@@ -2709,6 +2709,7 @@ type CliMessageResponse struct {
 	ReceivedAt           *time.Time             `json:"received_at" validate:"required"`
 	RelatedMessageID     *int64                 `json:"related_message_id,omitempty"`
 	Rfc822MessageID      *string                `json:"rfc822_message_id,omitzero"`
+	SenderAuth           *SenderAuthVerdict     `json:"sender_auth,omitempty"`
 	SentAt               time.Time              `json:"sent_at" validate:"required"`
 	SizeEstimate         int64                  `json:"size_estimate"`
 	Snippet              string                 `json:"snippet" validate:"required"`
@@ -2784,6 +2785,13 @@ func (c CliMessageResponse) Validate() error {
 	if c.ReceivedAt != nil {
 		if err := typesValidator.Var(c.ReceivedAt, "required"); err != nil {
 			errors = errors.Append("ReceivedAt", err)
+		}
+	}
+	if c.SenderAuth != nil {
+		if v, ok := any(c.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(c.SentAt, "required"); err != nil {
@@ -8021,22 +8029,23 @@ type MessageDetail struct {
 	FromName          *string `json:"from_name,omitzero"`
 
 	// FromParticipantID Sender participant ID, populated for conversation windows.
-	FromParticipantID *int64   `json:"from_participant_id,omitempty"`
-	FromPhone         *string  `json:"from_phone,omitzero"`
-	HasAttachments    bool     `json:"has_attachments"`
-	HiddenTextPresent bool     `json:"hidden_text_present"`
-	ID                int64    `json:"id"`
-	IsFromMe          *bool    `json:"is_from_me,omitempty"`
-	Labels            []string `json:"labels" validate:"required"`
-	MessageType       *string  `json:"message_type,omitzero"`
-	RelatedMessageID  *int64   `json:"related_message_id,omitempty"`
-	SentAt            string   `json:"sent_at" validate:"required"`
-	SizeBytes         int64    `json:"size_bytes"`
-	Snippet           string   `json:"snippet" validate:"required"`
-	SourceID          *int64   `json:"source_id,omitempty"`
-	SourceMessageID   *string  `json:"source_message_id,omitzero"`
-	Subject           string   `json:"subject" validate:"required"`
-	To                []string `json:"to" validate:"required"`
+	FromParticipantID *int64             `json:"from_participant_id,omitempty"`
+	FromPhone         *string            `json:"from_phone,omitzero"`
+	HasAttachments    bool               `json:"has_attachments"`
+	HiddenTextPresent bool               `json:"hidden_text_present"`
+	ID                int64              `json:"id"`
+	IsFromMe          *bool              `json:"is_from_me,omitempty"`
+	Labels            []string           `json:"labels" validate:"required"`
+	MessageType       *string            `json:"message_type,omitzero"`
+	RelatedMessageID  *int64             `json:"related_message_id,omitempty"`
+	SenderAuth        *SenderAuthVerdict `json:"sender_auth,omitempty"`
+	SentAt            string             `json:"sent_at" validate:"required"`
+	SizeBytes         int64              `json:"size_bytes"`
+	Snippet           string             `json:"snippet" validate:"required"`
+	SourceID          *int64             `json:"source_id,omitempty"`
+	SourceMessageID   *string            `json:"source_message_id,omitzero"`
+	Subject           string             `json:"subject" validate:"required"`
+	To                []string           `json:"to" validate:"required"`
 
 	// ToParticipants Recipient participants, populated for conversation windows.
 	ToParticipants []ConversationParticipant `json:"to_participants,omitempty"`
@@ -8069,6 +8078,13 @@ func (m MessageDetail) Validate() error {
 	}
 	if err := typesValidator.Var(m.Labels, "required"); err != nil {
 		errors = errors.Append("Labels", err)
+	}
+	if m.SenderAuth != nil {
+		if v, ok := any(m.SenderAuth).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SenderAuth", err)
+			}
+		}
 	}
 	if err := typesValidator.Var(m.SentAt, "required"); err != nil {
 		errors = errors.Append("SentAt", err)
@@ -14964,6 +14980,15 @@ func (s Selector) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type SenderAuthVerdict struct {
+	AuthservID *string `json:"authserv_id,omitzero"`
+	Dkim       *string `json:"dkim,omitzero"`
+	Dmarc      *string `json:"dmarc,omitzero"`
+	Domain     *string `json:"domain,omitzero"`
+	Spf        *string `json:"spf,omitzero"`
+	Verified   bool    `json:"verified"`
 }
 
 type SenderCount struct {

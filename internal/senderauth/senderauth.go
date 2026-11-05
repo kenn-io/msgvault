@@ -1,0 +1,124 @@
+// Package senderauth reports authentication results from a pinned receiver.
+package senderauth
+
+import (
+	"bufio"
+	"bytes"
+	"net/textproto"
+	"strings"
+
+	"github.com/emersion/go-msgauth/authres"
+	"github.com/jhillyerd/enmime/v2"
+	"go.kenn.io/msgvault/internal/mime"
+	"golang.org/x/net/idna"
+)
+
+// Verdict describes the pinned receiver's results. Verified covers the From domain only.
+type Verdict struct {
+	Verified   bool   `json:"verified"`
+	Domain     string `json:"domain,omitempty"`
+	AuthservID string `json:"authserv_id,omitempty"`
+	SPF        string `json:"spf,omitempty"`
+	DKIM       string `json:"dkim,omitempty"`
+	DMARC      string `json:"dmarc,omitempty"`
+}
+
+// Evaluate reads only the topmost Authentication-Results header.
+func Evaluate(block []byte, trusted []string, displayedFrom string) *Verdict {
+	verdict := &Verdict{}
+	// Keep headers parsed before a malformed line in an archived message.
+	headers, _ := textproto.NewReader(bufio.NewReader(bytes.NewReader(block))).ReadMIMEHeader()
+	cleaned, ok := cleanResults(headers.Get("Authentication-Results"))
+	if !ok || cleaned == "" {
+		return verdict
+	}
+	id, results, err := authres.Parse(cleaned)
+	if err != nil {
+		return verdict
+	}
+	pinned := false
+	for _, pin := range trusted {
+		if strings.EqualFold(id, pin) {
+			pinned = true
+			break
+		}
+	}
+	if !pinned {
+		return verdict
+	}
+	verdict.AuthservID = id
+	seenSPF, seenDKIM, seenDMARC := false, false, false
+	for _, result := range results {
+		switch r := result.(type) {
+		case *authres.SPFResult:
+			if !seenSPF {
+				seenSPF = true
+				verdict.SPF = string(r.Value)
+			}
+		case *authres.DKIMResult:
+			if !seenDKIM || r.Value == authres.ResultPass {
+				seenDKIM = true
+				verdict.DKIM = string(r.Value)
+			}
+		case *authres.DMARCResult:
+			if !seenDMARC {
+				seenDMARC = true
+				verdict.DMARC = string(r.Value)
+				if r.From != `""` {
+					verdict.Domain = strings.ToLower(r.From)
+				}
+			}
+		}
+	}
+	from, err := enmime.ParseAddressList(headers.Get("From"))
+	if err == nil && len(from) == 1 && len(headers.Values("From")) == 1 {
+		domain, domainErr := idna.Lookup.ToASCII(mime.ExtractDomain(from[0].Address))
+		reportedDomain, reportedErr := idna.Lookup.ToASCII(verdict.Domain)
+		displayedDomain, displayedErr := idna.Lookup.ToASCII(mime.ExtractDomain(displayedFrom))
+		verdict.Verified = domainErr == nil && reportedErr == nil && displayedErr == nil &&
+			verdict.DMARC == "pass" && domain != "" && strings.EqualFold(reportedDomain, domain) && strings.EqualFold(domain, displayedDomain)
+	}
+	return verdict
+}
+
+// authres splits on semicolons and whitespace without recognizing quoted values.
+// Strip comments and blank quoted contents so diagnostic text stays inert.
+func cleanResults(value string) (string, bool) {
+	var out strings.Builder
+	depth := 0
+	quoted, escaped := false, false
+	for _, c := range value {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if c == '\\' && (depth > 0 || quoted) {
+			escaped = true
+			continue
+		}
+		if depth > 0 {
+			if c == '(' {
+				depth++
+			}
+			if c == ')' {
+				depth--
+			}
+			continue
+		}
+		if c == '"' {
+			quoted = !quoted
+			out.WriteRune(c)
+			continue
+		}
+		if quoted {
+			continue
+		}
+		if c == '(' {
+			depth++
+			out.WriteByte(' ')
+			continue
+		}
+		out.WriteRune(c)
+	}
+	return out.String(), depth == 0 && !quoted && !escaped
+}

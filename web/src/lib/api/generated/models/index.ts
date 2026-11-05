@@ -922,6 +922,7 @@ export * from "./secretSettingUpdate";
 export * from "./secretSettingUpdateAction";
 export * from "./selector";
 export * from "./selectorKind";
+export * from "./senderAuthVerdict";
 export * from "./senderCount";
 export * from "./sessionLoginRequest";
 export * from "./sessionStatus";

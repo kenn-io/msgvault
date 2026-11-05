@@ -216,6 +216,29 @@ func TestGmailDraftConfig(t *testing.T) {
 	}
 }
 
+func TestSenderAuthConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	const valid = "[[sender_auth.sources]]\nsource_id = 42\ntrusted_authserv_ids = [\"mx.google.com\"]\n"
+	require.NoError(t, os.WriteFile(path, []byte(valid), 0o600))
+	cfg, err := Load(path, "")
+	require.NoError(t, err)
+	pins := cfg.SenderAuth.Pins()
+	cfg.SenderAuth.Sources[0].TrustedAuthservIDs[0] = "changed.example.test"
+	assert.Equal(t, []string{"mx.google.com"}, pins[42])
+	for _, tc := range []struct{ name, body, want string }{
+		{"missing source", "trusted_authserv_ids = [\"mx.google.com\"]", "source_id is required"},
+		{"missing pins", "source_id = 42", "trusted_authserv_ids must contain at least one ID"},
+		{"blank pin", "source_id = 42\ntrusted_authserv_ids = [\"\"]", "trusted_authserv_ids must be nonblank"},
+		{"whitespace pin", "source_id = 42\ntrusted_authserv_ids = [\"mx.google.com other\"]", "contain no whitespace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(path, []byte("[[sender_auth.sources]]\n"+tc.body+"\n"), 0o600))
+			_, err := Load(path, "")
+			require.ErrorContains(t, err, tc.want)
+		})
+	}
+}
+
 func TestDraftSourceConfigErrorText(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	imap := func(body string) string { return "[[imap.drafts]]\n" + body + "\n" }

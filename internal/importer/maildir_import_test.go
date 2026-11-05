@@ -12,20 +12,13 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/email"
 )
 
-func maildirFixture(t *testing.T, root string) {
-	t.Helper()
-	for _, dir := range []string{"cur", "new", "tmp"} {
-		require.NoError(t, os.MkdirAll(filepath.Join(root, dir), 0700))
-	}
-}
-
 func TestImportMaildirPreservesRawAndMergesFolders(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
-	maildirFixture(t, filepath.Join(root, ".Archive"))
+	email.Maildir(t, root)
+	email.Maildir(t, filepath.Join(root, ".Archive"))
 	raw := []byte("From: alice@example.com\r\nTo: bob@example.com\r\nSubject: Maildir message\r\nMessage-ID: <one@example.com>\r\n\r\nArchive me.\r\n")
 	seenName := "one:2,S"
 	if runtime.GOOS == "windows" {
@@ -76,7 +69,7 @@ func TestImportMaildirCancellationAndResume(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	require.NoError(os.WriteFile(filepath.Join(root, "new/one"), []byte("Subject: resume\r\n\r\nbody"), 0600))
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
@@ -94,7 +87,7 @@ func TestImportMaildirEmptyAndOversized(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	opts := MaildirImportOptions{Identifier: "alice@example.com", MaxMessageBytes: 16}
 	empty, err := ImportMaildir(t.Context(), st, root, opts)
 	require.NoError(err)
@@ -112,7 +105,7 @@ func TestImportMaildirStoresAttachment(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	raw := email.NewMessage().WithAttachment("sample.txt", "text/plain", []byte("synthetic attachment")).Bytes()
 	require.NoError(os.WriteFile(filepath.Join(root, "cur/message"), raw, 0600))
 	attachments := filepath.Join(tmp, "attachments")
@@ -131,7 +124,7 @@ func TestImportMaildirRecoveredFailureIsSuccessful(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
+	email.Maildir(t, root)
 	require.NoError(os.WriteFile(filepath.Join(root, "new/one"), []byte("Subject: retry\r\n\r\nbody"), 0600))
 	_, err := st.DB().Exec(`CREATE TRIGGER fail_maildir_insert BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT,'transient import failure'); END`)
 	require.NoError(err)
@@ -157,8 +150,8 @@ func TestImportMaildirFolderNamedLikeFlagLabel(t *testing.T) {
 	require := require.New(t)
 	st, tmp := openTestStore(t)
 	root := filepath.Join(tmp, "mail")
-	maildirFixture(t, root)
-	maildirFixture(t, filepath.Join(root, ".TRASH"))
+	email.Maildir(t, root)
+	email.Maildir(t, filepath.Join(root, ".TRASH"))
 	trashedName := "one:2,T"
 	if runtime.GOOS == "windows" {
 		trashedName = "one-trashed"

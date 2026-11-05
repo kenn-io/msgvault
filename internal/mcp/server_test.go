@@ -30,6 +30,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/query/querytest"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
@@ -2016,6 +2017,13 @@ func TestGetMessage(t *testing.T) {
 		assert.Equal(11, msg.BodyLength, "body_length")
 		assert.Equal(11, msg.BodyReturned, "body_returned")
 		assert.False(msg.HasMore, "has_more")
+	})
+
+	t.Run("sender authentication", func(t *testing.T) {
+		verdict := &senderauth.Verdict{Verified: true, Domain: "example.test", AuthservID: "mx.google.com", DMARC: "pass"}
+		handlers := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{42: {ID: 42, BodyText: "Archived body", SenderAuth: verdict}}})
+		got := runTool[getMessageResponse](t, "get_message", handlers.getMessage, map[string]any{"id": float64(42)})
+		assert.Equal(t, verdict, got.SenderAuth)
 	})
 
 	t.Run("stored HTML hidden text", func(t *testing.T) {

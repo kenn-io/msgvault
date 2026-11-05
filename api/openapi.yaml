@@ -2860,6 +2860,8 @@ components:
           type: integer
         rfc822_message_id:
           type: string
+        sender_auth:
+          $ref: "#/components/schemas/SenderAuthVerdict"
         sent_at:
           format: date-time
           type: string
@@ -8260,6 +8262,8 @@ components:
         related_message_id:
           format: int64
           type: integer
+        sender_auth:
+          $ref: "#/components/schemas/SenderAuthVerdict"
         sent_at:
           type: string
         size_bytes:
@@ -15096,6 +15100,24 @@ components:
         - kind
         - message_id
       type: object
+    SenderAuthVerdict:
+      additionalProperties: true
+      properties:
+        authserv_id:
+          type: string
+        dkim:
+          type: string
+        dmarc:
+          type: string
+        domain:
+          type: string
+        spf:
+          type: string
+        verified:
+          type: boolean
+      required:
+        - verified
+      type: object
     SenderCount:
       additionalProperties: false
       properties:
@@ -17076,7 +17098,7 @@ components:
       type: apiKey
 info:
   title: msgvault API
-  version: 3.42.0
+  version: 3.43.0
 openapi: 3.1.0
 paths:
   /api/ping:

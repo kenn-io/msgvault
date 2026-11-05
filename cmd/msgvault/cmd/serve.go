@@ -2229,6 +2229,10 @@ func (a *storeAPIAdapter) GetFileMetadataBatch(ctx context.Context, ids []int64)
 	return a.store.GetFileMetadataBatch(ctx, ids)
 }
 
+func (a *storeAPIAdapter) MessageHeaderBlockContext(ctx context.Context, id int64) ([]byte, error) {
+	return a.store.MessageHeaderBlockContext(ctx, id)
+}
+
 func (a *storeAPIAdapter) GetArchivedMessageRaw(ctx context.Context, id int64) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

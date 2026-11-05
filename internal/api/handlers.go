@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/scheduler"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/senderauth"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/vector"
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
@@ -340,6 +341,7 @@ type MessageDetail struct {
 
 	RelatedMessageID  *int64                    `json:"related_message_id,omitempty"`
 	ConversationTitle string                    `json:"conversation_title,omitempty" doc:"Conversation title, when available."`
+	SenderAuth        *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	Calendar          *store.CalendarProjection `json:"calendar,omitempty" doc:"Calendar state for calendar events: status, sequence, start, end, all-day, time zone, and iCal UID. A field is null when the stored event does not carry it; calendar sync does not store a sequence of 0."`
 
 	Body     string  `json:"body"`
@@ -798,6 +800,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			detail := messageDetailFromQuery(qMsg)
+			detail.SenderAuth = s.senderAuth(r.Context(), id, qMsg.SourceID, qMsg.MessageType, detail.FromEmail)
 			detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
 			writeJSON(w, http.StatusOK, detail)
 			return
@@ -845,6 +848,7 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	for _, att := range msg.Attachments {
 		attachments = append(attachments, attachmentInfoFromStore(att))
 	}
+	detail.SenderAuth = s.senderAuth(r.Context(), id, msg.SourceID, msg.MessageType, msg.FromEmail)
 	detail.Attachments = attachments
 	detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
 

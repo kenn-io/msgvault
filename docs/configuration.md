@@ -2766,3 +2766,21 @@ schedule = "30 4 * * *"
 [telemetry]
 enabled = true # false turns off anonymous usage telemetry
 ```
+
+## Sender authentication
+
+Pin the receiving mail server's authentication service ID for each email source:
+
+```toml
+[[sender_auth.sources]]
+source_id = 1
+trusted_authserv_ids = ["mx.google.com"]
+```
+
+Use the source ID from `msgvault list-accounts`. IDs must be positive and unique across entries. Authentication service IDs must be nonblank and contain no whitespace. Matching ignores case and requires an exact ID. Restart the daemon after changing these pins.
+
+Single-message HTTP, CLI JSON, and MCP reads return `sender_auth` for pinned email sources. The verdict uses only the topmost `Authentication-Results` header. `verified` means the pinned receiver reported `dmarc=pass` for the domain in both the archived From header and the displayed sender address. It covers the sender domain only. Empty results mean the pinned receiver reported nothing usable, or the archived headers could not be read. Sources without pins and non-email messages omit the field.
+
+A pin trusts the topmost header, so a copy that never passed through the pinned receiver can carry a forged one.
+
+Receivers that omit the authserv-id, such as Exchange Online and Outlook.com headers starting with `spf=...`, can't verify. Quoted or spaced property values report no result.
