@@ -1,4 +1,5 @@
 import { GlobalWorkerOptions, TextLayer, getDocument, version } from 'pdfjs-dist';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 import './pdf-viewer.css';
 import workerURL from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -15,6 +16,21 @@ export interface PDFRenderHandle {
 }
 
 GlobalWorkerOptions.workerSrc = workerURL;
+
+// Returns, for each page index, the baseline canvas pixels that page and every
+// later page need. Reserving them first keeps sharper early pages from
+// spending the budget a larger later page needs just to render.
+async function reservedBaselinePixels(pdfDocument: PDFDocumentProxy, signal: AbortSignal): Promise<number[]> {
+  const reserved = Array<number>(pdfDocument.numPages + 1).fill(0);
+  for (let pageNumber = pdfDocument.numPages; pageNumber >= 1; pageNumber -= 1) {
+    const page = await pdfDocument.getPage(pageNumber);
+    page.cleanup();
+    if (signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
+    const viewport = page.getViewport({ scale: 1.25 });
+    reserved[pageNumber - 1] = reserved[pageNumber]! + Math.ceil(viewport.width) * Math.ceil(viewport.height);
+  }
+  return reserved;
+}
 
 export async function renderPDF(
   bytes: Uint8Array,
@@ -74,6 +90,7 @@ export async function renderPDF(
     if (pdfDocument.numPages > MAX_PDF_PAGES) {
       throw new Error(`PDF exceeds the ${MAX_PDF_PAGES}-page preview limit.`);
     }
+    const reserved = await reservedBaselinePixels(pdfDocument, signal);
 
     host.replaceChildren(pages);
     let totalCanvasPixels = 0;
@@ -89,7 +106,7 @@ export async function renderPDF(
       const basePixels = Math.ceil(baseViewport.width) * Math.ceil(baseViewport.height);
       if (basePixels > MAX_CANVAS_PIXELS) throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
       const desiredScale = Math.max(1.25, availableWidth() * 2 * (host.ownerDocument.defaultView?.devicePixelRatio ?? 1) / page.getViewport({ scale: 1 }).width);
-      const budget = Math.min(MAX_CANVAS_PIXELS, (MAX_TOTAL_CANVAS_PIXELS - totalCanvasPixels) / (pdfDocument.numPages - pageNumber + 1));
+      const budget = Math.min(MAX_CANVAS_PIXELS, basePixels + (MAX_TOTAL_CANVAS_PIXELS - totalCanvasPixels - reserved[pageNumber - 1]!) / (pdfDocument.numPages - pageNumber + 1));
       const scale = Math.max(1.25, Math.min(desiredScale, 1.25 * Math.sqrt(budget / basePixels)));
       const viewport = page.getViewport({ scale });
       // Round down before budgeting and allocating. Rounding both sides up
@@ -97,9 +114,7 @@ export async function renderPDF(
       const width = Math.floor(viewport.width);
       const height = Math.floor(viewport.height);
       const pagePixels = width * height;
-      if (pagePixels > MAX_CANVAS_PIXELS) {
-        throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
-      }
+      if (pagePixels > MAX_CANVAS_PIXELS) throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
       totalCanvasPixels += pagePixels;
       if (totalCanvasPixels > MAX_TOTAL_CANVAS_PIXELS) {
         throw new Error('PDF exceeds the aggregate preview canvas limit.');
