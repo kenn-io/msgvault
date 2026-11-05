@@ -422,10 +422,6 @@ func personFactCLIDecisionReason(reason string) string {
 		return "too little advantage over competing claims"
 	case personfacts.ReasonCompetingTie:
 		return "too close to choose"
-	case personfacts.ReasonExplicitContradiction:
-		return "explicitly contradicted"
-	case personfacts.ReasonExplicitSupersession:
-		return "explicitly replaced"
 	default:
 		return reason
 	}
