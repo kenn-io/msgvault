@@ -98,7 +98,7 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	if err := q.QueryRow(`SELECT sync_config FROM sources WHERE id = ?`, sourceID).Scan(&config); err != nil {
 		return fmt.Errorf("read calendar projection source: %w", err)
 	}
-	event, ok := decodeCalendarProjection(format.String, stored, compression, []byte(metadata.String), calendarConfigZone(config))
+	event, item, ok := decodeCalendarProjection(format.String, stored, compression, []byte(metadata.String), calendarConfigZone(config))
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -118,11 +118,7 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		if _, err := q.Exec(fmt.Sprintf(`UPDATE messages SET metadata = %s WHERE id = ?`, s.dialect.JSONBindExpr()), string(encoded), messageID); err != nil {
 			return fmt.Errorf("refresh CalDAV message metadata: %w", err)
 		}
-		raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
-		if err != nil {
-			return err
-		}
-		messageEvent, err := calevent.CalDAVMessageEvent(raw, []byte(metadata.String), calendarConfigZone(config))
+		messageEvent, err := item.MessageEvent()
 		if err != nil {
 			return fmt.Errorf("decode CalDAV message text: %w", err)
 		}
@@ -197,17 +193,23 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 	return nil
 }
 
-func decodeCalendarProjection(format string, stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, bool) {
+func decodeCalendarProjection(format string, stored []byte, compression sql.NullString, metadata []byte, zone string) (calevent.Event, calevent.CalDAVEvent, bool) {
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
 	var event calevent.Event
+	var item calevent.CalDAVEvent
 	var ok bool
 	if err == nil {
-		event, ok, err = calevent.Decode(format, raw, metadata, zone)
+		if format == calevent.CalDAVRawFormat {
+			item, ok, err = calevent.DecodeCalDAV(raw, metadata, zone)
+			event = item.Event
+		} else {
+			event, ok, err = calevent.Decode(format, raw, metadata, zone)
+		}
 	}
 	if err != nil {
-		return calevent.Event{Kind: "single", Status: calendarEventDecodeFailureStatus}, true
+		return calevent.Event{Kind: "single", Status: calendarEventDecodeFailureStatus}, calevent.CalDAVEvent{}, true
 	}
-	return event, ok
+	return event, item, ok
 }
 
 func calendarRecurrenceEnd(ctx context.Context, event calevent.Event) *time.Time {

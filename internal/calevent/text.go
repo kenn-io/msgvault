@@ -6,6 +6,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
@@ -84,7 +85,7 @@ func (item CalDAVEvent) MessageEvent() (gcalmodel.Event, error) {
 		}
 		zone := time.UTC
 		if zoneName != "" {
-			zone, err = time.LoadLocation(zoneName)
+			zone, err = calrecur.LoadZone(zoneName)
 			if err != nil {
 				return gcalmodel.Event{}, fmt.Errorf("CalDAV body time zone: %w", err)
 			}

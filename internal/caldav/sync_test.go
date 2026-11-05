@@ -146,6 +146,36 @@ func count(t *testing.T, st *store.Store, sql string) int {
 	return n
 }
 
+func TestSyncWindowsTimeZone(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	c, f := archiveFixture(t)
+	f.raw["a.ics"] = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n" +
+		"UID:outlook@example.org\r\nSUMMARY:Planning\r\n" +
+		"DTSTART;TZID=\"Eastern Standard Time\":20270307T090000\r\n" +
+		"DTEND;TZID=\"Eastern Standard Time\":20270307T100000\r\n" +
+		"RRULE:FREQ=WEEKLY;COUNT=2\r\n" +
+		"RDATE;TZID=\"Eastern Standard Time\":20270321T090000\r\n" +
+		"EXDATE;TZID=\"Eastern Standard Time\":20270314T090000\r\n" +
+		"ATTENDEE;CN=Example Guest:mailto:guest@example.org\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+	st := testutil.NewTestStore(t)
+	result, err := c.Sync(t.Context(), st, syncOpts())
+	require.NoError(err)
+	assert.Equal(0, result.Skipped)
+	require.Equal(1, result.Events)
+	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 1, 0))
+	require.NoError(err)
+	assert.Empty(page.Unexpandable)
+	require.Len(page.Occurrences, 2)
+	assert.Equal("2027-03-07T14:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
+	assert.Equal("2027-03-21T13:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
+	assert.Equal("2027-03-21T14:00:00Z", page.Occurrences[1].End.UTC().Format(time.RFC3339))
+	var body string
+	require.NoError(st.DB().QueryRow(`SELECT body_text FROM message_bodies WHERE message_id = ?`, page.Occurrences[0].MessageID).Scan(&body))
+	assert.Contains(body, "09:00")
+}
+
 func TestSyncNonMailtoParticipants(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	c, f := archiveFixture(t)

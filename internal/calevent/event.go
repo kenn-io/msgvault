@@ -48,7 +48,8 @@ type Event struct {
 func Decode(rawFormat string, raw, metadata []byte, calendarZone string) (Event, bool, error) {
 	switch rawFormat {
 	case CalDAVRawFormat:
-		return decodeCalDAV(raw, metadata, calendarZone)
+		item, ok, err := DecodeCalDAV(raw, metadata, calendarZone)
+		return item.Event, ok, err
 	case gcalmodel.RawFormat:
 		return decodeGoogleEvent(raw, metadata, calendarZone)
 	default:
