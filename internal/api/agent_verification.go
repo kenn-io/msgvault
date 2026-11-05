@@ -88,9 +88,6 @@ func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, ro
 func (s *Server) maskQuerySummaries(w http.ResponseWriter, r *http.Request, rows []query.MessageSummary) bool {
 	_, ok := withholdRows(s, w, r, rows, func(row *query.MessageSummary) int64 { return row.ID }, func(row *query.MessageSummary) {
 		row.Subject, row.Snippet, row.MatchSnippet, row.ConversationTitle = verification.Masked, verification.Masked, verification.Masked, verification.Masked
-		if row.BodyText != "" {
-			row.BodyText = verification.Masked
-		}
 		for j := range row.AttachmentNames {
 			row.AttachmentNames[j] = verification.Masked
 		}
