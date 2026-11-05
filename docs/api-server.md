@@ -160,7 +160,9 @@ recurrence limits, notification behavior, and reconciliation instructions.
 The API publishes its generated OpenAPI contract at `/openapi.json`.
 `msgvault openapi` prints the checked-in contract without starting a daemon or
 opening an archive. OpenAPI `info.version` is the **API schema version**;
-it is separate from the binary release version. The current schema is **3.45.0**.
+it is separate from the binary release version. The current schema is **3.46.0**.
+
+Schema 3.46.0 adds owner-only contact delivery policy read/set/clear routes.
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
@@ -264,7 +266,7 @@ conflict when one UID resolves to multiple people. Person responses expose
 Schema 3.11.0 adds structured `account_scopes` filters, the Explore account
 filter, and the virtual account catalog on `/cli/accounts`.
 
-Schema 3.44.0 adds the unreleased [contact delivery policy](#contact-delivery-policies) routes.
+Schema 3.45.0 adds the unreleased [contact delivery policy](#contact-delivery-policies) routes.
 
 Schema 3.1.0 adds [calendar event control](#calendar-control),
 availability queries, and opt-in `write` on Calendar consent plans.
@@ -3311,7 +3313,7 @@ first. It does not send anything, disable drafting, change existing drafts, or
 replace provider credentials and platform confirmation. Policies are managed
 over HTTP, MCP, and the owner CLI commands [person read-delivery-policy, set-delivery-policy, and clear-delivery-policy](cli-reference.md#person-delivery-policies).
 
-These owner-only routes require API schema 3.44.0:
+These owner-only routes require API schema 3.45.0:
 
 | Operation | POST path | Request |
 | --- | --- | --- |
