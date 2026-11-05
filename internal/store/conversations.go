@@ -731,3 +731,13 @@ func (s *Store) ConversationTitlesBatchContext(ctx context.Context, sourceID int
 	}
 	return titles, nil
 }
+
+// PopulateMessageBodiesContext loads complete bodies for the supplied message metadata
+// in the caller's read snapshot.
+func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []APIMessage) error {
+	ids := make([]int64, len(messages))
+	for i := range messages {
+		ids[i] = messages[i].ID
+	}
+	return s.batchPopulateBodies(ctx, messages, ids)
+}

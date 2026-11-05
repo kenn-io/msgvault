@@ -1,0 +1,51 @@
+package verification
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+)
+
+func TestIs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		content Content
+		want    bool
+	}{
+		{"Google", Content{Subject: "G-482913 is your Google verification code"}, true},
+		{"split", Content{Text: "Your code is 482 913"}, true},
+		{"cells", Content{HTML: "Your verification code is <td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td>"}, true},
+		{"mixed", Content{Text: "Your code is K7M2-9QXA"}, true},
+		{"subject cue", Content{Subject: "Your code", Text: "482913"}, true},
+		{"PIN year", Content{Text: "Your code is 2026"}, true},
+		{"reverse", Content{Text: "482913 is your verification code"}, true},
+		{"Unicode window", Content{Text: "code " + strings.Repeat("界", 59) + "482913"}, true},
+		{"outside window", Content{Text: "code " + strings.Repeat("界", 61) + "482913"}, false},
+		{"French", Content{Text: "code de vérification: 482913"}, true},
+		{"UUID", Content{Text: "Reset your password https://example.test/r/12345678-1234-4321-1234-123456789abc"}, true},
+		{"Firebase", Content{Text: "https://example.test/reset?oobCode=Qm9_xK3-abc1234567890"}, true},
+		{"Supabase", Content{Text: "https://example.test/login?token=eyJ1234567890.eyJ0987654321.abc"}, true},
+		{"Slack", Content{Text: "Sign in https://example.test/login/z-app-1234567890-0987654321-abcdef123456"}, true},
+		{"fragment", Content{Text: "https://example.test/r#token=abcDEF1234567890"}, true},
+		{"href", Content{HTML: "<a href=\"https://example.test/r?a=b&amp;token=abcDEF1234567890\">Sign in</a>"}, true},
+		{"copyright", Content{Text: "© 2026"}, false},
+		{"cue copyright", Content{Subject: "Your verification code", Text: "© 2026"}, false},
+		{"order", Content{Text: "Order 1234567 shipped. Log in to track it."}, false},
+		{"help line", Content{Text: "Sign in help line 1800555"}, false},
+		{"article", Content{Text: "Sign in to read more https://example.test/articles/interesting-article-title"}, false},
+		{"coupon", Content{Text: "Use code SAVE20"}, false},
+		{"unsubscribe", Content{Text: "Sign in https://example.test/unsubscribe?token=abcDEF1234567890"}, false},
+		{"long number", Content{Text: "Your code is 12345678901"}, false},
+		{"oversized", Content{Text: strings.Repeat("x", MaxFieldBytes)}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, Is(tc.content)) })
+	}
+}
+
+func BenchmarkIsCueDense(b *testing.B) {
+	content := Content{Text: strings.Repeat("code 123456 ", 2000)}
+	for b.Loop() {
+		Is(content)
+	}
+}

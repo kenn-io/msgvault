@@ -767,6 +767,9 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
 	}
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, MessageListResponse{
 		Total:    total,
 		Page:     page,
@@ -801,6 +804,9 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusNotFound, "not_found", "Message not found")
 				return
 			}
+			if !s.maskMessageDetail(w, r, qMsg) {
+				return
+			}
 			detail := messageDetailFromQuery(qMsg)
 			detail.SenderAuth = s.senderAuth(r.Context(), id, qMsg.SourceID, qMsg.MessageType, detail.FromEmail)
 			detail.BodyHTML = s.archivedRemoteImageHTML(r.Context(), id, detail.BodyHTML)
@@ -833,6 +839,9 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 
 	if !s.agentObjectSourceAllowed(r, msg.SourceID) {
 		writeError(w, http.StatusNotFound, "not_found", "Message not found")
+		return
+	}
+	if !s.maskStoreMessage(w, r, msg) {
 		return
 	}
 	detail := MessageDetail{
@@ -1048,6 +1057,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummary(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchResult{
 		Warnings:   search.LiteralORWarnings(searchText),
 		IndexState: agentIndexState(r),
@@ -3148,6 +3160,9 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
 		IndexState:       agentIndexState(r),
 		Count:            len(summaries),
@@ -3582,6 +3597,9 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, ok := s.prepareVerificationAttachment(w, r, att); !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
 		Filename:    att.Filename,
@@ -3627,6 +3645,11 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
+	original := *att
+	parentWithheld, ok := s.prepareVerificationAttachment(w, r, att)
+	if !ok {
+		return
+	}
 	releaseReadSnapshot(r)
 
 	var content io.ReadCloser
@@ -3649,6 +3672,12 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
+	reader, apiErr := s.verificationAttachmentReader(content, original, parentWithheld)
+	if apiErr != nil {
+		_ = content.Close()
+		writeAPIHTTPError(w, apiErr)
+		return
+	}
 	contentType := att.MimeType
 	if contentType == "" {
 		contentType = "application/octet-stream"
@@ -3658,7 +3687,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
-	_, copyErr := io.Copy(w, content)
+	_, copyErr := io.Copy(w, reader)
 	if err := errors.Join(copyErr, content.Close()); err != nil {
 		// Status and headers are already committed, so only logging is possible.
 		s.logger.Error("failed to stream attachment", "error", err, "hash", hash)
@@ -3771,6 +3800,9 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
 		Count:    len(summaries),
 		HasMore:  result.HasMore,
@@ -3971,6 +4003,9 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchFastResponse{
 		Hints:            result.Hints,
 		Warnings:         search.LiteralORWarnings(queryStr),
@@ -4140,6 +4175,9 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	var warnings []string
 	if scope != bodyScope {
 		warnings = search.LiteralORWarnings(queryStr)
+	}
+	if !s.maskMessageSummaries(w, r, summaries, bodyContexts) {
+		return
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
 		Warnings:     warnings,
