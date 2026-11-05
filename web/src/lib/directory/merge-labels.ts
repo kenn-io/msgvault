@@ -28,12 +28,17 @@ export async function loadMergeLabels(client: APIClient, detail: PersonMergeDeta
     }),
   ]);
   incomplete ||= results.some(result => result.status === 'rejected');
+  const ambiguousLabels: { id: number; label: IdentityChipText }[] = [];
   for (const [id, labels] of addresses) {
     for (const label of labels) {
-      if (!label.subtitle && !label.detail && [...addresses].some(([otherID, others]) => otherID !== id && others.some(other => other.title === label.title))) {
-        label.detail = `Participant ${id}`;
+      if ([...addresses].some(([otherID, others]) => otherID !== id && others.some(other =>
+        other.title === label.title && other.subtitle === label.subtitle && other.detail === label.detail))) {
+        ambiguousLabels.push({ id, label });
       }
     }
+  }
+  for (const { id, label } of ambiguousLabels) {
+    label.detail = [label.detail, `Participant ${id}`].filter(Boolean).join(' · ');
   }
   return { names, addresses, incomplete };
 }

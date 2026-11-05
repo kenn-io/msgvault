@@ -11,6 +11,17 @@ const detail: PersonMergeDetail = {
 };
 
 describe('loadMergeLabels', () => {
+  it('distinguishes same-named linked participants without addresses', async () => {
+    const labels = await loadMergeLabels(createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      return Response.json(path.includes('/participants/')
+        ? { identifiers: [], cluster: { members: [701, 702].map(participant_id => ({ participant_id, display_name: 'Alex Example' })) } }
+        : {});
+    }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
+    expect(labels.addresses.get(701)).toEqual([{ title: 'Alex Example', subtitle: 'linked', detail: 'Participant 701' }]);
+    expect(labels.addresses.get(702)).toEqual([{ title: 'Alex Example', subtitle: 'linked', detail: 'Participant 702' }]);
+  });
+
   it('distinguishes same-named participants without addresses', async () => {
     const labels = await loadMergeLabels(createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -20,6 +31,17 @@ describe('loadMergeLabels', () => {
     }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
     expect(labels.addresses.get(701)).toEqual([{ title: 'Alex Example', subtitle: '', detail: 'Participant 701' }]);
     expect(labels.addresses.get(702)).toEqual([{ title: 'Alex Example', subtitle: '', detail: 'Participant 702' }]);
+  });
+
+  it('preserves existing detail when disambiguating identical identifier labels', async () => {
+    const labels = await loadMergeLabels(createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      return Response.json(path.includes('/participants/')
+        ? { identifiers: [{ participant_id: Number(path.split('/').pop()), type: 'handle', value: 'alex', scope_kind: 'workspace', scope_value: 'example.org' }] }
+        : {});
+    }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
+    expect(labels.addresses.get(701)).toEqual([{ title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 701' }]);
+    expect(labels.addresses.get(702)).toEqual([{ title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 702' }]);
   });
 
   it('keeps each participant’s own identifiers, all addresses, and member fallbacks', async () => {

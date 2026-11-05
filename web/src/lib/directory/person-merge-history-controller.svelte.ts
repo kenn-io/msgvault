@@ -453,6 +453,8 @@ export class PersonMergeHistoryController {
     context: number,
     owner: AbortController,
   ): Promise<boolean> {
+    const detailOwner = this.detailAbort;
+    if (!detailOwner) return false;
     try {
       const [source, merge] = await Promise.all([
         generatedGetPersonProfile(
@@ -489,7 +491,7 @@ export class PersonMergeHistoryController {
       this.sourceETag = etag;
       this.detail = merge.data;
       const detail = this.detail;
-      void loadMergeLabels(this.client, detail, this.detailAbort!.signal).then(labels => {
+      void loadMergeLabels(this.client, detail, detailOwner.signal).then(labels => {
         if (this.detail === detail) this.labels = { for: target.mergeID, ...labels };
       });
       this.selectedParticipantIDs = [];
