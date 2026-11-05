@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -186,6 +187,53 @@ func runImessageImport(t *testing.T, home string, args ...string) {
 	err := executeRootContext(t.Context(), rootCmd)
 	output := done()
 	require.NoError(t, err, output)
+}
+
+func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
+	for _, explicitPath := range []bool{true, false} {
+		t.Run(fmt.Sprintf("explicit db path=%t", explicitPath), func(t *testing.T) {
+			home := t.TempDir()
+			path, chat := testutil.NewIMessageChatDB(t)
+			_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT);
+ CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+ INSERT INTO message (date, text, is_from_me) VALUES (700000000, 'outgoing', 1)`)
+			require.NoError(t, err)
+			cfg := config.NewDefaultConfig()
+			cfg.Data.DataDir = home
+			cfg.Analytics.AutoBuildCache = false
+			cfg.IMessage.DBPath = path
+			cfg.IMessage.Me = "owner@example.test"
+			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), fmt.Appendf(nil,
+				"[analytics]\nauto_build_cache = false\n[imessage]\ndb_path = %q\nme = %q\n", path, cfg.IMessage.Me), 0o600))
+			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+			require.NoError(t, runScheduledIMessage(ctx, st, cfg.IMessage))
+			var owner string
+			require.NoError(t, st.DB().QueryRow(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			assert.Equal(t, "owner@example.test", owner)
+			require.NoError(t, st.Close())
+
+			args := []string{"--no-attachments"}
+			if explicitPath {
+				args = append(args, "--db-path", path)
+			}
+			restoreImessageFlags(t)
+			t.Setenv(daemonCLISubprocessEnv, strconv.Itoa(os.Getppid()))
+			rootCmd.SetArgs(append([]string{"--home", home, "import-imessage"}, args...))
+			done := captureStdout(t)
+			err = executeRootContext(t.Context(), rootCmd)
+			output := done()
+			// Attribution is persisted before the independent analytics rebuild.
+			if err != nil {
+				require.ErrorContains(t, err, "refresh analytics cache:", output)
+			}
+			st, err = store.Open(cfg.DatabaseDSN())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = st.Close() })
+			require.NoError(t, st.DB().QueryRow(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
+			assert.Equal(t, "owner@example.test", owner)
+		})
+	}
 }
 
 // Config limits and --max-media-mb must both reach the importer through the

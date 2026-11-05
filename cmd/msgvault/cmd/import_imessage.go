@@ -106,7 +106,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	defer cleanup()
 
-	chatDBPath, err := resolveChatDBPath()
+	chatDBPath, err := resolveChatDBPath(state.cfg.IMessage.DBPath)
 	if err != nil {
 		return err
 	}
@@ -119,9 +119,13 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if importImessageMe != "" {
+	me := importImessageMe
+	if me == "" {
+		me = state.cfg.IMessage.Me
+	}
+	if me != "" {
 		clientOpts = append(
-			clientOpts, imessage.WithOwnerHandle(importImessageMe),
+			clientOpts, imessage.WithOwnerHandle(me),
 		)
 	}
 
@@ -307,15 +311,19 @@ func applyImessageContacts(s *store.Store, vcfPath string) bool {
 	return phoneMatches > 0 || emailMatches > 0
 }
 
-func resolveChatDBPath() (string, error) {
-	if importImessageDBPath != "" {
-		if _, err := os.Stat(importImessageDBPath); os.IsNotExist(err) {
+func resolveChatDBPath(configPath string) (string, error) {
+	path := importImessageDBPath
+	if path == "" {
+		path = configPath
+	}
+	if path != "" {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
 			return "", fmt.Errorf(
 				"iMessage database not found at %s",
-				importImessageDBPath,
+				path,
 			)
 		}
-		return importImessageDBPath, nil
+		return path, nil
 	}
 
 	path, err := defaultChatDBPath()
