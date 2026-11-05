@@ -17,7 +17,7 @@ func LoadZone(name string) (*time.Location, error) {
 		zone, err = time.LoadLocation(mapped)
 	} else if vendor, prefixed := strings.CutPrefix(lookup, "/"); prefixed {
 		if _, iana, ok := strings.Cut(vendor, "/"); ok && strings.Contains(iana, "/") {
-			zone, err = time.LoadLocation(iana)
+			zone, err = time.LoadLocation(strings.TrimPrefix(iana, "Tzfile/"))
 		}
 	}
 	if err != nil {

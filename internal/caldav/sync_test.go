@@ -1904,10 +1904,16 @@ func TestSyncResourceFailureKeepsCommittedEventsAndRetries(t *testing.T) {
 			_, err = c.Sync(t.Context(), st, syncOpts())
 			require.NoError(err)
 			got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-22T00:00:00Z")
-			require.Len(got, 2)
-			require.Equal("Updated meeting", got[0].Subject)
-			require.Equal(want, got[1].Start.UTC().Format(time.RFC3339))
-			require.Equal(deleted, got[1].DeletedFromSource)
+			if deleted {
+				// Only the exception committed before the failed update survives deletion.
+				require.Len(got, 1)
+			} else {
+				require.Len(got, 2)
+				require.Equal("Updated meeting", got[0].Subject)
+			}
+			exception := got[len(got)-1]
+			require.Equal(want, exception.Start.UTC().Format(time.RFC3339))
+			require.Equal(deleted, exception.DeletedFromSource)
 			require.Equal("t2", sourceToken(t, st))
 		})
 	}
@@ -1954,10 +1960,9 @@ func TestSyncDeletedFloatingEventMessageTimeZoneChange(t *testing.T) {
 	var last time.Time
 	require.NoError(st.DB().QueryRow(`SELECT last_message_at FROM conversations`).Scan(&last))
 	require.Equal("2027-03-21T15:00:00Z", last.UTC().Format(time.RFC3339))
-	got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-15T00:00:00Z")
-	require.Len(got, 1)
-	require.True(got[0].DeletedFromSource)
-	require.Equal("2027-03-14T13:00:00Z", got[0].Start.UTC().Format(time.RFC3339))
+	// The deleted master generates no occurrences; its obsolete exception stays archived.
+	got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-22T00:00:00Z")
+	require.Empty(got)
 	var after string
 	require.NoError(st.DB().QueryRow(`SELECT metadata FROM messages m JOIN calendar_events e ON e.message_id=m.id WHERE e.kind='exception'`).Scan(&after))
 	var updated calevent.CalDAVMetadata
