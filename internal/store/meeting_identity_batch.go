@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"go.kenn.io/msgvault/internal/calrecur"
 )
@@ -29,6 +30,17 @@ func resolvedMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurre
 	if r.batch != nil {
 		if o, ok := r.batch.occurrences[ref]; ok {
 			return o, nil
+		}
+		for _, row := range r.batch.eventRowsByID(ref.MessageID) {
+			if ref.Key == "" && row.Event.Kind == meetingExceptionKind && row.Event.Original != nil {
+				predicate, args := meetingMasterPredicate(row)
+				masters := r.batch.events[meetingQueryKey(predicate, args)]
+				if len(masters) == 1 {
+					if o, ok := r.batch.occurrences[OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}]; ok {
+						return o, nil
+					}
+				}
+			}
 		}
 	}
 	o, err := resolveMeetingOccurrence(ctx, r, ref, budget)
@@ -78,6 +90,9 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 	recurring := []recurringRef{}
 	queries = nil
 	for _, ref := range refs {
+		if _, ok := r.batch.occurrences[ref]; ok {
+			continue
+		}
 		rows := r.batch.eventRowsByID(ref.MessageID)
 		if len(rows) != 1 {
 			continue
@@ -106,7 +121,12 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 		return err
 	}
 	queries = nil
+	masters := map[int64]CalendarEventRow{}
+	froms, tos := map[int64]time.Time{}, map[int64]time.Time{}
 	for _, ref := range recurring {
+		if _, ok := r.batch.occurrences[OccurrenceRef{MessageID: ref.row.MessageID, Key: ref.id.Key()}]; ok {
+			continue
+		}
 		at, err := meetingOccurrenceStart(ref.row, ref.id)
 		if err != nil {
 			return err
@@ -122,10 +142,38 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 				at = *x.Event.Start
 			}
 		}
-		predicate, args = meetingSeriesExceptionsPredicate(r.dialect, ref.row, at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin))
+		id := ref.row.MessageID
+		masters[id] = ref.row
+		from, to := at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin)
+		if froms[id].IsZero() || from.Before(froms[id]) {
+			froms[id] = from
+		}
+		if to.After(tos[id]) {
+			tos[id] = to
+		}
+	}
+	for id, master := range masters {
+		predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, master, froms[id], tos[id])
 		queries = append(queries, meetingEventQuery{predicate, args})
 	}
-	return s.preloadMeetingQueries(ctx, r, queries, budget)
+	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
+		return err
+	}
+	// Generate each master's requested window once, then reuse the occurrences
+	// for individual references, representative selection, and note discovery.
+	for id, master := range masters {
+		occurrences, err := expandMeetingSeries(ctx, r, master, froms[id], tos[id], budget)
+		if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+			return err
+		}
+		if r.batch.occurrences == nil {
+			r.batch.occurrences = map[OccurrenceRef]linkOccurrence{}
+		}
+		for _, o := range occurrences {
+			r.batch.occurrences[o.Ref] = o
+		}
+	}
+	return nil
 }
 
 // Find IDs for many predicates together, then hydrate each calendar row once.
@@ -144,7 +192,7 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 		terms := make([]string, 0, len(chunk))
 		args := []any{}
 		// Scope before LIMIT so hidden copies cannot exhaust candidate bounds.
-		from, scopeArgs := calendarEventFromContext(ctx)
+		from, scopeArgs := calendarEventFromContext(ctx, "e", "m")
 		for i, q := range chunk {
 			terms = append(terms, fmt.Sprintf("SELECT %d,message_id FROM (SELECT e.message_id ", i)+from+"("+q.predicate+") LIMIT ?) candidates")
 			args = append(args, scopeArgs...)

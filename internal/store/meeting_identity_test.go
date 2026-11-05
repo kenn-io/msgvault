@@ -168,6 +168,43 @@ func TestMeetingIdentityScopedInviteSurvivesHiddenNativeCopy(t *testing.T) {
 	assert.Len(page.Occurrences, 1)
 }
 
+func TestCalendarScopedSparseCancellationSurvivesHiddenNativeCopy(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, source := persistInviteEmail(t, st, "invite", inviteEmail(calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:P7D\r\nRRULE:FREQ=WEEKLY;COUNT=2")))
+	persistInviteEmailForSource(t, st, source, "cancel", inviteEmail(calendarDocument("CANCEL", "RECURRENCE-ID:20270302T120000Z\r\nSTATUS:CANCELLED")))
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{source})
+	from := time.Date(2027, 3, 7, 0, 0, 0, 0, time.UTC)
+	before, err := st.ListCalendarOccurrencesContext(ctx, from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	require.Len(before.Occurrences, 1)
+	require.Equal("cancelled", before.Occurrences[0].Status)
+	calendarFixture(t, st, "hidden", singleLinkRaw("hidden", "family@example.com"), "hidden@example.com")
+	after, err := st.ListCalendarOccurrencesContext(ctx, from, from.AddDate(0, 0, 1))
+	require.NoError(err)
+	assert.Equal(before, after)
+}
+
+func TestMeetingIdentityTwoLongRunningDailySeriesBatch(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	refs := make([]string, 0, 62)
+	for _, name := range []string{"first", "second"} {
+		_, series := calendarFixture(t, st, name, fmt.Sprintf(`{"id":%q,"iCalUID":%q,"start":{"dateTime":"2000-01-01T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2000-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`, name, name+"@example.org"))
+		for day := 1; day <= 31; day++ {
+			refs = append(refs, fmt.Sprintf("evt:%d@202703%02dT100000Z", series, day))
+		}
+	}
+	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs})
+	require.NoError(err)
+	require.Len(got.ByOccurrence, 62)
+	for _, ref := range refs {
+		assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
+		assert.Equal(ref, got.ByOccurrence[ref].OccurrenceRef)
+		assert.Empty(got.ByOccurrence[ref].LinkedTranscriptIDs)
+	}
+}
+
 func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

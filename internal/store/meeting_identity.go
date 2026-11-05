@@ -235,7 +235,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 					if key.Kind == "google_event_id" {
 						ref.Key = instance.Key()
 					} else if key.ScheduledAt != nil {
-						predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
+						predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
 						candidateQueries = append(candidateQueries, meetingEventQuery{predicate, args})
 					}
 				}

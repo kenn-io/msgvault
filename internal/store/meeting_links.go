@@ -120,8 +120,8 @@ func occurrenceFromRow(row CalendarEventRow, key string) linkOccurrence {
 	return o
 }
 
-func meetingSeriesExceptionsPredicate(dialect Dialect, master CalendarEventRow, from, to time.Time) (string, []any) {
-	predicate, args := calendarExceptionWindow(dialect, from, to)
+func meetingSeriesExceptionsPredicate(ctx context.Context, dialect Dialect, master CalendarEventRow, from, to time.Time) (string, []any) {
+	predicate, args := calendarExceptionWindow(ctx, dialect, from, to)
 	return predicate + ` AND m.source_id = ? AND e.series_provider_id = ?`, append(args, master.SourceID, master.Event.ProviderEventID)
 }
 
@@ -150,7 +150,7 @@ func meetingOccurrenceStart(row CalendarEventRow, id calrecur.Identity) (time.Ti
 }
 
 func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEventRow, from, to time.Time, budget *int) ([]linkOccurrence, error) {
-	predicate, args := meetingSeriesExceptionsPredicate(r.dialect, master, from, to)
+	predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, master, from, to)
 	related, err := meetingEventRows(ctx, r, predicate, args, budget)
 	if err != nil {
 		return nil, err
@@ -369,7 +369,7 @@ func (s *Store) automaticMeetingPredicate(ctx context.Context, r reboundReader, 
 		args = append([]any{key.Value, base}, sourceIDs...)
 		args = append(args, key.Value, base)
 	} else if key.ScheduledAt != nil {
-		window, windowArgs := calendarExceptionWindow(r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))
+		window, windowArgs := calendarExceptionWindow(ctx, r.dialect, key.ScheduledAt.Add(-calendarCandidateMargin), key.ScheduledAt.Add(calendarCandidateMargin))
 		predicate += ` AND (e.kind != 'exception' OR (` + window + `))`
 		args = append(args, windowArgs...)
 	} else {
@@ -461,7 +461,7 @@ candidatesLoop:
 			cached := false
 			if r.batch != nil {
 				// A moved exception can put another occurrence at the same start.
-				predicate, args := meetingSeriesExceptionsPredicate(r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
+				predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, row, *key.ScheduledAt, key.ScheduledAt.Add(time.Second))
 				related, loaded := r.batch.events[meetingQueryKey(predicate, args)]
 				ref := OccurrenceRef{MessageID: row.MessageID, Key: (calrecur.Identity{Instant: *key.ScheduledAt}).Key()}
 				if o, ok := r.batch.occurrences[ref]; loaded && len(related) == 0 && ok && o.Start.Equal(*key.ScheduledAt) {
