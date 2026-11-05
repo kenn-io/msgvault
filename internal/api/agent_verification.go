@@ -15,16 +15,18 @@ import (
 	"go.kenn.io/msgvault/internal/verification"
 )
 
+// MessageBodyLoader supplies complete message context in the caller's snapshot.
+type MessageBodyLoader interface {
+	PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error
+}
+
 // verificationWithheld classifies complete messages in the authorized snapshot.
 // A nil map means the caller has authority to read verification content.
 func (s *Server) verificationWithheld(w http.ResponseWriter, r *http.Request, ids []int64) (map[int64]bool, bool) {
-	grant := s.requestAuthentication(r).Grant
-	if grant == nil || grant.HasPermission(agentgrant.PermissionVerificationRead) {
+	if !s.withholdsVerification(r) {
 		return nil, true
 	}
-	loader, ok := s.store.(interface {
-		PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error
-	})
+	loader, ok := s.store.(MessageBodyLoader)
 	messages := make([]store.APIMessage, len(ids))
 	for i, id := range ids {
 		messages[i].ID = id
@@ -48,31 +50,31 @@ func messageVerificationContent(msg *store.APIMessage) verification.Content {
 	return verification.Content{Subject: msg.Subject, Snippet: msg.Snippet, Title: msg.ConversationTitle, Filenames: names, Text: msg.BodyText, HTML: msg.BodyHTML}
 }
 
-func withholdField(value *string, withheld bool) {
-	if withheld {
-		*value = verification.Masked
-	}
-}
-
 func (s *Server) withholdsVerification(r *http.Request) bool {
 	grant := s.requestAuthentication(r).Grant
 	return grant != nil && !grant.HasPermission(agentgrant.PermissionVerificationRead)
 }
 
-func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, rows []MessageSummary, contexts []BodySearchContext) bool {
+func withholdRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows []T, id func(*T) int64, mask func(*T)) (map[int64]bool, bool) {
 	ids := make([]int64, len(rows))
-	for i, row := range rows {
-		ids[i] = row.ID
+	for i := range rows {
+		ids[i] = id(&rows[i])
 	}
 	withheld, ok := s.verificationWithheld(w, r, ids)
-	if !ok || withheld == nil {
-		return ok
-	}
-	for i := range rows {
-		if withheld[rows[i].ID] {
-			rows[i].Subject, rows[i].Snippet = verification.Masked, verification.Masked
+	if ok {
+		for i := range rows {
+			if withheld[id(&rows[i])] {
+				mask(&rows[i])
+			}
 		}
 	}
+	return withheld, ok
+}
+
+func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, rows []MessageSummary, contexts []BodySearchContext) bool {
+	withheld, ok := withholdRows(s, w, r, rows, func(row *MessageSummary) int64 { return row.ID }, func(row *MessageSummary) {
+		row.Subject, row.Snippet = verification.Masked, verification.Masked
+	})
 	for i := range contexts {
 		if withheld[contexts[i].MessageID] {
 			for j := range contexts[i].ContextSnippets {
@@ -80,49 +82,25 @@ func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, ro
 			}
 		}
 	}
-	return true
+	return ok
 }
 
 func (s *Server) maskQuerySummaries(w http.ResponseWriter, r *http.Request, rows []query.MessageSummary) bool {
-	ids := make([]int64, len(rows))
-	for i, row := range rows {
-		ids[i] = row.ID
-	}
-	withheld, ok := s.verificationWithheld(w, r, ids)
-	if !ok || withheld == nil {
-		return ok
-	}
-	for i := range rows {
-		hide := withheld[rows[i].ID]
-		if hide {
-			rows[i].Subject, rows[i].Snippet, rows[i].MatchSnippet = verification.Masked, verification.Masked, verification.Masked
-			if rows[i].BodyText != "" {
-				rows[i].BodyText = verification.Masked
-			}
+	_, ok := withholdRows(s, w, r, rows, func(row *query.MessageSummary) int64 { return row.ID }, func(row *query.MessageSummary) {
+		row.Subject, row.Snippet, row.MatchSnippet, row.ConversationTitle = verification.Masked, verification.Masked, verification.Masked, verification.Masked
+		if row.BodyText != "" {
+			row.BodyText = verification.Masked
 		}
-		withholdField(&rows[i].ConversationTitle, hide)
-		for j := range rows[i].AttachmentNames {
-			withholdField(&rows[i].AttachmentNames[j], hide)
+		for j := range row.AttachmentNames {
+			row.AttachmentNames[j] = verification.Masked
 		}
-	}
-	return true
+	})
+	return ok
 }
 
 func (s *Server) maskThread(w http.ResponseWriter, r *http.Request, rows []query.ThreadMessage) bool {
-	ids := make([]int64, len(rows))
-	for i, row := range rows {
-		ids[i] = row.ID
-	}
-	withheld, ok := s.verificationWithheld(w, r, ids)
-	if !ok || withheld == nil {
-		return ok
-	}
-	for i := range rows {
-		if withheld[rows[i].ID] {
-			rows[i].Subject = verification.Masked
-		}
-	}
-	return true
+	_, ok := withholdRows(s, w, r, rows, func(row *query.ThreadMessage) int64 { return row.ID }, func(row *query.ThreadMessage) { row.Subject = verification.Masked })
+	return ok
 }
 
 func (s *Server) maskMessageDetail(r *http.Request, msg *query.MessageDetail) {
@@ -133,80 +111,53 @@ func (s *Server) maskMessageDetail(r *http.Request, msg *query.MessageDetail) {
 	for i, att := range msg.Attachments {
 		names[i] = att.Filename
 	}
-	hide := verification.Is(verification.Content{Subject: msg.Subject, Snippet: msg.Snippet, Title: msg.ConversationTitle, Filenames: names, Text: msg.BodyText, HTML: msg.BodyHTML})
-	if hide {
-		msg.Subject, msg.Snippet, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, ""
+	if !verification.Is(verification.Content{Subject: msg.Subject, Snippet: msg.Snippet, Title: msg.ConversationTitle, Filenames: names, Text: msg.BodyText, HTML: msg.BodyHTML}) {
+		return
 	}
-	withholdField(&msg.ConversationTitle, hide)
+	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
 	for i := range msg.Attachments {
-		withholdField(&msg.Attachments[i].Filename, hide)
+		msg.Attachments[i].Filename = verification.Masked
 	}
 }
 
 func (s *Server) maskStoreMessage(r *http.Request, msg *store.APIMessage) {
-	if !s.withholdsVerification(r) {
+	if !s.withholdsVerification(r) || !verification.Is(messageVerificationContent(msg)) {
 		return
 	}
-	hide := verification.Is(messageVerificationContent(msg))
-	if hide {
-		msg.Subject, msg.Snippet, msg.Body, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
-	}
-	withholdField(&msg.ConversationTitle, hide)
+	msg.Subject, msg.Snippet, msg.ConversationTitle, msg.Body, msg.BodyText, msg.BodyHTML = verification.Masked, verification.Masked, verification.Masked, verification.Masked, verification.Masked, ""
 	for i := range msg.Attachments {
-		withholdField(&msg.Attachments[i].Filename, hide)
+		msg.Attachments[i].Filename = verification.Masked
 	}
 }
 
-// Classify every parent holding the hash while the read snapshot is held.
-func (s *Server) prepareVerificationAttachments(w http.ResponseWriter, r *http.Request, attachments []query.AttachmentInfo) (map[int64]bool, bool) {
-	if !s.withholdsVerification(r) {
-		return nil, true
+func (s *Server) withholdAttachmentName(w http.ResponseWriter, r *http.Request, att *query.AttachmentInfo) (refuse, ok bool) {
+	withheld, ok := s.verificationWithheld(w, r, []int64{att.MessageID})
+	if withheld[att.MessageID] {
+		att.Filename = verification.Masked
 	}
-	if len(attachments) > 0 && attachments[0].ContentHash != "" {
-		var err error
-		attachments, err = s.queryEngineForContext(r.Context()).GetAttachmentsByHash(r.Context(), attachments[0].ContentHash)
-		if err != nil {
-			writeAPIHTTPError(w, newAPIHTTPError(503, "source_scope_unavailable", "Message content classification is unavailable"))
-			return nil, false
-		}
-	}
-
-	ids := make([]int64, 0, len(attachments))
-	seen := make(map[int64]bool)
-	for _, att := range attachments {
-		if !seen[att.MessageID] {
-			ids = append(ids, att.MessageID)
-			seen[att.MessageID] = true
-		}
-	}
-	return s.verificationWithheld(w, r, ids)
+	return withheld != nil, ok
 }
 
-// Sniff only the file type. The parent messages decide access to text files.
-func (s *Server) verificationAttachmentReader(content io.Reader, att *query.AttachmentInfo, withheld map[int64]bool) (io.Reader, *apiHTTPError) {
-	if withheld == nil {
+// The caller owns content. Sniffing preserves the original download bytes.
+func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, refuse bool) (io.Reader, *apiHTTPError) {
+	if !refuse {
 		return content, nil
 	}
-	text := strings.HasPrefix(strings.ToLower(att.MimeType), "text/") || strings.HasPrefix(strings.ToLower(att.MimeType), "message/") || strings.EqualFold(filepath.Ext(att.Filename), ".eml")
-	withholdField(&att.Filename, withheld[att.MessageID])
-	parentWithheld := false
-	for _, hide := range withheld {
-		parentWithheld = parentWithheld || hide
-	}
-	if !parentWithheld {
-		return content, nil
+	denied := newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
+	for _, att := range candidates {
+		declared := strings.ToLower(att.MimeType)
+		if strings.HasPrefix(declared, "text/") || strings.HasPrefix(declared, "message/") || strings.EqualFold(filepath.Ext(att.Filename), ".eml") {
+			return nil, denied
+		}
 	}
 	reader := bufio.NewReaderSize(content, 512)
-	if !text {
-		prefix, err := reader.Peek(512)
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
-		}
-		detected := http.DetectContentType(prefix)
-		text = strings.HasPrefix(detected, "text/") || strings.HasPrefix(detected, "message/")
+	prefix, err := reader.Peek(512)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
-	if text {
-		return nil, newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
+	detected := http.DetectContentType(prefix)
+	if strings.HasPrefix(detected, "text/") || strings.HasPrefix(detected, "message/") {
+		return nil, denied
 	}
 	return reader, nil
 }
