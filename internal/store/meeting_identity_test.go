@@ -152,13 +152,17 @@ func TestMeetingIdentityInviteAndSyncedCopyMerge(t *testing.T) {
 	inviteIDs := emailEvents(t, st, source)
 	require.Len(inviteIDs, 1)
 	invite := inviteIDs[0]
+	inviteRef := formatMeetingOccurrence(OccurrenceRef{MessageID: invite})
+	before, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{inviteRef}})
+	require.NoError(err)
+	assert.Equal("occ:"+inviteRef, before.ByOccurrence[inviteRef].Key)
 	_, synced := calendarFixture(t, st, "synced", singleLinkRaw("synced", "family@example.com"))
-	refs := []string{formatMeetingOccurrence(OccurrenceRef{MessageID: invite}), formatMeetingOccurrence(OccurrenceRef{MessageID: synced})}
+	refs := []string{inviteRef, formatMeetingOccurrence(OccurrenceRef{MessageID: synced})}
 	got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: refs})
 	require.NoError(err)
-	assert.Equal("occ:"+refs[0], got.ByOccurrence[refs[0]].Key)
-	assert.Equal(got.ByOccurrence[refs[0]].Key, got.ByOccurrence[refs[1]].Key)
-	assert.Equal(refs[0], got.ByOccurrence[refs[1]].OccurrenceRef)
+	require.Len(got.ByOccurrence, 1)
+	assert.Equal("occ:"+refs[1], got.ByOccurrence[refs[1]].Key)
+	assert.Equal(refs[1], got.ByOccurrence[refs[1]].OccurrenceRef)
 }
 
 func TestMeetingIdentityCalendarReadFailurePropagates(t *testing.T) {
