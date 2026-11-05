@@ -93,7 +93,8 @@ func (s *Store) callRolesSQL() string {
 }
 
 // ListCallObservationsContext includes withdrawn evidence for inspection but
-// respects archive and source deletion. It never reads raw payloads or bodies.
+// respects archive deletion and source deletion of other calls. It never reads
+// raw payloads or bodies.
 func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([]CallObservationView, error) {
 	if q.Offset != 0 {
 		return nil, fmt.Errorf("%w: evidence pages require after_id", callhistory.ErrInvalid)
@@ -102,7 +103,7 @@ func (s *Store) ListCallObservationsContext(ctx context.Context, q CallQuery) ([
 	if err != nil {
 		return nil, err
 	}
-	where := []string{"m.deleted_at IS NULL", "m.deleted_from_source_at IS NULL", "m.id > ?"}
+	where := []string{"m.deleted_at IS NULL", "(m.deleted_from_source_at IS NULL OR c.withdrawn)", "m.id > ?"}
 	args := []any{q.AfterID}
 	if q.PersonID != 0 {
 		where = append(where, `EXISTS (SELECT 1 FROM (`+s.callRolesSQL()+`) r

@@ -56,7 +56,8 @@ changes connected account bindings, or requests additional platform permissions.
 
 All commands return JSON. `calls list` includes source/message/record IDs,
 typed participant attendance and preserved scalar claims. It includes
-withdrawn observations for inspection, but excludes archive/source-deleted
+withdrawn observations for inspection, even though withdrawal marks them deleted
+at the source. It excludes other source-deleted messages and all archive-deleted
 messages. Original provider JSON remains in the archive's original-message
 storage, outside the list response.
 

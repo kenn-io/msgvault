@@ -51,12 +51,6 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 		if withdrawn && !o.Withdrawn {
 			return ErrCallObservationWithdrawn
 		}
-		if o.Withdrawn {
-			// Conversation upserts preserve existing titles when given empty text.
-			if _, err := tx.ExecContext(ctx, `UPDATE conversations SET title = '' WHERE source_id = ? AND source_conversation_id = ?`, sourceID, o.RecordID); err != nil {
-				return fmt.Errorf("clear withdrawn call title: %w", err)
-			}
-		}
 		return nil
 	}
 	prepare := func(ctx context.Context, tx *loggedTx, data *MessagePersistData) (*MessagePersistData, error) {
@@ -108,9 +102,6 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 	if o.DurationSeconds != nil {
 		text += fmt.Sprintf(", %g seconds", *o.DurationSeconds)
 	}
-	if o.Withdrawn {
-		text = ""
-	}
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}},
 		before, nil, func([]int64) *MessagePersistData {
 			return &MessagePersistData{
@@ -124,21 +115,12 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 					SourceConversationID: o.RecordID, ConversationType: "call_history", Title: text,
 				},
 				BodyText: sql.NullString{String: text, Valid: true},
-				FTS:      callFTSDoc(o, text),
+				FTS:      &FTSDoc{Subject: text, Body: text},
 				Metadata: &sql.NullString{String: string(metadata), Valid: true},
 				RawMIME:  o.Raw, RawFormat: "call_history_json", Recipients: sets,
 				PreserveLabels: true,
 			}
 		}, prepare, s.refreshCallConversationStatsWith)
-}
-
-// Withdrawn calls persist an empty search document, so the same upsert that
-// indexes a call leaves it unsearchable on both dialects.
-func callFTSDoc(o callhistory.Observation, text string) *FTSDoc {
-	if o.Withdrawn {
-		return &FTSDoc{}
-	}
-	return &FTSDoc{Subject: text, Body: text}
 }
 
 // Imported calls keep their conversation's denormalized stats current.
@@ -176,6 +158,14 @@ func (s *Store) refreshCallProjectionWith(ctx context.Context, tx *loggedTx, id 
 		e.OccurredAt.UTC(), e.DurationSeconds, e.Withdrawn)
 	if err != nil {
 		return fmt.Errorf("write call projection: %w", err)
+	}
+	if e.Withdrawn {
+		_, err := tx.ExecContext(ctx, fmt.Sprintf(`
+			UPDATE messages SET deleted_from_source_at = %s
+			WHERE id = ? AND deleted_from_source_at IS NULL`, s.dialect.Now()), id)
+		if err != nil {
+			return fmt.Errorf("mark withdrawn call deleted from source: %w", err)
+		}
 	}
 	return nil
 }

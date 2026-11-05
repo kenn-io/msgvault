@@ -96,14 +96,6 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
 	require.NoError(err)
 	require.Equal(id, again)
-	var subject, snippet, title string
-	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT m.subject, m.snippet, c.title FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.id = ?`), id).Scan(&subject, &snippet, &title))
-	assert.Empty(subject)
-	assert.Empty(snippet)
-	assert.Empty(title)
-	body, err := st.GetMessageBodyTextContext(t.Context(), id)
-	require.NoError(err)
-	assert.Empty(body)
 	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
 	require.NoError(err)
 	assert.Zero(total, "withdrawn calls leave archive search")
@@ -118,6 +110,42 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(total, "rebuilding search keeps withdrawn calls absent")
 	assert.Empty(matches)
+}
+
+func TestWithdrawnCallAbsentFromMetadataSearch(t *testing.T) {
+	requirements := require.New(t)
+	st := storetest.New(t).Store
+	o, err := (callhistory.ImportRequest{Format: "signal_desktop", Account: "example",
+		Record: []byte(`{"callId":"withdrawn","timestamp":1790845200000,"direction":"Incoming","mode":"Direct","status":"Accepted"}`),
+	}).Observation()
+	requirements.NoError(err)
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	requirements.NoError(err)
+	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	requirements.NoError(err)
+	queries := []string{"message_type:call_record", "after:2026-10-01 before:2026-10-02"}
+	for _, query := range queries {
+		matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
+		requirements.NoError(err)
+		requirements.EqualValues(1, total, query)
+		requirements.Len(matches, 1, query)
+		requirements.Equal(id, matches[0].ID, query)
+	}
+	o, err = (callhistory.ImportRequest{Format: "signal_desktop", Account: "example",
+		Record: []byte(`{"callId":"withdrawn","timestamp":1790845200000,"direction":"Incoming","mode":"Direct","status":"Deleted"}`),
+	}).Observation()
+	requirements.NoError(err)
+	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	requirements.NoError(err)
+	requirements.Equal(id, again)
+	for _, query := range queries {
+		t.Run(query, func(t *testing.T) {
+			matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse(query), 0, 10)
+			require.NoError(t, err)
+			assert.Zero(t, total)
+			assert.Empty(t, matches)
+		})
+	}
 }
 
 func TestListCallObservationsRejectsUnsupportedEvidenceVersion(t *testing.T) {
