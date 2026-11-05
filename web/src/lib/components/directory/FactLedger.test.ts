@@ -240,15 +240,23 @@ it('shows saved employment and its source in Pins', async () => {
   entity.destroy();
 });
 
-it('shows Location beside a readable submitted value', async () => {
+it.each([
+  ['attribute', '"Example City"', 'Example City'],
+  ['employment', '{"organization":{"name":"Synthetic Org"},"title":"Engineer"}', 'Engineer · Synthetic Org'],
+  ['attribute', '["Go","Rust"]', 'Go, Rust'],
+  ['attribute', 'true', 'Yes'],
+  ['attribute', '5', '5'],
+])('shows a readable %s claim for %s', async (kind, submitted, expected) => {
+  const key = kind === 'employment' ? 'system:employment' : 'location';
+  const slug = kind === 'employment' ? 'employment' : 'location';
   const fetchFn = vi.fn<typeof fetch>(async input => {
     const path = new URL(requestOf(input).url).pathname;
     if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{
-      kind: 'attribute', key: 'location', revision, slug: 'location', description: 'Location',
+      kind, key, revision, slug, description: slug,
       value_type: 'text', cardinality: 'single', sensitive: false,
     }] });
     if (path.endsWith('/fact-claims')) return Response.json({ claims: [{
-      target: { kind: 'attribute', key: 'location', revision }, submitted_value: '"Example City"',
+      target: { kind, key, revision }, submitted_value: submitted,
       relation: 'support', origin: 'extraction', confidence: { reported_score: 88 }, created_at: '2026-08-03',
     }] });
     return ledgerResponse(path);
@@ -259,8 +267,8 @@ it('shows Location beside a readable submitted value', async () => {
   value.selectedSection = 'claims';
   const view = render(FactLedger, { controller: value });
   const row = view.container.querySelector('[aria-label="Fact claim"]')!;
-  expect(row.textContent).toContain('Location');
-  expect(screen.getByText('Example City', { exact: true })).toBeDefined();
+  expect(row.textContent).toContain(kind === 'employment' ? 'Employment' : 'Location');
+  expect(row.querySelector('.value > span')?.textContent).toBe(expected);
   value.destroy();
 });
 

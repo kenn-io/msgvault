@@ -5,3 +5,8 @@ export function organizationName(controller: DirectoryEntityController | null | 
     ?? (controller?.employmentProjection?.organization_id === id ? controller.employmentProjection.organization_name : undefined)
     ?? `Organization ${id}`;
 }
+
+/** Reads an employment as "Title · Organization", falling back to its role. */
+export function employmentText(value: { title?: string; role?: string }, organization: string | undefined): string {
+  return [value.title ?? value.role, organization].filter(Boolean).join(' · ');
+}

@@ -10,7 +10,7 @@
   import AttributeSection from './AttributeSection.svelte';
   import { displayAttributeValue, joinDefinitions } from './attribute-value';
   import { historyProvenance } from './history-format';
-  import { organizationName } from './organization-name';
+  import { employmentText, organizationName } from './organization-name';
   import FactEvidenceHistoryDialog from './FactEvidenceHistoryDialog.svelte';
 
   interface Props { controller: FactLedgerController; profile?: DirectoryProfileController | null; entity?: DirectoryEntityController | null }
@@ -223,7 +223,7 @@
 {/snippet}
 
 {#snippet EmploymentRow(value: import('../../directory/models').Employment)}
-  <div class="row"><span>{[value.title ?? value.role, organizationName(entity, value.organization_id)].filter(Boolean).join(' · ')}</span><span class="meta">{historyProvenance(value)}</span></div>
+  <div class="row"><span>{employmentText(value, organizationName(entity, value.organization_id))}</span><span class="meta">{historyProvenance(value)}</span></div>
 {/snippet}
 
 {#if controller.historyOpen}<FactEvidenceHistoryDialog {controller} onClose={() => controller.closeEvidenceHistory()} />{/if}

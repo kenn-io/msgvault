@@ -16,6 +16,7 @@ import type {
 } from '../api/generated/models';
 import { sentenceCase } from '../explore/labels';
 import { encodeFactTargetRef } from './fact-target-ref';
+import { displayClaimValue } from '../components/directory/attribute-value';
 export const FACT_LEDGER_PAGE_LIMIT = 50;
 export type FactLedgerSection = 'evidence' | 'claims' | 'decisions' | 'pins';
 type PagedSection = Exclude<FactLedgerSection, 'pins'>;
@@ -604,7 +605,7 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
   return {
     rowToken: `claim-${index}`,
     submittedValue: row.submitted_value,
-    displayValue: readableValue(row.submitted_value),
+    displayValue: readableValue(row.submitted_value, row.target.kind),
     targetKey: row.target.key,
     normalizedValue: row.normalized_value ?? null,
     relation: row.relation,
@@ -635,10 +636,10 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
   };
 }
 
-function readableValue(value: string): string {
+function readableValue(value: string, kind: string): string {
   if (!value.trim()) return 'Blank submission';
   try {
     const decoded: unknown = JSON.parse(value);
-    return typeof decoded === 'string' ? decoded.trim() ? decoded : 'Blank submission' : value;
+    return typeof decoded === 'string' ? decoded.trim() ? decoded : 'Blank submission' : displayClaimValue(decoded, kind);
   } catch { return value; }
 }
