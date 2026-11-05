@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 
-	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/mime"
 )
 
@@ -56,8 +55,7 @@ func (s *Store) refreshEmailCalendarEventsWith(ctx context.Context, tx *loggedTx
 	q := boundQuerier{ctx: ctx, q: tx}
 	var kind string
 	var sourceID int64
-	var hadDiagnostics bool
-	if err := q.QueryRow(`SELECT COALESCE(message_type,''),source_id,COALESCE(CAST(metadata AS TEXT),'') LIKE '%calendar_invite_errors%' FROM messages WHERE id=? AND `+emailCalendarRepairableWhere, id).Scan(&kind, &sourceID, &hadDiagnostics); err != nil {
+	if err := q.QueryRow(`SELECT COALESCE(message_type,''),source_id FROM messages WHERE id=? AND `+emailCalendarRepairableWhere, id).Scan(&kind, &sourceID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return summary, 0, nil
 		}
@@ -66,51 +64,32 @@ func (s *Store) refreshEmailCalendarEventsWith(ctx context.Context, tx *loggedTx
 	if !IsEmailMessageType(kind) {
 		return summary, 0, nil
 	}
+	raw, err := readEmailCalendarRaw(q, id, inMemoryRaw)
+	if err != nil || !hasCalendarToken(raw) {
+		return summary, 0, err
+	}
 	var diagnostics []string
-	raw, readErr := readEmailCalendarRaw(q, id, inMemoryRaw)
 	var prepared []preparedICS
-	budget := calevent.NewICSParseBudget()
-	tx.icsVerificationRemaining = budget.VerificationRemaining
-
-	if readErr != nil {
-		if _, ok := errors.AsType[*icsInterpretationError](readErr); !ok {
-			return summary, 0, readErr
-		}
-		diagnostics = append(diagnostics, readErr.Error())
-	} else if raw == nil {
-		return summary, 0, nil
-	}
-
-	if hasCalendarToken(raw) {
-		if tx.attribution == nil || !tx.attribution.holds(sourceID) {
-			return summary, 0, errAttributionLockMissing
-		}
-
-		parsed, err := mime.Parse(raw)
+	parsed, err := mime.Parse(raw)
+	if err != nil {
+		diagnostics = append(diagnostics, "email MIME could not be decoded")
+	} else {
+		prepared, diagnostics, err = s.prepareEmailCalendarPartsWith(ctx, tx, sourceID, parsed.CalendarParts)
 		if err != nil {
-			diagnostics = append(diagnostics, "email MIME could not be decoded")
-		} else {
-			prepared, diagnostics, err = s.prepareEmailCalendarPartsWith(ctx, tx, sourceID, parsed.CalendarParts, budget)
-			if err != nil {
-				return summary, 0, err
-			}
+			return summary, 0, err
 		}
 	}
-	summary.SourceID = sourceID
 	if err := s.persistICalendarWith(ctx, tx, sourceID, prepared, &summary); err != nil {
 		return summary, 0, err
 	}
 	diagnostics = append(diagnostics, summary.Diagnostics...)
-	if err := s.setEmailCalendarDiagnosticsWith(ctx, tx, id, diagnostics, hadDiagnostics); err != nil {
+	if err := s.setEmailCalendarDiagnosticsWith(ctx, tx, id, diagnostics); err != nil {
 		return summary, 0, err
 	}
 	return summary, len(diagnostics), nil
 }
 
-func (s *Store) setEmailCalendarDiagnosticsWith(ctx context.Context, tx *loggedTx, id int64, diagnostics []string, hadDiagnostics bool) error {
-	if len(diagnostics) == 0 && !hadDiagnostics {
-		return nil
-	}
+func (s *Store) setEmailCalendarDiagnosticsWith(ctx context.Context, tx *loggedTx, id int64, diagnostics []string) error {
 	q := boundQuerier{ctx: ctx, q: tx}
 	var stored sql.NullString
 	if err := q.QueryRow(`SELECT metadata FROM messages WHERE id=?`, id).Scan(&stored); err != nil {
@@ -226,7 +205,7 @@ func (s *Store) RepairEmailCalendarEventsContext(ctx context.Context, sourceID i
 
 func readEmailCalendarRaw(q querier, id int64, inMemoryRaw *[]byte) ([]byte, error) {
 	if inMemoryRaw != nil {
-		return decodeEmailCalendarRaw(*inMemoryRaw, sql.NullString{})
+		return *inMemoryRaw, nil
 	}
 	var stored []byte
 	var format, compression sql.NullString
@@ -237,37 +216,18 @@ func readEmailCalendarRaw(q querier, id int64, inMemoryRaw *[]byte) ([]byte, err
 	if err != nil {
 		return nil, err
 	}
-	return decodeEmailCalendarRaw(stored, compression)
-}
-
-// A raw replacement must clear stale diagnostics even when calendar content is gone.
-func calendarMIMEForRefresh(raw []byte) *[]byte {
-	if !hasCalendarToken(raw) {
-		return nil
-	}
-	return &raw
-}
-
-func decodeEmailCalendarRaw(stored []byte, compression sql.NullString) ([]byte, error) {
 	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
-	if err != nil {
-		return nil, &icsInterpretationError{err}
-	}
-	return raw, nil
+	return raw, err
 }
 
-func (s *Store) prepareEmailCalendarPartsWith(ctx context.Context, tx *loggedTx, sourceID int64, parts []mime.CalendarPart, budget *calevent.ICSParseBudget) ([]preparedICS, []string, error) {
+func (s *Store) prepareEmailCalendarPartsWith(ctx context.Context, tx *loggedTx, sourceID int64, parts []mime.CalendarPart) ([]preparedICS, []string, error) {
 	var prepared []preparedICS
 	var diagnostics []string
 	for _, part := range parts {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		if part.Error != "" {
-			diagnostics = append(diagnostics, part.Error)
-			continue
-		}
-		items, skipped, err := s.prepareICalendarWith(ctx, tx, sourceID, part.Content, part.Method, true, budget)
+		items, err := s.prepareICalendarWith(ctx, tx, sourceID, part.Content, part.Method, true)
 		if err != nil {
 			// Interpretation failures preserve the email; database failures abort archival.
 			if ctx.Err() != nil {
@@ -280,7 +240,6 @@ func (s *Store) prepareEmailCalendarPartsWith(ctx context.Context, tx *loggedTx,
 			diagnostics = append(diagnostics, invalid.Error())
 			continue
 		}
-		diagnostics = append(diagnostics, skipped...)
 		prepared = append(prepared, items...)
 	}
 	return prepared, diagnostics, nil

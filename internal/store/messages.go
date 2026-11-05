@@ -116,7 +116,6 @@ type MessagePersistData struct {
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
 	SyncRunItem               *SyncRunItem
-	calendarInvite            *preparedICS
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -2369,13 +2368,12 @@ func (s *Store) persistMessageWithParticipantsTx(
 			return 0, err
 		}
 	}
-	if len(participants) > 0 || beforeParticipants != nil {
-		// The builder reveals calendar MIME only after participant resolution.
-		// Even one participant must follow batch ensures and merges by taking
-		// the directory lock first. Preflight can lock message rows, so it
-		// must follow the directory lock too.
+	if len(participants) > 1 || hasPhoneParticipant {
+		// Participant merges take the directory lock before rewriting
+		// message rows. Keep the same order when a repair's preflight
+		// callback locks its target message for identity revalidation.
 		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
-			return 0, fmt.Errorf("lock participant directory before message preflight: %w", err)
+			return 0, err
 		}
 	}
 	if beforeParticipants != nil {
@@ -2520,7 +2518,6 @@ func (s *Store) persistMessageWith(
 		return 0, fmt.Errorf("upsert body: %w", err)
 	}
 
-	var inMemoryCalendarRaw *[]byte
 	if len(data.RawMIME) > 0 {
 		if err := ctx.Err(); err != nil {
 			return 0, err
@@ -2528,9 +2525,6 @@ func (s *Store) persistMessageWith(
 		rawFormat := data.RawFormat
 		if rawFormat == "" {
 			rawFormat = "mime"
-		}
-		if rawFormat == rawFormatMIME {
-			inMemoryCalendarRaw = &data.RawMIME
 		}
 		if err := upsertMessageRawWithFormat(q, messageID, data.RawMIME, rawFormat); err != nil {
 			return 0, fmt.Errorf("upsert raw: %w", err)
@@ -2562,11 +2556,11 @@ func (s *Store) persistMessageWith(
 	if err := s.refreshMeetingProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
-	if err := s.persistCalendarEventProjectionWith(ctx, tx, messageID, data.calendarInvite); err != nil {
+	if err := s.refreshCalendarEventProjectionWith(ctx, tx, messageID); err != nil {
 		return 0, err
 	}
-	if inMemoryCalendarRaw != nil {
-		if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, inMemoryCalendarRaw); err != nil {
+	if len(data.RawMIME) > 0 && (data.RawFormat == "" || data.RawFormat == rawFormatMIME) {
+		if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, &data.RawMIME); err != nil {
 			return 0, err
 		}
 	}
@@ -6319,7 +6313,7 @@ func (s *Store) UpsertMessageRawWithFormatContext(ctx context.Context, messageID
 			return err
 		}
 		if format == rawFormatMIME {
-			if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, calendarMIMEForRefresh(rawData)); err != nil {
+			if _, _, err := s.refreshEmailCalendarEventsWith(ctx, tx, messageID, &rawData); err != nil {
 				return err
 			}
 		}

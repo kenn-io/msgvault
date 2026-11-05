@@ -43,50 +43,30 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return page, err
 	}
 	defer release()
-	reported := make(map[int64]bool)
-	report := func(id int64, reason string) {
-		if reason != "" && !reported[id] {
-			page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: id, Reason: reason})
-			reported[id] = true
-		}
-	}
-	rows, remaining, err := s.calendarOccurrenceRows(ctx, from, to)
+	rows, err := calendarEventRowsInWindow(ctx, s.db, s.dialect, from, to)
 	if err != nil {
 		return page, err
 	}
-	tombstones, err := queryICSSparseCancellationTombstones(ctx, s.db, rows)
-	if err != nil {
-		return page, err
+	type seriesKey struct {
+		source int64
+		id     string
 	}
-	exceptions := map[calendarSeriesKey][]CalendarEventRow{}
-	masters := map[calendarSeriesKey]bool{}
+	exceptions := map[seriesKey][]CalendarEventRow{}
+	masters := map[seriesKey]bool{}
 	byID := make(map[int64]CalendarEventRow, len(rows))
 	for _, row := range rows {
-		report(row.MessageID, row.evidenceError)
 		byID[row.MessageID] = row
 		if row.Event.Kind == "series" || row.Event.Kind == "single" {
-			masters[calendarSeriesKey{row.SourceID, row.Event.ProviderEventID}] = true
+			masters[seriesKey{row.SourceID, row.Event.ProviderEventID}] = true
 		}
 		if row.Event.Kind == "exception" {
-			key := calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}
+			key := seriesKey{row.SourceID, row.Event.SeriesProviderID}
 			exceptions[key] = append(exceptions[key], row)
 		}
 	}
-	for i := range rows {
-		row := &rows[i]
-		if row.Event.Kind != "exception" || masters[calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}] {
-			continue
-		}
-		if tombstones[calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}] {
-			row.Event.Status = SyncStatusCancelled
-			byID[row.MessageID] = *row
-			key := calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}
-			for j := range exceptions[key] {
-				if exceptions[key][j].MessageID == row.MessageID {
-					exceptions[key][j].Event.Status = SyncStatusCancelled
-				}
-			}
-		}
+	remaining := calrecur.RequestReadBudget - len(rows)
+	if remaining < 0 {
+		return page, calendarRecurrenceBudgetError()
 	}
 	add := func(row CalendarEventRow, seriesID int64, o calrecur.Occurrence) {
 		e := row.Event
@@ -108,12 +88,10 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		if o.HasException {
 			effective = byID[o.ExceptionRef]
 			if effective.Event.Status == "cancelled" {
-				var diagnostic string
-				effective, diagnostic, err = inheritCalendarCancellation(ctx, s.db, effective, row)
+				effective, err = inheritCalendarCancellation(ctx, s.db, effective, row)
 				if err != nil {
 					return err
 				}
-				report(effective.MessageID, diagnostic)
 			}
 		}
 		if row.Event.Status == "cancelled" {
@@ -121,6 +99,13 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		}
 		add(effective, row.MessageID, o)
 		return nil
+	}
+	reported := map[int64]bool{}
+	report := func(id int64, reason string) {
+		if !reported[id] {
+			page.Unexpandable = append(page.Unexpandable, CalendarUnexpandable{MessageID: id, Reason: reason})
+			reported[id] = true
+		}
 	}
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {
@@ -132,7 +117,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		}
 		switch e.Kind {
 		case "exception", "single":
-			if e.Kind == "exception" && masters[calendarSeriesKey{row.SourceID, e.SeriesProviderID}] {
+			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
 			if e.Start != nil && e.End != nil {
@@ -140,18 +125,18 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 			} else {
 				report(row.MessageID, calendarMissingBoundsReason(e))
 			}
-			if e.Kind == "exception" || len(exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
+			if e.Kind == "exception" || len(exceptions[seriesKey{row.SourceID, e.ProviderEventID}]) == 0 {
 				continue
 			}
 			fallthrough
 		case "series":
-			for _, exception := range exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}] {
+			for _, exception := range exceptions[seriesKey{row.SourceID, e.ProviderEventID}] {
 				edit := exception.Event
 				if edit.Original != nil && edit.Original.AllDay != e.AllDay && (edit.Start == nil || edit.End == nil) {
 					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 				}
 			}
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
 			if err != nil {
 				return page, err
@@ -173,21 +158,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		return cmp.Compare(a.MessageID, b.MessageID)
 	})
 	return page, nil
-}
-
-func (s *Store) calendarOccurrenceRows(ctx context.Context, from, to time.Time) ([]CalendarEventRow, int, error) {
-	rows, err := calendarEventRowsInWindow(ctx, s.db, s.dialect, from, to)
-	if err != nil {
-		return nil, 0, err
-	}
-	remaining := calrecur.RequestReadBudget - len(rows)
-	if remaining < 0 {
-		return nil, 0, calendarRecurrenceBudgetError()
-	}
-	if err := loadCalendarICSRecurrenceErrors(ctx, s.db, rows); err != nil {
-		return nil, 0, err
-	}
-	return rows, remaining, nil
 }
 
 func calendarMissingBoundsReason(event calevent.Event) string {
@@ -215,7 +185,7 @@ func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRo
 		return bounded, 0, "unsupported recurrence", nil //nolint:nilerr // Report an unsupported series alongside readable occurrences.
 	}
 	// A deleted series keeps only its archived exceptions.
-	if row.Event.Kind == "single" || row.Event.Status == SyncStatusCancelled && row.rawFormat != rawFormatICS {
+	if row.Event.Kind == "single" || row.Event.Status == "cancelled" {
 		return resolved, 0, "", nil
 	}
 	const requestLimit = "request work limit reached; long-running series count their steps from their start"
@@ -333,9 +303,6 @@ func calendarOccurrenceOverlaps(o calrecur.Occurrence, from, to time.Time) bool 
 }
 
 func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, int, error) {
-	if e.RecurrenceError != "" {
-		return calrecur.Set{}, 0, 0, errors.New(e.RecurrenceError)
-	}
 	if e.Start == nil || e.End == nil {
 		return calrecur.Set{}, 0, 0, errors.New("missing event bounds")
 	}
@@ -343,12 +310,7 @@ func prepareCalendarRecurrence(e calevent.Event) (calrecur.Set, time.Duration, i
 	if err != nil {
 		return calrecur.Set{}, 0, 0, err
 	}
-	var set calrecur.Set
-	if e.StartWall != nil {
-		set, err = calrecur.ParseSetWithCivilStart(*e.Start, *e.StartWall, e.AllDay, e.StartDate, zone, e.Recurrence)
-	} else {
-		set, err = calrecur.ParseSet(*e.Start, e.AllDay, e.StartDate, zone, e.Recurrence)
-	}
+	set, err := calrecur.ParseSet(*e.Start, e.AllDay, e.StartDate, zone, e.Recurrence)
 	if err != nil {
 		return set, 0, 0, err
 	}

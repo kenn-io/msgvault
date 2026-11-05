@@ -60,9 +60,8 @@ type ActivityCandidate struct {
 }
 
 type activityMessageMetadata struct {
-	AllDay     bool   `json:"all_day"`
-	Status     string `json:"status"`
-	Superseded bool   `json:"ics_superseded"`
+	AllDay bool   `json:"all_day"`
+	Status string `json:"status"`
 }
 
 type activityCandidateRow struct {
@@ -70,9 +69,6 @@ type activityCandidateRow struct {
 	deletedAt           *time.Time
 	deletedFromSourceAt *time.Time
 	metadata            sql.NullString
-	calendarStatus      sql.NullString
-	calendarAllDay      sql.NullBool
-	icsMasterCancelled  bool
 }
 
 const activityCandidateStateCTE = `
@@ -145,8 +141,7 @@ func (s *Store) activityCandidateColumns() string {
 	m.id, m.source_id, m.conversation_id,
 	COALESCE(c.conversation_type, ''), COALESCE(m.message_type, ''),
 	m.sent_at, m.received_at, m.internal_date, m.last_modified,
-	m.deleted_at, m.deleted_from_source_at, ` + activityICSMasterCancelled + `,
-	e.status, e.all_day, m.metadata,
+	m.deleted_at, m.deleted_from_source_at, m.metadata,
 	COALESCE(m.source_is_from_me, FALSE), ` + s.activityUnsentSQL() + `,
 	r.identity_revision, r.account_identity_revision,
 	r.timezone_active, r.timezone_target, r.timezone_generation,
@@ -243,7 +238,6 @@ func (s *Store) LoadQueuedActivityCandidatesContext(
 		JOIN messages m ON m.id = q.message_id
 		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		LEFT JOIN calendar_events e ON e.message_id = m.id
 		CROSS JOIN activity_current_state r
 		WHERE q.revision > q.processed_revision
 		ORDER BY m.id
@@ -279,7 +273,6 @@ func (s *Store) ScanForActivityProjectionContext(
 		FROM messages m
 		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		LEFT JOIN calendar_events e ON e.message_id = m.id
 		LEFT JOIN activity_events ae ON ae.message_id = m.id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
 		CROSS JOIN activity_current_state r
@@ -327,7 +320,6 @@ func (s *Store) ScanAllActivityCandidatesContext(
 		FROM messages m
 		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		LEFT JOIN calendar_events e ON e.message_id = m.id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
 		CROSS JOIN activity_current_state r
 		WHERE m.id > ?
@@ -406,7 +398,6 @@ func (s *Store) loadActivityCandidateRowsByIDQueryerContext(
 		FROM messages m
 		LEFT JOIN sources src ON src.id = m.source_id
 		LEFT JOIN conversations c ON c.id = m.conversation_id
-		LEFT JOIN calendar_events e ON e.message_id = m.id
 		LEFT JOIN activity_projection_queue q ON q.message_id = m.id
 		CROSS JOIN activity_current_state r
 		WHERE m.id IN (`+placeholders+`)
@@ -442,8 +433,8 @@ func scanActivityCandidateRows(rows rowsScanner) ([]ActivityCandidate, error) {
 			&internalDate,
 			&lastModified,
 			&row.deletedAt,
-			&row.deletedFromSourceAt, &row.icsMasterCancelled, &row.calendarStatus,
-			&row.calendarAllDay, &row.metadata,
+			&row.deletedFromSourceAt,
+			&row.metadata,
 			&row.candidate.SourceIsFromMe,
 			&row.candidate.Unsent,
 			&row.candidate.IdentityRevision,
@@ -491,21 +482,12 @@ func applyActivityEligibility(row *activityCandidateRow) {
 	if row.metadata.Valid {
 		_ = json.Unmarshal([]byte(row.metadata.String), &metadata)
 	}
-	status := metadata.Status
-	superseded := metadata.Superseded
 	row.candidate.DateOnly = metadata.AllDay
-	if row.calendarStatus.Valid && row.calendarStatus.String != calendarEventDecodeFailureStatus {
-		// Accepted projections own status and precision; decode failures fall back to metadata.
-		// Superseded revisions have no accepted projection.
-		status = row.calendarStatus.String
-		row.candidate.DateOnly = row.calendarAllDay.Bool
-		superseded = false
-	}
 	hasTimestamp := activityUsableTime(row.candidate.SentAt) ||
 		activityUsableTime(row.candidate.ReceivedAt) ||
 		activityUsableTime(row.candidate.InternalDate)
 	cancelled := row.candidate.MessageType == "calendar_event" &&
-		(superseded || row.icsMasterCancelled || strings.EqualFold(strings.TrimSpace(status), "cancelled"))
+		strings.EqualFold(strings.TrimSpace(metadata.Status), "cancelled")
 	row.candidate.Eligible = row.deletedAt == nil &&
 		row.deletedFromSourceAt == nil &&
 		hasTimestamp &&
