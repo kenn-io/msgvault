@@ -21,7 +21,7 @@ func TestCalendarCoverageSQLTrace(t *testing.T) {
 	require.NoError(err)
 	rec := findLogLine(t, buf)
 	assert.Equal(t, "calendar-coverage", rec["request_id"])
-	assert.Contains(t, rec["stmt"], "baseline.completed_at")
+	assert.Contains(t, rec["stmt"], "sync_runs")
 }
 
 func TestCalendarCoverageFreshnessBoundary(t *testing.T) {

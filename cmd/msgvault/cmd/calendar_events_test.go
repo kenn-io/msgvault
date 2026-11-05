@@ -38,59 +38,6 @@ func (f *calendarEventsFakeClient) ListCalendarOccurrencesContext(_ context.Cont
 	f.queries = append(f.queries, query)
 	return f.page, f.err
 }
-func TestCalendarEventsCommandUnexpandableCoverage(t *testing.T) {
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{
-		Coverage: store.CalendarCoverage{
-			Notice:  "An empty or incomplete result does not prove free time.",
-			Sources: []store.CalendarSourceCoverage{{Name: "Work", Status: "complete"}},
-		},
-		Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}},
-	}}
-	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
-	var out, stderr bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"--from", "2027-03-01", "--to", "2027-04-01"})
-	require.NoError(t, cmd.Execute())
-	assert.Equal(t, "Coverage: An empty or incomplete result does not prove free time.\nWork: complete\n1 event could not be expanded: message 500 (unsupported recurrence)\n", stderr.String())
-}
-
-func TestCalendarEventsCommandNoSourcesCoverage(t *testing.T) {
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{
-		Coverage: store.CalendarCoverage{
-			Complete: false,
-			Notice:   "An empty or incomplete result does not prove free time.",
-			Sources:  []store.CalendarSourceCoverage{},
-		},
-	}}
-	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
-	var out, stderr bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"--from", "2027-03-01", "--to", "2027-04-01"})
-	require.NoError(t, cmd.Execute())
-	assert.Equal(t, "Coverage: An empty or incomplete result does not prove free time.\n", stderr.String())
-}
-
-func TestCalendarEventsCommandCursorCoverage(t *testing.T) {
-	asOf := time.Date(2027, time.March, 1, 12, 0, 0, 0, time.UTC)
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{
-		Coverage: store.CalendarCoverage{
-			Complete: false,
-			Notice:   "An empty or incomplete result does not prove free time.",
-			Sources:  []store.CalendarSourceCoverage{{Name: "Work", Status: "complete", AsOf: &asOf}},
-		},
-	}}
-	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
-	var out, stderr bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&stderr)
-	cmd.SetArgs([]string{"--from", "2027-03-01", "--to", "2027-04-01", "--cursor", "previous-page"})
-	require.NoError(t, cmd.Execute())
-	assert.Equal(t, "previous-page", fake.query.Cursor)
-	assert.Equal(t, "Coverage: An empty or incomplete result does not prove free time.\nWork: complete (as of 2027-03-01T12:00:00Z)\n", stderr.String())
-}
-
 func TestCalendarEventsCommand(t *testing.T) {
 	start, err := time.Parse(time.RFC3339, "2027-03-02T17:00:00Z")
 	require.NoError(t, err)
@@ -105,22 +52,33 @@ func TestCalendarEventsCommand(t *testing.T) {
 			{SourceID: 45, SourceType: "gcal", Name: "Holidays", Status: "complete"},
 		},
 	}
+	completeCoverage := store.CalendarCoverage{
+		Complete: true,
+		Notice:   "An empty or incomplete result does not prove free time.",
+		Sources:  []store.CalendarSourceCoverage{{Name: "Work", Status: "complete", AsOf: &asOf}},
+	}
+	incompleteCoverage := completeCoverage
+	incompleteCoverage.Complete = false
 	for _, tc := range []struct {
 		name                                                               string
 		args                                                               []string
 		page                                                               store.CalendarOccurrencePage
 		version                                                            string
 		want, wantErr, wantWarning, wantCoverageNotice, wantCoverageSource string
+		wantStderr                                                         string
 		err                                                                error
 	}{
 		{name: "table", page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)", wantCoverageNotice: "Coverage: Archived calendar data, not live availability.", wantCoverageSource: "Work: stale (as of 2027-03-01T12:00:00Z)\nPersonal: not fully synced\nTeam: sync failed\nHolidays: complete\n"},
-		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
-		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "next cursor: next-page"},
-		{name: "empty", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}}, want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
+		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{Coverage: completeCoverage, Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
+		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Coverage: completeCoverage, Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "next cursor: next-page"},
+		{name: "empty", page: store.CalendarOccurrencePage{Coverage: completeCoverage}, want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
+		{name: "cursor coverage", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Coverage: incompleteCoverage}, want: "No archived calendar events", wantStderr: "Coverage: An empty or incomplete result does not prove free time.\nWork: complete (as of 2027-03-01T12:00:00Z)\n"},
+		{name: "unexpandable coverage", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Notice: "An empty or incomplete result does not prove free time.", Sources: []store.CalendarSourceCoverage{{Name: "Work", Status: "complete"}}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "No archived calendar events", wantStderr: "Coverage: An empty or incomplete result does not prove free time.\nWork: complete\n1 event could not be expanded: message 500 (unsupported recurrence)\n"},
+		{name: "no sources", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Notice: "An empty or incomplete result does not prove free time.", Sources: []store.CalendarSourceCoverage{}}}, want: "No archived calendar events", wantCoverageNotice: "Coverage: An empty or incomplete result does not prove free time.", wantStderr: "Coverage: An empty or incomplete result does not prove free time.\n"},
 		{name: "json", args: []string{"--json", "--limit", "1"}, page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}, NextCursor: "next-page"}, want: `"message_id":378`},
-		{name: "unpaged json", args: []string{"--from", "2026-01-01", "--to", "2028-01-01", "--json"}, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{Subject: "First event"}, {Subject: "Second event"}}}, want: `"subject":"First event"`},
-		{name: "deleted", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
-		{name: "terminal controls", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
+		{name: "unpaged json", args: []string{"--from", "2026-01-01", "--to", "2028-01-01", "--json"}, page: store.CalendarOccurrencePage{Coverage: completeCoverage, Occurrences: []store.CalendarOccurrence{{Subject: "First event"}, {Subject: "Second event"}}}, want: `"subject":"First event"`},
+		{name: "deleted", page: store.CalendarOccurrencePage{Coverage: completeCoverage, Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
+		{name: "terminal controls", page: store.CalendarOccurrencePage{Coverage: completeCoverage, Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
 		{name: "old daemon", version: "3.44.0", wantErr: "calendar events require daemon API schema 3.46.0 or newer"},
 		{name: "account", args: []string{"--account", "calendar@example.com"}, wantErr: "--account is only valid"},
@@ -159,7 +117,9 @@ func TestCalendarEventsCommand(t *testing.T) {
 			}
 			requirements.NoError(err)
 			assertions.Contains(out.String(), tc.want)
-			if tc.wantWarning == "" && tc.wantCoverageNotice == "" && tc.wantCoverageSource == "" {
+			if tc.wantStderr != "" {
+				assertions.Equal(tc.wantStderr, stderr.String())
+			} else if tc.wantWarning == "" && tc.wantCoverageNotice == "" && tc.wantCoverageSource == "" {
 				assertions.Empty(stderr.String())
 			} else if tc.wantWarning != "" {
 				assertions.Contains(stderr.String(), tc.wantWarning)
@@ -177,8 +137,8 @@ func TestCalendarEventsCommand(t *testing.T) {
 				assertions.Equal(time.Date(2027, 3, 1, 0, 0, 0, 0, time.Local), fake.query.From)
 			}
 			requirements.Len(fake.queries, 1)
-			if tc.name == "limit only" || tc.name == "cursor only" {
-				if tc.name != "cursor only" {
+			if tc.name == "limit only" || tc.name == "cursor only" || tc.name == "cursor coverage" {
+				if tc.name == "limit only" {
 					requirements.NotNil(fake.query.Limit)
 					assertions.Equal(1, *fake.query.Limit)
 				} else {
@@ -247,7 +207,7 @@ func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
 }
 
 func TestCalendarEventsRFC3339Bounds(t *testing.T) {
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}}}
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -264,7 +224,7 @@ func TestCalendarEventsDateBoundsSkippedMidnight(t *testing.T) {
 	previous := time.Local
 	time.Local = zone
 	t.Cleanup(func() { time.Local = previous })
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}}}
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{"--from", "2018-11-04", "--to", "2018-11-05"})
