@@ -71,23 +71,24 @@ func TestAggregations(t *testing.T) {
 	}
 }
 
-func TestAggregateByTime_DateFilterAttachmentPlan(t *testing.T) {
+func TestAggregateByTime_AttachmentPlan(t *testing.T) {
 	t.Parallel()
-	env := newTestEnv(t)
-	opts := DefaultAggregateOptions()
-	opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
-	opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
+	t.Run("DateFilter", func(t *testing.T) {
+		env := newTestEnv(t)
+		opts := DefaultAggregateOptions()
+		opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
+		opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
 
-	plan := aggregatePlan(t, env, opts)
-	assert.Contains(t, plan, "idx_attachments_message", plan)
-	assert.NotContains(t, plan, "SCAN attachments", plan)
-}
+		plan := aggregatePlan(t, env, opts)
+		assert.Contains(t, plan, "idx_attachments_message", plan)
+		assert.NotContains(t, plan, "SCAN attachments", plan)
+	})
 
-func TestAggregateByTime_UnfilteredAttachmentPlan(t *testing.T) {
-	t.Parallel()
-	env := newTestEnv(t)
-	plan := aggregatePlan(t, env, DefaultAggregateOptions())
-	assert.Contains(t, plan, "SCAN attachments", plan)
+	t.Run("Unfiltered", func(t *testing.T) {
+		env := newTestEnv(t)
+		plan := aggregatePlan(t, env, DefaultAggregateOptions())
+		assert.Contains(t, plan, "SCAN attachments", plan)
+	})
 }
 
 func aggregatePlan(t *testing.T, env *testEnv, opts AggregateOptions) string {
