@@ -3334,16 +3334,16 @@ MCP exposes the same response through `get_embeddings_status` on API 3.21.0 or n
 
 ## Verification content
 
-Delegated HTTP, CLI, and MCP reads without `verification.read` replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Owner reads and stored messages stay unchanged.
-
-Delegated draft lifecycle output without `verification.read` omits content, raw MIME, and pending candidate content for all providers, including local chat drafts, while preserving metadata.
+Delegated HTTP, CLI, and MCP message reads without `verification.read` replace detected verification messages' subjects, snippets, excerpts, bodies, conversation titles, and attachment filenames with `[verification content masked]`, and clear their HTML. Sender, date, labels, and IDs remain available. The modifier requires the operation's existing read permission and source grant. Owner reads and stored messages stay unchanged.
 
 Detection considers subject, snippet, conversation title, attachment filenames, and both body formats together. It folds fullwidth digits to ASCII and looks for 4–10 digits, including spaced digits, or uppercase codes containing at least three digits tied to a code cue. A cue in one field can describe a value in another. Years from 1900 through 2099 count only immediately after a cue. Sign-in links need an opaque token or UUID and a sign-in cue or credential query key, such as `token` or `oobCode`. Unsubscribe, preferences, tracking, and click paths are excluded. Fields of 1 MiB or more are withheld.
 
-Without `verification.read`, text-class attachment downloads return 403 `verification_masked`. Text-class means declared `text/*` or `message/*`, or a `.eml` filename, on any authorized record of the hash, or a sniffed text or message type. Binary files download unchanged. A withheld message's attachment filenames are masked in metadata and the `/attachments/{hash}/content` download header.
+Without `verification.read`, text-class attachment downloads return 403 `verification_masked`. Text-class means declared `text/*` or `message/*`, or a `.eml` filename, on any authorized record of the hash, or a sniffed text or message type. Binary files download unchanged. Attachment routes preserve filenames in metadata and download headers.
 
 A cue can precede its value by up to four line breaks. A period is allowed at the end of the cue line; `Here is your verification code. 482913` on one line is missed.
 
 These heuristics can miss unfamiliar wording and layouts, short link tokens, credentials inside binary files, or text stored under a binary type that sniffing misses. Non-English text such as `Tu código es 482913` is not detected.
 
-Content search omits withheld messages before applying pagination. For these grants, `total` and `total_count` are `-1` (unknown), including count-only requests. Offsets count eligible messages. Deep search reports continuation in `has_more`; `/search` and `/search/fast` callers request another page after a full page and stop after a short page. A short page can still hint at omitted content. Search aggregate rows and statistics are omitted; aggregate-only search routes return empty results. Add `verification.read` only when the delegated reader should receive verification content.
+Search rows are masked in place, with membership and counts unchanged.
+
+Search can confirm a withheld value through prefix probes, and draft output can include verification content. These known limits are covered by later slices for search confirmation and draft quotes. Attachment filenames are not masked on attachment routes. Add `verification.read` only when the delegated reader should receive verification content.

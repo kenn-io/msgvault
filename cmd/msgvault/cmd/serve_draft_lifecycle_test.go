@@ -144,8 +144,12 @@ func TestDraftLifecycleDelegatedIMAPGetEditDelete(t *testing.T) {
 		var output draftLifecycleOutput
 		requirements.NoError(json.Unmarshal([]byte(got), &output))
 		assertions.Equal(created.Revision, output.Revision)
-		assertions.Empty(output.Content)
-		assertions.Empty(output.RawMIME)
+		if permission == agentgrant.PermissionDraftDelete {
+			assertions.Empty(output.Content)
+			assertions.Empty(output.RawMIME)
+		} else {
+			assertions.Contains(output.Content, "initial body")
+		}
 	}
 
 	_, err = fixture.store.ClaimIMAPDraftContext(t.Context(), created.DraftID, created.Revision, store.IMAPDraftOperationEdit, []byte("pending candidate"))

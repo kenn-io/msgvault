@@ -37,6 +37,8 @@ func TestAgentVerificationReads(t *testing.T) {
 	requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
 	_, err = st.DB().Exec(st.Rebind("UPDATE messages SET snippet = ? WHERE id = ?"), "…code is 4829", id)
 	requirements.NoError(err)
+	_, _, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", "second-code", "Your verification code is 482913", "Your verification code is 482913")
+	requirements.NoError(err)
 	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
 	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
@@ -46,9 +48,13 @@ func TestAgentVerificationReads(t *testing.T) {
 	requirements.NoError(err)
 	for _, path := range []string{
 		fmt.Sprintf("/cli/message?id=%d", id), fmt.Sprintf("/messages/%d", id),
+		"/search?q=verification", "/search/fast?q=verification", "/search/deep?q=verification&scope=body", "/cli/search?q=verification&include_snippet=true",
+		"/search/deep?q=verification",
+		"/search?q=verification&page_size=1&page=2", "/search/fast?q=verification&limit=1&offset=1", "/search/deep?q=verification&limit=1&offset=1", "/search/deep?q=verification&scope=body&limit=1&offset=1", "/cli/search?q=verification&include_snippet=true&limit=1&offset=1",
 		"/messages/filter", "/messages", "/search/domains?domains=example.test", fmt.Sprintf("/cli/message/thread?id=%d", id),
 	} {
 		t.Run(path, func(t *testing.T) {
+			requirements := require.New(t)
 			assertions := assert.New(t)
 			req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
 			req.Header.Set(apiprotocol.AgentTokenHeader, token)
@@ -58,6 +64,8 @@ func TestAgentVerificationReads(t *testing.T) {
 			assertions.NotContains(w.Body.String(), "482913")
 			assertions.NotContains(w.Body.String(), "4829")
 			assertions.Contains(w.Body.String(), "[verification content masked]")
+			var masked map[string]json.RawMessage
+			requirements.NoError(json.Unmarshal(w.Body.Bytes(), &masked))
 			for _, credential := range []string{"owner", revealToken} {
 				req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
 				req.RemoteAddr = "127.0.0.1:1234"
@@ -71,6 +79,16 @@ func TestAgentVerificationReads(t *testing.T) {
 				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 				assertions.Contains(w.Body.String(), "482913")
 				assertions.NotContains(w.Body.String(), "[verification content masked]")
+				if strings.HasPrefix(path, "/search") || strings.HasPrefix(path, "/cli/search?") {
+					var revealed map[string]json.RawMessage
+					requirements.NoError(json.Unmarshal(w.Body.Bytes(), &revealed))
+					for _, field := range []string{"total", "total_count"} {
+						if field == "total" && strings.HasPrefix(path, "/search?") || field == "total_count" && (strings.HasPrefix(path, "/search/fast?") || strings.HasPrefix(path, "/search/deep?")) {
+							assertions.Contains(revealed, field)
+						}
+						assertions.Equal(revealed[field], masked[field], field)
+					}
+				}
 			}
 		})
 	}
@@ -185,7 +203,7 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
-	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}))
+	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
 	assertions.NotContains(w.Body.String(), "482913")
 }
@@ -219,6 +237,13 @@ func TestAgentVerificationFields(t *testing.T) {
 			t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
 			_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionMessageRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
 			requirements.NoError(err)
+			req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/cli/message/thread?id=%d", id), nil)
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+			assertions.NotContains(w.Body.String(), "482913")
+			assertions.Contains(w.Body.String(), "[verification content masked]")
 			for _, withEngine := range []bool{true, false} {
 				if !withEngine {
 					srv.SetAnalyticsEngine(nil, "")
@@ -312,12 +337,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 							if strings.HasPrefix(endpoint, "/cli/attachment?") {
 								assertions.Empty(w.Header().Get("Content-Disposition"))
 							} else if tc.name == "code-482913.png" {
-								if mode == "masked" {
-									assertions.Contains(w.Header().Get("Content-Disposition"), "verification content masked")
-									assertions.NotContains(w.Header().Get("Content-Disposition"), "482913")
-								} else {
-									assertions.Contains(w.Header().Get("Content-Disposition"), tc.name)
-								}
+								assertions.Contains(w.Header().Get("Content-Disposition"), tc.name)
 							}
 						}
 					}
@@ -338,247 +358,13 @@ func TestAgentVerificationAttachments(t *testing.T) {
 						w := httptest.NewRecorder()
 						srv.Router().ServeHTTP(w, req)
 						assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-						if mode == "masked" {
+						if mode == "masked" && strings.HasPrefix(endpoint, "/cli/message?") {
 							assertions.NotContains(w.Body.String(), "482913")
 							assertions.Contains(w.Body.String(), "verification content masked")
 						} else {
 							assertions.Contains(w.Body.String(), tc.name)
 						}
 					}
-				}
-			}
-		})
-	}
-}
-
-func TestAgentVerificationSearchOmitsMatches(t *testing.T) {
-	requirements := require.New(t)
-	st := testutil.NewTestStore(t)
-	source, hidden, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "otp", "Your verification code is 482913", "Your verification code is 482913")
-	requirements.NoError(err)
-	_, ordinary, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "ordinary", "Order 482913 shipped", "Order 482913 shipped")
-	requirements.NoError(err)
-	participant, err := st.EnsureParticipant("sender@example.test", "Sender", "example.test")
-	requirements.NoError(err)
-	for _, id := range []int64{hidden, ordinary} {
-		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
-	}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
-	requestCount := 0
-	for _, mode := range []string{"delegate", "reveal", "owner"} {
-		permissions := []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}
-		if mode == "reveal" {
-			permissions = append(permissions, agentgrant.PermissionVerificationRead)
-		}
-		_, token, _, err := srv.agentGrants.Issue(mode, permissions, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-		requirements.NoError(err)
-		for _, route := range []string{"/search?q=", "/search/fast?q=", "/search/fast?view_type=senders&q=", "/search/deep?q=", "/search/deep?view_type=senders&q=", "/search/deep?scope=body&q=", "/cli/search?q="} {
-			for _, term := range []string{"482913", "48291", "4829", "shipped", "verification"} {
-				t.Run(mode+route+term, func(t *testing.T) {
-					requirements, assertions := require.New(t), assert.New(t)
-					req := httptest.NewRequest(http.MethodGet, "/api/v1"+route+term, nil)
-					requestCount++
-					req.RemoteAddr = fmt.Sprintf("127.0.0.%d:1234", requestCount)
-					if mode == "owner" {
-						req.Header.Set("X-Api-Key", "owner")
-					} else {
-						req.Header.Set(apiprotocol.AgentTokenHeader, token)
-					}
-					w := httptest.NewRecorder()
-					srv.Router().ServeHTTP(w, req)
-					requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-					type searchRow struct {
-						ID int64 `json:"id"`
-					}
-					var response struct {
-						Messages     []searchRow         `json:"messages"`
-						Results      []searchRow         `json:"results"`
-						Total        *int64              `json:"total"`
-						TotalCount   *int64              `json:"total_count"`
-						Stats        *TotalStatsResponse `json:"stats"`
-						BodyContexts []BodySearchContext `json:"body_contexts"`
-					}
-					requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-					ids := make([]int64, 0)
-					for _, row := range response.Messages {
-						ids = append(ids, row.ID)
-					}
-					for _, row := range response.Results {
-						ids = append(ids, row.ID)
-					}
-					if term != "verification" {
-						assertions.Contains(ids, ordinary)
-					} else {
-						assertions.NotContains(ids, ordinary)
-					}
-					if mode == "delegate" || term == "shipped" {
-						assertions.NotContains(ids, hidden)
-						if term != "verification" {
-							assertions.Len(ids, 1)
-						} else {
-							assertions.Empty(ids)
-						}
-					} else {
-						assertions.Contains(ids, hidden)
-					}
-					for _, count := range []*int64{response.Total, response.TotalCount} {
-						if count != nil && mode == "delegate" {
-							assertions.Equal(int64(-1), *count)
-						}
-					}
-					if mode == "delegate" {
-						assertions.Nil(response.Stats)
-						for _, context := range response.BodyContexts {
-							assertions.NotEqual(hidden, context.MessageID)
-						}
-					}
-				})
-			}
-		}
-		for _, route := range []string{"/aggregates?view_type=senders&search_query=482913", "/aggregates/sub?view_type=senders&search_query=482913", "/stats/total?search_query=482913", "/search/fast?limit=0&q=482913"} {
-			t.Run(mode+route, func(t *testing.T) {
-				requirements, assertions := require.New(t), assert.New(t)
-				req := httptest.NewRequest(http.MethodGet, "/api/v1"+route, nil)
-				requestCount++
-				req.RemoteAddr = fmt.Sprintf("127.0.0.%d:1234", requestCount)
-				if mode == "owner" {
-					req.Header.Set("X-Api-Key", "owner")
-				} else {
-					req.Header.Set(apiprotocol.AgentTokenHeader, token)
-				}
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, req)
-				requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-				var response struct {
-					Rows         []AggregateRowJSON `json:"rows"`
-					MessageCount int64              `json:"message_count"`
-					TotalCount   int64              `json:"total_count"`
-				}
-				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-				if mode == "delegate" {
-					assertions.Empty(response.Rows)
-					assertions.Zero(response.MessageCount)
-					if strings.HasPrefix(route, "/search/") {
-						assertions.Equal(int64(-1), response.TotalCount)
-					} else {
-						assertions.Zero(response.TotalCount)
-					}
-				} else if strings.HasPrefix(route, "/search/") {
-					assertions.Equal(int64(2), response.TotalCount)
-				} else if strings.HasPrefix(route, "/stats/") {
-					assertions.Equal(int64(2), response.MessageCount)
-				} else {
-					requirements.Len(response.Rows, 1)
-					assertions.Equal(int64(2), response.Rows[0].Count)
-				}
-			})
-		}
-	}
-}
-
-func TestAgentVerificationAttachmentFallback(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	st := testutil.NewTestStore(t)
-	source, first, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "first", "Ordinary", "Ordinary")
-	requirements.NoError(err)
-	_, later, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "later", "Your verification code", "Your code is 482913")
-	requirements.NoError(err)
-	body := []byte("\x89PNG\r\n\x1a\n\x00shared image")
-	hash := fmt.Sprintf("%x", sha256.Sum256(body))
-	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
-	requirements.NoError(os.MkdirAll(cfg.AttachmentsDir(), 0700))
-	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "later.png"), body, 0600))
-	requirements.NoError(st.UpsertAttachment(first, "ordinary.png", "image/png", "missing.png", hash, len(body)))
-	requirements.NoError(st.UpsertAttachment(later, "code-482913.png", "image/png", "later.png", hash, len(body)))
-	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	requirements.NoError(err)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/"+hash+"/content", nil)
-	req.Header.Set(apiprotocol.AgentTokenHeader, token)
-	w := httptest.NewRecorder()
-	srv.Router().ServeHTTP(w, req)
-	assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-	assertions.Equal(body, w.Body.Bytes())
-	assertions.Contains(w.Header().Get("Content-Disposition"), "verification content masked")
-	assertions.NotContains(w.Header().Get("Content-Disposition"), "482913")
-}
-
-func TestAgentVerificationSearchPagination(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	st := testutil.NewTestStore(t)
-	var source *store.Source
-	var eligible []int64
-	for i := range 105 {
-		subject := "Pagination verification code is 482913"
-		ordinary := i == 100 || i == 102 || i == 103 || i == 104
-		if ordinary {
-			subject = fmt.Sprintf("Pagination ordinary %d", i)
-		}
-		createdSource, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", fmt.Sprintf("page-%d", i), subject, subject)
-		requirements.NoError(err)
-		source = createdSource
-		_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sent_at=? WHERE id=?"), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Duration(i)*time.Hour), id)
-		requirements.NoError(err)
-		if ordinary {
-			eligible = append(eligible, id)
-		}
-	}
-	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
-	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
-	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionSearchRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
-	requirements.NoError(err)
-	for _, route := range []string{"/search?q=pagination&page_size=2&page=%d", "/search/fast?q=pagination&limit=2&offset=%d", "/search/deep?q=pagination&limit=2&offset=%d", "/search/deep?scope=body&q=pagination&limit=2&offset=%d", "/cli/search?q=pagination&include_snippet=true&limit=2&offset=%d"} {
-		t.Run(route, func(t *testing.T) {
-			requirements, assertions := require.New(t), assert.New(t)
-			for page := range 3 {
-				position := page * 2
-				if strings.HasPrefix(route, "/search?") {
-					position = page + 1
-				}
-				req := httptest.NewRequest(http.MethodGet, "/api/v1"+fmt.Sprintf(route, position), nil)
-				req.Header.Set(apiprotocol.AgentTokenHeader, token)
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, req)
-				requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-				type searchRow struct {
-					ID int64 `json:"id"`
-				}
-				var response struct {
-					Messages     []searchRow         `json:"messages"`
-					Results      []searchRow         `json:"results"`
-					Total        *int64              `json:"total"`
-					TotalCount   *int64              `json:"total_count"`
-					HasMore      bool                `json:"has_more"`
-					Count        int                 `json:"count"`
-					BodyContexts []BodySearchContext `json:"body_contexts"`
-				}
-				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
-				rows := response.Messages
-				if rows == nil {
-					rows = response.Results
-				}
-				ids := make([]int64, 0, len(rows))
-				for _, row := range rows {
-					ids = append(ids, row.ID)
-				}
-				assertions.Equal(eligible[page*2:min(page*2+2, 4)], ids)
-				for _, total := range []*int64{response.Total, response.TotalCount} {
-					if total != nil {
-						assertions.Equal(int64(-1), *total)
-					}
-				}
-				if strings.HasPrefix(route, "/search/deep?") {
-					assertions.Equal(page == 0, response.HasMore)
-					assertions.Equal(len(ids), response.Count)
-				}
-				if strings.Contains(route, "scope=body") {
-					contextIDs := make([]int64, 0, len(response.BodyContexts))
-					for _, item := range response.BodyContexts {
-						contextIDs = append(contextIDs, item.MessageID)
-					}
-					assertions.Equal(ids, contextIDs)
 				}
 			}
 		})

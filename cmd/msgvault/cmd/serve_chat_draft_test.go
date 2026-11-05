@@ -144,7 +144,7 @@ func TestChatDraftDeleteGrantRedactsBody(t *testing.T) {
 	requirements.NoError(err)
 	grantFor := func(permission agentgrant.Permission) *agentgrant.Grant {
 		return &agentgrant.Grant{
-			ID: "chat-grant", Permissions: []agentgrant.Permission{permission, agentgrant.PermissionVerificationRead},
+			ID: "chat-grant", Permissions: []agentgrant.Permission{permission},
 			Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier}},
 		}
 	}

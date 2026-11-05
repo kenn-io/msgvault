@@ -2495,19 +2495,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 	if grant == nil {
 		resp.IndexState = s.ensureCLISearchIndexAsync(cliStore, true)
 	}
-	fetch := func(limit, offset int) ([]query.MessageSummary, error) {
-		return s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit, offset)
-	}
-	var results []query.MessageSummary
-	if s.withholdsVerification(r) {
-		var ok bool
-		results, _, ok, err = verificationSearchPage(s, w, r, limit+1, offset, fetch, func(row *query.MessageSummary) int64 { return row.ID })
-		if !ok {
-			return
-		}
-	} else {
-		results, err = fetch(limit+1, offset)
-	}
+	results, err := s.queryEngineForContext(r.Context()).Search(r.Context(), parsed, limit+1, offset)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -2532,6 +2520,9 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 				results[i].MatchSnippet = item.MatchSnippet
 			}
 		}
+	}
+	if !s.maskQuerySummaries(w, r, results) {
+		return
 	}
 	// Search leaves summary BodyText empty; /cli/message serves full bodies.
 	resp.Results = results

@@ -5525,7 +5525,7 @@ msgvault --agent-url https://archive.example.test \
 | `stats.read` | Statistics within the granted sources; global database size is omitted |
 | `verification.read` | Reveals detected verification content alongside an existing read permission; grants no reads alone |
 
-Without `verification.read`, detected verification messages return `[verification content masked]` in subjects, snippets, excerpts, bodies, conversation titles, and attachment names, with empty HTML. Text-class attachment downloads return 403 `verification_masked` when any authorized record of the hash declares a text or message type or `.eml` filename, or sniffing detects text. Binary files download unchanged. Owner reads and stored originals stay unchanged. See [detection rules and limits](api-server.md#verification-content).
+Without `verification.read`, detected verification messages return `[verification content masked]` in subjects, snippets, excerpts, bodies, conversation titles, and attachment names in message responses, with empty HTML. Text-class attachment downloads return 403 `verification_masked` when any authorized record of the hash declares a text or message type or `.eml` filename, or sniffing detects text. Binary files download unchanged. Attachment routes preserve filenames. Owner reads and stored originals stay unchanged. See [detection rules and limits](api-server.md#verification-content).
 
 Unscoped reads select the grant's live sources. Explicit accounts, collections,
 and source sets must fit entirely inside that grant. Collection membership is

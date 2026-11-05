@@ -33,7 +33,6 @@ import (
 	"go.kenn.io/msgvault/internal/vector/chunkmatch"
 	"go.kenn.io/msgvault/internal/vector/embed"
 	"go.kenn.io/msgvault/internal/vector/hybrid"
-	"go.kenn.io/msgvault/internal/verification"
 	"golang.org/x/oauth2"
 )
 
@@ -768,7 +767,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		summaries[i] = toMessageSummary(m)
 	}
-	if !s.maskMessageSummaries(w, r, summaries) {
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
 		return
 	}
 	writeJSON(w, http.StatusOK, MessageListResponse{
@@ -1029,31 +1028,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		total    int64
 	)
 	useQuery := parsedQuery.HasOR() || parsedQuery.HasOperators() || len(parsedQuery.AccountIDs) > 0
-	fetch := func(limit, offset int) ([]store.APIMessage, error) {
-		var rows []store.APIMessage
-		var err error
-		if searcher, ok := s.store.(ctxMessageSearcher); ok {
-			if useQuery {
-				rows, total, err = searcher.SearchMessagesQueryContext(r.Context(), parsedQuery, offset, limit)
-			} else {
-				rows, total, err = searcher.SearchMessagesContext(r.Context(), searchText, offset, limit)
-			}
-		} else if useQuery {
-			rows, total, err = s.store.SearchMessagesQuery(parsedQuery, offset, limit)
+	if searcher, ok := s.store.(ctxMessageSearcher); ok {
+		if useQuery {
+			messages, total, err = searcher.SearchMessagesQueryContext(r.Context(), parsedQuery, offset, pageSize)
 		} else {
-			rows, total, err = s.store.SearchMessages(searchText, offset, limit)
+			messages, total, err = searcher.SearchMessagesContext(r.Context(), searchText, offset, pageSize)
 		}
-		return rows, err
-	}
-	if s.withholdsVerification(r) {
-		var ok bool
-		messages, _, ok, err = verificationSearchPage(s, w, r, pageSize, offset, fetch, func(row *store.APIMessage) int64 { return row.ID })
-		if !ok {
-			return
-		}
-		total = -1
+	} else if useQuery {
+		messages, total, err = s.store.SearchMessagesQuery(parsedQuery, offset, pageSize)
 	} else {
-		messages, err = fetch(pageSize, offset)
+		messages, total, err = s.store.SearchMessages(searchText, offset, pageSize)
 	}
 	if err != nil {
 		if s.writeIfContextError(w, err) {
@@ -1069,6 +1053,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummary(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchResult{
 		Warnings:   search.LiteralORWarnings(searchText),
 		IndexState: agentIndexState(r),
@@ -3044,9 +3031,6 @@ func (s *Server) handleAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.withholdsVerification(r) && opts.SearchQuery != "" {
-		rows = nil
-	}
 	jsonRows := make([]AggregateRowJSON, len(rows))
 	for i, row := range rows {
 		jsonRows[i] = toAggregateRowJSON(row)
@@ -3111,9 +3095,6 @@ func (s *Server) handleSubAggregates(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.withholdsVerification(r) && opts.SearchQuery != "" {
-		rows = nil
-	}
 	jsonRows := make([]AggregateRowJSON, len(rows))
 	for i, row := range rows {
 		jsonRows[i] = toAggregateRowJSON(row)
@@ -3175,7 +3156,7 @@ func (s *Server) handleFilteredMessages(w http.ResponseWriter, r *http.Request) 
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	if !s.maskMessageSummaries(w, r, summaries) {
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
 		return
 	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
@@ -3612,9 +3593,6 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !s.withholdAttachmentName(w, r, att) {
-		return
-	}
 	writeJSON(w, http.StatusOK, AttachmentInfo{
 		ID:          att.ID,
 		Filename:    att.Filename,
@@ -3660,14 +3638,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	att := &attachments[0]
-	ids := make([]int64, len(attachments))
-	for i := range attachments {
-		ids[i] = attachments[i].MessageID
-	}
-	withheld, ok := s.verificationWithheld(w, r, ids)
-	if !ok {
-		return
-	}
+	refuse := s.withholdsVerification(r)
 	releaseReadSnapshot(r)
 
 	var content io.ReadCloser
@@ -3690,7 +3661,7 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to open attachment")
 		return
 	}
-	reader, apiErr := textAttachmentReader(content, attachments, withheld != nil)
+	reader, apiErr := textAttachmentReader(content, attachments, refuse)
 	if apiErr != nil {
 		_ = content.Close()
 		writeAPIHTTPError(w, apiErr)
@@ -3700,12 +3671,8 @@ func (s *Server) handleGetAttachmentContent(w http.ResponseWriter, r *http.Reque
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
-	filename := att.Filename
-	if withheld[att.MessageID] {
-		filename = verification.Masked
-	}
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", contentDisposition(filename))
+	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(contentLength, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
@@ -3822,7 +3789,7 @@ func (s *Server) handleSearchByDomains(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
-	if !s.maskMessageSummaries(w, r, summaries) {
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
 		return
 	}
 	writeJSON(w, http.StatusOK, FilteredMessagesResponse{
@@ -3934,9 +3901,6 @@ func (s *Server) handleTotalStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.withholdsVerification(r) && opts.SearchQuery != "" {
-		stats = &query.TotalStats{}
-	}
 	response := toTotalStatsResponse(stats)
 	if response != nil {
 		response.IndexState = agentIndexState(r)
@@ -4007,27 +3971,7 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	indexState := agentIndexState(r)
-	var result *query.SearchFastResult
-	if s.withholdsVerification(r) {
-		fetch := func(limit, offset int) ([]query.MessageSummary, error) {
-			batch, err := engine.SearchFastWithStats(r.Context(), q, queryStr, filter, query.ViewNoStats, limit, offset)
-			if err != nil {
-				return nil, err
-			}
-			return batch.Messages, nil
-		}
-		var rows []query.MessageSummary
-		var ok bool
-		if limit > 0 {
-			rows, _, ok, err = verificationSearchPage(s, w, r, limit, offset, fetch, func(row *query.MessageSummary) int64 { return row.ID })
-			if !ok {
-				return
-			}
-		}
-		result = &query.SearchFastResult{Messages: rows, TotalCount: -1}
-	} else {
-		result, err = engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
-	}
+	result, err := engine.SearchFastWithStats(r.Context(), q, queryStr, filter, statsGroupBy, limit, offset)
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -4048,6 +3992,9 @@ func (s *Server) handleFastSearch(w http.ResponseWriter, r *http.Request) {
 		summaries[i] = toMessageSummaryFromQuery(m)
 	}
 
+	if !s.maskMessageSummaries(w, r, summaries, nil) {
+		return
+	}
 	writeJSON(w, http.StatusOK, SearchFastResponse{
 		Hints:            result.Hints,
 		Warnings:         search.LiteralORWarnings(queryStr),
@@ -4129,51 +4076,47 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	bodySearcher, supportsBodySearch := engine.(query.MessageBodySearcher)
-	if scope == bodyScope && !supportsBodySearch {
-		writeError(w, http.StatusNotImplemented, "body_search_unavailable",
-			"Query engine does not support exact message body search")
-		return
-	}
-
 	// Fetch one extra row to determine has_more accurately.
 	var messages []query.MessageSummary
 	var totalCount int64
 	var stats *query.TotalStats
-	searchScope := *q
 	if scope == bodyScope {
-		searchScope = *query.MergeFilterIntoQuery(q, filter)
-	}
-	// Omitted or false hide_deleted includes retained source-deleted messages.
-	searchScope.DeletionScope = search.DeletionScopeAny
-	if filter.HideDeletedFromSource {
-		searchScope.DeletionScope = search.DeletionScopeActive
-	}
-	fetch := func(limit, offset int) ([]query.MessageSummary, error) {
-		var result *query.SearchFastResult
-		var err error
-		if scope == bodyScope {
-			result, err = bodySearcher.SearchMessageBodies(r.Context(), &searchScope, limit, offset)
+		merged := query.MergeFilterIntoQuery(q, filter)
+		if filter.HideDeletedFromSource {
+			merged.DeletionScope = search.DeletionScopeActive
 		} else {
-			result, err = engine.SearchDeepWithStats(r.Context(), &searchScope, filter, limit, offset)
+			// Preserve the pre-2.12 deep-search contract: omitted or false
+			// hide_deleted includes retained source-deleted messages.
+			merged.DeletionScope = search.DeletionScopeAny
 		}
-		if err != nil {
-			return nil, err
-		}
-		totalCount, stats = result.TotalCount, result.Stats
-		return result.Messages, nil
-	}
-	eligibleMore := false
-	if s.withholdsVerification(r) {
-		var ok bool
-		messages, eligibleMore, ok, err = verificationSearchPage(s, w, r, limit, offset, fetch, func(row *query.MessageSummary) int64 { return row.ID })
+		bodySearcher, ok := engine.(query.MessageBodySearcher)
 		if !ok {
+			writeError(w, http.StatusNotImplemented, "body_search_unavailable",
+				"Query engine does not support exact message body search")
 			return
 		}
+		var result *query.SearchFastResult
+		result, err = bodySearcher.SearchMessageBodies(r.Context(), merged, limit+1, offset)
+		if err == nil {
+			messages = result.Messages
+		}
 	} else {
-		messages, err = fetch(limit+1, offset)
+		searchScope := *q
+		if filter.HideDeletedFromSource {
+			searchScope.DeletionScope = search.DeletionScopeActive
+		} else {
+			// Preserve the pre-2.12 deep-search contract: omitted or false
+			// hide_deleted includes retained source-deleted messages.
+			searchScope.DeletionScope = search.DeletionScopeAny
+		}
+		var result *query.SearchFastResult
+		result, err = engine.SearchDeepWithStats(r.Context(), &searchScope, filter, limit+1, offset)
+		if err == nil {
+			messages = result.Messages
+			totalCount = result.TotalCount
+			stats = result.Stats
+		}
 	}
-
 	if err != nil {
 		if s.writeIfContextError(w, err) {
 			return
@@ -4222,8 +4165,8 @@ func (s *Server) handleDeepSearch(w http.ResponseWriter, r *http.Request) {
 	if scope != bodyScope {
 		warnings = search.LiteralORWarnings(queryStr)
 	}
-	if s.withholdsVerification(r) {
-		totalCount, stats, hasMore = -1, nil, eligibleMore
+	if !s.maskMessageSummaries(w, r, summaries, bodyContexts) {
+		return
 	}
 	writeJSON(w, http.StatusOK, DeepSearchResponse{
 		Warnings:     warnings,

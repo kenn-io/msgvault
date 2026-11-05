@@ -1,7 +1,6 @@
 package mcp
 
 import (
-	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -239,7 +238,7 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 			owner, err := daemonclient.New(daemonclient.Config{URL: server.URL, APIKey: "owner", AllowInsecure: true})
 			requirements.NoError(err)
 			t.Cleanup(func() { _ = owner.Close() })
-			grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{"attachment.read"}, []int64{source.ID}, nil, time.Time{})
+			grant, err := owner.IssueAgentToken(t.Context(), "reader", []string{"attachment.read", "verification.read"}, []int64{source.ID}, nil, time.Time{})
 			requirements.NoError(err)
 			agent, err := daemonclient.New(daemonclient.Config{URL: server.URL, AgentToken: grant.Secret, AllowInsecure: true})
 			requirements.NoError(err)
@@ -287,58 +286,5 @@ func TestAgentAttachmentChunksReauthorize(t *testing.T) {
 				assertions.Contains(task5SDKResultText(restarted), base64.StdEncoding.EncodeToString(data[:4]))
 			}
 		})
-	}
-}
-
-func TestAgentVerificationSearchPaginationThroughDaemon(t *testing.T) {
-	requirements, assertions := require.New(t), assert.New(t)
-	st := testutil.NewTestStore(t)
-	var source *store.Source
-	var eligible []int64
-	for i := range 7 {
-		subject := "Pagination verification code is 482913"
-		if i%2 == 0 {
-			subject = fmt.Sprintf("Pagination ordinary %d", i)
-		}
-		createdSource, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", fmt.Sprintf("page-%d", i), subject, subject)
-		requirements.NoError(err)
-		source = createdSource
-		_, err = st.DB().Exec(st.Rebind("UPDATE messages SET sent_at=? WHERE id=?"), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Duration(i)*time.Hour), id)
-		requirements.NoError(err)
-		if i%2 == 0 {
-			eligible = append(eligible, id)
-		}
-	}
-	srv := api.NewServerWithOptions(api.ServerOptions{Config: &config.Config{Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: slog.New(slog.DiscardHandler)})
-	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
-	daemon := httptest.NewServer(srv.Router())
-	t.Cleanup(daemon.Close)
-	owner, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "owner", AllowInsecure: true})
-	requirements.NoError(err)
-	t.Cleanup(func() { assertions.NoError(owner.Close()) })
-	issued, err := owner.IssueAgentToken(t.Context(), "reader", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
-	requirements.NoError(err)
-	agent, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, AgentToken: issued.Secret, AllowInsecure: true})
-	requirements.NoError(err)
-	t.Cleanup(func() { assertions.NoError(agent.Close()) })
-	h := newTestHandlers(daemonclient.NewEngineAdapter(agent))
-	for page := range 3 {
-		args := map[string]any{"query": "pagination", "limit": float64(2), "offset": float64(page * 2)}
-		metadata := runTool[paginatedSearchMessages](t, ToolSearchMetadata, h.searchMetadata, args)
-		ids := make([]int64, 0, len(metadata.Data))
-		for _, row := range metadata.Data {
-			ids = append(ids, row.ID)
-		}
-		assertions.Equal(eligible[page*2:min(page*2+2, 4)], ids)
-		assertions.Equal(int64(-1), metadata.Total)
-		assertions.Equal(page == 0, metadata.HasMore)
-		body := runTool[searchMessageBodiesResponse](t, ToolSearchMessageBodies, h.searchMessageBodies, args)
-		ids = ids[:0]
-		for _, row := range body.Data {
-			ids = append(ids, row.ID)
-			assertions.NotEmpty(row.Matches)
-		}
-		assertions.Equal(eligible[page*2:min(page*2+2, 4)], ids)
-		assertions.Equal(page == 0, body.HasMore)
 	}
 }

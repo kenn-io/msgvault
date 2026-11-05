@@ -732,11 +732,11 @@ func (s *Store) ConversationTitlesBatchContext(ctx context.Context, sourceID int
 	return titles, nil
 }
 
-// PopulateMessageBodiesContext hydrates classification context in the caller's
-// snapshot. Bodies at or above maxFieldBytes stay empty and are flagged oversized.
-func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []APIMessage, maxFieldBytes int) (map[int64]bool, error) {
+// PopulateMessageBodiesContext hydrates the complete classification context in
+// the caller's read snapshot, including metadata omitted by thread projections.
+func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []APIMessage) error {
 	if len(messages) == 0 {
-		return map[int64]bool{}, nil
+		return nil
 	}
 	ids := make([]int64, len(messages))
 	for i := range messages {
@@ -752,49 +752,14 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("load classification metadata: %w", err)
+		return fmt.Errorf("load classification metadata: %w", err)
 	}
 	for i := range messages {
 		msg := metadata[messages[i].ID]
 		messages[i].Subject, messages[i].Snippet, messages[i].ConversationTitle = msg.Subject, msg.Snippet, msg.ConversationTitle
 	}
 	if err := s.batchPopulateAttachments(ctx, messages, ids); err != nil {
-		return nil, err
+		return err
 	}
-	return s.populateBoundedBodies(ctx, messages, maxFieldBytes)
-}
-
-// populateBoundedBodies withholds both fields when either reaches the byte limit.
-func (s *Store) populateBoundedBodies(ctx context.Context, messages []APIMessage, maxFieldBytes int) (map[int64]bool, error) {
-	byteLength := "LENGTH(CAST(%s AS BLOB))"
-	if s.IsPostgreSQL() {
-		byteLength = "OCTET_LENGTH(%s)"
-	}
-	oversizedExpr := fmt.Sprintf(byteLength, "COALESCE(body_text, '')") + " >= ? OR " + fmt.Sprintf(byteLength, "COALESCE(body_html, '')") + " >= ?"
-	statement := `SELECT oversized,
-		CASE WHEN oversized THEN '' ELSE COALESCE(body_text, '') END,
-		CASE WHEN oversized THEN '' ELSE COALESCE(body_html, '') END
-		FROM (SELECT body_text, body_html, ` + oversizedExpr + ` AS oversized
-		FROM message_bodies WHERE message_id = ?) AS bounded`
-	oversized := make(map[int64]bool)
-	for i := range messages {
-		msg := &messages[i]
-		msg.BodyText, msg.BodyHTML, msg.Body = "", "", ""
-		var tooLarge bool
-		err := s.db.QueryRowContext(ctx, statement, maxFieldBytes, maxFieldBytes, msg.ID).Scan(&tooLarge, &msg.BodyText, &msg.BodyHTML)
-		if errors.Is(err, sql.ErrNoRows) {
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("load bounded classification body: %w", err)
-		}
-		if tooLarge {
-			oversized[msg.ID] = true
-		}
-		msg.Body = msg.BodyText
-		if msg.Body == "" {
-			msg.Body = msg.BodyHTML
-		}
-	}
-	return oversized, nil
+	return s.batchPopulateBodies(ctx, messages, ids)
 }
