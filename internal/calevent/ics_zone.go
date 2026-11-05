@@ -24,32 +24,32 @@ func customICSZones(cal *ical.Calendar) (map[string]string, error) {
 		}
 		offsets, rules := make(map[string]string), make(map[string]string)
 		for _, part := range zone.Children {
-			if (part.Name != "STANDARD" && part.Name != "DAYLIGHT") || offsets[part.Name] != "" {
-				return nil, fmt.Errorf("unsupported VTIMEZONE %q observances", id)
-			}
 			offset, start, rule := part.Props.Get("TZOFFSETTO"), part.Props.Get("DTSTART"), part.Props.Get("RRULE")
-			if offset == nil || start == nil || rule == nil {
-				return nil, fmt.Errorf("VTIMEZONE %q requires TZOFFSETTO, DTSTART, and RRULE", id)
+			if (part.Name != "STANDARD" && part.Name != "DAYLIGHT") || offsets[part.Name] != "" || offset == nil || start == nil {
+				return nil, fmt.Errorf("VTIMEZONE %q requires distinct STANDARD or DAYLIGHT observances with TZOFFSETTO and DTSTART", id)
 			}
 			_, offsetErr := time.Parse("-0700", offset.Value)
 			wall, startErr := time.Parse("20060102T150405", start.Value)
-			r, err := rrule.StrToROption(rule.Value)
-			if offsetErr != nil || startErr != nil || err != nil || r.Freq != rrule.YEARLY || len(r.Bymonth) != 1 || len(r.Byweekday) != 1 || strings.Count(rule.Value, ";") != 2 {
-				return nil, fmt.Errorf("unsupported VTIMEZONE %q rule", id)
-			}
-			week := r.Byweekday[0].N()
-			if r.Bymonth[0] < 1 || r.Bymonth[0] > 12 || (week != -1 && (week < 1 || week > 4)) {
-				return nil, fmt.Errorf("unsupported VTIMEZONE %q transition", id)
+			if offsetErr != nil || startErr != nil {
+				return nil, fmt.Errorf("unsupported VTIMEZONE %q offset or start", id)
 			}
 			offsets[part.Name] = strings.NewReplacer("+", "-", "-", "+").Replace(offset.Value[:3]) + ":" + offset.Value[3:]
-			rules[part.Name] = fmt.Sprintf("M%d.%d.%d/%s", r.Bymonth[0], (week+6)%6, (r.Byweekday[0].Day()+1)%7, wall.Format("15:04:05"))
-		}
-		if offsets["STANDARD"] == "" {
-			return nil, fmt.Errorf("VTIMEZONE %q requires STANDARD", id)
+			if rule == nil {
+				continue // Exchange writes zones without daylight saving as observances without RRULE.
+			}
+			r, err := rrule.StrToROption(rule.Value)
+			if err != nil || r.Freq != rrule.YEARLY || len(r.Bymonth) != 1 || len(r.Byweekday) != 1 || strings.Count(rule.Value, ";") != 2 ||
+				r.Bymonth[0] < 1 || r.Bymonth[0] > 12 || r.Byweekday[0].N() < -1 || r.Byweekday[0].N() == 0 || r.Byweekday[0].N() > 4 {
+				return nil, fmt.Errorf("unsupported VTIMEZONE %q rule", id)
+			}
+			rules[part.Name] = fmt.Sprintf("M%d.%d.%d/%s", r.Bymonth[0], (r.Byweekday[0].N()+6)%6, (r.Byweekday[0].Day()+1)%7, wall.Format("15:04:05"))
 		}
 		zones[id] = "STD" + offsets["STANDARD"]
-		if offsets["DAYLIGHT"] != "" {
-			zones[id] += "DST" + offsets["DAYLIGHT"] + "," + rules["DAYLIGHT"] + "," + rules["STANDARD"]
+		if dst := offsets["DAYLIGHT"]; dst != "" && dst != offsets["STANDARD"] {
+			zones[id] += "DST" + dst + "," + rules["DAYLIGHT"] + "," + rules["STANDARD"]
+		}
+		if !customZonePattern.MatchString(zones[id]) {
+			return nil, fmt.Errorf("VTIMEZONE %q requires STANDARD, and RRULE on both observances when daylight saving changes the offset", id)
 		}
 	}
 	return zones, nil
