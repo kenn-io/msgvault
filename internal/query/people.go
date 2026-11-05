@@ -374,7 +374,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p.id)")
 	case len(clusterMemberIDs) > 1:
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
-		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (" + placeholders + ") AND pbn.id IN (SELECT participant_id FROM canon)")
+		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (" + placeholders + ")")
 		for _, memberID := range clusterMemberIDs {
 			args = append(args, memberID)
 		}
@@ -385,7 +385,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	case exactID == nil:
 		overrideFilter = "pnv.participant_id IN (SELECT cno.participant_id FROM canon cno WHERE cno.canonical_id = p.id)"
 	case len(clusterMemberIDs) > 1:
-		overrideFilter = "pnv.participant_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",") + ") AND pnv.participant_id IN (SELECT participant_id FROM canon)"
+		overrideFilter = "pnv.participant_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",") + ")"
 		for _, memberID := range clusterMemberIDs {
 			args = append(args, memberID)
 		}
@@ -446,18 +446,15 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 			placeholders[i] = "?"
 			args = append(args, memberID)
 		}
-		identifierFilter = "pi.participant_id IN (" + strings.Join(placeholders, ",") + ") AND pi.participant_id IN (SELECT participant_id FROM canon)"
+		identifierFilter = "pi.participant_id IN (" + strings.Join(placeholders, ",") + ")"
 	}
 	// Exact detail rows retain the requested participant ID, but the compact
 	// relationship scores are keyed by the resolved cluster canonical ID.
 	relationshipPersonExpr := "counted.person_id"
 	if exactID != nil && len(clusterMemberIDs) > 1 {
-		relationshipPersonExpr = "(SELECT min(participant_id) FROM canon WHERE participant_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",") + "))"
-		for range 3 {
-			for _, memberID := range clusterMemberIDs {
-				args = append(args, memberID)
-			}
-		}
+		relationshipPersonExpr = "?"
+		canonicalID := slices.Min(clusterMemberIDs)
+		args = append(args, canonicalID, canonicalID, canonicalID)
 	}
 	limit := request.Page.Limit
 	if limit == 0 {
@@ -577,11 +574,11 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	args = append(args, *exactID)
 	return canon + `
 ), person_message_ids AS (
-	SELECT mr.message_id FROM message_recipients mr JOIN canon c ON c.participant_id = mr.participant_id WHERE mr.participant_id IN ` + memberList + `
+	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
 	UNION
-	SELECT m.id AS message_id FROM messages m JOIN canon c ON c.participant_id = m.sender_id WHERE m.sender_id IN ` + memberList + `
+	SELECT m.id AS message_id FROM messages m WHERE m.sender_id IN ` + memberList + `
 ), person_chat_conversation_ids AS (
-	SELECT cp.conversation_id FROM conversation_participants cp JOIN canon c ON c.participant_id = cp.participant_id WHERE cp.participant_id IN ` + memberList + `
+	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id IN ` + memberList + `
 	UNION
 	SELECT f.conversation_id FROM classified f
 	WHERE f.is_chat AND f.message_id IN (SELECT message_id FROM person_message_ids)

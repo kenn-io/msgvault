@@ -939,12 +939,8 @@ func (s *cacheSourceSnapshot) participantsExportSelectSQL() string {
 			COALESCE(%s, '') AS email_address,
 			COALESCE(%s, '') AS domain,
 			COALESCE(%s, '') AS display_name,
-			COALESCE(%s, '') AS phone_number,
-			(%s OR EXISTS (SELECT 1 FROM sqlite_db.calendar_event_attendees a
-				WHERE a.role = 'room' AND lower(%s) = lower(%s))) AS is_room
-		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"),
-		identityindex.RoomDomainSQL("lower(coalesce("+cacheIdentityTextSQL("participants.domain")+", ''))"),
-		cacheIdentityTextSQL("a.email"), cacheIdentityTextSQL("participants.email_address"))
+			COALESCE(%s, '') AS phone_number
+		FROM sqlite_db.participants`, s.identityExportSQL("email_address"), s.textSQL("domain"), s.textSQL("display_name"), s.textSQL("phone_number"))
 }
 
 // personDisplayNamesExportSelectSQL keeps full and derived-only exports identical.
@@ -1457,17 +1453,6 @@ func buildCacheLockedAttempt(
 	}
 	if err := runExport(tableParticipants, copyDataset(tableParticipants, sourceSnapshot.participantsExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participants: %w", err)
-	}
-	if !replaceAll {
-		var roomsChanged bool
-		err := exportDB.QueryRowContext(ctx, `SELECT EXISTS (
-			SELECT 1 FROM read_parquet(?) old JOIN read_parquet(?) current USING (id)
-			WHERE old.is_room IS DISTINCT FROM current.is_room
-		)`, filepath.Join(analyticsDir, tableParticipants, "*.parquet"), filepath.Join(staging.root, tableParticipants, "*.parquet")).Scan(&roomsChanged)
-		if err != nil {
-			return nil, fmt.Errorf("compare participant room classifications: %w", err)
-		}
-		repairActivity = repairActivity || roomsChanged
 	}
 	if err := runExport(tableParticipantIdentifiers, copyDataset(tableParticipantIdentifiers, sourceSnapshot.participantIdentifiersExportSelectSQL())); err != nil {
 		return nil, fmt.Errorf("export participant identifiers: %w", err)
@@ -2165,8 +2150,6 @@ func (s *cacheSourceSnapshot) tables(through int64, afterMessageIDs map[string]i
 		{tableParticipants, "SELECT id, email_address, domain, display_name, phone_number, " + emailPresence + " AS primary_email_present FROM participants",
 			"types={'id': 'BIGINT', 'email_address': 'VARCHAR', 'domain': 'VARCHAR', 'display_name': 'VARCHAR', 'phone_number': 'VARCHAR', 'primary_email_present': 'BOOLEAN'}",
 			identityColumns("email_address")},
-		{"calendar_event_attendees", "SELECT email, role FROM calendar_event_attendees WHERE role = 'room'",
-			"types={'email': 'VARCHAR', 'role': 'VARCHAR'}", identityColumns("email")},
 		{"account_identities", "SELECT source_id, address FROM account_identities",
 			"types={'source_id': 'BIGINT', 'address': 'VARCHAR'}",
 			identityColumns("address")},

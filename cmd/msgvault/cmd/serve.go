@@ -3854,10 +3854,6 @@ func (a *storeAPIAdapter) ClusterMembers(id int64) ([]int64, error) {
 	return a.store.ClusterMembers(id)
 }
 
-func (a *storeAPIAdapter) ClusterCanonicalID(members []int64) (int64, error) {
-	return a.store.ClusterCanonicalID(members)
-}
-
 func (a *storeAPIAdapter) ClusterEdges(id int64) ([]store.LinkEdge, error) {
 	return a.store.ClusterEdges(id)
 }

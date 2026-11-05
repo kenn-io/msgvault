@@ -13,10 +13,10 @@ func RoomDomainSQL(col string) string {
 // Its arguments are trusted SQL relations from the cache builder or query engine.
 func CanonicalParticipantsSQL(participants, clusters string) string {
 	return fmt.Sprintf(`SELECT p.id::BIGINT AS participant_id,
-	       min(p.id) OVER (PARTITION BY coalesce(c.canonical_id, p.id))::BIGINT AS canonical_id,
+	       coalesce(c.canonical_id, p.id)::BIGINT AS canonical_id,
 	       lower(coalesce(p.domain, ''))::VARCHAR AS participant_domain
 	FROM %s p LEFT JOIN %s c ON c.participant_id = p.id
-	WHERE NOT coalesce(p.is_room, false)`, participants, clusters)
+	WHERE c.participant_id IS NOT NULL OR NOT %s`, participants, clusters, RoomDomainSQL("lower(coalesce(p.domain, ''))"))
 }
 
 // OwnerCanonicalsSQL projects confirmed owners through a canonical participant relation.

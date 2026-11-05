@@ -221,7 +221,7 @@ func buildBenchData(tb testing.TB) *DuckDBEngine {
 	tables := []tableSpec{
 		{"SELECT id, account_email, source_type FROM bench_sources",
 			"sources", "sources.parquet"},
-		{"SELECT id, email_address, domain, display_name, phone_number, false AS is_room FROM bench_participants",
+		{"SELECT id, email_address, domain, display_name, phone_number FROM bench_participants",
 			"participants", "participants.parquet"},
 		{"SELECT participant_id, identifier_type, identifier_value, display_value, is_primary FROM bench_participant_identifiers",
 			"participant_identifiers", "participant_identifiers.parquet"},

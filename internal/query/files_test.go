@@ -30,14 +30,14 @@ func TestPersonFileMatchCTEsBoundsRoleAggregationToAttachmentMessages(t *testing
 		INSERT INTO conversation_participants VALUES (700, 1);
 		CREATE TABLE message_recipients(message_id BIGINT, participant_id BIGINT, recipient_type VARCHAR);
 		CREATE TABLE attachments(attachment_id BIGINT, message_id BIGINT);
-		INSERT INTO attachments VALUES (1, 100000); CREATE TABLE participants AS SELECT 1::BIGINT AS id, '' AS domain, false AS is_room; CREATE TABLE participant_clusters(participant_id BIGINT, canonical_id BIGINT);
+		INSERT INTO attachments VALUES (1, 100000);
 	`)
 	requirements.NoError(err)
 
 	ctes, args := personFileMatchCTEs(PersonFileScope{
 		ParticipantIDs: []int64{1},
 		Directions:     []PersonFileDirection{PersonFileGroup},
-	}, "participant_clusters")
+	})
 	var aggregatedMessages int64
 	err = db.QueryRowContext(context.Background(),
 		"WITH "+ctes+" SELECT COUNT(*) FROM person_matches_unfiltered", args...).Scan(&aggregatedMessages)
@@ -175,33 +175,6 @@ func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
 	requirements.Len(grouped.Rows, 1)
 	assertions.Equal("1", grouped.Rows[0].Key)
 	assertions.Equal(int64(2), grouped.Rows[0].Count)
-}
-
-func TestLinkedRoomFilesStayOutOfPerson(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	b := NewTestDataBuilder(t)
-	source := b.AddSource("archive@example.com")
-	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
-	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room")
-	b.LinkCluster(alice, room)
-	for _, item := range []struct {
-		id   int64
-		name string
-	}{{alice, "alice.pdf"}, {room, "room.pdf"}} {
-		message := b.AddMessage(MessageOpt{SourceID: source, SentAt: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)})
-		b.AddTo(message, item.id, "")
-		b.AddAttachment(message, 10, item.name)
-	}
-	engine := b.BuildEngine()
-	person, err := engine.GetPerson(t.Context(), alice, Context{}, []int64{alice, room})
-	requirements.NoError(err)
-	requirements.NotNil(person)
-	assertions.Equal(int64(1), person.FileCount)
-	files, err := engine.SearchFiles(t.Context(), FileSearchRequest{Person: &PersonFileScope{ParticipantIDs: []int64{alice, room}, Directions: []PersonFileDirection{PersonFileToPerson}}, Page: PageSpec{Limit: 10}})
-	requirements.NoError(err)
-	requirements.Len(files.Files, 1)
-	assertions.Equal("alice.pdf", files.Files[0].Filename)
 }
 
 func TestSearchFilesPersonScopeSeparatesDirectionsAndPreservesProvenance(t *testing.T) {

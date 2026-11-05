@@ -43,8 +43,7 @@ import (
 // only messages that can still be deleted from their source.
 // Version 33 flags unsent messages in the relationship activity dataset.
 // Version 34 carries hidden_text_present in message rows.
-// Version 35 flags calendar rooms in participant rows and excludes them from
-// derived people and domains.
+// Version 35 excludes unlinked calendar rooms from derived people and domains.
 // Schema bumps force a full rebuild before readers use an older publication,
 // so committed caches never mix shards of different shapes.
 const CacheSchemaVersion = 35

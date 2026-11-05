@@ -1202,27 +1202,6 @@ func (s *Store) ClusterMembers(id int64) ([]int64, error) {
 	return members, nil
 }
 
-// ClusterCanonicalID returns the smallest member that is not a calendar room,
-// the canonical ID the analytics cache assigns. It is 0 when every member is a
-// room. Rooms match build-cache: a Google resource domain or a room attendee.
-func (s *Store) ClusterCanonicalID(members []int64) (int64, error) {
-	args := make([]any, len(members))
-	for i, member := range members {
-		args[i] = member
-	}
-	var canonical sql.NullInt64
-	err := s.db.QueryRow(`SELECT MIN(p.id) FROM participants p
-		WHERE p.id IN (`+placeholders(len(args))+`)
-		  AND lower(coalesce(p.domain, '')) <> 'resource.calendar.google.com'
-		  AND lower(coalesce(p.domain, '')) NOT LIKE '%.resource.calendar.google.com'
-		  AND NOT EXISTS (SELECT 1 FROM calendar_event_attendees a
-			WHERE a.role = 'room' AND lower(a.email) = lower(p.email_address))`, args...).Scan(&canonical)
-	if err != nil {
-		return 0, fmt.Errorf("resolve cluster canonical ID: %w", err)
-	}
-	return canonical.Int64, nil
-}
-
 // LinkEdge is one participant_links row, exposed to API callers (the
 // person-detail HTTP handler) that need the literal edges of a cluster, not
 // just its membership — e.g. to render a per-chip unlink affordance that

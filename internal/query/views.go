@@ -443,12 +443,6 @@ func hasNormalizedRelationshipActivity(analyticsDir string) (bool, error) {
 	return len(activityFiles) > 0, nil
 }
 
-// participantsRelationSQL reads participant rows with is_room present. Rows
-// from caches written before rooms were flagged have NULL is_room and stay people.
-func participantsRelationSQL(path string) string {
-	return "(SELECT * FROM read_parquet('" + quoteIdentitySQLPath(path) + "') UNION ALL BY NAME SELECT NULL::BOOLEAN AS is_room WHERE false)"
-}
-
 // The normalized relationship view is used by internal query paths even when
 // legacy analytical views are disabled.
 func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDir string) error {
@@ -469,7 +463,7 @@ func createRelationshipActivityView(ctx context.Context, db *sql.DB, analyticsDi
 		relation := identityindex.ExpandedActivityRelation(
 			parquet(identityindex.DatasetActivity, true),
 			parquet(datasetConversationParticipants, false),
-			participantsRelationSQL(filepath.Join(analyticsDir, datasetParticipants, "*.parquet")),
+			parquet(datasetParticipants, false),
 			parquet(datasetParticipantClusters, false),
 			parquet(datasetOwnerParticipants, false),
 		)
@@ -504,7 +498,7 @@ func refreshRelationshipQuerySets(ctx context.Context, db *sql.DB, analyticsDir 
 	// Match the expanded view: unpartitioned caches have no normalized activity.
 	if hasActivity {
 		canon := "(" + identityindex.CanonicalParticipantsSQL(
-			participantsRelationSQL(filepath.Join(analyticsDir, datasetParticipants, "*.parquet")),
+			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipants, "*.parquet"))),
 			fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetParticipantClusters, "*.parquet"))),
 		) + ")"
 		owners := fmt.Sprintf("read_parquet('%s')", quoteIdentitySQLPath(filepath.Join(analyticsDir, datasetOwnerParticipants, "*.parquet")))

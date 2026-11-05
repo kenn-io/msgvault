@@ -309,7 +309,7 @@ func TestLogicalChatReductionPreservesCanonicalAliasDomains(t *testing.T) {
 			 'Synthetic group chat'::VARCHAR, 'group_chat'::VARCHAR)
 		) AS t(id, source_conversation_id, title, conversation_type)`)
 	replaceRelationshipParquet(t, db, root, "participants", `
-		SELECT *, false AS is_room FROM (VALUES
+		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@alpha.test'::VARCHAR, 'alpha.test'::VARCHAR,
 			 'Owner'::VARCHAR, ''::VARCHAR),
 			(2::BIGINT, 'alias@beta.test'::VARCHAR, 'beta.test'::VARCHAR,
@@ -417,7 +417,7 @@ func TestLogicalChatReductionKeepsEarlierDirectOnlyIdentity(t *testing.T) {
 			 'Synthetic group chat'::VARCHAR, 'group_chat'::VARCHAR)
 		) AS t(id, source_conversation_id, title, conversation_type)`)
 	replaceRelationshipParquet(t, db, root, "participants", `
-		SELECT *, false AS is_room FROM (VALUES
+		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@alpha.test'::VARCHAR, 'alpha.test'::VARCHAR,
 			 'Owner'::VARCHAR, ''::VARCHAR),
 			(2::BIGINT, 'guest@gamma.test'::VARCHAR, 'gamma.test'::VARCHAR,
@@ -615,7 +615,7 @@ func writeRelationshipEquivalenceFixture(t *testing.T) (string, *sql.DB) {
 			 'email_thread'::VARCHAR)
 		) AS t(id, source_conversation_id, title, conversation_type)`)
 	replaceRelationshipParquet(t, db, root, "participants", `
-		SELECT *, false AS is_room FROM (VALUES
+		SELECT * FROM (VALUES
 			(1::BIGINT, 'owner@example.test'::VARCHAR, 'example.test'::VARCHAR,
 			 'Owner'::VARCHAR, ''::VARCHAR),
 			(2::BIGINT, 'owner-alias@example.test'::VARCHAR, 'example.test'::VARCHAR,
@@ -722,7 +722,7 @@ func writeSyntheticRelationshipFanOut(
 		       ('person-' || i || '@example.test')::VARCHAR AS email_address,
 		       'example.test'::VARCHAR AS domain,
 		       ('Person ' || i)::VARCHAR AS display_name,
-		       ''::VARCHAR AS phone_number, false AS is_room
+		       ''::VARCHAR AS phone_number
 		FROM range(1, %d) AS t(i)`, opts.memberCount+1))
 	replaceRelationshipParquet(tb, db, root, "participant_identifiers", `
 		SELECT NULL::BIGINT AS participant_id,
@@ -819,7 +819,7 @@ func writeRelationshipYearScopeFixture(t *testing.T, db *sql.DB, root string) {
 		       ('person-' || i || '@example.test')::VARCHAR AS email_address,
 		       'example.test'::VARCHAR AS domain,
 		       ('Person ' || i)::VARCHAR AS display_name,
-		       ''::VARCHAR AS phone_number, false AS is_room
+		       ''::VARCHAR AS phone_number
 		FROM range(1, %d) AS participants(i)`, offYearParticipants+1))
 	replaceRelationshipParquet(t, db, root, "participant_identifiers", `
 		SELECT NULL::BIGINT AS participant_id,

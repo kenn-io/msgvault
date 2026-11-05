@@ -178,7 +178,7 @@ func (e *DuckDBEngine) SearchFiles(ctx context.Context, request FileSearchReques
 	args = append(args, limit, request.Page.Offset)
 	var queryText string
 	if request.Person != nil {
-		personCTEs, personArgs := personFileMatchCTEs(*request.Person, "read_parquet('"+quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters))+"')")
+		personCTEs, personArgs := personFileMatchCTEs(*request.Person)
 		if !e.exploreFastPathDisabled {
 			queryText = buildPersonFileSearchFastSQL(personCTEs, exploreConditions, fileConditions, order)
 		} else {
@@ -391,7 +391,7 @@ func filteredFilePopulationSQL(
 // base facts as analytical_entries: explicit envelope roles, direct sender IDs,
 // and conversation roster membership. The GROUP BY guarantees one match row
 // per message even when several linked aliases or roles match.
-func personFileMatchCTEs(scope PersonFileScope, clusters string) (string, []any) {
+func personFileMatchCTEs(scope PersonFileScope) (string, []any) {
 	participantRows := make([]string, len(scope.ParticipantIDs))
 	args := make([]any, len(scope.ParticipantIDs))
 	for i, participantID := range scope.ParticipantIDs {
@@ -427,8 +427,8 @@ func personFileMatchCTEs(scope PersonFileScope, clusters string) (string, []any)
 
 	return `attachment_message_ids AS MATERIALIZED (
 	SELECT message_id FROM attachments GROUP BY message_id
-), person_ids AS (
-	SELECT participant_id FROM (` + identityindex.CanonicalParticipantsSQL("participants", clusters) + `) WHERE participant_id IN (` + personIDRows + `)
+), person_ids(participant_id) AS (
+	` + personIDRows + `
 ), person_edges AS (
 	SELECT mr.message_id, mr.participant_id, lower(mr.recipient_type) AS role
 	FROM attachment_message_ids ami

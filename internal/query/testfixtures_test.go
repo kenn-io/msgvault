@@ -1099,9 +1099,6 @@ func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, 
 		whereClause = "\n\t\t\t\tWHERE false"
 	}
 	projection := "*"
-	if slices.Contains(expectedColumns, "phone_number") && slices.Contains(expectedColumns, "domain") {
-		projection += ", (domain = 'resource.calendar.google.com') AS is_room"
-	}
 	if slices.Contains(expectedColumns, "source_message_id") && !slices.Contains(expectedColumns, "archive_only") {
 		// Ordinary fixture messages belong to their current provider account.
 		projection += ", false AS archive_only"

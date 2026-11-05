@@ -19,63 +19,59 @@ import (
 
 func TestBuildExcludesRooms(t *testing.T) {
 	for _, mode := range []Mode{ModeFull, ModeIncremental, ModeIndexOnly} {
-		for _, linked := range []bool{false, true} {
-			t.Run(fmt.Sprintf("mode=%d/linked=%t", mode, linked), func(t *testing.T) {
-				assertions := assert.New(t)
-				requirements := require.New(t)
-				root, db := writeRelationshipBaseFixture(t, false)
-				// Room 4B is both an invite recipient and a conversation member.
-				_, err := db.Exec(`CREATE TEMP TABLE room_participants AS
+		t.Run(fmt.Sprintf("mode_%d", mode), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			root, db := writeRelationshipBaseFixture(t, false)
+			// Room 4B is both an invite recipient and a conversation member.
+			_, err := db.Exec(`CREATE TEMP TABLE room_participants AS
 					SELECT * FROM read_parquet(?) UNION ALL
-					SELECT 5, 'room@resource.calendar.google.com', 'resource.calendar.google.com', 'Room 4B', '', true`, parquetDatasetGlob(root, "participants"))
-				requirements.NoError(err)
-				replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM room_participants")
-				_, err = db.Exec(`CREATE TEMP TABLE room_messages AS
+					SELECT 5, 'room@resource.calendar.google.com', 'resource.calendar.google.com', 'Room 4B', ''`, parquetDatasetGlob(root, "participants"))
+			requirements.NoError(err)
+			replaceRelationshipParquet(t, db, root, "participants", "SELECT * FROM room_participants")
+			_, err = db.Exec(`CREATE TEMP TABLE room_messages AS
 					SELECT * FROM read_parquet(?) UNION ALL
 					SELECT * REPLACE (101 AS id, NULL::BIGINT AS sender_id, NULL::BIGINT AS conversation_id) FROM read_parquet(?)`, parquetDatasetGlob(root, "messages"), parquetDatasetGlob(root, "messages"))
-				requirements.NoError(err)
-				replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM room_messages")
-				replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 100, 2, 'to' UNION ALL SELECT 100, 5, 'to' UNION ALL SELECT 101, 5, 'to'`)
-				replaceRelationshipParquet(t, db, root, "conversation_participants", `SELECT 10::BIGINT AS conversation_id, 4::BIGINT AS participant_id UNION ALL SELECT 10, 5`)
-				if linked {
-					replaceRelationshipParquet(t, db, root, "participant_clusters", `SELECT 1::BIGINT AS participant_id, 1::BIGINT AS canonical_id UNION ALL SELECT 2, 2 UNION ALL SELECT 3, 2 UNION ALL SELECT 5, 1`)
-				}
-				_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
-				requirements.NoError(err)
-				output := root
-				if mode != ModeFull {
-					staged, stagedDB := writeRelationshipBaseFixture(t, false)
-					if mode == ModeIndexOnly {
-						staged = t.TempDir()
-					} else {
-						rewriteRelationshipFixtureIDs(t, stagedDB, staged, 200, 20)
-						replaceRelationshipParquet(t, stagedDB, staged, "message_recipients", `SELECT 200::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 200, 5, 'to'`)
-					}
-					for _, dataset := range []string{"participants", "participant_clusters", "conversation_participants"} {
-						requirements.NoError(os.RemoveAll(filepath.Join(staged, dataset)))
-						writeRelationshipParquet(t, stagedDB, staged, dataset, "SELECT * FROM read_parquet('"+quoteSQLString(parquetDatasetGlob(root, dataset))+"')")
-					}
-					_, err = Build(t.Context(), db, BuildOptions{Mode: mode, CommittedRoot: root, StagedBaseRoot: staged, OutputRoot: staged})
-					requirements.NoError(err)
-					output = staged
-				}
-				var roomRows, aliceCount int64
-				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE list_contains(member_ids, 5)`, relationshipParquetGlob(output, DatasetPeople)).Scan(&roomRows))
-				assertions.Zero(roomRows)
-				requirements.NoError(db.QueryRow(`SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetPeople)).Scan(&aliceCount))
-				if mode == ModeIncremental {
-					assertions.Equal(int64(2), aliceCount)
+			requirements.NoError(err)
+			replaceRelationshipParquet(t, db, root, "messages", "SELECT * FROM room_messages")
+			replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 100, 2, 'to' UNION ALL SELECT 100, 5, 'to' UNION ALL SELECT 101, 5, 'to'`)
+			replaceRelationshipParquet(t, db, root, "conversation_participants", `SELECT 10::BIGINT AS conversation_id, 4::BIGINT AS participant_id UNION ALL SELECT 10, 5`)
+
+			_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
+			requirements.NoError(err)
+			output := root
+			if mode != ModeFull {
+				staged, stagedDB := writeRelationshipBaseFixture(t, false)
+				if mode == ModeIndexOnly {
+					staged = t.TempDir()
 				} else {
-					assertions.Equal(int64(1), aliceCount)
+					rewriteRelationshipFixtureIDs(t, stagedDB, staged, 200, 20)
+					replaceRelationshipParquet(t, stagedDB, staged, "message_recipients", `SELECT 200::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 200, 5, 'to'`)
 				}
-				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetDomains)).Scan(&roomRows))
-				assertions.Zero(roomRows)
-				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE participant_domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetActivity)).Scan(&roomRows))
-				assertions.Zero(roomRows)
-				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetActivity)).Scan(&aliceCount))
-				assertions.Positive(aliceCount)
-			})
-		}
+				for _, dataset := range []string{"participants", "participant_clusters", "conversation_participants"} {
+					requirements.NoError(os.RemoveAll(filepath.Join(staged, dataset)))
+					writeRelationshipParquet(t, stagedDB, staged, dataset, "SELECT * FROM read_parquet('"+quoteSQLString(parquetDatasetGlob(root, dataset))+"')")
+				}
+				_, err = Build(t.Context(), db, BuildOptions{Mode: mode, CommittedRoot: root, StagedBaseRoot: staged, OutputRoot: staged})
+				requirements.NoError(err)
+				output = staged
+			}
+			var roomRows, aliceCount int64
+			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE list_contains(member_ids, 5)`, relationshipParquetGlob(output, DatasetPeople)).Scan(&roomRows))
+			assertions.Zero(roomRows)
+			requirements.NoError(db.QueryRow(`SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetPeople)).Scan(&aliceCount))
+			if mode == ModeIncremental {
+				assertions.Equal(int64(2), aliceCount)
+			} else {
+				assertions.Equal(int64(1), aliceCount)
+			}
+			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetDomains)).Scan(&roomRows))
+			assertions.Zero(roomRows)
+			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE participant_domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetActivity)).Scan(&roomRows))
+			assertions.Zero(roomRows)
+			requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetActivity)).Scan(&aliceCount))
+			assertions.Positive(aliceCount)
+		})
 	}
 }
 
@@ -887,7 +883,7 @@ func writeRelationshipBaseFixture(tb testing.TB, empty bool) (string, *sql.DB) {
 			(10::BIGINT, 'thread-10'::VARCHAR, 'Thread'::VARCHAR, 'email_thread'::VARCHAR)
 		) AS t(id, source_conversation_id, title, conversation_type)`+where)
 	writeRelationshipParquet(tb, db, root, "participants", `
-		SELECT *, false AS is_room FROM (VALUES
+		SELECT * FROM (VALUES
 			(1::BIGINT, 'alice@example.com'::VARCHAR, 'example.com'::VARCHAR, 'Alice'::VARCHAR, ''::VARCHAR),
 			(2::BIGINT, 'bob@example.net'::VARCHAR, 'example.net'::VARCHAR, ''::VARCHAR, ''::VARCHAR),
 			(3::BIGINT, 'alias@example.net'::VARCHAR, 'example.net'::VARCHAR, 'Bob Alias'::VARCHAR, ''::VARCHAR),
