@@ -125,6 +125,7 @@ jobs:
         run: make test-cli-e2e TEST_TIMEOUT=${{ matrix.test_timeout }} MSGVAULT_E2E_BINARY="$PWD/dist/msgvault"
 
       - name: Check for test reruns
+        if: always()
         id: check-reruns
         shell: bash
         run: |
@@ -242,15 +243,13 @@ jobs:
         run: make test-unsharded TEST_TIMEOUT=17m
 
       - name: Check for test reruns
+        if: always()
         id: check-unsharded-reruns
         shell: bash
         run: |
-          for report in gotestsum/unsharded-reruns.txt; do
-            if [ -s "$report" ]; then
-              echo "reruns=true" >> "$GITHUB_OUTPUT"
-              break
-            fi
-          done
+          if [ -s gotestsum/unsharded-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1 || steps.check-unsharded-reruns.outputs.reruns == 'true'
@@ -268,15 +267,13 @@ jobs:
           -timeout 5m -tags fts5 -run '^TestDocumentVectorStubKeepsStatusAvailableAndBuildActionable$' -count=1
 
       - name: Check for test reruns
+        if: always()
         id: check-vector-stub-reruns
         shell: bash
         run: |
-          for report in gotestsum/vector-stub-reruns.txt; do
-            if [ -s "$report" ]; then
-              echo "reruns=true" >> "$GITHUB_OUTPUT"
-              break
-            fi
-          done
+          if [ -s gotestsum/vector-stub-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1 || steps.check-vector-stub-reruns.outputs.reruns == 'true'
@@ -368,6 +365,7 @@ jobs:
         run: make test TEST_TIMEOUT=39m
 
       - name: Check for test reruns
+        if: always()
         id: check-reruns
         shell: bash
         run: |
@@ -788,6 +786,7 @@ jobs:
           --packages "./internal/api ./internal/importer ./scripts" -- -timeout 9m -tags "fts5 sqlite_vec"
 
       - name: Check for test reruns
+        if: always()
         id: check-reruns
         shell: bash
         run: |
@@ -991,15 +990,13 @@ jobs:
           -timeout 82m -p 4 -tags "fts5 sqlite_vec pgvector" -count=1
 
       - name: Check for test reruns
+        if: always()
         id: check-pgvector-reruns
         shell: bash
         run: |
-          for report in gotestsum/pgvector-reruns.txt; do
-            if [ -s "$report" ]; then
-              echo "reruns=true" >> "$GITHUB_OUTPUT"
-              break
-            fi
-          done
+          if [ -s gotestsum/pgvector-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload test events
         if: failure() || github.run_attempt > 1 || steps.check-pgvector-reruns.outputs.reruns == 'true'
@@ -1082,6 +1079,7 @@ jobs:
         run: make test-pg-shipped-unsharded TEST_TIMEOUT=24m
 
       - name: Check for test reruns
+        if: always()
         id: check-reruns
         shell: bash
         run: |
@@ -1188,15 +1186,13 @@ jobs:
         run: make test-pg-nocgo TEST_TIMEOUT=5m
 
       - name: Check for test reruns
+        if: always()
         id: check-pg-nocgo-reruns
         shell: bash
         run: |
-          for report in gotestsum/pg-nocgo-reruns.txt; do
-            if [ -s "$report" ]; then
-              echo "reruns=true" >> "$GITHUB_OUTPUT"
-              break
-            fi
-          done
+          if [ -s gotestsum/pg-nocgo-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload test events
         if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || steps.check-pg-nocgo-reruns.outputs.reruns == 'true') }}
@@ -1216,15 +1212,13 @@ jobs:
           --packages ./internal/store -- -timeout 7m -tags fts5 -count=5 -run 'Concurrent'
 
       - name: Check for test reruns
+        if: always()
         id: check-store-concurrency-reruns
         shell: bash
         run: |
-          for report in gotestsum/store-concurrency-reruns.txt; do
-            if [ -s "$report" ]; then
-              echo "reruns=true" >> "$GITHUB_OUTPUT"
-              break
-            fi
-          done
+          if [ -s gotestsum/store-concurrency-reruns.txt ]; then
+            echo "reruns=true" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload test events
         if: ${{ matrix.followups && (failure() || github.run_attempt > 1 || steps.check-store-concurrency-reruns.outputs.reruns == 'true') }}
