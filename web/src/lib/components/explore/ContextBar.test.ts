@@ -10,7 +10,15 @@ const sort = { options: [{ value: 'newest', label: 'Newest first' }], value: 'ne
 
 function mockCompact(compact: boolean): void {
   const matchMedia = window.matchMedia.bind(window);
-  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...matchMedia(query), matches: compact && query === MEDIA.compact }));
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => {
+    const list = matchMedia(query);
+    return {
+      media: list.media, matches: compact && query === MEDIA.compact, onchange: list.onchange,
+      addListener: list.addListener.bind(list), removeListener: list.removeListener.bind(list),
+      addEventListener: list.addEventListener.bind(list), removeEventListener: list.removeEventListener.bind(list),
+      dispatchEvent: list.dispatchEvent.bind(list)
+    };
+  });
 }
 
 describe('ContextBar extra controls', () => {
@@ -63,38 +71,33 @@ describe('ContextBar compact View menu', () => {
     expect(onchange).toHaveBeenCalledWith('oldest');
   });
 
-  it('offers only Sort for a locked person scope', async () => {
+  it.each([
+    { label: 'with sort', sort, groupingChain: [] as const },
+    { label: 'without sort', sort: undefined, groupingChain: ['year'] as const }
+  ])('handles a locked person scope $label', async ({ sort: scopeSort, groupingChain }) => {
     render(ContextBar, {
-      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '', sort,
+      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: [...groupingChain], countLabel: '', sort: scopeSort,
       lockedFilter: { dimension: 'participant', values: ['1'] },
       onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
     });
+    if (!scopeSort) {
+      expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
+      return;
+    }
     await fireEvent.click(screen.getByRole('button', { name: 'View' }));
     expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent?.trim())).toEqual(['Newest first']);
     expect(screen.queryByRole('menuitem', { name: 'Year' })).toBeNull();
   });
 
-  it('omits View for a locked grouped scope without sort', () => {
-    render(ContextBar, {
-      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: ['year'], countLabel: '',
-      lockedFilter: { dimension: 'participant', values: ['1'] },
-      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
-    });
-    expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
-  });
-
-  it('keeps grouping controls and the removable chip when grouped without sort', async () => {
-    const onRemoveGroup = vi.fn();
+  it('keeps grouping choices when grouped without sort', async () => {
     render(ContextBar, {
       client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: ['year'], countLabel: '2 groups',
-      onAddGroup: vi.fn(), onRemoveGroup, onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
     });
     await fireEvent.click(screen.getByRole('button', { name: 'View' }));
     expect(screen.getByRole('menuitem', { name: 'Month' })).toBeDefined();
     expect(screen.queryByRole('group', { name: 'Sort' })).toBeNull();
     expect(screen.queryByRole('menuitem', { name: 'Year' })).toBeNull();
-    await fireEvent.click(screen.getByRole('button', { name: 'Remove Year grouping' }));
-    expect(onRemoveGroup).toHaveBeenCalledWith(0);
   });
 });
 

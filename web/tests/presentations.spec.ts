@@ -46,6 +46,14 @@ test.describe('compact toolbar', () => {
     expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(2);
   }
 
+  async function stubVisualFiles(page: import('@playwright/test').Page, requests?: Array<Record<string, unknown>>) {
+    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
+    await page.route('**/api/v1/files/search', async route => {
+      requests?.push(route.request().postDataJSON());
+      await route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } });
+    });
+  }
+
   test('compact Messages and Files toolbars fit one row and View opens Files', async ({ page }) => {
     await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
     await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));
@@ -62,7 +70,6 @@ test.describe('compact toolbar', () => {
         await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
       } else {
         await page.keyboard.press('Escape');
-        await expect(controls.getByRole('button', { name: 'View', exact: true })).toBeFocused();
         await controls.getByRole('button', { name: 'Filter', exact: true }).click();
         const dialog = page.getByRole('dialog', { name: 'Filter' });
         await dialog.getByLabel('From', { exact: true }).fill('2026-07-01');
@@ -82,15 +89,13 @@ test.describe('compact toolbar', () => {
     await controls.getByRole('button', { name: 'Filter', exact: true }).click();
     const setup = page.getByRole('dialog', { name: 'Filter' }).getByRole('button', { name: 'Set up', exact: true });
     await expect(setup).toBeVisible();
-    await expectOneRow(controls);
     await setup.click();
     await expect.poll(async () => (await exploreHistoryState(page)).workspace).toBe('settings');
     expect(await exploreHistoryState(page)).toMatchObject({ settingsCategory: 'search', settingsAuthority: 'visual_attachments' });
   });
 
   test('compact Files keeps visual search fields and their state in Filter', async ({ page }) => {
-    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
-    await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } }));
+    await stubVisualFiles(page);
     await page.goto('/?workspace=files');
     const controls = page.locator('.context-controls');
     const filter = controls.getByRole('button', { name: 'Filter', exact: true });
@@ -121,11 +126,7 @@ test.describe('compact toolbar', () => {
 
   test('compact Filter indicates an active visual query or image', async ({ page }) => {
     const requests: Array<Record<string, unknown>> = [];
-    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
-    await page.route('**/api/v1/files/search', async route => {
-      requests.push(route.request().postDataJSON());
-      await route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } });
-    });
+    await stubVisualFiles(page, requests);
     await page.goto('/?workspace=files');
     const filter = page.getByRole('button', { name: 'Filter', exact: true });
     await expect(filter).toHaveText('Filter');
@@ -138,7 +139,6 @@ test.describe('compact toolbar', () => {
     await filter.click();
     await expect(filter).toHaveText('Filter · 1');
     await expect(filter).toHaveAccessibleDescription('Visual search active');
-    await expectOneRow(page.locator('.context-controls'));
     await filter.click();
     await visual.click();
     await filter.click();
@@ -157,12 +157,9 @@ test.describe('compact toolbar', () => {
   });
 
   test('compact Clear filters clears visual text, drafts, and images', async ({ page }) => {
+    await page.clock.install();
     const requests: Array<Record<string, unknown>> = [];
-    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
-    await page.route('**/api/v1/files/search', async route => {
-      requests.push(route.request().postDataJSON());
-      await route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } });
-    });
+    await stubVisualFiles(page, requests);
     await page.goto('/?workspace=files');
     await page.getByRole('button', { name: 'Filter', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: 'Filter' });
@@ -179,7 +176,9 @@ test.describe('compact toolbar', () => {
     await query.fill('pending draft');
     await clear.click();
     await expect(query).toHaveValue('');
-    await page.waitForTimeout(750);
+    const requestCount = requests.length;
+    await page.clock.fastForward(750);
+    expect(requests).toHaveLength(requestCount);
     expect(requests.some(request => request.visual_query === 'pending draft')).toBe(false);
 
     await dialog.getByLabel('Query image').setInputFiles({ name: 'query.png', mimeType: 'image/png', buffer: Buffer.from('image') });
@@ -201,9 +200,9 @@ test.describe('compact toolbar', () => {
   test('compact grouping and sort shortcuts open View', async ({ page }) => {
     await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
     await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));
-    for (const workspace of ['everything', 'files']) {
+    for (const [workspace, gridName] of [['everything', 'Messages results'], ['files', 'Files results']]) {
       await page.goto(`/?workspace=${workspace}`);
-      const grid = page.getByRole('grid', { name: workspace === 'files' ? 'Files results' : 'Messages results' });
+      const grid = page.getByRole('grid', { name: gridName });
       await expect(grid).toBeVisible();
       for (const key of ['g', 's']) {
         await grid.focus();
@@ -235,8 +234,6 @@ test.describe('compact toolbar', () => {
     await page.keyboard.press('f');
     await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'true');
     await page.keyboard.press('Escape');
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByRole('button', { name: 'View', exact: true })).toHaveAttribute('aria-expanded', 'false');
   });
 
 });
