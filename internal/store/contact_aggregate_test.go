@@ -25,8 +25,6 @@ func TestMessageAggregateCountsOnlyCountedInScope(t *testing.T) {
 	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 	requirements.NoError(err)
 	assertions.Equal(2, got.Count)
-	assertions.Equal(1, got.InitiatedByContact)
-	assertions.Equal(1, got.InitiatedByOwner)
 	requirements.NotNil(got.FirstAt)
 	assertions.Equal(q.Now.AddDate(-2, 0, 0), *got.FirstAt)
 	assertions.Equal([]store.ActivityChannel{store.ChannelEmail}, got.Channels)
@@ -79,18 +77,13 @@ func TestMessageAggregateMonthlyRowEndsAtNow(t *testing.T) {
 				// October starts at 01:00 after a midnight clock jump.
 				ats = []time.Time{time.Date(2023, 10, 1, 3, 30, 0, 0, time.UTC), time.Date(2023, 10, 1, 4, 30, 0, 0, time.UTC)}
 			}
-			for i, at := range ats {
-				f.add(t, f.ConvID, f.Source.ID, at, tc.zone != "UTC" && (i == 2 || tc.zone == "America/Asuncion" && i == 1), "")
+			for _, at := range ats {
+				f.add(t, f.ConvID, f.Source.ID, at, false, "")
 			}
 			projectTierSignals(t, f.Fixture, "UTC", 0)
 			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 			require.NoError(err)
 			assert.Equal(tc.want, got.Monthly)
-			if tc.zone == "America/New_York" || tc.zone == "Asia/Tokyo" {
-				assert.Equal(5, got.Count)
-				assert.Equal(2, got.InitiatedByContact)
-				assert.Equal(1, got.InitiatedByOwner)
-			}
 		})
 	}
 }

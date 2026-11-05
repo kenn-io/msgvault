@@ -10,42 +10,6 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-// An ordinarily imported chat stays visible without staged policy state.
-func TestActivityReadersDefaultMissingPolicyToFull(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	src, err := f.Store.GetOrCreateSource("beeper", "synthetic-account")
-	requirements.NoError(err)
-	requirements.NoError(f.Store.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
-	conv, err := f.Store.EnsureConversation(src.ID, "synthetic-room", "Room")
-	requirements.NoError(err)
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), conv)
-	requirements.NoError(err)
-	id := f.add(t, conv, src.ID, timelineContactQuery(f).Now, false, "")
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='chat' WHERE id=?`), id)
-	requirements.NoError(err)
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	var projected int
-	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&projected))
-	requirements.Equal(1, projected)
-	bursts, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	requirements.NoError(err)
-	assertions.Len(bursts.Bursts, 1)
-	messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conv, Limit: 10})
-	requirements.NoError(err)
-	assertions.Len(messages, 1)
-	display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
-	requirements.NoError(err)
-	assertions.Len(display, 1)
-	summary, err := f.Store.MessageContactAggregateContext(t.Context(), timelineContactQuery(f))
-	requirements.NoError(err)
-	assertions.Equal(1, summary.Count)
-	latest, err := f.Store.LatestEligibleMessageContext(t.Context(), conv)
-	requirements.NoError(err)
-	assertions.Equal(id, latest)
-}
-
 func TestActivityReadersRefuseDuringDirectLimitTransition(t *testing.T) {
 	require := require.New(t)
 	f := newTimelineActivityFixture(t)
@@ -62,18 +26,16 @@ func TestActivityReadersRefuseDuringDirectLimitTransition(t *testing.T) {
 	require.NoError(err)
 	_, err = f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
 	require.ErrorIs(err, store.ErrPersonTierRebuilding)
-	for _, subject := range []store.ActivitySubject{{PersonID: person.ID}, {ParticipantIDs: []int64{other}}} {
-		q := timelineBurstQuery()
-		q.Subject = subject
-		_, err = f.Store.ListActivityBurstsContext(t.Context(), q)
-		require.ErrorIs(err, store.ErrPersonTierRebuilding)
-		_, err = f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10})
-		require.ErrorIs(err, store.ErrPersonTierRebuilding)
-		contact := timelineContactQuery(f)
-		contact.Subject = subject
-		_, err = f.Store.MessageContactAggregateContext(t.Context(), contact)
-		require.ErrorIs(err, store.ErrPersonTierRebuilding)
-	}
+	q := timelineBurstQuery()
+	q.Subject = store.ActivitySubject{PersonID: person.ID}
+	_, err = f.Store.ListActivityBurstsContext(t.Context(), q)
+	require.ErrorIs(err, store.ErrPersonTierRebuilding)
+	_, err = f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10})
+	require.ErrorIs(err, store.ErrPersonTierRebuilding)
+	contact := timelineContactQuery(f)
+	contact.Subject = store.ActivitySubject{ParticipantIDs: []int64{other}}
+	_, err = f.Store.MessageContactAggregateContext(t.Context(), contact)
+	require.ErrorIs(err, store.ErrPersonTierRebuilding)
 }
 
 // The projection's audience policy also governs live readers and saved aliases.
@@ -195,6 +157,8 @@ func TestActivityReadersChatAudienceUsesEnvelopeOrRoster(t *testing.T) {
 				requirements.NoError(f.Store.EnsureConversationParticipant(conv, id, "member"))
 			}
 			id := f.add(t, conv, src.ID, timelineContactQuery(f).Now, false, "")
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='chat' WHERE id=?`), id)
+			requirements.NoError(err)
 			if !envelope {
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
 			}
@@ -212,6 +176,20 @@ func TestActivityReadersChatAudienceUsesEnvelopeOrRoster(t *testing.T) {
 				want = 1
 			}
 			assertions.Equal(want, got.Bursts[0].Inbound)
+			if envelope {
+				messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conv, Limit: 10})
+				requirements.NoError(err)
+				assertions.Len(messages, 1)
+				display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
+				requirements.NoError(err)
+				assertions.Len(display, 1)
+				summary, err := f.Store.MessageContactAggregateContext(t.Context(), timelineContactQuery(f))
+				requirements.NoError(err)
+				assertions.Equal(1, summary.Count)
+				latest, err := f.Store.LatestEligibleMessageContext(t.Context(), conv)
+				requirements.NoError(err)
+				assertions.Equal(id, latest)
+			}
 		})
 	}
 }

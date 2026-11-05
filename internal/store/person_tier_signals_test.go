@@ -243,56 +243,6 @@ func TestPersonTierSignalsOwnerAddressInAnotherAccountIsExcluded(t *testing.T) {
 	assert.True(signals.Owner)
 }
 
-// Duplicate mailbox copies must not supply the second outbound event needed
-// for tier one; qualification and authorization precede logical-email collapse.
-func TestPersonTierSignalsCollapseQualifiedEmailCopies(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	a := newAudienceFixture(t)
-	second, err := a.f.Store.GetOrCreateSource("gmail", "second@example.com")
-	require.NoError(err)
-	require.NoError(a.f.Store.AddAccountIdentity(second.ID, "owner@example.com", "manual"))
-	room, err := a.f.Store.EnsureConversationWithType(second.ID, "copies", "email_thread", "Copies")
-	require.NoError(err)
-	for day := range 6 {
-		for _, source := range []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}} {
-			from, to := a.sender, a.owner
-			if day == 0 {
-				from, to = a.owner, a.sender
-			}
-			m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -day)).Build()
-			m.SourceID, m.ConversationID = source.id, source.room
-			m.SenderID = sql.NullInt64{Int64: from, Valid: true}
-			m.RFC822MessageID = sql.NullString{String: fmt.Sprintf("<logical-%d@example.com>", day), Valid: true}
-			id, err := a.f.Store.UpsertMessage(m)
-			require.NoError(err)
-			require.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
-			require.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
-		}
-	}
-	projectTierSignals(t, a.f, "UTC", 25)
-	defer store.SetPersonTierRowPage(1)()
-	for _, sources := range [][]int64{nil, {a.f.Source.ID}, {second.ID}, {}} {
-		ctx := t.Context()
-		if sources != nil {
-			ctx = sourcescope.WithSourceIDs(ctx, sources)
-		}
-		preview, err := a.f.Store.PreviewPersonTiersContext(ctx, tierOptions())
-		require.NoError(err)
-		if sources != nil && len(sources) == 0 {
-			assert.Empty(preview.People)
-			continue
-		}
-		require.Len(preview.People, 1)
-		assert.Equal(2, preview.People[0].Tier)
-		explanation, err := a.f.Store.ExplainPersonTierContext(ctx, a.personID, tierOptions())
-		require.NoError(err)
-		assert.Equal(1, explanation.Signals.OutboundShort)
-		assert.Equal(5, explanation.Signals.InboundShort)
-		assert.Equal(6, explanation.Signals.ActiveDaysShort)
-	}
-}
-
 func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind               string
@@ -357,17 +307,20 @@ func TestPersonTierSignalsCopyQualificationControls(t *testing.T) {
 	}
 }
 
-// Tier counts collapse canonical email copies within the granted sources.
+// Duplicate mailbox copies must not supply the second outbound event needed
+// for tier one; qualification and authorization precede logical-email collapse.
 func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		ids         [2]string
 		sameMailbox bool
+		days        int
 		want        int
 	}{
-		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, false, 1},
-		{"missing IDs", [2]string{"", ""}, true, 2},
-		{"distinct IDs", [2]string{"first@example.com", "second@example.com"}, true, 2},
+		{"six days of copies", [2]string{}, false, 6, 5},
+		{"clean brackets", [2]string{"<canonical@example.com>", "canonical@example.com"}, false, 1, 1},
+		{"missing IDs", [2]string{"", ""}, true, 1, 2},
+		{"distinct IDs", [2]string{"first@example.com", "second@example.com"}, true, 1, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -378,34 +331,60 @@ func TestPersonTierSignalsCanonicalEmailCopies(t *testing.T) {
 			room, err := a.f.Store.EnsureConversationWithType(second.ID, "canonical-copies", "email_thread", "Canonical copies")
 			requirements.NoError(err)
 			sources := []struct{ id, room int64 }{{a.f.Source.ID, a.f.ConvID}, {second.ID, room}}
-			firstCount, secondCount := 1, 1
+			firstCount, secondCount := tc.want, tc.want
 			if tc.sameMailbox {
 				sources[1] = sources[0]
 				firstCount, secondCount = 2, 0
 			}
-			for i, source := range sources {
-				m := a.f.NewMessage().WithSentAt(a.asOf.AddDate(0, 0, -2+i)).Build()
-				m.SourceID, m.ConversationID = source.id, source.room
-				m.SenderID = sql.NullInt64{Int64: a.sender, Valid: true}
-				m.RFC822MessageID = sql.NullString{String: tc.ids[i], Valid: tc.ids[i] != ""}
-				id, err := a.f.Store.UpsertMessage(m)
-				requirements.NoError(err)
-				requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{a.sender}, nil))
-				requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{a.owner}, nil))
+			for day := range tc.days {
+				for i, source := range sources {
+					from, to := a.sender, a.owner
+					at := a.asOf.AddDate(0, 0, -2+i)
+					key := tc.ids[i]
+					if tc.days > 1 {
+						at = a.asOf.AddDate(0, 0, -day)
+						key = fmt.Sprintf("<logical-%d@example.com>", day)
+						if day == 0 {
+							from, to = a.owner, a.sender
+						}
+					}
+					m := a.f.NewMessage().WithSentAt(at).Build()
+					m.SourceID, m.ConversationID = source.id, source.room
+					m.SenderID = sql.NullInt64{Int64: from, Valid: true}
+					m.RFC822MessageID = sql.NullString{String: key, Valid: key != ""}
+					id, err := a.f.Store.UpsertMessage(m)
+					requirements.NoError(err)
+					requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "from", []int64{from}, nil))
+					requirements.NoError(a.f.Store.ReplaceMessageRecipients(id, "to", []int64{to}, nil))
+				}
 			}
 			projectTierSignals(t, a.f, "UTC", 25)
 			defer store.SetPersonTierRowPage(1)()
 			for _, scope := range []struct {
 				ids  []int64
 				want int
-			}{{nil, tc.want}, {[]int64{a.f.Source.ID}, firstCount}, {[]int64{second.ID}, secondCount}} {
+			}{{nil, tc.want}, {[]int64{a.f.Source.ID}, firstCount}, {[]int64{second.ID}, secondCount}, {[]int64{}, 0}} {
 				ctx := t.Context()
 				if scope.ids != nil {
 					ctx = sourcescope.WithSourceIDs(ctx, scope.ids)
 				}
+				if tc.days > 1 {
+					preview, err := a.f.Store.PreviewPersonTiersContext(ctx, tierOptions())
+					requirements.NoError(err)
+					if scope.ids != nil && len(scope.ids) == 0 {
+						assertions.Empty(preview.People)
+						continue
+					}
+					requirements.Len(preview.People, 1)
+					assertions.Equal(2, preview.People[0].Tier)
+				}
 				explanation, err := a.f.Store.ExplainPersonTierContext(ctx, a.personID, tierOptions())
 				requirements.NoError(err)
 				assertions.Equal(scope.want, explanation.Signals.InboundShort)
+				if tc.days > 1 {
+					assertions.Equal(1, explanation.Signals.OutboundShort)
+					assertions.Equal(6, explanation.Signals.ActiveDaysShort)
+				}
 			}
 		})
 	}

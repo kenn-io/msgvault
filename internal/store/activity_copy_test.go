@@ -111,6 +111,7 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 					quiet, err := f.Store.ListActivityBurstsContext(ctx, q)
 					requirements.NoError(err)
 					assertions.Len(quiet.Bursts, scope.count)
+					assertions.Equal(1-scope.count, quiet.NoiseOmitted)
 				})
 			}
 		})

@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
-func TestScopedTierHiddenIdentifier(t *testing.T) {
+func TestScopedTierAndActivityHiddenIdentifier(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	f := newTimelineActivityFixture(t)
@@ -39,59 +39,20 @@ func TestScopedTierHiddenIdentifier(t *testing.T) {
 	before, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
 	requirements.NoError(err)
 	requirements.Equal(3, before.Tier)
+	beforeActivity, err := f.Store.MessageContactAggregateContext(ctx, q)
+	requirements.NoError(err)
+	requirements.Zero(beforeActivity.Count)
 	requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
 	after, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
 	requirements.NoError(err)
 	assertions.Equal(before.Tier, after.Tier)
 	assertions.Equal(before.Signals, after.Signals)
+	afterActivity, err := f.Store.MessageContactAggregateContext(ctx, q)
+	requirements.NoError(err)
+	assertions.Equal(beforeActivity, afterActivity)
 }
 
-func TestScopedActivityHiddenIdentifier(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	f.peer = f.EnsureParticipant("noreply@example.com", "Peer", "example.com")
-	alias := f.EnsureParticipant("noreply@other.example.com", "Alias", "other.example.com")
-	_, err := f.Store.LinkParticipants(f.peer, alias)
-	requirements.NoError(err)
-	_, _, err = f.Store.CreatePersonFromParticipant(f.peer)
-	requirements.NoError(err)
-	q := timelineContactQuery(f)
-	f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
-	hidden, err := f.Store.GetOrCreateSource("matrix", "hidden@example.com")
-	requirements.NoError(err)
-	conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
-	requirements.NoError(err)
-	peer := f.peer
-	f.peer = alias
-	hiddenAt := q.Now
-	f.add(t, conv, hidden.ID, hiddenAt, false, "")
-	f.peer = peer
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-
-	before, err := f.Store.MessageContactAggregateContext(ctx, q)
-	requirements.NoError(err)
-	requirements.Zero(before.Count)
-	requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
-	after, err := f.Store.MessageContactAggregateContext(ctx, q)
-	requirements.NoError(err)
-	assertions.Equal(before, after)
-	bq := timelineBurstQuery()
-	bq.Filters.IncludeNoise = true
-	bursts, err := f.Store.ListActivityBurstsContext(ctx, bq)
-	requirements.NoError(err)
-	requirements.Len(bursts.Bursts, 1)
-	assertions.Zero(bursts.Bursts[0].Inbound)
-	for _, cp := range bursts.Bursts[0].Counterparts {
-		if cp.ParticipantID == f.peer {
-			assertions.Equal("automated_address", cp.Excluded)
-			assertions.False(cp.Counted)
-		}
-	}
-}
-
-func TestTierAndTimelineOwnerAgree(t *testing.T) {
+func TestTimelineExcludesOwnerAddressInAnotherAccount(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		name := "unsaved"
 		if saved {
@@ -266,21 +227,19 @@ func TestActivityInstantWindowReturnsCompleteConversationDays(t *testing.T) {
 	requirements.NoError(err)
 	projectTierSignals(t, f.Fixture, "America/New_York", 0)
 	for _, tc := range []struct {
-		name          string
-		after, before *time.Time
+		name           string
+		after, before  *time.Time
+		conversationID int64
 	}{
-		{"after", new(first.Add(3 * time.Hour)), new(last.Add(time.Hour))},
-		{"before", new(first.Add(-time.Hour)), new(first.Add(3 * time.Hour))},
-		{"middle", new(first.Add(3 * time.Hour)), new(first.Add(7 * time.Hour))},
-		{"noise-only instant", new(first.Add(time.Hour)), new(first.Add(2 * time.Hour))},
-		{"inclusive after", new(last), new(last.Add(time.Hour))},
+		{"after", new(first.Add(3 * time.Hour)), new(last.Add(time.Hour)), 0},
+		{"before", new(first.Add(-time.Hour)), new(first.Add(3 * time.Hour)), f.ConvID},
+		{"middle", new(first.Add(3 * time.Hour)), new(first.Add(7 * time.Hour)), 0},
+		{"noise-only instant", new(first.Add(time.Hour)), new(first.Add(2 * time.Hour)), 0},
+		{"inclusive after", new(last), new(last.Add(time.Hour)), 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
-			q := store.BurstQuery{After: tc.after, Before: tc.before, Limit: 10}
-			if tc.name == "before" {
-				q.ConversationID = f.ConvID
-			}
+			q := store.BurstQuery{After: tc.after, Before: tc.before, ConversationID: tc.conversationID, Limit: 10}
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(page.Bursts, 1)

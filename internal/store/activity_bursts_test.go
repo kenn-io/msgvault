@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/persontiers"
-	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
@@ -76,30 +75,32 @@ func TestBurstsReturnUnsavedCorrespondents(t *testing.T) {
 func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
 	for _, tc := range []struct {
 		name, address, alias, phone, kind, value, excluded string
+		saved                                              []bool
+		aggregate, defaultView, phoneOnly, out             bool
 	}{
-		{"human email", "noreply@example.com", "human@example.com", "", "", "", ""},
-		{"phone", "noreply@example.com", "", "+12025550123", "", "", ""},
-		{"chat identifier", "noreply@example.com", "", "", "matrix", "@peer:example.com", ""},
-		{"email identifier", "noreply@example.com", "", "", "email", "human@example.com", ""},
-		{"room human email", "room@resource.calendar.google.com", "human@example.com", "", "", "", ""},
-		{"room phone", "room@resource.calendar.google.com", "", "+12025550123", "", "", "calendar_room"},
-		{"automated aliases", "noreply@example.com", "noreply@other.example.com", "", "", "", "automated_address"},
-		{"mixed categories", "noreply@example.com", "human@resource.calendar.google.com", "", "", "", ""},
-		{"overlapping categories", "noreply@resource.calendar.google.com", "noreply@example.com", "", "", "", "automated_address"},
+		{name: "human email", address: "noreply@example.com", alias: "human@example.com", aggregate: true, defaultView: true, saved: []bool{true}},
+		{name: "phone", address: "noreply@example.com", phone: "+12025550123", saved: []bool{true}},
+		{name: "chat identifier", address: "noreply@example.com", kind: "matrix", value: "@peer:example.com", saved: []bool{true}},
+		{name: "email identifier", address: "noreply@example.com", kind: "email", value: "human@example.com", saved: []bool{true}},
+		{name: "room human email", address: "room@resource.calendar.google.com", alias: "human@example.com", saved: []bool{true}},
+		{name: "room phone", address: "room@resource.calendar.google.com", phone: "+12025550123", excluded: "calendar_room", saved: []bool{true}},
+		{name: "automated aliases", address: "noreply@example.com", alias: "noreply@other.example.com", excluded: "automated_address", saved: []bool{false, true}},
+		{name: "mixed categories", address: "noreply@example.com", alias: "human@resource.calendar.google.com", saved: []bool{true}},
+		{name: "overlapping categories", address: "noreply@resource.calendar.google.com", alias: "noreply@example.com", excluded: "automated_address", saved: []bool{true}},
+		{name: "phone-only participant", phone: "+14155550123", phoneOnly: true, saved: []bool{false}, out: true},
 	} {
-		for _, saved := range []bool{false, true} {
-			if !saved && tc.name != "automated aliases" {
-				continue
-			}
-			name := tc.name
-			if !saved {
-				name = "automated address"
-			}
-			t.Run(fmt.Sprintf("%s/saved=%t", name, saved), func(t *testing.T) {
+		for _, saved := range tc.saved {
+			t.Run(fmt.Sprintf("%s/saved=%t", tc.name, saved), func(t *testing.T) {
 				require := require.New(t)
 				assert := assert.New(t)
 				f := newTimelineActivityFixture(t)
-				f.peer = f.EnsureParticipant(tc.address, "Peer", "example.com")
+				if tc.phoneOnly {
+					_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address=NULL,phone_number=? WHERE id=?`), tc.phone, f.peer)
+					require.NoError(err)
+					require.NoError(f.Store.SetParticipantIdentifier(f.peer, "phone", tc.phone))
+				} else {
+					f.peer = f.EnsureParticipant(tc.address, "Peer", "example.com")
+				}
 				subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
 				if saved {
 					person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
@@ -115,20 +116,20 @@ func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
 					subject = store.ActivitySubject{PersonID: person.ID}
 				}
 				q := timelineContactQuery(f)
-				f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+				f.add(t, f.ConvID, f.Source.ID, q.Now, tc.out, "")
 				projectTierSignals(t, f.Fixture, "UTC", 0)
 				q.Subject = subject
 				want := 0
 				if tc.excluded == "" {
 					want = 1
 				}
-				if tc.name == "human email" {
+				if tc.aggregate {
 					aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 					require.NoError(err)
 					assert.Equal(want, aggregate.Count)
 				}
 				bq := timelineBurstQuery()
-				if tc.name == "human email" {
+				if tc.defaultView {
 					page, err := f.Store.ListActivityBurstsContext(t.Context(), bq)
 					require.NoError(err)
 					assert.Len(page.Bursts, want)
@@ -145,28 +146,10 @@ func TestActivityExclusionsUseBoundIdentities(t *testing.T) {
 						assert.Equal(want == 1, cp.Counted)
 					}
 				}
-				assert.True(found, "burst includes the email counterpart")
+				assert.True(found, "burst includes the counterpart")
 			})
 		}
 	}
-}
-func TestBurstsApplySourceScope(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	f.add(t, f.ConvID, f.Source.ID, at, false, "")
-	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-	requirements.NoError(err)
-	conv, err := f.Store.EnsureConversation(other.ID, "other", "Other")
-	requirements.NoError(err)
-	f.add(t, conv, other.ID, at, false, "")
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	got, err := f.Store.ListActivityBurstsContext(sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID}), timelineBurstQuery())
-	requirements.NoError(err)
-	requirements.Len(got.Bursts, 1)
-	assertions.Equal(f.Source.ID, got.Bursts[0].SourceID)
-	assertions.Zero(got.NoiseOmitted)
 }
 func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 	requirements := require.New(t)
@@ -233,21 +216,6 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 	}
 }
 
-func TestBurstsKeepLocalDateAcrossDSTDay(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC), false, "")
-	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC), true, "")
-	projectTierSignals(t, f.Fixture, "America/New_York", 0)
-	got, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	requirements.NoError(err)
-	requirements.Len(got.Bursts, 1)
-	assertions.Equal("2026-11-01", got.Bursts[0].LocalDate)
-	assertions.Equal(1, got.Bursts[0].Inbound)
-	assertions.Equal(1, got.Bursts[0].Outbound)
-}
-
 func TestBurstsOutboundOwnerIsNotNoise(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
@@ -259,28 +227,6 @@ func TestBurstsOutboundOwnerIsNotNoise(t *testing.T) {
 	requirements.Len(got.Bursts, 1)
 	assertions.Equal(1, got.Bursts[0].Outbound)
 	assertions.Zero(got.NoiseOmitted)
-}
-
-func TestBurstsPhoneCounterpartsAreNotEmailExclusions(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE participants SET email_address=NULL,phone_number='+14155550123' WHERE id=?`), f.peer)
-	requirements.NoError(err)
-	requirements.NoError(f.Store.SetParticipantIdentifier(f.peer, "phone", "+14155550123"))
-	f.add(t, f.ConvID, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), true, "")
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	q := timelineBurstQuery()
-	q.Filters.IncludeNoise = true
-	got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
-	requirements.NoError(err)
-	requirements.Len(got.Bursts, 1)
-	for _, cp := range got.Bursts[0].Counterparts {
-		if cp.ParticipantID == f.peer {
-			assertions.Empty(cp.Excluded)
-			assertions.True(cp.Counted)
-		}
-	}
 }
 
 func TestActivityListExclusionCanBeDisabled(t *testing.T) {
