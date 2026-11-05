@@ -240,7 +240,7 @@ func (s *Store) hydrateActivityCounterpartsContext(ctx context.Context, messages
 		owner := activityOwnerLinked(raw)
 		audience := map[string]bool{}
 		for _, cp := range raw {
-			if owner(cp) {
+			if owner(cp) || participants[cp.ParticipantID].excluded == "owner" {
 				continue
 			}
 			key := fmt.Sprint("participant:", cp.ParticipantID)

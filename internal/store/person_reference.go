@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"net/mail"
 	"strconv"
 	"strings"
 
@@ -48,6 +49,10 @@ func (s *Store) ResolvePersonReferenceContext(ctx context.Context, kind PersonRe
 		}
 	case PersonRefKind(ContactAddressEmail):
 		value = strings.ToLower(value)
+		address, err := mail.ParseAddress(value)
+		if err != nil || address.Address != value || address.Name != "" {
+			return nil, fmt.Errorf("%w: invalid email reference", ErrInvalidActivityRequest)
+		}
 	case "phone":
 		var err error
 		value, err = textimport.NormalizePhone(value)

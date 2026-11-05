@@ -132,13 +132,14 @@ func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {
 				contact.Subject = store.ActivitySubject{PersonID: p.ID}
 			}
 			owner2 := f.EnsureParticipant("second@example.com", "Second owner", "example.com")
+			sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 			source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
 			require.NoError(err)
 			require.NoError(f.Store.AddAccountIdentity(source.ID, "second@example.com", "manual"))
 			room, err := f.Store.EnsureConversationWithType(source.ID, "sent-copy", "email_thread", "Sent copy")
 			require.NoError(err)
 			received := f.add(t, f.ConvID, f.Source.ID, contact.Now.Add(-time.Hour), false, "<subject-copy@example.com>")
-			require.NoError(f.Store.ReplaceMessageRecipients(received, "from", []int64{owner2}, nil))
+			require.NoError(f.Store.ReplaceMessageRecipients(received, "from", []int64{sender}, nil))
 			require.NoError(f.Store.ReplaceMessageRecipients(received, "to", []int64{f.owner, f.peer}, nil))
 			sent := f.add(t, room, source.ID, contact.Now, true, "subject-copy@example.com")
 			require.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{owner2}, nil))

@@ -103,17 +103,13 @@ func (s *Store) activityAddressExclusionsCTE(ctx context.Context, subjects strin
 	if s.IsPostgreSQL() {
 		valid = strings.ReplaceAll(valid, "CHAR(", "CHR(")
 	}
-	scope, args := sourceScopeClause(ctx, "observed.source_id")
-	visible := ""
-	if scope != "" {
-		visible = ` WHERE EXISTS(SELECT 1 FROM messages observed WHERE ` + activityParticipantMatchSQL("observed", "p.id") + scope + `)`
-	}
+	visible, args := activityIdentityPopulationSQL(ctx)
 	domain, domainArgs := exclusionPatternsSQL(`SUBSTR(address,`+at+`+1)`, f.Exclusions.ExcludeDomainPatterns)
 	local, localArgs := exclusionPatternsSQL(`SUBSTR(address,1,CASE WHEN `+at+`>0 THEN `+at+`-1 ELSE 0 END)`, f.Exclusions.ExcludeAddressPatterns)
 	args = append(args, domainArgs...)
 	args = append(args, localArgs...)
 	return `exclusion_subjects AS MATERIALIZED (` + subjects + `), exclusion_visible AS MATERIALIZED (
- SELECT p.*,pp.person_id FROM participants p LEFT JOIN person_participants pp ON pp.participant_id=p.id` + visible + `
+ ` + visible + `
  ), exclusion_links(participant_id,member_id) AS (
  SELECT subject.participant_id,p.id FROM exclusion_subjects subject
  LEFT JOIN person_participants bound ON bound.person_id=subject.person_id
@@ -124,16 +120,17 @@ func (s *Store) activityAddressExclusionsCTE(ctx context.Context, subjects strin
  JOIN participant_links l ON l.participant_a=member.member_id OR l.participant_b=member.member_id
  JOIN exclusion_visible p ON p.id=CASE WHEN l.participant_a=member.member_id THEN l.participant_b ELSE l.participant_a END AND p.person_id IS NULL
  ), exclusion_members AS MATERIALIZED (
- SELECT member.participant_id,p.email_address,p.phone_number,pi.identifier_type,pi.identifier_value
+ SELECT member.participant_id,p.email_address,p.phone_number,p.is_account_owner,pi.identifier_type,pi.identifier_value
  FROM exclusion_links member JOIN exclusion_visible p ON p.id=member.member_id
  LEFT JOIN participant_identifiers pi ON pi.participant_id=p.id
  ), exclusion_addresses AS (
- SELECT participant_id,LOWER(TRIM(COALESCE(email_address,''))) AS address,
+ SELECT participant_id,is_account_owner,LOWER(TRIM(COALESCE(email_address,''))) AS address,
  CASE WHEN TRIM(COALESCE(phone_number,''))<>'' OR (identifier_type<>'email' AND TRIM(identifier_value)<>'') THEN 1 ELSE 0 END AS has_phone
  FROM exclusion_members
- UNION ALL SELECT participant_id,LOWER(TRIM(identifier_value)),0 FROM exclusion_members WHERE identifier_type='email'
+ UNION ALL SELECT participant_id,is_account_owner,LOWER(TRIM(identifier_value)),0 FROM exclusion_members WHERE identifier_type='email'
  ), address_exclusions AS (
- SELECT participant_id,CASE WHEN MAX(CASE WHEN address<>'' THEN 1 ELSE 0 END)=0 THEN ''
+ SELECT participant_id,CASE WHEN MAX(is_account_owner)=1 THEN 'owner'
+ WHEN MAX(CASE WHEN address<>'' THEN 1 ELSE 0 END)=0 THEN ''
  WHEN MIN(CASE WHEN address='' OR (` + valid + ` AND ` + domain + `) THEN 1 ELSE 0 END)=1 THEN 'calendar_room'
  WHEN MAX(has_phone)=0 AND MIN(CASE WHEN address='' OR (` + valid + ` AND ` + local + `) THEN 1 ELSE 0 END)=1 THEN 'automated_address'
  ELSE '' END AS excluded FROM exclusion_addresses GROUP BY participant_id
@@ -147,7 +144,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	if w.ConversationID < 0 || (w.After != nil && w.Before != nil && !w.After.Before(*w.Before)) {
 		return "", nil, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
 	}
-	where := s.activityLiveEligibleSQL("m", "src") + ` AND ` + FullActivityEventWhere("ae")
+	where := s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae")
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	where += scope
 	windowWhere := []string{}
@@ -164,7 +161,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 		windowWhere = append(windowWhere, `ae.occurred_at<?`)
 		windowArgs = append(windowArgs, w.Before.UTC())
 	}
-	if w.After == nil && w.Before == nil && (w.FromDate != "" || w.ToDate != "") {
+	if w.FromDate != "" || w.ToDate != "" {
 		if !validActivityDate(w.FromDate) || !validActivityDate(w.ToDate) || w.FromDate > w.ToDate {
 			return "", nil, fmt.Errorf("%w: invalid local dates", ErrInvalidActivityRequest)
 		}
@@ -224,7 +221,9 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	// them into each correlated fact lookup and rebuild the scoped population
 	// repeatedly while scoring a burst. The fences retain all eligible rows
 	// before copy selection, grouping and pagination. Prefer counted contact
-	// for the requested subject when copies differ, then keep stable IDs.
+	// for the requested subject when copies differ, then the fullest thread.
+	// Thread sizes include eligible messages outside this read's window so
+	// widening the window keeps the same account's copy.
 	query := prefix + `eligible AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,
@@ -255,15 +254,18 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  MAX(f.large_inbound) AS large_inbound,
  CASE WHEN f.contact_eligible=1 AND f.encrypted=0
  THEN MAX(CASE WHEN f.excluded=''` + countedSubject + ` AND ` + counted + ` THEN 1 ELSE 0 END) ELSE 0 END AS counted,
- CASE WHEN ` + listExcluded + `=1 OR MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END)=1 THEN 0 ELSE 1 END AS non_noise
+ CASE WHEN ` + listExcluded + `=1 OR (MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END)=1
+ AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded='' THEN 1 ELSE 0 END)=0) THEN 0 ELSE 1 END AS non_noise
  FROM facts f GROUP BY f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
  f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible
- ), thread_sizes AS (
- SELECT e.*,COUNT(*) OVER (PARTITION BY source_id,conversation_id) AS thread_messages FROM scored e
+ ), thread_sizes AS MATERIALIZED (
+ SELECT e.source_id,e.conversation_id,(SELECT COUNT(*) FROM messages m JOIN activity_events ae ON ae.message_id=m.id JOIN sources src ON src.id=m.source_id
+ WHERE m.source_id=e.source_id AND m.conversation_id=e.conversation_id AND ` + s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae") + `) AS thread_messages
+ FROM scored e GROUP BY e.source_id,e.conversation_id
  ), copies AS (
- SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,thread_messages DESC,source_id,message_id) AS copy_rank,
+ SELECT e.*,ROW_NUMBER() OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END ORDER BY counted DESC,COALESCE(ts.thread_messages,1) DESC,e.source_id,message_id) AS copy_rank,
  COUNT(*) OVER (PARTITION BY CASE WHEN channel='email' AND COALESCE(rfc822_message_id,'')<>'' THEN 'email:'||` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` ELSE 'id:'||CAST(message_id AS TEXT) END) AS copy_count
- FROM thread_sizes e
+ FROM scored e LEFT JOIN thread_sizes ts ON ts.source_id=e.source_id AND ts.conversation_id=e.conversation_id
  ), representatives AS (SELECT * FROM copies WHERE copy_rank=1)`
 	return query, args, nil
 }
