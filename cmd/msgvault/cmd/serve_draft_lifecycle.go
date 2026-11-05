@@ -17,6 +17,7 @@ import (
 	msgmime "go.kenn.io/msgvault/internal/mime"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/textutil"
+	"go.kenn.io/msgvault/internal/verification"
 )
 
 type draftLifecycleIntent struct {
@@ -28,6 +29,8 @@ type draftLifecycleIntent struct {
 	MetadataOnly bool // Set by delegated authorization, never by CLI arguments.
 	// ConversationID lists a conversation's local chat drafts in place of DraftID.
 	ConversationID int64
+
+	WithholdVerification bool
 }
 
 const draftLifecycleActive = "active"
@@ -274,6 +277,22 @@ func emitDraftLifecycleOutput(
 		output.Content = ""
 		output.RawMIME = ""
 		output.CandidateContent = ""
+	} else if intent.WithholdVerification {
+		for _, raw := range []string{output.RawMIME, output.CandidateContent} {
+			if raw == "" {
+				continue
+			}
+			parsed, err := msgmime.Parse([]byte(raw))
+			if err != nil {
+				return fmt.Errorf("classify managed draft MIME: %w", err)
+			}
+			if verification.Is(verification.Content{Subject: parsed.Subject, Text: output.Content + "\n" + parsed.BodyText, HTML: parsed.BodyHTML}) {
+				output.Content = verification.Masked
+				output.RawMIME = verification.Masked
+				output.CandidateContent = verification.Masked
+				break
+			}
+		}
 	}
 	if intent.JSON {
 		data, err := jsonv2.Marshal(output)
@@ -410,6 +429,7 @@ func (a *storeAPIAdapter) runCLIDraftLifecycle(
 	if err != nil {
 		return err
 	}
+	intent.WithholdVerification = req.Grant != nil && !req.Grant.HasPermission(agentgrant.PermissionVerificationRead)
 	if intent.ConversationID != 0 || strings.HasPrefix(intent.DraftID, store.ChatDraftIDPrefix) {
 		return a.runCLIChatDraftLifecycle(ctx, intent, req.Grant, emit)
 	}
