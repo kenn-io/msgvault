@@ -78,7 +78,7 @@
   }
 </script>
 
-<aside class="sidebar" class:sidebar--rail={collapsed} class:sidebar--drawer={!!onCloseNavigation} aria-label="Sidebar">
+<aside class="sidebar" class:sidebar--rail={collapsed} aria-label="Sidebar">
   <div class="sidebar__brand">msgvault{#if onCloseNavigation}<IconButton ariaLabel="Close navigation" onclick={onCloseNavigation}><X size={18} /></IconButton>{/if}</div>
   <nav aria-label="Primary">
     <ul>

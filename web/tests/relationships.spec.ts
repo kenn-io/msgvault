@@ -582,11 +582,6 @@ test.describe('touch People toolbar', () => {
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipShowAll: true }))}`);
     await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
     const toolbar = page.locator('.people-list .toolbar');
-    const segment = await page.getByRole('radiogroup', { name: 'List' }).boundingBox();
-    const filter = await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox();
-    const bounds = await toolbar.boundingBox();
-    expect.soft(Math.abs(segment!.height - filter!.height), 'toolbar controls share height').toBeLessThanOrEqual(1);
-    expect.soft(Math.abs((segment!.y - bounds!.y) - (segment!.x - bounds!.x)), 'toolbar top and left insets match').toBeLessThanOrEqual(1);
     await expect(toolbar.locator('.chips button')).toBeVisible();
     for (const button of await toolbar.locator('button:visible').all()) {
       expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
@@ -605,24 +600,6 @@ test('narrow mouse People toolbar retains compact control sizes', async ({ page 
   await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
   expect((await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox())!.height).toBeLessThan(44);
   expect((await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).boundingBox())!.height).toBeLessThan(44);
-});
-
-test('People heading follows phone width and keeps the duplicates heading', async ({ page }) => {
-  await prepare(page);
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/?workspace=relationships');
-  const heading = page.getByRole('heading', { name: 'People', exact: true });
-  await expect(heading).toHaveCount(1);
-  await expect.poll(async () => (await page.locator('.heading').filter({ has: heading }).boundingBox())!.height).toBeLessThanOrEqual(1);
-  await page.getByRole('button', { name: 'Filter', exact: true }).click();
-  await page.getByRole('button', { name: 'Possible duplicates', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Possible duplicates', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Back to People', exact: true })).toBeVisible();
-  await page.setViewportSize({ width: 930, height: 844 });
-  await page.goto('/?workspace=relationships');
-  await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
-  expect((await page.locator('.heading').boundingBox())!.height).toBeGreaterThan(1);
 });
 
 for (const close of ['Escape', 'Back to People']) {

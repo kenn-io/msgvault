@@ -260,8 +260,7 @@
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
-  <!-- The heading repeats the tab at phone width; toolbar sizing follows touch. -->
-  <div class="heading" class:heading--people={!urlState.peopleDuplicates}><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
+  <div class="heading"><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
   {#if urlState.peopleDuplicates}
     <PossibleDuplicates controller={reviews} onDecide={(candidate, decision) => reviews.queueDecision(candidate, decision)} />
   {:else}
@@ -278,9 +277,6 @@
 <style>
   .people { display: flex; min-height: 0; height: 100%; flex-direction: column; background: var(--bg-canvas); }
   .heading { --page-header-gap: 0px; padding: var(--space-5) var(--page-gutter) var(--field-gap); }
-  @media (max-width: 640px) {
-    .heading--people { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-  }
   .body { display: flex; min-height: 0; flex: 1; }
   .list { display: flex; min-height: 0; height: 100%; width: 100%; flex-direction: column; }
   .list-content { display: flex; min-height: 0; flex: 1; }
