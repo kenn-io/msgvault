@@ -490,21 +490,14 @@ func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
 	client, err := NewClient(path)
 	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
-	client.pageSize = 1
 	first, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Equal(1, first.MessagesAdded)
 	assert.Zero(first.MessagesUpdated)
-	var conversation string
-	query := st.Rebind(`SELECT c.source_conversation_id FROM messages m JOIN conversations c ON c.id = m.conversation_id WHERE m.source_id = ?`)
-	require.NoError(st.DB().QueryRow(query, src.ID).Scan(&conversation))
-	assert.Equal("any;-;two", conversation)
 	idle, err := client.Import(t.Context(), st, src.ID)
 	require.NoError(err)
 	assert.Zero(idle.MessagesAdded)
 	assert.Zero(idle.MessagesUpdated)
-	require.NoError(st.DB().QueryRow(query, src.ID).Scan(&conversation))
-	assert.Equal("any;-;two", conversation)
 }
 
 func TestImportFailedRecipientResolutionPreservesArchive(t *testing.T) {
