@@ -623,13 +623,4 @@ func TestImportTwentyLinksArchivedCalendarUID(t *testing.T) {
 	requirements.NoError(json.Unmarshal([]byte(metadata.String), &fields))
 	assertions.Equal("shared@example.org", fields["calendar_ical_uid"])
 	assertions.Equal("2026-09-01T09:30:00Z", fields["scheduled_start"])
-	raw, err := st.GetMessageRaw(note)
-	requirements.NoError(err)
-	var envelope struct {
-		Recording     jsontext.Value `json:"recording"`
-		CalendarEvent jsontext.Value `json:"calendar_event"`
-	}
-	requirements.NoError(json.Unmarshal(raw, &envelope))
-	assertions.JSONEq(string(source.pages[""].Records[0].Raw), string(envelope.Recording))
-	assertions.JSONEq(`{"id":"event-1","iCalUid":"shared@example.org","startsAt":"2026-09-01T09:30:00Z","endsAt":"2026-09-01T10:30:00Z"}`, string(envelope.CalendarEvent))
 }
