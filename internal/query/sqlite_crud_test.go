@@ -2603,6 +2603,8 @@ func TestDeletionTargetPathsExcludeCalendarArtifactsFromGmail(t *testing.T) {
 	_, err := env.DB.Exec(`INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet)
 		VALUES (?, 1, 1, 'calendar-invite:generated', 'calendar_event', '2024-01-15 10:00:00', 'Generated event', 'generated calendar content')`, calendarID)
 	requirements.NoError(err)
+	_, err = env.DB.Exec(`INSERT INTO source_merge_archive_only_messages (message_id) VALUES (?)`, calendarID)
+	requirements.NoError(err)
 	sourceID := int64(1)
 	filter := MessageFilter{SourceID: &sourceID}
 	chatSource := env.AddSource(dbtest.SourceOpts{Type: "google_chat", Identifier: "chat@example.test"})

@@ -2603,7 +2603,7 @@ func (e *DuckDBEngine) GetDeletionTargetsByFilter(ctx context.Context, filter Me
 	// maintaining a second, partial copy for the fallback path.
 	filter.HideDeletedFromSource = true
 	where, args := e.buildFilterConditions(filter)
-	where += " AND NOT msg.archive_only AND " + store.SourceNativeMessagesWhere("msg", "src")
+	where += " AND NOT msg.archive_only"
 
 	// Build query — JOIN src to scope to deletable sources authoritatively.
 	query := fmt.Sprintf(`
