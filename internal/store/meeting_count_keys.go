@@ -27,7 +27,7 @@ func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64][]string
 		return nil, err
 	}
 	defer release()
-	r := s.meetingReader(ctx)
+	r := s.meetingReader()
 
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM messages m
  WHERE m.message_type IN ('meeting_transcript','meeting_note','meeting_minutes') AND m.deleted_at IS NULL
@@ -98,7 +98,7 @@ func (s *Store) countScopedMeetings(ctx context.Context, tx *loggedTx, statement
 	if err := rows.Close(); err != nil {
 		return 0, fmt.Errorf("close meeting count members: %w", err)
 	}
-	r := reboundReader{reader: tx.Tx, rebind: s.dialect.Rebind, dialect: s.dialect}
+	r := reboundReader{loggedReader: tx, dialect: s.dialect}
 	keys := make(map[string]bool, len(linked))
 	for id, isLinked := range linked {
 		var occurrences []linkOccurrence
