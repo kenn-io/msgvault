@@ -20,6 +20,27 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
+func TestImportAdvancesPastAFullPageOfFailures(t *testing.T) {
+	require := require.New(t)
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`INSERT INTO message (date, text) VALUES (725760000, 'one'), (725760001, 'two'), (725760002, 'three')`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+	_, err = st.DB().Exec(`CREATE TRIGGER fail_message BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+	require.NoError(err)
+	client, err := NewClient(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	client.pageSize = 2
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	summary, err := client.Import(ctx, st, src.ID)
+	require.NoError(err)
+	assert.Equal(t, 3, summary.Skipped)
+}
+
 func TestImportIndexesMessageBodies(t *testing.T) {
 	for _, tt := range []struct {
 		name string

@@ -186,6 +186,11 @@ func (c *Client) Import(
 	s *store.Store,
 	sourceID int64,
 ) (*ImportSummary, error) {
+	return c.ImportWithProgress(ctx, s, sourceID, nil)
+}
+
+// ImportWithProgress reports cumulative progress after each page.
+func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceID int64, onProgress func(ImportSummary)) (*ImportSummary, error) {
 	summary := &ImportSummary{}
 	if err := c.prepareAttachments(ctx); err != nil {
 		return summary, fmt.Errorf("read attachment schema: %w", err)
@@ -273,6 +278,7 @@ func (c *Client) Import(
 				break
 			}
 
+			lastROWID = msg.ROWID
 			if err := c.importMessage(
 				ctx, s, sourceID, &msg,
 				imessageLabelID, smsLabelID,
@@ -286,7 +292,6 @@ func (c *Client) Import(
 					// Keep scanning later messages and report the count once the scan ends.
 					// importMessage has already persisted this message row.
 					imported++
-					lastROWID = msg.ROWID
 					// The first failure explains the run; the count covers the rest.
 					level := slog.LevelDebug
 					if summary.AttachmentFailures == 1 {
@@ -305,9 +310,11 @@ func (c *Client) Import(
 			}
 
 			imported++
-			lastROWID = msg.ROWID
 		}
 
+		if onProgress != nil {
+			onProgress(*summary)
+		}
 		if pageCount < c.pageSize {
 			break
 		}
@@ -519,6 +526,9 @@ func (c *Client) importMessage(
 	})
 	if err != nil {
 		return fmt.Errorf("upsert message: %w", err)
+	}
+	if msgID > c.maxMessageID {
+		summary.MessagesAdded++
 	}
 	if clearsExistingDate {
 		summary.DatesCleared++

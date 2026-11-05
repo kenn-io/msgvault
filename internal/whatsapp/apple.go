@@ -409,7 +409,11 @@ func (imp *Importer) importApple(
 				if _, err := imp.store.PersistMessageContext(ctx, data); err != nil {
 					return summary, fmt.Errorf("persist Apple message: %w", err)
 				}
-				summary.MessagesAdded++
+				if _, exists := stored[sourceMessage.StanzaID]; exists {
+					summary.MessagesUpdated++
+				} else {
+					summary.MessagesAdded++
+				}
 				chatAdded++
 				totalAdded++
 			}
@@ -417,6 +421,8 @@ func (imp *Importer) importApple(
 			if err := imp.store.UpdateSyncCheckpoint(syncID, &store.Checkpoint{
 				MessagesProcessed: summary.MessagesProcessed,
 				MessagesAdded:     summary.MessagesAdded,
+				MessagesUpdated:   summary.MessagesUpdated,
+				ErrorsCount:       summary.Errors,
 			}); err != nil {
 				return summary, fmt.Errorf("checkpoint Apple import: %w", err)
 			}

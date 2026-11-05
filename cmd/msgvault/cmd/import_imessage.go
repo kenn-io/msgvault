@@ -162,7 +162,7 @@ func runImportImessage(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println()
 
-	summary, err := client.Import(ctx, s, src.ID)
+	summary, err := importImessageRecorded(ctx, s, client, src.ID, "imessage_import")
 	if err != nil {
 		if ctx.Err() != nil {
 			fmt.Println("\nImport interrupted.")
@@ -318,11 +318,10 @@ func resolveChatDBPath() (string, error) {
 		return importImessageDBPath, nil
 	}
 
-	home, err := os.UserHomeDir()
+	path, err := defaultChatDBPath()
 	if err != nil {
-		return "", fmt.Errorf("get home directory: %w", err)
+		return "", err
 	}
-	path := filepath.Join(home, "Library", "Messages", "chat.db")
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return "", fmt.Errorf(
 			"iMessage database not found at %s\n\n"+
@@ -331,6 +330,52 @@ func resolveChatDBPath() (string, error) {
 		)
 	}
 	return path, nil
+}
+
+func defaultChatDBPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+	return filepath.Join(home, "Library", "Messages", "chat.db"), nil
+}
+
+// importImessageRecorded preserves partial progress even when an import fails.
+func importImessageRecorded(ctx context.Context, s *store.Store, client *imessage.Client, sourceID int64, syncType string) (summary *imessage.ImportSummary, retErr error) {
+	syncID, err := s.StartSync(sourceID, syncType)
+	if err != nil {
+		return nil, fmt.Errorf("start sync: %w", err)
+	}
+	scoped := s.ScopedToSync(sourceID, syncID)
+	record := func(sum imessage.ImportSummary) error {
+		return scoped.UpdateSyncCheckpoint(syncID, imessageCheckpoint(sum))
+	}
+	defer func() {
+		if summary != nil {
+			if err := record(*summary); err != nil {
+				retErr = errors.Join(retErr, fmt.Errorf("record sync progress: %w", err))
+			}
+		}
+		if retErr != nil {
+			retErr = errors.Join(retErr, scoped.FailSync(syncID, retErr.Error()))
+			return
+		}
+		if err := scoped.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, sourceID, ""); err != nil {
+			retErr = fmt.Errorf("complete sync: %w", err)
+		}
+	}()
+	return client.ImportWithProgress(ctx, scoped, sourceID, func(sum imessage.ImportSummary) {
+		_ = record(sum)
+	})
+}
+
+func imessageCheckpoint(sum imessage.ImportSummary) *store.Checkpoint {
+	return &store.Checkpoint{
+		MessagesProcessed: int64(sum.MessagesImported + sum.Skipped),
+		MessagesAdded:     int64(sum.MessagesAdded),
+		MessagesUpdated:   int64(sum.DatesCleared),
+		ErrorsCount:       int64(sum.Skipped + sum.AttachmentFailures),
+	}
 }
 
 func buildImessageOpts(logger *slog.Logger, attachmentsDir, messagesRoot string, noAttachments bool, policy attachmentpolicy.Policy) ([]imessage.ClientOption, error) {
@@ -440,19 +485,11 @@ func messagesRootHint() string {
 // (most recently created), which is more likely in active use.
 func resolveImessageSource(s *store.Store) (*store.Source, error) {
 	sources, err := s.ListSources(sourceTypeAppleMessages)
-	if err == nil && len(sources) > 0 {
-		var best *store.Source
-		for _, src := range sources {
-			if src.Identifier != localValue {
-				if best == nil || src.ID > best.ID {
-					best = src
-				}
-			}
-		}
-		if best != nil {
-			return best, nil
-		}
-		return sources[0], nil
+	if err != nil {
+		return nil, err
+	}
+	if src := store.SelectImessageSource(sources); src != nil {
+		return src, nil
 	}
 	return s.GetOrCreateSource(sourceTypeAppleMessages, localValue)
 }

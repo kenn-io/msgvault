@@ -1,0 +1,191 @@
+package cmd
+
+import (
+	"context"
+	"database/sql"
+	"math"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/config"
+	"go.kenn.io/msgvault/internal/imessage"
+	"go.kenn.io/msgvault/internal/testutil"
+)
+
+func TestRunScheduledIMessageRecordsRunsAndWindows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.AutoBuildCache = false
+	path, chat := testutil.NewIMessageChatDB(t)
+	cfg.IMessage.DBPath = path
+	cfg.IMessage.Me = "owner@example.test"
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	// A manual, limited import must not anchor the first scheduled scan.
+	src, err := resolveImessageSource(st)
+	require.NoError(err)
+	manual, err := st.StartSync(src.ID, "imessage_import")
+	require.NoError(err)
+	require.NoError(st.CompleteSync(manual, ""))
+	_, err = chat.Exec(`CREATE TABLE attachment (filename TEXT);
+ CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+ INSERT INTO message (date,text) VALUES (?, 'recent'), (?, 'old')`,
+		time.Now().Add(-time.Hour).Unix()-978307200, time.Now().Add(-30*24*time.Hour).Unix()-978307200)
+	require.NoError(err)
+	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+	first, err := st.GetLastSuccessfulSyncByType(src.ID, "imessage_scheduled_import")
+	require.NoError(err)
+	assert.Equal("completed", first.Status)
+	assert.Equal(int64(2), first.MessagesAdded)
+	src, err = st.GetSourceByID(src.ID)
+	require.NoError(err)
+	assert.True(src.LastSyncAt.Valid)
+	// Simulate a daemon that was off for a week: anchor at the last run,
+	// rather than now, and leave a still older new row outside its window.
+	anchor := time.Now().Add(-7 * 24 * time.Hour)
+	_, err = st.DB().Exec(`UPDATE sync_runs SET started_at = ? WHERE id = ?`, anchor, first.ID)
+	require.NoError(err)
+	_, err = chat.Exec(`INSERT INTO message (date,text) VALUES (?, 'inside'), (?, 'outside')`,
+		anchor.Add(-time.Hour).Unix()-978307200, anchor.Add(-30*24*time.Hour).Unix()-978307200)
+	require.NoError(err)
+	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+	second, err := st.GetLastSuccessfulSyncByType(src.ID, "imessage_scheduled_import")
+	require.NoError(err)
+	assert.Greater(second.ID, first.ID)
+	assert.Equal(int64(1), second.MessagesAdded)
+	var ids string
+	require.NoError(st.DB().QueryRow(`SELECT group_concat(source_message_id, ',') FROM (SELECT source_message_id FROM messages ORDER BY source_message_id)`).Scan(&ids))
+	assert.Equal("1,2,3", ids)
+}
+
+func TestScheduledIMessageDateClearForcesFullCacheRebuild(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.AutoBuildCache = false
+	path, chat := testutil.NewIMessageChatDB(t)
+	cfg.IMessage.DBPath = path
+	cfg.IMessage.Me = "owner@example.test"
+	_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT);
+ CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+ INSERT INTO chat VALUES ('any;-;synthetic', NULL, 'peer@example.test');
+ INSERT INTO message (date, text) VALUES (?, 'Synthetic message');
+ INSERT INTO chat_message_join VALUES (1,1);`, time.Now().UnixNano()-978307200000000000)
+	require.NoError(err)
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+	src, err := resolveImessageSource(st)
+	require.NoError(err)
+	require.NoError(st.AddAccountIdentity(src.ID, cfg.IMessage.Me, "manual"))
+	_, err = buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+	require.NoError(err)
+	_, err = chat.Exec(`UPDATE message SET date = ?`, int64(math.MaxInt64))
+	require.NoError(err)
+	require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+	run, err := st.GetLastSuccessfulSyncByType(src.ID, "imessage_scheduled_import")
+	require.NoError(err)
+	assert.Equal(int64(1), run.MessagesUpdated)
+	stale := cacheNeedsBuild(cfg.DatabaseDSN(), cfg.AnalyticsDir())
+	assert.True(stale.NeedsBuild)
+	assert.True(stale.FullRebuild)
+}
+
+func TestRunScheduledIMessageRequestsRefreshAfterFailure(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.AutoBuildCache = true
+	cfg.IMessage.DBPath, _ = testutil.NewIMessageChatDB(t)
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	requested := make(chan string, 1)
+	refresher := newBackgroundCacheRefresher(ctx, func(_ context.Context, id string) error {
+		requested <- id
+		return nil
+	}, nil)
+	previous := daemonCacheRefresher
+	daemonCacheRefresher = refresher
+	t.Cleanup(func() {
+		require.NoError(refresher.Shutdown(context.Background()))
+		daemonCacheRefresher = previous
+	})
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.ErrorIs(runScheduledIMessage(canceled, st, cfg.IMessage), context.Canceled)
+	src, err := resolveImessageSource(st)
+	require.NoError(err)
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal("failed", run.Status)
+	select {
+	case id := <-requested:
+		assert.Equal("apple-messages", id)
+	case <-time.After(serveLifecycleTestTimeout):
+		require.FailNow("failed import did not request a refresh")
+	}
+}
+
+func TestRunScheduledWhatsAppApple(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.AutoBuildCache = false
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	source := config.WhatsAppAppleSource{Phone: "+15550000000", Path: createWhatsAppIdentityFixture(t, false, false)}
+	require.NoError(runScheduledWhatsAppApple(ctx, st, source))
+	src, err := st.GetSourceByTypeAndIdentifier("whatsapp", source.Phone)
+	require.NoError(err)
+	assert.True(src.LastSyncAt.Valid)
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal("completed", run.Status)
+	assert.Equal(int64(1), run.MessagesAdded)
+	identities, err := st.ListAccountIdentities(src.ID)
+	require.NoError(err)
+	require.Len(identities, 1)
+	assert.Equal(source.Phone, identities[0].Address)
+	db, err := sql.Open("sqlite3", source.Path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`UPDATE ZWAMESSAGE SET ZTEXT = 'Edited message'`)
+	require.NoError(err)
+	require.NoError(runScheduledWhatsAppApple(ctx, st, source))
+	second, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal(int64(0), second.MessagesAdded)
+	assert.Equal(int64(1), second.MessagesUpdated)
+	assert.Greater(second.ID, run.ID)
+}
+
+func TestImportImessageRecordedPreservesPartialCounters(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path, chat := testutil.NewIMessageChatDB(t)
+	_, err := chat.Exec(`INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two')`)
+	require.NoError(err)
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(t.TempDir(), "msgvault.db"))
+	src, err := resolveImessageSource(st)
+	require.NoError(err)
+	_, err = st.DB().Exec(`CREATE TRIGGER fail_message BEFORE INSERT ON messages WHEN NEW.source_message_id = '2' BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END`)
+	require.NoError(err)
+	client, err := imessage.NewClient(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+	_, err = importImessageRecorded(t.Context(), st, client, src.ID, "imessage_import")
+	require.NoError(err)
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal(int64(2), run.MessagesProcessed)
+	assert.Equal(int64(1), run.MessagesAdded)
+	assert.Equal(int64(1), run.ErrorsCount)
+}

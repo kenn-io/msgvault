@@ -2248,3 +2248,25 @@ func TestEditConfigRejectsInvalidPlaudSchedule(t *testing.T) {
 		})
 	}
 }
+
+func TestEditConfigRejectsInvalidAppleSchedule(t *testing.T) {
+	for _, tc := range []struct{ name, before, key, errorKey string }{
+		{"imessage", "[imessage]\nschedule = '0 * * * *'\n", "imessage.schedule", "imessage.schedule"},
+		{"whatsapp", "[[whatsapp_apple]]\nname = 'personal'\nschedule = '0 * * * *'\n", "whatsapp_apple.schedule", "whatsapp_apple[0].schedule"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(os.WriteFile(path, []byte(tc.before), 0o600))
+			snapshot, err := ReadConfigFile(path)
+			require.NoError(err)
+			_, err = EditConfigFile(path, snapshot.ETag, []Edit{{Key: tc.key, Value: "invalid cron"}})
+			require.ErrorIs(err, ErrInvalidConfigCandidate)
+			assert.Contains(err.Error(), "invalid "+tc.errorKey)
+			got, err := os.ReadFile(path)
+			require.NoError(err)
+			assert.Equal(tc.before, string(got))
+		})
+	}
+}

@@ -1620,6 +1620,27 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, SourceStatusResponse{Sources: statuses})
 }
 
+// sourceScheduling restricts the singleton Messages job to its import target.
+func (s *Server) sourceScheduling(ctx context.Context, sourceType, identifier string) (sourceScheduleClassification, error) {
+	scheduling := classifySourceScheduling(sourceType, identifier)
+	if sourceType != "apple_messages" {
+		return scheduling, nil
+	}
+	statusStore, ok := s.store.(SourceStatusStore)
+	if !ok {
+		return sourceScheduleClassification{}, errors.New("source status store is unavailable")
+	}
+	sources, err := statusStore.ListSourcesContext(ctx, sourceType)
+	if err != nil {
+		return sourceScheduleClassification{}, fmt.Errorf("list Messages sources: %w", err)
+	}
+	selected := store.SelectImessageSource(sources)
+	if selected != nil && selected.Identifier == identifier || selected == nil && identifier == "local" {
+		return scheduling, nil
+	}
+	return sourceScheduleClassification{kind: sourceScheduleNonSchedulable}, nil
+}
+
 func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore, source *store.Source) (SourceStatus, error) {
 	status := SourceStatus{
 		ID:         source.ID,
@@ -1642,7 +1663,10 @@ func (s *Server) sourceStatus(ctx context.Context, statusStore SourceStatusStore
 	if err := s.hydrateSyncRunStatus(ctx, statusStore, status.ActiveSync); err != nil {
 		return SourceStatus{}, err
 	}
-	scheduling := classifySourceScheduling(source.SourceType, source.Identifier)
+	scheduling, err := s.sourceScheduling(ctx, source.SourceType, source.Identifier)
+	if err != nil {
+		return SourceStatus{}, err
+	}
 	schedulerRunning := false
 	if s.scheduler != nil {
 		switch scheduling.kind {
@@ -1809,7 +1833,12 @@ func (s *Server) handleTriggerSync(w http.ResponseWriter, r *http.Request) {
 	security, _ := securityFromRequest(r)
 	manual := security.auth.Mode == AuthModeSession || security.auth.Mode == AuthModeLoopback && requestOriginMatches(r, security.scheme, security.host)
 
-	scheduling := classifySourceScheduling(sourceType, account)
+	scheduling, err := s.sourceScheduling(r.Context(), sourceType, account)
+	if err != nil {
+		s.logger.Error("failed to select scheduled source", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal_error", "Failed to retrieve source scheduling")
+		return
+	}
 	switch scheduling.kind {
 	case sourceScheduleNonSchedulable:
 		writeError(w, http.StatusBadRequest, "source_not_schedulable", "Source type cannot be scheduled: "+sourceType)
