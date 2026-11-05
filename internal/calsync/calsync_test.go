@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	_ "time/tzdata" // Keep named zones available on hosts without a zone database.
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"

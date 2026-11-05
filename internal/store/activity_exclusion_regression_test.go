@@ -67,7 +67,7 @@ func TestActivityMixedConversationExcludesNoiseBeforeDisplay(t *testing.T) {
 	}
 }
 
-func TestActivityUnicodeAddressExclusions(t *testing.T) {
+func TestActivityAddressAndDomainExclusions(t *testing.T) {
 	for _, tc := range []struct {
 		name                      string
 		identifier, saved, domain bool

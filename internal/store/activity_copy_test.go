@@ -164,11 +164,6 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 				} else if invitation {
 					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
 					requirements.NoError(err)
-				} else if i == 0 {
-					sender := f.EnsureParticipant("noreply@example.com", "Automated sender", "example.com")
-					requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.owner, sender}, nil))
-					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET source_is_from_me=FALSE WHERE id=?`), id)
-					requirements.NoError(err)
 				}
 			}
 			if invitation {

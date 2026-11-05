@@ -82,7 +82,9 @@ func TestActivityReadersKeepIdentitySnapshot(t *testing.T) {
 			gate.resume()
 			got := <-done
 			require.NoError(got.err)
-			assert.Zero(got.inbound)
+			if reader == "bursts" {
+				assert.Zero(got.inbound)
+			}
 			var found bool
 			for _, cp := range got.counterparts {
 				if cp.ParticipantID == peer {

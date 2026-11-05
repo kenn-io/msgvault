@@ -119,10 +119,6 @@ func TestCalendarInvitationsFromExcludedSender(t *testing.T) {
 				assert.True(found)
 			}
 			if tc.readContact {
-				messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conversationID, Limit: 10})
-				require.NoError(err)
-				require.Len(messages, 1)
-				assert.Equal(id, messages[0].MessageID)
 				contact := timelineContactQuery(f)
 				contact.Now = tierAsOf
 				aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)

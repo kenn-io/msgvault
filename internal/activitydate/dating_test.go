@@ -3,7 +3,6 @@ package activitydate
 import (
 	"testing"
 	"time"
-	_ "time/tzdata" // Keep named zones available on hosts without a zone database.
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
