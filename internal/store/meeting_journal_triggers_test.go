@@ -10,6 +10,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMeetingJournalCalendarMailboxChange(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("SQLite cache journal")
+	}
+	data, event := calendarFixture(t, st, "event", singleLinkRaw("event", "meeting@example.test"))
+	note := granolaLinkFixture(t, st, "event")
+	before, err := st.MeetingCountKeysContext(t.Context())
+	requirements.NoError(err)
+	requirements.Equal("uid:meeting@example.test/", before[note])
+	_, err = st.db.Exec(`DELETE FROM cache_related_change_journal`)
+	requirements.NoError(err)
+	requirements.NoError(st.UpdateSourceSyncConfig(data.Message.SourceID, `{"calendar_id":"other@example.com","time_zone":"UTC"}`))
+	after, err := st.MeetingCountKeysContext(t.Context())
+	requirements.NoError(err)
+	assertions.Empty(after[note])
+	var accountAddress sql.NullString
+	requirements.NoError(st.db.QueryRow(`SELECT account_address FROM messages WHERE id=?`, event).Scan(&accountAddress))
+	assertions.Empty(accountAddress.String, "neither mailbox is a confirmed account identity")
+	var count int
+	requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM cache_related_change_journal WHERE dataset='meeting_links' AND message_id=?`, event).Scan(&count))
+	assertions.Positive(count, "a mailbox-only mapping change must invalidate meeting count keys")
+}
+
 func TestMeetingJournalTriggers(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	if st.IsPostgreSQL() {
