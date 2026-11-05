@@ -42,6 +42,20 @@ func TestIs(t *testing.T) {
 		{"unrelated title", Content{Title: "Code review", Filenames: []string{"123456.txt"}}, false},
 		{"unrelated trailing cue", Content{Text: "Order 123456 shipped. Read about your verification code"}, false},
 		{"whole token", Content{Text: "Your code is 1234AB56"}, true},
+		{"sign-in mixed code", Content{Text: "Your sign-in code is K7MQPZ"}, true},
+		{"verification mixed code", Content{Text: "Your verification code: AB12CD"}, true},
+		{"five character login code", Content{Text: "Login code: F7KQ2"}, true},
+		{"invalid verification status", Content{Text: "Your verification code is INVALID"}, false},
+		{"disabled OTP status", Content{Text: "OTP DISABLED"}, false},
+		{"qualified code at window limit", Content{Text: "Verification code" + strings.Repeat("\u00a0", 60) + "K7MQPZ"}, true},
+		{"qualified code outside window", Content{Text: "Verification code" + strings.Repeat("\u00a0", 61) + "K7MQPZ"}, false},
+		{"distant qualified code", Content{Text: "Verification code" + strings.Repeat(" ", 150) + "K7MQPZ"}, false},
+		{"unqualified mixed code", Content{Text: "Your code: AB12CD"}, false},
+		{"separate qualified mixed code", Content{Subject: "Your verification code", Text: "AB12CD"}, false},
+		{"reverse qualified mixed code", Content{Text: "AB12CD is your verification code"}, false},
+		{"short qualified mixed code", Content{Text: "Login code: A1BC"}, false},
+		{"long qualified mixed code", Content{Text: "Login code: A1BCDEFGHIJ"}, false},
+		{"promo SAVE20", Content{Text: "Use promo code SAVE20"}, false},
 		{"sign in", Content{Text: "Use 482913 to sign in to Acme"}, true},
 		{"temporary password", Content{Text: "Your temporary password is 482913"}, true},
 		{"folded passcode", Content{Text: "Your paſſcode is 482913"}, true},
@@ -108,6 +122,9 @@ func TestIs(t *testing.T) {
 		{"Update the code", Content{Subject: "Update the code", Text: "Invoice 123456 attached"}, false},
 		{"Re: fix the code", Content{Subject: "Re: fix the code", Text: "555 1234"}, false},
 		{"Your PIN", Content{Subject: "Your PIN", Text: "Account ending 123456"}, false},
+	}
+	for _, cue := range []string{"verification code", "security PIN", "login password", "sign-in code", "sign in code", "authentication code", "one-time code", "one-time PIN", "one time password", "OTP", "passcode", "2FA"} {
+		cases = append(cases, testCase{cue + " mixed", Content{Text: cue + ": A1BCD"}, true})
 	}
 	for _, prefix := range []string{"promo", "coupon", "discount", "voucher", "referral", "gift", "Zip", "postal", "area", "tracking", "order", "invoice", "product", "project"} {
 		for _, value := range []string{"482913", "2024"} {
