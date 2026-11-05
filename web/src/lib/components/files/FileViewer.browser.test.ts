@@ -36,13 +36,21 @@ describe('PDF preview resource bounds', () => {
     vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({} as CanvasRenderingContext2D);
   });
 
-  it.each([1, 2])('renders Letter pages within integer canvas budgets at device scale %s', async (deviceScale) => {
-    vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(deviceScale);
-    for (const count of [1, 4]) {
-      const task = loadingTask(Array.from({ length: count }, () => ({ width: 612, height: 792 })));
-      const document = await task.promise;
-      document.getPage.mockImplementation(async () => ({
-        getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: 792 * scale, scale, userUnit: 1 }),
+  it.each([
+    ['one Letter page', 1, [792]],
+    ['four Letter pages', 1, Array<number>(4).fill(792)],
+    ['one Letter page', 2, [792]],
+    ['four Letter pages', 2, Array<number>(4).fill(792)],
+    // Baseline allocation is 32,596,650 pixels, below the document limit.
+    ['40 mixed-size pages', 2, [...Array<number>(39).fill(792), 3200]],
+  ] as const)('renders %s within integer canvas budgets at device scale %s', async (_label, deviceScale, heights) => {
+    const devicePixelRatio = vi.spyOn(window, 'devicePixelRatio', 'get').mockReturnValue(deviceScale);
+    let handle: Awaited<ReturnType<typeof renderPDF>> | undefined;
+    try {
+      const task = loadingTask(heights.map((height) => ({ width: 612, height })));
+      const pdfDocument = await task.promise;
+      pdfDocument.getPage.mockImplementation(async (number: number) => ({
+        getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: heights[number - 1]! * scale, scale, userUnit: 1 }),
         render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
         getTextContent: async () => ({ items: [] }),
         cleanup: task.cleanup
@@ -50,35 +58,16 @@ describe('PDF preview resource bounds', () => {
       pdf.getDocument.mockReturnValue(task);
       const host = window.document.createElement('div');
       Object.defineProperty(host, 'clientWidth', { value: 1200 });
-      const handle = await renderPDF(new TextEncoder().encode('%PDF-1.4'), host, new AbortController().signal);
+      handle = await renderPDF(new TextEncoder().encode('%PDF-1.4'), host, new AbortController().signal);
+      expect(handle.pages).toBe(heights.length);
       const canvases = [...host.querySelectorAll('canvas')];
-      expect(canvases).toHaveLength(count);
+      expect(canvases).toHaveLength(heights.length);
       expect(canvases.every((canvas) => canvas.width * canvas.height <= 16_000_000)).toBe(true);
       expect(canvases.reduce((sum, canvas) => sum + canvas.width * canvas.height, 0)).toBeLessThanOrEqual(64_000_000);
-      handle.destroy();
+    } finally {
+      handle?.destroy();
+      devicePixelRatio.mockRestore();
     }
-  });
-
-  it('preserves all 40 mixed-size PDF pages within the canvas budget', async () => {
-    const task = loadingTask(Array.from({ length: 40 }, (_, index) => ({ width: 612, height: index === 39 ? 3200 : 792 })));
-    const pdfDocument = await task.promise;
-    pdfDocument.getPage.mockImplementation(async (number: number) => ({
-      getViewport: ({ scale }: { scale: number }) => ({ width: 612 * scale, height: (number === 40 ? 3200 : 792) * scale, scale, userUnit: 1 }),
-      render: () => ({ cancel: vi.fn(), promise: Promise.resolve() }),
-      getTextContent: async () => ({ items: [] }),
-      cleanup: task.cleanup
-    }));
-    pdf.getDocument.mockReturnValue(task);
-    const host = window.document.createElement('div');
-    Object.defineProperty(host, 'clientWidth', { value: 1200 });
-    // Baseline allocation is 32,596,650 pixels, below the document limit.
-    const pending = renderPDF(new TextEncoder().encode('%PDF-1.4'), host, new AbortController().signal);
-    await expect(pending).resolves.toMatchObject({ pages: 40 });
-    const canvases = [...host.querySelectorAll('canvas')];
-    expect(canvases).toHaveLength(40);
-    expect(canvases.every((canvas) => canvas.width * canvas.height <= 16_000_000)).toBe(true);
-    expect(canvases.reduce((sum, canvas) => sum + canvas.width * canvas.height, 0)).toBeLessThanOrEqual(64_000_000);
-    (await pending).destroy();
   });
 
   it('destroys a document with too many pages exactly once', async () => {
