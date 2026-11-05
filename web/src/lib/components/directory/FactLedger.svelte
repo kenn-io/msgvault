@@ -2,7 +2,6 @@
   import { Button, EmptyState, SegmentedControl, Typeahead, Spinner } from '@kenn-io/kit-ui';
   import Lock from '@lucide/svelte/icons/lock';
   import { formatShortDate } from '../../util/format';
-  import type { FactClaimRow } from '../../directory/fact-ledger-controller.svelte';
   import { onDestroy, tick } from 'svelte';
 
   import type { FactLedgerController, FactLedgerSection } from '../../directory/fact-ledger-controller.svelte';
@@ -18,14 +17,11 @@
   let root: HTMLElement;
   let destroyed = false;
   const searchID = $props.id();
-  const earlier = (row: FactClaimRow) => row.relation !== 'contradict' && row.relation !== 'invalid' && !!row.validUntil && Date.parse(row.validUntil) <= Date.now();
-  const currentClaims = $derived(controller.claims.rows.filter(row => !earlier(row)));
-  const earlierClaims = $derived(controller.claims.rows.filter(earlier));
   const fields = $derived(joinDefinitions(profile?.definitions ?? [], profile?.attributes?.attributes ?? []));
   const definitions = $derived(fields.map(field => field.definition));
   const selectedTarget = $derived(controller.targets.find(target => target.optionID === controller.selectedTargetOption));
   const selectedField = $derived(selectedTarget ? controller.fieldName({ targetCanonical: selectedTarget.canonical, targetKey: selectedTarget.targetKey }, definitions) : undefined);
-  const pins = $derived(controller.pins.rows.filter(pin => pin.pinned && (controller.selectedSection === 'pins' || !controller.selectedTarget || pin.targetCanonical === controller.selectedTarget)));
+  const pins = $derived(controller.pins.rows.filter(pin => pin.pinned));
   const attributeIDs = $derived(pins.filter(pin => pin.kind === 'attribute').flatMap(pin => pin.targetKey ? [pin.targetKey] : []));
   function organizationName(id: number): string {
     return entity?.organizationRecords.get(id)?.organization.name ?? entity?.organizations.find(item => item.id === id)?.name
@@ -121,9 +117,25 @@
         {#if controller.claims.loading}<p class="loading" role="status"><Spinner size={12} label="Loading requested claims page" /> Loading claims page…</p>{/if}
         {#if controller.claims.pageError}<div class="message" role="alert"><p>{controller.claims.pageError}</p><Button label="Retry claims" size="sm" onclick={() => void controller.retrySection('claims')} /></div>{/if}
         <div class="rows" aria-busy={controller.claims.loading}>
-          {#each currentClaims as row (row.rowToken)}{@render Claim(row)}{/each}
-          {#if earlierClaims.length}<details><summary>{earlierClaims.length} earlier {earlierClaims.length === 1 ? 'value' : 'values'}</summary>{#each earlierClaims as row (row.rowToken)}{@render Claim(row)}{/each}</details>{/if}
-          {#if !controller.claims.rows.length}<EmptyState title={emptyTitle('claims')} description={selectedField ? undefined : "Facts appear as msgvault reads this person's messages."} />{/if}
+          {#each controller.claims.rows as row (row.rowToken)}
+            {@const sensitivity = controller.claimSensitivity(row)}
+            {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.rowToken))}
+            <div class="row" aria-label="Fact claim">
+              <div class="value">
+                <strong>{controller.fieldName(row, definitions)}</strong>
+                {#if sensitivity === 'unknown'}
+                  <p role="status" aria-label="Fact value hidden until target sensitivity is verified.">Fact value hidden until target sensitivity is verified.</p>
+                {:else if !shown}
+                  <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
+                {:else}<span>{row.displayValue}</span>{/if}
+                <details><summary>Details</summary>
+                  {#if row.validFrom || row.validUntil}<p>{row.validFrom ? formatShortDate(row.validFrom) : 'No start'} – {row.validUntil ? formatShortDate(row.validUntil) : 'No end'}</p>{/if}
+                  {#if shown}<dl><div><dt>Submitted JSON</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized JSON</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}</dl>{/if}
+                </details>
+              </div>
+              <span class="meta">{row.relation} · {row.origin} · Reported confidence {row.reportedScore} · {formatShortDate(row.createdAt)}</span>
+            </div>
+          {:else}<EmptyState title={emptyTitle('claims')} description={selectedField ? undefined : "Facts appear as msgvault reads this person's messages."} />{/each}
         </div>
         {@render Pagination(controller, 'claims')}
       {/if}
@@ -160,8 +172,7 @@
     {:else if pins.length}
       <h4>Saved pinned values</h4>
       {#if attributeIDs.length}
-        {#if profile?.reloadPending}<p class="loading" role="status">Loading saved values…</p>
-        {:else if !profile || profile.attributesError || profile.definitionsError || !profile.attributes}
+        {#if !profile || profile.attributesError || profile.definitionsError || !profile.attributes}
           <div class="message" role="alert"><p>Saved values unavailable.</p>{#if profile}<Button label="Retry saved values" size="sm" onclick={() => void profile?.reload()} />{/if}</div>
         {:else}
           <AttributeSection controller={profile} universalIDs={attributeIDs} />
@@ -187,26 +198,6 @@
       {/each}
     {:else if controller.selectedSection === 'pins'}<EmptyState title="No pinned fields yet" />{/if}
   </section>
-{/snippet}
-
-{#snippet Claim(row: FactClaimRow)}
-  {@const sensitivity = controller.claimSensitivity(row)}
-  {@const shown = sensitivity === 'non_sensitive' || (sensitivity === 'sensitive' && controller.revealedClaims.has(row.rowToken))}
-  <div class="row" aria-label="Fact claim">
-    <div class="value">
-      <strong>{controller.fieldName(row, definitions)}</strong>
-      {#if sensitivity === 'unknown'}
-        <p role="status" aria-label="Fact value hidden until target sensitivity is verified.">Fact value hidden until target sensitivity is verified.</p>
-      {:else if !shown}
-        <p>Sensitive fact value hidden.</p><Button label="Reveal sensitive fact value" size="sm" onclick={() => controller.revealClaim(row.rowToken)} />
-      {:else}<span>{row.displayValue}</span>{#if row.normalizedDisplayValue !== null && row.normalizedDisplayValue !== row.displayValue}<small>{row.normalizedDisplayValue}</small>{/if}{/if}
-      <details><summary>Details</summary>
-        {#if row.validFrom || row.validUntil}<p>{row.validFrom ? formatShortDate(row.validFrom) : 'No start'} – {row.validUntil ? formatShortDate(row.validUntil) : 'No end'}</p>{/if}
-        {#if shown}<dl><div><dt>Submitted JSON</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized JSON</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}</dl>{/if}
-      </details>
-    </div>
-    <span class="meta">{row.relation} · {row.origin} · Reported confidence {row.reportedScore} · {formatShortDate(row.createdAt)}</span>
-  </div>
 {/snippet}
 
 {#if controller.historyOpen}<FactEvidenceHistoryDialog {controller} onClose={() => controller.closeEvidenceHistory()} />{/if}
@@ -245,5 +236,5 @@
   .message { justify-items: start; padding-left: var(--space-3); border-left: 2px solid var(--accent-red); border-start-start-radius: 0; border-end-start-radius: 0; }
   .revealed { display: grid; gap: var(--space-1); }
   @media (max-width: 760px) { .toolbar { flex-direction: column; align-items: stretch; } .field { margin-left: 0; } .pagination { flex-wrap: wrap; } }
-  @media (max-width: 640px) { .ledger :global(.history-rows li) { flex-direction: column; align-items: stretch; gap: var(--space-1); overflow-wrap: anywhere; } .row { flex-direction: column; gap: var(--space-1); } .meta { text-align: left; max-width: 100%; } }
+  @media (max-width: 640px) { .row { flex-direction: column; gap: var(--space-1); } .meta { text-align: left; max-width: 100%; } }
 </style>

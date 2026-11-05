@@ -42,7 +42,7 @@ function controller(): FactLedgerController {
   value.evidence.rows = [{ rowToken: 'evidence-0', sourceURL: null, sourceClass: 'message', directness: 'direct', authority: 'first party', identityScore: 92,
     eventTime: '2026-08-01', recordedTime: '2026-08-02', supported: true, currentSupportLabel: 'Source reimported', createdAt: '2026-08-03',
     excerpt: 'allowed evidence excerpt', evidenceKey: 'forbidden-evidence-key' }];
-  value.claims.rows = [{ rowToken: 'claim-0', submittedValue: '"allowed sensitive value"', displayValue: 'allowed sensitive value', normalizedValue: '"allowed normalized value"', normalizedDisplayValue: 'allowed normalized value', relation: 'support', origin: 'extraction',
+  value.claims.rows = [{ rowToken: 'claim-0', submittedValue: '"allowed sensitive value"', displayValue: 'allowed sensitive value', normalizedValue: '"allowed normalized value"', relation: 'support', origin: 'extraction',
     validFrom: '2026-01-01', validUntil: null, reportedScore: 88, createdAt: '2026-08-03', targetCanonical: value.targets[0]!.canonical }];
   value.decisions.rows = [{ rowToken: 'decision-0', action: 'project', reason: 'highest score', score: { authority: 1, confidence: 2, corroboration: 3,
     directness: 4, freshness: 5, sourceClass: 6, total: 21 }, projectionKind: 'attribute', createdAt: '2026-08-03' }];
@@ -181,14 +181,13 @@ describe('FactLedger', () => {
   });
 });
 
-it('preserves claim order and folds only expired values and keeps claim relations visible', async () => {
+it('preserves claim order and keeps claim relations visible', async () => {
   const value = controller();
   value.targets[0]!.sensitive = false;
   value.targets[0]!.name = 'Location';
   const claim = value.claims.rows[0]!;
   value.claims.rows = [
     { ...claim, rowToken: 'unknown', targetCanonical: 'other', submittedValue: 'unverified' },
-    { ...claim, rowToken: 'expired', submittedValue: '"Example City"', displayValue: 'Example City', validUntil: '2020-10-01' },
     { ...claim, rowToken: 'current', submittedValue: '"Current City"', displayValue: 'Current City' },
     { ...claim, rowToken: 'contradicted', submittedValue: '"Contradicted City"', displayValue: 'Contradicted City', relation: 'contradict' },
     { ...claim, rowToken: 'invalid', submittedValue: '"Invalid City"', displayValue: 'Invalid City', relation: 'invalid' },
@@ -203,11 +202,6 @@ it('preserves claim order and folds only expired values and keeps claim relation
   expect(rows[2]!.textContent).toContain('contradict');
   expect(rows[3]!.textContent).toContain('invalid');
   expect(rows[4]!.textContent).toContain('Future City');
-  expect(screen.getByText('Contradicted City').closest('details')).toBeNull();
-  expect(screen.getByText('Invalid City').closest('details')).toBeNull();
-  expect(screen.getByText('Example City').closest('details')?.open).toBe(false);
-  await fireEvent.click(screen.getByText('1 earlier value'));
-  expect(screen.getByText('Example City').closest('details')?.open).toBe(true);
 });
 
 it('searches short field names and keeps sensitive metadata separate', async () => {
@@ -266,7 +260,8 @@ it('shows Location beside a readable submitted value', async () => {
   value.destroy();
 });
 
-it.each(['"42"', '""', '"   "'])('keeps original rejected JSON %s alongside relation and enrichment confidence', async submitted => {
+it('keeps original rejected JSON alongside relation and enrichment confidence', async () => {
+  const submitted = '"42"';
   const fetchFn = vi.fn<typeof fetch>(async input => {
     const path = new URL(requestOf(input).url).pathname;
     if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{

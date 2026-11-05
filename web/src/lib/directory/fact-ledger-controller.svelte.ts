@@ -60,7 +60,6 @@ export interface FactClaimRow {
   displayValue: string;
   targetKey?: string;
   normalizedValue: string | null;
-  normalizedDisplayValue: string | null;
   relation: string;
   origin: string;
   validFrom: string | null;
@@ -623,7 +622,6 @@ function projectClaim(row: RawClaim, index: number): FactClaimRow {
     displayValue: readableValue(row.submitted_value),
     targetKey: row.target.key,
     normalizedValue: row.normalized_value ?? null,
-    normalizedDisplayValue: row.normalized_value == null ? null : readableValue(row.normalized_value),
     relation: row.relation,
     origin: row.origin,
     validFrom: row.valid_from ?? null,
@@ -655,6 +653,6 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
 function readableValue(value: string): string {
   try {
     const decoded: unknown = JSON.parse(value);
-    return typeof decoded === 'string' && decoded.trim() ? decoded : value;
+    return typeof decoded === 'string' ? decoded : value;
   } catch { return value; }
 }

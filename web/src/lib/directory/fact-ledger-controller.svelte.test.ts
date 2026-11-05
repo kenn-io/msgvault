@@ -289,7 +289,6 @@ it.each([0, 50, 51])('shows at most 50 claims with a next page only for a lookah
   if (count) {
     expect(controller.claims.rows[0]!.submittedValue).toBe('"Example City"');
     expect(controller.claims.rows[0]!.displayValue).toBe('Example City');
-    expect(controller.claims.rows[0]!.normalizedDisplayValue).toBe('example city');
     controller.revealClaim(controller.claims.rows[0]!.rowToken);
     await controller.selectSection('evidence');
     expect(controller.revealedClaims.size).toBe(0);
