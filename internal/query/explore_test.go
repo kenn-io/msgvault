@@ -184,6 +184,11 @@ func TestExploreKeepsSemanticMatchStateConstantPerLogicalRow(t *testing.T) {
 			wantStrongest: &first,
 		},
 		{
+			name:          "semantic strongest follows candidate order",
+			search:        SearchSpec{Mode: SearchSemantic, Query: "alpha", CandidateMessageIDs: []int64{second, first}, VectorGeneration: &generation},
+			wantStrongest: &second,
+		},
+		{
 			name: "hybrid strongest is not chronological anchor",
 			search: SearchSpec{
 				Mode: SearchHybrid, Query: "alpha", CandidateMessageIDs: []int64{first, second},

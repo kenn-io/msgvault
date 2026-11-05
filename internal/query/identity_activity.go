@@ -409,13 +409,8 @@ func buildIdentityFactConditions(request ExploreRequest) (string, []any) {
 		if len(request.Search.CandidateMessageIDs) == 0 {
 			conditions = append(conditions, "false")
 		} else {
-			placeholders := make([]string, len(request.Search.CandidateMessageIDs))
-			for index, messageID := range request.Search.CandidateMessageIDs {
-				placeholders[index] = "?"
-				args = append(args, messageID)
-			}
-			conditions = append(conditions,
-				"f.message_id IN ("+strings.Join(placeholders, ",")+")")
+			conditions = append(conditions, "f.message_id IN (SELECT UNNEST(?::BIGINT[]))")
+			args = append(args, request.Search.CandidateMessageIDs)
 		}
 	}
 	if len(conditions) == 0 {
