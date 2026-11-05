@@ -50,10 +50,11 @@ aggregates remain email-only unless you choose another message type.
 
 ## Connect notes to calendar events
 
-Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row. When the note records a scheduled start, a copy starting at that time takes precedence. If no copy matches that time, or the note has no scheduled start, the lowest message ID wins.
+Use `msgvault meetings links <message-id>` to see a note's linked calendar events, with their references, titles, and times, followed by the IDs of every note in the record. Pass `evt:<id>[@occurrence key]` instead to list the notes linked to a calendar occurrence. Exact calendar identifiers connect Granola and Twenty notes automatically when the archived evidence identifies one meeting; copies with the same identity share one row. When the note records a scheduled start, a copy starting at that time takes precedence. If no copy matches that time, or the note has no scheduled start, the lowest message ID wins.
 
 ```bash
 msgvault meetings links 42
+msgvault meetings links evt:81@20270314T100000Z
 msgvault meetings suggest msg:42
 msgvault meetings link 42 --event evt:100
 msgvault meetings unlink 42 --event evt:100

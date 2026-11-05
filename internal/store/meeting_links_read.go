@@ -96,10 +96,10 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		}
 		values = append(values, value)
 	}
-	args := slices.Concat(values, targets)
+	args := slices.Concat(values, []any{target.Row.Event.Kind, target.Start, target.Ref.Key, target.Identity.OccurrenceKey}, targets)
 	rows, err := r.QueryContext(ctx, `SELECT m.id FROM (
- SELECT k.message_id FROM meeting_link_key k WHERE k.value IN (`+placeholders(len(values))+`)
- UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE EXISTS (
+ SELECT k.message_id FROM meeting_link_key k WHERE k.value IN (`+placeholders(len(values))+`) AND (`+s.meetingKeyStartPredicate()+`)
+ UNION SELECT d.member_message_id FROM meeting_link_decisions d WHERE d.occurrence_key IN ('', ?, ?) AND EXISTS (
  SELECT 1 FROM calendar_events e JOIN messages m ON m.id = e.message_id
  WHERE e.message_id IN (`+placeholders(len(targets))+`) AND (`+meetingEventAliasPredicate("d.target_message_id")+`))
  ) candidates JOIN messages m ON m.id = candidates.message_id
@@ -137,4 +137,13 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		}
 	}
 	return membersOut, nil
+}
+
+// A recurring occurrence only gathers notes scheduled at its own start, so a
+// long series does not expand every other date's notes against the budget.
+func (s *Store) meetingKeyStartPredicate() string {
+	if s.IsPostgreSQL() {
+		return `k.kind != 'ical_uid' OR k.scheduled_at IS NULL OR ? = 'single' OR k.scheduled_at = ?`
+	}
+	return `k.kind != 'ical_uid' OR k.scheduled_at IS NULL OR ? = 'single' OR julianday(k.scheduled_at) = julianday(?)`
 }
