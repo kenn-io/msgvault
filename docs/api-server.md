@@ -92,7 +92,7 @@ Pass `next_cursor` as `cursor` with the same window, including offsets, and auth
 
 Agents need `calendar.event.read` or `message.read` on the source. Reads include only granted sources. `calendar.read` alone returns 403. Missing or hidden occurrences return 404, and unsupported recurrence returns 422. Lists with too many candidate rows return 400 `query_too_broad`. When list expansion reaches its work limit, the response keeps completed results and lists interrupted and remaining series under `unexpandable`. Invalid windows, limits, refs, or cursors return 400 `invalid_argument`.
 
-Archived calendar reads require schema 3.43.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#list-archived-events) for display and expansion behavior.
+Archived calendar reads require schema 3.45.0. See [Calendar usage](https://msgvault.io/docs/usage/calendar/#list-archived-events) for display and expansion behavior.
 
 ### Calendar control
 
