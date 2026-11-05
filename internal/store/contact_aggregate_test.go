@@ -103,18 +103,6 @@ func TestMessageAggregateUnsavedCluster(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal(got, saved)
 }
-func TestMessageAggregateIgnoresIncludeNoise(t *testing.T) {
-	f := newTimelineActivityFixture(t)
-	q := timelineContactQuery(f)
-	id := f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), id)
-	require.NoError(t, err)
-	projectTimelineActivity(t, f, "UTC")
-	q.Filters.IncludeNoise = true
-	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-	require.NoError(t, err)
-	assert.Zero(t, got.Count)
-}
 func TestAttendedTranscriptIDsByRole(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

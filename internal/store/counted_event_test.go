@@ -29,13 +29,8 @@ func TestCountedEventWhereMatchesTierRule(t *testing.T) {
 		}
 		want := row.evidence == "direct" && !row.list && accepted[key]
 		assert.Equal(t, want, row.counted, "%+v", row)
-	}
-}
-
-func TestCountedEventGoMatchesSQL(t *testing.T) {
-	for _, row := range countedEventRows(t) {
 		got := store.CountedEvent(store.ActivityEvidence(row.evidence), store.ActivityRole(row.role), store.ActivityDirection(row.direction), row.refKind, row.list, row.large)
-		assert.Equal(t, row.counted, got, "%+v", row)
+		assert.Equal(t, want, got, "%+v", row)
 	}
 }
 

@@ -2,7 +2,6 @@ package store_test
 
 import (
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -10,25 +9,54 @@ import (
 )
 
 func TestActivityProjectionStateIsScoped(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	f.add(t, f.ConvID, f.Source.ID, at, false, "")
-	before, err := f.Store.ActivityProjectionStateContext(ctx)
-	requirements.NoError(err)
-	assertions.Equal(1, before.Queued)
-	assertions.NotNil(before.OldestQueuedAt)
-	hidden, err := f.Store.GetOrCreateSource("gmail", "hidden@example.com")
-	requirements.NoError(err)
-	conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
-	requirements.NoError(err)
-	f.add(t, conv, hidden.ID, at, false, "")
-	after, err := f.Store.ActivityProjectionStateContext(ctx)
-	requirements.NoError(err)
-	assertions.Equal(before, after)
-	all, err := f.Store.ActivityProjectionStateContext(t.Context())
-	requirements.NoError(err)
-	assertions.Equal(2, all.Queued)
+	for _, trigger := range []string{"message", "roster"} {
+		t.Run(trigger, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			q := timelineContactQuery(f)
+			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
+			f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+			if trigger == "roster" {
+				projectTimelineActivity(t, f, "UTC")
+			}
+			before, err := f.Store.ActivityProjectionStateContext(ctx)
+			requirements.NoError(err)
+			if trigger == "message" {
+				assertions.Equal(1, before.Queued)
+				assertions.NotNil(before.OldestQueuedAt)
+			} else {
+				requirements.Zero(before.Queued)
+				requirements.False(before.Reconciling)
+			}
+			hidden, err := f.Store.GetOrCreateSource("gmail", "hidden@example.com")
+			requirements.NoError(err)
+			conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
+			requirements.NoError(err)
+			f.add(t, conv, hidden.ID, q.Now, false, "")
+			if trigger == "roster" {
+				projectTimelineActivity(t, f, "UTC")
+				requirements.NoError(f.Store.EnsureConversationParticipant(conv, f.peer, "member"))
+			}
+			after, err := f.Store.ActivityProjectionStateContext(ctx)
+			requirements.NoError(err)
+			assertions.Equal(before, after)
+			if trigger == "message" {
+				all, err := f.Store.ActivityProjectionStateContext(t.Context())
+				requirements.NoError(err)
+				assertions.Equal(2, all.Queued)
+				return
+			}
+			requirements.NoError(f.Store.EnsureConversationParticipant(f.ConvID, f.peer, "member"))
+			after, err = f.Store.ActivityProjectionStateContext(ctx)
+			requirements.NoError(err)
+			assertions.Equal(1, after.Queued)
+			assertions.True(after.Reconciling)
+			projectTimelineActivity(t, f, "UTC")
+			drained, err := f.Store.ActivityProjectionStateContext(ctx)
+			requirements.NoError(err)
+			assertions.Zero(drained.Queued)
+			assertions.False(drained.Reconciling)
+		})
+	}
 }

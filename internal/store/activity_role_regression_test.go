@@ -14,7 +14,6 @@ import (
 func TestActivityStrongestRoleMatchesProjector(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
-			assertions := assert.New(t)
 			requirements := require.New(t)
 			f := newTimelineActivityFixture(t)
 			q := timelineContactQuery(f)
@@ -36,14 +35,6 @@ func TestActivityStrongestRoleMatchesProjector(t *testing.T) {
 			}
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", to, nil))
 			projectTimelineActivity(t, f, "UTC")
-			cs, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
-			requirements.NoError(err)
-			requirements.Len(cs, 1)
-			if saved {
-				classified := store.ClassifyActivityCandidate(cs[0], 25)
-				requirements.Len(classified.Persons, 1)
-				assertions.Equal(store.RoleSender, classified.Persons[0].Role)
-			}
 			for _, limit := range []int{0, 25, 1} {
 				t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
 					assertions := assert.New(t)

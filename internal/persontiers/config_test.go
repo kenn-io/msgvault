@@ -23,6 +23,7 @@ func TestConfigValidation(t *testing.T) {
 		{"negative alternative", func(c *Config) { c.Tier2.MinMeetingDaysLong = -1 }, "meeting thresholds must be 0"},
 		{"one channel", func(c *Config) { c.Tier1.BreadthMinChannelsLong = 1 }, "breadth_min_channels_long must be 0 or at least 2"},
 		{"negative call length", func(c *Config) { c.MinCallSeconds = -1 }, "min_call_seconds must be 0"},
+		{"address subdomain wildcard", func(c *Config) { c.ExcludeAddressPatterns = []string{"*.bot"} }, `exclusion pattern "*.bot"`},
 		{"empty pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{""} }, `exclusion pattern ""`},
 		{"upper pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"Alert"} }, `exclusion pattern "Alert"`},
 		{"address pattern", func(c *Config) { c.ExcludeAddressPatterns = []string{"alert@example.com"} }, `exclusion pattern "alert@example.com"`},
@@ -41,6 +42,7 @@ func TestConfigValidation(t *testing.T) {
 			tc.change(&c)
 			err := c.Validate()
 			require.Error(t, err)
+			require.ErrorIs(t, err, ErrInvalidConfig)
 			assert.ErrorContains(t, err, tc.contains)
 		})
 	}

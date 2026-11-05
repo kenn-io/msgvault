@@ -68,6 +68,9 @@ func TestExclusionsForceTierThree(t *testing.T) {
 		{"mixed", false, []string{"noreply@example.com", "alex@example.org"}, false, 2, ""},
 		{"phone defeats automated exclusion", false, []string{"noreply@example.com"}, true, 2, ""},
 		{"room", false, []string{"room@rooms.example.com"}, false, 3, "calendar_room"},
+		{"all automated across room and email", false, []string{"noreply@rooms.example.com", "noreply@example.com"}, false, 3, "automated_address"},
+		{"room overrides phone", false, []string{"noreply@rooms.example.com"}, true, 3, "calendar_room"},
+		{"mixed exclusions retain human eligibility", false, []string{"room-4@rooms.example.com", "noreply@example.com"}, false, 2, ""},
 		{"human plus room", false, []string{"room@rooms.example.com", "alex@example.com"}, false, 2, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

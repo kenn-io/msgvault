@@ -38,7 +38,7 @@ func TestImportedEncryptedEventsDoNotPromotePersonTier(t *testing.T) {
 			client, err := mautrix.NewClient("https://example.invalid", id.UserID("@archive:example.org"), "token")
 			require.NoError(err)
 			imp := NewImporter(st, &Runtime{Client: client})
-			asOf := time.Now().UTC()
+			asOf := time.Now().UTC().Truncate(time.Millisecond)
 			for i, sender := range []string{"@archive:example.org", "@member:example.org", "@archive:example.org"} {
 				kind, content := "m.room.message", `{"msgtype":"m.text","body":"Synthetic contact"}`
 				if encrypted && i > 0 {
@@ -48,12 +48,58 @@ func TestImportedEncryptedEventsDoNotPromotePersonTier(t *testing.T) {
 					kind, i, sender, asOf.AddDate(0, 0, i-5).UnixMilli(), content))
 				require.NoError(imp.persistEvent(t.Context(), source.ID, conv, evt, &ImportSummary{}))
 			}
+			ids, err := st.MessageExistsBatch(source.ID, []string{"$tier-0", "$tier-1", "$tier-2"})
+			require.NoError(err)
+			if encrypted {
+				for _, key := range []string{"$tier-1", "$tier-2"} {
+					messageID := ids[key]
+					require.NotZero(messageID)
+					var snippet string
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT snippet FROM messages WHERE id=?`), messageID).Scan(&snippet))
+					assert.Equal(store.MatrixEncryptedPlaceholder, snippet)
+					var pending bool
+					require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT NOT recovered FROM matrix_encrypted_events WHERE message_id=?`), messageID).Scan(&pending))
+					assert.True(pending)
+					_, err := st.DB().ExecContext(t.Context(), st.Rebind(`DELETE FROM message_bodies WHERE message_id=?`), messageID)
+					require.NoError(err)
+				}
+			}
 			projector, err := activity.NewProjector(st, activity.Options{Timezone: "UTC"})
 			require.NoError(err)
 			_, err = projector.RunOnce(t.Context())
 			require.NoError(err)
 			explanation, err := st.ExplainPersonTierContext(t.Context(), person.ID, store.PersonTierOptions{Config: persontiers.DefaultConfig()})
 			require.NoError(err)
+			bursts, err := st.ListActivityBurstsContext(t.Context(), store.BurstQuery{FromDate: asOf.AddDate(0, 0, -5).Format(time.DateOnly), ToDate: asOf.AddDate(0, 0, -3).Format(time.DateOnly), Limit: 10, Filters: store.ActivityFilters{IncludeNoise: true}})
+			require.NoError(err)
+			require.Len(bursts.Bursts, 3)
+			for i, burst := range bursts.Bursts {
+				assert.Equal(asOf.AddDate(0, 0, i-5).Format(time.DateOnly), burst.LocalDate)
+				inbound, outbound := 0, 1
+				if i == 1 {
+					inbound, outbound = 1, 0
+				}
+				if encrypted && i > 0 {
+					inbound, outbound = 0, 0
+				}
+				assert.Equal(inbound, burst.Inbound)
+				assert.Equal(outbound, burst.Outbound)
+				require.NotEmpty(burst.Counterparts)
+				if encrypted && i > 0 {
+					for _, counterpart := range burst.Counterparts {
+						assert.False(counterpart.Counted)
+					}
+				}
+			}
+			aggregate, err := st.MessageContactAggregateContext(t.Context(), store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{peer}}, Now: asOf, Location: time.UTC})
+			require.NoError(err)
+			wantCount, lastAt := 3, asOf.AddDate(0, 0, -3)
+			if encrypted {
+				wantCount, lastAt = 1, asOf.AddDate(0, 0, -5)
+			}
+			assert.Equal(wantCount, aggregate.Count)
+			require.NotNil(aggregate.LastAt)
+			assert.Equal(lastAt, *aggregate.LastAt)
 			if encrypted {
 				assert.Equal(3, explanation.Tier)
 				assert.Equal(1, explanation.Signals.OutboundLong)

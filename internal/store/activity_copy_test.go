@@ -117,8 +117,8 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 	}
 }
 
-// Both copies have contact, but only the sent copy counts for the requested
-// addressee. The lower source is a received copy in another owned account.
+// The same sender is received in one account and owns the sending account.
+// Only the sent copy counts for the requested addressee.
 func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
@@ -132,24 +132,26 @@ func TestActivityEmailCopiesPreferRequestedSubject(t *testing.T) {
 				contact.Subject = store.ActivitySubject{PersonID: p.ID}
 			}
 			owner2 := f.EnsureParticipant("second@example.com", "Second owner", "example.com")
-			sender := f.EnsureParticipant("sender@example.com", "Sender", "example.com")
 			source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
 			require.NoError(err)
 			require.NoError(f.Store.AddAccountIdentity(source.ID, "second@example.com", "manual"))
 			room, err := f.Store.EnsureConversationWithType(source.ID, "sent-copy", "email_thread", "Sent copy")
 			require.NoError(err)
 			received := f.add(t, f.ConvID, f.Source.ID, contact.Now.Add(-time.Hour), false, "<subject-copy@example.com>")
-			require.NoError(f.Store.ReplaceMessageRecipients(received, "from", []int64{sender}, nil))
+			require.NoError(f.Store.ReplaceMessageRecipients(received, "from", []int64{owner2}, nil))
 			require.NoError(f.Store.ReplaceMessageRecipients(received, "to", []int64{f.owner, f.peer}, nil))
 			sent := f.add(t, room, source.ID, contact.Now, true, "subject-copy@example.com")
 			require.NoError(f.Store.ReplaceMessageRecipients(sent, "from", []int64{owner2}, nil))
+			require.NoError(f.Store.ReplaceMessageRecipients(sent, "to", []int64{f.owner, f.peer}, nil))
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id IN (?,?)`), owner2, received, sent)
+			require.NoError(err)
 			projectTimelineActivity(t, f, "UTC")
 			fullQuery := timelineBurstQuery()
 			fullQuery.Filters.IncludeNoise = true
 			full, err := f.Store.ListActivityBurstsContext(t.Context(), fullQuery)
 			require.NoError(err)
 			require.Len(full.Bursts, 1)
-			assert.Equal(received, full.Bursts[0].AnchorMessageID)
+			assert.Equal(sent, full.Bursts[0].AnchorMessageID)
 			for _, scope := range []struct {
 				sources       []int64
 				count, copies int
@@ -185,6 +187,7 @@ func TestActivityEmailCopiesCanonicalMessageIDs(t *testing.T) {
 		count               int
 	}{
 		{"clean brackets", "<copy@example.com>", "copy@example.com", 1},
+		{"both bracketed", "<copy@example.com>", "<copy@example.com>", 1},
 		{"distinct IDs", "first@example.com", "second@example.com", 2},
 		{"missing IDs", "", "", 2},
 		{"empty brackets", "<>", "", 2},
@@ -200,7 +203,7 @@ func TestActivityEmailCopiesCanonicalMessageIDs(t *testing.T) {
 			requirements.NoError(f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
 			room, err := f.Store.EnsureConversationWithType(source.ID, "canonical-copy", "email_thread", "Copy")
 			requirements.NoError(err)
-			f.add(t, f.ConvID, f.Source.ID, contact.Now, false, tc.first)
+			firstID := f.add(t, f.ConvID, f.Source.ID, contact.Now, false, tc.first)
 			f.add(t, room, source.ID, contact.Now, false, tc.second)
 			projectTimelineActivity(t, f, "UTC")
 			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), contact)
@@ -210,6 +213,9 @@ func TestActivityEmailCopiesCanonicalMessageIDs(t *testing.T) {
 			requirements.NoError(err)
 			assertions.Len(page.Bursts, tc.count)
 			for _, burst := range page.Bursts {
+				if tc.count == 1 {
+					assertions.Equal(firstID, burst.AnchorMessageID)
+				}
 				assertions.Equal(1, burst.Inbound)
 				assertions.Equal(3-tc.count, burst.CopyCounts[burst.AnchorMessageID])
 			}
@@ -221,6 +227,7 @@ func TestActivityEmailCopiesCanonicalMessageIDs(t *testing.T) {
 				page, err := f.Store.ListActivityBurstsContext(ctx, timelineBurstQuery())
 				requirements.NoError(err)
 				requirements.Len(page.Bursts, 1)
+				assertions.Equal(sourceID, page.Bursts[0].SourceID)
 				assertions.Equal(1, page.Bursts[0].CopyCounts[page.Bursts[0].AnchorMessageID])
 			}
 		})

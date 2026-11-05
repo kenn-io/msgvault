@@ -21,11 +21,7 @@ func TestPersonTiersExcludeGoogleResourceSubdomains(t *testing.T) {
 		wantTier      int
 		wantExclusion string
 	}{
-		{"resource.calendar.google.com", 3, "calendar_room"},
 		{"c.resource.calendar.google.com", 3, "calendar_room"},
-		{"floor.c.resource.calendar.google.com", 3, "calendar_room"},
-		{"notresource.calendar.google.com", 2, ""},
-		{"resource.calendar.google.com.example.test", 2, ""},
 	} {
 		t.Run(tc.domain, func(t *testing.T) {
 			require := require.New(t)

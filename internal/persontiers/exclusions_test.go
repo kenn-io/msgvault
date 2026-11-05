@@ -45,25 +45,4 @@ func TestDomainSubdomainPatternsCanBeConfigured(t *testing.T) {
 	assert.Empty(cfg.ExcludesAddress("room@rooms.example.com"))
 	assert.Empty(cfg.ExcludesAddress("room@otherrooms.example.com"))
 	assert.Empty(cfg.ExcludesAddress("room@c.resource.calendar.google.com"))
-	cfg.ExcludeAddressPatterns = []string{"*.bot"}
-	assert.ErrorIs(cfg.Validate(), ErrInvalidConfig)
-}
-
-func TestExcludedPreservesMultiAddressAndPhoneRules(t *testing.T) {
-	cfg := DefaultConfig()
-	for _, tt := range []struct {
-		name    string
-		signals Signals
-		want    string
-	}{
-		{"all automated across room and email", Signals{Emails: []string{"noreply@resource.calendar.google.com", "noreply@example.com"}}, "automated_address"},
-		{"room overrides phone", Signals{Emails: []string{"noreply@resource.calendar.google.com"}, HasPhoneOrChat: true}, "calendar_room"},
-		{"phone defeats automated", Signals{Emails: []string{"noreply@example.com"}, HasPhoneOrChat: true}, ""},
-		{"human and automated", Signals{Emails: []string{"alice@example.com", "noreply@example.com"}}, ""},
-		{"mixed exclusions retain human eligibility", Signals{Emails: []string{"room-4@resource.calendar.google.com", "noreply@example.com"}}, ""},
-		{"owner", Signals{Owner: true, Emails: []string{"alice@example.com"}}, "owner"},
-		{"no email", Signals{}, ""},
-	} {
-		t.Run(tt.name, func(t *testing.T) { assert.Equal(t, tt.want, excluded(tt.signals, cfg)) })
-	}
 }

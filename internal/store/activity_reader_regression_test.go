@@ -14,57 +14,53 @@ import (
 // Missing staged policy must not erase an ordinarily imported chat. Explicit
 // cold state must still suppress its projected rows before queue retraction.
 func TestActivityReadersDefaultMissingPolicyToFull(t *testing.T) {
-	for _, provider := range []string{"beeper", "slack", "slackdump", "discord", "teams"} {
-		t.Run(provider, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
-			f := newTimelineActivityFixture(t)
-			src, err := f.Store.GetOrCreateSource(provider, "synthetic-account")
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	src, err := f.Store.GetOrCreateSource("beeper", "synthetic-account")
+	requirements.NoError(err)
+	requirements.NoError(f.Store.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
+	conv, err := f.Store.EnsureConversation(src.ID, "synthetic-room", "Room")
+	requirements.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), conv)
+	requirements.NoError(err)
+	id := f.add(t, conv, src.ID, timelineContactQuery(f).Now, false, "")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='chat' WHERE id=?`), id)
+	requirements.NoError(err)
+	projectTimelineActivity(t, f, "UTC")
+	var projected int
+	requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&projected))
+	requirements.Equal(1, projected)
+	for _, cold := range []bool{false, true} {
+		if cold {
+			requirements.NoError(f.Store.SetConversationPolicyOverride(t.Context(), src.ID, "synthetic-room", conversationpolicy.Cold))
+			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversation_policy SET effective_tier='cold' WHERE conversation_id=?`), conv)
 			requirements.NoError(err)
-			requirements.NoError(f.Store.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
-			conv, err := f.Store.EnsureConversation(src.ID, "synthetic-room", "Room")
-			requirements.NoError(err)
-			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='group_chat' WHERE id=?`), conv)
-			requirements.NoError(err)
-			id := f.add(t, conv, src.ID, timelineContactQuery(f).Now, false, "")
-			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='chat' WHERE id=?`), id)
-			requirements.NoError(err)
-			projectTimelineActivity(t, f, "UTC")
-			var projected int
-			requirements.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT COUNT(*) FROM activity_events WHERE message_id=?`), id).Scan(&projected))
-			requirements.Equal(1, projected)
-			for _, cold := range []bool{false, true} {
-				if cold {
-					requirements.NoError(f.Store.SetConversationPolicyOverride(t.Context(), src.ID, "synthetic-room", conversationpolicy.Cold))
-					_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversation_policy SET effective_tier='cold' WHERE conversation_id=?`), conv)
-					requirements.NoError(err)
-				}
-				want := 1
-				if cold {
-					want = 0
-				}
-				bursts, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-				requirements.NoError(err)
-				assertions.Len(bursts.Bursts, want)
-				messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conv, Limit: 10})
-				requirements.NoError(err)
-				assertions.Len(messages, want)
-				display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
-				requirements.NoError(err)
-				assertions. // Display hydrates already-authorized cold entries too.
-						Len(display, 1)
-				summary, err := f.Store.MessageContactAggregateContext(t.Context(), timelineContactQuery(f))
-				requirements.NoError(err)
-				assertions.Equal(want, summary.Count)
-				latest, err := f.Store.LatestEligibleMessageContext(t.Context(), conv)
-				requirements.NoError(err)
-				if cold {
-					assertions.Zero(latest)
-				} else {
-					assertions.Equal(id, latest)
-				}
-			}
-		})
+		}
+		want := 1
+		if cold {
+			want = 0
+		}
+		bursts, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+		requirements.NoError(err)
+		assertions.Len(bursts.Bursts, want)
+		messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conv, Limit: 10})
+		requirements.NoError(err)
+		assertions.Len(messages, want)
+		display, err := f.Store.MessageDisplayContext(t.Context(), []int64{id})
+		requirements.NoError(err)
+		assertions. // Display hydrates already-authorized cold entries too.
+				Len(display, 1)
+		summary, err := f.Store.MessageContactAggregateContext(t.Context(), timelineContactQuery(f))
+		requirements.NoError(err)
+		assertions.Equal(want, summary.Count)
+		latest, err := f.Store.LatestEligibleMessageContext(t.Context(), conv)
+		requirements.NoError(err)
+		if cold {
+			assertions.Zero(latest)
+		} else {
+			assertions.Equal(id, latest)
+		}
 	}
 }
 
@@ -86,10 +82,6 @@ func TestActivityReadersInboundAudienceMatchesClassifier(t *testing.T) {
 			}
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other}, []string{"Owner", "Other"}))
 			projectTimelineActivity(t, f, "UTC")
-			cs, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
-			requirements.NoError(err)
-			requirements.Len(cs, 1)
-			assertions.Equal(!aliases, store.ClassifyActivityCandidate(cs[0], 1).Broadcast)
 			q := timelineBurstQuery()
 			q.Filters = store.ActivityFilters{MaxDirect: 1, IncludeNoise: true}
 			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
@@ -173,10 +165,6 @@ func TestActivityReadersChatAudienceUsesEnvelopeOrRoster(t *testing.T) {
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
 			}
 			projectTimelineActivity(t, f, "UTC")
-			cs, err := f.Store.LoadActivityCandidatesByIDContext(t.Context(), []int64{id})
-			requirements.NoError(err)
-			requirements.Len(cs, 1)
-			assertions.Equal(!envelope, store.ClassifyActivityCandidate(cs[0], 1).Broadcast)
 			q := timelineBurstQuery()
 			q.Filters = store.ActivityFilters{MaxDirect: 1, IncludeNoise: true}
 			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)

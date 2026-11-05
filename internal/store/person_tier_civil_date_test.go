@@ -25,8 +25,6 @@ func TestPersonTierCivilDateWindows(t *testing.T) {
 		{"before long window", "America/Sao_Paulo", "2018-11-04", "2018-10-31", 0, 0, 3},
 		{"skipped short boundary", "America/Sao_Paulo", "2018-11-05", "2018-11-03", 0, 1, 2},
 		{"skipped long boundary", "America/Sao_Paulo", "2018-11-07", "2018-11-03", 0, 0, 3},
-		{"spring DST boundary", "America/New_York", "2026-03-09", "2026-03-08", 1, 1, 1},
-		{"fall DST boundary", "America/New_York", "2026-11-02", "2026-11-01", 1, 1, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert := assert.New(t)

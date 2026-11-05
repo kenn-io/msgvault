@@ -30,9 +30,13 @@ func TestLiveEligibilityExcludesChangesAfterProjection(t *testing.T) {
 			assertions.Equal(1, summary.Count)
 			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET `+change+` WHERE id IN (?,?)`), id, transcript)
 			requirements.NoError(err)
-			bursts, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-			requirements.NoError(err)
-			assertions.Empty(bursts.Bursts)
+			for _, includeNoise := range []bool{false, true} {
+				query := timelineBurstQuery()
+				query.Filters.IncludeNoise = includeNoise
+				bursts, err := f.Store.ListActivityBurstsContext(t.Context(), query)
+				requirements.NoError(err)
+				assertions.Empty(bursts.Bursts)
+			}
 			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10, Filters: store.ActivityFilters{IncludeNoise: true}})
 			requirements.NoError(err)
 			assertions.Empty(messages)

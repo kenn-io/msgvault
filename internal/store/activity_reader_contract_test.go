@@ -11,34 +11,72 @@ import (
 )
 
 func TestScopedTierHiddenIdentifier(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	f.peer = f.EnsureParticipant("noreply@example.com", "Peer", "example.com")
-	alias := f.EnsureParticipant("noreply@other.example.com", "Alias", "other.example.com")
-	_, err := f.Store.LinkParticipants(f.peer, alias)
-	require.NoError(err)
-	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-	require.NoError(err)
-	for i := range 3 {
-		f.add(t, f.ConvID, f.Source.ID, tierAsOf.AddDate(0, 0, i-3), i == 1, "")
+	for _, reader := range []string{"tier", "aggregate and bursts"} {
+		t.Run(reader, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			f.peer = f.EnsureParticipant("noreply@example.com", "Peer", "example.com")
+			alias := f.EnsureParticipant("noreply@other.example.com", "Alias", "other.example.com")
+			_, err := f.Store.LinkParticipants(f.peer, alias)
+			requirements.NoError(err)
+			person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+			requirements.NoError(err)
+			q := timelineContactQuery(f)
+			if reader == "tier" {
+				q.Now = tierAsOf
+				for i := range 3 {
+					f.add(t, f.ConvID, f.Source.ID, tierAsOf.AddDate(0, 0, i-3), i == 1, "")
+				}
+			} else {
+				f.add(t, f.ConvID, f.Source.ID, q.Now, false, "")
+			}
+			hidden, err := f.Store.GetOrCreateSource("matrix", "hidden@example.com")
+			requirements.NoError(err)
+			conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
+			requirements.NoError(err)
+			peer := f.peer
+			f.peer = alias
+			hiddenAt := q.Now
+			if reader == "tier" {
+				hiddenAt = q.Now.AddDate(0, 0, -1)
+			}
+			f.add(t, conv, hidden.ID, hiddenAt, false, "")
+			f.peer = peer
+			projectTimelineActivity(t, f, "UTC")
+			ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
+			if reader == "tier" {
+				before, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
+				requirements.NoError(err)
+				requirements.Equal(3, before.Tier)
+				requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
+				after, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
+				requirements.NoError(err)
+				assertions.Equal(before.Tier, after.Tier)
+				assertions.Equal(before.Signals, after.Signals)
+				return
+			}
+			before, err := f.Store.MessageContactAggregateContext(ctx, q)
+			requirements.NoError(err)
+			requirements.Zero(before.Count)
+			requirements.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
+			after, err := f.Store.MessageContactAggregateContext(ctx, q)
+			requirements.NoError(err)
+			assertions.Equal(before, after)
+			bq := timelineBurstQuery()
+			bq.Filters.IncludeNoise = true
+			bursts, err := f.Store.ListActivityBurstsContext(ctx, bq)
+			requirements.NoError(err)
+			requirements.Len(bursts.Bursts, 1)
+			assertions.Zero(bursts.Bursts[0].Inbound)
+			for _, cp := range bursts.Bursts[0].Counterparts {
+				if cp.ParticipantID == f.peer {
+					assertions.Equal("automated_address", cp.Excluded)
+					assertions.False(cp.Counted)
+				}
+			}
+		})
 	}
-	hidden, err := f.Store.GetOrCreateSource("matrix", "hidden@example.com")
-	require.NoError(err)
-	conv, err := f.Store.EnsureConversation(hidden.ID, "hidden", "Hidden")
-	require.NoError(err)
-	f.peer = alias
-	f.add(t, conv, hidden.ID, tierAsOf.AddDate(0, 0, -1), false, "")
-	projectTimelineActivity(t, f, "UTC")
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID})
-	before, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
-	require.NoError(err)
-	require.Equal(3, before.Tier)
-	require.NoError(f.Store.SetParticipantIdentifier(alias, "matrix", "@alias:example.com"))
-	after, err := f.Store.ExplainPersonTierContext(ctx, person.ID, tierOptions())
-	require.NoError(err)
-	assert.Equal(before.Tier, after.Tier)
-	assert.Equal(before.Signals, after.Signals)
 }
 
 func TestTierAndTimelineOwnerAgree(t *testing.T) {
@@ -52,11 +90,9 @@ func TestTierAndTimelineOwnerAgree(t *testing.T) {
 			assert := assert.New(t)
 			f := newTimelineActivityFixture(t)
 			subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
-			var personID int64
 			if saved {
 				person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
 				require.NoError(err)
-				personID = person.ID
 				subject = store.ActivitySubject{PersonID: person.ID}
 			}
 			other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
@@ -67,12 +103,6 @@ func TestTierAndTimelineOwnerAgree(t *testing.T) {
 			q := timelineContactQuery(f)
 			q.Subject = subject
 			q.Now = tierAsOf
-			if saved {
-				tier, err := f.Store.ExplainPersonTierContext(t.Context(), personID, tierOptions())
-				require.NoError(err)
-				require.NotNil(tier.Exclusion)
-				assert.Equal("owner", *tier.Exclusion)
-			}
 			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 			require.NoError(err)
 			assert.Zero(got.Count)
