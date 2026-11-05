@@ -69,6 +69,7 @@
   import { formatBytes } from '../../util/format';
   import { reportError, reportAction, reportSearch, reportWhenVisible } from '../../telemetry/actions';
   import { visualReadiness } from '../../search/visual-ready.svelte';
+  import RowKind from '../explore/RowKind.svelte';
   import FileFilters from './FileFilters.svelte';
   import FileViewer from './FileViewer.svelte';
   import PersonMediaGallery from './PersonMediaGallery.svelte';
@@ -172,7 +173,7 @@
     onOpenConversation = undefined,
   }: Props = $props();
   const visual = visualReadiness();
-  const geometry = new RowGeometry();
+  const geometry = new RowGeometry('--table-short-row-height');
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
   let rows = $state<WorkspaceFileRow[]>([]);
@@ -374,8 +375,7 @@
     previousRowHeight = nextHeight;
     if (!grid || nextHeight === undefined || previousHeight === undefined || previousHeight === nextHeight) return;
     const element = grid;
-    const rebased =
-      activeIndex >= 0 ? activeIndex * nextHeight : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, activeIndex, measuredViewport(element, headerElement));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(element, nextHeight, expectedScrollHeight, rebased));
   });
@@ -701,8 +701,8 @@
     if (grid && top < grid.scrollTop) grid.scrollTop = top;
     else if (grid && top + height > grid.scrollTop + visibleHeight) grid.scrollTop = top + height - visibleHeight;
   }
-  function measuredViewport(element: HTMLDivElement, header: HTMLDivElement): number {
-    return tableViewportHeight(element.clientHeight, header.offsetHeight || 34, window.innerHeight);
+  function measuredViewport(element: HTMLDivElement, header: HTMLDivElement | undefined): number {
+    return tableViewportHeight(element.clientHeight, header?.offsetHeight || 34, window.innerHeight);
   }
   function applyDensityRebase(
     element: HTMLDivElement,
@@ -787,7 +787,7 @@
 
 {#snippet sortHeader(field: FileSearchSort['field'], label: string)}
   <!-- kit-ui-check-ignore: the virtualized div grid owns focus and deep restoration; kit TableHeaderCell renders a <th> and needs kit Table. -->
-  <span role="columnheader" aria-sort={sort.field === field ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
+  <span class={`header--${field}`} role="columnheader" aria-sort={sort.field === field ? (sort.direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
     <button type="button" aria-label={`Sort by ${label.toLowerCase()}`} onclick={() => chooseSort(field)}>
       {label}
       {#if sort.field === field}
@@ -913,7 +913,7 @@
         onkeydown={handleKeydown}
         onscroll={handleScroll}
       >
-        <div class="table-header" style:grid-template-columns={columns} bind:this={headerElement} role="row">
+        <div class="table-header" style:--row-template={columns} bind:this={headerElement} role="row">
           {@render sortHeader('occurred_at', 'Date')}
           {@render sortHeader('filename', 'Filename')}
           <span role="columnheader">Type</span>
@@ -976,7 +976,7 @@
                   <div
                     id={rowID(row)}
                     class="data-row"
-                    style:grid-template-columns={columns}
+                    style:--row-template={columns}
                     class:data-row--active={index === activeIndex}
                     role="row"
                     aria-rowindex={index + 2}
@@ -991,23 +991,25 @@
                       }
                     }}
                   >
-                    <span role="gridcell"
+                    <span class="file-kind" aria-hidden="true"><RowKind kind="file" messageType="" /></span>
+                    <span class="cell--date" role="gridcell"
                       ><time datetime={row.occurred_at} data-mono>{formatDate(row.occurred_at)}</time></span
                     >
                     <span
+                      class="cell--name"
                       role="gridcell"
                       title={row.search_explain ? `Match score ${row.search_explain.rrf.toFixed(4)}` : undefined}
                     >
                       <Tooltip text={row.filename || '(unnamed)'}><strong title={row.filename || '(unnamed)'}>{row.filename || '(unnamed)'}</strong></Tooltip>
                     </span>
-                    <span role="gridcell" title={row.mime_type || row.mime_family}
+                    <span class="cell--type" role="gridcell" title={row.mime_type || row.mime_family}
                       >{fileTypeLabel(row.mime_type, row.mime_family)}</span
                     >
-                    <span role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
-                    {#if personScoped}<span role="gridcell">{relationship(row)}</span>{/if}
-                    <span role="gridcell">{people(row)}</span>
-                    <span role="gridcell">{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
-                    <span role="gridcell">
+                    <span class="cell--size" role="gridcell" data-mono>{formatBytes(row.size_bytes)}</span>
+                    {#if personScoped}<span class="cell--direction" role="gridcell">{relationship(row)}</span>{/if}
+                    <span class="cell--people" role="gridcell"><span class="desktop-people">{people(row)}</span><span class="phone-sender">{row.sender_label}</span></span>
+                    <span class="cell--source" role="gridcell">{row.source_identifier.includes('://') ? row.source_type === 'imap' ? sourceMailbox(row.source_identifier) : sourceTypeLabel(row.source_type) : row.source_identifier}</span>
+                    <span class="cell--message" role="gridcell">
                       {#if onOpenItem}
                         {@const openItem = onOpenItem}
                         <button
@@ -1020,7 +1022,7 @@
                         {row.containing_title || row.entry_key}
                       {/if}
                     </span>
-                    <span role="gridcell">{availability(row)}</span>
+                    <span class="cell--availability" class:local-content={row.content_state === 'local_content'} role="gridcell">{availability(row)}</span>
                   </div>
                 {/each}
               </div>
@@ -1174,6 +1176,7 @@
     display: grid;
     align-items: center;
     min-width: 840px;
+    grid-template-columns: var(--row-template);
   }
   .table-header {
     position: sticky;
@@ -1241,7 +1244,7 @@
     inset: 0 0 auto;
   }
   .data-row {
-    height: var(--row-height);
+    height: var(--table-short-row-height);
     border-bottom: 1px solid var(--border-muted);
     color: var(--text-secondary);
     font-size: var(--font-size-xs);
@@ -1273,5 +1276,30 @@
     padding: var(--space-2);
     background: var(--bg-inset);
     text-align: center;
+  }
+  .file-kind, .phone-sender { display: none; }
+  @media (max-width: 640px) {
+    .table-header, .data-row { min-width: 0; }
+    .table-header { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .table-header > span:not(.header--occurred_at):not(.header--filename):not(.header--size) { display: none; }
+    .data-row {
+      grid-template-columns: 24px auto auto minmax(0, 1fr);
+      grid-template-areas: 'icon name name avail' 'icon date size people';
+      align-content: center;
+      gap: var(--space-1) var(--control-gap);
+      padding: var(--pane-pad-y) var(--pane-pad-x);
+    }
+    .data-row span { padding: 0; }
+    .data-row .file-kind { display: block; grid-area: icon; color: var(--artifact-ink); }
+    .file-kind :global(.row-kind__label) { display: none; }
+    .desktop-people { display: none; }
+    .phone-sender { display: inline; }
+    .cell--name { grid-area: name; color: var(--text-primary); font-size: var(--font-size-sm); }
+    .data-row:has(.local-content) .cell--name { grid-column: 2 / -1; }
+    .cell--date { grid-area: date; }
+    .cell--size { grid-area: size; }
+    .cell--people { grid-area: people; }
+    .data-row .cell--availability { grid-area: avail; color: var(--text-muted); text-align: right; }
+    .cell--type, .cell--direction, .cell--source, .cell--message, .local-content { display: none; }
   }
 </style>

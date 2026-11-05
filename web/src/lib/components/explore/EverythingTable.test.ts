@@ -47,7 +47,7 @@ describe('EverythingTable', () => {
   });
 
   it('waits for computed row geometry before virtualizing and becomes ready reactively', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-row-height');
     document.documentElement.removeAttribute('data-density');
     const rendered = render(EverythingTable, {
       rows: [row(1)],
@@ -57,7 +57,7 @@ describe('EverythingTable', () => {
     expect(screen.getByText('Preparing table layout…')).toBeDefined();
     expect(rendered.container.querySelector('.virtual-spacer')).toBeNull();
 
-    document.documentElement.style.setProperty('--row-height', '41px');
+    document.documentElement.style.setProperty('--table-row-height', '41px');
     document.documentElement.dataset.density = 'comfortable';
 
     await waitFor(() => {
@@ -95,7 +95,7 @@ describe('EverythingTable', () => {
 
     const rendered = screen.getByRole('row', { name: /Email item/ });
     expect((rendered as HTMLElement).style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
+    expect(getComputedStyle(document.documentElement).getPropertyValue('--table-row-height').trim()).toBe('36px');
     expect(screen.getByRole('columnheader', { name: 'Kind' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'People / source' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'Attachments' }).textContent).toBe('⌕');
@@ -379,7 +379,7 @@ describe('EverythingTable', () => {
     const { rerender } = render(EverythingTable, { rows: [], selection, loading: true, onRetry });
     const skeleton = screen.getAllByTestId('everything-skeleton')[0]!;
     expect(skeleton.style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
+    expect(getComputedStyle(document.documentElement).getPropertyValue('--table-row-height').trim()).toBe('36px');
     const grid = screen.getByRole('grid', { name: 'Messages results' });
     expect(grid.getAttribute('aria-busy')).toBe('true');
     expect(grid.getAttribute('aria-rowcount')).toBeNull();

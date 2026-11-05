@@ -358,6 +358,26 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusServiceUnavailable, "identity_matches_unavailable", "Message identity matches could not be resolved")
 		return
 	}
+	messageIDs := make([]int64, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		if row.Kind != query.EntryConversation && row.AnchorMessageID != nil {
+			messageIDs = append(messageIDs, *row.AnchorMessageID)
+		}
+	}
+	senders, err := s.pageSenderLabels(r.Context(), messageIDs)
+	if err != nil {
+		if s.writeIfContextError(w, err) {
+			return
+		}
+		writeError(w, http.StatusServiceUnavailable, "sender_labels_unavailable", "Message senders could not be resolved")
+		return
+	}
+	for i := range result.Rows {
+		row := &result.Rows[i]
+		if row.Kind != query.EntryConversation && row.AnchorMessageID != nil {
+			row.SenderLabel = senders[*row.AnchorMessageID]
+		}
+	}
 	response := ExploreHTTPResponse{
 		Rows: result.Rows, CacheRevision: result.CacheRevision,
 		SearchProvenance: result.SearchProvenance, CandidateSnapshotID: snapshotID,
@@ -386,6 +406,39 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 		})
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+// pageSenderLabels resolves only the distinct messages in the returned page.
+func (s *Server) pageSenderLabels(ctx context.Context, messageIDs []int64) (map[int64]string, error) {
+	labels := make(map[int64]string, len(messageIDs))
+	ids := make([]int64, 0, len(messageIDs))
+	for _, id := range messageIDs {
+		if id <= 0 {
+			continue
+		}
+		if _, seen := labels[id]; !seen {
+			ids = append(ids, id)
+			labels[id] = ""
+		}
+	}
+	if len(ids) == 0 {
+		return labels, nil
+	}
+	summaries, err := s.getMessagesSummariesByIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, summary := range summaries {
+		label := summary.FromName
+		if label == "" {
+			label = summary.FromPhone
+		}
+		if label == "" {
+			label = summary.FromEmail
+		}
+		labels[summary.ID] = label
+	}
+	return labels, nil
 }
 
 // addExploreTiming reports milliseconds in the browser's request timing panel.

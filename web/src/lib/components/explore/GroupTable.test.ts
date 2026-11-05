@@ -38,7 +38,7 @@ describe('GroupTable', () => {
     const first = screen.getByRole('row', { name: /Example source/ });
 
     expect((first as HTMLElement).style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--row-height').trim()).toBe('36px');
+    expect(getComputedStyle(document.documentElement).getPropertyValue('--table-short-row-height').trim()).toBe('36px');
     grid.focus();
     await fireEvent.keyDown(grid, { key: 'j' });
     await fireEvent.keyDown(grid, { key: 'Enter' });

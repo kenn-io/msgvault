@@ -634,7 +634,7 @@ describe('FilesWorkspace', () => {
   });
 
   it('loads bounded cursor pages until a durable selected file is restored', async () => {
-    document.documentElement.style.removeProperty('--row-height');
+    document.documentElement.style.removeProperty('--table-short-row-height');
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrame = 1;
     vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
@@ -681,7 +681,7 @@ describe('FilesWorkspace', () => {
     expect(onRestorationComplete).not.toHaveBeenCalled();
     expect(grid.getAttribute('aria-activedescendant')).toBeNull();
 
-    document.documentElement.style.setProperty('--row-height', '36px');
+    document.documentElement.style.setProperty('--table-short-row-height', '36px');
     const [frame, callback] = [...frames.entries()][0]!;
     frames.delete(frame);
     callback(performance.now());

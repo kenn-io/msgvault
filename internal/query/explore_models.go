@@ -175,6 +175,7 @@ type SearchProvenance struct {
 // EntryRow is one logical archive row. Chat/text rows aggregate messages only
 // after Context has been applied; other modalities retain durable item units.
 type EntryRow struct {
+	SenderLabel                string       `json:"sender_label,omitempty"`
 	Key                        string       `json:"key"`
 	Kind                       EntryKind    `json:"kind"`
 	AnchorMessageID            *int64       `json:"anchor_message_id,omitzero" nullable:"false"`

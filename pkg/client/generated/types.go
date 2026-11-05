@@ -4829,6 +4829,7 @@ type EntryRow struct {
 	ParticipantIds             []int64      `json:"participant_ids,omitempty"`
 	ParticipantLabels          []string     `json:"participant_labels,omitempty"`
 	Preview                    string       `json:"preview" validate:"required"`
+	SenderLabel                *string      `json:"sender_label,omitzero"`
 	SourceID                   int64        `json:"source_id"`
 	SourceIdentifier           string       `json:"source_identifier" validate:"required"`
 	SourceType                 string       `json:"source_type" validate:"required"`
@@ -5816,6 +5817,7 @@ type FileSearchRow struct {
 	ParticipantIds     []int64                   `json:"participant_ids,omitempty"`
 	ParticipantLabels  []string                  `json:"participant_labels,omitempty"`
 	SearchExplain      *FileSearchExplain        `json:"search_explain,omitempty"`
+	SenderLabel        *string                   `json:"sender_label,omitzero"`
 	SizeBytes          int64                     `json:"size_bytes"`
 	SourceID           int64                     `json:"source_id"`
 	SourceIdentifier   string                    `json:"source_identifier" validate:"required"`
@@ -12113,6 +12115,7 @@ type PersonFileSearchRow struct {
 	ParticipantLabels  []string                        `json:"participant_labels,omitempty"`
 	PersonProvenance   PersonFileProvenance            `json:"person_provenance"`
 	SearchExplain      *FileSearchExplain              `json:"search_explain,omitempty"`
+	SenderLabel        *string                         `json:"sender_label,omitzero"`
 	SizeBytes          int64                           `json:"size_bytes"`
 	SourceID           int64                           `json:"source_id"`
 	SourceIdentifier   string                          `json:"source_identifier" validate:"required"`

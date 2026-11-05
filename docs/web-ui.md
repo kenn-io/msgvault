@@ -92,6 +92,8 @@ warns that its session cookie travels without TLS. `HttpOnly` and
 
 ## Messages and search
 
+At 640px or narrower, message rows show the sender and time, subject, and a one-line preview. Conversation rows show their participants. Group rows show the name, item count, size, and latest date. Columns still chooses which parts appear.
+
 <figure class="screenshot" data-lightbox>
   <img src="/docs/assets/static/analytical-light-compact-darwin.png" alt="Archived email table with global search, Save view button, and compact email rows in light theme" loading="lazy">
   <figcaption>Browse archived email. Select the image to view it at full size.</figcaption>
@@ -240,6 +242,9 @@ true` for daemon startup to build a stale cache. With `analytics.engine =
 "duckdb"`, startup fails if no usable cache can be produced.
 
 ## Files and containing context
+
+At 640px or narrower, files use stacked rows with the filename above the date, size, and sender.
+Type, source, containing message, and person-file direction are hidden at this width. Availability appears only for files without local content.
 
 Files is the single file view. It is a searchable table of attachment date,
 filename, type, size, person or domain, source, Message, and content

@@ -1,4 +1,5 @@
 import {
+  MEDIA,
   cleanupTheme,
   initTheme,
   setThemeMode,
@@ -29,12 +30,18 @@ const ROW_GEOMETRY_READINESS_FRAMES = 300;
 
 export class RowGeometry {
   height = $state<number | undefined>();
+  #media: MediaQueryList | undefined;
+  #breakpointChanged = () => this.#read();
   #observer: MutationObserver | undefined;
   #readinessFrame: number | undefined;
   #readinessAttempts = 0;
 
-  constructor() {
+  constructor(private token = '--table-row-height') {
     this.#read();
+    if (typeof matchMedia === 'function') {
+      this.#media = matchMedia(MEDIA.compact);
+      this.#media.addEventListener('change', this.#breakpointChanged);
+    }
     if (typeof document !== 'undefined' && typeof MutationObserver !== 'undefined') {
       this.#observer = new MutationObserver(() => this.#read());
       this.#observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-density'] });
@@ -43,13 +50,14 @@ export class RowGeometry {
   }
 
   destroy(): void {
+    this.#media?.removeEventListener('change', this.#breakpointChanged);
     this.#observer?.disconnect();
     this.#stopReadinessProbe();
   }
 
   #read(): void {
     if (typeof document === 'undefined') return;
-    const parsed = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height'));
+    const parsed = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(this.token));
     if (Number.isFinite(parsed) && parsed > 0) {
       this.height = parsed;
       this.#stopReadinessProbe();
@@ -153,8 +161,12 @@ export function mergeSavedAppearance(current: AppearanceDefaults, saved: SavedAp
   };
 }
 
-export function rebaseVirtualScroll(scrollTop: number, previousHeight: number, nextHeight: number): number {
+export function rebaseVirtualScroll(scrollTop: number, previousHeight: number, nextHeight: number, focusedIndex = -1, viewportHeight = 0): number {
   if (previousHeight <= 0 || nextHeight <= 0 || previousHeight === nextHeight) return scrollTop;
+  const focusedOffset = focusedIndex * previousHeight - scrollTop;
+  if (focusedIndex >= 0 && focusedOffset >= 0 && focusedOffset < viewportHeight) {
+    return Math.max(0, focusedIndex * nextHeight - focusedOffset);
+  }
   const anchorIndex = Math.floor(scrollTop / previousHeight);
   const offset = Math.min(scrollTop - anchorIndex * previousHeight, nextHeight - 1);
   return anchorIndex * nextHeight + offset;

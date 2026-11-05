@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -123,7 +124,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
 	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
 		Files: []query.FileRow{
-			{ID: 1, Key: "file:1", EntryKey: "message:1", MessageID: 11, ConversationID: 21, OccurredAt: now, Filename: "local.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage},
+			{ID: 1, Key: "file:1", EntryKey: "message:1", MessageID: 11, ConversationID: 21, OccurredAt: now, ParticipantLabels: []string{"Alice Recipient", "Zoe Sender"}, Filename: "local.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage},
 			{ID: 2, Key: "file:2", EntryKey: "message:2", MessageID: 12, ConversationID: 22, OccurredAt: now, Filename: "remote.pdf", MimeType: "application/pdf", MIMEFamily: query.FileMIMEPDF},
 			{ID: 3, Key: "file:3", EntryKey: "message:3", MessageID: 13, ConversationID: 23, OccurredAt: now, Filename: "missing.bin"},
 			{ID: 4, Key: "file:4", EntryKey: "message:4", MessageID: 14, ConversationID: 24, OccurredAt: now, Filename: "metadata.txt"},
@@ -131,7 +132,7 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 		TotalCount: 4, CacheRevision: "cache-files", SearchProvenance: query.SearchProvenance{},
 	}}
 	hash := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	catalog := &fileCatalogStore{mockStore: &mockStore{}, files: map[int64]store.FileMetadata{
+	catalog := &fileCatalogStore{mockStore: &mockStore{messages: []APIMessage{{ID: 11, FromName: "Zoe Sender"}}}, files: map[int64]store.FileMetadata{
 		1: {ID: 1, MessageID: 11, ConversationID: 21, Filename: "local.png", MimeType: "image/png", ContentHash: hash, StoragePath: "aa/" + hash},
 		2: {ID: 2, MessageID: 12, ConversationID: 22, Filename: "remote.pdf", MimeType: "application/pdf", URL: "https://files.example/remote.pdf"},
 		3: {ID: 3, MessageID: 13, ConversationID: 23, Filename: "missing.bin", ContentHash: hash},
@@ -154,6 +155,9 @@ func TestFilesSearchUsesAnalyticalQueryAndOneCatalogBatch(t *testing.T) {
 	requirements.Len(result.Files, 4)
 	assertions.Equal([]int64{1, 2, 3, 4}, catalog.batchIDs)
 	assertions.Equal(1, catalog.batchCalls)
+	assertions.Equal("Zoe Sender", result.Files[0].SenderLabel)
+	assertions.Equal(int32(1), catalog.getSummariesByIDsCalls.Load())
+	assertions.Equal([]int64{11, 12, 13, 14}, catalog.getSummariesByIDsLastIDs)
 	assertions.Equal(FileContentLocal, result.Files[0].ContentState)
 	assertions.True(result.Files[0].ContentAvailable)
 	assertions.Equal(FileContentURLOnly, result.Files[1].ContentState)
@@ -369,6 +373,12 @@ func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing
 	st := testutil.NewTestStore(t)
 	person, err := st.EnsureParticipant("person@example.com", "Person", "example.com")
 	requirements.NoError(err)
+	source, err := st.GetOrCreateSource("gmail", "archive@example.test")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "sender-test", "Sender test")
+	requirements.NoError(err)
+	messageID, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "sender-test", MessageType: "email", SenderID: sql.NullInt64{Int64: person, Valid: true}})
+	requirements.NoError(err)
 	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
 	provenance := &query.PersonFileProvenance{
 		ParticipantIDs: []int64{person},
@@ -379,14 +389,14 @@ func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing
 	}
 	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
 		Files: []query.FileRow{{
-			ID: 17, Key: "file:17", EntryKey: "message:11", MessageID: 11, ConversationID: 21,
-			OccurredAt: now, Filename: "photo.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
+			ID: 17, Key: "file:17", EntryKey: "message:11", MessageID: messageID, ConversationID: 21,
+			OccurredAt: now, ParticipantLabels: []string{"Alice Recipient", "Person"}, Filename: "photo.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
 			PersonProvenance: provenance,
 		}},
 		TotalCount: 1, CacheRevision: "cache-person-files",
 	}}
 	catalog := &clusterFileCatalogStore{Store: st, files: map[int64]store.FileMetadata{
-		17: {ID: 17, MessageID: 11, ConversationID: 21, Filename: "photo.png", MimeType: "image/png"},
+		17: {ID: 17, MessageID: messageID, ConversationID: 21, Filename: "photo.png", MimeType: "image/png"},
 	}}
 	srv := NewServerWithOptions(ServerOptions{
 		Config: &config.Config{Server: config.ServerConfig{APIPort: 8080}},
@@ -408,6 +418,7 @@ func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing
 	var body PersonFileSearchHTTPResponse
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	requirements.Len(body.Files, 1)
+	assertions.Equal("Person", body.Files[0].SenderLabel)
 	assertions.Equal(*provenance, body.Files[0].PersonProvenance)
 	assertions.Equal(int64(17), body.Files[0].ID)
 

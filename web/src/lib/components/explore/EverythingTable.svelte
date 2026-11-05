@@ -98,9 +98,7 @@
     scrollIntent += 1;
     const preservedKey = activeKey;
     const focusedIndex = activeKey ? rows.findIndex((row) => row.key === activeKey) : -1;
-    const rebased = focusedIndex >= 0
-      ? focusedIndex * nextHeight
-      : rebaseVirtualScroll(scrollTop, previousHeight, nextHeight);
+    const rebased = rebaseVirtualScroll(scrollTop, previousHeight, nextHeight, focusedIndex, measuredViewport(element));
     const expectedScrollHeight = rows.length * nextHeight;
     requestAnimationFrame(() => applyDensityRebase(
       element, nextHeight, expectedScrollHeight, rebased, preservedKey
@@ -126,7 +124,7 @@
     const index = rows.findIndex((row) => row.key === scrollAnchor.key);
     if (index < 0) return;
     const element = gridElement;
-    const target = index * height + scrollAnchor.offset;
+    const target = index * height + Math.min(scrollAnchor.offset, height - 1);
     const intent = scrollIntent;
     restoredAnchor = signature;
     afterVirtualLayout(element, rows.length * height, () => {
@@ -413,7 +411,7 @@
     onkeydown={handleKeydown}
     onscroll={handleScroll}
   >
-    <div class="table-header" bind:this={headerElement} role="row" style:grid-template-columns={template}>
+    <div class="table-header" bind:this={headerElement} role="row" style:--row-template={template}>
       {#if selection}<span role="columnheader" class="selection-header">
         <SelectionCheckbox
           checked={allLoadedSelected}
@@ -469,7 +467,7 @@
               class="skeleton-row"
               data-testid="everything-skeleton"
               role="row"
-              style:grid-template-columns={template}
+              style:--row-template={template}
             >
               {#if selection}<span class="skeleton-cell selection-cell" role="gridcell"><i></i></span>{/if}
               {#each visibleColumns as column (column)}
@@ -502,7 +500,7 @@
                 aria-rowindex={index + 2}
                 aria-selected={selection?.isSelected(row.key)}
                 aria-current={inspectedKey === row.key ? 'true' : undefined}
-                style:grid-template-columns={template}
+                style:--row-template={template}
                 onpointerdown={() => {
                   activeKey = row.key;
                   onActiveKey?.(row.key);
@@ -528,7 +526,8 @@
                       <RowKind kind={row.kind} messageType={row.message_type} />
                     {:else if column === 'people'}
                       {@const label = people(row)}
-                      <Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip>
+                      <span class="desktop-people"><Tooltip text={label}><span class="people-label" title={label}>{label}</span></Tooltip></span>
+                      <span class="phone-sender">{row.kind === 'conversation' ? label : row.sender_label}</span>
                       {#if isEmailMessageType(row.message_type)}
                         <IdentityBadge
                           senderIdentities={row.matched_sender_identities}
@@ -548,7 +547,7 @@
                       {#if row.has_attachments}
                         <span class="attachment" aria-label={`${row.attachment_count} attachments`}>⌕</span>
                       {:else}
-                        <span aria-label="No attachments">—</span>
+                        <span class="no-attachments" aria-label="No attachments">—</span>
                       {/if}
                     {:else if column === 'size'}
                       <span data-mono>{formatBytes(row.attachment_size)}</span>
@@ -603,6 +602,7 @@
   .data-row {
     display: grid;
     align-items: center;
+    grid-template-columns: var(--row-template);
   }
 
   .table-grid {
@@ -687,7 +687,7 @@
 
   .data-row,
   .skeleton-row {
-    height: var(--row-height);
+    height: var(--table-row-height);
     border-bottom: 1px solid var(--border-muted);
   }
 
@@ -780,6 +780,7 @@
   }
 
   .skeleton-row {
+    grid-template-columns: var(--row-template);
     display: grid;
     align-items: center;
   }
@@ -863,5 +864,35 @@
     *::after {
       scroll-behavior: auto !important;
     }
+  }
+  .phone-sender { display: none; }
+  @media (max-width: 640px) {
+    .virtual-spacer { min-width: 0; }
+    .data-row {
+      grid-template-columns: 16px 16px minmax(0, 1fr) auto auto auto;
+      grid-template-areas: 'sel kind people att size time' 'sel title title title title title' 'sel excerpt excerpt excerpt excerpt excerpt';
+      align-content: center;
+      column-gap: var(--control-gap);
+      row-gap: var(--space-1);
+      padding: var(--pane-pad-y) var(--pane-pad-x);
+    }
+    .cell, .selection-cell { padding: 0; }
+    .selection-cell { grid-area: sel; }
+    .cell--kind { grid-area: kind; justify-self: center; color: var(--artifact-ink); }
+    .cell--kind :global(.row-kind__label) { display: none; }
+    .desktop-people { display: none; }
+    .phone-sender { display: inline; }
+    .cell--people { grid-area: people; font-weight: 500; }
+    .cell--time { grid-area: time; font-size: var(--font-size-xs); }
+    .cell--attachments { grid-area: att; }
+    .no-attachments { display: none; }
+    .cell--size { grid-area: size; font-size: var(--font-size-xs); }
+    .cell--title { grid-area: title; }
+    .cell--excerpt { grid-area: excerpt; color: var(--text-muted); font-size: var(--font-size-xs); }
+    .table-header { grid-template-columns: 16px; min-height: 0; padding: 0 var(--pane-pad-x); }
+    .table-header .header-cell { display: none; }
+    .table-header .selection-header { padding: 0; }
+    .skeleton-row { grid-template-columns: minmax(0, 1fr); }
+    .skeleton-cell:not(:first-child) { display: none; }
   }
 </style>
