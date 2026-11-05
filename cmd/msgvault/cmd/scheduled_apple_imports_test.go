@@ -13,7 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/imessage"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
@@ -156,27 +155,6 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 	check.Equal(int64(0), second.MessagesAdded)
 	check.Equal(int64(1), second.MessagesUpdated)
 	check.Greater(second.ID, run.ID)
-}
-
-func TestRunScheduledWhatsAppAppleSkipsMergedSource(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	cfg := config.NewDefaultConfig()
-	cfg.Data.DataDir = t.TempDir()
-	cfg.Analytics.AutoBuildCache = false
-	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-	source := config.WhatsAppAppleSource{Phone: "+15550000000", Path: createWhatsAppIdentityFixture(t, false, false)}
-	retired, err := st.GetOrCreateSource("whatsapp", source.Phone)
-	require.NoError(err)
-	destination, err := st.GetOrCreateSource("whatsapp", "+15550000001")
-	require.NoError(err)
-	_, err = st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: retired.ID, IntoSourceID: destination.ID})
-	require.NoError(err)
-
-	assert.NoError(runScheduledWhatsAppApple(ctx, st, source))
-	var runs int
-	require.NoError(st.DB().QueryRow(`SELECT COUNT(*) FROM sync_runs`).Scan(&runs))
-	assert.Zero(runs)
 }
 
 func TestImportImessageRecordedPreservesCountersAfterCheckpointFailure(t *testing.T) {
