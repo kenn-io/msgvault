@@ -1,9 +1,8 @@
 <script lang="ts">
   import {
     autoReposition, Button, dismissable, floatingPopoverStyle,
-    Menu, MenuContent, MenuItem, MenuTrigger, Tooltip,
+    Tooltip,
   } from '@kenn-io/kit-ui';
-  import Ellipsis from '@lucide/svelte/icons/ellipsis';
   import type { Snippet } from 'svelte';
 
   import type { APIClient } from '../../api/client';
@@ -28,7 +27,6 @@
     meetingSelection = undefined,
     canExportMeetings = false,
     onExport = undefined,
-    onOpenInSource = undefined,
     onReviewDeletion = undefined,
     onClear = undefined,
   }: {
@@ -40,19 +38,16 @@
     meetingSelection?: GeneratedExploreSelection;
     canExportMeetings?: boolean;
     onExport?: () => void;
-    onOpenInSource?: () => void;
     onReviewDeletion?: (mode: 'explicit' | 'all_matching') => void;
     /** Runs after Clear selection, which removes the bar and its focused button. */
     onClear?: () => void;
   } = $props();
 
   const exportReason = $derived(preflight?.unavailable_actions.find((item) => item.action === 'export')?.reason);
-  const openReason = $derived(preflight?.unavailable_actions.find((item) => item.action === 'open_in_source')?.reason);
   const stageReason = $derived(
     preflight?.unavailable_actions.find((item) => item.action === 'stage_deletion')?.reason,
   );
   const visible = $derived(selection.mode === 'all_matching' || selection.count > 0);
-  const openMenuVisible = $derived(Boolean(preflight && onOpenInSource && !openReason));
   const exportTarget = $derived(preflight?.action_targets?.find((item) => item.action === 'export'));
   const contextSelectionCount = $derived(
     meetingSelection?.mode === 'explicit'
@@ -133,7 +128,7 @@
 >
 {#if visible}
   <div class="selection-bar">
-    <span class="selection-count">{message}{#if preflight}<span class="selection-size">{' · '}{formatBytes(preflight.estimated_bytes)}</span>{/if}</span>
+    <span class="selection-count">{message.replace(' matching items', '')}{#if preflight}<span class="selection-size">{' · '}{formatBytes(preflight.estimated_bytes)}</span>{/if}</span>
     {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
       <Button
         size="sm"
@@ -177,18 +172,6 @@
         />
       {/snippet}
       {@render gated(stageReason ? preflightReasonLabel('stage_deletion', stageReason) : undefined, deletionControl)}
-    {/if}
-    {#if openMenuVisible}
-      <Menu align="end">
-        <MenuTrigger ariaLabel="More selection actions" title="More selection actions">
-          <Ellipsis size={16} aria-hidden="true" />
-        </MenuTrigger>
-        <MenuContent ariaLabel="More selection actions">
-          <MenuItem textValue="Open selection in source" onselect={() => onOpenInSource?.()}>
-            Open selection in source
-          </MenuItem>
-        </MenuContent>
-      </Menu>
     {/if}
     <Button
       size="sm"

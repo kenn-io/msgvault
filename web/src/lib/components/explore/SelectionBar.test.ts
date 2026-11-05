@@ -111,12 +111,16 @@ describe('SelectionBar', () => {
     expect(screen.queryByRole('button', { name: 'Open selection in source' })).toBeNull();
   });
 
-  it('shows count and estimated size together while announcing only the count', () => {
+  it.each([
+    [20, '20 B'],
+    [1024, '1 KB'],
+    [128 * 1024 * 1024, '128.0 MB'],
+  ])('shows count and estimated size %s as %s while announcing only the count', (estimated_bytes, size) => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1', 'message:2']);
-    render(SelectionBar, { selection, preflight: preflight() });
+    render(SelectionBar, { selection, preflight: { ...preflight(), estimated_bytes } });
     const count = screen.getByText('2 selected', { selector: '.selection-count' });
-    expect(count.textContent).toBe('2 selected · 20 B');
+    expect(count.textContent).toBe(`2 selected · ${size}`);
     expect(count.closest('[aria-hidden="true"]')).toBeNull();
     expect(screen.getByRole('status').textContent).toBe('2 selected');
   });
@@ -150,26 +154,16 @@ describe('SelectionBar', () => {
     }
   });
 
-  it('hides the source menu when source links are unavailable', () => {
-    const selection = new ExploreSelectionState();
-    selection.selectVisible(['message:1']);
-    render(SelectionBar, {
-      selection, preflight: preflight([{ action: 'open_in_source', reason: 'trusted_source_link_unavailable' }]),
-      onOpenInSource: vi.fn(),
-    });
-    expect(screen.queryByRole('button', { name: 'More selection actions' })).toBeNull();
-  });
-
-  it('opens the selection in source from the overflow menu when preflight allows it', async () => {
+  it('offers only supported actions for the selection', () => {
     const selection = new ExploreSelectionState();
     selection.selectVisible(['message:1']);
     const onOpenInSource = vi.fn();
-    render(SelectionBar, { selection, totalCount: 2, preflight: preflight(), onOpenInSource });
+    const props = { selection, preflight: preflight(), onOpenInSource, onExport: vi.fn(), onReviewDeletion: vi.fn() };
+    render(SelectionBar, props);
 
-    await fireEvent.click(screen.getByRole('button', { name: 'More selection actions' }));
-    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open selection in source' }));
-
-    expect(onOpenInSource).toHaveBeenCalledOnce();
+    expect(screen.getAllByRole('button').map(button => button.getAttribute('aria-label') || button.textContent?.trim())).toEqual([
+      'Export selection', 'Review deletion…', 'Clear selection',
+    ]);
   });
 
   it('renders nothing while nothing is selected', () => {

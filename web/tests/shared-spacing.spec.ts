@@ -324,6 +324,44 @@ test('selected rows keep their fill on stripes and in the reader', async ({ page
 });
 
 
+test.describe('touch selection', () => {
+  test.use({ hasTouch: true, colorScheme: 'dark', deviceScaleFactor: 2 });
+
+  test('filtered all-matching selection shows size and exclusions at 1024px', async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1024, height: 900 });
+    const meetings = Array.from({ length: 50 }, (_, index) => ({ ...row, key: `message:${index + 1}`, title: `Meeting ${index + 1}`, message_type: 'meeting_transcript' }));
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+      rows: meetings, total_count: 50, cache_revision: 'spacing', search_provenance: {}
+    } }));
+    await page.route('**/api/v1/explore/preflight', route => route.fulfill({ json: {
+      count: 49, deletable_count: 0, estimated_bytes: 128 * 1024 * 1024, cache_revision: 'spacing', search_provenance: {},
+      unavailable_actions: [
+        { action: 'export', reason: 'browser_export_requires_single_message' },
+        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
+        { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
+      ], action_targets: []
+    } }));
+    const explore = { filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }], presentation: 'table' };
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(explore))}`);
+    const grid = page.getByRole('grid', { name: 'Messages results' });
+    await grid.getByRole('checkbox', { name: 'Select all loaded items' }).check();
+    await page.getByRole('button', { name: 'Select all 50 matching', exact: true }).click();
+    await grid.getByRole('checkbox', { name: 'Unselect Meeting 1', exact: true }).uncheck();
+    const bar = page.locator('.selection-bar');
+    await expect(bar.getByRole('button', { name: 'Meeting context…' })).toBeVisible();
+    const count = bar.locator('.selection-count');
+    await expect(count).toContainText('All 50');
+    await expect(count).toContainText('except 1');
+    await expect(count).toContainText('128.0 MB');
+    await expect(bar.getByRole('button', { name: 'Export selection' })).toBeDisabled();
+    await expect(bar.getByRole('button', { name: 'Review deletion…' })).toBeDisabled();
+    await page.evaluate(() => document.fonts.ready);
+    await page.screenshot({ path: testInfo.outputPath('filtered-selection.png') });
+    const geometry = await count.evaluate(element => ({ content: element.scrollWidth, available: element.clientWidth }));
+    expect(geometry.content).toBeLessThanOrEqual(geometry.available);
+  });
+});
+
 for (const width of [1024, 1440]) {
   test(`selection bar stays on one row and anchors meeting context at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
