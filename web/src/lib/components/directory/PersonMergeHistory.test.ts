@@ -143,6 +143,39 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = 
 }
 
 describe('PersonMergeHistory', () => {
+  it('shows service names and scopes without storage keys in Inspect and split choices', async () => {
+    const mergeDetail = detail();
+    mergeDetail.participants = [701, 702].map(participant_id => ({ merge_id: 41, participant_id, origin_side: 'absorbed' }));
+    mergeDetail.splits = [];
+    render(PersonMergeHistory, { client: createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/people/7/merges') return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail);
+      if (path.startsWith('/api/v1/people/')) {
+        const id = Number(path.split('/').at(-1));
+        return Response.json(person(id, 4, [701, 702], 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
+      }
+      if (path.startsWith('/api/v1/participants/')) {
+        const id = Number(path.split('/').at(-1));
+        return Response.json({ identifiers: [{ participant_id: id, type: 'beeper', value: `beeper:14:signal-account:31:synthetic-${id}`, service_label: 'Signal', participant_display_name: 'Alex Example', scope_kind: 'account', scope_value: 'example.org' }] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }), personID: 7 });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    const addresses = within((await screen.findByRole('heading', { name: 'Message addresses from the merged-in profile' })).parentElement!);
+    await waitFor(() => expect(addresses.getAllByText('Signal')).toHaveLength(2));
+    expect(addresses.getByText('Alex Example · account: example.org · Participant 701')).toBeDefined();
+    expect(addresses.getByText('Alex Example · account: example.org · Participant 702')).toBeDefined();
+    expect(document.body.textContent).not.toContain('beeper:14:signal-account:31:');
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Split merged profile' }));
+    await fireEvent.click(await screen.findByRole('checkbox', { name: 'Signal · Alex Example · account: example.org · Participant 701' }));
+    expect(screen.getByRole('checkbox', { name: 'Signal · Alex Example · account: example.org · Participant 702' })).toHaveProperty('checked', false);
+    expect(screen.getByRole('checkbox', { name: 'I confirm splitting Signal · Alex Example · account: example.org · Participant 701 from Alex Example (Person 12).' })).toBeDefined();
+    expect(document.body.textContent).not.toContain('beeper:14:signal-account:31:');
+  });
+
   it('distinguishes unnamed split destinations by their dates', async () => {
     const mergeDetail = detail();
     mergeDetail.participants = [701, 702].map((participant_id, index) => ({ merge_id: 41, participant_id, origin_side: 'absorbed', split_id: 55 + index }));
