@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	Assert "github.com/stretchr/testify/assert" //nolint:importas // Keep package constructors available to assertion helpers in nested scopes.
 	"github.com/stretchr/testify/require"
@@ -12,8 +13,10 @@ import (
 )
 
 type policyMCPBackend struct {
-	writes int
-	last   store.DeliveryPolicyWrite
+	writes  int
+	last    store.DeliveryPolicyWrite
+	method  string
+	receipt *store.DeliveryPolicyReceipt
 }
 
 func (b *policyMCPBackend) GetDeliveryPolicy(context.Context, store.DeliveryPolicyQuery) (*store.DeliveryPolicyState, error) {
@@ -23,13 +26,15 @@ func (b *policyMCPBackend) GetDeliveryPolicy(context.Context, store.DeliveryPoli
 func (b *policyMCPBackend) SetDeliveryPolicy(_ context.Context, write store.DeliveryPolicyWrite) (*store.DeliveryPolicyReceipt, error) {
 	b.writes++
 	b.last = write
-	return &store.DeliveryPolicyReceipt{}, nil
+	b.method = ToolSetDeliveryPolicy
+	return b.receipt, nil
 }
 
 func (b *policyMCPBackend) ClearDeliveryPolicy(_ context.Context, write store.DeliveryPolicyWrite) (*store.DeliveryPolicyReceipt, error) {
 	b.writes++
 	b.last = write
-	return &store.DeliveryPolicyReceipt{}, nil
+	b.method = ToolClearDeliveryPolicy
+	return b.receipt, nil
 }
 
 func TestDeliveryPolicyMCPSeparateOptInAndDelegation(t *testing.T) {
@@ -53,44 +58,74 @@ func TestDeliveryPolicyMCPSeparateOptInAndDelegation(t *testing.T) {
 }
 
 func TestDeliveryPolicyMCPWriteNeedsConfirmation(t *testing.T) {
-	assertions := Assert.New(t)
-	requirements := require.New(t)
-
-	backend := &policyMCPBackend{}
-	opts := ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: backend, AllowDeliveryPolicyWrites: true}
-	args := map[string]any{"person_uid": "synthetic-uid", "expected_revision": 1, "policy": "send_allowed", "scope_acknowledgement": "person_all_routes", "reason": "Explicit synthetic approval"}
-	result := confirmedCallTool(t, opts, ToolSetDeliveryPolicy, args, false)
-	requirements.Equal(true, result["isError"])
-	assertions.Zero(backend.writes)
-	result = confirmedCallTool(t, opts, ToolSetDeliveryPolicy, args, true)
-	assertions.NotEqual(true, result["isError"])
-	assertions.Equal(1, backend.writes)
-	assertions.Equal(store.DeliveryPolicyWrite{
-		PersonUID: "synthetic-uid", ExpectedRevision: 1, Policy: store.DeliverySendAllowed,
-		ScopeAcknowledgement: "person_all_routes", Reason: "Explicit synthetic approval",
-	}, backend.last)
-}
-
-func TestDeliveryPolicyMCPConfirmationPrompt(t *testing.T) {
 	for _, test := range []struct {
-		tool, prefix string
+		name, tool, prefix, promptJSON string
+		write                          store.DeliveryPolicyWrite
 	}{
-		{ToolSetDeliveryPolicy, "Set delivery policy: "},
-		{ToolClearDeliveryPolicy, "Clear delivery policy: "},
+		{
+			name: "set person default", tool: ToolSetDeliveryPolicy, prefix: "Set delivery policy: ",
+			promptJSON: `{"person_uid":"synthetic-uid","expected_revision":1,"policy":"send_allowed","scope_acknowledgement":"person_all_routes","reason":"Explicit synthetic approval"}`,
+			write:      store.DeliveryPolicyWrite{PersonUID: "synthetic-uid", ExpectedRevision: 1, Policy: store.DeliverySendAllowed, ScopeAcknowledgement: "person_all_routes", Reason: "Explicit synthetic approval"},
+		},
+		{
+			name: "set address override", tool: ToolSetDeliveryPolicy, prefix: "Set delivery policy: ",
+			promptJSON: `{"person_uid":"synthetic-uid","endpoint":"alice@example.test","expected_revision":3,"policy":"send_allowed","scope_acknowledgement":"person_all_routes","reason":"Explicit synthetic approval"}`,
+			write:      store.DeliveryPolicyWrite{PersonUID: "synthetic-uid", Endpoint: "alice@example.test", ExpectedRevision: 3, Policy: store.DeliverySendAllowed, ScopeAcknowledgement: "person_all_routes", Reason: "Explicit synthetic approval"},
+		},
+		{
+			name: "clear address override", tool: ToolClearDeliveryPolicy, prefix: "Clear delivery policy: ",
+			promptJSON: `{"person_uid":"synthetic-uid","endpoint":"alice@example.test","expected_revision":3,"reason":"Restore inheritance"}`,
+			write:      store.DeliveryPolicyWrite{PersonUID: "synthetic-uid", Endpoint: "alice@example.test", ExpectedRevision: 3, Reason: "Restore inheritance"},
+		},
 	} {
-		t.Run(test.tool, func(t *testing.T) {
+		t.Run(test.name, func(t *testing.T) {
 			assert := Assert.New(t)
 			require := require.New(t)
-
-			backend := &policyMCPBackend{}
+			before := store.DeliveryPolicyState{PersonUID: "synthetic-uid", Endpoint: test.write.Endpoint, Revision: test.write.ExpectedRevision, EffectivePolicy: store.DeliveryDraftOnly, InheritanceSource: "system_default", Reason: "draft_required"}
+			after := before
+			after.Revision++
+			if test.tool == ToolSetDeliveryPolicy {
+				after.StoredPolicy = new(store.DeliverySendAllowed)
+				after.EffectivePolicy = store.DeliverySendAllowed
+				after.InheritanceSource, after.Reason = "person_default", "explicit_person_default"
+			} else {
+				before.StoredPolicy = new(store.DeliverySendAllowed)
+				before.EffectivePolicy = store.DeliverySendAllowed
+				before.InheritanceSource, before.Reason = "contact_method", "explicit_approval"
+			}
+			scope := "person_all_routes"
+			if test.write.Endpoint != "" {
+				scope = test.write.Endpoint
+			}
+			backend := &policyMCPBackend{receipt: &store.DeliveryPolicyReceipt{
+				Before: before, After: after,
+				Audit: &store.DeliveryPolicyAudit{Actor: "owner", Reason: test.write.Reason, Scope: scope, CreatedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), BeforePolicy: before.StoredPolicy, AfterPolicy: after.StoredPolicy},
+			}}
+			if test.tool == ToolSetDeliveryPolicy && test.write.Endpoint != "" {
+				after.InheritanceSource, after.Reason = "contact_method", "explicit_approval"
+				backend.receipt.After = after
+				backend.receipt.Audit.ContactPointID = new(int64(1))
+			}
 			opts := ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: backend, AllowDeliveryPolicyWrites: true}
-			args := map[string]any{"person_uid": "synthetic-uid", "endpoint": "alice@example.test", "expected_revision": 3, "policy": "send_allowed", "scope_acknowledgement": "person_all_routes", "reason": "Explicit synthetic approval"}
+			args := map[string]any{"person_uid": "synthetic-uid", "expected_revision": test.write.ExpectedRevision, "reason": test.write.Reason}
+			if test.tool == ToolSetDeliveryPolicy {
+				args["policy"], args["scope_acknowledgement"] = "send_allowed", "person_all_routes"
+			}
+			if test.write.Endpoint != "" {
+				args["endpoint"] = test.write.Endpoint
+			}
 			var prompt string
-			confirmedCallTool(t, opts, test.tool, args, false, func(message string) { prompt = message })
+			result := confirmedCallTool(t, opts, test.tool, args, false, func(message string) { prompt = message })
+			require.Equal(true, result["isError"])
+			assert.Zero(backend.writes)
 			require.True(strings.HasPrefix(prompt, test.prefix), "prompt: %s", prompt)
 			require.True(strings.HasSuffix(prompt, ". No message will be sent."), "prompt: %s", prompt)
-			assert.JSONEq(`{"person_uid":"synthetic-uid","endpoint":"alice@example.test","expected_revision":3,"policy":"send_allowed","scope_acknowledgement":"person_all_routes","reason":"Explicit synthetic approval"}`, strings.TrimSuffix(strings.TrimPrefix(prompt, test.prefix), ". No message will be sent."))
-			assert.Zero(backend.writes)
+			assert.JSONEq(test.promptJSON, strings.TrimSuffix(strings.TrimPrefix(prompt, test.prefix), ". No message will be sent."))
+			result = confirmedCallTool(t, opts, test.tool, args, true)
+			assert.NotEqual(true, result["isError"])
+			assert.Equal(1, backend.writes)
+			assert.Equal(test.tool, backend.method)
+			assert.Equal(test.write, backend.last)
 		})
 	}
 }

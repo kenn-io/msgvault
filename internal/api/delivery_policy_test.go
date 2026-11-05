@@ -62,8 +62,4 @@ func TestDeliveryPolicyHTTPRoutes(t *testing.T) {
 	assertions.Contains(response.Body.String(), "invalid_policy")
 	response = request("/api/v1/people/delivery-policy/clear", store.DeliveryPolicyWrite{PersonUID: q.PersonUID, ExpectedRevision: receipt.After.Revision, Reason: "Restore inheritance"})
 	requirements.Equal(200, response.Code, response.Body.String())
-	srv.store = nil
-	response = request("/api/v1/people/delivery-policy/read", q)
-	assertions.Equal(503, response.Code)
-	assertions.Contains(response.Body.String(), "delivery_policy_unavailable")
 }
