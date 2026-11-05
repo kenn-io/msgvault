@@ -32,7 +32,7 @@
   let listName = $state('agenda');
   let listQuery = $state('');
   const listOptions = $derived(
-    [...new Set(['agenda', ...items.map((item) => item.list), listName].map(canonicalList))]
+    [...new Set(['agenda', ...items.map((item) => item.list), listName])]
       .map((name) => ({ name, label: listLabel(name) })),
   );
   let generation = 0;
@@ -221,7 +221,7 @@
   {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No tasks yet</p>{/if}
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
   {#each items as item (item.uid)}
-    <DetailRow>
+    <DetailRow collapseActions>
       <div class="task-row">
         <span class="task-title">{#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}</span>
         {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info"><span class="list-label">{listLabel(item.list)}</span></Chip>{/if}
@@ -234,7 +234,7 @@
       <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task…" block disabled={mutating}>
         {#snippet suffix()}
           <div class="list-picker">
-            <Typeahead options={listOptions} value={listName} fallbackLabel="Agenda" placeholder="List" allowCustom={!listOptions.some((option) => option.name === canonicalList(listQuery))} onquery={(query) => { listQuery = query; }} customLabel={'New list "{query}"'} disabled={mutating} onselect={(value) => { listName = canonicalList(value); }}>
+            <Typeahead options={listOptions} value={listName} fallbackLabel="Agenda" placeholder="List" allowCustom={!listOptions.some((option) => option.name === listQuery.trim().toLowerCase())} onquery={(query) => { listQuery = query; }} customLabel={'New list "{query}"'} disabled={mutating} onselect={(value) => { listName = canonicalList(value); }}>
               {#snippet trigger({ attachment })}
                 <button {@attach attachment} type="button" class="list-trigger" aria-label={`List: ${listLabel(listName)}`} disabled={mutating}>{listLabel(listName)} ▾</button>
               {/snippet}
@@ -257,17 +257,8 @@
   form { flex-wrap: wrap; justify-content: flex-start; }
   form :global(.kit-text-input) { min-width: 0; flex: 1; }
   .task-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--field-gap); }
-  @media (hover: hover) {
-    .person-agenda :global(.detail-row) { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-    .person-agenda :global(.detail-row > .value) { grid-area: 1 / 1 / 2 / 3; }
-    .person-agenda :global(.detail-row > .actions) { grid-area: 1 / 2; pointer-events: none; }
-    .person-agenda :global(.detail-row:hover > .value),
-    .person-agenda :global(.detail-row:focus-within > .value) { grid-column-end: 2; }
-    .person-agenda :global(.detail-row:hover > .actions),
-    .person-agenda :global(.detail-row:focus-within > .actions) { pointer-events: auto; }
-  }
   .task-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
-  .task-row :global(.kit-chip) { box-sizing: border-box; max-width: 100%; }
+  .task-row :global(.kit-chip) { box-sizing: border-box; max-width: 100%; margin-left: auto; }
   .list-label { white-space: normal; overflow-wrap: anywhere; }
   .list-picker { max-width: 9rem; --typeahead-panel-min-width: 16rem; }
   .list-trigger { max-width: 100%; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -58,6 +58,31 @@ describe('PersonAgenda', () => {
     expect(screen.getAllByRole('option', { name: 'Waiting' })).toHaveLength(1);
   });
 
+  it.each(['Gift Ideas', 'Gift  Ideas'])('selects and creates in an existing list queried as %s', async query => {
+    const requests: Request[] = [];
+    const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
+      const request = input instanceof Request ? input : new Request(input);
+      requests.push(request);
+      if (isStatus(request)) return readyStatus();
+      if (request.method === 'POST') {
+        return Response.json({ item: { ...item('new', 'Send notes'), list: 'gift ideas' } }, { status: 201 });
+      }
+      return Response.json({ project: 'msgvault', items: [{ ...item('one', 'Choose a gift'), list: 'gift ideas' }] });
+    }));
+    render(PersonAgenda, { client, personID: 7 });
+    await screen.findByText('Choose a gift');
+    await fireEvent.click(screen.getByRole('button', { name: 'List: Agenda' }));
+    await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: query } });
+    expect(screen.getAllByRole('option')).toHaveLength(1);
+    await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
+    await screen.findByRole('button', { name: 'List: Gift ideas' });
+    expect(requests.some(request => request.method === 'POST')).toBe(false);
+    await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send notes' } });
+    await fireEvent.submit(screen.getByLabelText('New agenda item').closest('form')!);
+    await waitFor(() => expect(requests.some(request => request.method === 'POST')).toBe(true));
+    expect(await requests.find(request => request.method === 'POST')!.clone().json()).toMatchObject({ title: 'Send notes', list: 'gift ideas' });
+  });
+
   it('preserves punctuation in list pills, options, and the selection', async () => {
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
       const request = input instanceof Request ? input : new Request(input);
