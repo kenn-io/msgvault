@@ -16,14 +16,3 @@ func (s *Store) activityLiveEligibleSQL() string {
  LOWER(TRIM(COALESCE((SELECT NULLIF(e.status,'decode_error') FROM calendar_events e WHERE e.message_id=m.id),` + status + `,''))) <> 'cancelled'
  AND (EXISTS(SELECT 1 FROM calendar_events e WHERE e.message_id=m.id AND e.status<>'decode_error') OR COALESCE(CAST(` + superseded + ` AS TEXT),'false') NOT IN ('true','1'))))`
 }
-
-// activityInvitationSQL reports meeting records and email invitations, which
-// stay visible when an excluded sender would otherwise make them noise.
-// Queries use ae for activity events and m for messages.
-func (s *Store) activityInvitationSQL() string {
-	flag := "m.metadata ->> '" + emailInvitationMetadataKey + "'"
-	if !s.IsPostgreSQL() {
-		flag = "CASE WHEN json_valid(m.metadata) THEN " + flag + " END"
-	}
-	return `CASE WHEN ae.ref_kind='meeting' OR COALESCE(CAST(` + flag + ` AS TEXT),'false') IN ('true','1') THEN 1 ELSE 0 END`
-}

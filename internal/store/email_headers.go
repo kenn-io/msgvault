@@ -15,19 +15,6 @@ import (
 const emailReplyMetadataKey = "email_in_reply_to"
 const emailReplyBatchSize = 200
 
-// emailInvitationMetadataKey marks an email that carries a text/calendar part.
-// Such invitations keep the email type but stay visible in activity history.
-const emailInvitationMetadataKey = "calendar_invitation"
-
-// EmailInvitationMetadata returns the metadata an email persist writes for a
-// calendar invitation, or nil to leave stored metadata unchanged.
-func EmailInvitationMetadata(calendarPart bool) *sql.NullString {
-	if !calendarPart {
-		return nil
-	}
-	return &sql.NullString{String: `{"` + emailInvitationMetadataKey + `":true}`, Valid: true}
-}
-
 // RecordEmailHeadersContext fills missing imported header facts without replacing
 // the archived message. The cache revision and a repaired RFC ID commit together.
 func (s *Store) RecordEmailHeadersContext(ctx context.Context, sourceID, messageID int64, rfcID, inReplyTo string) error {
