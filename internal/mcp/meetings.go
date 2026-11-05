@@ -378,7 +378,7 @@ func getMeetingRecordDefinition() toolDefinition {
 	definition := readDefinition(ToolGetMeetingRecord, "Read a meeting's calendar occurrence and linked note IDs.",
 		closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]")}, "ref"),
 		outputSchemaFor[store.MeetingRecord](), (*handlers).getMeetingRecord)
-	definition.availability = meetingsAvailable
+	definition.availability = meetingLinksAvailable
 	return definition
 }
 
@@ -386,7 +386,7 @@ func suggestMeetingLinksDefinition() toolDefinition {
 	definition := readDefinition(ToolSuggestMeetingLinks, "Suggest archived notes or calendar occurrences to link.",
 		closedObject(map[string]*jsonschema.Schema{"ref": stringSchema("msg:<id> or evt:<id>[@occurrence key]")}, "ref"),
 		outputSchemaFor[store.MeetingSuggestionPage](), (*handlers).suggestMeetingLinks)
-	definition.availability = meetingsAvailable
+	definition.availability = meetingLinksAvailable
 	return definition
 }
 
@@ -398,7 +398,7 @@ func meetingLinkDecisionDefinition(unlink bool) toolDefinition {
 	definition := writeDefinition(name, description,
 		closedObject(map[string]*jsonschema.Schema{toolArgMessageID: safeIDSchema("Meeting note message ID"), "event": stringSchema("evt:<id>[@occurrence key]")}, toolArgMessageID, "event"),
 		outputSchemaFor[generated.MeetingLinkDecisionResponse](), handler)
-	definition.availability = meetingsAvailable
+	definition.availability = meetingLinksAvailable
 	return definition
 }
 
