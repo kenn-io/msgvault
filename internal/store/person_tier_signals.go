@@ -103,7 +103,7 @@ type tierSignalRow struct {
 }
 
 // personTierRows reads up to personTierRowPage direct links in the long window,
-// in (person, date, message) order after the given row. The WHERE clause is the
+// in (person, date DESC, message) order after the given row. The WHERE clause is the
 // counting rule: sent email and chat messages between the person and the owner,
 // not drafts or unsent texts; answered calls that stayed connected at least
 // MinCallSeconds, whoever dialed; and meetings in either direction. Unsent uses
@@ -116,7 +116,7 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
 	args = append(args,
 		asOf.AddDate(0, 0, -(cfg.LongWindowDays-1)).Format(time.DateOnly),
 		asOf.Format(time.DateOnly),
-		after.PersonID, after.LocalDate, after.MessageID,
+		after.LocalDate, after.PersonID, after.MessageID,
 		cfg.MinCallSeconds, cfg.MinCallSeconds, personTierRowPage)
 	callTypes := `'` + MessageTypeSynctechCall + `','` + MessageTypeGoogleVoiceCall + `'`
 	// List and audience exclusions are tallied after the classifier batch so
@@ -137,14 +137,14 @@ func (s *Store) personTierRows(ctx context.Context, tx *loggedTx, personIDs []in
  JOIN sources src ON src.id=m.source_id
  WHERE aep.person_id IN (`+int64Placeholders(len(personIDs))+`)`+scope+` AND `+counted+`
  AND aep.local_date BETWEEN ? AND ?
- AND (aep.person_id,aep.local_date,aep.message_id) > (?,?,?)
+ AND (aep.person_id,?,aep.message_id) > (?,aep.local_date,?)
  AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL AND (
  ae.ref_kind='meeting' OR
  ((`+countedMessageTypeSQL("m", "c")+`
  AND NOT `+s.activityUnsentSQL()+`)
  OR (m.message_type IN (`+callTypes+`) AND ? > 0 AND `+s.callConnectedSecondsSQL()+` >= ?)))
  AND NOT `+matrixPendingEncryptedSQL("m")+`
- ORDER BY aep.person_id,aep.local_date,aep.message_id LIMIT ?`, args...)
+ ORDER BY aep.person_id,aep.local_date DESC,aep.message_id LIMIT ?`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("read person tier signals: %w", err)
 	}
