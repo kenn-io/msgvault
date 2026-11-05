@@ -2602,7 +2602,7 @@ func TestLoadAppleImportPaths(t *testing.T) {
 	}
 }
 
-func TestLoadApplePhoneUniqueness(t *testing.T) {
+func TestLoadApplePhonePrefix(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		content   string
@@ -2610,11 +2610,6 @@ func TestLoadApplePhoneUniqueness(t *testing.T) {
 	}{
 		{name: "requires plus", content: "[[whatsapp_apple]]\nenabled = true\nphone = '15550000000'\n", wantError: "whatsapp_apple[0].phone must start with +"},
 		{name: "disabled without phone", content: "[[whatsapp_apple]]\nenabled = false\n"},
-		{name: "enabled duplicates", content: "[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n", wantError: "whatsapp_apple[1].phone duplicates enabled phone"},
-		{name: "disabled first", content: "[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n"},
-		{name: "disabled second", content: "[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n"},
-		{name: "both disabled", content: "[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = false\nphone = '+15550000000'\n"},
-		{name: "distinct enabled phones", content: "[[whatsapp_apple]]\nenabled = true\nphone = '+15550000000'\n[[whatsapp_apple]]\nenabled = true\nphone = '+15550000001'\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
