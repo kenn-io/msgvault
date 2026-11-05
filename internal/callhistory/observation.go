@@ -110,7 +110,7 @@ func (e Evidence) validate(sparse bool) error {
 		!slices.Contains([]string{"incoming", "outgoing", unknown}, e.Direction) ||
 		!slices.Contains([]string{"answered", "missed", "declined", "cancelled", unknown}, e.Outcome) ||
 		!slices.Contains([]string{"joined", "not_joined", unknown}, e.OwnerParticipation) ||
-		(!slices.Contains([]string{"instant", "day"}, e.Precision) && !(sparseCancellation && e.Precision == "")) {
+		(!slices.Contains([]string{"instant", "day"}, e.Precision) && (!sparseCancellation || e.Precision != "")) {
 		return invalid("evidence classification")
 	}
 	if (e.OccurredAt.IsZero() && !sparseCancellation) || e.OccurredAt.Year() < 1 || e.OccurredAt.Year() > 9999 ||
@@ -146,7 +146,7 @@ func (e Evidence) validate(sparse bool) error {
 }
 
 func (o Observation) Validate() error {
-	if err := o.Evidence.validate(o.Sparse); err != nil {
+	if err := o.validate(o.Sparse); err != nil {
 		return err
 	}
 	if !validID(o.RecordID) || len(o.Participants) > 100 ||
