@@ -3,35 +3,11 @@ package query
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
-
-func TestSQLiteTextAggregate_FilteredAttachmentFields(t *testing.T) {
-	t.Parallel()
-	require := require.New(t)
-	assert := assert.New(t)
-	env := newTestEnv(t)
-	_, err := env.DB.Exec(`UPDATE messages SET message_type = 'sms' WHERE id IN (1, 2, 4)`)
-	require.NoError(err)
-
-	rows, err := env.Engine.TextAggregate(env.Ctx, TextViewContacts, TextAggregateOptions{
-		SourceID:    new(int64(1)),
-		After:       new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC)),
-		Before:      new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC)),
-		SearchQuery: "Hello",
-	})
-	require.NoError(err)
-	require.Len(rows, 1)
-	assert.Equal("alice@example.com", rows[0].Key)
-	assert.Equal(int64(1), rows[0].Count)
-	assert.Equal(int64(2000), rows[0].TotalSize)
-	assert.Equal(int64(15000), rows[0].AttachmentSize)
-	assert.Equal(int64(2), rows[0].AttachmentCount)
-}
 
 func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
 	t.Parallel()

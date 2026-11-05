@@ -220,8 +220,6 @@ func aggDimensionForView(d Dialect, view ViewType, timeGranularity TimeGranulari
 
 // buildAggregateSQL builds a complete aggregate query from a dimension and filter parts.
 func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string, sort string) string {
-	// Search conditions can reference dimension aliases, so the matched-message
-	// subquery needs the dimension joins as well as the filter joins.
 	allJoins := dim.joins
 	if filterJoins != "" {
 		allJoins += "\n" + filterJoins
@@ -246,27 +244,17 @@ func buildAggregateSQL(dim aggDimension, filterJoins string, filterWhere string,
 				%s as key,
 				COUNT(*) as count,
 				COALESCE(SUM(m.size_estimate), 0) as total_size,
-				COALESCE(SUM(att.att_size), 0) as attachment_size,
-				COALESCE(SUM(att.att_count), 0) as attachment_count,
+				COALESCE(SUM((SELECT SUM(a.size) FROM attachments a WHERE a.message_id = m.id)), 0) as attachment_size,
+				COALESCE(SUM((SELECT COUNT(*) FROM attachments a WHERE a.message_id = m.id)), 0) as attachment_count,
 				COUNT(*) OVER() as total_unique
 			FROM messages m
-			LEFT JOIN (
-				SELECT message_id, SUM(size) AS att_size, COUNT(*) AS att_count
-				FROM attachments
-				WHERE message_id IN (
-					SELECT m.id FROM messages m
-					%s
-					WHERE %s
-				)
-				GROUP BY message_id
-			) att ON att.message_id = m.id
 			%s
 			WHERE %s
 		GROUP BY %s
 	) AS agg
 		%s
 		LIMIT ?
-	`, dim.keyExpr, allJoins, allWhere, allJoins, allWhere, groupExpr, sort)
+	`, dim.keyExpr, allJoins, allWhere, groupExpr, sort)
 }
 
 // optsToFilterConditions converts AggregateOptions into WHERE conditions and args.
@@ -923,8 +911,6 @@ func (e *SQLiteEngine) executeAggregate(ctx context.Context, groupBy ViewType, o
 	}
 
 	query := buildAggregateSQL(dim, filterJoins, filterWhere, sort)
-	// The rollup's joins and WHERE precede the outer joins and WHERE.
-	args = append(args, args...)
 	args = append(args, limit)
 	return e.executeAggregateQuery(ctx, query, args)
 }

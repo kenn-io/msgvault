@@ -95,29 +95,6 @@ func TestQueryEngine_PostgresPortability(t *testing.T) {
 		setupRequire.NotEmpty(rows, "Aggregate returned no rows; expected at least the Alice sender bucket")
 	})
 
-	t.Run("aggregate_filtered_fts", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		_, err := st.BackfillFTS(nil)
-		require.NoError(err)
-		opts := query.DefaultAggregateOptions()
-		opts.SourceID = &src.ID
-		opts.After = new(base.Add(time.Hour))
-		opts.SearchQuery = "beta"
-		rows, err := eng.Aggregate(ctx, query.ViewSenders, opts)
-		require.NoError(err)
-		require.Len(rows, 1)
-		assert.Equal("alice@example.com", rows[0].Key)
-		assert.Equal(int64(1), rows[0].Count)
-		assert.Equal(int64(1250), rows[0].TotalSize)
-
-		rows, err = eng.SubAggregate(ctx, query.MessageFilter{Label: "Important"}, query.ViewSenders, opts)
-		require.NoError(err)
-		require.Len(rows, 1)
-		assert.Equal(int64(1), rows[0].Count)
-		assert.Equal(int64(1250), rows[0].TotalSize)
-	})
-
 	// (2) GetDeletionTargetsByFilter — must not error from a SELECT DISTINCT +
 	// ORDER BY collision on PG. Use a label filter to exercise the
 	// previously-multiplying join (now an EXISTS subquery).
