@@ -3757,7 +3757,6 @@ CREATE INDEX IF NOT EXISTS idx_account_identities_address
 CREATE INDEX IF NOT EXISTS idx_collection_sources_source_id
     ON collection_sources(source_id);
 
--- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS call_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     projection_version INTEGER NOT NULL,
@@ -3773,6 +3772,7 @@ CREATE TABLE IF NOT EXISTS call_details (
 CREATE INDEX IF NOT EXISTS idx_call_details_identity ON call_details(canonical_key, message_id);
 CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);
 
+-- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id BIGINT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     projection_version INTEGER NOT NULL,

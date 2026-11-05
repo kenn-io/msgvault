@@ -42,6 +42,7 @@ func (r ImportRequest) signalObservation() (Observation, error) {
 		switch row.Status {
 		case "Deleted":
 			o.Withdrawn = true
+			o.EndedAt = nil
 		case "Missed", "MissedNotificationProfile":
 			if row.Mode != "Adhoc" {
 				o.Outcome, o.OwnerParticipation = "missed", "not_joined"

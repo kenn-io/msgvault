@@ -80,7 +80,7 @@ func (s *Server) writeCallError(w http.ResponseWriter, err error) {
 	case errors.Is(err, callhistory.ErrMalformedImport):
 		writeError(w, 400, "bad_request", "Invalid call import JSON")
 	case errors.Is(err, callhistory.ErrInvalid):
-		writeError(w, 422, "validation_failed", "Call observation failed validation")
+		writeError(w, 422, "validation_failed", err.Error())
 	case errors.Is(err, store.ErrCallObservationWithdrawn), errors.Is(err, store.ErrSourceRetired):
 		writeError(w, 409, "evidence_withdrawn", "Source or observation was withdrawn")
 	default:
