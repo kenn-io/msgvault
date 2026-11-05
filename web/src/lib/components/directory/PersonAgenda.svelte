@@ -31,8 +31,8 @@
   let title = $state('');
   let listName = $state('agenda');
   const listOptions = $derived(
-    [...new Set(['agenda', ...items.map((item) => item.list)])]
-      .map((name) => ({ name, label: listLabel(name) })),
+    [...new Set([listName, 'agenda', ...items.map((item) => item.list)])]
+      .map((name) => ({ name, label: name })),
   );
   let generation = 0;
   let mutationToken = 0;
@@ -129,10 +129,6 @@
     return value.trim().replace(/\s+/g, ' ').toLowerCase() || 'agenda';
   }
 
-  function listLabel(value: string): string {
-    return value.charAt(0).toUpperCase() + value.slice(1);
-  }
-
   async function createItem(): Promise<void> {
     const trimmedTitle = title.trim();
     const effectiveList = canonicalList(listName);
@@ -214,7 +210,7 @@
 
 <section class="person-agenda" aria-labelledby={`person-${personID}-agenda-heading`}>
   <div class="heading"><h3 id={`person-${personID}-agenda-heading`}>Tasks</h3>{#if integrationState === 'disabled' && onSetUp}<Button size="sm" label="Set up" ariaLabel="Set up Tasks" onclick={onSetUp} />{/if}{#if loading}<span role="status">Loading…</span>{/if}</div>
-  {#if error}<p class="notice error" role="alert">{error}<Button size="sm" label="Retry tasks" onclick={() => void load()} /></p>{/if}
+  {#if error}<p class="notice" role="alert">{error}<Button size="sm" label="Retry tasks" onclick={() => void load()} /></p>{/if}
   {#if stateMessage && !(integrationState === 'disabled' && onSetUp)}<div class="heading"><span class="notice" role="status">{stateMessage}</span><Button size="sm" label="Set up" onclick={onSetUp} /></div>{/if}
   {#if !loading && !error && !stateMessage && items.length === 0}<p class="notice">No tasks yet</p>{/if}
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
@@ -222,7 +218,7 @@
     <DetailRow>
       <div class="task-row">
         <span class="task-title">{#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}</span>
-        {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info"><span class="list-label" title={listLabel(item.list)}>{listLabel(item.list)}</span></Chip>{/if}
+        {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info"><span class="list-label" title={item.list}>{item.list}</span></Chip>{/if}
       </div>
       {#snippet actions()}<IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton>{/snippet}
     </DetailRow>
@@ -232,9 +228,9 @@
       <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task…" block disabled={mutating}>
         {#snippet suffix()}
           <div class="list-picker">
-            <Typeahead options={listOptions} value={listName} fallbackLabel="Agenda" placeholder="List" allowCustom disabled={mutating} onselect={(value) => { listName = canonicalList(value); }}>
+            <Typeahead options={listOptions} value={listName} fallbackLabel="agenda" placeholder="List" allowCustom disabled={mutating} onselect={(value) => { listName = canonicalList(value); }}>
               {#snippet trigger({ attachment })}
-                <button {@attach attachment} type="button" class="list-trigger" aria-label={`List: ${listLabel(listName)}`}><span class="trigger-label">{listLabel(listName)}</span><span aria-hidden="true">▾</span></button>
+                <button {@attach attachment} type="button" class="list-trigger" aria-label={`List: ${listName}`}><span class="trigger-label">{listName}</span><span aria-hidden="true">▾</span></button>
               {/snippet}
             </Typeahead>
           </div>
@@ -262,8 +258,12 @@
   .list-picker :global(.kit-typeahead) { min-width: var(--typeahead-min-width); max-width: var(--typeahead-max-width); }
   .list-trigger { display: flex; align-items: center; gap: var(--space-1); max-width: 100%; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; }
   .trigger-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .list-trigger:focus { outline: none; box-shadow: none; }
+  .list-trigger:focus-visible { outline: var(--focus-ring); outline-offset: 1px; }
   .list-trigger:disabled { cursor: not-allowed; }
   a { color: var(--link-ink); }
   .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
+  @media (hover: hover) {
+    .person-agenda :global(.detail-row) { position: relative; }
+    .person-agenda :global(.detail-row:not(:hover):not(:focus-within) .actions) { position: absolute; right: 0; }
+  }
 </style>
