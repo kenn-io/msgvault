@@ -525,6 +525,17 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 	c := item.component
 	e := c.Event
 	key, familyKey := e.ProviderEventID, calevent.ICSMessageID(c.UID, "")
+	item.meta.ICalUID = c.UID
+	item.meta.TimeZone = e.EventTimeZone
+	item.meta.Start, item.meta.End = e.StartDate, e.EndDate
+	if !e.AllDay {
+		if e.Start != nil {
+			item.meta.Start = e.Start.Format(time.RFC3339)
+		}
+		if e.End != nil {
+			item.meta.End = e.End.Format(time.RFC3339)
+		}
+	}
 
 	encoded, err := json.Marshal(item.meta)
 	if err != nil {

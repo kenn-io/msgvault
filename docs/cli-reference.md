@@ -2049,7 +2049,7 @@ unfolded line.
 
 ### Invitations in email
 
-Archiving email extracts decoded `text/calendar` MIME parts, including inline alternatives, into event messages in the same source. A `.ics` filename alone does not qualify. Attached forwarded emails and iTIP messages with the ADD, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
+Archiving email extracts decoded `text/calendar` MIME parts, including inline alternatives, into event messages in the same source. A `.ics` filename alone does not qualify. Attached forwarded emails and iTIP messages with the ADD, REPLY, REFRESH, COUNTER, or DECLINECOUNTER method are ignored.
 
 The first invitation for a UID creates an event entry. Recurring exceptions use the UID and original recurrence identity. Every contributing email keeps its full MIME and attachments. Events survive replacement or deletion of those emails. Floating invite times in email sources use UTC because email sources have no calendar time zone.
 
@@ -2063,7 +2063,7 @@ For `import-ics`, `STATUS:CANCELLED` marks a full cancellation. `METHOD:CANCEL` 
 
 To extract invites from emails already in the archive, run
 [`repair-derived`](#repair-derived). It works from stored MIME without a provider
-connection or a schema migration:
+connection:
 
 ```bash
 msgvault repair-derived --source-type mbox

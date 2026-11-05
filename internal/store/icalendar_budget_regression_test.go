@@ -11,6 +11,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestICalendarListingOrdinaryUnboundedWeeklySeries(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	const zone = "BEGIN:VTIMEZONE\r\nTZID:America/New_York\r\n" +
+		"BEGIN:STANDARD\r\nDTSTART:20071104T020000\r\nRRULE:FREQ=YEARLY;BYMONTH=11;BYDAY=1SU\r\nTZOFFSETFROM:-0400\r\nTZOFFSETTO:-0500\r\nEND:STANDARD\r\n" +
+		"BEGIN:DAYLIGHT\r\nDTSTART:20070311T020000\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=2SU\r\nTZOFFSETFROM:-0500\r\nTZOFFSETTO:-0400\r\nEND:DAYLIGHT\r\nEND:VTIMEZONE\r\n"
+	for i := range 600 {
+		raw := fmt.Sprintf("BEGIN:VCALENDAR\r\nVERSION:2.0\r\n%sBEGIN:VEVENT\r\nUID:weekly-%d@example.com\r\nDTSTART;TZID=America/New_York:20270101T090000\r\nDURATION:PT1H\r\nRRULE:FREQ=WEEKLY\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n", zone, i)
+		sum, err := st.PersistICalendarContext(t.Context(), source, []byte(raw))
+		requirements.NoError(err)
+		requirements.Equal(1, sum.Changed)
+	}
+	from := time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 7))
+	requirements.NoError(err)
+	assertions.Empty(page.Unexpandable)
+	assertions.Len(page.Occurrences, 600)
+}
+
 func TestEmailCalendarRejectsSharedVerificationWork(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
