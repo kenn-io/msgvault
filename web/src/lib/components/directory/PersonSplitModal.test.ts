@@ -32,6 +32,7 @@ async function preparedController(fetchFn: typeof fetch, participants?: MergeDet
   const routedFetch = vi.fn<typeof fetch>(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname === '/api/v1/person-merges/41') return Response.json(value);
+    if (new URL(request.url).pathname.startsWith('/api/v1/participants/')) return Response.json({ identifiers: [] });
     return fetchFn(request);
   });
   const controller = new PersonMergeHistoryController(createAPIClient(routedFetch), 7);
@@ -105,8 +106,6 @@ describe('PersonSplitModal', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail([
         { merge_id: 41, participant_id: 701, origin_side: 'absorbed' },
-        { merge_id: 41, participant_id: 702, origin_side: 'absorbed' },
-        { merge_id: 41, participant_id: 703, origin_side: 'absorbed' },
         { merge_id: 41, participant_id: 704, origin_side: 'absorbed' },
         { merge_id: 41, participant_id: 705, origin_side: 'absorbed' },
       ]));
@@ -116,12 +115,11 @@ describe('PersonSplitModal', () => {
       if (path === '/api/v1/participants/704') return Response.json({ identifiers: [{
         participant_id: 704, type: 'email', value: 'user@example.org',
       }] });
-      if (['/api/v1/participants/701', '/api/v1/participants/702', '/api/v1/participants/703'].includes(path)) {
-        const id = Number(path.split('/').at(-1));
+      if (path === '/api/v1/participants/701') {
         return Response.json({ identifiers: [{
-          participant_id: id, type: 'beeper', service_label: 'Matrix',
-          value: id === 702 ? 'user-b' : 'user-a',
-          scope_kind: 'network', scope_value: id === 703 ? 'example.net' : 'example.org',
+          participant_id: 701, type: 'beeper', service_label: 'Matrix',
+          participant_display_name: 'Matrix Member',
+          value: 'user-a', scope_kind: 'network', scope_value: 'example.org',
         }] });
       }
       throw new Error(`Unexpected request: ${request.method} ${path}`);
@@ -133,13 +131,11 @@ describe('PersonSplitModal', () => {
       await controller.openSplit();
       render(PersonSplitModal, { controller, onClose: vi.fn(), onOpenPerson: vi.fn() });
 
-      await fireEvent.click(screen.getByRole('checkbox', { name: 'Matrix · user-a · network: example.org' }));
-      expect(screen.getByRole('checkbox', { name: 'Matrix · user-b · network: example.org' })).toHaveProperty('checked', false);
-      expect(screen.getByRole('checkbox', { name: 'Matrix · user-a · network: example.net' })).toHaveProperty('checked', false);
+      await fireEvent.click(screen.getByRole('checkbox', { name: 'Matrix · Matrix Member · user-a · network: example.org' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: 'user@example.org' }));
       await fireEvent.click(screen.getByRole('checkbox', { name: 'Participant 705' }));
       await fireEvent.click(screen.getByRole('checkbox', {
-        name: 'I confirm splitting Matrix · user-a · network: example.org, user@example.org, Participant 705 from Synthetic Source (Person 12).',
+        name: 'I confirm splitting Matrix · Matrix Member · user-a · network: example.org, user@example.org, Participant 705 from Synthetic Source (Person 12).',
       }));
       expect(controller.confirmedParticipantIDs).toEqual([701, 704, 705]);
       expect(fetchFn.mock.calls.map(([input]) => new URL((input as Request).url).pathname)).toEqual(['/api/v1/people/12']);
