@@ -15,6 +15,26 @@ import (
 	"go.kenn.io/msgvault/pkg/client/generated"
 )
 
+func TestCalendarOccurrencesNewestExceptionWins(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, master := calendarFixture(t, st, "master", `{"id":"daily","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=1"]}`)
+	calendarFixture(t, st, "older-offset-free", `{"id":"older","recurringEventId":"daily","originalStartTime":{"dateTime":"2027-03-02T09:00:00","timeZone":"UTC"},"start":{"dateTime":"2027-03-02T12:00:00Z"},"end":{"dateTime":"2027-03-02T13:00:00Z"}}`)
+	_, newest := calendarFixture(t, st, "newer-with-offset", `{"id":"newer","recurringEventId":"daily","originalStartTime":{"dateTime":"2027-03-02T09:00:00Z"},"start":{"dateTime":"2027-03-02T13:00:00Z"},"end":{"dateTime":"2027-03-02T14:00:00Z"}}`)
+	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
+	requirements.NoError(err)
+	assertions.Len(page.Occurrences, 1)
+	for _, occurrence := range page.Occurrences {
+		assertions.Equal(newest, occurrence.MessageID)
+		assertions.Equal("2027-03-02T13:00:00Z", occurrence.Start.Format(time.RFC3339))
+	}
+	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@20270302T090000Z", master))
+	requirements.NoError(err)
+	assertions.Equal(newest, detail.MessageID)
+	assertions.Equal("2027-03-02T13:00:00Z", detail.Start.Format(time.RFC3339))
+}
+
 func TestListCalendarOccurrences(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
