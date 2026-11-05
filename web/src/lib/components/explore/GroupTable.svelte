@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, MEDIA, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type {
     ExploreCacheUnavailable,
@@ -60,6 +61,7 @@
     onRetry?: () => void;
   } = $props();
 
+  const compact = new MediaQuery(MEDIA.compact);
   const geometry = new RowGeometry('--table-short-row-height');
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
@@ -294,11 +296,11 @@
     onscroll={handleScroll}
   >
     <div class="group-header" bind:this={headerElement} role="row">
-      <span role="columnheader">Group</span>
-      <span role="columnheader" class="numeric">Items</span>
-      <span role="columnheader" class="numeric">Estimated</span>
-      <span role="columnheader">Latest</span>
-      <span role="columnheader">Action</span>
+      <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Group</span>
+      <span role="columnheader" class={['numeric', compact.current && 'kit-sr-only']}>Items</span>
+      <span role="columnheader" class={['numeric', compact.current && 'kit-sr-only']}>Estimated</span>
+      <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Latest</span>
+      <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Action</span>
     </div>
     <div class="group-body" role="rowgroup">
       {#if unavailable}
@@ -553,7 +555,7 @@
   .count-label { display: none; }
   @media (max-width: 640px) {
     .group-spacer { min-width: 0; }
-    .group-header { position: absolute; width: 1px; height: 0; min-height: 0; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+    .group-header { min-height: 0; border: 0; box-shadow: none; }
     .group-row {
       grid-template-columns: auto auto minmax(0, 1fr) auto;
       grid-template-areas: 'label label label action' 'count size latest action';

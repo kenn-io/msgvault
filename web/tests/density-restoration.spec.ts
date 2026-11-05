@@ -400,7 +400,15 @@ for (const workspace of ['everything', 'groups', 'files'] as const) {
     const grid = page.getByRole('grid', { name: workspace === 'everything' ? 'Messages results' : workspace === 'groups' ? 'Messages grouped by source' : 'Files results' });
     await expect(grid.locator('[aria-rowindex="2"]')).toBeVisible();
     const header = workspace === 'everything' ? 'Subject / title' : workspace === 'groups' ? 'Items' : 'People';
-    await expect(grid.getByRole('columnheader', { name: header, exact: true })).toHaveCount(1);
+    const column = grid.getByRole('columnheader', { name: header, exact: true });
+    await expect(column).toHaveCount(1);
+    await expect(column).toHaveClass(/\bkit-sr-only\b/);
+    if (workspace === 'groups') {
+      expect(await grid.locator('.group-header').evaluate(el => el.getBoundingClientRect().height)).toBe(0);
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await expect(column).toHaveCount(1);
+    await expect(column).not.toHaveClass(/\bkit-sr-only\b/);
   });
 }
 

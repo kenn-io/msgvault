@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { Button, EmptyState, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, MEDIA, Tooltip, virtualSlice } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
 
   import type {
     EntryRow,
@@ -69,6 +70,7 @@
     onRetry = undefined
   }: Props = $props();
 
+  const compact = new MediaQuery(MEDIA.compact);
   const geometry = new RowGeometry();
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
@@ -431,7 +433,7 @@
       {#each visibleColumns as column (column)}
         <span
           role="columnheader"
-          class={`header-cell header-cell--${column}`}
+          class={['header-cell', `header-cell--${column}`, compact.current && 'kit-sr-only']}
           aria-label={column === 'attachments' ? 'Attachments' : undefined}
         >
           {column === 'attachments' ? '⌕' : EXPLORE_COLUMNS.find((entry) => entry.id === column)?.label}
@@ -902,7 +904,6 @@
     .cell--title { grid-area: title; }
     .cell--excerpt { grid-area: excerpt; color: var(--text-muted); font-size: var(--font-size-xs); }
     .table-header { grid-template-columns: 16px; padding: 0 var(--pane-pad-x); box-shadow: none; }
-    .table-header .header-cell { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
     .table-header .selection-header { padding: 0; }
     .skeleton-row { grid-template-columns: minmax(0, 1fr); }
     .skeleton-cell:not(:first-child) { display: none; }

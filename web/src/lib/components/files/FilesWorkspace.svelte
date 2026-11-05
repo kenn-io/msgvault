@@ -40,6 +40,7 @@
   import {
     Button,
     Checkbox,
+    MEDIA,
     SearchInput,
     SegmentedControl,
     Toggle,
@@ -47,6 +48,7 @@
     virtualSlice,
   } from '@kenn-io/kit-ui';
   import { onDestroy, tick, untrack, type Snippet } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import type { APIClient } from '../../api/client';
   import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
   import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
@@ -173,6 +175,7 @@
     onOpenConversation = undefined,
   }: Props = $props();
   const visual = visualReadiness();
+  const compact = new MediaQuery(MEDIA.compact);
   const geometry = new RowGeometry('--table-short-row-height');
   const rowHeight = $derived(geometry.height);
   const OVERSCAN = 6;
@@ -916,13 +919,13 @@
         <div class="table-header" style:--row-template={columns} bind:this={headerElement} role="row">
           {@render sortHeader('occurred_at', 'Date')}
           {@render sortHeader('filename', 'Filename')}
-          <span role="columnheader">Type</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Type</span>
           {@render sortHeader('size', 'Size')}
-          {#if personScoped}<span role="columnheader">Direction</span>{/if}
-          <span role="columnheader">People</span>
-          <span role="columnheader">Source</span>
-          <span role="columnheader">Message</span>
-          <span role="columnheader">Availability</span>
+          {#if personScoped}<span role="columnheader" class={[compact.current && 'kit-sr-only']}>Direction</span>{/if}
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>People</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Source</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Message</span>
+          <span role="columnheader" class={[compact.current && 'kit-sr-only']}>Availability</span>
         </div>
         <div class="table-body" role="rowgroup">
           {#if unavailable?.readiness === 'building'}
@@ -1284,7 +1287,6 @@
   @media (max-width: 640px) {
     .table-header, .data-row { min-width: 0; }
     .table-header { display: flex; gap: var(--space-2); padding: 0 var(--pane-pad-x); }
-    .table-header > span:not(.header--occurred_at):not(.header--filename):not(.header--size) { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
     .table-header > span { padding: 0; }
     .table-header button { width: auto; height: 26px; padding: 0 var(--space-3); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-inset); }
     .data-row {
