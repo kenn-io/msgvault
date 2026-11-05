@@ -86,6 +86,34 @@ func TestDelegatedResponseIgnoresHiddenSourceAndNativeCalls(t *testing.T) {
 	}
 }
 
+func TestDelegatedCalendarIgnoresHiddenAccountIdentity(t *testing.T) {
+	f := newTimelineFixture(t)
+	f.calendar("event", singleDayEvent)
+	calendar, err := f.Store.GetOrCreateSource("gcal", "calendar@example.com")
+	require.NoError(t, err)
+	hidden, err := f.Store.GetOrCreateSource("gmail", "hidden@example.com")
+	require.NoError(t, err)
+	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{calendar.ID})
+	req := dayRequest()
+	req.Scope.Owner = false
+	before, err := Build(ctx, f.src, req)
+	require.NoError(t, err)
+	entries := allDayEntries(before)
+	require.Len(t, entries, 1)
+	require.NotNil(t, entries[0].Meeting)
+	require.Len(t, entries[0].Meeting.Attendees, 1)
+	assert.Equal(t, "Alice", entries[0].Meeting.Attendees[0].Name)
+
+	require.NoError(t, f.Store.AddAccountIdentity(hidden.ID, "alice@example.com", "manual"))
+	after, err := Build(ctx, f.src, req)
+	require.NoError(t, err)
+	beforeJSON, err := json.Marshal(before, json.Deterministic(true))
+	require.NoError(t, err)
+	afterJSON, err := json.Marshal(after, json.Deterministic(true))
+	require.NoError(t, err)
+	assert.Equal(t, string(beforeJSON), string(afterJSON))
+}
+
 type deniedCalls struct{ hits *atomic.Int64 }
 
 func (s deniedCalls) ListLogicalCallsContext(context.Context, store.LogicalCallQuery) ([]store.LogicalCall, string, error) {

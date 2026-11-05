@@ -51,8 +51,8 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 		m.cancelTimelineRequest()
 		m.loading = false
-		m.timelineState.err = nil
 		if m.timelineState.reader != timelineReaderNone {
+			m.timelineState.err = nil
 			if m.timelineState.reader == timelineReaderMessage && m.timelineState.readerFromThread {
 				m.timelineState.reader = timelineReaderThread
 				m.timelineState.readerID = m.timelineState.threadID
@@ -108,7 +108,7 @@ func (m Model) handleTimelineKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case "r":
 		req := m.timelineState.request
 		req.Cursor = ""
-		return m.requestTimeline(req, false)
+		return m.requestTimeline(req, true)
 	case "n":
 		if result := m.timelineState.result; result != nil && result.Cursor != "" {
 			req := m.timelineState.request
@@ -358,7 +358,7 @@ var errTimelineLoadCancelled = errors.New("timeline load cancelled · r to retry
 func (m *Model) popTimelineHistory() {
 	n := len(m.timelineState.history)
 	if n == 0 {
-		if m.timelineState.result == nil {
+		if m.timelineState.result == nil && m.timelineState.err == nil {
 			m.timelineState.err = errTimelineLoadCancelled
 		}
 		return
@@ -368,5 +368,6 @@ func (m *Model) popTimelineHistory() {
 	m.timelineState.request, m.timelineState.result = prev.request, prev.result
 	m.timelineState.cursor, m.timelineState.scroll = prev.cursor, prev.scroll
 	m.timelineState.needsLoad = false
+	m.timelineState.err = nil
 	m.rebuildTimelineRows()
 }

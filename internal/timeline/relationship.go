@@ -67,9 +67,6 @@ func (c *composer) filterSubject(entries []Entry) []Entry {
 }
 func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.setSubject(p)
-	if !c.req.Scope.Owner {
-		c.ownerGaps()
-	}
 	person := Person{PersonID: p.PersonID, Name: p.DisplayName, TierSource: "none"}
 	if person.Name == "" {
 		person.Name = p.Address
@@ -128,14 +125,12 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 			}
 		},
 		func() {
-			if c.req.Scope.Owner {
-				calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
-					return c.src.Calls.CallContactAggregateContext(ctx, q)
-				})
-				logicalCalls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
-					return c.readCalls(ctx, store.LogicalCallQuery{After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond), ParticipantIDs: c.participants, Limit: 500})
-				})
-			}
+			calls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.ContactAggregate, error) {
+				return c.src.Calls.CallContactAggregateContext(ctx, q)
+			})
+			logicalCalls = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.LogicalCall, error) {
+				return c.readCalls(ctx, store.LogicalCallQuery{After: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), Before: c.t.Now.Add(time.Nanosecond), ParticipantIDs: c.participants, Limit: 500})
+			})
 		},
 		func() {
 			upcoming = c.readCalendar(c.t.Now, c.t.Now.AddDate(0, 0, 30))
@@ -152,11 +147,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.t.Omitted.Cold = coldCount.value
 	c.gap("calls", logicalCalls.err, false)
 	c.mergeContact(messages.value, false)
-	if c.req.Scope.Owner {
-		c.mergeContact(calls.value, true)
-	} else {
-		c.ownerGaps()
-	}
+	c.mergeContact(calls.value, true)
 	occurrences := slices.Clone(upcoming.value.Occurrences)
 	if len(transcripts.value) > 0 {
 		r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
@@ -223,9 +214,6 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 	c.t.History = entries
 	if history.value.more || cold.value.NextKey != nil {
 		c.t.Gaps = append(c.t.Gaps, Gap{Section: "history", Code: "partial"})
-	}
-	if !c.req.Scope.Owner {
-		return
 	}
 	c.addLoops(c.collectLoops(p.PersonID))
 	if p.PersonID == 0 {

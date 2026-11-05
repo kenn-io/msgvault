@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -8,6 +9,42 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/timeline"
 )
+
+func TestTimelineRefreshFailureRestoresLastResult(t *testing.T) {
+	m := timelineModeModel()
+	original := m.timelineState.result
+	originalRequest := m.timelineState.request
+	m.timelineState.scroll = 1
+	refreshed, cmd := sendKey(t, m, key('r'))
+	defer refreshed.cancelTimelineRequest()
+	require.NotNil(t, cmd)
+	msg := cmd().(timelineLoadedMsg)
+	failure := errors.New("daemon temporarily unavailable")
+	msg.result, msg.err = nil, failure
+	refreshed = sendMsg(t, refreshed, msg)
+	assert.Contains(t, stripANSI(refreshed.renderView()), failure.Error())
+	restored, _ := sendKey(t, refreshed, keyEsc())
+	assert.Same(t, original, restored.timelineState.result)
+	assert.Equal(t, originalRequest, restored.timelineState.request)
+	assert.Equal(t, 1, restored.timelineState.scroll)
+	assert.NotEmpty(t, restored.timelineState.entries)
+	assert.Contains(t, stripANSI(restored.renderView()), "Project update")
+}
+
+func TestTimelineInitialLoadFailureKeepsErrorAfterEscape(t *testing.T) {
+	m := timelineModeModel()
+	m.timelineState.result = nil
+	cmd := m.startTimelineRequest(timeline.Request{Mode: timeline.ModeDay}, false)
+	defer m.cancelTimelineRequest()
+	require.NotNil(t, cmd)
+	msg := cmd().(timelineLoadedMsg)
+	failure := errors.New("daemon temporarily unavailable")
+	msg.result, msg.err = nil, failure
+	m = sendMsg(t, m, msg)
+	m, _ = sendKey(t, m, keyEsc())
+	assert.ErrorIs(t, m.timelineState.err, failure)
+	assert.Contains(t, stripANSI(m.renderView()), failure.Error())
+}
 
 func TestTimelineInitialLoadCancellationIsVisible(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)

@@ -320,8 +320,7 @@ func preparePage(t, original *Timeline, totals, counts map[string]int, format st
 			if item.section == "days" {
 				return fmt.Errorf("%w: missing day sort key", ErrInvalidRequest)
 			}
-			// Fixed precision keeps lexical order chronological across subsecond times.
-			sortKey = item.entry.Time.UTC().Format("2006-01-02T15:04:05.000000000Z") + "|" + item.entry.Kind + "|" + item.entry.Key
+			sortKey = chronologicalKey(*item.entry)
 		}
 		positions[item.section] = sortKey
 	}
