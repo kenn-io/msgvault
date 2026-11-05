@@ -80,7 +80,7 @@ non-dry-run plan through client elicitation.
 
 ## Draft tools
 
-These tools run the matching CLI commands through your selected daemon. Draft preparation and lifecycle tools require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft creation and lifecycle commands do not send. On unreleased `main`, the owner can send reviewed LINE text drafts with `send_line_reply` (API schema 3.44.0); see [LINE setup and receipts](line.md#reply-from-a-reviewed-draft).
+These tools run the matching CLI commands through your selected daemon. Draft preparation and lifecycle tools require API schema 3.0.0 or newer. The daemon enforces source opt-ins, confirmed sender identities, and the caller's grants. Draft creation and lifecycle commands do not send. On unreleased `main`, the owner can send reviewed LINE text drafts with `send_line_reply` (API schema 3.45.0); see [LINE setup and receipts](line.md#reply-from-a-reviewed-draft).
 
 `draft_delete`, `draft_recover`, and `send_line_reply` require client confirmation for the specific tool and arguments. Deletion removes a draft, recovery can finish an interrupted deletion, and LINE sending can make a provider request. The client must show the proposed action and get your approval before responding, and msgvault checks that the response matches the pending call. Clients that can't answer confirmation prompts, including Claude Desktop, can still create, read, and edit drafts but can't delete, recover, or send them.
 

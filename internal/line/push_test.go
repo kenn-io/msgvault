@@ -150,7 +150,7 @@ func TestValidateReplyText(t *testing.T) {
 		name, text string
 		valid      bool
 	}{
-		{"empty", "", false}, {"blank", " \t\n\u3000", false}, {"NUL", "a\x00b", false}, {"invalid UTF8", string([]byte{0xff}), false},
+		{"empty", "", false}, {"blank", " \t\n\u3000", false},
 		{"BMP boundary", strings.Repeat("a", 5000), true}, {"BMP over", strings.Repeat("a", 5001), false},
 		{"astral boundary", strings.Repeat("🌍", 2500), true}, {"astral over", strings.Repeat("🌍", 2501), false},
 		{"mixed boundary", strings.Repeat("a", 4998) + "🌍", true}, {"mixed over", strings.Repeat("a", 4999) + "🌍", false},

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -37,8 +36,8 @@ var ErrInvalidReplyText = errors.New("line: invalid reply text")
 
 // ValidateReplyText applies LINE's 5,000 UTF-16 code-unit text limit.
 func ValidateReplyText(text string) error {
-	if !utf8.ValidString(text) || strings.ContainsRune(text, 0) || strings.TrimSpace(text) == "" {
-		return fmt.Errorf("%w: must be nonblank UTF-8 without NUL", ErrInvalidReplyText)
+	if strings.TrimSpace(text) == "" {
+		return fmt.Errorf("%w: must be nonblank", ErrInvalidReplyText)
 	}
 	units := 0
 	for _, r := range text {
