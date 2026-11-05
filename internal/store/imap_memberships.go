@@ -525,14 +525,18 @@ func captureUntrackedIMAPMessageIDs(
 	}
 	incremental := err == nil
 	bound := pgContentCommitBoundSQL
+	guard := pgRedactedMessageWritersSQL + " = 0"
 	if sqlite {
 		bound = (&SQLiteDialect{}).ContentChangedNow()
+		guard = "1 = 1"
 	}
 	// Save the bound before reading candidates. PostgreSQL writers can commit
 	// during capture; the bound keeps their stamps in the next apply's window.
 	// Both the checkpoint and reconciliation roll back if apply fails.
+	// A redacted PostgreSQL writer leaves the old checkpoint in place so its
+	// uncommitted stamp remains in the next apply's capture window.
 	if _, err := tx.Exec(`INSERT INTO sync_checkpoints (source_id, checkpoint_type, checkpoint_value)
-		VALUES (?, 'imap_untracked_complete_through', CAST(`+bound+` AS TEXT))
+		SELECT ?, 'imap_untracked_complete_through', CAST(`+bound+` AS TEXT) WHERE `+guard+`
 		ON CONFLICT(source_id, checkpoint_type) DO UPDATE SET
 			checkpoint_value = excluded.checkpoint_value, updated_at = CURRENT_TIMESTAMP`, sourceID); err != nil {
 		return fmt.Errorf("save IMAP capture checkpoint: %w", err)

@@ -183,18 +183,20 @@ const pgContentCommitBoundSQL = `LEAST(transaction_timestamp(),
 	                         AND l.mode IN ` + pgWriteLockModes + `),
 	                      transaction_timestamp()))`
 
-const pgWatermarkBoundsQuery = `
-	SELECT clock_timestamp(),
-	       transaction_timestamp(),
-	       ` + pgContentCommitBoundSQL + `,
-	       to_regclass('messages') IS NOT NULL,
-	       (SELECT count(*)
+const pgRedactedMessageWritersSQL = `(SELECT count(*)
 	          FROM pg_stat_activity a
 	          JOIN pg_locks l ON l.pid = a.pid
 	          WHERE a.datname = current_database()
 	            AND a.backend_type IS NULL
 	            AND l.relation = to_regclass('messages')
 	            AND l.mode IN ` + pgWriteLockModes + `)`
+
+const pgWatermarkBoundsQuery = `
+	SELECT clock_timestamp(),
+	       transaction_timestamp(),
+	       ` + pgContentCommitBoundSQL + `,
+	       to_regclass('messages') IS NOT NULL,
+	       ` + pgRedactedMessageWritersSQL
 
 // ReadWatermarkBounds implements Dialect. See pgWatermarkBoundsQuery for why
 // the bound is what it is.
