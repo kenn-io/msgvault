@@ -821,7 +821,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 				}
 				for _, id := range labelResult.LabelIDs {
 					if _, known := labelMap[id]; !known {
-						return nil, fmt.Errorf("recovery label %q is absent from the label catalogue", id)
+						return nil, fmt.Errorf("Gmail returned an unknown label %q", id)
 					}
 				}
 			}
