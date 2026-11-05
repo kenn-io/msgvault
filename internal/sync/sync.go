@@ -1570,7 +1570,7 @@ func (s *Syncer) full(
 		current, err := s.store.GetSourceByIDContext(ctx, source.ID)
 		if err != nil {
 			s.failStoppedSync(state.syncID, err)
-			return nil, fmt.Errorf("read source cursor before full-sync completion: %w", err)
+			return nil, fmt.Errorf("read saved sync progress: %w", err)
 		}
 		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > completionHistoryID {
 			completionHistoryID = currentHistoryID
