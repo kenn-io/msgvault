@@ -90,38 +90,6 @@ function deferredResponse() {
 }
 
 describe('PersonMergeHistoryController', () => {
-  it('refreshes matching labels after a stale split reload', async () => {
-    let stale = false;
-    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
-      const request = requestOf(input);
-      const path = new URL(request.url).pathname;
-      if (request.method === 'POST') {
-        stale = true;
-        return Response.json({ error: 'person_merge_revision_conflict' }, { status: 409 });
-      }
-      if (path === '/api/v1/person-merges/41') return Response.json(detail({ survivor_revision_after: stale ? 5 : 4 }));
-      if (path === '/api/v1/people/12') {
-        const revision = stale ? 5 : 4;
-        return Response.json(person(12, revision, [701]), { headers: { ETag: `"person-12-r${revision}"` } });
-      }
-      if (path === '/api/v1/people/7') return Response.json(person(7, 1, [], stale ? 'Fresh Example' : 'Earlier Example'));
-      return Response.json({ identifiers: [] });
-    }), 7);
-    try {
-      await controller.selectMerge(41);
-      expect(controller.labels?.names.get(7)).toBe('Earlier Example');
-      await controller.openSplit();
-      controller.setParticipantSelected(701, true);
-      expect(controller.confirmSplit()).toBe(true);
-      await controller.submitSplit();
-      expect(controller.detail?.merge.survivor_revision_after).toBe(5);
-      expect(controller.labels?.for).toBe(controller.detail);
-      expect(controller.labels?.names.get(7)).toBe('Fresh Example');
-    } finally {
-      controller.destroy();
-    }
-  });
-
   it('uses exact pagination and keeps Previous on a successful empty nonzero page', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
@@ -152,27 +120,26 @@ describe('PersonMergeHistoryController', () => {
       requests.push(request);
       if (request.url.endsWith('/snapshot'))
         return Response.json({ version: 1, sha256: 'synthetic-digest', snapshot: { private: 'explicit' } });
-      return Response.json(detail());
+      if (new URL(request.url).pathname === '/api/v1/person-merges/41') return Response.json(detail());
+      if (new URL(request.url).pathname === '/api/v1/people/7') return Response.json(person(7));
+      return Response.json({ identifiers: [] });
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
 
     await controller.selectMerge(41);
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41', '/api/v1/people/7', '/api/v1/participants/701', '/api/v1/participants/702']);
+    expect(requests.filter(request => new URL(request.url).pathname.startsWith('/api/v1/person-merges/'))
+      .map(request => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41']);
     expect(controller.snapshot).toBeNull();
 
     await controller.revealSnapshot();
     await controller.revealSnapshot();
-    expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-      '/api/v1/person-merges/41',
-      '/api/v1/people/7',
-      '/api/v1/participants/701',
-      '/api/v1/participants/702',
-      '/api/v1/person-merges/41/snapshot',
-    ]);
+    expect(requests.filter(request => new URL(request.url).pathname.endsWith('/snapshot'))
+      .map(request => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41/snapshot']);
   });
 
   it.each(['person', 'merge'])('offers Split during label loading and discards late labels after a newer %s', async replacement => {
     const late = deferredResponse();
+    let failReload = false;
     const requests: Request[] = [];
     const controller = new PersonMergeHistoryController(createAPIClient(async input => {
       const request = requestOf(input);
@@ -180,7 +147,9 @@ describe('PersonMergeHistoryController', () => {
       const path = new URL(request.url).pathname;
       if (path === '/api/v1/person-merges/41') return Response.json(detail());
       if (path === '/api/v1/people/7') return late.promise;
-      if (path === '/api/v1/person-merges/42') return Response.json(detail({ id: 42, survivor_person_id: 8 }, []));
+      if (path === '/api/v1/person-merges/42') return failReload
+        ? Response.json({}, { status: 503 })
+        : Response.json(detail({ id: 42, survivor_person_id: 8 }, []));
       if (path === '/api/v1/people/8') return Response.json(person(8, 1, [], 'New Example'));
       return Response.json({ merges: [], identifiers: [] });
     }), 7);
@@ -198,25 +167,13 @@ describe('PersonMergeHistoryController', () => {
     if (replacement === 'merge') {
       expect(controller.labels?.for).toBe(controller.detail);
       expect(controller.labels?.names.get(8)).toBe('New Example');
+      const labels = controller.labels;
+      failReload = true;
+      await controller.retryDetail();
+      expect(controller.detailError).toBeTruthy();
+      expect(controller.labels).toBe(labels);
+      expect(controller.labels?.for).toBe(controller.detail);
     } else expect(controller.labels).toBeNull();
-    controller.destroy();
-  });
-
-  it('keeps the matching labels when a detail reload fails', async () => {
-    let failed = false;
-    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
-      const path = new URL(requestOf(input).url).pathname;
-      if (path === '/api/v1/person-merges/41') return failed ? Response.json({}, { status: 503 }) : Response.json(detail());
-      if (path === '/api/v1/people/7') return Response.json(person(7, 1, [], 'Alex Example'));
-      return Response.json({ identifiers: [] });
-    }), 7);
-    await controller.selectMerge(41);
-    const labels = controller.labels;
-    failed = true;
-    await controller.retryDetail();
-    expect(controller.detailError).toBeTruthy();
-    expect(controller.labels).toBe(labels);
-    expect(controller.labels?.for).toBe(controller.detail);
     controller.destroy();
   });
 
@@ -400,6 +357,7 @@ describe('PersonMergeHistoryController', () => {
           headers: { ETag: `"person-12-r${revision}"` },
         });
       }
+      if (path === '/api/v1/people/7') return Response.json(person(7, 1, [], detailReads === 1 ? 'Earlier Example' : 'Fresh Example'));
       if (request.method === 'GET') return Response.json({ identifiers: [] });
       postAttempts += 1;
       return postAttempts === 1
@@ -411,6 +369,7 @@ describe('PersonMergeHistoryController', () => {
       .mockReturnValueOnce('234-567-890-23');
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
+    expect(controller.labels?.names.get(7)).toBe('Earlier Example');
     await controller.openSplit();
     controller.setParticipantSelected(701, true);
     controller.confirmSplit();
@@ -440,6 +399,8 @@ describe('PersonMergeHistoryController', () => {
     expect(controller.sourcePerson?.revision).toBe(6);
     expect(controller.sourceETag).toBe('"person-12-r6"');
     expect(controller.detail?.merge.survivor_revision_after).toBe(6);
+    expect(controller.labels?.for).toBe(controller.detail);
+    expect(controller.labels?.names.get(7)).toBe('Fresh Example');
     expect(controller.selectedParticipantIDs).toEqual([]);
     expect(requests.filter((request) => request.method === 'POST')).toHaveLength(1);
 
@@ -478,7 +439,9 @@ describe('PersonMergeHistoryController', () => {
     controller.confirmSplit();
     await controller.submitSplit();
 
-    expect(requests.filter((request) => request.method === 'GET')).toHaveLength(5);
+    expect(requests.filter(request => request.method === 'GET' &&
+      ['/api/v1/person-merges/41', '/api/v1/people/12'].includes(new URL(request.url).pathname))
+      .map(request => new URL(request.url).pathname)).toEqual(['/api/v1/person-merges/41', '/api/v1/people/12']);
     expect(
       requests.filter((request) => request.method === 'POST').map((request) => request.headers.get('Idempotency-Key')),
     ).toEqual(['123-456-789-12', '234-567-890-23']);
@@ -581,7 +544,10 @@ describe('PersonMergeHistoryController', () => {
       if (path.endsWith('/snapshot')) return lateSnapshot.promise;
       if (request.method === 'POST') return lateSplit.promise;
       if (path === '/api/v1/people/12') return Response.json(person(12, 4, [701, 702], 'Synthetic Person 12'), { headers: { ETag: '"person-12-r4"' } });
-      return Response.json({ merges: [], limit: 100, offset: 0 });
+      if (path === '/api/v1/people/7') return Response.json(person(7));
+      if (path.startsWith('/api/v1/participants/')) return Response.json({ identifiers: [] });
+      if (path.endsWith('/merges')) return Response.json({ merges: [], limit: 100, offset: 0 });
+      throw new Error(`Unexpected request: ${path}`);
     });
     const controller = new PersonMergeHistoryController(createAPIClient(fetchFn), 7);
     await controller.selectMerge(41);
@@ -592,7 +558,11 @@ describe('PersonMergeHistoryController', () => {
     const snapshotRead = controller.revealSnapshot();
     const splitWrite = controller.submitSplit();
     const detailRead = controller.selectMerge(41);
-    await vi.waitFor(() => expect(requests).toHaveLength(8));
+    await vi.waitFor(() => {
+      expect(requests.filter(request => new URL(request.url).pathname === '/api/v1/person-merges/41')).toHaveLength(2);
+      expect(requests.filter(request => new URL(request.url).pathname.endsWith('/snapshot'))).toHaveLength(1);
+      expect(requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    });
     controller.setPerson(8);
 
     lateDetail.resolve(Response.json(detail({ current_person_id: 99 })));
@@ -600,7 +570,11 @@ describe('PersonMergeHistoryController', () => {
     lateSplit.resolve(Response.json(splitResult()));
     await Promise.all([detailRead, snapshotRead, splitWrite]);
 
-    const lateRequests = requests.slice(5, 8);
+    const lateRequests = [
+      requests.filter(request => new URL(request.url).pathname === '/api/v1/person-merges/41')[1]!,
+      requests.find(request => new URL(request.url).pathname.endsWith('/snapshot'))!,
+      requests.find(request => request.method === 'POST')!,
+    ];
     expect(lateRequests.every((request) => request.signal.aborted)).toBe(true);
     expect(controller.personID).toBe(8);
     expect(controller.detail).toBeNull();

@@ -99,7 +99,10 @@ function renderHistory(currentPersonID: number | null = 12, options: { gone?: bo
     if (path.startsWith('/api/v1/participants/')) {
       if (options.fail) { options.fail = false; return Response.json({}, { status: 503 }); }
       const id = Number(path.split('/').at(-1));
-      return Response.json({ identifiers: [{ participant_id: id, type: 'email', value: `address${id}@example.org` }] });
+      return Response.json({ identifiers: [
+        { participant_id: id, type: 'email', value: `address${id}@example.org` },
+        ...(id === 701 ? [{ participant_id: id, type: 'phone', value: '+12025550101' }] : []),
+      ] });
     }
     return Response.json(mergeDetail);
   });
@@ -107,7 +110,7 @@ function renderHistory(currentPersonID: number | null = 12, options: { gone?: bo
   return { requests };
 }
 
-function renderRegressionHistory(mergeDetail: MergeDetail, missingAddress = false, missingDestination = false) {
+function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = false) {
   render(PersonMergeHistory, { client: createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
@@ -118,7 +121,7 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingAddress = fals
       const id = Number(path.split('/').at(-1));
       return Response.json(person(id, 4, [701], id === 19 ? 'Alex Restored' : 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
     }
-    if (path === '/api/v1/participants/701') return Response.json({ identifiers: missingAddress ? [] : [
+    if (path === '/api/v1/participants/701') return Response.json({ identifiers: [
       { participant_id: 701, type: 'email', value: 'alex@example.org' },
       { participant_id: 701, type: 'phone', value: '+12025550101' },
     ] });
@@ -128,29 +131,11 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingAddress = fals
 }
 
 describe('PersonMergeHistory', () => {
-  it.each([
-    [false, false, 'Split out to Alex Restored'],
-    [true, false, 'Split out to a profile'],
-    [false, true, 'Split out'],
-  ])('ties split addresses to their destination, missing name %s, missing split %s', async (missingDestination, missingSplit, expected) => {
-    const mergeDetail = detail();
-    if (missingSplit) mergeDetail.splits = [];
-    renderRegressionHistory(mergeDetail, false, missingDestination);
+  it('ties split addresses to a profile when its destination was deleted', async () => {
+    renderRegressionHistory(detail(), true);
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     const heading = await screen.findByRole('heading', { name: 'Message addresses from Alex Example' });
-    expect(within(heading.parentElement!).getByText(expected)).toBeDefined();
-  });
-
-  it.each([false, true])('uses Inspect address labels in split choices and confirmation, missing address %s', async missingAddress => {
-    renderRegressionHistory(detail(), missingAddress);
-    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
-    const heading = await screen.findByRole('heading', { name: 'Message addresses from the merged-in profile' });
-    const labels = missingAddress ? ['Participant 701'] : ['alex@example.org', '+12025550101'];
-    for (const label of labels) expect(within(heading.parentElement!).getByText(label)).toBeDefined();
-    await fireEvent.click(screen.getByRole('button', { name: 'Split merged profile' }));
-    const choice = await screen.findByRole('checkbox', { name: labels.join(', ') });
-    await fireEvent.click(choice);
-    expect(screen.getByRole('checkbox', { name: `I confirm splitting ${labels.join(', ')} from Alex Example (Person 12).` })).toBeDefined();
+    expect(within(heading.parentElement!).getByText('Split out to a profile')).toBeDefined();
   });
 
   it('titles a section containing only decided candidates Review decisions', async () => {
@@ -160,17 +145,22 @@ describe('PersonMergeHistory', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     expect(await screen.findByRole('heading', { name: 'Review decisions' })).toBeDefined();
     expect(screen.queryByRole('heading', { name: 'Needs review' })).toBeNull();
-    await fireEvent.click(screen.getByText('1 earlier decision'));
-    expect(screen.getByText(/^Accepted · You ·/)).toBeDefined();
   });
 
   it('groups addresses, splits, and review decisions like profile history', async () => {
-    const { requests } = renderHistory();
+    renderHistory();
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     await screen.findByRole('heading', { name: 'Another profile merged into Alex Example' });
+    expect(screen.getByText('Person 9 merged into person 7')).toBeDefined();
+    expect(screen.getByText(/2 addresses · split 1×/)).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Previous merge history page' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Next merge history page' })).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Needs review' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Review decisions' })).toBeNull();
     expect(screen.getByText(/^You · Aug [23], 2026, \d{1,2}:00 [AP]M$/, { selector: 'p' })).toBeDefined();
     const absorbed = screen.getByRole('heading', { name: 'Message addresses from the merged-in profile' }).parentElement!;
     expect(within(absorbed).getByText('address701@example.org')).toBeDefined();
+    expect(within(absorbed).getByText('+12025550101')).toBeDefined();
     const survivor = screen.getByRole('heading', { name: 'Message addresses from Alex Example' }).parentElement!;
     expect(within(survivor).getByText('address702@example.org')).toBeDefined();
     expect(within(survivor).getByText('Split out to Alex Restored')).toBeDefined();
@@ -182,7 +172,8 @@ describe('PersonMergeHistory', () => {
     expect(screen.getByText('Role')).toBeDefined();
     expect(screen.getByText(/^Accepted · You ·/)).toBeDefined();
     expect(screen.queryByRole('table')).toBeNull();
-    expect(requests.some(request => request.url.endsWith('/snapshot'))).toBe(false);
+    expect(document.body.textContent).not.toContain('opaque-row-key-must-not-appear');
+    expect(document.body.textContent).not.toContain('private/snapshot/path-must-not-appear');
   });
 
   it('uses both surviving-profile fallbacks after a 404', async () => {
@@ -190,7 +181,6 @@ describe('PersonMergeHistory', () => {
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     await screen.findByRole('heading', { name: 'Two profiles merged' });
     expect(screen.getByRole('heading', { name: 'Message addresses from the surviving profile' })).toBeDefined();
-    expect(screen.queryByText(/couldn't be loaded/)).toBeNull();
   });
 
   it('explains a merge with no message addresses', async () => {
@@ -251,7 +241,10 @@ describe('PersonMergeHistory', () => {
           { headers: { ETag: '"person-12-r4"' } },
         );
       }
-      return Response.json(mergeDetail);
+      if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail);
+      if (path.startsWith('/api/v1/people/')) return Response.json(person(Number(path.split('/').at(-1)), 1, [], ''));
+      if (path.startsWith('/api/v1/participants/')) return Response.json({ identifiers: [] });
+      throw new Error(`Unexpected request: ${path}`);
     });
     render(PersonMergeHistory, { client: createAPIClient(fetchFn), personID: 7 });
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));

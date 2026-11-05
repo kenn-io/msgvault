@@ -51,15 +51,15 @@ describe('loadMergeLabels', () => {
     expect(labels.incomplete).toBe(true);
   });
 
-  it('marks a failed profile lookup as incomplete while keeping a missing profile independent', async () => {
-    const labels = await loadMergeLabels(createAPIClient(async input => Response.json({}, { status: new URL((input as Request).url).pathname.endsWith('/7') ? 404 : 503 })), { ...detail, participants: [] }, new AbortController().signal);
+  it.each([
+    [404, false],
+    [503, true],
+  ])('marks profile lookup incomplete only for non-404 failures, destination status %s', async (destinationStatus, incomplete) => {
+    const labels = await loadMergeLabels(createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      return Response.json({}, { status: path.endsWith('/7') ? 404 : destinationStatus });
+    }), { ...detail, participants: [] }, new AbortController().signal);
     expect(labels.names.size).toBe(0);
-    expect(labels.incomplete).toBe(true);
-  });
-
-  it('does not mark a missing profile as an incomplete lookup', async () => {
-    const labels = await loadMergeLabels(createAPIClient(async () => Response.json({}, { status: 404 })), { ...detail, participants: [], splits: [] }, new AbortController().signal);
-    expect(labels.names.size).toBe(0);
-    expect(labels.incomplete).toBe(false);
+    expect(labels.incomplete).toBe(incomplete);
   });
 });
