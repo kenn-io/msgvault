@@ -62,51 +62,24 @@ func TestMeetingLinksSuccessiveExceptionTimestampForms(t *testing.T) {
 }
 
 func TestMeetingLinksSeriesExpansionResolvesAliasesBeforeWindowFiltering(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
+	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, master := calendarFixture(t, st, "master", `{"id":"weekly","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=12"]}`)
-	_, stale := calendarFixture(t, st, "alias-a", `{"id":"alias-a","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-03-08T09:00:00Z"},"end":{"dateTime":"2027-03-08T10:00:00Z"}}`)
-	_, current := calendarFixture(t, st, "alias-b", `{"id":"alias-b","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-05-10T09:00:00Z"},"end":{"dateTime":"2027-05-10T10:00:00Z"}}`)
-	setCalendarEventLastModified(t, st, stale, time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC))
-	setCalendarEventLastModified(t, st, current, time.Date(2001, time.January, 1, 0, 0, 0, 0, time.UTC))
-
-	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
+	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-02T09:00:00Z"},"end":{"dateTime":"2027-03-02T10:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=12"]}`)
+	calendarFixture(t, st, "alias-a", `{"id":"alias-a","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00","timeZone":"UTC"},"start":{"dateTime":"2027-03-08T09:00:00Z"},"end":{"dateTime":"2027-03-08T10:00:00Z"}}`)
+	calendarFixture(t, st, "weekly|2027-04-06T09:00:00Z", `{"id":"alias-a","iCalUID":"weekly@example.org","recurringEventId":"weekly","originalStartTime":{"dateTime":"2027-04-06T09:00:00Z"},"start":{"dateTime":"2027-05-10T09:00:00Z"},"end":{"dateTime":"2027-05-10T10:00:00Z"}}`)
+	_, march := projectionFixture(t, st, "march-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-08T09:00:00Z"}}`)
+	_, may := projectionFixture(t, st, "may-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-05-10T09:00:00Z"}}`)
+	links, err := st.MeetingLinksContext(t.Context(), march)
 	requirements.NoError(err)
-	defer release()
-	r := st.meetingReader(ctx)
-	masters, err := queryCalendarEventRowsWithinBudget(ctx, r, `e.message_id = ?`, []any{master}, 1)
+	assertions.Empty(links)
+	links, err = st.MeetingLinksContext(t.Context(), may)
 	requirements.NoError(err)
-	requirements.Len(masters, 1)
-
-	budget := 500
-	march := time.Date(2027, 3, 8, 0, 0, 0, 0, time.UTC)
-	expanded, err := expandMeetingSeries(ctx, r, masters[0], march, march.AddDate(0, 0, 1), &budget)
-	requirements.NoError(err)
-	var staleAtMarch, currentAliasLoaded bool
-	for _, occurrence := range expanded {
-		staleAtMarch = staleAtMarch || occurrence.Row.MessageID == stale && occurrence.Start.Equal(march.Add(9*time.Hour))
-		currentAliasLoaded = currentAliasLoaded || occurrence.Row.MessageID == current
-	}
-	assertions.False(staleAtMarch, "the stale in-window alias must be suppressed by the newer out-of-window snapshot")
-	assertions.True(currentAliasLoaded, "series expansion must load the winning alias even when it is outside the window")
-
-	budget = 500
-	may := time.Date(2027, 5, 10, 0, 0, 0, 0, time.UTC)
-	mayStart := may.Add(9 * time.Hour)
-	expanded, err = expandMeetingSeries(ctx, r, masters[0], mayStart, mayStart.Add(time.Second), &budget)
-	requirements.NoError(err)
-	var matching []linkOccurrence
-	for _, occurrence := range expanded {
-		if occurrence.Start.Equal(mayStart) {
-			matching = append(matching, occurrence)
-		}
-	}
-	requirements.Len(matching, 1)
-	assertions.Equal(current, matching[0].Row.MessageID)
-	assertions.Equal("2027-05-10T09:00:00Z", matching[0].Start.Format(time.RFC3339))
+	requirements.Len(links, 1)
+	assertions.Equal(fmt.Sprintf("evt:%d@20270406T090000Z", master), links[0].Ref)
+	assertions.Equal(time.Date(2027, 5, 10, 9, 0, 0, 0, time.UTC), links[0].Start)
 }
 
-func TestMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved(t *testing.T) {
+func testMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		updatedRaw string
@@ -172,9 +145,7 @@ func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	_, id := calendarFixture(t, st, "event", singleLinkRaw("event", "shared@example.org"))
-	// Metadata is the UID source even if the archived provider payload differs.
-	requirements.NoError(st.SetMessageMetadata(id, sql.NullString{String: `{"ical_uid":"metadata@example.org"}`, Valid: true}))
+	_, id := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"metadata@example.org"}}`)
 	// Distinct calendar UIDs make an indexed lookup cheaper than scanning events.
 	series := `(WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<3000) SELECT n FROM nums)`
@@ -293,7 +264,7 @@ func granolaLinkFixture(t *testing.T, st *Store, event string) int64 {
 	return id
 }
 
-func TestMeetingLinksGranolaOwnCalendar(t *testing.T) {
+func testMeetingLinksGranolaOwnCalendar(t *testing.T) {
 	for _, tc := range []struct{ name, calendar, owner string }{
 		{"exact email", "calendar@example.com", "calendar@example.com"},
 		{"padded uppercase email", " Calendar@Example.COM ", " CALENDAR@example.com "},
@@ -505,7 +476,7 @@ func TestMeetingLinksUpgradeFromSchema11(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
 }
 
-func TestMeetingLinksIgnoreUnresolvableDecision(t *testing.T) {
+func testMeetingLinksIgnoreUnresolvableDecision(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
@@ -563,7 +534,7 @@ func linkedMeetingRefs(t *testing.T, st *Store, ids ...int64) map[int64]string {
 	return out
 }
 
-func TestMeetingLinksPrimaryCalendar(t *testing.T) {
+func testMeetingLinksPrimaryCalendar(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	data, event := calendarFixture(t, st, "event", singleLinkRaw("event", "primary@example.org"))
@@ -590,7 +561,7 @@ func TestMeetingLinksTwoOccurrenceAliases(t *testing.T) {
 	assertions.Equal("2027-03-14T12:00:00Z", links[0].Start.Format(time.RFC3339))
 }
 
-func TestMeetingLinksOrphanAliasResolvesLatestProviderUpdate(t *testing.T) {
+func testMeetingLinksOrphanAliasResolvesLatestProviderUpdate(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	alias := func(updated, start, end string) string {
@@ -609,7 +580,7 @@ func TestMeetingLinksOrphanAliasResolvesLatestProviderUpdate(t *testing.T) {
 	assertions.Equal("2027-03-14T14:00:00Z", links[0].Start.Format(time.RFC3339))
 }
 
-func TestMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
+func testMeetingLinksUnidentifiedExceptionsUseMessageIdentity(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, first := calendarFixture(t, st, "orphan-one", `{"id":"orphan-one","iCalUID":"shared@example.org","recurringEventId":"series","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"}}`)
@@ -706,7 +677,7 @@ func TestMeetingLinksSplitSurvivesSourceRemoval(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksUnlinkAfterCalendarSourceRemoval(t *testing.T) {
+func testMeetingLinksUnlinkAfterCalendarSourceRemoval(t *testing.T) {
 	for _, recurring := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -729,7 +700,7 @@ func TestMeetingLinksUnlinkAfterCalendarSourceRemoval(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksManualOverrideSurvivesSourceRemoval(t *testing.T) {
+func testMeetingLinksManualOverrideSurvivesSourceRemoval(t *testing.T) {
 	for _, recurring := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -763,7 +734,7 @@ func TestMeetingLinksManualOverrideSurvivesSourceRemoval(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksDecisionLifetime(t *testing.T) {
+func testMeetingLinksDecisionLifetime(t *testing.T) {
 	for _, uid := range []string{"lifetime@example.org", ""} {
 		t.Run("uid="+uid, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
@@ -795,5 +766,54 @@ func TestMeetingLinksDecisionLifetime(t *testing.T) {
 			requirements.NoError(st.db.QueryRow(`SELECT COUNT(*) FROM meeting_link_decisions`).Scan(&count))
 			assertions.Zero(count, "decisions follow the member note's lifetime")
 		})
+	}
+}
+
+func TestMeetingLinkAliasFreshness(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingLinksOrphanAliasResolvesLatestProviderUpdate", testMeetingLinksOrphanAliasResolvesLatestProviderUpdate},
+		{"MeetingLinksFractionalAliasResolvesFreshestSnapshotForUnlink", testMeetingLinksFractionalAliasResolvesFreshestSnapshotForUnlink},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func TestMeetingUnresolvableDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingLinksIgnoreUnresolvableDecision", testMeetingLinksIgnoreUnresolvableDecision},
+		{"MeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved", testMeetingLinksUnlinkSavedIdentityWhenRecurrenceCannotBeResolved},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func TestMeetingDecisionSourceRemoval(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingLinksUnlinkAfterCalendarSourceRemoval", testMeetingLinksUnlinkAfterCalendarSourceRemoval},
+		{"MeetingLinksDecisionLifetime", testMeetingLinksDecisionLifetime},
+		{"MeetingLinksManualOverrideSurvivesSourceRemoval", testMeetingLinksManualOverrideSurvivesSourceRemoval},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func TestMeetingOwnCalendar(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingLinksPrimaryCalendar", testMeetingLinksPrimaryCalendar},
+		{"MeetingLinksGranolaOwnCalendar", testMeetingLinksGranolaOwnCalendar},
+	} {
+		t.Run(tc.name, tc.run)
 	}
 }

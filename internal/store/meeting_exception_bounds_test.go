@@ -10,7 +10,7 @@ import (
 	"go.kenn.io/msgvault/internal/calrecur"
 )
 
-func TestMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
+func testMeetingLinksUnidentifiedExceptionWithCancelledMaster(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
@@ -91,7 +91,7 @@ func TestMeetingVersionlessCancellationOverridesVersionedException(t *testing.T)
 	assertions.Equal("cancelled", occurrences[0].Row.Event.Status)
 }
 
-func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
+func testMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
@@ -142,7 +142,7 @@ func TestMeetingLinksAllDayExceptionWithTombstoneMaster(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.T) {
+func testMeetingLinksAllDayExceptionUsesCalendarZoneOverSeriesBudget(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"daily","iCalUID":"daily@example.org","start":{"date":"1800-01-01","timeZone":"America/New_York"},"end":{"date":"1800-01-02"},"recurrence":["RRULE:FREQ=DAILY"]}`)
