@@ -2576,31 +2576,21 @@ trusted_imap_sent_mailboxes = { "imaps://alice@example.com@imap.example.com:993"
 		"unconfigured archives carry no explicit Sent-folder trust")
 }
 
-func TestLoadAppleImportPathsAndWindow(t *testing.T) {
+func TestLoadAppleImportPaths(t *testing.T) {
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
-	for _, tc := range []struct {
-		name, path, window string
-		wantWindow         time.Duration
-		invalid            bool
-	}{
-		{name: "relative default", path: "apple/chat.db", wantWindow: 48 * time.Hour},
-		{name: "tilde explicit", path: "~/apple/chat.db", window: `window = "6h"`, wantWindow: 6 * time.Hour},
-		{name: "nonpositive", path: "apple/chat.db", window: `window = "0s"`, wantWindow: 48 * time.Hour},
-		{name: "invalid", path: "apple/chat.db", window: `window = "soon"`, invalid: true},
+	for _, tc := range []struct{ name, path string }{
+		{name: "relative", path: "apple/chat.db"},
+		{name: "tilde", path: "~/apple/chat.db"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
 			dir := t.TempDir()
 			path := filepath.Join(dir, "config.toml")
-			content := fmt.Sprintf("[[whatsapp_apple]]\nname = 'personal'\nenabled = true\nphone = '+15550000000'\nschedule = '*/10 * * * *'\npath = '%s'\n[imessage]\ndb_path = '%s'\n%s\n", tc.path, tc.path, tc.window)
+			content := fmt.Sprintf("[[whatsapp_apple]]\nname = 'personal'\nenabled = true\nphone = '+15550000000'\nschedule = '*/10 * * * *'\npath = '%s'\n[imessage]\ndb_path = '%s'\n", tc.path, tc.path)
 			require.NoError(os.WriteFile(path, []byte(content), 0o600))
 			cfg, err := Load(path, "")
-			if tc.invalid {
-				require.Error(err)
-				return
-			}
 			require.NoError(err)
 			wantPath := filepath.Join(dir, "apple/chat.db")
 			if strings.HasPrefix(tc.path, "~/") {
@@ -2609,8 +2599,6 @@ func TestLoadAppleImportPathsAndWindow(t *testing.T) {
 			assert.Equal(wantPath, cfg.IMessage.DBPath)
 			require.Len(cfg.ScheduledWhatsAppAppleSources(), 1)
 			assert.Equal(wantPath, cfg.WhatsAppApple[0].Path)
-			assert.Equal(tc.wantWindow, cfg.IMessage.Window)
 		})
 	}
-	assert.Equal(t, 48*time.Hour, NewDefaultConfig().IMessage.Window)
 }

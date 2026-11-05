@@ -192,7 +192,6 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 	if state == nil || state.cfg == nil {
 		return errors.New("configuration is unavailable")
 	}
-	cfg := state.cfg
 	mutated := false
 
 	if importImessageContacts != "" {
@@ -205,6 +204,11 @@ func finishImessageImport(s *store.Store, state *invocation, summary *imessage.I
 		mutated = true
 	}
 
+	return refreshImessageCache(state, mutated, summary)
+}
+
+func refreshImessageCache(state *invocation, mutated bool, summary *imessage.ImportSummary) error {
+	cfg := state.cfg
 	dbPath := cfg.DatabaseDSN()
 	if !store.IsPostgresURL(dbPath) && (mutated || (summary != nil && summary.DatesCleared > 0)) {
 		// Title/display_name updates aren't visible to the message-id-keyed
@@ -341,6 +345,8 @@ func defaultChatDBPath() (string, error) {
 }
 
 // importImessageRecorded preserves partial progress even when an import fails.
+//
+//nolint:unparam // CLI and scheduled imports intentionally share the same sync type.
 func importImessageRecorded(ctx context.Context, s *store.Store, client *imessage.Client, sourceID int64, syncType string) (summary *imessage.ImportSummary, retErr error) {
 	syncID, err := s.StartSync(sourceID, syncType)
 	if err != nil {
@@ -356,12 +362,12 @@ func importImessageRecorded(ctx context.Context, s *store.Store, client *imessag
 				retErr = errors.Join(retErr, fmt.Errorf("record sync progress: %w", err))
 			}
 		}
-		if retErr != nil {
+		if retErr != nil && !attachmentImportOnly(retErr) {
 			retErr = errors.Join(retErr, scoped.FailSync(syncID, retErr.Error()))
 			return
 		}
 		if err := scoped.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, sourceID, ""); err != nil {
-			retErr = fmt.Errorf("complete sync: %w", err)
+			retErr = errors.Join(retErr, fmt.Errorf("complete sync: %w", err))
 		}
 	}()
 	return client.ImportWithProgress(ctx, scoped, sourceID, func(sum imessage.ImportSummary) {
@@ -369,11 +375,27 @@ func importImessageRecorded(ctx context.Context, s *store.Store, client *imessag
 	})
 }
 
+// attachmentImportOnly excludes cancellation and archive failures joined with the warning.
+func attachmentImportOnly(err error) bool {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			if !attachmentImportOnly(child) {
+				return false
+			}
+		}
+		return len(joined.Unwrap()) > 0
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return attachmentImportOnly(wrapped)
+	}
+	return errors.Is(err, imessage.ErrAttachmentImport)
+}
+
 func imessageCheckpoint(sum imessage.ImportSummary) *store.Checkpoint {
 	return &store.Checkpoint{
 		MessagesProcessed: int64(sum.MessagesImported + sum.Skipped),
 		MessagesAdded:     int64(sum.MessagesAdded),
-		MessagesUpdated:   int64(sum.DatesCleared),
+		MessagesUpdated:   int64(sum.MessagesUpdated),
 		ErrorsCount:       int64(sum.Skipped + sum.AttachmentFailures),
 	}
 }
@@ -443,7 +465,7 @@ func printImessageSummary(
 	fmt.Println()
 	fmt.Println("iMessage import complete!")
 	fmt.Printf("  Duration:         %s\n", elapsed.Round(time.Second))
-	fmt.Printf("  Messages:         %d imported\n", summary.MessagesImported)
+	fmt.Printf("  Messages:         %d imported, %d added, %d updated\n", summary.MessagesImported, summary.MessagesAdded, summary.MessagesUpdated)
 	fmt.Printf("  Conversations:    %d\n", summary.ConversationsImported)
 	fmt.Printf("  Participants:     %d resolved\n", summary.ParticipantsResolved)
 	if summary.Skipped > 0 {

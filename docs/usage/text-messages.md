@@ -134,11 +134,10 @@ Import messages from the local iMessage database on macOS.
 
 To keep Messages current with the daemon, enable a schedule under
 [`[imessage]`](https://msgvault.io/docs/configuration/#imessage) and run `msgvault serve`.
-Grant Full Disk Access to the process running the daemon. Its first run reads
-the whole database. Later runs rescan from the last successful scheduled run's
-start minus `window` (default `48h`), so downtime doesn't leave a gap.
-Use a manual `msgvault import-imessage` to capture edits and unsends older
-than that window. Sources shows run history and offers **Sync now**.
+Grant Full Disk Access to the process running the daemon. Every run re-reads
+all of `chat.db` and writes only what changed, including late arrivals,
+edits, and unsends. Choose an interval that allows for the time it takes to
+read your database. Sources shows run history and offers **Sync now**.
 
 ```bash
 msgvault import-imessage

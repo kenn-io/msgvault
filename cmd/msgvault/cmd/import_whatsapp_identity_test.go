@@ -29,7 +29,7 @@ func TestImportWhatsAppConfirmsDefaultIdentityWithRecoverableErrors(t *testing.T
 	require.NoError(err)
 	assert.Contains(output, "Confirmed identity "+whatsappIdentityTestPhone)
 	assert.Contains(output, "phone-e164")
-	assert.Contains(output, "Messages:       3 processed, 1 added, 2 skipped")
+	assert.Contains(output, "Messages:       3 processed, 1 added, 0 updated, 2 skipped")
 	assert.Contains(output, "Errors:         1")
 
 	identities := whatsappIdentityTestIdentities(t, home)
@@ -84,8 +84,14 @@ func TestImportWhatsAppIdentityIsIdempotent(t *testing.T) {
 
 	_, err := runWhatsAppIdentityCommand(t, home, fixture, false)
 	require.NoError(err)
-	_, err = runWhatsAppIdentityCommand(t, home, fixture, false)
+	db, err := sql.Open("sqlite3", fixture)
 	require.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`UPDATE ZWAMESSAGE SET ZTEXT = 'Edited message' WHERE ZTEXT IS NOT NULL`)
+	require.NoError(err)
+	output, err := runWhatsAppIdentityCommand(t, home, fixture, false)
+	require.NoError(err)
+	assert.Contains(t, output, "0 added, 1 updated")
 
 	identities := whatsappIdentityTestIdentities(t, home)
 	require.Len(identities, 1)

@@ -987,7 +987,7 @@ func NewDefaultConfig() *Config {
 		Inline:   InlineConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Discord:  DiscordConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 		Teams:    TeamsConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
-		IMessage: IMessageConfig{Window: DefaultIMessageWindow, MediaMaxParticipants: DefaultMediaMaxParticipants},
+		IMessage: IMessageConfig{MediaMaxParticipants: DefaultMediaMaxParticipants},
 	}
 	cfg.Attachments.Documents = documentindex.DefaultDocumentsConfig()
 	cfg.Vector.ApplyDefaults()
@@ -1317,9 +1317,6 @@ func decodeConfig(cfg *Config, path string, explicit, homeOverride bool, content
 	}
 	if err := cfg.validateInlineAccounts(); err != nil {
 		return nil, err
-	}
-	if cfg.IMessage.Window <= 0 {
-		cfg.IMessage.Window = DefaultIMessageWindow
 	}
 	cfg.applySynctechSMSDefaults()
 	cfg.applyGCalDefaults()
@@ -1852,19 +1849,15 @@ type TeamsConfig struct {
 	AccountsConfig       map[string]MediaAccountConfig `toml:"accounts_config"`
 }
 
-// DefaultIMessageWindow is the overlap rescanned after a successful scheduled import.
-const DefaultIMessageWindow = 48 * time.Hour
-
 // IMessageConfig configures scheduled imports and media limits for Messages.
 // MediaMaxParticipants distinguishes omitted values from explicit zero.
 type IMessageConfig struct {
-	Enabled              bool          `toml:"enabled"`
-	Schedule             string        `toml:"schedule"`
-	DBPath               string        `toml:"db_path"`
-	Me                   string        `toml:"me"`
-	Window               time.Duration `toml:"window"`
-	MediaMaxParticipants int           `toml:"media_max_participants"`
-	MaxMediaMB           int           `toml:"max_media_mb"`
+	Enabled              bool   `toml:"enabled"`
+	Schedule             string `toml:"schedule"`
+	DBPath               string `toml:"db_path"`
+	Me                   string `toml:"me"`
+	MediaMaxParticipants int    `toml:"media_max_participants"`
+	MaxMediaMB           int    `toml:"max_media_mb"`
 }
 
 // MediaEnabled reports whether file download is on (default true).
