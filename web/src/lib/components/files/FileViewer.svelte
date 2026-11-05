@@ -512,7 +512,7 @@
   }
   .pdf-preview :global(.textLayer ::selection) {
     color: transparent;
-    background: rgba(0, 0, 255, 0.25);
+    background: color-mix(in srgb, var(--accent-blue) 25%, transparent);
   }
   .pdf-preview :global(.pdf-page) {
     position: relative;
@@ -655,7 +655,7 @@
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto auto;
-      min-height: 58px;
+      min-height: 48px;
       align-content: start;
     }
     .actions {
