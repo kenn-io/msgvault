@@ -13,15 +13,6 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
-type AccessPoint struct {
-	Kind  string `json:"kind" validate:"required"`
-	Value string `json:"value" validate:"required"`
-}
-
-func (a AccessPoint) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(a))
-}
-
 type AccountInfo struct {
 	DisplayName *string `json:"display_name,omitzero"`
 	Email       string  `json:"email" validate:"required"`
@@ -1578,7 +1569,6 @@ type CallImportResponse struct {
 }
 
 type CallObservationView struct {
-	AccessPoints       []AccessPoint     `json:"access_points,omitempty"`
 	Account            string            `json:"account" validate:"required"`
 	Direction          string            `json:"direction" validate:"required"`
 	DurationSeconds    *float64          `json:"duration_seconds" validate:"omitempty"`
@@ -1601,13 +1591,6 @@ type CallObservationView struct {
 
 func (c CallObservationView) Validate() error {
 	var errors runtime.ValidationErrors
-	for i, item := range c.AccessPoints {
-		if v, ok := any(item).(runtime.Validator); ok {
-			if err := v.Validate(); err != nil {
-				errors = errors.Append(fmt.Sprintf("AccessPoints[%d]", i), err)
-			}
-		}
-	}
 	if err := typesValidator.Var(c.Account, "required"); err != nil {
 		errors = errors.Append("Account", err)
 	}
@@ -11328,16 +11311,14 @@ func (p PersonBriefVersionsResponse) Validate() error {
 }
 
 type PersonCallSummary struct {
-	Answered           int64 `json:"answered"`
-	Cancelled          int64 `json:"cancelled"`
-	Conflicting        int64 `json:"conflicting"`
-	Declined           int64 `json:"declined"`
-	ExampleMessageID   int64 `json:"example_message_id"`
-	Missed             int64 `json:"missed"`
-	PersonID           int64 `json:"person_id"`
-	Scheduled          int64 `json:"scheduled"`
-	ScheduledCancelled int64 `json:"scheduled_cancelled"`
-	Unknown            int64 `json:"unknown"`
+	Answered         int64 `json:"answered"`
+	Cancelled        int64 `json:"cancelled"`
+	Conflicting      int64 `json:"conflicting"`
+	Declined         int64 `json:"declined"`
+	ExampleMessageID int64 `json:"example_message_id"`
+	Missed           int64 `json:"missed"`
+	PersonID         int64 `json:"person_id"`
+	Unknown          int64 `json:"unknown"`
 }
 
 type PersonCategory struct {

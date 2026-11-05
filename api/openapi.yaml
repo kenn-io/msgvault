@@ -1,16 +1,5 @@
 components:
   schemas:
-    AccessPoint:
-      additionalProperties: true
-      properties:
-        kind:
-          type: string
-        value:
-          type: string
-      required:
-        - kind
-        - value
-      type: object
     AccountInfo:
       additionalProperties: true
       properties:
@@ -1704,10 +1693,6 @@ components:
     CallObservationView:
       additionalProperties: true
       properties:
-        access_points:
-          items:
-            $ref: "#/components/schemas/AccessPoint"
-          type: array
         account:
           type: string
         direction:
@@ -11694,12 +11679,6 @@ components:
         person_id:
           format: int64
           type: integer
-        scheduled:
-          format: int64
-          type: integer
-        scheduled_cancelled:
-          format: int64
-          type: integer
         unknown:
           format: int64
           type: integer
@@ -11711,8 +11690,6 @@ components:
         - cancelled
         - unknown
         - conflicting
-        - scheduled
-        - scheduled_cancelled
         - example_message_id
       type: object
     PersonCategory:
@@ -18552,7 +18529,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Inspect call and scheduled meeting observations
+      summary: Inspect call observations
       tags:
         - API
   /api/v1/calls/summary:
@@ -24047,7 +24024,7 @@ paths:
           description: Error
       security:
         - apiKey: []
-      summary: Import one supplied call or scheduled meeting observation
+      summary: Import one supplied call observation
       tags:
         - API
   /api/v1/import/meeting:

@@ -49,16 +49,14 @@ type CallObservationView struct {
 }
 
 type PersonCallSummary struct {
-	PersonID           int64 `json:"person_id"`
-	Answered           int   `json:"answered"`
-	Missed             int   `json:"missed"`
-	Declined           int   `json:"declined"`
-	Cancelled          int   `json:"cancelled"`
-	Unknown            int   `json:"unknown"`
-	Conflicting        int   `json:"conflicting"`
-	Scheduled          int   `json:"scheduled"`
-	ScheduledCancelled int   `json:"scheduled_cancelled"`
-	ExampleMessageID   int64 `json:"example_message_id"`
+	PersonID         int64 `json:"person_id"`
+	Answered         int   `json:"answered"`
+	Missed           int   `json:"missed"`
+	Declined         int   `json:"declined"`
+	Cancelled        int   `json:"cancelled"`
+	Unknown          int   `json:"unknown"`
+	Conflicting      int   `json:"conflicting"`
+	ExampleMessageID int64 `json:"example_message_id"`
 }
 
 // callRowsSQL counts any connected seconds as answered in the summary.
@@ -220,14 +218,45 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 		where, args = append(where, "i.occurred_at < ?"), append(args, q.Before.UTC())
 	}
 	args = append(args, limit, q.Offset)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(`
+	out := []PersonCallSummary{}
+	err = s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT m.metadata
+			FROM call_details c JOIN messages m ON m.id = c.message_id
+			WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL`)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var metadata string
+			if err := rows.Scan(&metadata); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			var evidence callhistory.Evidence
+			if err := json.Unmarshal([]byte(metadata), &evidence); err != nil {
+				_ = rows.Close()
+				return fmt.Errorf("decode call evidence: %w", err)
+			}
+			if evidence.Version != 1 {
+				_ = rows.Close()
+				return fmt.Errorf("%w: unsupported call evidence version %d", callhistory.ErrInvalid, evidence.Version)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := rows.Close(); err != nil {
+			return err
+		}
+		rows, err = tx.QueryContext(ctx, `
 		WITH active AS (
 			SELECT c.*, CASE WHEN c.canonical_key = '' THEN 'm:' || CAST(c.message_id AS TEXT)
 				ELSE 'n:' || c.canonical_key END AS identity_key
 			FROM (`+s.callRowsSQL()+`) c JOIN messages m ON m.id = c.message_id
 			WHERE NOT c.withdrawn AND m.deleted_at IS NULL AND m.deleted_from_source_at IS NULL
 		), identities AS (
-			SELECT identity_key, MIN(occurred_at) AS occurred_at, MIN(kind) AS kind,
+			SELECT identity_key, MIN(occurred_at) AS occurred_at,
 				MAX(CASE WHEN outcome = 'answered' THEN 1 ELSE 0 END) AS answered,
 				MAX(CASE WHEN owner_participation = 'not_joined' OR outcome IN ('missed','declined','cancelled')
 					THEN 1 ELSE 0 END) AS negative,
@@ -244,9 +273,7 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 			GROUP BY a.identity_key, pp.person_id
 		), classified AS (
 			SELECT p.person_id, p.example_id,
-				CASE WHEN i.kind = 'scheduled_meeting' AND i.cancelled = 1 THEN 'scheduled_cancelled'
-					WHEN i.kind = 'scheduled_meeting' THEN 'scheduled'
-					WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
+				CASE WHEN (i.answered = 1 AND i.negative = 1) OR i.missed + i.declined + i.cancelled > 1 THEN 'conflicting'
 					WHEN p.confirmed = 1 THEN 'answered'
 					WHEN i.missed = 1 THEN 'missed'
 					WHEN i.declined = 1 THEN 'declined'
@@ -262,23 +289,25 @@ func (s *Store) SummarizeCallsContext(ctx context.Context, q CallQuery) ([]Perso
 			SUM(CASE WHEN category = 'cancelled' THEN 1 ELSE 0 END),
 			SUM(CASE WHEN category = 'unknown' THEN 1 ELSE 0 END),
 			SUM(CASE WHEN category = 'conflicting' THEN 1 ELSE 0 END),
-			SUM(CASE WHEN category IN ('scheduled', 'scheduled_cancelled') THEN 1 ELSE 0 END),
-			SUM(CASE WHEN category = 'scheduled_cancelled' THEN 1 ELSE 0 END),
 			MIN(example_id)
 		FROM classified GROUP BY person_id ORDER BY answered DESC, person_id
-		LIMIT ? OFFSET ?`), args...)
+		LIMIT ? OFFSET ?`, args...)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = rows.Close() }()
+		for rows.Next() {
+			var v PersonCallSummary
+			if err := rows.Scan(&v.PersonID, &v.Answered, &v.Missed, &v.Declined, &v.Cancelled,
+				&v.Unknown, &v.Conflicting, &v.ExampleMessageID); err != nil {
+				return fmt.Errorf("scan call summary: %w", err)
+			}
+			out = append(out, v)
+		}
+		return rows.Err()
+	})
 	if err != nil {
 		return nil, fmt.Errorf("summarize calls: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	out := []PersonCallSummary{}
-	for rows.Next() {
-		var v PersonCallSummary
-		if err := rows.Scan(&v.PersonID, &v.Answered, &v.Missed, &v.Declined, &v.Cancelled,
-			&v.Unknown, &v.Conflicting, &v.Scheduled, &v.ScheduledCancelled, &v.ExampleMessageID); err != nil {
-			return nil, fmt.Errorf("scan call summary: %w", err)
-		}
-		out = append(out, v)
-	}
-	return out, rows.Err()
+	return out, nil
 }

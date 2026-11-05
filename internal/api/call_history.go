@@ -40,7 +40,7 @@ func (s *Server) registerCallHistoryRoutes(api huma.API) {
 	registry := api.OpenAPI().Components.Schemas
 	registry.RegisterTypeAlias(reflect.TypeFor[callhistory.ImportRequest](), reflect.TypeFor[CallImportRequest]())
 	registry.RegisterTypeAlias(reflect.TypeFor[callhistory.Participant](), reflect.TypeFor[CallParticipant]())
-	op := rawAPIV1Operation("importCallObservation", http.MethodPost, "/import/calls", "Import one supplied call or scheduled meeting observation")
+	op := rawAPIV1Operation("importCallObservation", http.MethodPost, "/import/calls", "Import one supplied call observation")
 	op.RequestBody = jsonRequestBodyFor[callhistory.ImportRequest](api)
 	// jsontext.Value is raw provider JSON, not a base64-encoded byte string.
 	registry.Map()["CallImportRequest"].Properties["record"] = &huma.Schema{Type: "object", AdditionalProperties: true}
@@ -48,7 +48,7 @@ func (s *Server) registerCallHistoryRoutes(api huma.API) {
 	op.Errors = []int{400, 401, 409, 413, 415, 422, 500, 503}
 	registerRawHumaRoute(api, op, s.handleCallImport)
 	for _, summary := range []bool{false, true} {
-		id, path, title := "listCallObservations", "/calls", "Inspect call and scheduled meeting observations"
+		id, path, title := "listCallObservations", "/calls", "Inspect call observations"
 		if summary {
 			id, path, title = "summarizeCalls", "/calls/summary", "Count call evidence per person"
 		}

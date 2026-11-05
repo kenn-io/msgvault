@@ -2147,7 +2147,7 @@ func (c *Client) ListCalendarEventsWithResponse(ctx context.Context, options *Li
 	}
 }
 
-// ListCallObservations Inspect call and scheduled meeting observations
+// ListCallObservations Inspect call observations
 func (c *Client) ListCallObservationsWithResponse(ctx context.Context, options *ListCallObservationsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCallObservationsResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{
@@ -13442,7 +13442,7 @@ func (c *Client) UnlinkIdentityParticipantsWithResponse(ctx context.Context, opt
 	}
 }
 
-// ImportCallObservation Import one supplied call or scheduled meeting observation
+// ImportCallObservation Import one supplied call observation
 func (c *Client) ImportCallObservationWithResponse(ctx context.Context, options *ImportCallObservationRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ImportCallObservationResp, error) {
 	var err error
 	reqParams := runtime.RequestOptionsParameters{

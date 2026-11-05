@@ -148,7 +148,7 @@ func TestWithdrawnCallAbsentFromMetadataSearch(t *testing.T) {
 	}
 }
 
-func TestListCallObservationsRejectsUnsupportedEvidenceVersion(t *testing.T) {
+func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
@@ -160,14 +160,18 @@ func TestListCallObservationsRejectsUnsupportedEvidenceVersion(t *testing.T) {
 	require.NoError(err)
 	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
 	require.NoError(err)
-	// Simulate evidence saved by a newer writer, bypassing current write validation.
-	o.Version = 2
-	metadata, err := json.Marshal(o.Evidence)
-	require.NoError(err)
-	_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
-	require.NoError(err)
-	_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-	assert.ErrorIs(err, callhistory.ErrInvalid)
+	// Simulate unsupported persisted evidence, bypassing current write validation.
+	for _, version := range []int{0, 2} {
+		o.Version = version
+		metadata, err := json.Marshal(o.Evidence)
+		require.NoError(err)
+		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
+		require.NoError(err)
+		_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
+		assert.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
+		_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
+		assert.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
+	}
 }
 
 func TestCallReimportPreservesLabels(t *testing.T) {
@@ -253,42 +257,6 @@ func TestCallObservationReplacementAndWithdrawal(t *testing.T) {
 	requirements.ErrorIs(err, context.Canceled)
 }
 
-func TestCompleteCalendarCancellationReplacesEvent(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st := storetest.New(t).Store
-	peer, err := st.EnsureParticipant("peer@example.com", "Peer", "example.com")
-	require.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(peer)
-	require.NoError(err)
-	o, err := (callhistory.ImportRequest{Format: "google_calendar", Account: "example",
-		Record: []byte(`{"id":"e1","start":{"date":"2026-10-01"},"attendees":[{"email":"peer@example.com"}]}`), Bindings: map[string]int64{"peer@example.com": peer},
-	}).Observation()
-	require.NoError(err)
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	require.NoError(err)
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	require.NoError(err)
-	cancelled, err := (callhistory.ImportRequest{Format: "google_calendar", Account: "example",
-		Record: []byte(`{"id":"e1","status":"cancelled","start":{"date":"2026-10-02"}}`),
-	}).Observation()
-	require.NoError(err)
-	again, err := st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-	require.NoError(err)
-	assert.Equal(id, again)
-	items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-	require.NoError(err)
-	require.Len(items, 1)
-	assert.True(cancelled.OccurredAt.Equal(items[0].OccurredAt))
-	assert.Empty(items[0].Participants)
-	raw, err := st.GetMessageRawContext(t.Context(), id)
-	require.NoError(err)
-	assert.JSONEq(string(cancelled.Raw), string(raw))
-	summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{PersonID: person.ID})
-	require.NoError(err)
-	assert.Empty(summary)
-}
-
 func TestNormalizedCancelledObservationWithdrawal(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -297,10 +265,11 @@ func TestNormalizedCancelledObservationWithdrawal(t *testing.T) {
 	require.NoError(err)
 	other, err := st.EnsureParticipant("other@example.com", "Other", "example.com")
 	require.NoError(err)
-	o, err := (callhistory.ImportRequest{Format: "google_calendar", Account: "example",
-		Record: []byte(`{"id":"e1","start":{"date":"2026-10-01"},"attendees":[{"email":"peer@example.com"}]}`), Bindings: map[string]int64{"peer@example.com": peer},
-	}).Observation()
-	require.NoError(err)
+	o := callhistory.Observation{RecordID: "e1", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant",
+		Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}}, Raw: []byte(`{}`),
+	}
 	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
 	require.NoError(err)
 	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
@@ -330,123 +299,6 @@ func TestNormalizedCancelledObservationWithdrawal(t *testing.T) {
 	assert.Empty(summary)
 	_, err = st.PutCallObservationContext(t.Context(), src.ID, stale)
 	require.ErrorIs(err, store.ErrCallObservationWithdrawn)
-	cancelled, err := (callhistory.ImportRequest{Format: "google_calendar", Account: "example", Record: []byte(`{"id":"e1","status":"cancelled"}`)}).Observation()
-	require.NoError(err)
-	_, err = st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-	require.ErrorIs(err, store.ErrCallObservationWithdrawn)
-}
-
-func TestSparseCalendarCancellationPreservesDirection(t *testing.T) {
-	for _, direction := range []string{"outgoing", "incoming", "unknown"} {
-		t.Run(direction, func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			st := storetest.New(t).Store
-			o := callhistory.Observation{
-				RecordID: "e1", Version: 1, Provider: "google_calendar", Account: "calendar@example.com",
-				Kind: "scheduled_meeting", Direction: direction, Outcome: "unknown", OwnerParticipation: "unknown",
-				OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
-			}
-			src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-			require.NoError(err)
-			id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-			require.NoError(err)
-			var fromMe bool
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&fromMe))
-			require.Equal(direction == "outgoing", fromMe)
-			cancelled, err := (callhistory.ImportRequest{
-				Format: "google_calendar", Account: "calendar@example.com", Record: []byte(`{"id":"e1","status":"cancelled"}`),
-			}).Observation()
-			require.NoError(err)
-			again, err := st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-			require.NoError(err)
-			assert.Equal(id, again)
-			require.NoError(st.DB().QueryRow(st.Rebind(`SELECT is_from_me FROM messages WHERE id = ?`), id).Scan(&fromMe))
-			assert.Equal(direction == "outgoing", fromMe)
-			items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-			require.NoError(err)
-			require.Len(items, 1)
-			assert.Equal(direction, items[0].Direction)
-			assert.Equal("cancelled", items[0].Outcome)
-		})
-	}
-}
-
-func TestSparseCalendarCancellationKeepsEvent(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	st := storetest.New(t).Store
-	peer, err := st.EnsureParticipant("attendee@example.com", "Example", "example.com")
-	requirements.NoError(err)
-	person, _, err := st.CreatePersonFromParticipant(peer)
-	requirements.NoError(err)
-	o, err := (callhistory.ImportRequest{
-		Format: "google_calendar", Account: "calendar@example.com",
-		Record:   []byte(`{"id":"e1","start":{"dateTime":"2026-10-01T09:00:00Z"},"attendees":[{"email":"attendee@example.com"}]}`),
-		Bindings: map[string]int64{"attendee@example.com": peer},
-	}).Observation()
-	requirements.NoError(err)
-	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-	requirements.NoError(err)
-	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-	requirements.NoError(err)
-	cancelled, err := (callhistory.ImportRequest{
-		Format: "google_calendar", Account: "calendar@example.com", Record: []byte(`{"id":"e1","status":"cancelled"}`),
-	}).Observation()
-	requirements.NoError(err)
-	cancelled.RecordID = "missing"
-	_, err = st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-	requirements.ErrorIs(err, callhistory.ErrInvalid)
-	requirements.ErrorContains(err, "calendar event to cancel does not exist")
-	t.Run("non-scheduled record", func(t *testing.T) {
-		requirements := require.New(t)
-		st := storetest.New(t).Store
-		o := callhistory.Observation{RecordID: "7", Version: 1, Provider: "google_calendar", Account: "a", Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined", OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`)}
-		src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-		requirements.NoError(err)
-		id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
-		requirements.NoError(err)
-		cancelled, err := (callhistory.ImportRequest{Format: "google_calendar", Account: "a", Record: []byte(`{"id":"7","status":"cancelled"}`)}).Observation()
-		requirements.NoError(err)
-		_, err = st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-		requirements.ErrorIs(err, callhistory.ErrInvalid)
-		var outcome string
-		requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT outcome FROM call_details WHERE message_id = ?`), id).Scan(&outcome))
-		assert.Equal(t, "answered", outcome)
-	})
-	t.Run("non-calendar record", func(t *testing.T) {
-		st := testutil.NewTestStore(t)
-		requirements := require.New(t)
-		o := callhistory.Observation{RecordID: "same-record", Version: 1, Provider: "signal", Account: "a", Kind: "call", Direction: "unknown", Outcome: "unknown", OwnerParticipation: "unknown", OccurredAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`)}
-		src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
-		requirements.NoError(err)
-		_, err = st.PutCallObservationContext(t.Context(), src.ID, o)
-		requirements.NoError(err)
-		cancelled, err := (callhistory.ImportRequest{
-			Format: "google_calendar", Account: "a", Record: []byte(`{"id":"same-record","status":"cancelled"}`),
-		}).Observation()
-		requirements.NoError(err)
-		_, err = st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-		requirements.ErrorIs(err, callhistory.ErrInvalid)
-	})
-	cancelled.RecordID = "e1"
-	again, err := st.PutCallObservationContext(t.Context(), src.ID, cancelled)
-	requirements.NoError(err)
-	assertions.Equal(id, again)
-	summary, err := st.SummarizeCallsContext(t.Context(), store.CallQuery{PersonID: person.ID})
-	requirements.NoError(err)
-	requirements.Len(summary, 1)
-	assertions.Equal(1, summary[0].Scheduled)
-	assertions.Equal(1, summary[0].ScheduledCancelled)
-	items, err := st.ListCallObservationsContext(t.Context(), store.CallQuery{PersonID: person.ID})
-	requirements.NoError(err)
-	requirements.Len(items, 1)
-	assertions.True(o.OccurredAt.Equal(items[0].OccurredAt))
-	assertions.Equal("cancelled", items[0].Outcome)
-	assertions.Equal([]callhistory.Participant{{ID: peer, Participation: "invited"}}, items[0].Participants)
-	raw, err := st.GetMessageRawContext(t.Context(), id)
-	requirements.NoError(err)
-	assertions.JSONEq(string(o.Raw), string(raw))
 }
 
 func TestCallObservationDoesNotProjectMessageContact(t *testing.T) {

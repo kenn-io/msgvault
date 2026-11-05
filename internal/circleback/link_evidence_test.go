@@ -26,7 +26,6 @@ func TestCirclebackJoinURLKnownHostsOnly(t *testing.T) {
 		{"teams consumer", "https://teams.live.com/meet/123456789?p=example", true},
 		{"teams government", "https://gov.teams.microsoft.us/l/meetup-join/example", true},
 		{"unknown", "https://meet.example.com/planning", false},
-		{"booking page", "https://cal.com/example/intro", false},
 		{"deceptive zoom", "https://evilzoom.us/j/123456789", false},
 		{"deceptive zoom government", "https://evilzoomgov.com/j/123456789", false},
 		{"deceptive meet", "https://meet.google.com.example.org/abc-defg-hij", false},

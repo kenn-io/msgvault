@@ -39,10 +39,6 @@ func FuzzCallStoreSequences(f *testing.F) {
 			o.Outcome = []string{"answered", "missed", "declined", "cancelled", "unknown"}[random.IntN(5)]
 			o.OwnerParticipation = []string{"joined", "not_joined", "unknown"}[random.IntN(3)]
 			role := []string{"joined", "invited", "unknown"}[random.IntN(3)]
-			if o.Kind == "scheduled_meeting" {
-				o.OwnerParticipation, role = "unknown", "invited"
-				o.Outcome = []string{"unknown", "cancelled"}[random.IntN(2)]
-			}
 			o.Participants = []callhistory.Participant{{ID: a, Participation: role}}
 			switch random.IntN(3) {
 			case 0:
@@ -96,9 +92,6 @@ func FuzzCallStoreSequences(f *testing.F) {
 				OccurredAt: time.Date(2026, 10, 1, index, 0, 0, 0, time.UTC), Precision: "instant",
 
 				Raw: []byte(`{}`),
-			}
-			if random.IntN(4) == 0 || index == 0 {
-				o.Kind, o.NativeCallID = "scheduled_meeting", ""
 			}
 			o = change(o)
 			if index == 0 {

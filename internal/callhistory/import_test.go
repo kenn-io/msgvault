@@ -1,13 +1,10 @@
 package callhistory
 
 import (
-	"bytes"
 	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"testing"
-	"time"
-	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,93 +63,11 @@ func TestSignalNativeStatuses(t *testing.T) {
 	}
 }
 
-func TestCalendarPreservesDialSequence(t *testing.T) {
-	for _, field := range []string{"description", "location"} {
-		t.Run(field, func(t *testing.T) {
-			o, err := (ImportRequest{Format: "google_calendar", Account: "example",
-				Record: []byte(fmt.Sprintf(`{"id":"event","start":{"date":"2026-10-01"},%q:"tel:+12025550101,,,123456789;1234"}`, field)),
-			}).Observation()
-			require.NoError(t, err)
-			assert.Equal(t, []AccessPoint{{Kind: "phone", Value: "tel:+12025550101,,,123456789;1234"}}, o.AccessPoints)
-		})
-	}
-}
-
-func TestCalendarDecodesDescriptionAccessPoints(t *testing.T) {
-	o, err := (ImportRequest{Format: "google_calendar", Account: "example",
-		Record: []byte(`{"id":"event","start":{"date":"2026-10-01"},"description":"<a href=\"https://zoom.us/j/123?omn=42&amp;pwd=example\">Join</a><a href=\"tel:&#43;12025550101,,,123&#59;456\">Dial</a>"}`),
-	}).Observation()
-	require.NoError(t, err)
-	assert.Equal(t, []AccessPoint{
-		{Kind: "url", Value: "https://zoom.us/j/123?omn=42&pwd=example"},
-		{Kind: "phone", Value: "tel:+12025550101,,,123;456"},
-	}, o.AccessPoints)
-}
-
-func TestCalendarBindingEmailCase(t *testing.T) {
-	o, err := (ImportRequest{Format: "google_calendar", Account: "example",
-		Record:   []byte(`{"id":"event","start":{"date":"2026-10-01"},"attendees":[{"email":"peer@example.com"}]}`),
-		Bindings: map[string]int64{"Peer@EXAMPLE.com": 7},
-	}).Observation()
-	require.NoError(t, err)
-	assert.Equal(t, []Participant{{ID: 7, Participation: "invited"}}, o.Participants)
-}
-
 func TestNormalizedCancellationRequiresTime(t *testing.T) {
 	_, err := (ImportRequest{Format: "normalized", Account: "example",
-		Record: []byte(`{"version":1,"provider":"google_calendar","account":"example","record_id":"event","kind":"scheduled_meeting","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","precision":"instant","raw":{}}`),
+		Record: []byte(`{"version":1,"provider":"signal","account":"example","record_id":"call","kind":"call","direction":"unknown","outcome":"cancelled","owner_participation":"unknown","precision":"instant","raw":{}}`),
 	}).Observation()
 	require.ErrorIs(t, err, ErrInvalid)
-}
-
-func TestCalendarSchedulingIsNeverAttendance(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	raw := `{"id":"event-1","status":"confirmed","start":{"dateTime":"2026-10-01T09:00:00-07:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-01T10:00:00-07:00"},"attendees":[{"email":"peer@example.com","responseStatus":"accepted"}],"conferenceData":{"entryPoints":[{"entryPointType":"phone","uri":"tel:+12025550101"},{"entryPointType":"video","uri":"https://meet.google.com/abc-defg-hij"}]},"description":"https://example.zoom.us/j/123 https://teams.microsoft.com/l/meetup-join/example https://cal.com/example/intro https://meet.google.com.evil.example/fake https://meet.google.com@evil.example/fake"}`
-	got, err := (ImportRequest{
-		Format: "google_calendar", Account: "calendar@example.com", Record: []byte(raw),
-		Bindings: map[string]int64{"peer@example.com": 7},
-	}).Observation()
-	requirements.NoError(err)
-	assertions.Empty(got.NativeCallID)
-	assertions.Equal("America/Los_Angeles", got.Timezone)
-	_, offset := got.OccurredAt.Zone()
-	assertions.Equal(-7*3600, offset)
-	assertions.Len(got.AccessPoints, 5)
-	for _, point := range got.AccessPoints {
-		assertions.NotContains(point.Value, "evil.example")
-	}
-	assertions.JSONEq(raw, string(got.Raw))
-	cancelled, err := (ImportRequest{
-		Format: "google_calendar", Account: "calendar@example.com", Record: []byte(`{"id":"e1","status":"cancelled"}`),
-	}).Observation()
-	requirements.NoError(err)
-	assertions.Equal("cancelled", cancelled.Outcome)
-	assertions.True(cancelled.OccurredAt.IsZero())
-	assertions.Empty(cancelled.Participants)
-	t.Run("offset-free time zone", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		o, err := (ImportRequest{
-			Format: "google_calendar", Account: "calendar@example.com",
-			Record: []byte(`{"id":"event-zone","start":{"dateTime":"2026-10-01T09:00:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-01T10:00:00","timeZone":"America/Los_Angeles"}}`),
-		}).Observation()
-		require.NoError(err)
-		assert.Equal("2026-10-01T16:00:00Z", o.OccurredAt.UTC().Format(time.RFC3339))
-		require.NotNil(o.EndedAt)
-		assert.Equal("2026-10-01T17:00:00Z", o.EndedAt.UTC().Format(time.RFC3339))
-	})
-}
-
-func TestCalendarCancellationRejectsPresentInvalidStart(t *testing.T) {
-	for _, start := range []string{`{"dateTime":"2026-10-01T09:00:00"}`, `{}`, `null`} {
-		t.Run(start, func(t *testing.T) {
-			_, err := (ImportRequest{Format: "google_calendar", Account: "example",
-				Record: []byte(`{"id":"e1","status":"cancelled","start":` + start + `}`),
-			}).Observation()
-			assert.ErrorIs(t, err, ErrInvalid)
-		})
-	}
 }
 
 func TestImportMissingAndUnsupportedFields(t *testing.T) {
@@ -164,8 +79,6 @@ func TestImportMissingAndUnsupportedFields(t *testing.T) {
 		{"signal_desktop", `{"callId":"x","timestamp":null}`},
 		{"signal_desktop", `{"callId":"x"}`},
 		{"signal_desktop", `{"callId":"x","timestamp":"1790841600000"}`},
-		{"google_calendar", `{"id":"x"}`},
-		{"google_calendar", `{"id":"x","start":{"date":"2026-10-01"},"recurrence":["RRULE:FREQ=WEEKLY"]}`},
 		{"unsupported", `{}`},
 	} {
 		_, err := (ImportRequest{Format: tc.format, Account: "example", Record: []byte(tc.raw)}).Observation()
@@ -176,28 +89,6 @@ func TestImportMissingAndUnsupportedFields(t *testing.T) {
 		requirements.NoError(err, "explicit epoch zero differs from a missing timestamp")
 		assertions.Equal(int64(0), got.OccurredAt.UnixMilli())
 	}
-}
-
-func FuzzImportNeverInventsScheduledAttendance(f *testing.F) {
-	f.Add([]byte(`{"format":"google_calendar","account":"example","record":{"id":"x","start":{"date":"2026-10-01"}}}`))
-	f.Add([]byte(`{"format":"signal_desktop","account":"example","record":{"callId":"x","timestamp":0}}`))
-	f.Fuzz(func(t *testing.T, data []byte) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		o, err := DecodeImport(bytes.NewReader(data))
-		if err != nil {
-			return
-		}
-		requirements.NoError(o.Validate())
-		if o.Kind == "scheduled_meeting" {
-			assertions.NotEqual("answered", o.Outcome)
-			assertions.NotEqual("joined", o.OwnerParticipation)
-			assertions.Nil(o.DurationSeconds)
-			for _, p := range o.Participants {
-				assertions.NotEqual("joined", p.Participation)
-			}
-		}
-	})
 }
 
 func TestImportRequestBoundsAndAccountMismatch(t *testing.T) {
@@ -245,60 +136,9 @@ func FuzzSourceIdentifierSeparatesAccounts(f *testing.F) {
 	})
 }
 
-func FuzzValidCalendarImportPreservesEvidence(f *testing.F) {
-	f.Add(uint32(0), uint8(0), false, false)
-	f.Add(uint32(1790841600), uint8(255), true, true)
-	f.Fuzz(func(t *testing.T, seconds uint32, peer uint8, cancelled, allDay bool) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		at := time.Unix(int64(seconds), 0).UTC()
-		start := map[string]string{"dateTime": at.Format(time.RFC3339)}
-		precision := "instant"
-		if allDay {
-			start = map[string]string{"date": at.Format(time.DateOnly)}
-			at = time.Date(at.Year(), at.Month(), at.Day(), 0, 0, 0, 0, time.UTC)
-			precision = "day"
-		}
-		status, outcome := "confirmed", "unknown"
-		if cancelled {
-			status, outcome = "cancelled", "cancelled"
-		}
-		record, err := json.Marshal(map[string]any{
-			"id": "generated-event", "status": status, "start": start,
-			"attendees": []map[string]string{{"email": "peer@example.com", "responseStatus": "accepted"}},
-		})
-		requirements.NoError(err)
-		id := int64(peer) + 1
-		wire, err := json.Marshal(ImportRequest{
-			Format: "google_calendar", Account: "example", Record: record,
-			Bindings: map[string]int64{"peer@example.com": id},
-		})
-		requirements.NoError(err)
-		o, err := DecodeImport(bytes.NewReader(wire))
-		requirements.NoError(err, "constructive valid inputs must be accepted")
-		assertions.Equal("generated-event", o.RecordID)
-		assertions.Equal("scheduled_meeting", o.Kind)
-		assertions.Equal(outcome, o.Outcome)
-		assertions.Equal("unknown", o.OwnerParticipation)
-		assertions.Equal(precision, o.Precision)
-		assertions.Empty(o.Timezone)
-		assertions.True(at.Equal(o.OccurredAt))
-		assertions.Equal([]Participant{{ID: id, Participation: "invited"}}, o.Participants)
-		assertions.JSONEq(string(record), string(o.Raw))
-		assertions.Nil(o.DurationSeconds)
-	})
-}
-
 func TestSignalDeletedDropsEnd(t *testing.T) {
 	o, err := (ImportRequest{Format: "signal_desktop", Account: "a", Record: []byte(`{"callId":"7","mode":"Direct","status":"Deleted","timestamp":1790841720000,"endedTimestamp":1790841660000}`)}).Observation()
 	require.NoError(t, err)
 	assert.True(t, o.Withdrawn)
 	assert.Nil(t, o.EndedAt)
-}
-
-func TestCalendarLongEventID(t *testing.T) {
-	id := strings.Repeat("a", 257)
-	o, err := (ImportRequest{Format: "google_calendar", Account: "a", Record: []byte(fmt.Sprintf(`{"id":%q,"start":{"date":"2026-10-01"}}`, id))}).Observation()
-	require.NoError(t, err)
-	assert.Equal(t, id, o.RecordID)
 }
