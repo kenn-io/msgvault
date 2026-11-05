@@ -119,6 +119,5 @@
 </div>
 
 <style>
-  /* The automatic minimum height uses the workspace's own floor. */
-  .messages { display: flex; min-width: 0; flex: 1 0 0; }
+  .messages { display: flex; min-width: 0; flex: 1 0 auto; }
 </style>
