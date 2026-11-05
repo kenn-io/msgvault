@@ -82,6 +82,35 @@ async function prepare(page: Page, baseURL: string | undefined, row: ReturnType<
   return () => contentCookie;
 }
 
+for (const dismissal of ['close button', 'Escape', 'Back']) {
+  test(`closing after stepping restores the shown row via ${dismissal}`, async ({ page, baseURL }) => {
+    const first = file('01-guide.pdf', 'application/pdf', 'pdf');
+    const second = { ...file('06-budget.xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'document'), id: 8, key: 'file:8' };
+    await prepare(page, baseURL, first, shortPagesPDF(1));
+    await page.route('**/api/v1/files/search', (route) => route.fulfill({ json: {
+      files: [first, second], total_count: 2, cache_revision: 'cache-files', search_provenance: {}
+    } }));
+    await page.route('**/api/v1/files/8', (route) => route.fulfill({ json: {
+      ...second, content_state: 'local_content', content_available: true
+    } }));
+    await page.reload();
+    const grid = page.getByRole('grid', { name: 'Files results' });
+    await page.getByRole('gridcell', { name: first.filename, exact: true }).click();
+    await page.getByRole('button', { name: 'Next file', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: `View ${second.filename}` })).toBeVisible();
+    if (dismissal === 'Back') await page.goBack();
+    else if (dismissal === 'Escape') await page.keyboard.press('Escape');
+    else await page.getByRole('button', { name: 'Close file viewer', exact: true }).click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(grid).toHaveAttribute('aria-busy', 'false');
+    await expect(grid).toBeFocused();
+    await expect(grid).toHaveAttribute('aria-activedescendant', 'file-row-8');
+    await expect(grid).toHaveCSS('box-shadow', 'none');
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog', { name: `View ${second.filename}` })).toBeVisible();
+  });
+}
+
 test('Escape closes an authenticated image once, suspends background shortcuts, and restores exact keyboard focus', async ({ page, baseURL }) => {
   await page.addInitScript(() => {
     const create = URL.createObjectURL.bind(URL);
@@ -281,7 +310,7 @@ for (const deviceScaleFactor of [1, 2]) {
       await expect.poll(async () => (await canvas.boundingBox())!.width).toBeGreaterThan(fitWidth);
       await page.getByRole('button', { name: 'Zoom in', exact: true }).click();
       expect(await canvas.evaluate((element) => (element as HTMLCanvasElement).width)).toBeGreaterThanOrEqual((await canvas.boundingBox())!.width);
-      await page.getByRole('button', { name: 'Fit', exact: true }).click();
+      await page.getByRole('button', { name: 'Fit width', exact: true }).click();
       await expect.poll(async () => (await canvas.boundingBox())!.width).toBe(fitWidth);
     });
   });

@@ -199,7 +199,7 @@ describe('FileViewer', () => {
   });
 
   it.each([
-    ['missing_blob', "The archive has this file's record, but its bytes are missing from storage."],
+    ['missing_blob', "The archive has this file's record, but its bytes are missing."],
     ['metadata_only', "The import saved this file's name and size, not its contents."],
     ['url_only', "This file is a link, and msgvault didn't download it."]
   ] as const)('names %s without fetching content bytes', async (contentState, message) => {
@@ -319,7 +319,7 @@ describe('FileViewer', () => {
     });
     rejectStale!(new TypeError('stale network failure'));
 
-    expect(await screen.findByText("The archive has this file's record, but its bytes are missing from storage.")).toBeDefined();
+    expect(await screen.findByText("The archive has this file's record, but its bytes are missing.")).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByText('stale network failure')).toBeNull();
   });
