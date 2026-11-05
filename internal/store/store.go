@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -77,6 +78,7 @@ type Store struct {
 	personMatchConsentMu sync.RWMutex
 
 	sqliteOptimizeMu sync.Mutex
+	compacted        atomic.Bool
 	// syncOptimizeMu guards lastSyncOptimize, which throttles the planner
 	// maintenance a successful sync triggers (see optimizeAfterSync).
 	syncOptimizeMu   sync.Mutex
@@ -575,7 +577,8 @@ const sqliteOptimizeTimeout = time.Second
 // Close checkpoints the WAL (unless read-only) and closes the database.
 func (s *Store) Close() error {
 	if !s.readOnly {
-		if !s.IsPostgreSQL() {
+		// A compacted store already refreshed statistics before VACUUM.
+		if !s.IsPostgreSQL() && !s.compacted.Load() {
 			// Persist statistics for short-lived commands without draining a pool
 			// that may still have a checked-out connection during shutdown.
 			ctx, cancel := context.WithTimeout(context.Background(), sqliteOptimizeTimeout)
