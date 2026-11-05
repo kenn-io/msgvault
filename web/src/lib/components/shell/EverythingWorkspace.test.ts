@@ -10,6 +10,7 @@ import { createCaptureClient } from '../../telemetry/capture.test-support';
 import { IntegrationReadiness } from '../../kata/kata-ready.svelte';
 import { mediaReadinessKey } from '../../search/media-ready.svelte';
 import { LOAD_THROUGH_END_MAX_PAGES } from '../../explore/paging';
+import { sourceGroup } from '../../explore/fixtures.test-support';
 import { ExploreState, parseExploreURLState } from '../../explore/state.svelte';
 import AppShell from './AppShell.svelte';
 
@@ -1206,7 +1207,7 @@ describe('EverythingWorkspace', () => {
       requests.push(request);
       if (new URL(request.url).pathname.endsWith('/groups')) {
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1,
           cache_revision: 'cache-1',
           search_provenance: {}
@@ -2691,7 +2692,7 @@ describe('EverythingWorkspace', () => {
       if (path.endsWith('/explore/groups')) {
         counts.groups += 1;
         return Response.json({
-          rows: [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }],
+          rows: [sourceGroup],
           total_count: 1, cache_revision: 'cache-1', search_provenance: {}
         });
       }

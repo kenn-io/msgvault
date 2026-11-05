@@ -1,5 +1,6 @@
 import { stubOperationStatus } from './kit-ui';
 import { recordingMessage, recordingTranscript, recordingSearchHit, recordingSearchReport } from '../src/lib/archive/recording-fixtures.test-support';
+import { sourceGroup } from '../src/lib/explore/fixtures.test-support';
 import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ page }) => {
@@ -345,8 +346,18 @@ test('phone reader replaces results and Back restores the focused row', async ({
   const grid = page.getByRole('grid', { name: 'Messages results' });
   await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
   await grid.evaluate(element => { element.scrollTop = 1800; });
-  const row = grid.locator('.data-row:visible').nth(3);
-  const key = await row.getAttribute('data-row-key');
+  let key: string | null = null;
+  await expect.poll(async () => {
+    key = await grid.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return Array.from(element.querySelectorAll<HTMLElement>('.data-row')).find(row => {
+        const box = row.getBoundingClientRect();
+        return box.top >= bounds.top && box.bottom <= bounds.bottom;
+      })?.dataset.rowKey ?? null;
+    });
+    return Number(key?.split(':')[1]);
+  }).toBeGreaterThan(1);
+  const row = grid.locator(`[data-row-key="${key}"]`);
   const index = Number(key?.split(':')[1]);
   expect(index).toBeGreaterThan(1);
   await row.getByText('Example Person').click();
@@ -439,7 +450,7 @@ for (const grouped of [false, true]) {
         return route.fulfill({ status: 503, json: { message: 'Search unavailable' } });
       }
       return route.fulfill({ json: {
-        rows: grouped ? [{ key: '7', label: 'Example source', count: 12, estimated_bytes: 42, latest_at: '2026-07-18T12:00:00Z' }] : [entry(1)],
+        rows: grouped ? [sourceGroup] : [entry(1)],
         total_count: 1, cache_revision: 'retry', search_provenance: {}
       } });
     });

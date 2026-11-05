@@ -957,7 +957,6 @@
     position: absolute;
     inset: 0;
     visibility: hidden;
-    pointer-events: none;
   }
   .results-split--solo :global(.handle-reset) { display: none; }
   .results-split.results-split--solo :global([data-pane='secondary']) {

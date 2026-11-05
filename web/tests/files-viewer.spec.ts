@@ -171,7 +171,7 @@ test('malformed PDF fails without retaining a canvas', async ({ page, baseURL })
   await expect(page.locator('.pdf-preview canvas')).toHaveCount(0);
 });
 
-test('opening a containing conversation and one Back restores the exact Files URL and active row', async ({ page, baseURL }) => {
+async function stubContainingConversation(page: Page) {
   await page.route('**/api/v1/explore', (route) => route.fulfill({ json: {
     rows: [{
       key: 'message:11', kind: 'message', message_type: 'email', conversation_type: 'email_thread',
@@ -191,6 +191,10 @@ test('opening a containing conversation and one Back restores the exact Files UR
       body_html: '', attachments: []
     }]
   } }));
+}
+
+test('opening a containing conversation and one Back restores the exact Files URL and active row', async ({ page, baseURL }) => {
+  await stubContainingConversation(page);
   await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Back fixture'));
   const grid = page.getByRole('grid', { name: 'Files results' });
   await grid.focus();
@@ -210,15 +214,7 @@ test('opening a containing conversation and one Back restores the exact Files UR
 
 test('a phone opens a message from Files and returns to results', async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: [{
-      key: 'message:11', kind: 'message', message_type: 'email', conversation_type: 'email_thread',
-      title: 'Containing item', preview: 'Message preview', occurred_at: '2026-07-18T12:00:00Z',
-      source_id: 1, source_identifier: 'archive@example.com', source_type: 'synthetic',
-      participant_labels: ['Example Person'], participant_ids: [1], attachment_count: 1,
-      attachment_size: 1024, has_attachments: true, deleted_from_source: false, message_count: 1, match: {}
-    }], total_count: 1, cache_revision: 'cache-files', search_provenance: {}
-  } }));
+  await stubContainingConversation(page);
   await prepare(page, baseURL, file('fixture.pdf', 'application/pdf', 'pdf'), tinyPDF('Phone fixture'));
   const files = page.getByRole('grid', { name: 'Files results' });
   await files.getByText('fixture.pdf').click();
@@ -228,6 +224,7 @@ test('a phone opens a message from Files and returns to results', async ({ page,
   const reader = page.getByRole('complementary', { name: 'Reading pane: Containing item' });
   const messages = page.getByRole('grid', { name: 'Messages results' });
   await expect(reader).toBeVisible();
+  await expect(reader.getByText('Archived body', { exact: true })).toBeVisible();
   await expect(messages).toBeHidden();
   const split = (await page.locator('.results-split').boundingBox())!;
   expect((await reader.boundingBox())!.width).toBeCloseTo(split.width, 0);
