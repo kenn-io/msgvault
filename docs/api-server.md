@@ -172,38 +172,29 @@ Schema 3.46.0 adds `has_more` to CLI full-text search and optional `ranking_limi
 
 Schema 3.45.0 adds optional `sender_label` to message and file results, including person files. It identifies the sender separately from the conversation participants.
 
-Schema 3.42.0 adds `imessage.media_max_participants` and `imessage.max_media_mb` to the settings catalog and updates.
-
 Schema 3.40.0 adds timezone-aware daily message grouping and `sent_only` group filtering. It also filters participant timelines to events and meetings attended by the owner.
 
 Schema 3.39.0 adds the optional `account` to staged deletion list summaries.
 
 Schema 3.38.0 adds exact sender and To participant identities to conversation windows and `kind` filters for canonical Email, Conversation, Event, Meeting, and Item entries. Conversation classification includes older chat messages whose stored message type is empty.
 
-Schema 3.36.0 adds `stored_plaintext_ranges` to document indexing status.
-
 Schema 3.35.0 adds `GET /api/v1/calendar/events`, which lists archived calendar occurrences in a window with repeating events expanded. `msgvault calendar events` requires a daemon supporting this schema.
-
-Schema 3.34.0 adds `calls_short` and `calls_long`, the answered-call counts, to person tier signals.
-
-Schema 3.33.0 adds the read-only [person tier preview](#get-apiv1peopletiers) and [explanation](#get-apiv1peopleidtier) routes. The `preview_person_tiers` and `explain_person_tier` MCP tools require a daemon supporting this schema.
 
 Schema 3.32.0 adds scheduled-work queue times and CardDAV scheduler activity: `queued_at` in scheduler account and CardDAV status, `scheduler_queued_at` in Sources status, and CardDAV `scheduler_running`.
 
-Schema 3.30.0 adds `hidden_text_present` to message details and search rows. It is a best-effort flag: true means the stored HTML likely hides readable text, and false does not guarantee that text is visible.
-
 Schema 3.29.0 adds the optional `address` filter to `GET /api/v1/people/directory`. It matches literal case-insensitive fragments on a saved person's currently bound identities or current curated contact points without semantic search. CLI and MCP address lookups require a daemon supporting this schema.
+
+Schema 3.33.0 adds the read-only [person tier preview](#get-apiv1peopletiers) and [explanation](#get-apiv1peopleidtier) routes. The `preview_person_tiers` and `explain_person_tier` MCP tools require a daemon supporting this schema.
+
+Schema 3.36.0 adds `stored_plaintext_ranges` to document indexing status.
+
+Schema 3.34.0 adds `calls_short` and `calls_long`, the answered-call counts, to person tier signals.
 
 Schema 3.28.0 adds `calendar` to `GET /messages/{id}` and the CLI message route for calendar events: `status`, `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`. A field is `null` when the stored event does not carry it, such as a cancellation recorded before any details were seen. Calendar sync does not store a `sequence` of 0, so a `null` sequence usually means 0.
 
-Schema 3.26.0 adds `max_results` to `GET /messages/gmail-ids` for bounded query staging and `matched_count` to its bounded responses. See [staged deletion via MCP](https://msgvault.io/docs/usage/chat/#staged-deletion-via-mcp) for supported sources, skipped matches, and the staging limit.
+Schema 3.30.0 adds `hidden_text_present` to message details and search rows. It is a best-effort flag: true means the stored HTML likely hides readable text, and false does not guarantee that text is visible.
 
-Schema 3.23.0 adds the [Docbank attachment mirror](#docbank-attachment-mirror)
-routes, delivery receipts and status states.
-
-Schema 3.22.0 adds account aliases and lifecycle fields, account merging, and
-owner source-maintenance requests. Existing source identifiers and account
-requests remain valid.
+Schema 3.42.0 adds `imessage.media_max_participants` and `imessage.max_media_mb` to the settings catalog and updates.
 
 Schema 3.19.0 adds pipe-separated OR in full-text message search queries.
 Upgrade clients and daemon together across incompatible schema versions,
@@ -3353,7 +3344,7 @@ A token issued before this change now sees masked verification messages, and tex
 
 A cue can precede its value by up to four line breaks. A period is allowed at the end of the cue line; `Here is your verification code. 482913` on one line is missed.
 
-These heuristics can miss unfamiliar wording and layouts, codes containing lowercase letters such as `a8f3k2`, short link tokens, credentials inside binary files, or text stored under a binary type that sniffing misses. Non-English text such as `Tu código es 482913` is not detected.
+These heuristics can miss unfamiliar wording and layouts, codes containing lowercase letters such as `a8f3k2`, short link tokens, credentials inside binary files, or text stored under a binary type that sniffing misses. Non-English text such as `Tu código es 482913` is not detected. Lists and threads classify a message whose body exists only in its original MIME by subject, snippet, title, and filenames.
 
 Search rows are masked in place, with membership and counts unchanged.
 
