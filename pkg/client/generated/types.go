@@ -7352,6 +7352,7 @@ type LocalEmbeddingsStatus struct {
 	OllamaAvailable bool                       `json:"ollama_available"`
 	Phase           LocalEmbeddingsStatusPhase `json:"phase" validate:"required"`
 	Provider        string                     `json:"provider" validate:"required"`
+	Running         *bool                      `json:"running,omitempty"`
 	TotalBytes      int64                      `json:"total_bytes"`
 }
 

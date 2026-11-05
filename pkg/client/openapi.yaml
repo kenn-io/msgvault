@@ -7588,6 +7588,8 @@ components:
           type: string
         provider:
           type: string
+        running:
+          type: boolean
         total_bytes:
           format: int64
           type: integer

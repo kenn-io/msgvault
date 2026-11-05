@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen } from '@testing-library/svelte';
 import SettingsOverview from '../components/settings/SettingsOverview.svelte';
 import type { LocalEmbeddingsStatus } from '../api/generated/models';
 import { embeddingStatus } from '../../test/operations';
@@ -20,12 +20,25 @@ describe('local search row', () => {
     ['indexing', { ...off, phase: 'indexing' }, 'Turning on', undefined],
     ['retry', { ...off, enabled: true, error: 'Download interrupted' }, 'Off', 'Turn on'],
   ] as const)('%s', (_name, status, chip, action) => {
-    render(SettingsOverview, { rows: [row], localSearch: localSearchState(status, embeddingStatus, 'archive.example.test'), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
+    render(SettingsOverview, { rows: [{ ...row, chip: { ...row.chip, text: status.enabled ? 'On' : 'Off' } }], localSearch: localSearchState(status, embeddingStatus, 'archive.example.test'), localLabels: localSearchLabels(status, embeddingStatus), onSetUp: () => {}, onSources: () => {}, onStart: () => {} });
     expect(screen.getByText(chip)).toBeDefined();
     if (action) expect(screen.getByRole('button', { name: action })).toBeDefined();
     else expect(screen.queryByRole('button')).toBeNull();
     if (status === off) expect(screen.getByText('Downloads 290 MB once to archive.example.test')).toBeDefined();
+    if (_name === 'available Ollama') expect(screen.getByText('Uses Ollama on this computer')).toBeDefined();
     if (status.phase === 'indexing') expect(screen.getByRole('progressbar').getAttribute('aria-valuemax')).toBe('10');
     if (_name === 'other Ollama') expect(screen.getByText('Switching rebuilds the index for 10 messages')).toBeDefined();
   });
 });
+
+for (const kind of ['on', 'ollama'] as const) {
+  it(`keeps rebuild for a stale ${kind} index`, async () => {
+    const calls: string[] = [];
+    render(SettingsOverview, { rows: [{ ...row, chip: { text: 'Stale', tone: 'muted' as const }, action: { kind: 'start', id: 'messages', label: 'Build index' } }], localSearch: { kind }, onSetUp: () => {}, onSources: () => {}, onStart: () => calls.push('build') });
+    expect(screen.getByText('Stale')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Build index, Message search' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Confirm full rebuild' }));
+    expect(calls).toEqual(['build']);
+    if (kind === 'ollama') expect(screen.getByRole('button', { name: 'Use built-in instead' })).toBeDefined();
+  });
+}

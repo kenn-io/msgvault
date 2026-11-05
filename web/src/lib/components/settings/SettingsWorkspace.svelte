@@ -123,20 +123,20 @@
     try {
       const { data, response } = await getLocalEmbeddings({ ...client, signal: localController.signal });
       if (localController.signal.aborted || !response.ok || !data) return;
-      const previous = localStatus?.phase;
+      const previous = localStatus && (localStatus.running || localStatus.phase !== 'idle');
       localStatus = data;
       localError = data.error ?? '';
-      if (data.phase !== 'idle') {
+      if (data.running || data.phase !== 'idle') {
         statusRevision += 1;
         localTimer = setTimeout(() => void loadLocalSearch(), 1000);
-      } else if (previous && previous !== 'idle') {
+      } else if (previous) {
         await loadSettings(true);
         refreshFeatureStatus();
       }
     } catch { /* The normal settings view remains usable if setup is unavailable. */ }
   }
   async function turnOnLocalSearch(builtin: boolean): Promise<void> {
-    if (localPosting || (localStatus && localStatus.phase !== 'idle')) return;
+    if (localPosting || localStatus?.running || (localStatus && localStatus.phase !== 'idle')) return;
     localPosting = true;
     localError = '';
     try {

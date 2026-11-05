@@ -423,12 +423,20 @@
 
   let localSearchOff = $state(false);
   let startingLocalSearch = $state(false);
+  let localSearchCache: { off: boolean; expires: number } | undefined;
   $effect(() => {
     localSearchOff = false;
     if (!enabled || exploreState.current.workspace !== 'everything' || exploreState.current.searchMode !== 'full_text' || !exploreState.current.query.trim() || loader.loading || !loader.result) return;
+    if (localSearchCache && localSearchCache.expires > Date.now()) {
+      localSearchOff = localSearchCache.off;
+      return;
+    }
     const controller = new AbortController();
     void getLocalEmbeddings({ ...client, signal: controller.signal }).then(({ data, response }) => {
-      if (!controller.signal.aborted && response.ok) localSearchOff = Boolean(data && !data.enabled && data.phase === 'idle');
+      if (!controller.signal.aborted && response.ok) {
+        localSearchOff = Boolean(data && data.provider !== 'configured' && !data.enabled && !data.running && data.phase === 'idle');
+        localSearchCache = { off: localSearchOff, expires: Date.now() + 5000 };
+      }
     }).catch(() => undefined);
     return () => controller.abort();
   });
@@ -902,7 +910,8 @@
 </svelte:element>
 
 <style>
-  .local-search-hint { margin: var(--control-gap) var(--pane-pad-x); }
+  .local-search-hint { margin: var(--control-gap) var(--pane-pad-x) calc(-1 * var(--control-gap)); }
+  .local-search-hint :global(button) { text-decoration: underline; }
   .everything-workspace {
     display: flex;
     width: 100%;

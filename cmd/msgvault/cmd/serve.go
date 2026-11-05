@@ -6,8 +6,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"go.kenn.io/kit/embedlocal"
-	"go.kenn.io/msgvault/internal/vector/visual"
 	"io"
 	"log/slog"
 	"net"
@@ -23,6 +21,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"go.kenn.io/kit/embedlocal"
 	"go.kenn.io/kit/telemetry/posthog"
 	"go.kenn.io/msgvault/internal/api"
 	"go.kenn.io/msgvault/internal/beeper"
@@ -61,6 +60,7 @@ import (
 	"go.kenn.io/msgvault/internal/teams"
 	"go.kenn.io/msgvault/internal/telemetry"
 	"go.kenn.io/msgvault/internal/twilio"
+	"go.kenn.io/msgvault/internal/vector/visual"
 	"golang.org/x/oauth2"
 )
 

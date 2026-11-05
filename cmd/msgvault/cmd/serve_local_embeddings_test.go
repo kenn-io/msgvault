@@ -255,3 +255,35 @@ func TestLocalEmbeddingsDownloadFailureAndConfigConflictKeepSavedSettings(t *tes
 		})
 	}
 }
+
+func TestLocalEmbeddingsPreservesPausedConfiguredProviders(t *testing.T) {
+	for _, endpoint := range []string{"https://api.example.test/v1", "http://localhost:11434/v1"} {
+		t.Run(endpoint, func(t *testing.T) {
+			fixture := newSetupProvidersFixture(t, setupProvidersMinimalConfig+fmt.Sprintf(`
+[vector]
+enabled = false
+[vector.embeddings]
+endpoint = %q
+model = "configured-model"
+api_key_env = "EXAMPLE_EMBEDDING_KEY"
+`, endpoint))
+			cfg := fixture.load(t)
+			before, err := os.ReadFile(fixture.path)
+			require.NoError(t, err)
+			handle := &vectorInitHandle{done: make(chan struct{})}
+			close(handle.done)
+			controller := &localEmbeddingsController{state: &invocation{cfg: cfg}, handle: handle,
+				inspect: func(context.Context, embedlocal.Options) (embedlocal.Status, error) {
+					return embedlocal.Status{DownloadBytes: 290000000}, nil
+				},
+			}
+			status, err := controller.Inspect(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, "configured", status.Provider)
+			require.NoError(t, controller.Enable(t.Context(), false, func(api.LocalEmbeddingsStatus) {}))
+			after, err := os.ReadFile(fixture.path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}

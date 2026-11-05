@@ -37,17 +37,19 @@
   {#each rows as row (row.id)}
     {@const action = row.action}
     {@const authority = row.relatedStatus}
+    {@const local = row.id === 'message_embedding' && localSearch}
+    {@const settingUp = local && !['on', 'ollama', 'ollama-other'].includes(local.kind)}
     <li class="row" data-feature={row.id}>
-      {#if row.id === 'message_embedding' && localSearch}
+      {#if settingUp && local}
         <div class="row__local">
-          <SearchByMeaningRow state={localSearch} itemNoun="messages" labels={localLabels} onturnon={() => onLocalSearch(false)} onusebuiltin={() => onLocalSearch(true)} />
+          <SearchByMeaningRow state={local} itemNoun="messages" labels={localLabels} onturnon={() => onLocalSearch(false)} onusebuiltin={() => onLocalSearch(true)} />
           {#if localError}<p class="row__error" role="alert">{localError}</p>{/if}
         </div>
       {:else}
       <span class="row__name">
-        {row.name}
+        {local ? 'Search by meaning' : row.name}
       </span>
-      <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{row.chip.text}</Chip></span>
+      <span class="row__chip"><Chip size="xs" tone={row.chip.tone} uppercase={false}>{local && ['ollama', 'ollama-other'].includes(local.kind) && row.chip.text === 'On' ? 'On · Ollama' : row.chip.text}</Chip></span>
       <span class="row__action">
         {#if authority}<Button size="sm" surface="soft" label="Details" ariaLabel={`Details, ${row.name}`} onclick={() => onDetails(authority)} />{/if}
         {#if action?.kind === 'settings'}
@@ -76,6 +78,12 @@
       </span>
       {#if action?.kind === 'host'}<span class="row__consent">{action.text}</span>{/if}
       {#if action?.kind === 'start' && action.consent}<span class="row__consent">{action.consent}</span>{/if}
+      {#if local && ['ollama', 'ollama-other'].includes(local.kind)}
+        <div class="row__local row__local--switch">
+          <SearchByMeaningRow state={local} itemNoun="messages" labels={localLabels} onturnon={() => onLocalSearch(false)} onusebuiltin={() => onLocalSearch(true)} />
+        </div>
+      {/if}
+      {#if local && localError}<p class="row__error" role="alert">{localError}</p>{/if}
       {/if}
     </li>
   {/each}
@@ -103,8 +111,15 @@
   .row + .row {
     border-top: 1px solid var(--border-default);
   }
-  .row__local { grid-column: 1 / -1; min-width: 0; }
-  .row__error { color: var(--text-danger); font-size: var(--font-size-xs); }
+  .row__local { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; min-width: 0; }
+  .row__local :global(.kit-search-by-meaning) { grid-column: 1 / -1; grid-template-columns: subgrid; min-height: var(--control-height); gap: var(--control-gap) var(--section-gap); }
+  .row__local :global(.kit-chip) { grid-column: 2; grid-row: 1; justify-self: start; }
+  .row__local :global(.kit-search-by-meaning__action) { grid-column: 3; grid-row: 1; }
+  .row__local :global(.kit-search-by-meaning__action .kit-button) { background: var(--kit-button-fill); color: var(--text-secondary); border: var(--border-width) solid var(--border-default); }
+  .row__local :global(.kit-search-by-meaning__action .kit-button:hover) { background: var(--bg-surface-hover); color: var(--text-primary); }
+  .row__local :global(.kit-search-by-meaning__progress) { background: var(--bg-raised); border-color: var(--border-default); }
+  .row__local--switch :global(.kit-search-by-meaning__name), .row__local--switch :global(.kit-chip) { display: none; }
+  .row__error { grid-column: 1 / -1; margin: 0; color: var(--text-danger); font-size: var(--font-size-xs); }
   .row__name {
     display: flex;
     align-items: center;
@@ -145,5 +160,7 @@
       grid-column: 1 / -1;
       justify-content: flex-start;
     }
+    .row__local :global(.kit-search-by-meaning__action) { grid-column: 1 / -1; grid-row: 2; justify-self: start; }
+    .row__local :global(.kit-search-by-meaning__line), .row__local :global(.kit-search-by-meaning__warning) { grid-row: 3; }
   }
 </style>

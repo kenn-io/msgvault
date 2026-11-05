@@ -48,10 +48,12 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 	}
 	c.handle.mu.Unlock()
 	provider := ""
-	if cfg.Enabled {
+	if cfg.Enabled || cfg.Embeddings.LocalOnly || cfg.Embeddings.Endpoint != "" || cfg.Embeddings.Model != "" {
 		switch {
 		case cfg.Embeddings.LocalOnly:
 			provider = "builtin"
+		case !cfg.Enabled:
+			provider = "configured"
 		case isOllamaEmbeddingEndpoint(cfg.Embeddings.Endpoint):
 			provider = "ollama"
 		default:
@@ -63,7 +65,8 @@ func (c *localEmbeddingsController) Inspect(ctx context.Context) (api.LocalEmbed
 }
 
 func isOllamaEmbeddingEndpoint(endpoint string) bool {
-	return strings.TrimRight(endpoint, "/") == "http://127.0.0.1:11434/v1" || strings.TrimRight(endpoint, "/") == "http://localhost:11434/v1"
+	server := strings.TrimSuffix(strings.TrimRight(strings.TrimSpace(endpoint), "/"), "/v1")
+	return server == "http://127.0.0.1:11434" || server == "http://localhost:11434"
 }
 
 func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, report func(api.LocalEmbeddingsStatus)) error {
@@ -86,7 +89,7 @@ func (c *localEmbeddingsController) Enable(ctx context.Context, builtin bool, re
 		return err
 	}
 	// A configured lane changes provider only through Use built-in instead.
-	if loaded.Vector.Enabled && !builtin && !loaded.Vector.Embeddings.LocalOnly && !isOllamaEmbeddingEndpoint(loaded.Vector.Embeddings.Endpoint) {
+	if !builtin && !loaded.Vector.Embeddings.LocalOnly && (loaded.Vector.Enabled || loaded.Vector.Embeddings.Endpoint != "" || loaded.Vector.Embeddings.Model != "") {
 		return nil
 	}
 	dir, err := localEmbeddingsDir()

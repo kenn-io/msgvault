@@ -12,6 +12,7 @@ export interface LocalEmbeddingsStatus {
   ollama_available: boolean;
   phase: LocalEmbeddingsStatusPhase;
   provider: string;
+  running?: boolean;
   total_bytes: number;
   [key: string]: unknown;
 }

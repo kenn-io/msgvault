@@ -26,6 +26,7 @@ type LocalEmbeddingsStatus struct {
 	DoneBytes       int64  `json:"done_bytes"`
 	TotalBytes      int64  `json:"total_bytes"`
 	Error           string `json:"error,omitempty"`
+	Running         bool   `json:"running,omitempty"`
 }
 
 type LocalEmbeddingsRequest struct {
@@ -64,6 +65,7 @@ func (s *Server) handleGetLocalEmbeddings(w http.ResponseWriter, r *http.Request
 		return
 	}
 	status.Error = progress.Error
+	status.Running = running
 	if running {
 		status.Phase, status.DoneBytes, status.TotalBytes = progress.Phase, progress.DoneBytes, progress.TotalBytes
 	}
@@ -95,7 +97,7 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	controller := s.localEmbeddings
-	s.localSetup = LocalEmbeddingsStatus{Phase: "downloading"}
+	s.localSetup = LocalEmbeddingsStatus{Phase: "idle", Running: true}
 	s.localSetupRunning = true
 	status := s.localSetup
 	s.importWG.Add(1)
@@ -103,10 +105,16 @@ func (s *Server) handleEnableLocalEmbeddings(w http.ResponseWriter, r *http.Requ
 	go func() {
 		defer s.importWG.Done()
 		defer finishIdle()
-		report := func(status LocalEmbeddingsStatus) { s.importMu.Lock(); s.localSetup = status; s.importMu.Unlock() }
+		report := func(status LocalEmbeddingsStatus) {
+			s.importMu.Lock()
+			status.Running = true
+			s.localSetup = status
+			s.importMu.Unlock()
+		}
 		err := controller.Enable(s.importContext, req.UseBuiltIn, report)
 		s.importMu.Lock()
 		s.localSetupRunning = false
+		s.localSetup.Running = false
 		s.localSetup.Phase = "idle"
 		if err != nil {
 			s.localSetup.Error = err.Error()

@@ -19,6 +19,7 @@ export function localSearchState(status: LocalEmbeddingsStatus, embedding?: Embe
 
 export function localSearchLabels(status: LocalEmbeddingsStatus, embedding?: EmbeddingStatus): Partial<SearchByMeaningLabels> {
   return {
+    ...(!status.enabled && status.ollama_available ? { downloaded: 'Uses Ollama on this computer' } : {}),
     ...(!embedding?.eta_seconds ? { rebuild: 'Switching rebuilds the index for {count} {items}' } : {}),
   };
 }
