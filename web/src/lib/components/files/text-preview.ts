@@ -16,9 +16,12 @@ export async function parseDelimited(text: string, delimiter = '', maxRows = 200
   // A byte prefix can end inside a field, including a quoted multiline field.
   // Only a parsed record terminator proves the final record is complete.
   if (inputTruncated && !result.meta.truncated && (!text.endsWith(result.meta.linebreak) || hasErrors)) result.data.pop();
+  const visible = result.data.slice(0, maxRows + 1);
+  const columns = Math.max(0, ...visible.map((row) => row.length));
+  const padded = visible.map((row) => [...row, ...Array<string>(columns - row.length).fill('')]);
   return {
-    header: result.data[0] ?? [],
-    rows: result.data.slice(1, maxRows + 1),
+    header: padded[0] ?? [],
+    rows: padded.slice(1),
     truncated: result.data.length > maxRows + 1 || result.meta.truncated,
     hasErrors,
   };

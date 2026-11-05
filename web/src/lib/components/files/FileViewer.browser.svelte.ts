@@ -28,6 +28,12 @@ export async function renderPDF(
   if (signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
 
   const loadingTask = getDocument({ data: bytes });
+  const pages = host.ownerDocument.createElement('div');
+  pages.className = 'pdf-pages';
+  const availableWidth = (): number => {
+    const style = host.ownerDocument.defaultView!.getComputedStyle(pages);
+    return host.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0) - 24;
+  };
   let activeRender: { cancel(): void; promise: Promise<unknown> } | undefined;
   let activePage: { cleanup(): void } | undefined;
   let destroyed = false;
@@ -36,7 +42,7 @@ export async function renderPDF(
   const resize = (): void => {
     for (const { section, layer, page } of layers) {
       const natural = page.getViewport({ scale: 1 });
-      const width = Math.min(host.clientWidth - 24, natural.width * 1.25) * zoom;
+      const width = Math.min(availableWidth(), natural.width * 1.25) * zoom;
       const scale = Math.max(1, width) / natural.width;
       const viewport = page.getViewport({ scale });
       section.style.width = `${viewport.width}px`;
@@ -69,7 +75,7 @@ export async function renderPDF(
       throw new Error(`PDF exceeds the ${MAX_PDF_PAGES}-page preview limit.`);
     }
 
-    host.replaceChildren();
+    host.replaceChildren(pages);
     let totalCanvasPixels = 0;
     for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
       if (signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
@@ -82,11 +88,15 @@ export async function renderPDF(
       const baseViewport = page.getViewport({ scale: 1.25 });
       const basePixels = Math.ceil(baseViewport.width) * Math.ceil(baseViewport.height);
       if (basePixels > MAX_CANVAS_PIXELS) throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
-      const desiredScale = Math.max(1.25, (host.clientWidth - 24) * 2 * (host.ownerDocument.defaultView?.devicePixelRatio ?? 1) / page.getViewport({ scale: 1 }).width);
+      const desiredScale = Math.max(1.25, availableWidth() * 2 * (host.ownerDocument.defaultView?.devicePixelRatio ?? 1) / page.getViewport({ scale: 1 }).width);
       const budget = Math.min(MAX_CANVAS_PIXELS, (MAX_TOTAL_CANVAS_PIXELS - totalCanvasPixels) / (pdfDocument.numPages - pageNumber + 1));
       const scale = Math.max(1.25, Math.min(desiredScale, 1.25 * Math.sqrt(budget / basePixels)));
       const viewport = page.getViewport({ scale });
-      const pagePixels = Math.ceil(viewport.width) * Math.ceil(viewport.height);
+      // Round down before budgeting and allocating. Rounding both sides up
+      // can exceed the limit even when the continuous area fits exactly.
+      const width = Math.floor(viewport.width);
+      const height = Math.floor(viewport.height);
+      const pagePixels = width * height;
       if (pagePixels > MAX_CANVAS_PIXELS) {
         throw new Error(`PDF page ${pageNumber} exceeds the preview canvas limit.`);
       }
@@ -99,8 +109,8 @@ export async function renderPDF(
       section.className = 'pdf-page';
       const canvas = host.ownerDocument.createElement('canvas');
       canvas.className = 'pdf-canvas';
-      canvas.width = Math.ceil(viewport.width);
-      canvas.height = Math.ceil(viewport.height);
+      canvas.width = width;
+      canvas.height = height;
       canvas.setAttribute('aria-label', `PDF page ${pageNumber}`);
       const context = canvas.getContext('2d');
       if (!context) throw new Error('Canvas rendering is unavailable.');
@@ -119,11 +129,11 @@ export async function renderPDF(
       const layer = new TextLayer({ textContentSource: text, container: textLayer, viewport: page.getViewport({ scale: 1.25 }) });
       section.style.setProperty('--total-scale-factor', '1.25');
       section.append(textLayer);
-      host.append(section);
       layers.push({ section, layer, page });
+      resize();
+      pages.append(section);
       await layer.render();
       if (destroyed || signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
-      resize();
       page.cleanup();
       activePage = undefined;
     }

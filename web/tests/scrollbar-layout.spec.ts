@@ -132,7 +132,7 @@ test('first PDF page stays in place when a later page makes the preview scroll',
   await page.keyboard.press('Home');
   await page.keyboard.press('Enter');
   const preview = page.getByRole('region', { name: 'PDF preview receipt.pdf' });
-  await expect(preview.locator('.pdf-text')).toHaveCount(3);
+  await expect(preview.locator('.textLayer')).toHaveCount(3);
 
   const samples = await page.evaluate(() =>
     (window as unknown as { pdfLayoutSamples: Array<{ pages: number; x: number; scrolls: boolean }> }).pdfLayoutSamples);

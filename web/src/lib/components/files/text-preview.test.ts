@@ -49,3 +49,9 @@ it('reports malformed quoted fields', async () => {
 it.each(['Name\nOne\nTwo', 'Name,Amount\nExample,42,extra\nOther,73'])('keeps readable rows without an unreadable warning', async (text) => {
   expect((await parseDelimited(text)).hasErrors).toBe(false);
 });
+
+it('pads ragged headers and rows to the widest visible record', async () => {
+  expect(await parseDelimited('Name,Amount\nExample,42,extra\nOther', ',')).toEqual({
+    header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other', '', '']], truncated: false, hasErrors: false
+  });
+});
