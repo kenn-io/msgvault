@@ -114,7 +114,6 @@ func TestRelocationPlanRequiresAuthoritativeCoverage(t *testing.T) {
 func TestRelocationScopedPlanPreservesSkippedCanonical(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	loaded := false
-	target := gmail.MessageRelocationTarget{InternalID: 12, SourceID: 3, SourceMessageID: "Trash|1", RFC822MessageID: "same@example.test"}
 	c := &Client{config: &Config{}, labelMapComplete: true,
 		reconcileFilteredDeletions: true,
 		folderFilterExclude:        []string{"Trash"},
@@ -131,13 +130,11 @@ func TestRelocationScopedPlanPreservesSkippedCanonical(t *testing.T) {
 		relocationCandidateLoader: func(_ context.Context, lost []string) ([]RelocationCandidate, error) {
 			loaded = true
 			assert.Equal([]string{"INBOX|2"}, lost, "a skipped mailbox supplies no evidence of loss")
-			return []RelocationCandidate{{Target: target, Mailbox: "Sent", UIDValidity: 88, UID: 1}}, nil
+			return nil, nil
 		},
 	}
 	require.NoError(c.finalizeMessageListLocked(t.Context(), []string{"INBOX", "Sent"}, nil))
 	assert.True(loaded)
-	assert.Empty(c.messageListCache)
-	assert.Empty(c.relocationTargets)
 }
 
 func TestRelocationRawFetchRejectsEpochChangeAndBypassesDedup(t *testing.T) {

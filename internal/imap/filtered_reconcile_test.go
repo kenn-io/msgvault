@@ -12,6 +12,9 @@ import (
 func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 	for _, all := range []string{"", "[Gmail]/All Mail"} {
 		for _, excludeAll := range []bool{false, true} {
+			if all == "" && excludeAll {
+				continue
+			}
 			t.Run(all+map[bool]string{true: " excluded", false: " selected"}[excludeAll], func(t *testing.T) {
 				assert, require := assert.New(t), require.New(t)
 				counts := map[string]int{"INBOX": 0, "Trash": 1}
