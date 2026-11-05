@@ -24,8 +24,20 @@ func (e *DuckDBEngine) SenderLabels(ctx context.Context, messageIDs []int64) (ma
 	for i, id := range messageIDs {
 		args[i] = id
 	}
-	rows, err := e.db.QueryContext(ctx, "SELECT id, from_name FROM v_messages WHERE id IN ("+
-		strings.TrimSuffix(strings.Repeat("?,", len(args)), ",")+")", args...)
+	query := `WITH page AS (
+		SELECT id, sender_id FROM messages WHERE id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(args)), ",") + `)
+	), senders AS (
+		SELECT mr.message_id, FIRST(` + recipientNameExpr("mr", "p") + `) AS from_name
+		FROM message_recipients mr
+		JOIN participants p ON p.id = mr.participant_id
+		WHERE mr.recipient_type = 'from' AND mr.message_id IN (SELECT id FROM page)
+		GROUP BY mr.message_id
+	)
+	SELECT page.id, COALESCE(senders.from_name, ` + participantNameExpr("direct") + `, '')
+	FROM page
+	LEFT JOIN senders ON senders.message_id = page.id
+	LEFT JOIN participants direct ON direct.id = page.sender_id AND senders.message_id IS NULL`
+	rows, err := e.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query sender labels: %w", err)
 	}

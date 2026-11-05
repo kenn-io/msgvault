@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -371,7 +372,6 @@ func TestReviewSenderUsesMessageEnvelope(t *testing.T) {
 	b.AddFrom(first, alice, "Personal Alias")
 	b.AddFrom(second, alice, "Issue Desk")
 	e := b.BuildEngine()
-	t.Cleanup(func() { _ = e.Close() })
 	labels, err := e.SenderLabels(t.Context(), []int64{first, second})
 	require.NoError(t, err)
 	assert.Equal(t, "Personal Alias", labels[first])
@@ -386,7 +386,6 @@ func TestReviewSenderPrefersFromRecipient(t *testing.T) {
 	id := b.AddMessage(MessageOpt{SenderID: &bob})
 	b.AddFrom(id, alice, "Alice")
 	e := b.BuildEngine()
-	t.Cleanup(func() { _ = e.Close() })
 	labels, err := e.SenderLabels(t.Context(), []int64{id})
 	require.NoError(t, err)
 	assert.Equal(t, "Alice", labels[id])
@@ -401,8 +400,37 @@ func TestReviewSenderLabelUsesKnownIdentifier(t *testing.T) {
 	b.AddTo(id, other, "Recipient")
 	b.AddAttachment(id, 37, "example.txt")
 	e := b.BuildEngine()
-	t.Cleanup(func() { _ = e.Close() })
 	labels, err := e.SenderLabels(t.Context(), []int64{id})
 	require.NoError(t, err)
 	assert.Equal(t, "+12025550123", labels[id])
+}
+
+func TestSenderLabelsAggregationIsPageBounded(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	b.AddSource("archive@example.com")
+	sender := b.AddParticipant("sender@example.com", "example.com", "Sender")
+	var requested int64
+	for range 1000 {
+		id := b.AddMessage(MessageOpt{})
+		b.AddFrom(id, sender, "Sender")
+		requested = id
+	}
+	e := b.BuildEngine()
+	profile, err := profileQuery(t, e, func() error {
+		labels, err := e.SenderLabels(t.Context(), []int64{requested})
+		require.NoError(t, err)
+		assert.Equal(t, "Sender", labels[requested])
+		return nil
+	})
+	require.NoError(t, err)
+	var inspect func(domainPopulationProfile)
+	inspect = func(operator domainPopulationProfile) {
+		if strings.Contains(operator.Type, "GROUP_BY") {
+			assert.LessOrEqual(t, operator.IntermediateRows, int64(1), "sender aggregation must be limited to the requested page")
+		}
+		for _, child := range operator.Children {
+			inspect(child)
+		}
+	}
+	inspect(profile)
 }

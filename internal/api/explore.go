@@ -410,13 +410,7 @@ func (s *Server) handleExploreWithScope(w http.ResponseWriter, r *http.Request, 
 // pageSenderLabels resolves only the distinct messages in the returned page.
 func (s *Server) pageSenderLabels(ctx context.Context, messageIDs []int64) (map[int64]string, error) {
 	labels := make(map[int64]string, len(messageIDs))
-	ids := make([]int64, 0, len(messageIDs))
-	for _, id := range messageIDs {
-		if _, seen := labels[id]; !seen {
-			ids = append(ids, id)
-			labels[id] = ""
-		}
-	}
+	ids := normalizeSourceIDs(messageIDs)
 	if len(ids) == 0 {
 		return labels, nil
 	}
