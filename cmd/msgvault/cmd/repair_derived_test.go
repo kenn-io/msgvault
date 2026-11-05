@@ -78,5 +78,6 @@ func TestRepairDerivedSourceReportsEmailLinkage(t *testing.T) {
 	require.NoError(err)
 	var out bytes.Buffer
 	require.NoError(repairDerivedSource(t.Context(), &out, st, src))
-	assert.Contains(t, out.String(), "email linkage derived for 1 messages")
+	assert.Contains(t, out.String(), "  imap/repair@example.test: Indexing 1 emails\n")
+	assert.Contains(t, out.String(), "imap/repair@example.test: indexed 1 emails (1 incomplete)\n")
 }

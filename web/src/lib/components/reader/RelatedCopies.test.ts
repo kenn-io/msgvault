@@ -151,7 +151,6 @@ describe('RelatedCopies', () => {
   });
 
   const unreadable = (outcome: string) => [member(1, { evidence: 'anchor', conversation_id: 100, linkage_outcome: outcome })];
-  const everySearchNote = 'No related copies found, but the search may be incomplete.';
 
   it.each([
     {
@@ -193,8 +192,7 @@ describe('RelatedCopies', () => {
       name: 'other emails awaiting indexing',
       members: [anchor],
       options: { pending_linkage: true },
-      shown: [/Some archived emails haven't been indexed yet.*for a source that no longer syncs, run/, everySearchNote],
-      hidden: ['No related copies found.']
+      shown: [/Some archived emails haven't been indexed yet.*for a source that no longer syncs, run/, 'No related copies found.']
     },
     {
       name: 'the opened email being the pending one',
@@ -211,8 +209,7 @@ describe('RelatedCopies', () => {
     ].map(([outcome, note]) => ({
       name: `an opened email that is ${outcome}`,
       members: unreadable(outcome as string),
-      shown: [note as RegExp, everySearchNote],
-      hidden: ['No related copies found.']
+      shown: [note as RegExp, 'No related copies found.']
     })),
     {
       name: 'an unreadable member of the opened conversation that has no row',
@@ -221,7 +218,7 @@ describe('RelatedCopies', () => {
         member(2, { evidence: 'thread', conversation_id: 100, linkage_outcome: 'invalid_headers' })
       ],
       loadedIDs: [1, 2],
-      shown: [/Some identifiers in this conversation couldn't be read/, 'Related emails are already shown in this conversation. The search may be incomplete.']
+      shown: [/Some identifiers in this conversation couldn't be read/, 'Related emails are already shown in this conversation.']
     }
   ] as Array<{
     name: string;

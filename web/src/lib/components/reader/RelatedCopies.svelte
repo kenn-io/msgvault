@@ -97,11 +97,6 @@
         member.linkage_outcome !== 'pending'
     )
   );
-  // Every returned member counts, hidden or not.
-  const searchIncomplete = $derived(
-    !!family?.pending_linkage || (family?.members ?? []).some((member) => member.linkage_outcome !== 'complete')
-  );
-
   const truncationNotice = $derived.by(() => {
     if (family?.truncated_reason === 'members') return 'The lookup stopped at its 500-email limit, so some related emails may be missing.';
     if (family?.truncated_reason === 'identifiers') {
@@ -171,10 +166,8 @@
       {#if groups.length === 0}
         <p class="state">
           {shown.length > 0
-            ? `Related emails are already shown in this conversation.${searchIncomplete ? ' The search may be incomplete.' : ''}`
-            : searchIncomplete
-              ? 'No related copies found, but the search may be incomplete.'
-              : 'No related copies found.'}
+            ? 'Related emails are already shown in this conversation.'
+            : 'No related copies found.'}
         </p>
       {/if}
       {#each groups as group (group.key)}

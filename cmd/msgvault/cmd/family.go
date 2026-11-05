@@ -142,7 +142,7 @@ func writeRelatedCopies(cmd *cobra.Command, family *store.EmailFamily) error {
 		}
 	}
 	if pending > 0 {
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d copies are not indexed yet; sync or run repair-derived, then retry\n", pending); err != nil {
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%d copies are not indexed yet, so related emails may be missing; sync or run repair-derived, then retry\n", pending); err != nil {
 			return fmt.Errorf("write related copies: %w", err)
 		}
 	}
@@ -151,7 +151,7 @@ func writeRelatedCopies(cmd *cobra.Command, family *store.EmailFamily) error {
 			return fmt.Errorf("write related copies: %w", err)
 		}
 	}
-	if family.PendingLinkage {
+	if family.PendingLinkage && pending == 0 {
 		if _, err := fmt.Fprintln(cmd.ErrOrStderr(), "Some archived emails haven't been indexed yet, so related emails may be missing; sync or run repair-derived, then retry"); err != nil {
 			return fmt.Errorf("write related copies: %w", err)
 		}

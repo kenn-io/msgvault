@@ -129,10 +129,10 @@ func repairDerivedSource(ctx context.Context, out io.Writer, s *store.Store, src
 	}
 	// Linkage does not read attribution, so one failing leaves the other to run.
 	linkage, linkageErr := s.RepairEmailLinkageContext(ctx, src.ID, func(sum store.EmailLinkageRepairSummary) {
-		progress(fmt.Sprintf("email linkage: %d messages", sum.Scanned))
+		progress(fmt.Sprintf("Indexing %d emails", sum.Scanned))
 	})
 	if linkageErr == nil && linkage.Scanned > 0 {
-		_, _ = fmt.Fprintf(out, "%s: email linkage derived for %d messages (%d incomplete)\n", label, linkage.Scanned, linkage.Incomplete)
+		_, _ = fmt.Fprintf(out, "%s: indexed %d emails (%d incomplete)\n", label, linkage.Scanned, linkage.Incomplete)
 	}
 	return errors.Join(attributionErr, linkageErr)
 }
