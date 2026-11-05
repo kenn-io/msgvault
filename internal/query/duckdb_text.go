@@ -27,9 +27,6 @@ func (e *DuckDBEngine) TextSnapshotRevision(
 
 	release, err := e.acquireCacheRead(ctx)
 	if err != nil {
-		if e.useLiveSQL(err) {
-			return e.sqliteEngine.TextSnapshotRevision(ctx, scope)
-		}
 		return "", err
 	}
 	defer release()
@@ -179,9 +176,6 @@ func (e *DuckDBEngine) ListConversations(
 ) ([]ConversationRow, error) {
 	release, err := e.acquireQuerySlot(ctx)
 	if err != nil {
-		if e.useLiveSQL(err) {
-			return e.sqliteEngine.ListConversations(ctx, filter)
-		}
 		return nil, err
 	}
 	defer release()

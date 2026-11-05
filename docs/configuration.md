@@ -1304,7 +1304,8 @@ the activity projection; changing it does not change relationship membership.
 
 The daemon starts HTTP health and API routing before analytics cache
 maintenance. In auto mode, message and text analytics answer from live SQL while the cache
-is unusable, including while `remove-account` or a repair command rebuilds it.
+is unusable, including at startup, after a failed rebuild, or while
+`remove-account`, `repair-dates --apply`, or `repair-encoding` rebuilds it.
 Cache-only views (Explore, Files, and people) report the cache unavailable until
 the rebuild publishes.
 With `engine = "duckdb"`, analytics remain unavailable until a

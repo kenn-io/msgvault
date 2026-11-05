@@ -147,7 +147,7 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 			textFilter := TextFilter{SourceID: &textSourceID, Pagination: Pagination{Limit: 1}}
 			for _, method := range []string{
 				"Aggregate", "SubAggregate", "SubAggregateSourceOverride", "GetTotalStats", "ListMessages", "SearchFastWithStats",
-				"ListConversations", "ListConversationsSnapshot", "TextAggregate", "GetTextStats", "TextSnapshotRevision",
+				"ListConversationsSnapshot", "TextAggregate", "GetTextStats",
 			} {
 				t.Run(method, func(t *testing.T) {
 					require := require.New(t)
@@ -205,15 +205,8 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						assert.Equal(int64(1), result.TotalCount)
 						require.NotNil(result.Stats)
 						assert.Equal(int64(1), result.Stats.MessageCount)
-					case "ListConversations", "ListConversationsSnapshot":
-						var rows []ConversationRow
-						var revision string
-						var err error
-						if method == "ListConversations" {
-							rows, err = engine.ListConversations(ctx, textFilter)
-						} else {
-							rows, revision, err = engine.ListConversationsSnapshot(ctx, textFilter)
-						}
+					case "ListConversationsSnapshot":
+						rows, revision, err := engine.ListConversationsSnapshot(ctx, textFilter)
 						if !enabled {
 							require.ErrorIs(err, ErrCacheUnavailable)
 							return
@@ -222,12 +215,10 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						require.Len(rows, 1)
 						assert.Equal(int64(702), rows[0].ConversationID)
 						assert.Equal("Live chat", rows[0].Title)
-						if method == "ListConversationsSnapshot" {
-							want, err := engine.sqliteEngine.TextSnapshotRevision(ctx, TextSnapshotScope{Filter: textFilter})
-							require.NoError(err)
-							assert.NotEmpty(revision)
-							assert.Equal(want, revision)
-						}
+						want, err := engine.sqliteEngine.TextSnapshotRevision(ctx, TextSnapshotScope{Filter: textFilter})
+						require.NoError(err)
+						assert.NotEmpty(revision)
+						assert.Equal(want, revision)
 					case "TextAggregate":
 						rows, err := engine.TextAggregate(ctx, TextViewContactNames, TextAggregateOptions{SourceID: &textSourceID})
 						if !enabled {
@@ -246,18 +237,6 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						}
 						require.NoError(err)
 						assert.Equal(int64(1), stats.MessageCount)
-					case "TextSnapshotRevision":
-						scope := TextSnapshotScope{Filter: textFilter}
-						revision, err := engine.TextSnapshotRevision(ctx, scope)
-						if !enabled {
-							require.ErrorIs(err, ErrCacheUnavailable)
-							return
-						}
-						require.NoError(err)
-						want, err := engine.sqliteEngine.TextSnapshotRevision(ctx, scope)
-						require.NoError(err)
-						assert.NotEmpty(revision)
-						assert.Equal(want, revision)
 					}
 				})
 			}
