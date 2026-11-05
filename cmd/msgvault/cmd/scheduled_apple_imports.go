@@ -34,16 +34,8 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	opts := whatsapp.DefaultOptions()
 	opts.Phone = src.Phone
 	opts.DisplayName = src.DisplayName
-	progress := &scheduledWhatsAppProgress{logger: state.logger, source: src.Name}
-	summary, err := whatsapp.NewImporter(s, progress).Import(ctx, path, opts)
+	summary, err := whatsapp.NewImporter(s, scheduledWhatsAppProgress{logger: state.logger, source: src.Name}).Import(ctx, path, opts)
 	if err != nil {
-		if !progress.started {
-			source, sourceErr := s.GetOrCreateSource("whatsapp", src.Phone)
-			if sourceErr != nil {
-				return errors.Join(err, fmt.Errorf("get or create source: %w", sourceErr))
-			}
-			err = recordScheduledAppleFailure(s, source.ID, "whatsapp_apple_import", err)
-		}
 		return fmt.Errorf("whatsapp apple source %q: %w", src.Name, err)
 	}
 	confirmDefaultIdentity(io.Discard, s, summary.SourceID, src.Phone, src.Phone, "phone-e164", state.logger)
@@ -59,13 +51,6 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	defer func() {
 		retErr = errors.Join(retErr, rebuildCacheAfterScheduledSync(context.WithoutCancel(ctx), api.IMessageJobName))
 	}()
-	src, err := resolveImessageSource(s)
-	if err != nil {
-		return fmt.Errorf("get or create source: %w", err)
-	}
-	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
-		return fmt.Errorf("post-source-create migrations: %w", err)
-	}
 	opts, err := buildImessageOpts(state.logger, state.cfg.AttachmentsDir(), "", false, imessageMediaPolicy(0, state.cfg))
 	if err != nil {
 		return err
@@ -82,9 +67,16 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	}
 	client, err := imessage.NewClient(path, opts...)
 	if err != nil {
-		return recordScheduledAppleFailure(s, src.ID, "imessage_import", fmt.Errorf("open iMessage database: %w", err))
+		return fmt.Errorf("open iMessage database: %w", err)
 	}
 	defer func() { _ = client.Close() }()
+	src, err := resolveImessageSource(s)
+	if err != nil {
+		return fmt.Errorf("get or create source: %w", err)
+	}
+	if err := runPostSourceCreateMigrationsForInvocation(s, state); err != nil {
+		return fmt.Errorf("post-source-create migrations: %w", err)
+	}
 	summary, err := importImessageRecorded(ctx, s, client, src.ID)
 	if attachmentImportOnly(err) {
 		state.logger.Warn("imessage attachment import warning", "error", err)
@@ -100,28 +92,14 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	return nil
 }
 
-func recordScheduledAppleFailure(s *store.Store, sourceID int64, syncType string, importErr error) error {
-	syncID, err := s.StartSync(sourceID, syncType)
-	if err != nil {
-		return errors.Join(importErr, fmt.Errorf("start sync: %w", err))
-	}
-	return errors.Join(importErr, s.FailSync(syncID, importErr.Error()))
-}
-
 // scheduledWhatsAppProgress keeps importer warnings visible in daemon logs.
 type scheduledWhatsAppProgress struct {
 	whatsapp.NullProgress
 
-	logger  *slog.Logger
-	source  string
-	started bool
+	logger *slog.Logger
+	source string
 }
 
-// OnStart runs after the importer has created its sync run.
-func (p *scheduledWhatsAppProgress) OnStart() {
-	p.started = true
-}
-
-func (p *scheduledWhatsAppProgress) OnError(err error) {
+func (p scheduledWhatsAppProgress) OnError(err error) {
 	p.logger.Warn("whatsapp apple import warning", "source", p.source, "error", err)
 }
