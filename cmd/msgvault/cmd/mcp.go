@@ -172,7 +172,7 @@ const personCardDAVMinAPISchemaVersion = "2.32.0"
 const identityReviewMinAPISchemaVersion = "3.0.0"
 const identityScoringMinAPISchemaVersion = "3.0.0"
 const draftsMinAPISchemaVersion = "3.0.0"
-const deliveryPolicyMinAPISchemaVersion = "3.43.0"
+const deliveryPolicyMinAPISchemaVersion = "3.44.0"
 
 // delegatedMCPServeOptions offers only the tools an agent grant can use.
 // Draft tools are the floor, so an older daemon fails instead of serving an empty msgvault.
