@@ -104,13 +104,17 @@
   $effect(() => {
     if (!visible || !meetingEligible) meetingOpen = false;
   });
-  const message = $derived.by(() => {
+  const summary = $derived.by(() => {
     if (selection.mode === 'all_matching') {
-      const total = totalCount === undefined ? 'matching' : totalCount.toLocaleString();
-      const except = selection.exclusions.size;
-      return `All ${total} matching items selected${except > 0 ? `, except ${except}` : ''}`;
+      const total = totalCount?.toLocaleString();
+      const except = selection.exclusions.size > 0 ? `, except ${selection.exclusions.size}` : '';
+      return {
+        label: `All ${total ?? 'matching'} selected${except}`,
+        announced: `All ${total === undefined ? 'matching' : `${total} matching`} items selected${except}`,
+      };
     }
-    return `${selection.count.toLocaleString()} selected`;
+    const label = `${selection.count.toLocaleString()} selected`;
+    return { label, announced: label };
   });
 </script>
 
@@ -124,12 +128,12 @@
 
 <!-- The live region outlives the bar so the first "1 selected" is announced. -->
 <span class="kit-sr-only" role="status" aria-label="Selection status" aria-live="polite"
-  >{visible ? message : ''}</span
+  >{visible ? summary.announced : ''}</span
 >
 {#if visible}
   <div class="selection-bar">
     <div class="selection-summary">
-      <span class="selection-count">{message.replace(' matching items', '')}{#if preflight}<span class="selection-size">{' · '}{formatBytes(preflight.estimated_bytes)}</span>{/if}</span>
+      <span class="selection-count">{summary.label}{#if preflight}<span class="selection-size">{' · '}{formatBytes(preflight.estimated_bytes)}</span>{/if}</span>
       {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
         <Button
           size="sm"
@@ -159,9 +163,11 @@
           onclick={() => (meetingOpen = !meetingOpen)}
         />
       </span>
-      <div class="meeting-panel kit-popover-card" role="dialog" aria-label="Meeting context" bind:this={meetingPanel} style={meetingStyle} hidden={!meetingOpen} onfocusout={hideOnFocusOutside}>
-        <MeetingContextExport {client} request={{ selection: meetingSelection }} open={meetingOpen} disabledReason={contextDisabledReason} />
-      </div>
+      {#if meetingOpen}
+        <div class="meeting-panel kit-popover-card" role="dialog" aria-label="Meeting context" bind:this={meetingPanel} style={meetingStyle} onfocusout={hideOnFocusOutside}>
+          <MeetingContextExport {client} request={{ selection: meetingSelection }} disabledReason={contextDisabledReason} />
+        </div>
+      {/if}
     {/if}
     {#if onReviewDeletion}
       {#snippet deletionControl()}

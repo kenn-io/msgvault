@@ -223,8 +223,9 @@ Each expanded message lists its files, recordings, linked tasks, and Kata issues
 ## Meeting context and follow-ups
 
 Filter Messages to meetings to see the meeting count and known duration. Choose **Action items** to filter recorded follow-ups by status or assignee.
-Select meeting rows to export their context as JSON or Markdown, with transcripts
-included only when requested. People and domain views show meeting metrics and recorded actions for their current scope.
+Select meeting rows and choose **Meeting context…** in the selection bar.
+In its popover, choose JSON or Markdown, optionally turn on **Include transcript**,
+and choose **Export meeting context**. People and domain views show meeting metrics and recorded actions for their current scope.
 **Open archived meeting** opens the source evidence; Back restores the originating
 view. See the [meeting guide](usage/meetings.md#export-context-and-read-follow-ups)
 for selection limits, source coverage, unknown duration, and action filters.

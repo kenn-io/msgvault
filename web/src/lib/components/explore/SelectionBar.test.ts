@@ -63,20 +63,25 @@ describe('SelectionBar', () => {
     expect(screen.getByRole('status').textContent).toBe('');
   });
 
-  it('labels predicate selection as all matching rather than a finite URL selection', () => {
+  it.each([
+    [50000, [], 'All 50,000 selected', 'All 50,000 matching items selected'],
+    [50, ['message:1'], 'All 50 selected, except 1', 'All 50 matching items selected, except 1'],
+    [undefined, [], 'All matching selected', 'All matching items selected'],
+  ] as const)('labels predicate selection with total %s and exclusions %s', (totalCount, exclusions, label, announced) => {
     const selection = new ExploreSelectionState();
     selection.selectAllMatching({
       mode: 'all_matching',
       predicate: { query: 'synthetic', search_mode: 'full_text' },
-      exclusions: [],
+      exclusions: [...exclusions],
       cacheRevision: 'cache-1',
       searchProvenance: { lexical_index_revision: 'fts-1' },
       predicateFingerprint: predicateFingerprint({ query: 'synthetic', search_mode: 'full_text' }),
       resultGeneration: 1,
     });
-    render(SelectionBar, { selection, totalCount: 50000 });
+    render(SelectionBar, { selection, totalCount });
 
-    expect(screen.getByRole('status').textContent).toContain('All 50,000 matching items selected');
+    expect(screen.getByRole('status').textContent).toBe(announced);
+    expect(screen.getByText(label, { selector: '.selection-count' })).toBeDefined();
   });
 
   it('promotes visible selection to a pinned all-matching selection', async () => {
@@ -304,15 +309,27 @@ describe('SelectionBar', () => {
     });
 
     it('claims Escape and returns focus to the meeting button', async () => {
-      renderBar(true);
+      const selection = new ExploreSelectionState();
+      selection.selectVisible(['message:1']);
+      let request: Request | undefined;
+      render(SelectionBar, {
+        selection, meetingSelection, canExportMeetings: true,
+        client: createAPIClient(input => {
+          request = input as Request;
+          return new Promise<Response>(() => {});
+        }),
+      });
       const trigger = screen.getByRole('button', { name: 'Meeting context…' });
       await fireEvent.click(trigger);
+      await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
+      await waitFor(() => expect(request).toBeDefined());
       const escape = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
       document.dispatchEvent(escape);
       await tick();
       expect(escape.defaultPrevented).toBe(true);
       expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
       expect(document.activeElement).toBe(trigger);
+      expect(request!.signal.aborted).toBe(true);
     });
 
     it('hides on focus leaving', async () => {
@@ -327,27 +344,6 @@ describe('SelectionBar', () => {
         await tick();
         expect(screen.queryByRole('dialog', { name: 'Meeting context' })).toBeNull();
       } finally { outside.remove(); }
-    });
-
-    it('keeps the panel mounted and its request running when dismissed', async () => {
-      const selection = new ExploreSelectionState();
-      selection.selectVisible(['message:1']);
-      let request: Request | undefined;
-      render(SelectionBar, {
-        selection, meetingSelection, canExportMeetings: true,
-        client: createAPIClient(input => {
-          request = input as Request;
-          return new Promise<Response>(() => {});
-        }),
-      });
-      await fireEvent.click(screen.getByRole('button', { name: 'Meeting context…' }));
-      const panel = screen.getByRole('dialog', { name: 'Meeting context' });
-      await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
-      await waitFor(() => expect(request).toBeDefined());
-      await fireEvent.mouseDown(document.body);
-      expect(panel.isConnected).toBe(true);
-      expect(panel.hidden).toBe(true);
-      expect(request!.signal.aborted).toBe(false);
     });
 
     it('closes the meeting context controls when the bar hides or eligibility changes', async () => {

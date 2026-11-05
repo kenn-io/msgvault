@@ -86,8 +86,6 @@ const KNOWN_MIME: Record<string, string> = {
 
 // Keys are `${action}:${reason}`, matching the unavailable_actions the preflight endpoint returns.
 const REASONS: Record<string, string> = {
-  'open_in_source:trusted_source_link_unavailable':
-    'Your sources don’t provide links to open these items.',
   'export:browser_export_requires_single_message': 'Export works for one message at a time.',
   'export:selection_has_no_exportable_raw_message':
     'The selection has no original message to export.',

@@ -106,22 +106,6 @@ describe('MeetingContextExport', () => {
     expect((anchorClick.mock.instances[0] as HTMLAnchorElement).download).toBe('meeting-context.md');
   });
 
-  it('resets format and transcript on close while retaining a truncated result', async () => {
-    const view = render(MeetingContextExport, {
-      client: createAPIClient(async () => Response.json({ schema_version: 1, format: 'markdown', content: '# Meeting', content_bytes: 9, truncated: true, omitted_message_ids: [91] })),
-      request: { selection }, open: true,
-    });
-    await fireEvent.click(screen.getByRole('radio', { name: 'Markdown' }));
-    await fireEvent.click(screen.getByRole('checkbox', { name: 'Include transcript' }));
-    await fireEvent.click(screen.getByRole('button', { name: 'Export meeting context' }));
-    await waitFor(() => expect(createObjectURL).toHaveBeenCalledOnce());
-    await view.rerender({ open: false });
-    await view.rerender({ open: true });
-    expect(screen.getByRole('radio', { name: 'JSON' }).getAttribute('aria-checked')).toBe('true');
-    expect((screen.getByRole('checkbox', { name: 'Include transcript' }) as HTMLInputElement).checked).toBe(false);
-    expect(screen.getByText(/Export was truncated/).textContent).toContain('91');
-  });
-
   it('labels a delayed download with the format submitted before the control changes', async () => {
     let resolveResponse!: (response: Response) => void;
     let submittedRequest!: Request;

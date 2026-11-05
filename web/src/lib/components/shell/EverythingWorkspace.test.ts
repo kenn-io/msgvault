@@ -595,7 +595,8 @@ describe('EverythingWorkspace', () => {
         return Response.json({
           count: 1, deletable_count: 1, estimated_bytes: 10, cache_revision: 'cache-1', search_provenance: {},
           unavailable_actions: [
-            { action: 'export', reason: 'browser_export_requires_single_message' }
+            { action: 'export', reason: 'selection_contains_items_without_exportable_files' },
+            { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
           ],
           action_targets: [],
           operation_token: 'operation-1', expires_at: '2026-07-19T10:05:00Z'
