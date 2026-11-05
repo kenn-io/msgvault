@@ -251,6 +251,57 @@ func TestAgentVerificationFields(t *testing.T) {
 	}
 }
 
+type attachmentBodyLoadCounter struct {
+	*store.Store
+
+	calls int
+}
+
+func (s *attachmentBodyLoadCounter) PopulateMessageBodiesContext(ctx context.Context, messages []store.APIMessage) error {
+	s.calls++
+	return s.Store.PopulateMessageBodiesContext(ctx, messages)
+}
+
+func TestAgentVerificationSharedPNGSkipsBodyLoading(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	cfg := &config.Config{HomeDir: t.TempDir(), Data: config.DataConfig{DataDir: t.TempDir()}, Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}
+	hash := fmt.Sprintf("%x", sha256.Sum256(fakePNG))
+	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
+	requirements.NoError(err)
+	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
+	requirements.NoError(os.WriteFile(path, fakePNG, 0600))
+	source, id, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "ordinary", "Ordinary", "Ordinary")
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertAttachment(id, "shared.png", "image/png", "", hash, len(fakePNG)))
+	_, parentID, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Your verification code is 482913", "")
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertAttachment(parentID, "shared.png", "image/png", "", hash, len(fakePNG)))
+	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { assertions.NoError(srv.Shutdown(context.Background())) })
+	counter := &attachmentBodyLoadCounter{Store: st}
+	srv.store = counter
+	_, token, _, err := srv.agentGrants.Issue("reader", []agentgrant.Permission{agentgrant.PermissionAttachmentRead}, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+	requirements.NoError(err)
+	for _, blob := range []bool{false, true} {
+		if blob {
+			bs, err := attachmentstore.New(store.NewPackCatalog(st), cfg.AttachmentsDir())
+			requirements.NoError(err)
+			srv.blobStore = bs
+			t.Cleanup(func() { assertions.NoError(bs.Close()) })
+		}
+		for _, endpoint := range []string{"/attachments/" + hash + "/content", "/cli/attachment?content_hash=" + hash} {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
+			req.Header.Set(apiprotocol.AgentTokenHeader, token)
+			w := httptest.NewRecorder()
+			srv.Router().ServeHTTP(w, req)
+			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
+			assertions.Equal(fakePNG, w.Body.Bytes())
+			assertions.Zero(counter.calls, "blob=%t endpoint=%s", blob, endpoint)
+		}
+	}
+}
+
 func TestAgentVerificationAttachments(t *testing.T) {
 	requirements := require.New(t)
 	st := testutil.NewTestStore(t)

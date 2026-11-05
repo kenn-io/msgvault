@@ -153,8 +153,9 @@ func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, cand
 var nestedEncoding = regexp.MustCompile(`(?im)^content-transfer-encoding[ \t]*:`)
 
 // The caller owns content. Sniffing preserves the original download bytes.
-func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, refuse, withheld bool) (io.Reader, *apiHTTPError) {
-	if !refuse {
+// A nil reader with no error means classification already wrote the response.
+func (s *Server) textAttachmentReader(w http.ResponseWriter, r *http.Request, content io.Reader, candidates []query.AttachmentInfo) (io.Reader, *apiHTTPError) {
+	if !s.withholdsVerification(r) {
 		return content, nil
 	}
 	denied := newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
@@ -179,6 +180,10 @@ func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, 
 	if !text && !strings.HasPrefix(sniffed, "text/") {
 		return reader, nil
 	}
+	_, withheld, ok := s.attachmentWithheld(w, r, candidates)
+	if !ok {
+		return nil, nil
+	}
 	if withheld {
 		return nil, denied
 	}
@@ -186,14 +191,14 @@ func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, 
 	if err != nil {
 		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
-	s := string(data)
+	body := string(data)
 	c := verification.Content{Filenames: names}
 	if html || strings.HasPrefix(sniffed, "text/html") {
-		c.HTML = s
+		c.HTML = body
 	} else {
-		c.Text = s
+		c.Text = body
 	}
-	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || nestedEncoding.MatchString(s) || verification.Is(c) {
+	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || nestedEncoding.MatchString(body) || verification.Is(c) {
 		return nil, denied
 	}
 	return bytes.NewReader(data), nil
