@@ -192,6 +192,8 @@ func TestLineMessagePresenceSkipsUnchangedMembership(t *testing.T) {
 	}
 	snapshot := func() projection {
 		t.Helper()
+		_, err := st.ExpandActivityConversationQueueContext(ctx, func() error { return nil })
+		must.NoError(err)
 		var state projection
 		must.NoError(st.DB().QueryRow(st.Rebind(`SELECT cp.joined_at,cp.left_at,q.revision FROM conversation_participants cp
  JOIN activity_projection_queue q ON q.message_id=? WHERE cp.conversation_id=? AND cp.participant_id=?`), first, conversation, participant).Scan(&state.joined, &state.left, &state.revision))
