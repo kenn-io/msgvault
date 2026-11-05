@@ -1,4 +1,4 @@
-import { controllerWith as entityControllerWith, requestOf, pathOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith as entityControllerWith, requestOf, pathOf, relationshipType } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -35,14 +35,6 @@ function view(id: number, direction: 'incoming' | 'outgoing', label: string, nam
       ? { source_person_id: id + 100, target_person_id: 7 }
       : { source_person_id: 7, target_person_id: id + 100 }),
     ...overrides
-  };
-}
-
-function relationshipType(overrides: Record<string, unknown> = {}) {
-  return {
-    id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by',
-    is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
   };
 }
 

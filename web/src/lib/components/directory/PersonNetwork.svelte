@@ -72,7 +72,7 @@
     const target = layout.place.get(edge.target_node_id)!;
     if (!type) return edge.label;
     const flipped = source.x > target.x || (source.x === target.x && source.y > target.y);
-    return type.is_symmetric || !flipped ? type.forward_label : type.reverse_label;
+    return flipped ? type.reverse_label : type.forward_label;
   }
 
   const labelGroups = $derived.by(() => {
@@ -107,14 +107,13 @@
   });
 
   function segment(edge: NetworkEdge) {
-    const a = layout.place.get(edge.source_node_id);
-    const b = layout.place.get(edge.target_node_id);
-    if (!a || !b) return null;
+    const a = layout.place.get(edge.source_node_id)!;
+    const b = layout.place.get(edge.target_node_id)!;
     if (a.x === b.x) {
       const [top, bottom] = a.y <= b.y ? [a, b] : [b, a];
       const x = lanes.get(pairKey(edge))!;
-      const avatarLeft = a.x - AVATAR / 2;
-      return { d: `M ${avatarLeft} ${top.y} H ${x} V ${bottom.y} H ${avatarLeft}`, tx: x, ty: (top.y + bottom.y) / 2 };
+      const end = a.x - AVATAR / 2 - GAP;
+      return { d: `M ${end} ${top.y} H ${x} V ${bottom.y} H ${end}`, tx: x, ty: (top.y + bottom.y) / 2 };
     }
     const [left, right, leftID] = a.x < b.x ? [a, b, edge.source_node_id] : [b, a, edge.target_node_id];
     const x1 = left.x - AVATAR / 2 + Math.max(AVATAR, widths[leftID] ?? AVATAR) + GAP;
@@ -146,12 +145,12 @@
         <svg width={layout.width} height={layout.height} aria-hidden="true">
           {#each edges as edge (edge.id)}
             {@const line = segment(edge)}
-            {#if line}<path d={line.d} />{/if}
+            <path d={line.d} />
           {/each}
         </svg>
         {#each labelGroups as group (group.key)}
           {@const line = segment(group.edge)}
-          {#if line}<span class="edge-label" aria-hidden="true" style:left={`${line.tx}px`} style:top={`${line.ty}px`}>{group.labels.join(' · ')}</span>{/if}
+          <span class="edge-label" aria-hidden="true" style:left={`${line.tx}px`} style:top={`${line.ty}px`}>{group.labels.join(' · ')}</span>
         {/each}
         {#each nodes as node (node.id)}
           {@const at = layout.place.get(node.id)}
@@ -187,7 +186,7 @@
   .scroll:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-offset, 2px); }
   .graph { position: relative; }
   svg { position: absolute; inset: 0; overflow: visible; }
-  path { fill: none; stroke: var(--border-strong); stroke-width: 1; }
+  path { fill: none; stroke: color-mix(in srgb, var(--text-muted) 55%, transparent); stroke-width: 1; }
   .node { position: absolute; display: flex; align-items: center; gap: var(--space-2); }
   .name { max-width: 170px; overflow: hidden; font-size: var(--font-size-sm); text-overflow: ellipsis; white-space: nowrap; }
   .node--root .name { font-weight: var(--font-weight-semibold, 600); }

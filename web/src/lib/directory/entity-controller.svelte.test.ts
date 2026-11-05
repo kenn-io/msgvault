@@ -2,21 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createAPIClient } from '../api/client';
 import { DirectoryEntityController } from './entity-controller.svelte';
-import { requestOf, pathOf, employment, organization, organizationProfile } from './entity-fixtures.test-support';
+import { requestOf, pathOf, relationshipType, employment, organization, organizationProfile } from './entity-fixtures.test-support';
 
 function relationship(id: number, revision = 1) {
   return {
     id, revision, relationship_type_id: 31, type_slug: 'knows', source_person_id: 7, target_person_id: 8,
     forward_label: 'knows', reverse_label: 'is known by', is_symmetric: false, status: 'active', source: 'user',
     created_by: 'user', updated_by: 'user', vcard_identity: {},
-    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
-  };
-}
-
-function relationshipType(id = 31, revision = 1) {
-  return {
-    id, revision, slug: 'knows', forward_label: 'knows', reverse_label: 'is known by', is_symmetric: false,
-    is_canonical: false, is_deletable: true, ownership: 'user', universal_id: `relationship-type-${id}`,
     created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z'
   };
 }
@@ -40,7 +32,7 @@ function defaultResponse(request: Request): Response {
   if (path === '/api/v1/people/7/relationships') {
     return Response.json({ relationships: [{ counterpart_person_id: 8, counterpart_label: 'Synthetic Peer', counterpart_vcard_uid: 'person-8', direction: 'outgoing', relationship: relationship(41) }] });
   }
-  if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [relationshipType()] });
+  if (path === '/api/v1/relationship-types') return Response.json({ relationship_types: [relationshipType({ slug: 'knows', forward_label: 'knows', reverse_label: 'is known by' })] });
   if (path === '/api/v1/people/7/network') {
     const depth = Number(new URL(request.url).searchParams.get('depth'));
     return Response.json(network(7, depth));
@@ -701,17 +693,17 @@ describe('DirectoryEntityController', () => {
   it.each([
     {
       name: 'system update',
-      current: { ...relationshipType(), ownership: 'system' },
+      current: { ...relationshipType({ slug: 'knows', forward_label: 'knows', reverse_label: 'is known by' }), ownership: 'system' },
       run: (controller: DirectoryEntityController) => controller.updateRelationshipType(31, { forward_label: 'changed' })
     },
     {
       name: 'system delete',
-      current: { ...relationshipType(), ownership: 'system' },
+      current: { ...relationshipType({ slug: 'knows', forward_label: 'knows', reverse_label: 'is known by' }), ownership: 'system' },
       run: (controller: DirectoryEntityController) => controller.deleteRelationshipType(31)
     },
     {
       name: 'non-deletable user delete',
-      current: { ...relationshipType(), ownership: 'user', is_deletable: false },
+      current: { ...relationshipType({ slug: 'knows', forward_label: 'knows', reverse_label: 'is known by' }), ownership: 'user', is_deletable: false },
       run: (controller: DirectoryEntityController) => controller.deleteRelationshipType(31)
     }
   ])('refuses a $name in the controller after the fresh read', async ({ current, run }) => {

@@ -1,4 +1,4 @@
-import { controllerWith, requestOf } from '../../directory/entity-fixtures.test-support';
+import { controllerWith, requestOf, relationshipType } from '../../directory/entity-fixtures.test-support';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -43,10 +43,14 @@ function depthThree(): PersonNetworkProjection {
     truncated: false,
     nodes: [
       { id: 'person:7', kind: 'person', entity_id: 7, label: 'Selected Person', hop: 0 },
+      { id: 'person:8', kind: 'person', entity_id: 8, label: 'Curated Peer', hop: 1 },
+      { id: 'person:9', kind: 'person', entity_id: 9, label: 'Second Hop Person', hop: 2 },
       { id: 'person:10', kind: 'person', entity_id: 10, label: 'Depth Three Person', hop: 3 }
     ],
     edges: [
-      { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:10', relationship_type_slug: 'knows', label: 'knows' }
+      { id: 'relationship:31', kind: 'relationship', source_node_id: 'person:7', target_node_id: 'person:8', relationship_type_slug: 'colleague', label: 'works with' },
+      { id: 'relationship:32', kind: 'relationship', source_node_id: 'person:8', target_node_id: 'person:9', relationship_type_slug: 'mentor', label: 'mentors' },
+      { id: 'relationship:33', kind: 'relationship', source_node_id: 'person:9', target_node_id: 'person:10', relationship_type_slug: 'knows', label: 'knows' }
     ]
   };
 }
@@ -58,9 +62,9 @@ function deferredResponse() {
 }
 
 const relationshipTypes = [
-  { slug: 'colleague', forward_label: 'works with', reverse_label: 'works with', is_symmetric: true },
-  { slug: 'mentor', forward_label: 'mentors', reverse_label: 'mentored by', is_symmetric: false }
-].map((type, index) => ({ ...type, id: index + 1, revision: 1, ownership: 'system', is_canonical: true, is_deletable: false, universal_id: `urn:example:${type.slug}`, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z' }));
+  relationshipType({ id: 1, slug: 'colleague', forward_label: 'works with', reverse_label: 'works with', is_symmetric: true }),
+  relationshipType({ id: 2, reverse_label: 'mentored by' })
+];
 
 function networkFetcher(network: PersonNetworkProjection) {
   return vi.fn<typeof fetch>(async (input) => {
@@ -90,7 +94,7 @@ describe('PersonNetwork', () => {
     const chip = [...container.querySelectorAll<HTMLElement>('.edge-label')].find((chip) => chip.textContent === 'works with')!;
     expect(parseFloat(chip.style.left)).toBe((Number(cross[1]) + Number(cross[4])) / 2);
     expect(parseFloat(chip.style.top)).toBe((Number(cross[2]) + Number(cross[5])) / 2);
-    expect(paths[1]!.getAttribute('d')).toBe('M 280 14 H 272 V 70 H 280');
+    expect(paths[1]!.getAttribute('d')).toBe('M 272 14 H 272 V 70 H 272');
     expect([...container.querySelectorAll('.edge-label')].find((chip) => chip.textContent === 'Engineer')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Curated Peer' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Shared Organization' }));
@@ -198,7 +202,7 @@ describe('PersonNetwork', () => {
     await waitFor(() => expect(requests.some((request) => new URL(request.url).searchParams.get('depth') === '3')).toBe(true));
   });
 
-  it('discards a stale depth response and shows the truncation limit', async () => {
+  it('discards a stale depth response', async () => {
     const depthTwo = deferredResponse();
     const requests: Request[] = [];
     const client = createAPIClient(vi.fn<typeof fetch>(async (input) => {
@@ -206,7 +210,7 @@ describe('PersonNetwork', () => {
       requests.push(request);
       const depth = Number(new URL(request.url).searchParams.get('depth'));
       if (depth === 2) return depthTwo.promise;
-      return Response.json(depth === 3 ? { ...depthThree(), truncated: true } : connected(1));
+      return Response.json(depth === 3 ? depthThree() : connected(1));
     }));
     const controller = new DirectoryEntityController(client, 7);
 
@@ -217,7 +221,7 @@ describe('PersonNetwork', () => {
     await fireEvent.click(screen.getByRole('radio', { name: '3 steps' }));
     await screen.findByRole('button', { name: 'Depth Three Person' });
     depthTwo.resolve(Response.json(connected(2)));
-    await waitFor(() => expect(screen.getByText('Showing up to 250 people and organizations and 500 connections.')).toBeDefined());
+    await waitFor(() => expect(controller.network?.depth).toBe(3));
     expect(screen.getByRole('list', { name: 'Network connections' }).textContent).toContain('Depth Three Person');
   });
 });

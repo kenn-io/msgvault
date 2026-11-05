@@ -1,3 +1,4 @@
+import type { RelationshipType } from './models';
 import { person } from './person-fixtures.test-support';
 import type { DirectoryPersonSummary } from '../api/generated/models/directoryPersonSummary';
 import { createAPIClient } from '../api/client';
@@ -76,4 +77,12 @@ export function directoryPerson(id: number, overrides: Partial<DirectoryPersonSu
 
 export function candidate(id: number, state = 'candidate') {
   return { id, left_id: id * 10, left_kind: 'participant', right_id: id * 10 + 1, right_kind: 'participant', basis: 'email', source: 'user', state, actionable: state === 'candidate' || state === 'conflict', application_pending: false, review_token: `token-${id}-${state}`, evidence: [], created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z' };
+}
+
+export function relationshipType(overrides: Partial<RelationshipType> = {}): RelationshipType {
+  return {
+    id: 31, revision: 1, slug: 'mentor', forward_label: 'mentors', reverse_label: 'is mentored by',
+    is_symmetric: false, is_canonical: false, is_deletable: true, ownership: 'user', universal_id: 'relationship-type-31',
+    created_at: '2026-08-01T00:00:00Z', updated_at: '2026-08-01T00:00:00Z', ...overrides
+  };
 }
