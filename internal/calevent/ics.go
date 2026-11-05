@@ -15,6 +15,7 @@ import (
 
 	ical "github.com/emersion/go-ical"
 	"go.kenn.io/msgvault/internal/calrecur"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // ICSMetadata records the accepted revision independently of the retained raw.
@@ -194,7 +195,7 @@ func propText(props ical.Props, name string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
-	return text, nil
+	return textutil.ReplaceNUL(text), nil
 }
 
 // Outlook names zones by their Windows IDs.
@@ -255,7 +256,12 @@ func icsDuration(value string) (int, time.Duration, error) {
 		}
 		n[i] = v
 	}
-	return int(n[0]*7 + n[1]), time.Duration(n[2]*3600+n[3]*60+n[4]) * time.Second, nil
+	days := n[0]*7 + n[1]
+	secs := n[2]*3600 + n[3]*60 + n[4]
+	if days*86400+secs > 36600*86400 {
+		return 0, 0, errors.New("calendar DURATION exceeds limit")
+	}
+	return int(days), time.Duration(secs) * time.Second, nil
 }
 
 func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICSComponent, error) {
@@ -301,15 +307,15 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 	if err != nil {
 		return ICSComponent{}, fmt.Errorf("DTEND: %w", err)
 	}
-	if !start.IsZero() {
-		days, elapsed := 0, time.Duration(0)
-		if dur := p.Get("DURATION"); dur != nil && end.IsZero() {
-			if days, elapsed, err = icsDuration(dur.Value); err != nil {
-				return ICSComponent{}, err
-			}
-		} else if end.IsZero() && allDay {
-			days = 1
+	days, elapsed := 0, time.Duration(0)
+	if dur := p.Get("DURATION"); dur != nil {
+		if days, elapsed, err = icsDuration(dur.Value); err != nil {
+			return ICSComponent{}, err
 		}
+	} else if allDay {
+		days = 1
+	}
+	if !start.IsZero() {
 		if allDay {
 			e.AllDay = true
 			e.StartDate = start.Format(time.DateOnly)

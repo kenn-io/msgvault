@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImportICSInvalidLeavesNoSource(t *testing.T) {
+func TestImportICSRejectsInvalidFile(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st, dir := openTestStore(t)
 	path := filepath.Join(dir, "invalid.ics")
@@ -18,5 +18,5 @@ func TestImportICSInvalidLeavesNoSource(t *testing.T) {
 	requirements.Error(err)
 	sources, err := st.ListSources("ics")
 	requirements.NoError(err)
-	assertions.Empty(sources)
+	assertions.Len(sources, 1)
 }
