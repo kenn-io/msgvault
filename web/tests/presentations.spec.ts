@@ -30,6 +30,141 @@ const rows = [1, 2].map((id) => ({
   message_count: 1, anchor_message_id: id, conversation_id: id, match: {}
 }));
 
+test.describe('compact toolbar', () => {
+  test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+  async function expectOneRow(controls: import('@playwright/test').Locator) {
+    const boxes = await Promise.all([
+      controls.getByRole('button', { name: 'Filter', exact: true }).boundingBox(),
+      controls.getByRole('button', { name: 'View', exact: true }).boundingBox(),
+      controls.locator('.context-count').boundingBox()
+    ]);
+    const centers = boxes.map((box) => box!.y + box!.height / 2);
+    expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(2);
+  }
+
+  test('compact Messages and Files toolbars fit one row and View opens Files', async ({ page }) => {
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
+    await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));
+    await page.goto('/?workspace=everything');
+    for (const name of ['Messages', 'Files']) {
+      const main = page.getByRole('main', { name, exact: true });
+      await expect(main.getByRole('grid')).toBeVisible();
+      const controls = main.locator('.context-controls');
+      await expect(controls.getByRole('button', { name: 'View', exact: true })).toBeVisible();
+      await expectOneRow(controls);
+      await controls.getByRole('button', { name: 'View', exact: true }).click();
+      if (name === 'Messages') {
+        await page.getByRole('menuitemradio', { name: 'Files', exact: true }).click();
+        await expect(page).toHaveURL(/[?&]workspace=files(&|$)/);
+      } else {
+        await page.keyboard.press('Escape');
+        await expect(controls.getByRole('button', { name: 'View', exact: true })).toBeFocused();
+        await controls.getByRole('button', { name: 'Filter', exact: true }).click();
+        const dialog = page.getByRole('dialog', { name: 'Filter' });
+        await dialog.getByLabel('From', { exact: true }).fill('2026-07-01');
+        await dialog.getByLabel('To', { exact: true }).fill('2026-07-31');
+        await page.keyboard.press('Escape');
+        await expect(controls.getByRole('button', { name: 'Filter', exact: true })).toHaveText('Filter · 2');
+        await expect(controls.locator('.context-count')).toHaveText('1,234,567 files');
+        await expectOneRow(controls);
+      }
+    }
+  });
+
+  test('compact Files opens visual search setup from Filter', async ({ page }) => {
+    await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } }));
+    await page.goto('/?workspace=files');
+    const controls = page.locator('.context-controls');
+    await controls.getByRole('button', { name: 'Filter', exact: true }).click();
+    const setup = page.getByRole('dialog', { name: 'Filter' }).getByRole('button', { name: 'Set up', exact: true });
+    await expect(setup).toBeVisible();
+    await expectOneRow(controls);
+    await setup.click();
+    await expect.poll(async () => (await exploreHistoryState(page)).workspace).toBe('settings');
+    expect(await exploreHistoryState(page)).toMatchObject({ settingsCategory: 'search', settingsAuthority: 'visual_attachments' });
+  });
+
+  test('compact Files keeps visual search fields and their state in Filter', async ({ page }) => {
+    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
+    await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } }));
+    await page.goto('/?workspace=files');
+    const controls = page.locator('.context-controls');
+    const filter = controls.getByRole('button', { name: 'Filter', exact: true });
+    await expect(controls.getByRole('switch', { name: 'Visual search' })).toHaveCount(0);
+    await filter.click();
+    const dialog = page.getByRole('dialog', { name: 'Filter' });
+    await dialog.getByRole('switch', { name: 'Visual search' }).click();
+    const query = dialog.getByRole('searchbox', { name: 'Search attachment pixels' });
+    await expect(query).toBeVisible();
+    await expect(page.getByLabel('Query image')).toBeVisible();
+    await expect(page.getByText('The query is sent to the configured visual embedding provider.')).toBeVisible();
+    await expectOneRow(controls);
+    await query.fill('blue sky');
+    await expect(query).toHaveValue('blue sky');
+    await filter.click();
+    await expect(dialog).not.toBeVisible();
+    await filter.click();
+    await expect(query).toHaveValue('blue sky');
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(controls.getByRole('searchbox', { name: 'Search attachment pixels' })).toHaveValue('blue sky');
+  });
+
+  test('compact grouping and sort shortcuts open View', async ({ page }) => {
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
+    await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));
+    for (const workspace of ['everything', 'files']) {
+      await page.goto(`/?workspace=${workspace}`);
+      const grid = page.getByRole('grid', { name: workspace === 'files' ? 'Files results' : 'Messages results' });
+      await expect(grid).toBeVisible();
+      for (const key of ['g', 's']) {
+        await grid.focus();
+        await page.keyboard.press(key);
+        await expect(page.getByRole('menu', { name: 'View' })).toBeVisible();
+        await page.keyboard.press('Escape');
+      }
+    }
+  });
+
+  test('compact View keeps global shortcuts suspended while open', async ({ page }) => {
+    await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
+    await page.goto('/?workspace=everything');
+    await page.getByRole('button', { name: 'View', exact: true }).click();
+    await page.keyboard.press('f');
+    await expect(page.getByRole('menuitemradio', { name: 'Files', exact: true })).toBeFocused();
+    await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'false');
+    await page.keyboard.press('/');
+    await expect(page.getByRole('menu', { name: 'View' })).toBeVisible();
+    await expect(page.getByRole('searchbox', { name: 'Search messages' })).not.toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: 'View', exact: true })).toBeFocused();
+    await page.keyboard.press('f');
+    await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'true');
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: 'View', exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.getByRole('grid', { name: 'Messages results' }).focus();
+    await page.keyboard.press('f');
+    await expect(page.getByRole('button', { name: 'Filter', exact: true })).toHaveAttribute('aria-expanded', 'true');
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole('button', { name: 'View', exact: true })).toHaveAttribute('aria-expanded', 'false');
+  });
+
+});
+
+test('desktop Files keeps visual search and the three selects in the toolbar', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
+  await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } }));
+  await page.goto('/?workspace=files');
+  const controls = page.locator('.context-controls');
+  await expect(controls.getByRole('switch', { name: 'Visual search' })).toBeVisible();
+  await expect(controls.getByRole('combobox')).toHaveCount(3);
+  await expect(controls.getByRole('combobox', { name: 'Show as: Files' })).toBeVisible();
+});
+
 test('Show as Files opens the Files workspace with the same context, and Back returns', async ({ page }) => {
   const filePredicates: Array<Record<string, unknown>> = [];
   const savedViews: Array<Record<string, unknown>> = [];

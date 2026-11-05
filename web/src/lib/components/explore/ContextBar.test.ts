@@ -1,10 +1,92 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MEDIA } from '@kenn-io/kit-ui';
+import { createRawSnippet } from 'svelte';
 
 import { createAPIClient } from '../../api/client';
 import ContextBar from './ContextBar.svelte';
 
 const sort = { options: [{ value: 'newest', label: 'Newest first' }], value: 'newest' };
+
+it.each([true, false])('places extra controls in the Filter dialog only when compact is %s', async (compact) => {
+  const matchMedia = window.matchMedia.bind(window);
+  const spy = vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...matchMedia(query), matches: compact && query === MEDIA.compact }));
+  try {
+    const { container } = render(ContextBar, {
+      client: createAPIClient(vi.fn(async () => Response.json({ rows: [] }))),
+      messages: true, query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '20 files', sort,
+      filterExtra: createRawSnippet(() => ({ render: () => '<span>Filename filter</span>' })),
+      extraControls: createRawSnippet(() => ({ render: () => '<button>Visual search</button>' })),
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    expect(container.querySelector('.context-controls')?.textContent?.includes('Visual search')).toBe(!compact);
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
+    const dialog = screen.getByRole('dialog', { name: 'Filter' });
+    expect(dialog.textContent).toContain('Filename filter');
+    expect(dialog.textContent?.includes('Visual search')).toBe(compact);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+describe('ContextBar compact View menu', () => {
+  beforeEach(() => {
+    const matchMedia = window.matchMedia.bind(window);
+    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...matchMedia(query), matches: query === MEDIA.compact }));
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it('offers presentation, grouping, and sort in View', async () => {
+    const onPresentationChange = vi.fn();
+    const onAddGroup = vi.fn();
+    const onchange = vi.fn();
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '20 items',
+      sort: { options: [...sort.options, { value: 'oldest', label: 'Oldest first' }], value: 'newest', note: 'Archive order', onchange },
+      onPresentationChange, onAddGroup, onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    expect(screen.queryByRole('combobox', { name: 'Show as: Table' })).toBeNull();
+    const view = screen.getByRole('button', { name: 'View' });
+    await fireEvent.click(view);
+    expect(screen.getByRole('menuitemradio', { name: 'Table' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Labels (not available yet)' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitemradio', { name: 'Archive order' }).getAttribute('aria-disabled')).toBe('true');
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Timeline' }));
+    expect(onPresentationChange).toHaveBeenCalledWith('timeline');
+    expect(screen.queryByRole('menu')).toBeNull();
+    await fireEvent.click(view);
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Year' }));
+    expect(onAddGroup).toHaveBeenCalledWith('year');
+    await fireEvent.click(view);
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Oldest first' }));
+    expect(onchange).toHaveBeenCalledWith('oldest');
+  });
+
+  it('offers only Sort for a locked person scope', async () => {
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '', sort,
+      lockedFilter: { dimension: 'participant', values: ['1'] },
+      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent?.trim())).toEqual(['Newest first']);
+    expect(screen.queryByRole('menuitem', { name: 'Year' })).toBeNull();
+  });
+
+  it('keeps grouping controls and the removable chip when grouped without sort', async () => {
+    const onRemoveGroup = vi.fn();
+    render(ContextBar, {
+      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: ['year'], countLabel: '2 groups',
+      onAddGroup: vi.fn(), onRemoveGroup, onClearFilters: vi.fn(), onFiltersChange: vi.fn()
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    expect(screen.getByRole('menuitem', { name: 'Month' })).toBeDefined();
+    expect(screen.queryByRole('group', { name: 'Sort' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: 'Year' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Remove Year grouping' }));
+    expect(onRemoveGroup).toHaveBeenCalledWith(0);
+  });
+});
 
 describe('ContextBar presentation control', () => {
   it('shows presentation and sort choices and changes Table to Timeline', async () => {
