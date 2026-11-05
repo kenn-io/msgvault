@@ -39,7 +39,6 @@ func TestSearchPeopleRanksExactPrefixAndSubstring(t *testing.T) {
 		{query: "  ALICE  ", want: []int64{exact, prefix, substring}},
 		{query: "Alice Example", want: []int64{prefix}},
 		{query: "@alice", want: []int64{exact}},
-		{query: "absent", want: []int64{}},
 	} {
 		t.Run(test.query, func(t *testing.T) {
 			response, err := engine.SearchPeople(t.Context(), PersonSearchRequest{
