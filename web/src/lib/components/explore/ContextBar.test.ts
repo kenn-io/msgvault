@@ -58,35 +58,17 @@ describe('ContextBar compact View menu', () => {
     const view = screen.getByRole('button', { name: 'View' });
     await fireEvent.click(view);
     expect(screen.getByRole('menuitemradio', { name: 'Table' }).getAttribute('aria-checked')).toBe('true');
-    expect(screen.getByRole('menuitemradio', { name: 'Labels (not available yet)' }).getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByRole('menuitem', { name: 'Labels (not available yet)' }).getAttribute('aria-disabled')).toBe('true');
     expect(screen.getByRole('menuitemradio', { name: 'Archive order' }).getAttribute('aria-disabled')).toBe('true');
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Timeline' }));
     expect(onPresentationChange).toHaveBeenCalledWith('timeline');
     expect(screen.queryByRole('menu')).toBeNull();
     await fireEvent.click(view);
-    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Year' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Year' }));
     expect(onAddGroup).toHaveBeenCalledWith('year');
     await fireEvent.click(view);
     await fireEvent.click(screen.getByRole('menuitemradio', { name: 'Oldest first' }));
     expect(onchange).toHaveBeenCalledWith('oldest');
-  });
-
-  it.each([
-    { label: 'with sort', sort, groupingChain: [] as const },
-    { label: 'without sort', sort: undefined, groupingChain: ['year'] as const }
-  ])('handles a locked person scope $label', async ({ sort: scopeSort, groupingChain }) => {
-    render(ContextBar, {
-      client: createAPIClient(vi.fn()), query: '', searchMode: 'full_text', filters: [], groupingChain: [...groupingChain], countLabel: '', sort: scopeSort,
-      lockedFilter: { dimension: 'participant', values: ['1'] },
-      onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
-    });
-    if (!scopeSort) {
-      expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
-      return;
-    }
-    await fireEvent.click(screen.getByRole('button', { name: 'View' }));
-    expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent?.trim())).toEqual(['Newest first']);
-    expect(screen.queryByRole('menuitem', { name: 'Year' })).toBeNull();
   });
 
   it('keeps grouping choices when grouped without sort', async () => {
@@ -95,9 +77,9 @@ describe('ContextBar compact View menu', () => {
       onAddGroup: vi.fn(), onRemoveGroup: vi.fn(), onClearFilters: vi.fn(), onFiltersChange: vi.fn()
     });
     await fireEvent.click(screen.getByRole('button', { name: 'View' }));
-    expect(screen.getByRole('menuitemradio', { name: 'Month' })).toBeDefined();
+    expect(screen.getByRole('menuitem', { name: 'Month' })).toBeDefined();
     expect(screen.queryByRole('group', { name: 'Sort' })).toBeNull();
-    expect(screen.getByRole('menuitemradio', { name: 'Year' }).getAttribute('aria-checked')).toBe('true');
+    expect(screen.queryByRole('menuitem', { name: 'Year' })).toBeNull();
   });
 });
 

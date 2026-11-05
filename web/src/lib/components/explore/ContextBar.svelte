@@ -33,7 +33,6 @@
     lockedFilter = undefined,
     filterExtra = undefined,
     extraControls = undefined,
-    extraActive = false,
     query,
     searchMode,
     filters,
@@ -45,7 +44,6 @@
     onAddGroup,
     onRemoveGroup,
     onClearFilters,
-    onClearExtra = undefined,
     onFiltersChange,
     onRemoveQuery = undefined,
     onRemoveFilter = undefined,
@@ -56,7 +54,6 @@
     lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;
-    extraActive?: boolean;
     query: string;
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
@@ -68,7 +65,6 @@
     onAddGroup: (dimension: ExploreGroupDimension) => void;
     onRemoveGroup: (index: number) => void;
     onClearFilters: () => void;
-    onClearExtra?: () => void;
     onFiltersChange: (filters: ExploreFilter[]) => void;
     onRemoveQuery?: () => void;
     onRemoveFilter?: (index: number) => void;
@@ -126,7 +122,7 @@
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} {lockedFilter} extraActive={extraInPopover && extraActive} onChange={onFiltersChange} onClear={() => { onClearFilters(); if (extraInPopover) onClearExtra?.(); }} extra={extraInPopover ? popoverExtra : filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={onClearFilters} extra={extraInPopover ? popoverExtra : filterExtra} />
     {:else}
     <Button
       size="sm"
@@ -137,10 +133,8 @@
       onclick={() => { filtersOpen = !filtersOpen; }}
     />
     {/if}
-    {#if compact.current}
-      {#if !lockedFilter || sort}
-        <ViewMenu scoped={Boolean(lockedFilter)} {presentation} {presentationOptions} groupOptions={groupingOptions({ includeUnavailable: true })} {groupingChain} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
-      {/if}
+    {#if compact.current && !lockedFilter}
+      <ViewMenu {presentation} {presentationOptions} {groupOptions} {sort} {sortOptions} {selectPresentation} {selectGrouping} {selectSort} />
     {:else}
     {#if !lockedFilter}
     <SelectDropdown

@@ -117,7 +117,7 @@
     expectedAuthority?: string;
     embedded?: boolean;
     showHeader?: boolean;
-    toolbar?: Snippet<[Snippet, () => void, boolean]>;
+    toolbar?: Snippet<[Snippet]>;
     fileCount?: number | null;
     fileCountLoading?: boolean;
     sort: FileSearchSort;
@@ -223,8 +223,6 @@
   let visualImageBase64 = $state('');
   let visualImageName = $state('');
   let visualImageRevision = $state(0);
-  let visualImageSelection = 0;
-  let visualImageInput = $state<HTMLInputElement>();
   let completingRestoration = '';
   // The restoration epoch that has not been acknowledged yet. It outlives a
   // cursor failure inside restoreDeepState so retry and reload can resume the
@@ -760,7 +758,6 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     if (!file) return;
-    const selection = ++visualImageSelection;
     if (file.size > 20 * 1024 * 1024) {
       error = 'Visual query images must be 20 MiB or smaller.';
       rejectedImages += 1;
@@ -773,7 +770,6 @@
       reader.onload = () => resolve(String(reader.result));
       reader.readAsDataURL(file);
     });
-    if (selection !== visualImageSelection) return;
     submitted = true;
     visualQuery = visualQueryDraft = '';
     visualImageName = file.name;
@@ -786,13 +782,6 @@
     visualImageBase64 = '';
     visualImageName = '';
     visualImageRevision += 1;
-  }
-  function clearVisualSearch(): void {
-    clearTimeout(visualQueryDebounce);
-    visualQuery = visualQueryDraft = '';
-    visualImageSelection += 1;
-    removeVisualImage();
-    if (visualImageInput) visualImageInput.value = '';
   }
 </script>
 
@@ -867,7 +856,6 @@
         Query image
         <input
           type="file"
-          bind:this={visualImageInput}
           accept="image/jpeg,image/png,image/webp"
           onchange={(event) => void chooseVisualImage(event)}
         />
@@ -881,7 +869,7 @@
   </div>
   {/snippet}
   {#if toolbar}
-    {@render toolbar(controls, clearVisualSearch, hostedVisualSearch && Boolean(visualQuery.trim() || visualImageBase64))}
+    {@render toolbar(controls)}
   {:else}
     <div class="embedded-controls">
       <div class="embedded-filters">
