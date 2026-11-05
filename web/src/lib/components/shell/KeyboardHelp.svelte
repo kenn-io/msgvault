@@ -34,7 +34,7 @@
     </div>
     <div class="keyboard-help-list" aria-live="polite">
       {#if filtered.length === 0}
-        <EmptyState title={`No shortcuts match "${query}"`}>
+        <EmptyState title={`No shortcuts match "${query.trim()}"`}>
           <Button label="Search commands instead" onclick={() => onOpenCommands(query)} />
         </EmptyState>
       {:else}

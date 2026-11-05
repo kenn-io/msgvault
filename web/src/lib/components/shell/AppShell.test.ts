@@ -148,13 +148,13 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
-    await fireEvent.click(screen.getByRole('button', { name: 'Help', exact: true }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
     await fireEvent.input(screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' }), { target: { value: 'sources' } });
     await fireEvent.click(screen.getByRole('button', { name: 'Search commands instead' }));
     const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
     expect((within(palette).getByRole('combobox') as HTMLInputElement).value).toBe('sources');
-    expect(within(palette).getByRole('option', { name: 'Sources', exact: true })).toBeDefined();
-    expect(within(palette).queryByRole('option', { name: 'People', exact: true })).toBeNull();
+    expect(within(palette).getByRole('option', { name: 'Sources' })).toBeDefined();
+    expect(within(palette).queryByRole('option', { name: 'People' })).toBeNull();
     rendered.unmount(); state.destroy();
   });
 
@@ -162,7 +162,7 @@ describe('AppShell', () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
     const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
-    await fireEvent.click(screen.getByRole('button', { name: 'Help', exact: true }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Help' }));
     const search = screen.getByRole('searchbox', { name: 'Search keyboard shortcuts' });
     await fireEvent.input(search, { target: { value: 'shift' } });
     await fireEvent.keyDown(search, { key: 'k', ctrlKey: true });

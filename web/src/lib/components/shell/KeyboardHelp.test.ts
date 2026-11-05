@@ -82,7 +82,7 @@ describe('keyboard command registry', () => {
     expect(screen.queryByText('Open filters')).toBeNull();
   });
 
-  it('shows review chords and offers the query to command search when no shortcut matches', async () => {
+  it.each(['zzzxxyy', '  zzzxxyy  '])('shows review chords and offers the query %j to command search when no shortcut matches', async (query) => {
     const onOpenCommands = vi.fn();
     render(KeyboardHelp, {
       commands: createCommandRegistry(handlersFor(COMMAND_DEFINITIONS.map(({ id }) => id))),
@@ -100,10 +100,10 @@ describe('keyboard command registry', () => {
     await fireEvent.input(search, { target: { value: 'Ctrl K' } });
     expect(screen.getByText('Open command palette', { selector: 'dt' })).toBeDefined();
     expect(screen.queryByText('Open filters')).toBeNull();
-    await fireEvent.input(search, { target: { value: 'zzzxxyy' } });
+    await fireEvent.input(search, { target: { value: query } });
     expect(screen.getByText('No shortcuts match "zzzxxyy"')).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Search commands instead' }));
-    expect(onOpenCommands).toHaveBeenCalledExactlyOnceWith('zzzxxyy');
+    expect(onOpenCommands).toHaveBeenCalledExactlyOnceWith(query);
   });
 });
 
