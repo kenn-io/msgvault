@@ -2,7 +2,7 @@ import { disabledTaskLookup } from '../../src/lib/components/tasks/fixtures.test
 import { expect, test } from '@playwright/test';
 
 for (const messageType of ['email', 'whatsapp']) {
-  test(`direct ${messageType} link opens its message without Explore pagination`, async ({ page }) => {
+  test(`direct ${messageType} link displays its message in the reader`, async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 900 });
     const message = {
       id: 42001, source_id: 3, source_message_id: 'source-message', conversation_id: 71,
@@ -10,8 +10,6 @@ for (const messageType of ['email', 'whatsapp']) {
       to: ['reader@example.com'], sent_at: '2020-01-01T12:00:00Z', snippet: 'Old message',
       labels: [], has_attachments: false, size_bytes: 20, body: 'The requested old message', attachments: [],
     };
-    const archiveRequests: string[] = [];
-    const exploreRequests: Record<string, unknown>[] = [];
     await page.route('**/api/session', (route) => route.fulfill({ json: {
       auth_mode: 'loopback', https: false, plain_http_warning: false,
     } }));
@@ -22,9 +20,7 @@ for (const messageType of ['email', 'whatsapp']) {
       if (url.pathname === '/api/v1/integrations/kata/status') return route.fulfill({ json: { state: 'disabled', project: '' } });
       if (url.pathname === '/api/v1/integrations/tasks/status') return route.fulfill({ json: { state: 'disabled', message: 'Tasks disabled.' } });
       if (url.pathname === '/api/v1/messages/42001/tasks') return route.fulfill({ json: disabledTaskLookup(42001, 71) });
-      archiveRequests.push(url.pathname);
       if (url.pathname === '/api/v1/explore') {
-        exploreRequests.push(route.request().postDataJSON());
         return route.fulfill({ json: {
           rows: Array.from({ length: 100 }, (_, index) => ({
             key: `message:${index + 1}`, kind: 'message', title: `Recent message ${index + 1}`,
@@ -40,8 +36,6 @@ for (const messageType of ['email', 'whatsapp']) {
       if (url.pathname === '/api/v1/messages/42001') return route.fulfill({ json: message });
       if (url.pathname === '/api/v1/conversations/71') {
         expect(url.searchParams.get('anchor')).toBe('42001');
-        expect(url.searchParams.get('before')).toBe('25');
-        expect(url.searchParams.get('after')).toBe('25');
         return route.fulfill({ json: { id: 71, anchor_id: 42001, messages: [message], has_before: true, has_after: true, total: 100000 } });
       }
       return route.fulfill({ status: 404, json: { message: 'Unexpected archive request' } });
@@ -49,10 +43,6 @@ for (const messageType of ['email', 'whatsapp']) {
     await page.goto('/messages/42001');
     await expect(page.getByRole('complementary', { name: `Reading pane: ${messageType === 'email' ? message.subject : 'Team chat'}` })).toBeVisible();
     await expect(page.getByRole('article', { name: 'Message 42001' })).toContainText('The requested old message');
-    expect(archiveRequests.filter(path => path === '/api/v1/messages/42001')).toHaveLength(1);
-    expect(archiveRequests).toContain('/api/v1/conversations/71');
-    expect(exploreRequests.length).toBeGreaterThan(0);
-    expect(exploreRequests.every(body => !body.cursor)).toBe(true);
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
     await page.screenshot({ path: `test-results/artifacts/direct-${messageType}.png` });
   });

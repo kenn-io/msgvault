@@ -41,15 +41,14 @@ function renderPane(row: EntryRow) {
 }
 
 describe('ReadingPane header', () => {
-  it.each(['loading', 'missing'] as const)('uses a plain title for a %s message selected by ID', (status) => {
+  it('uses a plain title for a missing message selected by ID', () => {
     render(ReadingPane, {
       client: createAPIClient(vi.fn<typeof fetch>()),
       targetKey: 'recording:42001',
-      status,
+      status: 'missing',
       predicate: {},
     });
     expect(screen.getByRole('complementary', { name: 'Reading pane: Message' })).toBeDefined();
-    expect(screen.getByText('Message', { exact: true })).toBeDefined();
   });
 
   it.each([

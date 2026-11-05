@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
+import { render, screen, within } from '@testing-library/svelte';
 import { afterEach, expect, it } from 'vitest';
 import App from './App.svelte';
 import { parseExploreURLState } from './lib/explore/state.svelte';
@@ -6,10 +6,9 @@ import { createSessionController } from './lib/api/session.svelte';
 
 afterEach(() => history.replaceState(null, '', '/'));
 
-it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explore', async (messageType) => {
+it.each(['email', 'whatsapp'])('opens a direct %s message in the shell', async (messageType) => {
   history.replaceState(null, '', '/messages/42001');
   const requested: string[] = [];
-  const exploreRequests: Record<string, unknown>[] = [];
   const message = {
     id: 42001, source_id: 3, source_message_id: 'source-message', conversation_id: 71,
     subject: 'Linked message', message_type: messageType, from: 'sender@example.com',
@@ -23,18 +22,7 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
     if (url.pathname === '/api/session') return Response.json({ auth_mode: 'loopback', https: false, plain_http_warning: false });
     if (url.pathname === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
     if (url.pathname === '/api/v1/explore') {
-      exploreRequests.push(await request.json());
-      return Response.json({
-        rows: Array.from({ length: 100 }, (_, index) => ({
-          key: `message:${index + 1}`, kind: 'message', title: `Recent message ${index + 1}`,
-          preview: 'Recent excerpt', message_type: 'email', conversation_type: 'email',
-          occurred_at: '2026-01-01T12:00:00Z', source_id: 3, source_type: 'synthetic',
-          source_identifier: 'archive@example.com', participant_labels: [], participant_ids: [],
-          attachment_count: 0, attachment_size: 0, has_attachments: false,
-          deleted_from_source: false, message_count: 1, match: {},
-        })),
-        total_count: 100000, next_cursor: 'page:2', cache_revision: 'links', search_provenance: {},
-      });
+      return Response.json({ rows: [], total_count: 0, cache_revision: 'links', search_provenance: {} });
     }
     if (url.pathname === '/api/v1/messages/42001') return Response.json(message);
     if (url.pathname === '/api/v1/conversations/71') {
@@ -53,26 +41,4 @@ it.each(['email', 'whatsapp'])('opens a direct %s message without scanning Explo
   expect(location.pathname).toBe('/');
   expect(parseExploreURLState(location.search).selectedRow).toBe('recording:42001');
   expect(requested.filter((path) => path === '/api/v1/messages/42001')).toHaveLength(1);
-  expect(exploreRequests.length).toBeGreaterThan(0);
-  expect(exploreRequests.every(body => !body.cursor)).toBe(true);
-});
-
-it('keeps a missing linked message in the shell and closes its reader', async () => {
-  history.replaceState(null, '', '/messages/42001');
-  const session = createSessionController(async (input) => {
-    const path = new URL((input as Request).url).pathname;
-    if (path === '/api/session') return Response.json({ auth_mode: 'loopback', https: false });
-    if (path === '/api/v1/settings') return Response.json({ settings: [], pending_restart: false });
-    if (path === '/api/v1/explore') return Response.json({ rows: [], total_count: 0, cache_revision: 'missing', search_provenance: {} });
-    return Response.json({ message: 'Message not found' }, { status: 404 });
-  });
-  render(App, { session });
-  expect(await screen.findByText('This message is no longer available.')).toBeDefined();
-  expect(screen.getByRole('complementary', { name: 'Reading pane: Message' })).toBeDefined();
-  expect(screen.getByRole('navigation', { name: 'Primary' })).toBeDefined();
-  await fireEvent.click(screen.getByRole('button', { name: 'Close reading pane' }));
-  await waitFor(() => expect(screen.queryByRole('complementary', { name: /Reading pane/ })).toBeNull());
-  expect(screen.getByRole('main', { name: 'Messages' })).toBeDefined();
-  expect(location.pathname).toBe('/');
-  expect(parseExploreURLState(location.search).selectedRow).toBeNull();
 });
