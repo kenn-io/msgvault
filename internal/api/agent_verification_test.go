@@ -116,6 +116,8 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 		{"code", "Account", "Your code is 482913", ""},
 		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>"},
 		{"HTML beside text", "Account", "Ordinary text", "<p>Your code is 482913</p>"},
+		{"HTML block code", "Your verification code", "", "<p>482913</p><p>5550100</p>"},
+		{"HTML inline code", "Account", "", "Your verification code is <b>482</b>913"},
 		{"ordinary", "Project update", "Order 1234567 shipped. Log in to track it. © 2026", "<p>Project update</p>"},
 		{"uncapped detail", "Account", strings.Repeat("x", 256*1024) + " Your code is 482913", ""},
 	} {
@@ -210,9 +212,9 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 
 func TestAgentVerificationFields(t *testing.T) {
 	for _, tc := range []struct{ name, subject, snippet, title, text, filename string }{
-		{name: "title cue", subject: "482913", title: "Your code"},
-		{name: "body cue", subject: "482913", text: "Your code"},
-		{name: "filename cue", subject: "Your code", filename: "482913.png"},
+		{name: "title cue", subject: "482913", title: "Your verification code"},
+		{name: "body cue", subject: "482913", text: "Your verification code"},
+		{name: "filename cue", subject: "Your verification code", filename: "482913.png"},
 		{name: "thread snippet", subject: "482913", snippet: "Your verification code"},
 		{name: "metadata", subject: "Your code is 482913"},
 		{name: "title", title: "Your code is 482913"},

@@ -24,8 +24,10 @@ func TestIs(t *testing.T) {
 		{"same line sentence", Content{Text: "Here is your verification code. 482913"}, false},
 		{"too many lines", Content{Text: "Your code:\n\n\n\n\n482913"}, false},
 		{"reverse line break", Content{Text: "482913\nis your verification code"}, false},
-		{"title context", Content{Title: "Your code", Text: "482913"}, true},
-		{"filename context", Content{Text: "Your code", Filenames: []string{"482913.txt"}}, true},
+		{"title context", Content{Title: "Your verification code", Text: "482913"}, true},
+		{"filename context", Content{Text: "Your verification code", Filenames: []string{"482913.txt"}}, true},
+		{"bare title cue", Content{Title: "Your code", Text: "482913"}, false},
+		{"bare filename cue", Content{Text: "Your code", Filenames: []string{"482913.txt"}}, false},
 		{"unrelated title", Content{Title: "Code review", Filenames: []string{"123456.txt"}}, false},
 		{"unrelated trailing cue", Content{Text: "Order 123456 shipped. Read about your verification code"}, false},
 		{"whole token", Content{Text: "Your code is 1234AB56"}, true},
@@ -40,8 +42,10 @@ func TestIs(t *testing.T) {
 		{"entity repeat", Content{HTML: "<p>Your code is &#52;&#56;&#50;&#57;&#49;&#51;</p>"}, true},
 		{"nbsp repeat", Content{HTML: "<p>Your code is 4&nbsp;8&nbsp;2&nbsp;9&nbsp;1&nbsp;3</p>"}, true},
 		{"cells", Content{HTML: "Your verification code is <td>4</td><td>8</td><td>2</td><td>9</td><td>1</td><td>3</td>"}, true},
+		{"long cell number", Content{HTML: "Your verification code is " + strings.Repeat("<td>4</td>", 11)}, false},
 		{"mixed", Content{Text: "Your code is K7M2-9QXA"}, true},
-		{"subject cue", Content{Subject: "Your code", Text: "482913"}, true},
+		{"subject cue", Content{Subject: "Your verification code", Text: "482913"}, true},
+		{"bare subject cue", Content{Subject: "Your code", Text: "482913"}, false},
 		{"PIN year", Content{Text: "Your code is 2026"}, true},
 		{"reverse", Content{Text: "482913 is your verification code"}, true},
 		{"Unicode window", Content{Text: "code " + strings.Repeat("\u00a0", 59) + "482913"}, true},
@@ -71,5 +75,35 @@ func BenchmarkIsCueDense(b *testing.B) {
 	content := Content{Text: strings.Repeat("code 123456 ", 2000)}
 	for b.Loop() {
 		Is(content)
+	}
+}
+
+func TestIsHTMLBlockBoundaries(t *testing.T) {
+	for _, tag := range []string{"p", "div", "br", "li", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "table"} {
+		t.Run(tag, func(t *testing.T) {
+			assert.True(t, Is(Content{Subject: "Your verification code", HTML: "<" + tag + ">482913</" + tag + "><" + tag + ">5550100</" + tag + ">"}))
+		})
+	}
+	assert.True(t, Is(Content{HTML: "Your verification code is <b>482</b>913"}))
+	assert.True(t, Is(Content{Subject: "Your verification code", HTML: "<p>482913</p><p>555-0100</p>"}))
+}
+
+func TestIsCrossFieldCue(t *testing.T) {
+	for _, tc := range []struct {
+		subject, text string
+	}{
+		{"Promo code", "Order 1234567 shipped"},
+		{"Update the code", "Invoice 123456 attached"},
+		{"Re: fix the code", "555 1234"},
+		{"Your PIN", "Account ending 123456"},
+	} {
+		t.Run(tc.subject, func(t *testing.T) {
+			assert.False(t, Is(Content{Subject: tc.subject, Text: tc.text}))
+		})
+	}
+	for _, cue := range []string{"verification code", "security code", "login code", "sign-in code", "confirmation code", "authentication code", "one-time code", "passcode", "OTP", "2FA"} {
+		t.Run(cue, func(t *testing.T) {
+			assert.True(t, Is(Content{Subject: "Your " + cue, Text: "482913"}))
+		})
 	}
 }
