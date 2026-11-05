@@ -35,8 +35,8 @@ func acceptedICSSnapshot(q querier, sourceID int64, items []preparedICS, summary
 					return nil, fmt.Errorf("decode ICS family metadata: %w", err)
 				}
 				organizer = family.InviteOrganizer
+				organizers[key] = organizer
 			}
-			organizers[key] = organizer
 		}
 		if item.fromEmail && organizer != "" && !strings.EqualFold(c.OrganizerEmail, organizer) {
 			summary.Diagnostics = append(summary.Diagnostics, fmt.Sprintf("calendar UID %q update ignored: ORGANIZER does not match invite_organizer", c.UID))
@@ -44,7 +44,6 @@ func acceptedICSSnapshot(q querier, sourceID int64, items []preparedICS, summary
 		}
 		if organizer == "" {
 			organizer = c.OrganizerEmail
-			organizers[key] = organizer
 		}
 		item.meta.InviteOrganizer = organizer
 		accepted = append(accepted, item)
