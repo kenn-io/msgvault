@@ -59,32 +59,33 @@ func TestCalendarArchiveToolsPermissionGatedReads(t *testing.T) {
 	}
 }
 
-func TestCalendarArchiveDefaultPageSize(t *testing.T) {
-	st := &calendarEventsTestBackend{}
-	result := rawCallTool(t, ServeOptions{CalEvents: st}, ToolListCalendarEvents, map[string]any{"from": "2026-01-01T00:00:00Z", "to": "2028-01-01T00:00:00Z"})
-	require.NotEqual(t, true, result["isError"], fmt.Sprint(result["content"]))
-	assert.Equal(t, new(100), st.query.Limit)
-}
-
 func TestCalendarArchiveRejectsInvalidArguments(t *testing.T) {
-	st := &calendarEventsTestBackend{}
 	for _, tt := range []struct {
-		name, tool string
-		args       map[string]any
-		want       string
+		name  string
+		args  map[string]any
+		want  string
+		limit *int
 	}{
-		{"from", ToolListCalendarEvents, map[string]any{"from": "", "to": "2027-03-03T00:00:00Z"}, ""},
-		{"to", ToolListCalendarEvents, map[string]any{"from": "2027-03-01T00:00:00Z", "to": ""}, ""},
-		{"string limit", ToolListCalendarEvents, map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-03T00:00:00Z", "limit": "1"}, "integer"},
-		{"fractional limit", ToolListCalendarEvents, map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-03T00:00:00Z", "limit": 1.5}, "integer"},
-		{"numeric cursor", ToolListCalendarEvents, map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-03T00:00:00Z", "cursor": 1}, "string"},
+		{"no limit", map[string]any{"from": "2026-01-01T00:00:00Z", "to": "2028-01-01T00:00:00Z"}, "", new(100)},
+		{"from", map[string]any{"from": "", "to": "2027-03-03T00:00:00Z"}, "", nil},
+		{"to", map[string]any{"from": "2027-03-01T00:00:00Z", "to": ""}, "", nil},
+		{"string limit", map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-03T00:00:00Z", "limit": "1"}, "integer", nil},
+		{"fractional limit", map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-03T00:00:00Z", "limit": 1.5}, "integer", nil},
+		{"numeric cursor", map[string]any{"from": "2027-03-01T00:00:00Z", "to": "2027-03-03T00:00:00Z", "cursor": 1}, "string", nil},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			result := rawCallTool(t, ServeOptions{CalEvents: st}, tt.tool, tt.args)
-			assert.Equal(t, true, result["isError"], fmt.Sprint(result["content"]))
-			assert.NotEmpty(t, result["content"])
+			assertions, requirements := assert.New(t), require.New(t)
+			st := &calendarEventsTestBackend{}
+			result := rawCallTool(t, ServeOptions{CalEvents: st}, ToolListCalendarEvents, tt.args)
+			if tt.limit != nil {
+				requirements.NotEqual(true, result["isError"], fmt.Sprint(result["content"]))
+				assertions.Equal(tt.limit, st.query.Limit)
+				return
+			}
+			assertions.Equal(true, result["isError"], fmt.Sprint(result["content"]))
+			assertions.NotEmpty(result["content"])
 			if tt.want != "" {
-				assert.Contains(t, fmt.Sprint(result["content"]), tt.want)
+				assertions.Contains(fmt.Sprint(result["content"]), tt.want)
 			}
 		})
 	}
