@@ -29,7 +29,7 @@ const appleMarkerSchema = `
 	CREATE TABLE Z_METADATA (Z_VERSION INTEGER PRIMARY KEY, Z_UUID VARCHAR(255), Z_PLIST BLOB);
 `
 
-func TestImportAppleCompletesWithFreshnessAndChatMarkers(t *testing.T) {
+func TestImportAppleCompletesAndUpdatesSourceFreshness(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	st := testutil.NewTestStore(t)
@@ -42,7 +42,7 @@ func TestImportAppleCompletesWithFreshnessAndChatMarkers(t *testing.T) {
 	require.NoError(err)
 	require.True(before.LastSyncAt.Valid)
 
-	_, err = NewImporter(st, nil).Import(context.Background(), createAppleMarkerFixture(t), opts)
+	_, err = NewImporter(st, nil).Import(context.Background(), createAppleChatFixture(t), opts)
 	require.NoError(err)
 	after, err := st.GetSourceByID(source.ID)
 	require.NoError(err)
