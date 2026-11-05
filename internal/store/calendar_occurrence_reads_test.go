@@ -141,6 +141,7 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 	}{
 		{count: 0, name: "missing bounds", state: "missing bounds"},
 		{count: 2, name: "plain generated"},
+		{count: 1, name: "cancelled master", state: "cancelled master", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{count: 1, name: "plain single", state: "single"},
 		{count: 2, name: "single overridden at own start", state: "single overridden", fields: `"start":{"dateTime":"2027-03-12T19:00:00Z"},"end":{"dateTime":"2027-03-12T20:00:00Z"}`},
 		{count: 2, name: "single cancelled at own start", state: "single overridden", fields: `"status":"cancelled"`, content: masterContent},
@@ -240,9 +241,24 @@ func TestListedRefsOpenToSameOccurrence(t *testing.T) {
 				requirements.NoError(err)
 			}
 			from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
+			var removedRef string
+			if tc.state == "cancelled master" {
+				before, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
+				requirements.NoError(err)
+				requirements.Len(before.Occurrences, 2)
+				removedRef = before.Occurrences[0].Ref
+				assertions.Equal(fmt.Sprintf("evt:%d@20270302T170000Z", master), removedRef)
+				_, err = st.GetCalendarOccurrenceContext(t.Context(), removedRef)
+				requirements.NoError(err)
+				requirements.NoError(st.SetMessageMetadata(master, sql.NullString{String: `{"calendar_id":"calendar@example.com","status":"cancelled"}`, Valid: true}))
+			}
 			page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 1, 0)})
 			requirements.NoError(err)
 			requirements.Len(page.Occurrences, tc.count)
+			if removedRef != "" {
+				_, err := st.GetCalendarOccurrenceContext(t.Context(), removedRef)
+				requirements.ErrorIs(err, ErrCalendarOccurrenceNotFound)
+			}
 			if tc.name == "sparse cancellation under unsupported master" {
 				detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", exception))
 				requirements.NoError(err)
