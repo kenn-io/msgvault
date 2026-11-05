@@ -110,6 +110,10 @@ type MessagePersistData struct {
 	MIMEAttachmentReplacement *[]AttachmentWrite
 	FTS                       *FTSDoc
 	SyncRunItem               *SyncRunItem
+	// EmailInReplyTo is the parent Message-ID an email names. The persist
+	// transaction adds it to metadata as email_in_reply_to when metadata
+	// holds no parent yet, after any Metadata replacement.
+	EmailInReplyTo string
 }
 
 // MessageIdentityGuard binds repair persistence to the exact archive row that
@@ -2488,6 +2492,11 @@ func (s *Store) persistMessageWith(
 	if data.Metadata != nil {
 		if err := setMessageMetadataWith(q, s.dialect, messageID, *data.Metadata); err != nil {
 			return 0, fmt.Errorf("set metadata: %w", err)
+		}
+	}
+	if data.EmailInReplyTo != "" && message.MessageType == MessageTypeEmail {
+		if _, err := s.addEmailReplyFactTx(ctx, tx, message.SourceID, messageID, data.EmailInReplyTo); err != nil {
+			return 0, err
 		}
 	}
 
