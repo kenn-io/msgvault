@@ -956,3 +956,36 @@ func TestImportMbox_CheckpointAdvancesPastReaderErrors(t *testing.T) {
 	require.NoError(json.Unmarshal([]byte(cursor), &cp), "unmarshal checkpoint")
 	require.Equal(wantOffset, cp.Offset, "checkpoint offset")
 }
+
+// TestImportMboxLinksReplies covers an offline import that records In-Reply-To
+// but never links it, including a reply stored before its parent and a header
+// that follows the parent ID with a comment.
+func TestImportMboxLinksReplies(t *testing.T) {
+	testutil.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	assert := assert.New(t)
+	require := require.New(t)
+	tmp := t.TempDir()
+	st := testutil.NewSQLiteTestStoreAt(t, filepath.Join(tmp, "msgvault.db"))
+
+	reply := email.NewMessage().From("Sender <sender@example.com>").To("owner@example.com").
+		Subject("Re: Plan").Header("Message-ID", "<reply@example.test>").
+		Header("In-Reply-To", "<parent@example.test> (Owner's message of Mon)").
+		Body("Reply.\n").Bytes()
+	parent := email.NewMessage().From("Owner <owner@example.com>").To("sender@example.com").
+		Subject("Plan").Header("Message-ID", "<parent@example.test>").Body("Parent.\n").Bytes()
+	mboxPath := filepath.Join(tmp, "replies.mbox")
+	separator := "From sender@example.com Mon Jan 1 12:00:00 2024\n"
+	require.NoError(os.WriteFile(mboxPath, []byte(separator+string(reply)+"\n"+separator+string(parent)), 0600))
+
+	_, err := ImportMbox(t.Context(), st, mboxPath, MboxImportOptions{
+		SourceType: "mbox", Identifier: "owner@example.com", NoResume: true,
+	})
+	require.NoError(err, "import mbox")
+
+	var parentID int64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM messages WHERE rfc822_message_id = 'parent@example.test'`).Scan(&parentID))
+	var link sql.NullInt64
+	require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT reply_to_message_id FROM messages
+		WHERE rfc822_message_id = 'reply@example.test'`).Scan(&link))
+	assert.Equal(sql.NullInt64{Int64: parentID, Valid: true}, link)
+}

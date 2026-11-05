@@ -1252,7 +1252,12 @@ func (s *Syncer) runWithSyncExecution(
 	if src != nil {
 		rederive.Heal(ctx, s.logger, s.store, src)
 	}
-	return run(execution)
+	summary, err = run(execution)
+	if err == nil && src != nil {
+		// Link this run's replies now rather than at the next sync's Heal.
+		rederive.LinkEmailReplies(ctx, s.logger, s.store, src)
+	}
+	return summary, err
 }
 
 // RecoverExpiredHistory rebuilds the archive from a complete Gmail listing,
@@ -1754,6 +1759,7 @@ type messageData struct {
 	relayValue        string
 	originalMessageID string // Parsed identity evidence, before omission from new projections.
 	metadata          *sql.NullString
+	emailInReplyTo    string // Canonical In-Reply-To parent of an email, or empty.
 	message           *store.Message
 	threadID          string
 	conversationType  string
@@ -1954,9 +1960,18 @@ func (s *Syncer) prepareMessage(
 		msg.SentAt = sql.NullTime{Time: resolvedDate, Valid: true}
 	}
 
+	// Chat messages keep their provider threading; only email gets a parent.
+	var inReplyTo string
+	if messageType == store.MessageTypeEmail {
+		inReplyTo = mime.ReplyParentID(parsed.InReplyTo)
+	}
 	var metadata *sql.NullString
 	if origin := s.imapContentOrigin(raw.ID); s.opts.SourceType == sourceTypeIMAP && origin != "" {
-		encoded, err := json.Marshal(imapMessageMetadata{ContentOrigin: origin}, json.Deterministic(true))
+		// This metadata replaces the stored object, so it carries the
+		// parent of the same snapshot.
+		encoded, err := json.Marshal(imapMessageMetadata{
+			ContentOrigin: origin, EmailInReplyTo: inReplyTo,
+		}, json.Deterministic(true))
 		if err != nil {
 			return nil, fmt.Errorf("encode IMAP content origin: %w", err)
 		}
@@ -1971,6 +1986,7 @@ func (s *Syncer) prepareMessage(
 		relayType: relayType, relayValue: relayValue,
 		originalMessageID: originalMessageID,
 		metadata:          metadata,
+		emailInReplyTo:    inReplyTo,
 		message:           msg,
 		threadID:          threadID,
 		conversationType:  conversationType,
@@ -2044,14 +2060,15 @@ func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap
 	}
 	// Publish the search document with RAW before interruptible file I/O.
 	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
-		Message:     data.message,
-		Metadata:    data.metadata,
-		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
-		BodyHTML:    sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
-		RawMIME:     data.rawMIME,
-		Recipients:  recipientSets,
-		LabelIDs:    labelIDs,
-		SyncRunItem: resolution,
+		Message:        data.message,
+		Metadata:       data.metadata,
+		EmailInReplyTo: data.emailInReplyTo,
+		BodyText:       sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
+		BodyHTML:       sql.NullString{String: data.bodyHTML, Valid: data.bodyHTML != ""},
+		RawMIME:        data.rawMIME,
+		Recipients:     recipientSets,
+		LabelIDs:       labelIDs,
+		SyncRunItem:    resolution,
 		FTS: &store.FTSDoc{
 			Subject:  data.message.Subject.String,
 			Body:     data.bodyText,

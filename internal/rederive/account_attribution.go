@@ -12,13 +12,13 @@ import (
 // pass, so a first sync after upgrading does not look stalled.
 const healProgressInterval = 10 * time.Second
 
-// Heal rebuilds stale derived text, then derives the account attribution of
-// pending email and calendar rows and explicit email linkage before a sync or
-// import adds more mail. Rows archived by older versions start pending, and an
-// identity change returns the rows it affects
-// to pending. A source with nothing pending costs one indexed lookup, so every
-// sync runs it. A failure is logged instead of returned: committed pages stay
-// derived, and the next sync retries unfinished work.
+// Heal rebuilds stale derived text, links email replies, then derives the
+// account attribution of pending email and calendar rows and explicit email
+// linkage before a sync or import adds more mail. Rows archived by older
+// versions start pending, and an identity change returns the rows it affects
+// to pending. A source with nothing pending costs a few indexed lookups, so
+// every sync runs it. A failure is logged instead of returned: committed pages
+// stay derived, and the next sync retries unfinished work.
 func Heal(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.Source) {
 	lastTextReport := time.Now()
 	textProgress := func(message string) {
@@ -37,6 +37,8 @@ func Heal(ctx context.Context, logger *slog.Logger, s *store.Store, src *store.S
 		logger.Info("checked archived message text", "source_id", src.ID, "messages", textSum.MessagesScanned,
 			"bodies", textSum.BodiesRewritten, "undecodable", textSum.Undecodable, "duration", textSum.Duration)
 	}
+
+	LinkEmailReplies(ctx, logger, s, src)
 
 	start := time.Now()
 	lastReport := start
