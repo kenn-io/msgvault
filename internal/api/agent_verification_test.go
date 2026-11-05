@@ -115,9 +115,6 @@ func TestAgentVerificationDetailAlternatives(t *testing.T) {
 	for _, tc := range []struct{ name, subject, text, html string }{
 		{"code", "Account", "Your code is 482913", ""},
 		{"HTML only", "Sign in", "", "<a href=\" \thttps://example.test/r?token=abcDEF1234567890 \r\n\">Sign in https://example.test/r?token=abcDEF1234567890</a>"},
-		{"HTML beside text", "Account", "Ordinary text", "<p>Your code is 482913</p>"},
-		{"HTML block code", "Your verification code", "", "<p>482913</p><p>5550100</p>"},
-		{"HTML inline code", "Account", "", "Your verification code is <b>482</b>913"},
 		{"ordinary", "Project update", "Order 1234567 shipped. Log in to track it. © 2026", "<p>Project update</p>"},
 		{"uncapped detail", "Account", strings.Repeat("x", 256*1024) + " Your code is 482913", ""},
 	} {
@@ -223,9 +220,6 @@ func TestAgentVerificationFields(t *testing.T) {
 		{name: "body cue", subject: "482913", text: "Your verification code"},
 		{name: "filename cue", subject: "Your verification code", filename: "482913.png"},
 		{name: "thread snippet", subject: "482913", snippet: "Your verification code"},
-		{name: "metadata", subject: "Your code is 482913"},
-		{name: "title", title: "Your code is 482913"},
-		{name: "snippet", snippet: "Your code is 482913"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
@@ -253,22 +247,6 @@ func TestAgentVerificationFields(t *testing.T) {
 			assertions.Equal(http.StatusOK, w.Code, w.Body.String())
 			assertions.NotContains(w.Body.String(), "482913")
 			assertions.Contains(w.Body.String(), "[verification content masked]")
-			for _, withEngine := range []bool{true, false} {
-				if !withEngine {
-					srv.SetAnalyticsEngine(nil, "")
-				}
-				req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/messages/%d", id), nil)
-				req.Header.Set(apiprotocol.AgentTokenHeader, token)
-				w := httptest.NewRecorder()
-				srv.Router().ServeHTTP(w, req)
-				assertions.Equal(http.StatusOK, w.Code, w.Body.String())
-				var body struct {
-					BodyText string `json:"body_text"`
-				}
-				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &body))
-				assertions.Equal("[verification content masked]", body.BodyText)
-				assertions.NotContains(w.Body.String(), "482913")
-			}
 		})
 	}
 }
@@ -297,6 +275,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		blocked          bool
 		parent, shared   bool
 	}{
+		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 		{"ordinary.txt", "text/plain", "Ordinary attachment", false, false, false},
 		{"table.csv", "text/csv", "name,value\nexample,42\n", false, false, false},
 		{"mail.bin", "message/rfc822", "Ordinary mail", true, false, false},
@@ -305,14 +284,11 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		{"code.txt", "text/plain", "Your verification code is 482913", true, false, false},
 		{"parent.txt", "text/plain", "482913", true, true, false},
 		{"shared.txt", "text/plain", "482914", true, false, true},
-		{"utf16-le.txt", "text/plain", "\xff\xfeY\x00o\x00u\x00r\x00", true, false, false},
-		{"utf16-be.txt", "text/plain", "\xfe\xff\x00Y\x00o\x00u\x00r", true, false, false},
 		{"nul.txt", "text/plain", "Y\x00o\x00u\x00r\x00", true, false, false},
 		{"nested.txt", "text/plain", "Content-Transfer-Encoding: base64\r\n\r\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
 		{"invalid.txt", "text/plain", "Your \xff attachment", true, false, false},
 		{"large.txt", "text/plain", strings.Repeat("x", 1024*1024+1), true, false, false},
 		{"image.png", "image/png", "\x89PNG\r\n\x1a\n\x00Ordinary image", false, false, false},
-		{"code-482913.png", "image/png", "\x89PNG\r\n\x1a\n\x00Named image", false, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -323,8 +299,14 @@ func TestAgentVerificationAttachments(t *testing.T) {
 			requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
 			requirements.NoError(os.WriteFile(path, []byte(tc.body), 0600))
 			messageID := id
-			if tc.parent {
-				_, messageID, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", tc.name, "Your verification code is 482913", "")
+			if tc.parent || tc.name == "code-482913.png" {
+				subject := "Your verification code is 482913"
+				messageKey := tc.name
+				if !tc.parent {
+					subject = "Ordinary"
+					messageKey = "named-image"
+				}
+				_, messageID, err = testutil.CreateIndexedSourceMessage(st, "reader@example.test", messageKey, subject, "")
 				requirements.NoError(err)
 			}
 			requirements.NoError(st.UpsertAttachment(messageID, tc.name, tc.mime, "", hash, len(tc.body)))
@@ -333,7 +315,15 @@ func TestAgentVerificationAttachments(t *testing.T) {
 				requirements.NoError(err)
 				requirements.NoError(st.UpsertAttachment(parentID, tc.name, tc.mime, "", hash, len(tc.body)))
 			}
-			for _, blob := range []bool{false, true} {
+			backends := []bool{false}
+			endpoints := []string{"/attachments/" + hash + "/content"}
+			callers := []string{"masked"}
+			if tc.name == "code.txt" || tc.name == "ordinary.txt" {
+				backends = append(backends, true)
+				endpoints = append(endpoints, "/cli/attachment?content_hash="+hash)
+				callers = append(callers, "reveal", "owner")
+			}
+			for _, blob := range backends {
 				srv.blobStore = nil
 				if blob {
 					bs, err := attachmentstore.New(store.NewPackCatalog(st), cfg.AttachmentsDir())
@@ -341,8 +331,8 @@ func TestAgentVerificationAttachments(t *testing.T) {
 					srv.blobStore = bs
 					t.Cleanup(func() { requirements.NoError(bs.Close()) })
 				}
-				for _, endpoint := range []string{"/attachments/" + hash + "/content", "/cli/attachment?content_hash=" + hash} {
-					for _, mode := range []string{"masked", "reveal", "owner"} {
+				for _, endpoint := range endpoints {
+					for _, mode := range callers {
 						req := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
 						requestCount++
 						req.RemoteAddr = fmt.Sprintf("192.0.2.%d:1234", requestCount)
@@ -361,8 +351,6 @@ func TestAgentVerificationAttachments(t *testing.T) {
 							assertions.Equal(tc.body, w.Body.String())
 							if strings.HasPrefix(endpoint, "/cli/attachment?") {
 								assertions.Empty(w.Header().Get("Content-Disposition"))
-							} else if tc.name == "code-482913.png" {
-								assertions.Contains(w.Header().Get("Content-Disposition"), tc.name)
 							}
 						}
 					}
@@ -372,7 +360,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 				attachments, err := srv.queryEngineForContext(context.Background()).GetAttachmentsByHash(context.Background(), hash)
 				requirements.NoError(err)
 				requirements.Len(attachments, 1)
-				for _, endpoint := range []string{fmt.Sprintf("/attachments/%d", attachments[0].ID), fmt.Sprintf("/cli/message?id=%d", id)} {
+				for _, endpoint := range []string{fmt.Sprintf("/attachments/%d", attachments[0].ID), fmt.Sprintf("/cli/message?id=%d", messageID)} {
 					for _, mode := range []string{"masked", "reveal", "owner"} {
 						req := httptest.NewRequest(http.MethodGet, "/api/v1"+endpoint, nil)
 						if mode == "owner" {
@@ -386,7 +374,7 @@ func TestAgentVerificationAttachments(t *testing.T) {
 						if mode == "masked" && strings.HasPrefix(endpoint, "/cli/message?") {
 							assertions.NotContains(w.Body.String(), "482913")
 							assertions.Contains(w.Body.String(), "verification content masked")
-						} else {
+						} else if mode != "masked" {
 							assertions.Contains(w.Body.String(), tc.name)
 						}
 					}

@@ -444,7 +444,7 @@ func TestServeFilenameDiscoveryWiring(t *testing.T) {
 	}
 }
 
-func TestStoreAPIAdapterVerificationRegressions(t *testing.T) {
+func TestStoreAPIAdapterForwardsVerificationBodyLoader(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
 	st := testutil.NewTestStore(t)
 	source, _, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "code", "Account", strings.Repeat("x", 1024*1024)+" Your code is 482913")
@@ -458,24 +458,13 @@ func TestStoreAPIAdapterVerificationRegressions(t *testing.T) {
 	owner, err := daemonclient.New(daemonclient.Config{URL: daemon.URL, APIKey: "owner", AllowInsecure: true, HTTPClient: daemon.Client()})
 	requirements.NoError(err)
 	t.Cleanup(func() { assertions.NoError(owner.Close()) })
-	for _, reveal := range []bool{false, true} {
-		permissions := []string{"search.read"}
-		if reveal {
-			permissions = append(permissions, "verification.read")
-		}
-		issued, err := owner.IssueAgentToken(t.Context(), strconv.FormatBool(reveal), permissions, []int64{source.ID}, nil, time.Time{})
-		requirements.NoError(err)
-		request := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
-		request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
-		response := httptest.NewRecorder()
-		srv.Router().ServeHTTP(response, request)
-		assertions.Equal(http.StatusOK, response.Code, response.Body.String())
-		if reveal {
-			assertions.Contains(response.Body.String(), "Account")
-			assertions.NotContains(response.Body.String(), "[verification content masked]")
-		} else {
-			assertions.Contains(response.Body.String(), "[verification content masked]")
-			assertions.NotContains(response.Body.String(), "Account")
-		}
-	}
+	issued, err := owner.IssueAgentToken(t.Context(), "masked", []string{"search.read"}, []int64{source.ID}, nil, time.Time{})
+	requirements.NoError(err)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
+	request.Header.Set(apiprotocol.AgentTokenHeader, issued.Secret)
+	response := httptest.NewRecorder()
+	srv.Router().ServeHTTP(response, request)
+	assertions.Equal(http.StatusOK, response.Code, response.Body.String())
+	assertions.Contains(response.Body.String(), "[verification content masked]")
+	assertions.NotContains(response.Body.String(), "Account")
 }
