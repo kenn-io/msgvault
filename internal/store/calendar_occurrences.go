@@ -101,7 +101,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 	if err != nil {
 		return page, err
 	}
-	exceptions := map[calendarSeriesKey]map[calrecur.Identity]int64{}
+	exceptions := map[calendarSeriesKey]map[calrecur.Identity]bool{}
 	masters := map[calendarSeriesKey]*calendarSeries{}
 	for _, row := range rows {
 		if row.Event.ProviderEventID != "" && (row.Event.Kind == "series" || row.Event.Kind == "single") {
@@ -110,9 +110,9 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 		if row.Event.Kind == "exception" && row.Event.Original != nil {
 			key := calendarSeriesKey{row.SourceID, row.Event.SeriesProviderID}
 			if exceptions[key] == nil {
-				exceptions[key] = map[calrecur.Identity]int64{}
+				exceptions[key] = map[calrecur.Identity]bool{}
 			}
-			exceptions[key][*row.Event.Original] = row.MessageID
+			exceptions[key][*row.Event.Original] = true
 		}
 	}
 	remaining := calrecur.RequestReadBudget - len(rows)
@@ -148,7 +148,7 @@ type calendarSeriesKey struct {
 	id     string
 }
 
-func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEventRow, masters map[calendarSeriesKey]*calendarSeries, exceptions map[calendarSeriesKey]map[calrecur.Identity]int64, from, to time.Time, after calendarOccurrenceCursor, remaining int) ([]CalendarOccurrence, []CalendarUnexpandable, error) {
+func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEventRow, masters map[calendarSeriesKey]*calendarSeries, exceptions map[calendarSeriesKey]map[calrecur.Identity]bool, from, to time.Time, after calendarOccurrenceCursor, remaining int) ([]CalendarOccurrence, []CalendarUnexpandable, error) {
 	page := CalendarOccurrencePage{Occurrences: []CalendarOccurrence{}, Unexpandable: []CalendarUnexpandable{}}
 	// Steps still run from DTSTART, so budgets match a full read; only earlier output is skipped.
 	floor := from
@@ -184,7 +184,7 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 			report(row.MessageID, reason)
 		}
 		for _, o := range occurrences {
-			if _, exists := exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}][o.Original]; !exists {
+			if !exceptions[calendarSeriesKey{row.SourceID, e.ProviderEventID}][o.Original] {
 				add(calendarOccurrence(row, row.MessageID, calendarOccurrenceRef(row.MessageID, o.Original.Key()), o))
 			}
 		}
@@ -201,9 +201,6 @@ func collectCalendarOccurrences(ctx context.Context, s *Store, rows []CalendarEv
 			report(row.MessageID, "exception has no original start")
 		}
 		key := calendarSeriesKey{row.SourceID, e.SeriesProviderID}
-		if e.Kind == "exception" && e.Original != nil && exceptions[key][*e.Original] != row.MessageID {
-			continue
-		}
 		if master := masters[key]; e.Kind == "exception" && master != nil && e.Original != nil && e.Original.AllDay != master.row.Event.AllDay && (e.Start == nil || e.End == nil) {
 			report(row.MessageID, "exception original type differs from series and event bounds are missing")
 			continue
@@ -545,7 +542,7 @@ func (s *Store) calendarExceptionsAt(ctx context.Context, row CalendarEventRow, 
 	if original.AllDay {
 		identityPredicate, identityValue = "e.original_start_date = ?", original.Date
 	}
-	return queryCalendarEventRows(ctx, s.db, "e.message_id = (SELECT e.message_id "+calendarEventFrom+"e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND "+identityPredicate+" ORDER BY e.message_id DESC LIMIT 1)", []any{row.SourceID, row.Event.ProviderEventID, identityValue}, 1)
+	return queryCalendarEventRows(ctx, s.db, "e.kind = 'exception' AND m.source_id = ? AND e.series_provider_id = ? AND "+identityPredicate, []any{row.SourceID, row.Event.ProviderEventID, identityValue}, 1)
 }
 
 func (s *Store) calendarOccurrenceContent(ctx context.Context, row CalendarEventRow, masterID int64, cancellation *calendarCancellationEvidence) (calevent.Content, error) {
