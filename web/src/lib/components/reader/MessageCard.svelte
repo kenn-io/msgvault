@@ -291,6 +291,28 @@
     white-space: nowrap;
   }
 
+  @media (max-width: 640px) {
+    .message-card--collapsed {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr) max-content;
+      gap: var(--space-1) var(--space-3);
+    }
+
+    .message-card--collapsed :global(.identity-avatar) { grid-row: 1 / 3; }
+    .collapsed-sender { min-width: 0; max-width: none; }
+    .collapsed-snippet { grid-column: 2 / 4; grid-row: 2; }
+    .message-card--collapsed time { grid-column: 3; grid-row: 1; }
+
+    .header-line {
+      min-width: 0;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0;
+    }
+
+    .header-line .sender { max-width: 100%; }
+  }
+
 
   .sanitize-notice {
     margin: var(--space-2) var(--pane-pad-x) 0;

@@ -307,8 +307,17 @@ test('phone reader replaces results and Back restores the focused row', async ({
     auth_mode: 'loopback', https: false, plain_http_warning: false
   } }));
   await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-    rows: [entry(1), entry(2)], total_count: 2,
+    rows: [{ ...entry(1), conversation_id: 7, anchor_message_id: 3 }, entry(2)], total_count: 2,
     cache_revision: 'cache-phone', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/conversations/7?*', route => route.fulfill({ json: {
+    id: 7, anchor_id: 3, has_before: false, has_after: false, total: 3,
+    messages: [1, 2, 3].map(id => ({
+      id, conversation_id: 7, message_type: 'email',
+      from: 'Alexandria Example <alexandria@example.com>', to: ['reader@example.com'],
+      subject: 'Synthetic subject 1', sent_at: '2024-12-30T11:21:00Z',
+      snippet: 'Synthetic excerpt', body: 'Synthetic body', body_html: '', attachments: []
+    }))
   } }));
   await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(exploreURLState()))}`);
   const grid = page.getByRole('grid', { name: 'Messages results' });
@@ -318,8 +327,31 @@ test('phone reader replaces results and Back restores the focused row', async ({
   await expect(grid).toBeHidden();
   const resultsBox = (await page.locator('.results-split').boundingBox())!;
   expect(Math.abs((await reading.boundingBox())!.width - resultsBox.width)).toBeLessThanOrEqual(1);
-  await expect(reading.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
+  await expect(reading.locator('.pane-title')).toHaveText('Synthetic subject 1');
   await expect(page.locator('.results-solo')).toBeFocused();
+  const thread = reading.getByRole('region', { name: 'Conversation thread' });
+  const collapsed = thread.getByRole('button', { name: /^Expand message/ });
+  await expect(collapsed).toHaveCount(2);
+  const expanded = thread.getByRole('article', { name: 'Message 3' });
+  const menu = expanded.getByRole('button', { name: /^More actions for/ });
+  await expect(menu).toBeVisible();
+  for (const card of [collapsed.nth(0), collapsed.nth(1), expanded]) {
+    const time = card.locator('time');
+    await expect(time).toHaveText('Dec 30, 2024, 11:21 AM');
+    const bounds = await time.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      const cardRect = element.closest('.message-card')!.getBoundingClientRect();
+      return { right: rect.right, left: rect.left, cardRight: cardRect.right, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth };
+    });
+    expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth);
+    expect(bounds.right).toBeLessThanOrEqual(bounds.cardRight);
+    if (await card.getAttribute('aria-expanded') === 'false') {
+      const sender = (await card.locator('.collapsed-sender').boundingBox())!;
+      expect(sender.x + sender.width).toBeLessThanOrEqual(bounds.left);
+    } else {
+      expect(bounds.right).toBeLessThanOrEqual((await menu.boundingBox())!.x);
+    }
+  }
   await reading.getByRole('button', { name: 'Back to results' }).click();
   await expect(grid).toBeVisible();
   await expect(grid).toBeFocused();
