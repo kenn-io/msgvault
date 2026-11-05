@@ -119,7 +119,6 @@
 {#snippet popoverExtra()}
   {@render filterExtra?.()}
   <div class="popover-extra">
-    <div class="popover-extra-heading">Visual search</div>
     {@render extraControls?.()}
   </div>
 {/snippet}
@@ -272,12 +271,6 @@
     :global(.file-controls > label > .kit-search-input) {
       width: 100%;
     }
-  }
-
-  .popover-extra-heading {
-    margin-bottom: var(--label-gap);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
   }
 
   .context-chips :global(.chip) {

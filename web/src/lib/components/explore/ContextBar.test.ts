@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MEDIA } from '@kenn-io/kit-ui';
 import { createRawSnippet } from 'svelte';
@@ -37,7 +37,7 @@ describe('ContextBar extra controls', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
     const dialog = screen.getByRole('dialog', { name: 'Filter' });
     expect(dialog.textContent).toContain('Filename filter');
-    expect(dialog.textContent?.includes('Visual search')).toBe(compact);
+    expect(within(dialog).queryByRole('button', { name: 'Visual search' }) !== null).toBe(compact);
   });
 });
 

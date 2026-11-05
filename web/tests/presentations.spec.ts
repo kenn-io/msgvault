@@ -93,19 +93,6 @@ test.describe('compact toolbar', () => {
       await view.click();
       await expect(menu.getByRole('menuitemradio', { name: 'Year', exact: true })).toHaveAttribute('aria-checked', 'true');
     });
-
-    test(`compact visual search has a section heading in ${theme}`, async ({ page }) => {
-      await page.emulateMedia({ colorScheme: theme });
-      await stubVisualFiles(page);
-      await page.goto('/?workspace=files');
-      await page.getByRole('button', { name: 'Filter', exact: true }).click();
-      const dialog = page.getByRole('dialog', { name: 'Filter' });
-      const heading = dialog.getByText('Visual search', { exact: true }).filter({ visible: true });
-      await expect(heading).toHaveCount(2);
-      const headingBox = await heading.first().boundingBox();
-      const switchBox = await dialog.getByRole('switch', { name: 'Visual search' }).boundingBox();
-      expect(headingBox!.y + headingBox!.height).toBeLessThanOrEqual(switchBox!.y);
-    });
   }
 
   test('compact Messages and Files toolbars fit one row and View opens Files', async ({ page }) => {
