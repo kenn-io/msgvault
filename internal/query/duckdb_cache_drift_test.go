@@ -613,6 +613,8 @@ func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t 
 				require.ErrorContains(err, "load unsent message IDs", "surface the refresh failure instead of querying a missing exclusion table")
 				_, err = engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{Explore: ExploreRequest{SentOnly: true}})
 				require.ErrorContains(err, "load unsent message IDs", "SentOnly analysis must reject the prior exclusion set")
+				_, err = engine.Explore(t.Context(), ExploreRequest{PersonInteractionsOnly: true})
+				require.ErrorContains(err, "load unsent message IDs", "person interactions must reject the prior owner event set")
 				_, err = engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: 2, Year: 2024})
 				require.ErrorContains(err, "load unsent message IDs", "calendar must reject stale owners")
 				_, err = engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: 2})
