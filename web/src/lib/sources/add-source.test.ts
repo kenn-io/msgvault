@@ -26,6 +26,13 @@ describe('addSourceCommand', () => {
     expect(addSourceCommand(mbox, values, 'cmd')).toBe('msgvault import-mbox you@example.com "~/All mail.mbox"');
   });
 
+  it('preserves a tilde-prefixed IMAP username', () => {
+    const command = addSourceCommand(imap, { host: 'imap.example.com', username: '~/reader' }, 'posix')!;
+    expect(command).toBe("msgvault add-imap --host imap.example.com --username '~/reader'");
+    const output = execFileSync('sh', ['-c', command.replace('msgvault add-imap', 'printf "%s\\n"')], { encoding: 'utf8' });
+    expect(output).toBe('--host\nimap.example.com\n--username\n~/reader\n');
+  });
+
   it('preserves a quoted path through a real POSIX shell', () => {
     const command = addSourceCommand(mbox, { email: 'you@example.com', path: "/tmp/O'Brien $notes.mbox" }, 'posix')!;
     const output = execFileSync('sh', ['-c', command.replace('msgvault import-mbox', 'printf "%s\\n"')], { encoding: 'utf8' });

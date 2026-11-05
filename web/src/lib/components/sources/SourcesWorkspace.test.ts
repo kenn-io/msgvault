@@ -529,6 +529,7 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
     const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
     await fireEvent.click(dialog.getByRole('button', { name: 'Set up Gmail' }));
+    expect(dialog.getByText(/open the source for its first sync command/)).toBeDefined();
     const email = dialog.getByLabelText('Email address');
     expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
     await fireEvent.input(email, { target: { value: 'you@gmail.com' } });
@@ -548,6 +549,25 @@ describe('SourcesWorkspace', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     await fireEvent.click(screen.getByRole('button', { name: 'Sync history' }));
     expect(onOpenOperations).toHaveBeenCalledOnce();
+  });
+
+  it('requires both IMAP fields before showing commands', async () => {
+    render(SourcesWorkspace, { client: createCaptureClient(api([]), []) });
+    await screen.findByText('No sources yet');
+    await fireEvent.click(screen.getByRole('button', { name: 'Add source' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Add source' }));
+    await fireEvent.click(dialog.getByRole('button', { name: 'Set up IMAP mailbox' }));
+    expect(dialog.getByText("You'll be prompted for your password.")).toBeDefined();
+    expect(dialog.getByText(/open the source for its first sync command/)).toBeDefined();
+    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
+    await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: 'imap.example.com' } });
+    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
+    await fireEvent.input(dialog.getByLabelText('Username'), { target: { value: '~/reader' } });
+    expect(dialog.getByText("msgvault add-imap --host imap.example.com --username '~/reader'")).toBeDefined();
+    expect(dialog.getByText('msgvault add-imap --host imap.example.com --username "~/reader"')).toBeDefined();
+    expect(dialog.getAllByRole('button', { name: /^Copy / })).toHaveLength(2);
+    await fireEvent.input(dialog.getByLabelText('Server'), { target: { value: '' } });
+    expect(dialog.queryByRole('button', { name: /^Copy / })).toBeNull();
   });
 
   it('opens existing CardDAV setup and closes the picker', async () => {

@@ -14,6 +14,7 @@
   {#each kind.fields as field, index (field.id)}
     <label>{field.label}<TextInput block bind:value={() => values[field.id] ?? '', value => (values[field.id] = value)} placeholder={field.placeholder} autofocus={index === 0} /></label>
   {/each}
+  {#if kind.id === 'imap'}<p>You'll be prompted for your password.</p>{/if}
   {#if posix && cmd}
     <div class="terminal"><p>POSIX shell</p><CommandLine command={posix} /></div>
     <div class="terminal">
@@ -22,7 +23,7 @@
       <CommandLine command={cmd} />
     </div>
   {/if}
-  <p>Run this in a terminal where msgvault is installed. When it finishes, come back to this window and the new source appears in the Sources list.</p>
+  <p>Run this in a terminal where msgvault is installed. Then return to Sources{#if kind.id !== 'mbox'} and open the source for its first sync command{/if}.</p>
   <a href={kind.docs} target="_blank" rel="noreferrer">Learn more</a>
 </div>
 

@@ -51,13 +51,13 @@ export const ADD_SOURCE_KINDS: readonly AddSourceKind[] = [
   },
 ];
 
-function arg(value: string, shell: 'posix' | 'cmd'): string {
+function arg(value: string, shell: 'posix' | 'cmd', isPath: boolean): string {
   if (/^[A-Za-z0-9@._+:/-]+$/.test(value)) return value;
-  if (shell === 'posix' && value.startsWith('~/')) return `~/${shellQuote(value.slice(2), shell)}`;
+  if (isPath && shell === 'posix' && value.startsWith('~/')) return `~/${shellQuote(value.slice(2), shell)}`;
   return shellQuote(value, shell);
 }
 
 export function addSourceCommand(kind: CommandSourceKind, values: Record<string, string>, shell: 'posix' | 'cmd'): string | undefined {
   if (kind.fields.some(field => !values[field.id]?.trim())) return undefined;
-  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(values[id]!.trim(), shell));
+  return kind.template.replace(/\{(\w+)\}/g, (_, id: string) => arg(values[id]!.trim(), shell, kind.id === 'mbox' && id === 'path'));
 }
