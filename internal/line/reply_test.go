@@ -733,11 +733,7 @@ func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 			attempt, readErr := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
 			require.NoError(readErr)
 			assert.Zero(attempt.StatusCode, "credential errors are not submission outcomes")
-			if tc.endpoint == "/oauth2/v3/token" {
-				assert.Equal(store.LineReplyAdmitted, pending.Status)
-			} else {
-				assert.Equal(store.LineReplyRemoteUnknown, pending.Status)
-			}
+			assert.Equal(store.LineReplyAdmitted, pending.Status, "refused credentials prove nothing was submitted")
 			f.now = f.now.Add(31 * time.Second)
 			sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 			require.NoError(err)

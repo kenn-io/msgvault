@@ -9,7 +9,8 @@ import (
 
 // LineReplyOutcome contains only safe receipt fields, never provider error
 // bodies. DefiniteRejection is valid only for the live first submission;
-// a recovered or previously uncertain submission must leave it false.
+// a recovered or previously uncertain submission must leave it false. Without
+// a status, it means credentials were refused, so the request is still unsent.
 type LineReplyOutcome struct {
 	Accepted          bool
 	DefiniteRejection bool
@@ -27,6 +28,19 @@ func LineReplyHasAcceptance(state string) bool {
 
 func lineReplyExpired(state string) bool {
 	return state == LineReplyRemoteUnknownExpired || state == LineReplyAcceptedUnresolvedExpired
+}
+
+// lineReplyRefusalState resolves a live first submission LINE did not accept.
+func lineReplyRefusalState(state string, outcome LineReplyOutcome) string {
+	switch {
+	case !outcome.DefiniteRejection:
+		return state
+	case outcome.StatusCode == 0 && !lineReplyExpired(state):
+		return LineReplyAdmitted
+	case outcome.StatusCode >= 400 && outcome.StatusCode < 500 && outcome.StatusCode != http.StatusConflict:
+		return LineReplyProviderRejected
+	}
+	return state
 }
 
 func lineReplyTerminal(state string) bool {
@@ -123,7 +137,7 @@ func (s *Store) StartLineReplyRequestContext(ctx context.Context, id string, now
 }
 
 // RecordLineReplyOutcomeContext preserves known acceptance on later failures.
-// A definite first-request rejection keeps the draft deletable.
+// A first-request rejection is terminal; a credential refusal leaves it unsent.
 func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, outcome LineReplyOutcome) (LineReplyAttempt, error) {
 	prior, err := s.GetLineReplyAttemptContext(ctx, id)
 	if err != nil || lineReplyTerminal(prior.State) {
@@ -159,10 +173,8 @@ func (s *Store) RecordLineReplyOutcomeContext(ctx context.Context, id string, ou
 			if a.RemoteMessageID != "" {
 				a.State = LineReplyRemoteAccepted
 			}
-		} else if !known && outcome.DefiniteRejection && outcome.StatusCode >= 400 && outcome.StatusCode < 500 && outcome.StatusCode != http.StatusConflict {
-			a.State = LineReplyProviderRejected
-			a.StatusCode = outcome.StatusCode
 		} else if !known {
+			a.State = lineReplyRefusalState(a.State, outcome)
 			a.StatusCode = outcome.StatusCode
 		}
 		deadline := outcome.NextRetryAt.UTC().Truncate(time.Microsecond)
