@@ -71,6 +71,67 @@ func TestAggregations(t *testing.T) {
 	}
 }
 
+func TestAggregateByTime_AttachmentPlan(t *testing.T) {
+	t.Parallel()
+	t.Run("DateFilter", func(t *testing.T) {
+		env := newTestEnv(t)
+		opts := DefaultAggregateOptions()
+		opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
+		opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
+
+		plan := aggregatePlan(t, env, opts)
+		assert.Contains(t, plan, "idx_attachments_message", plan)
+		assert.NotContains(t, plan, "SCAN attachments", plan)
+	})
+
+	t.Run("Unfiltered", func(t *testing.T) {
+		env := newTestEnv(t)
+		plan := aggregatePlan(t, env, DefaultAggregateOptions())
+		assert.Contains(t, plan, "SCAN attachments", plan)
+	})
+}
+
+func aggregatePlan(t *testing.T, env *testEnv, opts AggregateOptions) string {
+	t.Helper()
+	conditions, args := optsToFilterConditions(env.Engine.dialect, opts, "m.")
+	conditions = append(conditions, emailOnlyFilterM)
+	dim, err := aggDimensionForView(env.Engine.dialect, ViewTime, opts.TimeGranularity)
+	require.NoError(t, err)
+	sort, err := sortClause(opts)
+	require.NoError(t, err)
+	sqlText := buildAggregateSQL(dim, "", conditions, sort)
+	return dbtest.ExplainQueryPlan(t, env.DB, sqlText, append(args, 100)...)
+}
+
+func TestAggregateByLabel_AttachmentFields(t *testing.T) {
+	t.Parallel()
+	env := newTestEnv(t)
+
+	// Message 2 has two attachments and both INBOX and IMPORTANT labels.
+	for _, filtered := range []bool{false, true} {
+		opts := DefaultAggregateOptions()
+		if filtered {
+			opts.After = new(time.Date(2024, 1, 16, 0, 0, 0, 0, time.UTC))
+			opts.Before = new(time.Date(2024, 1, 17, 0, 0, 0, 0, time.UTC))
+		}
+		rows, err := env.Engine.Aggregate(env.Ctx, ViewLabels, opts)
+		require.NoError(t, err)
+		want := map[string][2]int64{
+			"INBOX":     {35000, 3},
+			"IMPORTANT": {15000, 2},
+			"Work":      {20000, 1},
+		}
+		if filtered {
+			want = map[string][2]int64{"INBOX": {15000, 2}, "IMPORTANT": {15000, 2}}
+		}
+		got := make(map[string][2]int64, len(rows))
+		for _, row := range rows {
+			got[row.Key] = [2]int64{row.AttachmentSize, row.AttachmentCount}
+		}
+		assert.Equal(t, want, got, "filtered=%t", filtered)
+	}
+}
+
 func TestAggregateDefaultExcludesCalendarEvents(t *testing.T) {
 	t.Parallel()
 	env := newTestEnv(t)
