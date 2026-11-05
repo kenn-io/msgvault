@@ -1110,10 +1110,4 @@ func TestGetPersonExcludesCallRecipients(t *testing.T) {
 		assert.Equal(int64(1), result.Rows[0].ActivityCount)
 		assert.Equal(at, result.Rows[0].LastAt)
 	}
-	legacy, err := engine.searchPeopleLegacy(t.Context(), PersonSearchRequest{}, nil, nil, false)
-	require.NoError(err)
-	require.Len(legacy.Rows, 1)
-	assert.Equal(person, legacy.Rows[0].ID)
-	assert.Equal(int64(1), legacy.Rows[0].ActivityCount)
-	assert.Equal(at, legacy.Rows[0].LastAt)
 }

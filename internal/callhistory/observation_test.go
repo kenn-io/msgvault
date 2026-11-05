@@ -39,11 +39,6 @@ func TestObservationValidation(t *testing.T) {
 		{"scheduled participant joined", func(o *Observation) {
 			o.Kind, o.Outcome, o.OwnerParticipation = "scheduled_meeting", "unknown", "unknown"
 		}, false},
-		{"scheduled duration", func(o *Observation) {
-			o.Kind, o.Outcome, o.OwnerParticipation = "scheduled_meeting", "unknown", "unknown"
-			o.Participants[0].Participation = "invited"
-			o.DurationSeconds = new(0.0)
-		}, false},
 		{"unknown status", func(o *Observation) { o.Outcome = "unknown" }, true},
 		{"invalid status", func(o *Observation) { o.Outcome = "perhaps" }, false},
 		{"missing time", func(o *Observation) { o.OccurredAt = time.Time{} }, false},
@@ -109,6 +104,7 @@ func FuzzObservationDurationValidation(f *testing.F) {
 	f.Add(0.0, false, true)
 	f.Add(12.5, true, false)
 	f.Add(2.0, true, true)
+	f.Add(0.0, true, true)
 	f.Add(-1.0, false, true)
 	f.Add(math.Inf(1), false, true)
 	f.Add(math.NaN(), false, true)
@@ -120,7 +116,7 @@ func FuzzObservationDurationValidation(f *testing.F) {
 		if scheduled {
 			o.Kind = "scheduled_meeting"
 			o.Outcome, o.OwnerParticipation = "unknown", "unknown"
-			o.Participants = nil
+			o.Participants[0].Participation = "invited"
 		}
 		if scheduled && hasDuration && !math.IsNaN(duration) && !math.IsInf(duration, 0) {
 			record, err := json.Marshal(o)
