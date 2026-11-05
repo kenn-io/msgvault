@@ -38,15 +38,18 @@ func TestBuildExcludesRooms(t *testing.T) {
 				replaceRelationshipParquet(t, db, root, "message_recipients", `SELECT 100::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 100, 2, 'to' UNION ALL SELECT 100, 5, 'to' UNION ALL SELECT 101, 5, 'to'`)
 				replaceRelationshipParquet(t, db, root, "conversation_participants", `SELECT 10::BIGINT AS conversation_id, 4::BIGINT AS participant_id UNION ALL SELECT 10, 5`)
 				if linked {
-					replaceRelationshipParquet(t, db, root, "participant_clusters", `SELECT 2::BIGINT AS participant_id, 2::BIGINT AS canonical_id UNION ALL SELECT 3, 2 UNION ALL SELECT 5, 1`)
+					replaceRelationshipParquet(t, db, root, "participant_clusters", `SELECT 1::BIGINT AS participant_id, 1::BIGINT AS canonical_id UNION ALL SELECT 2, 2 UNION ALL SELECT 3, 2 UNION ALL SELECT 5, 1`)
 				}
 				_, err = Build(t.Context(), db, BuildOptions{Mode: ModeFull, StagedBaseRoot: root, OutputRoot: root})
 				requirements.NoError(err)
 				output := root
 				if mode != ModeFull {
-					staged, stagedDB := writeRelationshipBaseFixture(t, true)
+					staged, stagedDB := writeRelationshipBaseFixture(t, false)
 					if mode == ModeIndexOnly {
 						staged = t.TempDir()
+					} else {
+						rewriteRelationshipFixtureIDs(t, stagedDB, staged, 200, 20)
+						replaceRelationshipParquet(t, stagedDB, staged, "message_recipients", `SELECT 200::BIGINT AS message_id, 1::BIGINT AS participant_id, 'from' AS recipient_type UNION ALL SELECT 200, 5, 'to'`)
 					}
 					for _, dataset := range []string{"participants", "participant_clusters", "conversation_participants"} {
 						requirements.NoError(os.RemoveAll(filepath.Join(staged, dataset)))
@@ -60,11 +63,17 @@ func TestBuildExcludesRooms(t *testing.T) {
 				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE list_contains(member_ids, 5)`, relationshipParquetGlob(output, DatasetPeople)).Scan(&roomRows))
 				assertions.Zero(roomRows)
 				requirements.NoError(db.QueryRow(`SELECT activity_count FROM read_parquet(?) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetPeople)).Scan(&aliceCount))
-				assertions.Equal(int64(1), aliceCount)
+				if mode == ModeIncremental {
+					assertions.Equal(int64(2), aliceCount)
+				} else {
+					assertions.Equal(int64(1), aliceCount)
+				}
 				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetDomains)).Scan(&roomRows))
 				assertions.Zero(roomRows)
-				requirements.NoError(db.QueryRow(`SELECT count(*) FROM ` + testExpandedActivity(root, root) + ` WHERE participant_domain = 'resource.calendar.google.com'`).Scan(&roomRows))
+				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE participant_domain = 'resource.calendar.google.com'`, relationshipParquetGlob(output, DatasetActivity)).Scan(&roomRows))
 				assertions.Zero(roomRows)
+				requirements.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?, hive_partitioning=true, union_by_name=true) WHERE canonical_id = 1`, relationshipParquetGlob(output, DatasetActivity)).Scan(&aliceCount))
+				assertions.Positive(aliceCount)
 			})
 		}
 	}

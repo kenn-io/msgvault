@@ -137,6 +137,74 @@ func TestPeopleAndExploreExcludeRooms(t *testing.T) {
 	assertions.Equal(message, messages[0].ID)
 }
 
+func TestRoomPersonDetailAndLinkedActivity(t *testing.T) {
+	for _, roomFirst := range []bool{false, true} {
+		t.Run(fmt.Sprintf("roomFirst=%t", roomFirst), func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			b := NewTestDataBuilder(t)
+			source := b.AddSourceWithType("archive@example.com", "gmail")
+			var alice, room int64
+			if roomFirst {
+				room = b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
+			}
+			alice = b.AddParticipant("alice@example.com", "example.com", "Alice")
+			if !roomFirst {
+				room = b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
+			}
+			b.LinkCluster(alice, room)
+			b.AddParticipantIdentifier(alice, "email", "alice@example.com", "alice@example.com", true)
+			b.AddParticipantIdentifier(room, "email", "room@resource.calendar.google.com", "room@resource.calendar.google.com", true)
+			when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+			humanMessage := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 301, SentAt: when})
+			b.AddTo(humanMessage, alice, "Alice")
+			roomMessage := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 302, SentAt: when.Add(time.Hour)})
+			b.AddTo(roomMessage, room, "Room 4B")
+			engine := b.BuildEngine()
+			resolved, err := engine.ResolveCanonicalParticipant(t.Context(), alice)
+			requirements.NoError(err)
+			assertions.Equal(alice, resolved)
+			members := []int64{alice, room}
+			for _, filter := range []Context{{}, {SourceIDs: []int64{source}}} {
+				people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: ExploreRequest{Context: filter}, Page: PageSpec{Limit: 25}})
+				requirements.NoError(err)
+				requirements.Len(people.Rows, 1)
+				assertions.Equal(alice, people.Rows[0].ID)
+				assertions.Equal(int64(1), people.Rows[0].ActivityCount)
+				detail, err := engine.GetPerson(t.Context(), alice, filter, members)
+				requirements.NoError(err)
+				requirements.NotNil(detail)
+				assertions.Equal("Alice", detail.DisplayLabel)
+				assertions.Equal(int64(1), detail.ActivityCount)
+				requirements.Len(detail.Identifiers, 1)
+				assertions.Equal(alice, detail.Identifiers[0].ParticipantID)
+				roomDetail, err := engine.GetPerson(t.Context(), room, filter, members)
+				requirements.NoError(err)
+				assertions.Nil(roomDetail)
+				summary, err := engine.GetPersonSummary(t.Context(), alice, ExploreRequest{Context: filter}, members)
+				requirements.NoError(err)
+				requirements.Len(summary.Rows, 1)
+				assertions.Equal(int64(1), summary.Rows[0].ActivityCount)
+				roomSummary, err := engine.GetPersonSummary(t.Context(), room, ExploreRequest{Context: filter}, members)
+				requirements.NoError(err)
+				assertions.Empty(roomSummary.Rows)
+			}
+		})
+	}
+}
+
+func TestRoomPersonDetailIsAbsent(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("archive@example.com")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
+	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 201})
+	b.AddTo(message, room, "Room 4B")
+	engine := b.BuildEngine()
+	detail, err := engine.GetPerson(t.Context(), room, Context{}, nil)
+	require.NoError(t, err)
+	assert.Nil(t, detail)
+}
+
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {
 	t.Parallel()
 	assertions := assert.New(t)

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/identityindex"
 )
 
 const (
@@ -187,10 +189,8 @@ func (e *DuckDBEngine) RelationshipTimeline(ctx context.Context, request Relatio
 	return response, nil
 }
 
-// ResolveCanonicalParticipant maps a participant ID to its canonical
-// identity cluster ID via the committed participant_clusters dataset. A
-// participant absent from that dataset belongs to no recorded cluster and
-// is its own single-member canonical ID.
+// ResolveCanonicalParticipant maps a participant ID to its observed identity.
+// An absent participant retains its own ID.
 func (e *DuckDBEngine) ResolveCanonicalParticipant(ctx context.Context, participantID int64) (int64, error) {
 	if e.analyticsDir == "" {
 		return 0, &CacheUnavailableError{Readiness: CacheAbsent}
@@ -201,7 +201,8 @@ func (e *DuckDBEngine) ResolveCanonicalParticipant(ctx context.Context, particip
 	}
 	defer release()
 
-	queryText := fmt.Sprintf("SELECT canonical_id FROM read_parquet('%s') WHERE participant_id = ?", e.parquetPath(datasetParticipantClusters))
+	clusters := "read_parquet('" + quoteIdentitySQLPath(e.parquetPath(datasetParticipantClusters)) + "')"
+	queryText := "SELECT canonical_id FROM (" + identityindex.CanonicalParticipantsSQL("participants", clusters) + ") WHERE participant_id = ?"
 	var canonicalID int64
 	err = e.db.QueryRowContext(ctx, queryText, participantID).Scan(&canonicalID)
 	switch {

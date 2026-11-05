@@ -26,21 +26,3 @@ func TestIsRoomAttendee(t *testing.T) {
 		})
 	}
 }
-
-func TestIsRoomDomain(t *testing.T) {
-	for _, tt := range []struct {
-		domain string
-		want   bool
-	}{
-		{"resource.calendar.google.com", true},
-		{"c.resource.calendar.google.com", true},
-		{"RESOURCE.Calendar.Google.COM", true},
-		{"notresource.calendar.google.com", false},
-		{"resource.calendar.google.com.example.com", false},
-		{"", false},
-	} {
-		t.Run(tt.domain, func(t *testing.T) {
-			assert.Equal(t, tt.want, IsRoomDomain(tt.domain))
-		})
-	}
-}

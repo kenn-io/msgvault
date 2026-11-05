@@ -364,8 +364,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	// Listing/search rows are canonical identities, so the label evaluates
 	// every member of the row's cluster (resolved through the canon CTE that
 	// personEntriesCTE emits), exactly as the ranked relationships list does.
-	// Exact-ID lookups have no canon CTE: with a caller-supplied cluster the
-	// members bind as placeholders here, before the personWhere and
+	// With a caller-supplied cluster the members bind as placeholders here, before the personWhere and
 	// identifier args, matching their position inside person_population;
 	// otherwise the row participant's own name applies.
 	// Curated-name member args follow observed-name args in person_population.
@@ -375,7 +374,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (SELECT cnl.participant_id FROM canon cnl WHERE cnl.canonical_id = p.id)")
 	case len(clusterMemberIDs) > 1:
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
-		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (" + placeholders + ")")
+		bestNameExpr = sqlClusterBestNameExpr("pbn.id IN (" + placeholders + ") AND pbn.id IN (SELECT participant_id FROM canon)")
 		for _, memberID := range clusterMemberIDs {
 			args = append(args, memberID)
 		}
@@ -386,7 +385,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	case exactID == nil:
 		overrideFilter = "pnv.participant_id IN (SELECT cno.participant_id FROM canon cno WHERE cno.canonical_id = p.id)"
 	case len(clusterMemberIDs) > 1:
-		overrideFilter = "pnv.participant_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",") + ")"
+		overrideFilter = "pnv.participant_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",") + ") AND pnv.participant_id IN (SELECT participant_id FROM canon)"
 		for _, memberID := range clusterMemberIDs {
 			args = append(args, memberID)
 		}
@@ -398,6 +397,7 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id"
 	}
 	if exactID != nil {
+		populationFrom += " JOIN canon eligible ON eligible.participant_id = p.id"
 		personWhere = append(personWhere, "person_id = ?")
 		args = append(args, *exactID)
 	}
@@ -446,15 +446,18 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 			placeholders[i] = "?"
 			args = append(args, memberID)
 		}
-		identifierFilter = "pi.participant_id IN (" + strings.Join(placeholders, ",") + ")"
+		identifierFilter = "pi.participant_id IN (" + strings.Join(placeholders, ",") + ") AND pi.participant_id IN (SELECT participant_id FROM canon)"
 	}
 	// Exact detail rows retain the requested participant ID, but the compact
 	// relationship scores are keyed by the resolved cluster canonical ID.
 	relationshipPersonExpr := "counted.person_id"
 	if exactID != nil && len(clusterMemberIDs) > 1 {
-		relationshipPersonExpr = "?"
-		canonicalID := slices.Min(clusterMemberIDs)
-		args = append(args, canonicalID, canonicalID, canonicalID)
+		relationshipPersonExpr = "(SELECT min(participant_id) FROM canon WHERE participant_id IN (" + strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",") + "))"
+		for range 3 {
+			for _, memberID := range clusterMemberIDs {
+				args = append(args, memberID)
+			}
+		}
 	}
 	limit := request.Page.Limit
 	if limit == 0 {
@@ -551,14 +554,12 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // live membership can differ from the cached identity clusters.
 // Listing/search aggregates edges by canonical ID, so linked aliases count once.
 func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (string, []any) {
-	if exactID == nil {
-		return fmt.Sprintf(`
-), clusters AS (
-	SELECT participant_id, canonical_id FROM read_parquet('%s')
+	canon := `
 ), canon AS (
-	SELECT p.id AS participant_id, COALESCE(c.canonical_id, p.id) AS canonical_id
-	FROM participants p LEFT JOIN clusters c ON c.participant_id = p.id
-), person_entries AS (`, clustersGlob) +
+	` + identityindex.CanonicalParticipantsSQL("participants", "read_parquet('"+quoteIdentitySQLPath(clustersGlob)+"')") + `
+`
+	if exactID == nil {
+		return canon + `), person_entries AS (` +
 			sqlActivityEntryEdges(
 				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
@@ -574,13 +575,13 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 		}
 	}
 	args = append(args, *exactID)
-	return `
+	return canon + `
 ), person_message_ids AS (
-	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
+	SELECT mr.message_id FROM message_recipients mr JOIN canon c ON c.participant_id = mr.participant_id WHERE mr.participant_id IN ` + memberList + `
 	UNION
-	SELECT m.id AS message_id FROM messages m WHERE m.sender_id IN ` + memberList + `
+	SELECT m.id AS message_id FROM messages m JOIN canon c ON c.participant_id = m.sender_id WHERE m.sender_id IN ` + memberList + `
 ), person_chat_conversation_ids AS (
-	SELECT cp.conversation_id FROM conversation_participants cp WHERE cp.participant_id IN ` + memberList + `
+	SELECT cp.conversation_id FROM conversation_participants cp JOIN canon c ON c.participant_id = cp.participant_id WHERE cp.participant_id IN ` + memberList + `
 	UNION
 	SELECT f.conversation_id FROM classified f
 	WHERE f.is_chat AND f.message_id IN (SELECT message_id FROM person_message_ids)
