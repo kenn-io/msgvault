@@ -496,13 +496,18 @@ func TestEmailCalendarRevisionAfterSourceMerge(t *testing.T) {
 			if tc.reject {
 				subject = "Rejected"
 			}
-			raw := inviteEmail(calendarDocument("REQUEST", "SEQUENCE:"+tc.sequence+"\r\nDTSTART:20270303T120000Z\r\nSUMMARY:"+subject+"\r\nORGANIZER:mailto:"+tc.organizer))
+			update := calendarDocument("REQUEST", "SEQUENCE:"+tc.sequence+"\r\nDTSTART:20270303T120000Z\r\nSUMMARY:"+subject+"\r\nORGANIZER:mailto:"+tc.organizer)
+			raw := inviteEmail(update)
 			id := persistInviteEmailForSource(t, st, into.ID, "update", raw)
+			assertions.Equal(ids, emailEvents(t, st, into.ID))
 			if tc.reject {
 				stored, err := st.GetMessageRaw(id)
 				requirements.NoError(err)
 				assertions.Equal(raw, stored)
-				assertions.Equal(ids, emailEvents(t, st, into.ID))
+			} else {
+				stored, err := st.GetMessageRaw(ids[0])
+				requirements.NoError(err)
+				assertions.Equal(update, stored)
 			}
 			if tc.cancel {
 				persistInviteEmailForSource(t, st, into.ID, "cancel", inviteEmail(calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED\r\nORGANIZER:mailto:organizer@example.com")))
