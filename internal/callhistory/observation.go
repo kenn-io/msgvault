@@ -89,7 +89,7 @@ func invalid(field string) error {
 }
 
 func validID(s string) bool {
-	return strings.TrimSpace(s) != "" && len(s) <= 256 && utf8.ValidString(s) && !strings.ContainsRune(s, 0)
+	return strings.TrimSpace(s) != "" && len(s) <= 1024 && utf8.ValidString(s) && !strings.ContainsRune(s, 0)
 }
 
 func (e Evidence) Validate() error {
