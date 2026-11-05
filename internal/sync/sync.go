@@ -744,9 +744,6 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		existingCount++
-		if s.requireLabelRefresh && (!canReadLabels || !snapshotComplete) {
-			return nil, errors.New("gmail recovery requires complete message label metadata")
-		}
 		if canReadLabels {
 			labelRefreshIDs = append(labelRefreshIDs, id)
 			continue
@@ -773,18 +770,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			return nil, fmt.Errorf("fetch message labels: %w", err)
 		}
 
-		if s.requireLabelRefresh && len(labelResults) != len(labelRefreshIDs) {
-			return nil, errors.New("incomplete recovery message label batch")
-		}
 		for i, sourceMessageID := range labelRefreshIDs {
-			if s.requireLabelRefresh {
-				if err := ctx.Err(); err != nil {
-					return nil, err
-				}
-				if labelResults[i].ID != sourceMessageID {
-					return nil, errors.New("unexpected recovery message label identity")
-				}
-			}
 			if i >= len(labelResults) {
 				err := errors.New("label metadata missing from batch response")
 				s.logger.Warn("failed to fetch message labels",
@@ -805,6 +791,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			}
 			if labelResult.Err != nil {
 				if s.requireLabelRefresh {
+					checkpoint.MessagesUpdated += result.updated
 					return nil, fmt.Errorf("fetch recovery labels for %s: %w", sourceMessageID, labelResult.Err)
 				}
 				s.logger.Warn("failed to fetch message labels",
@@ -816,12 +803,10 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 
 			existing := existingMap[sourceMessageID]
 			if s.requireLabelRefresh {
-				if labelResult.LabelIDs == nil {
-					return nil, errors.New("missing recovery message label snapshot")
-				}
 				for _, id := range labelResult.LabelIDs {
 					if _, known := labelMap[id]; !known {
-						return nil, fmt.Errorf("Gmail returned an unknown label %q", id)
+						checkpoint.MessagesUpdated += result.updated
+						return nil, fmt.Errorf("gmail returned an unknown label %q for message %s", id, sourceMessageID)
 					}
 				}
 			}
@@ -916,6 +901,7 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			)
 			if err != nil {
 				if s.requireLabelRefresh {
+					checkpoint.MessagesUpdated += result.updated
 					return nil, fmt.Errorf("replace recovery labels for %s: %w", sourceMessageID, err)
 				}
 				s.logger.Warn("failed to refresh existing message labels",

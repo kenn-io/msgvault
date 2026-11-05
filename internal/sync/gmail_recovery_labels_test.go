@@ -165,6 +165,7 @@ func TestGmailRecoveryReplacesArchivedLabels(t *testing.T) {
 	summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
 	require.NoError(err)
 	require.Zero(summary.Errors)
+	assert.Equal(int64(4), summary.MessagesUpdated)
 	assert.Equal(uint64(2001), summary.FinalHistoryID)
 	assert.Equal([]string{"1000", "2000"}, f.historyStarts, "expire old History, then consume the empty catch-up")
 	reopenAcquisitionStore(t, e)
@@ -197,7 +198,7 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 					require.ErrorContains(err, map[string]string{
 						"read":      "synthetic label read failure",
 						"identity":  "unexpected message identity",
-						"catalogue": "Gmail returned an unknown label",
+						"catalogue": "gmail returned an unknown label",
 						"write":     "synthetic acquisition write failure",
 					}[fault], "required metadata reconciliation cannot report success")
 				}
@@ -221,6 +222,7 @@ func TestGmailRecoveryLabelFailureRetainsCheckpoint(t *testing.T) {
 			summary, err := e.Syncer.IncrementalWithHistoryRecovery(t.Context(), gmailCoverageSource(t, e), nil)
 			require.NoError(err)
 			assert.Zero(summary.Errors)
+			assert.Equal(int64(4), summary.MessagesUpdated)
 			reopenAcquisitionStore(t, e)
 			assertRecoveryLabels(t, e, ids, f.labels)
 			assert.Equal(4, f.rawGets)

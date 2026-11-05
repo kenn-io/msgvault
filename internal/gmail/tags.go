@@ -42,9 +42,7 @@ func (c *Client) GetMessageLabelsBatch(ctx context.Context, messageIDs []string)
 			return nil
 		})
 	}
-	if err := group.Wait(); err != nil {
-		return nil, fmt.Errorf("read message labels concurrently: %w", err)
-	}
+	_ = group.Wait()
 	return results, ctx.Err()
 }
 

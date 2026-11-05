@@ -27,7 +27,7 @@ func gmailCoverageEnv(t *testing.T) *TestEnv {
 	require.NoError(t, st.InitSchema())
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 1000}
-	e := &TestEnv{Store: st, Mock: mock, Syncer: New(&gmailLabelSnapshotAPI{MockAPI: mock}, st, nil), TmpDir: dir, Context: context.Background()}
+	e := &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), TmpDir: dir, Context: context.Background()}
 	t.Cleanup(func() { require.NoError(t, e.Store.Close()) })
 	return e
 }

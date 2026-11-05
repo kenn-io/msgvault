@@ -17,19 +17,9 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-// Reuse the metadata fixture without adding a capability to the shared
-// MockAPI, which is also embedded by IMAP clients.
-type gmailLabelSnapshotAPI struct {
-	*gmail.MockAPI
-}
-
-func (a gmailLabelSnapshotAPI) GetMessageLabelsBatch(ctx context.Context, ids []string) ([]gmail.MessageLabelsBatchResult, error) {
-	return (&labelMetadataSnapshotAPI{MockAPI: a.MockAPI}).GetMessageLabelsBatch(ctx, ids)
-}
-
 // Fail at observable provider boundaries, after the preceding durable write.
 type recoveryStateAPI struct {
-	gmailLabelSnapshotAPI
+	*gmail.MockAPI
 
 	fault                       string
 	crash                       bool
@@ -135,13 +125,13 @@ func TestGmailRecoveryRejectsFilteredFullWhilePending(t *testing.T) {
 			} else {
 				opts.Limit = 1
 			}
-			_, err = New(&gmailLabelSnapshotAPI{MockAPI: e.Mock}, e.Store, opts).Full(t.Context(), testEmail)
+			_, err = New(e.Mock, e.Store, opts).Full(t.Context(), testEmail)
 			require.ErrorContains(err, "unfiltered, unlimited")
 			assert.Equal("1000", gmailCoverageSource(t, e).SyncCursor.String)
 			e.Mock.HistoryError = nil
 			lists, snapshots := e.Mock.ListMessagesCalls, e.Mock.SnapshotListCalls
 			// The direct Incremental entry must honor the pending recovery too.
-			_, err = New(&gmailLabelSnapshotAPI{MockAPI: e.Mock}, e.Store, nil).Incremental(t.Context(), gmailCoverageSource(t, e))
+			_, err = New(e.Mock, e.Store, nil).Incremental(t.Context(), gmailCoverageSource(t, e))
 			require.NoError(err)
 			assert.Equal(lists, e.Mock.ListMessagesCalls)
 			assert.Equal(snapshots, e.Mock.SnapshotListCalls)
@@ -235,7 +225,7 @@ func TestGmailRecoveryNoResumeAndExpiredHandoff(t *testing.T) {
 			} else {
 				e.Mock.HistoryError = &gmail.NotFoundError{Path: "/history"}
 			}
-			_, err := New(&gmailLabelSnapshotAPI{MockAPI: e.Mock}, e.Store, opts).Full(t.Context(), testEmail)
+			_, err := New(e.Mock, e.Store, opts).Full(t.Context(), testEmail)
 			require.NoError(t, err, "fresh profile cursor equals new H, so the second catch-up is a no-op")
 			if mode == "expired-handoff" {
 				assert.Equal([]uint64{15000}, e.Mock.HistoryCalls)
@@ -310,7 +300,7 @@ func TestGmailRecoveryLegacyTwoInterruptionsThenFull(t *testing.T) {
 	_, err := e.Syncer.Full(t.Context(), testEmail) // Second interruption: new page saved.
 	require.Error(t, err)
 	gmailCoverageReopen(t, e)
-	e.Syncer = New(&gmailLabelSnapshotAPI{MockAPI: e.Mock}, e.Store, nil)
+	e.Syncer = New(e.Mock, e.Store, nil)
 	_, err = e.Syncer.Full(t.Context(), testEmail)
 	require.NoError(t, err)
 	assert.Equal(t, []uint64{15000}, e.Mock.HistoryCalls)
@@ -347,7 +337,7 @@ func TestGmailRecoveryCompletionAndPublicationRange(t *testing.T) {
 			var lower int64
 			require.NoError(e.Store.DB().QueryRow("SELECT lower_sequence FROM person_sweep_sync_publications WHERE sync_run_id=(SELECT MAX(id) FROM sync_runs)").Scan(&lower))
 			progress := &recoveryProgress{}
-			syncer := New(&gmailLabelSnapshotAPI{MockAPI: e.Mock}, e.Store, nil)
+			syncer := New(e.Mock, e.Store, nil)
 			syncer.WithProgress(progress)
 			hooks := 0
 			syncer.WithSuccessfulSyncHook("synthetic", func(ctx context.Context, src *store.Source, changed bool) error {
@@ -418,7 +408,7 @@ func recoveryStateEnv(t *testing.T, legacy bool) *TestEnv {
 	require.NoError(t, st.InitSchema())
 	mock := gmail.NewMockAPI()
 	mock.Profile = &gmail.Profile{EmailAddress: testEmail, HistoryID: 1000}
-	e := &TestEnv{Store: st, Mock: mock, Syncer: New(&gmailLabelSnapshotAPI{MockAPI: mock}, st, nil), TmpDir: dir, Context: context.Background()}
+	e := &TestEnv{Store: st, Mock: mock, Syncer: New(mock, st, nil), TmpDir: dir, Context: context.Background()}
 	t.Cleanup(func() { require.NoError(t, e.Store.Close()) })
 	seedMessages(e, 9, 1000, "gone", "m0", "m1", "m2", "m3", "m4", "m5", "m6", "m7")
 	runFullSync(t, e)

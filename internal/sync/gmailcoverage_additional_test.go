@@ -151,7 +151,7 @@ func TestGmailCoverageInterruptedLegacyRecoveryRestartsAndCatchesUp(t *testing.T
 
 	listed := env.Mock.ListMessagesCalls
 	env.Mock.HistoryError = nil
-	env.Syncer = New(&gmailLabelSnapshotAPI{MockAPI: env.Mock}, env.Store, nil)
+	env.Syncer = New(env.Mock, env.Store, nil)
 	summary, err := env.Syncer.Full(env.Context, testEmail)
 	require.NoError(err)
 	require.True(summary.WasResumed)
