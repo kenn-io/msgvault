@@ -153,7 +153,7 @@ question. Deleting a question removes only that question's decision.
   `msgvault loops done`.
 - Each request checks up to 1,000 uncached messages, starting with the eligible conversation whose latest activity is oldest. It saves body classifications and MIME facts so another request continues farther through history. Message text stays in the archive's existing body storage.
 - When that budget runs out, the response sets `coverage_incomplete` and includes only conversations checked in full. Returned loops sort oldest-owed first among those checked conversations. Run `msgvault loops list` or issue another API request to continue.
-- A very large archive can still exceed the API's default 60-second request budget and return HTTP 500 (`internal_error`). Successful evidence writes remain available for the next request. A smaller `limit` may still scan the same history.
+- A request that reaches its time limit returns the conversations it checked in full and sets `coverage_incomplete`, as when the 1,000-message budget runs out. Run the list again to continue.
 - Done decisions remain attached to the exact questions marked; snoozed questions return after expiry.
 - A direct chat has no stored original to check, so the automatic-reply and
   bulk-mail rules don't apply. A bot or short-code sender that asks something
