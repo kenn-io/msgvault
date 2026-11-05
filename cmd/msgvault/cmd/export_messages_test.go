@@ -25,7 +25,9 @@ import (
 func TestExportMessagesCommandWritesContractOrderAndCounts(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
-	st := testutil.NewTestStore(t)
+	cfg := testConfigValue()
+	cfg.Data.DataDir = t.TempDir()
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 	source, err := st.GetOrCreateSource("text", "archive")
 	require.NoError(err)
 	require.NoError(st.UpdateSourceDisplayName(source.ID, "Example Archive"))
@@ -37,11 +39,15 @@ func TestExportMessagesCommandWritesContractOrderAndCounts(t *testing.T) {
 		t, st, source.ID, conversationID, "message", start, "Complete body <safe>&",
 	)
 
-	cmd := newExportMessagesLocalCmd(exportMessagesDeps{
-		openStore: func(context.Context) (*store.Store, func(), error) {
-			return st, func() {}, nil
-		},
-	})
+	ctx := withInvocation(t.Context(), testInvocationWithConfig(cfg))
+	deps := defaultExportMessagesDeps()
+	reader, cleanup, err := deps.openStore(ctx)
+	require.NoError(err)
+	t.Cleanup(cleanup)
+	_, err = reader.DB().ExecContext(ctx, `INSERT INTO sources (source_type, identifier) VALUES ('text', 'unexpected-write')`)
+	require.ErrorContains(err, "readonly")
+
+	cmd := newExportMessagesLocalCmd(deps)
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(io.Discard)
@@ -49,7 +55,7 @@ func TestExportMessagesCommandWritesContractOrderAndCounts(t *testing.T) {
 		"--start", "2026-07-19T20:00:00-04:00",
 		"--end", "2026-07-21T00:00:00Z",
 	})
-	require.NoError(cmd.Execute())
+	require.NoError(cmd.ExecuteContext(ctx))
 	assert.NotContains(output.String(), `\u003c`)
 	assert.NotContains(output.String(), `\u0026`)
 
