@@ -1,5 +1,5 @@
 import { stubOperationStatus } from './kit-ui';
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { selectWorkspace } from './kit-ui';
 
 import { mockArchiveLayout, row } from './archive-layout';
@@ -319,24 +319,30 @@ test('selected rows keep their fill and accent on stripes and in the reader', as
 });
 
 
+async function mockMeetingSelection(page: Page, {
+  meetingCount, selectedCount, totalCount = meetingCount, extraRows = [],
+}: { meetingCount: number; selectedCount: number; totalCount?: number; extraRows?: typeof row[] }) {
+  const meetings = Array.from({ length: meetingCount }, (_, index) => ({ ...row, key: `message:${index + 1}`, title: `Meeting ${index + 1}`, message_type: 'meeting_transcript' }));
+  await page.route('**/api/v1/explore', route => route.fulfill({ json: {
+    rows: [...meetings, ...extraRows], total_count: totalCount, cache_revision: 'spacing', search_provenance: {}
+  } }));
+  await page.route('**/api/v1/explore/preflight', route => route.fulfill({ json: {
+    count: selectedCount, deletable_count: 0, estimated_bytes: 128 * 1024 * 1024, cache_revision: 'spacing', search_provenance: {},
+    unavailable_actions: [
+      { action: 'export', reason: 'browser_export_requires_single_message' },
+      { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
+      { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
+    ], action_targets: []
+  } }));
+}
+
 test.describe('all-matching selection', () => {
   // Touch controls leave less room for the selection summary.
   test.use({ hasTouch: true });
 
   test('filtered all-matching selection shows size and exclusions at 1024px', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 900 });
-    const meetings = Array.from({ length: 50 }, (_, index) => ({ ...row, key: `message:${index + 1}`, title: `Meeting ${index + 1}`, message_type: 'meeting_transcript' }));
-    await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-      rows: meetings, total_count: 50, cache_revision: 'spacing', search_provenance: {}
-    } }));
-    await page.route('**/api/v1/explore/preflight', route => route.fulfill({ json: {
-      count: 49, deletable_count: 0, estimated_bytes: 128 * 1024 * 1024, cache_revision: 'spacing', search_provenance: {},
-      unavailable_actions: [
-        { action: 'export', reason: 'browser_export_requires_single_message' },
-        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
-        { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
-      ], action_targets: []
-    } }));
+    await mockMeetingSelection(page, { meetingCount: 50, selectedCount: 49 });
     const explore = { filters: [{ dimension: 'message_type', values: ['meeting_transcript'] }], presentation: 'table' };
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify(explore))}`);
     const grid = page.getByRole('grid', { name: 'Messages results' });
@@ -355,19 +361,10 @@ test.describe('all-matching selection', () => {
 for (const width of [1024, 1440]) {
   test(`selection bar stays on one row and anchors meeting context at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
-    const meetings = Array.from({ length: 500 }, (_, index) => ({ ...row, key: `message:${index + 1}`, title: `Meeting ${index + 1}`, message_type: 'meeting_transcript' }));
-    const email = { ...row, key: 'message:501', title: 'Example email' };
-    await page.route('**/api/v1/explore', route => route.fulfill({ json: {
-      rows: [...meetings, email], total_count: 10035, cache_revision: 'spacing', search_provenance: {}
-    } }));
-    await page.route('**/api/v1/explore/preflight', route => route.fulfill({ json: {
-      count: 500, deletable_count: 0, estimated_bytes: 128 * 1024 * 1024, cache_revision: 'spacing', search_provenance: {},
-      unavailable_actions: [
-        { action: 'export', reason: 'browser_export_requires_single_message' },
-        { action: 'stage_deletion', reason: 'selection_contains_items_that_cannot_be_deleted_from_source' },
-        { action: 'open_in_source', reason: 'trusted_source_link_unavailable' }
-      ], action_targets: []
-    } }));
+    await mockMeetingSelection(page, {
+      meetingCount: 500, selectedCount: 500, totalCount: 10035,
+      extraRows: [{ ...row, key: 'message:501', title: 'Example email' }],
+    });
     await selectWorkspace(page, 'Messages');
     const grid = page.getByRole('grid', { name: 'Messages results' });
     await grid.focus();
