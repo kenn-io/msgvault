@@ -41,7 +41,7 @@ msgvault sync-caldav personal --full
 
 Sync preserves each calendar resource and archives its events for search and `msgvault calendar events`. It only reads the server. Sync runs manually; `--full` reconciles a complete snapshot, and incremental syncs also mark events deleted at the source.
 
-Attendees without a `mailto:` email address, such as `urn:uuid:` values, stay in the archived raw event but are omitted from the attendee list because the typed model uses email addresses as keys.
+Attendees without a `mailto:` address keep their names, roles, and RSVPs. An `EMAIL` parameter supplies their email address when present.
 
 See [CalDAV configuration](../configuration.md#caldav-sources-unreleased) for supported time zones, resource skip rules, and duplicate UID handling.
 

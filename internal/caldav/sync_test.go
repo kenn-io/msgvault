@@ -246,6 +246,80 @@ func TestSyncTimeZoneChangeRewritesUnchangedInstants(t *testing.T) {
 	assertions.Zero(unchanged.Events)
 }
 
+func TestReviewZoneCorrectionRefreshesSearchText(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	f.raw["a.ics"] = strings.Replace(calendarBody, "20270314T130000Z", "20270314T023000", 1)
+	st := testutil.NewTestStore(t)
+	opts := syncOpts()
+	_, err := c.Sync(t.Context(), st, opts)
+	require.NoError(err)
+	var id int64
+	require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
+	opts.TimeZone = "America/New_York"
+	for _, failFetch := range []bool{true, false} {
+		f.Lock()
+		f.failFetch = failFetch
+		f.Unlock()
+		_, err = c.Sync(t.Context(), st, opts)
+		if failFetch {
+			require.Error(err)
+		} else {
+			require.NoError(err)
+		}
+		msg, err := st.GetMessageContext(t.Context(), id)
+		require.NoError(err)
+		assert.Contains(msg.BodyText, "2027-03-14 03:30 - 2027-03-14 04:30")
+		assert.Contains(msg.Snippet, "2027-03-14 03:30 - 2027-03-14 04:30")
+		_, total, err := st.SearchMessagesContext(t.Context(), `"04:30"`, 0, 10)
+		require.NoError(err)
+		assert.Equal(int64(1), total)
+		_, total, err = st.SearchMessagesContext(t.Context(), `"02:30"`, 0, 10)
+		require.NoError(err)
+		assert.Zero(total)
+	}
+}
+
+func TestReviewZoneCorrectionFailureKeepsConversationCurrent(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	c, f := archiveFixture(t)
+	f.raw["a.ics"] = strings.Replace(calendarBody, "20270314T130000Z", "20270314T090000", 1)
+	st := testutil.NewTestStore(t)
+	opts := syncOpts()
+	_, err := c.Sync(t.Context(), st, opts)
+	require.NoError(err)
+	opts.TimeZone = "America/New_York"
+	f.Lock()
+	f.failFetch = true
+	f.Unlock()
+	_, err = c.Sync(t.Context(), st, opts)
+	require.Error(err)
+	var sent, last time.Time
+	require.NoError(st.DB().QueryRow(`SELECT m.sent_at, c.last_message_at FROM messages m JOIN conversations c ON c.id=m.conversation_id`).Scan(&sent, &last))
+	assert.Equal("2027-03-14T13:00:00Z", sent.UTC().Format(time.RFC3339))
+	assert.True(sent.Equal(last), "conversation last time %s differs from message %s", last, sent)
+}
+
+func TestReviewMessageDetailsUIDAndSequence(t *testing.T) {
+	for _, sequence := range []int64{0, 3} {
+		t.Run(strconv.FormatInt(sequence, 10), func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			c, f := archiveFixture(t)
+			f.raw["a.ics"] = strings.Replace(calendarBody, "END:VEVENT", "SEQUENCE:"+strconv.FormatInt(sequence, 10)+"\r\nEND:VEVENT", 1)
+			st := testutil.NewTestStore(t)
+			_, err := c.Sync(t.Context(), st, syncOpts())
+			require.NoError(err)
+			var id int64
+			require.NoError(st.DB().QueryRow(`SELECT id FROM messages`).Scan(&id))
+			msg, err := st.GetMessageContext(t.Context(), id)
+			require.NoError(err)
+			require.NotNil(msg.Calendar)
+			assert.Equal(new("example@example.org"), msg.Calendar.ICalUID)
+			assert.Equal(new(sequence), msg.Calendar.Sequence)
+		})
+	}
+}
+
 func TestSyncMessageDetailsCalendarBounds(t *testing.T) {
 	for _, tc := range []struct {
 		name, start, duration, wantStart, wantEnd, changedStart, changedEnd string
@@ -723,22 +797,22 @@ func TestSyncRunCountersPreservePartialWritesOnFailure(t *testing.T) {
 
 			result, err := c.Sync(t.Context(), st, syncOpts())
 			require.ErrorContains(err, tc.wantError)
-			committed := 0
+			committed := 1
 			if tc.persistFails {
-				committed = 1
+				committed = 2
 			}
 			assert.Equal(committed, result.Events)
 			assert.Equal(committed, count(t, st, `SELECT COUNT(*) FROM calendar_events`))
 			assert.Equal(committed, count(t, st, `SELECT COUNT(*) FROM conversations WHERE message_count = 1`))
 			if tc.persistFails {
 				assert.Equal("t1", sourceToken(t, st))
-				assert.Zero(count(t, st, `SELECT COUNT(*) FROM calendar_events WHERE kind = 'series'`))
+				assert.Equal(1, count(t, st, `SELECT COUNT(*) FROM calendar_events WHERE kind = 'series'`))
 				assert.Zero(count(t, st, `SELECT COUNT(*) FROM calendar_events WHERE kind = 'exception'`))
 				_, total, err := st.SearchMessagesQuery(search.Parse("account:owner@example.org"), 0, 10)
 				require.NoError(err)
-				assert.Equal(int64(1), total)
+				assert.Equal(int64(2), total)
 			} else {
-				assert.Zero(count(t, st, `SELECT COUNT(*) FROM messages WHERE account_path = 'calendar' AND account_address = 'owner@example.org'`))
+				assert.Equal(1, count(t, st, `SELECT COUNT(*) FROM messages WHERE account_path = 'calendar' AND account_address = 'owner@example.org'`))
 			}
 			var sourceID int64
 			require.NoError(st.DB().QueryRowContext(t.Context(), `SELECT id FROM sources WHERE source_type = 'caldav'`).Scan(&sourceID))
@@ -1761,7 +1835,7 @@ func TestSyncDeletionAndFloatingEventTimeZoneChange(t *testing.T) {
 	require.Equal("2027-03-14T13:00:00Z", lastMessage.UTC().Format(time.RFC3339))
 }
 
-func TestSyncResourceUpdateIsAtomic(t *testing.T) {
+func TestSyncResourceFailureKeepsCommittedEventsAndRetries(t *testing.T) {
 	for _, deleted := range []bool{false, true} {
 		t.Run(strconv.FormatBool(deleted), func(t *testing.T) {
 			require := require.New(t)
@@ -1788,7 +1862,11 @@ func TestSyncResourceUpdateIsAtomic(t *testing.T) {
 				require.Equal(want, start.UTC().Format(time.RFC3339))
 				raw, err := st.GetMessageRawContext(t.Context(), id)
 				require.NoError(err)
-				require.Equal(compound(), string(raw))
+				wantRaw := compound()
+				if kind == "series" {
+					wantRaw = f.raw["a.ics"]
+				}
+				require.Equal(wantRaw, string(raw))
 			}
 			if st.IsPostgreSQL() {
 				_, err = st.DB().Exec(`DROP TRIGGER reject_caldav_exception ON calendar_events; DROP FUNCTION reject_caldav_exception()`)
@@ -1806,7 +1884,7 @@ func TestSyncResourceUpdateIsAtomic(t *testing.T) {
 			require.NoError(err)
 			got := occurrences(t, st, "2027-03-14T00:00:00Z", "2027-03-22T00:00:00Z")
 			require.Len(got, 2)
-			require.Equal(map[bool]string{false: "Updated meeting", true: "Example meeting"}[deleted], got[0].Subject)
+			require.Equal("Updated meeting", got[0].Subject)
 			require.Equal(want, got[1].Start.UTC().Format(time.RFC3339))
 			require.Equal(deleted, got[1].DeletedFromSource)
 			require.Equal("t2", sourceToken(t, st))

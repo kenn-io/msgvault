@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/netguard"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -723,7 +724,7 @@ func (r *davRemote) CreateHref(collectionURL, uid string) (string, error) {
 		return "", ErrUnsafeTarget
 	}
 	collection, err := url.Parse(collectionURL)
-	if err != nil || !validHTTPURL(collection) || !sameOrigin(r.client.origin, collection) {
+	if err != nil || !validHTTPURL(collection) || !netguard.SameOrigin(r.client.origin, collection) {
 		return "", fmt.Errorf("CardDAV publication collection: %w", ErrUnsafeTarget)
 	}
 	child := *collection
@@ -733,7 +734,7 @@ func (r *davRemote) CreateHref(collectionURL, uid string) (string, error) {
 	escapedBase := strings.TrimSuffix(collection.EscapedPath(), "/") + "/"
 	child.Path = strings.TrimSuffix(collection.Path, "/") + "/" + uid + ".vcf"
 	child.RawPath = escapedBase + url.PathEscape(uid) + ".vcf"
-	if !sameOrigin(collection, &child) || !sameOrigin(r.client.origin, &child) {
+	if !netguard.SameOrigin(collection, &child) || !netguard.SameOrigin(r.client.origin, &child) {
 		return "", fmt.Errorf("CardDAV publication href: %w", ErrUnsafeTarget)
 	}
 	return CanonicalDAVURLIdentity(&child), nil
@@ -741,7 +742,7 @@ func (r *davRemote) CreateHref(collectionURL, uid string) (string, error) {
 
 func (r *davRemote) Get(ctx context.Context, href string) (store.CardDAVRemoteResource, bool, error) {
 	target, err := url.Parse(href)
-	if err != nil || !validHTTPURL(target) || !sameOrigin(r.client.origin, target) {
+	if err != nil || !validHTTPURL(target) || !netguard.SameOrigin(r.client.origin, target) {
 		return store.CardDAVRemoteResource{}, false, ErrUnsafeTarget
 	}
 	href = CanonicalDAVURLIdentity(target)

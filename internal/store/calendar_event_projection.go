@@ -118,6 +118,26 @@ func (s *Store) refreshCalendarEventProjectionWith(ctx context.Context, tx *logg
 		if _, err := q.Exec(fmt.Sprintf(`UPDATE messages SET metadata = %s WHERE id = ?`, s.dialect.JSONBindExpr()), string(encoded), messageID); err != nil {
 			return fmt.Errorf("refresh CalDAV message metadata: %w", err)
 		}
+		raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+		if err != nil {
+			return err
+		}
+		messageEvent, err := calevent.CalDAVMessageEvent(raw, []byte(metadata.String), calendarConfigZone(config))
+		if err != nil {
+			return fmt.Errorf("decode CalDAV message text: %w", err)
+		}
+		body := calevent.SerializeBody(messageEvent)
+		row, err := s.loadDerivedEmailText(q, messageID)
+		if err != nil {
+			return fmt.Errorf("read CalDAV message text: %w", err)
+		}
+		text, snippet := NullIfEmpty(body), NullIfEmpty(calevent.Snippet(body))
+		if !row.matches(text, sql.NullString{}, snippet) {
+			row.fts.Body = body
+			if err := s.updateMessageDerivedText(q, messageID, text, sql.NullString{}, snippet, row.fts, s.dialect.FTSUpsert); err != nil {
+				return fmt.Errorf("refresh CalDAV message text: %w", err)
+			}
+		}
 	}
 	// Keep timed CalDAV message times aligned with the event decoded from its
 	// raw snapshot, including when a source configuration refresh reprojects it.

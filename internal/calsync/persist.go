@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"go.kenn.io/msgvault/internal/calevent"
 	"go.kenn.io/msgvault/internal/gcal"
@@ -75,8 +74,6 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 
 	// Attendees → 'to' recipients + FTS toAddrs.
 	var attendeeIDs []int64
-	var attendeeNames []string
-	var attendeeEmails []string
 	for _, a := range ev.Attendees {
 		if a.Email == "" {
 			continue
@@ -86,45 +83,20 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 			return 0, fmt.Errorf("attendee participant: %w", err)
 		}
 		attendeeIDs = append(attendeeIDs, pid)
-		attendeeNames = append(attendeeNames, a.DisplayName)
-		attendeeEmails = append(attendeeEmails, a.Email)
 	}
 
-	// Only the series master (or a standalone event) sets the conversation
-	// title. A per-instance exception keeps its edited summary on its own message
-	// row, but must not overwrite the shared series title — otherwise the
-	// conversation label flaps as the master and edited instances re-deliver
-	// across syncs. Passing "" preserves the existing title (EnsureConversation
-	// only overwrites with a non-empty title).
-	convTitle := ev.Summary
-	if ev.RecurringEventID != "" {
-		convTitle = ""
-	}
-	convID, err := s.store.EnsureConversationWithType(sourceID, conversationKey(ev), gcal.ConversationType, convTitle)
+	body := calevent.SerializeBody(ev)
+	data := MapEventMessage(ev, s.opts.AccountEmail, &store.MessagePersistData{
+		Message:      &store.Message{SourceID: sourceID, SourceMessageID: smid, SizeEstimate: int64(len(body))},
+		Conversation: &store.ConversationPersistData{SourceConversationID: conversationKey(ev)},
+		BodyText:     store.NullIfEmpty(body),
+	}, senderID, attendeeIDs)
+	convID, err := s.store.EnsureConversationWithType(sourceID, data.Conversation.SourceConversationID, data.Conversation.ConversationType, data.Conversation.Title)
 	if err != nil {
 		return 0, fmt.Errorf("ensure conversation: %w", err)
 	}
-
-	body := SerializeBody(ev)
-	subject := ev.Summary
-	identityFromMe := !ev.Organizer.Self &&
-		ev.Organizer.Email != "" &&
-		strings.EqualFold(ev.Organizer.Email, s.opts.AccountEmail)
-	fromMe := ev.Organizer.Self || identityFromMe
-
-	msgID, err := s.store.UpsertMessage(&store.Message{
-		ConversationID:          convID,
-		SourceID:                sourceID,
-		SourceMessageID:         smid,
-		MessageType:             gcal.MessageTypeCalendarEvent,
-		SentAt:                  eventSentAt(ev),
-		SenderID:                sql.NullInt64{Int64: senderID, Valid: senderID != 0},
-		IsFromMe:                fromMe,
-		IdentityDerivedIsFromMe: identityFromMe,
-		Subject:                 sql.NullString{String: subject, Valid: subject != ""},
-		Snippet:                 sql.NullString{String: Snippet(body), Valid: body != ""},
-		SizeEstimate:            int64(len(body)),
-	})
+	data.Message.ConversationID = convID
+	msgID, err := s.store.UpsertMessage(data.Message)
 	if err != nil {
 		return 0, fmt.Errorf("upsert message: %w", err)
 	}
@@ -157,27 +129,54 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	// no-ops the insert on an empty slice — a guarded call would skip the DELETE
 	// and leave stale 'from'/'to' rows that desync from the (always-rewritten)
 	// FTS to_addr column.
-	var fromIDs []int64
-	var fromNames []string
-	if senderID != 0 {
-		fromIDs = []int64{senderID}
-		fromNames = []string{ev.Organizer.DisplayName}
-	}
-	if err := s.store.ReplaceMessageRecipients(msgID, "from", fromIDs, fromNames); err != nil {
-		return 0, fmt.Errorf("replace from recipient: %w", err)
-	}
-	if err := s.store.ReplaceMessageRecipients(msgID, "to", attendeeIDs, attendeeNames); err != nil {
-		return 0, fmt.Errorf("replace to recipients: %w", err)
+	for _, recipients := range data.Recipients {
+		if err := s.store.ReplaceMessageRecipients(msgID, recipients.Type, recipients.ParticipantIDs, recipients.DisplayNames); err != nil {
+			return 0, fmt.Errorf("replace %s recipients: %w", recipients.Type, err)
+		}
 	}
 
 	// FTS: raw attendee emails go ONLY through the toAddrs column, never the
 	// body, so BM25/ts_rank doesn't double-count them and embeddings see only
 	// semantic prose.
-	if err := s.store.UpsertFTS(msgID, subject, body, ev.Organizer.Email, strings.Join(attendeeEmails, " "), ""); err != nil {
+	if err := s.store.UpsertFTS(msgID, data.FTS.Subject, data.FTS.Body, data.FTS.FromAddr, data.FTS.ToAddrs, data.FTS.CcAddrs); err != nil {
 		s.logger.Warn("upsert calendar event fts failed", "message_id", msgID, "event_id", smid, "error", err)
 	}
 
 	return msgID, nil
+}
+
+// MapEventMessage maps shared event fields onto a provider's message snapshot.
+func MapEventMessage(ev gcal.Event, account string, data *store.MessagePersistData, senderID int64, attendeeIDs []int64) *store.MessagePersistData {
+	var toNames, toEmails []string
+	for _, a := range ev.Attendees {
+		if a.Email != "" {
+			toNames, toEmails = append(toNames, a.DisplayName), append(toEmails, a.Email)
+		}
+	}
+	identityFromMe := !ev.Organizer.Self && ev.Organizer.Email != "" && strings.EqualFold(ev.Organizer.Email, account)
+	data.Message.MessageType = gcal.MessageTypeCalendarEvent
+	data.Message.SentAt = eventSentAt(ev)
+	data.Message.IsFromMe = ev.Organizer.Self || identityFromMe
+	data.Message.IdentityDerivedIsFromMe = identityFromMe
+	data.Message.Subject = store.NullIfEmpty(ev.Summary)
+	data.Message.Snippet = store.NullIfEmpty(calevent.Snippet(data.BodyText.String))
+	data.Conversation.ConversationType = gcal.ConversationType
+	data.Conversation.Title = ev.Summary
+	if ev.RecurringEventID != "" {
+		data.Conversation.Title = ""
+	}
+	data.FTS = &store.FTSDoc{Subject: ev.Summary, Body: data.BodyText.String, FromAddr: ev.Organizer.Email, ToAddrs: strings.Join(toEmails, " ")}
+	data.Message.SenderID = sql.NullInt64{Int64: senderID, Valid: senderID != 0}
+	var fromIDs []int64
+	var fromNames, fromEmails []string
+	if senderID != 0 {
+		fromIDs, fromNames, fromEmails = []int64{senderID}, []string{ev.Organizer.DisplayName}, []string{ev.Organizer.Email}
+	}
+	data.Recipients = []store.RecipientSet{
+		{Type: "from", ParticipantIDs: fromIDs, DisplayNames: fromNames, EmailAddresses: fromEmails},
+		{Type: "to", ParticipantIDs: attendeeIDs, DisplayNames: toNames, EmailAddresses: toEmails},
+	}
+	return data
 }
 
 // flagCancelled retains a cancelled event rather than soft-deleting it. If the
@@ -316,67 +315,6 @@ func dateTimeString(dt gcal.EventDateTime) string {
 		return dt.DateTime.Format(time.RFC3339)
 	}
 	return ""
-}
-
-// SerializeBody is the single body_text shared by FTS body and embeddings:
-// title, time range, location, description, and attendee DISPLAY NAMES. Raw
-// attendee email addresses are deliberately excluded (they reach FTS via the
-// toAddrs column only).
-func SerializeBody(ev gcal.Event) string {
-	var b strings.Builder
-	writeLine := func(s string) {
-		if s != "" {
-			b.WriteString(s)
-			b.WriteString("\n")
-		}
-	}
-	writeLine(ev.Summary)
-	writeLine(whenLine(ev))
-	if ev.Location != "" {
-		writeLine("Location: " + ev.Location)
-	}
-	writeLine(ev.Description)
-
-	var names []string
-	for _, a := range ev.Attendees {
-		if a.DisplayName != "" {
-			names = append(names, a.DisplayName)
-		}
-	}
-	if len(names) > 0 {
-		writeLine("Attendees: " + strings.Join(names, ", "))
-	}
-	return strings.TrimSpace(b.String())
-}
-
-// whenLine renders a human/searchable time range.
-func whenLine(ev gcal.Event) string {
-	start, ok := ev.Start.Instant()
-	if !ok {
-		return ""
-	}
-	if ev.Start.IsAllDay() {
-		return "When: " + start.Format("2006-01-02") + " (all day)"
-	}
-	if end, ok := ev.End.Instant(); ok {
-		return "When: " + start.Format("2006-01-02 15:04") + " - " + end.Format("2006-01-02 15:04")
-	}
-	return "When: " + start.Format("2006-01-02 15:04")
-}
-
-// Snippet returns a trimmed calendar-event preview of at most 200 bytes without splitting valid UTF-8.
-func Snippet(body string) string {
-	const maxSnippetBytes = 200
-	body = strings.TrimSpace(body)
-	if len(body) <= maxSnippetBytes {
-		return body
-	}
-
-	end := maxSnippetBytes
-	for end > 0 && !utf8.RuneStart(body[end]) {
-		end--
-	}
-	return body[:end]
 }
 
 // MapParticipants normalizes provider people. humanOnly excludes rooms and

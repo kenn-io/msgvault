@@ -37,6 +37,8 @@ type CalDAVMetadata struct {
 	Start        string `json:"start,omitempty"`
 	End          string `json:"end,omitempty"`
 	AllDay       bool   `json:"all_day"`
+	ICalUID      string `json:"ical_uid,omitempty"`
+	Sequence     int    `json:"sequence"`
 	// OverrideRemoved survives resource deletion to distinguish stale overrides
 	// from exceptions that belonged to the last archived snapshot.
 	OverrideRemoved bool `json:"override_removed,omitempty"`
@@ -56,6 +58,8 @@ func (m *CalDAVMetadata) SetEventTimes(e Event) {
 
 type CalDAVEvent struct {
 	Event                                 Event
+	ICalUID                               string
+	Sequence                              int
 	ExplicitAttendees                     []gcalmodel.Attendee
 	Summary, OrganizerName                string
 	Description, Location, OrganizerEmail string
@@ -67,14 +71,14 @@ var calDAVCache struct {
 
 	hash   [32]byte
 	zone   string
-	events map[string]Event
+	events map[string]CalDAVEvent
 }
 
-func decodeCalDAV(raw, metadata []byte, calendarZone string) (Event, bool, error) {
+func decodeCalDAVItem(raw, metadata []byte, calendarZone string) (CalDAVEvent, bool, error) {
 	var meta CalDAVMetadata
 	if len(metadata) > 0 {
 		if err := json.Unmarshal(metadata, &meta); err != nil {
-			return Event{}, false, fmt.Errorf("CalDAV metadata: %w", err)
+			return CalDAVEvent{}, false, fmt.Errorf("CalDAV metadata: %w", err)
 		}
 	}
 	calDAVCache.Lock()
@@ -83,16 +87,17 @@ func decodeCalDAV(raw, metadata []byte, calendarZone string) (Event, bool, error
 	if calDAVCache.events == nil || calDAVCache.hash != hash || calDAVCache.zone != calendarZone {
 		events, err := ParseCalDAVResource(context.Background(), raw, calendarZone)
 		if err != nil {
-			return Event{}, false, err
+			return CalDAVEvent{}, false, err
 		}
-		calDAVCache.events = make(map[string]Event, len(events))
+		calDAVCache.events = make(map[string]CalDAVEvent, len(events))
 		for _, item := range events {
-			calDAVCache.events[item.Event.ProviderEventID] = item.Event
+			calDAVCache.events[item.Event.ProviderEventID] = item
 		}
 		calDAVCache.hash, calDAVCache.zone = hash, calendarZone
 	}
-	e, ok := calDAVCache.events[meta.EventID]
+	item, ok := calDAVCache.events[meta.EventID]
 	if ok {
+		e := item.Event
 		e.Attendees = slices.Clone(e.Attendees)
 		e.Recurrence = slices.Clone(e.Recurrence)
 		if e.Start != nil {
@@ -108,9 +113,10 @@ func decodeCalDAV(raw, metadata []byte, calendarZone string) (Event, bool, error
 			a := &e.Attendees[i]
 			a.IsCopySelf = a.Email != "" && a.Email == gcalmodel.NormalizeParticipantEmail(meta.AccountEmail)
 		}
-		return e, true, nil
+		item.Event = e
+		return item, true, nil
 	}
-	return Event{}, false, errors.New("CalDAV component selector missing or ambiguous")
+	return CalDAVEvent{}, false, errors.New("CalDAV component selector missing or ambiguous")
 }
 
 // ParseCalDAVResource decodes VEVENTs without expanding recurrence. The caller
@@ -235,6 +241,7 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 	if uid == "" {
 		return item, errors.New("CalDAV event has no UID")
 	}
+	item.ICalUID = uid
 	var err error
 	e.ProviderEventID, err = calDAVID(uid, "")
 	if err != nil {
@@ -248,6 +255,7 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 		if err != nil || n < 0 {
 			return item, errors.New("invalid CalDAV sequence")
 		}
+		item.Sequence = n
 	}
 	start := p.Get("DTSTART")
 	end := p.Get("DTEND")
@@ -335,10 +343,11 @@ func decodeCalDAVComponent(c *ical.Component, calendarZone string, zone *time.Lo
 		for _, v := range p[name] {
 			v.Value = strings.ToUpper(v.Value)
 			if (name == "RDATE" || name == "EXDATE") && v.Params.Get("TZID") != "" {
-				if _, err := time.LoadLocation(v.Params.Get("TZID")); err != nil {
-					return item, fmt.Errorf("CalDAV time zone: %w", err)
-				}
-				if !strings.EqualFold(v.Params.Get("VALUE"), "PERIOD") {
+				if strings.EqualFold(v.Params.Get("VALUE"), "PERIOD") {
+					if _, err := time.LoadLocation(v.Params.Get("TZID")); err != nil {
+						return item, fmt.Errorf("CalDAV time zone: %w", err)
+					}
+				} else {
 					for value := range strings.SplitSeq(v.Value, ",") {
 						date := v
 						date.Value = value
@@ -492,13 +501,6 @@ func calDAVDurationEnd(start time.Time, value string, allDay bool) (time.Time, i
 }
 
 func calDAVDateTime(p *ical.Prop, zone *time.Location) (time.Time, error) {
-	if strings.HasSuffix(p.Value, "Z") {
-		instant, err := time.Parse("20060102T150405Z", p.Value)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("CalDAV UTC time: %w", err)
-		}
-		return instant, nil
-	}
 	if name := p.Params.Get("TZID"); name != "" {
 		var err error
 		zone, err = time.LoadLocation(name)
@@ -506,9 +508,30 @@ func calDAVDateTime(p *ical.Prop, zone *time.Location) (time.Time, error) {
 			return time.Time{}, fmt.Errorf("CalDAV time zone: %w", err)
 		}
 	}
+	if strings.HasSuffix(p.Value, "Z") {
+		instant, err := time.Parse("20060102T150405Z", p.Value)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("CalDAV UTC time: %w", err)
+		}
+		return instant, nil
+	}
 	local, err := calrecur.ParseLocalDateTime("20060102T150405", p.Value, zone)
 	if err != nil {
 		return time.Time{}, err
 	}
 	return local, nil
+}
+
+func decodeCalDAV(raw, metadata []byte, calendarZone string) (Event, bool, error) {
+	item, ok, err := decodeCalDAVItem(raw, metadata, calendarZone)
+	return item.Event, ok, err
+}
+
+// CalDAVMessageEvent renders the selected component from its archived snapshot.
+func CalDAVMessageEvent(raw, metadata []byte, calendarZone string) (gcalmodel.Event, error) {
+	item, _, err := decodeCalDAVItem(raw, metadata, calendarZone)
+	if err != nil {
+		return gcalmodel.Event{}, err
+	}
+	return item.MessageEvent()
 }

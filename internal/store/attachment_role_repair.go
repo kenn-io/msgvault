@@ -140,7 +140,7 @@ func (s *Store) RepairHistoricalAttachmentRolesBatch(
 					WHERE keyed.message_id = ? AND keyed.source_part_key = ?
 				  )
 			`, string(update.role), string(AttachmentRoleSourceRawMIMERepair),
-				update.partKey, nullIfEmpty(update.contentID), update.attachmentID,
+				update.partKey, NullIfEmpty(update.contentID), update.attachmentID,
 				update.contentHash, update.messageID, update.partKey)
 			if err != nil {
 				return fmt.Errorf("repair attachment %d role: %w", update.attachmentID, err)
