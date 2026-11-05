@@ -87,21 +87,14 @@ func TestICSLibicalTZID(t *testing.T) {
 
 const icsExample = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Example//EN\r\nMETHOD:REQUEST\r\nBEGIN:VEVENT\r\nUID:invite@example.com\r\nSEQUENCE:2\r\nDTSTAMP:20270301T120000Z\r\nDTSTART;TZID=America/New_York:20270314T090000\r\nDTEND;TZID=America/New_York:20270314T100000\r\nSUMMARY:Example\\, meeting\r\nDESCRIPTION:First line\\nSecond\r\n line\r\nORGANIZER:mailto:ORGANIZER@EXAMPLE.COM\r\nATTENDEE;CN=Guest;ROLE=OPT-PARTICIPANT;PARTSTAT=ACCEPTED:mailto:guest@example.org\r\nATTENDEE;CUTYPE=ROOM:mailto:room@example.com\r\nLOCATION:https://meet.google.com/abc-defg-hij\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
 
-func TestReviewRoomOrganizer(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	raw := strings.Replace(icsExample, "ORGANIZER:mailto:ORGANIZER@EXAMPLE.COM", "ORGANIZER:mailto:room@example.com", 1)
-	e, ok, err := Decode("ics", []byte(raw), []byte(`{}`), "")
-	requirements.NoError(err)
-	requirements.True(ok)
-	requirements.Len(e.Attendees, 2)
-	assertions.Equal("room@example.com", e.Attendees[1].Email)
-	assertions.Equal("room", e.Attendees[1].Role)
-}
-
 func TestICSDecode(t *testing.T) {
-	for _, tt := range []struct{ name, raw, role string }{
-		{"optional", icsExample, "optional"},
-		{"chair", strings.Replace(icsExample, "ROLE=OPT-PARTICIPANT", "ROLE=CHAIR", 1), "required"},
+	for _, tt := range []struct {
+		name, raw, role string
+		organizerIsRoom bool
+	}{
+		{"optional", icsExample, "optional", false},
+		{"chair", strings.Replace(icsExample, "ROLE=OPT-PARTICIPANT", "ROLE=CHAIR", 1), "required", false},
+		{"organizer is the room", strings.Replace(icsExample, "ORGANIZER:mailto:ORGANIZER@EXAMPLE.COM", "ORGANIZER:mailto:room@example.com", 1), "optional", true},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -112,9 +105,14 @@ func TestICSDecode(t *testing.T) {
 			requirements.True(ok)
 			requirements.NotNil(e.Start)
 			assertions.Equal("2027-03-14T13:00:00Z", e.Start.Format(time.RFC3339))
-			requirements.Len(e.Attendees, 3)
-			assertions.Equal("organizer", e.Attendees[2].Role)
-			assertions.Equal("organizer@example.com", e.Attendees[2].Email)
+			if tt.organizerIsRoom {
+				requirements.Len(e.Attendees, 2)
+			} else {
+				requirements.Len(e.Attendees, 3)
+				assertions.Equal("organizer", e.Attendees[2].Role)
+				assertions.Equal("organizer@example.com", e.Attendees[2].Email)
+			}
+			assertions.Equal("room@example.com", e.Attendees[1].Email)
 			assertions.Equal(tt.role, e.Attendees[0].Role)
 			assertions.Equal("accepted", e.Attendees[0].RSVP)
 			assertions.Equal("room", e.Attendees[1].Role)

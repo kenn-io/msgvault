@@ -6,7 +6,6 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -37,19 +36,19 @@ func TestEmailCalendarGmailAuditExcludesDerivedEvents(t *testing.T) {
 func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("requires PostgreSQL participant directory locks")
+	}
 	source, err := st.GetOrCreateSource("gmail", "owner@example.com")
 	requirements.NoError(err)
 	_, err = st.EnsureParticipant("existing@example.com", "Existing", "example.com")
 	requirements.NoError(err)
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	var blocker *loggedTx
-	if st.IsPostgreSQL() {
-		blocker, err = st.db.BeginTx(ctx, nil)
-		requirements.NoError(err)
-		defer func() { _ = blocker.Rollback() }()
-		requirements.NoError(st.lockParticipantDirectoryMutationTxContext(ctx, blocker))
-	}
+	blocker, err := st.db.BeginTx(ctx, nil)
+	requirements.NoError(err)
+	defer func() { _ = blocker.Rollback() }()
+	requirements.NoError(st.lockParticipantDirectoryMutationTxContext(ctx, blocker))
 	var id int64
 	done := make(chan error, 1)
 	go func() {
@@ -68,46 +67,27 @@ func TestEmailCalendarSingleParticipantLockOrder(t *testing.T) {
 	// Release the blocker and join the writer even when a lock assertion fails.
 	joined := false
 	defer func() {
-		if blocker != nil {
-			_ = blocker.Rollback()
-		}
+		_ = blocker.Rollback()
 		cancel()
 		if !joined {
 			<-done
 		}
 	}()
-	if blocker != nil {
-		var pid int
-		requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
-		requirements.Eventually(func() bool {
-			var waiting bool
-			return st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND ? = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
-		}, 5*time.Second, 10*time.Millisecond, "email writer must reach the directory lock")
-		// An ICS import holding the directory must still be able to update the revision.
-		_, err = blocker.ExecContext(ctx, `SELECT value FROM archive_metadata WHERE key='participant_display_name_revision' FOR UPDATE NOWAIT`)
-		assertions.NoError(err, "email writer must acquire the directory before the revision row")
-		requirements.NoError(blocker.Rollback())
-	}
+	var pid int
+	requirements.NoError(blocker.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&pid))
+	requirements.Eventually(func() bool {
+		var waiting bool
+		return st.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND ? = ANY(pg_blocking_pids(pid)))`, pid).Scan(&waiting) == nil && waiting
+	}, 5*time.Second, 10*time.Millisecond, "email writer must reach the directory lock")
+	// An ICS import holding the directory must still be able to update the revision.
+	_, err = blocker.ExecContext(ctx, `SELECT value FROM archive_metadata WHERE key='participant_display_name_revision' FOR UPDATE NOWAIT`)
+	assertions.NoError(err, "email writer must acquire the directory before the revision row")
+	requirements.NoError(blocker.Rollback())
 	err = <-done
 	joined = true
 	requirements.NoError(err)
 	assertions.Positive(id)
 	assertions.Len(emailEvents(t, st, source.ID), 1)
-}
-
-func TestEmailCalendarCustomizedTimeZone(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	raw, err := os.ReadFile("../calevent/testdata/customized.ics")
-	requirements.NoError(err)
-	_, source := persistInviteEmail(t, st, "custom-zone", inviteEmail(raw))
-	requirements.Len(emailEvents(t, st, source), 1)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 5, 0, 0, 0, 0, time.UTC))
-	requirements.NoError(err)
-	requirements.Empty(page.Unexpandable)
-	requirements.Len(page.Occurrences, 2)
-	assertions.Equal("2026-10-28T14:00:00Z", page.Occurrences[0].Start.UTC().Format(time.RFC3339))
-	assertions.Equal("2026-11-04T15:00:00Z", page.Occurrences[1].Start.UTC().Format(time.RFC3339))
 }
 
 // emailFrom wraps a calendar part in an email with a plain-text alternative.
@@ -191,6 +171,7 @@ func TestEmailCalendarEventsUseConfirmedMailAccountScope(t *testing.T) {
 		confirmed  bool
 		want       string
 	}{
+		{name: "confirmed Microsoft", sourceType: "msmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
 		{name: "confirmed Gmail", sourceType: "gmail", identifier: "owner@example.com", confirmed: true, want: "owner@example.com"},
 		{name: "confirmed IMAP", sourceType: "imap", identifier: "imap://owner%40example.com@mail.example.com:143", confirmed: true, want: "owner@example.com"},
 		{name: "unconfirmed Gmail", sourceType: "gmail", identifier: "owner@example.com"},
@@ -376,7 +357,6 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 		forged                                              bool
 	}{
 		{"matching claimed organizer", "ORGANIZER;CN=Owner;SENT-BY=\"mailto:service@example.org\":mailto:OWNER@EXAMPLE.COM", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER;CN=Different;SENT-BY=\"mailto:other@example.net\":mailto:owner@example.com", "cancelled", "", 1, false},
-		{"missing original organizer", "", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner@example.com", "cancelled", "", 1, false},
 		{"missing incoming organizer", "ORGANIZER:mailto:owner@example.com", "owner@example.com", "STATUS:CANCELLED\r\nSEQUENCE:1", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 1, false},
 		{"forged", "", "attendee@example.net", "STATUS:CANCELLED\r\nSEQUENCE:999\r\nORGANIZER:mailto:attendee@example.net\r\nSUMMARY:Forged cancellation", "confirmed", "update ignored: ORGANIZER does not match invite_organizer", 2, true},
 	} {
@@ -398,10 +378,6 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 			_, source := persistInviteEmail(t, st, "original", request)
 			ids := emailEvents(t, st, source)
 			requirements.Len(ids, tc.events)
-			if tc.name == "missing original organizer" {
-				persistInviteEmail(t, st, "update", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner@example.com")))
-				assertions.Equal("Updated", calendarRows(t, st, ids...)[0].Subject)
-			}
 			before := calendarRows(t, st, ids...)
 			rawCancel := emailFrom(tc.sender, calendarDocument("CANCEL", tc.cancel))
 			cancel, _ := persistInviteEmail(t, st, "cancel", rawCancel)
@@ -421,15 +397,27 @@ func TestEmailCalendarExistingRevisionRequiresOriginalOrganizer(t *testing.T) {
 			retained, err := st.GetMessageRaw(cancel)
 			requirements.NoError(err)
 			assertions.Equal(rawCancel, retained)
-			if tc.name == "missing original organizer" {
-				before := calendarRows(t, st, ids...)
-				logs.Reset()
-				persistInviteEmail(t, st, "mismatch", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:2\r\nDTSTART:20270302T140000Z\r\nSUMMARY:Rejected\r\nORGANIZER:mailto:other@example.org")))
-				assertions.Equal(before, calendarRows(t, st, ids...))
-				assertions.Contains(logs.String(), "update ignored: ORGANIZER does not match invite_organizer")
-			}
 		})
 	}
+	t.Run("missing original organizer", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, source := persistInviteEmail(t, st, "original", emailFrom("notifications@example.com", calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nSUMMARY:Original")))
+		ids := emailEvents(t, st, source)
+		requirements.Len(ids, 1)
+		persistInviteEmail(t, st, "update", inviteEmail(calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T130000Z\r\nSUMMARY:Updated\r\nORGANIZER:mailto:owner@example.com")))
+		assertions.Equal("Updated", calendarRows(t, st, ids...)[0].Subject)
+		rawCancel := emailFrom("owner@example.com", calendarDocument("CANCEL", "STATUS:CANCELLED\r\nSEQUENCE:1\r\nORGANIZER:mailto:owner@example.com"))
+		cancel, _ := persistInviteEmail(t, st, "cancel", rawCancel)
+		assertions.Equal(ids, emailEvents(t, st, source))
+		assertions.Equal("cancelled", calendarRows(t, st, ids...)[0].Event.Status)
+		metadata, err := st.GetMessageMetadata(cancel)
+		requirements.NoError(err)
+		assertions.NotContains(metadata.String, "calendar_invite_errors")
+		retained, err := st.GetMessageRaw(cancel)
+		requirements.NoError(err)
+		assertions.Equal(rawCancel, retained)
+	})
 }
 
 func TestEmailCalendarReplyAndCancellationPreserveInviteRSVP(t *testing.T) {

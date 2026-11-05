@@ -253,6 +253,7 @@ func (b *TestDataBuilder) AddLabel(name string) int64 {
 
 // MessageOpt configures a message to add.
 type MessageOpt struct {
+	ArchiveOnly         bool
 	Subject             string
 	Snippet             string
 	SentAt              time.Time
@@ -301,6 +302,7 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 	}
 
 	b.messages = append(b.messages, MessageFixture{
+		ArchiveOnly:            opt.ArchiveOnly,
 		ID:                     id,
 		SourceID:               srcID,
 		SourceMessageID:        fmt.Sprintf("msg%d", id),
