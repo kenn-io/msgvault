@@ -245,3 +245,104 @@ func TestActivityWindowValidatesDatesWithTimestamps(t *testing.T) {
 		assert.ErrorIs(err, store.ErrInvalidActivityRequest)
 	}
 }
+
+func TestActivityInstantWindowReturnsCompleteConversationDays(t *testing.T) {
+	requirements := require.New(t)
+	f := newTimelineActivityFixture(t)
+	// This local day crosses UTC midnight. Adjacent days and conversations
+	// must stay out even when their messages share the selected local date.
+	first := time.Date(2026, 10, 22, 13, 0, 0, 0, time.UTC)
+	morning := f.add(t, f.ConvID, f.Source.ID, first, false, "")
+	afternoon := f.add(t, f.ConvID, f.Source.ID, first.Add(6*time.Hour), false, "")
+	last := first.Add(12 * time.Hour)
+	reply := f.add(t, f.ConvID, f.Source.ID, last, true, "")
+	f.add(t, f.ConvID, f.Source.ID, first.AddDate(0, 0, -1), false, "")
+	f.add(t, f.ConvID, f.Source.ID, first.AddDate(0, 0, 1), false, "")
+	other, err := f.Store.EnsureConversation(f.Source.ID, "outside-window", "Other")
+	requirements.NoError(err)
+	f.add(t, other, f.Source.ID, first, false, "")
+	noise := f.add(t, f.ConvID, f.Source.ID, first.Add(time.Hour), false, "")
+	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), noise)
+	requirements.NoError(err)
+	projectTimelineActivity(t, f, "America/New_York")
+	for _, tc := range []struct {
+		name          string
+		after, before *time.Time
+	}{
+		{"after", new(first.Add(3 * time.Hour)), new(last.Add(time.Hour))},
+		{"before", new(first.Add(-time.Hour)), new(first.Add(3 * time.Hour))},
+		{"middle", new(first.Add(3 * time.Hour)), new(first.Add(7 * time.Hour))},
+		{"noise-only instant", new(first.Add(time.Hour)), new(first.Add(2 * time.Hour))},
+		{"inclusive after", new(last), new(last.Add(time.Hour))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requirements, assertions := require.New(t), assert.New(t)
+			q := store.BurstQuery{After: tc.after, Before: tc.before, Limit: 10}
+			if tc.name == "before" {
+				q.ConversationID = f.ConvID
+			}
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			b := page.Bursts[0]
+			assertions.Equal("2026-10-22", b.LocalDate)
+			assertions.Equal(2, b.Inbound)
+			assertions.Equal(1, b.Outbound)
+			assertions.Equal(first, b.FirstAt.UTC())
+			assertions.Equal(last, b.LastAt.UTC())
+			assertions.Equal(reply, b.AnchorMessageID)
+			assertions.Equal([]int64{reply, afternoon, morning}, b.LatestMessageIDs)
+			assertions.Equal(1, page.NoiseOmitted)
+			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, After: tc.after, Before: tc.before, Limit: 10})
+			requirements.NoError(err)
+			ids := make([]int64, len(messages))
+			for i, m := range messages {
+				ids[i] = m.MessageID
+			}
+			assertions.Equal([]int64{morning, afternoon, reply}, ids)
+		})
+	}
+	t.Run("empty interval within day", func(t *testing.T) {
+		requirements, assertions := require.New(t), assert.New(t)
+		after, before := first.Add(3*time.Hour), first.Add(6*time.Hour)
+		page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{After: &after, Before: &before, Limit: 10})
+		requirements.NoError(err)
+		assertions.Empty(page.Bursts)
+		assertions.Zero(page.NoiseOmitted)
+		messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, After: &after, Before: &before, Limit: 10})
+		requirements.NoError(err)
+		assertions.Empty(messages)
+	})
+}
+
+func TestActivityInstantWindowSingleBounds(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	f := newTimelineActivityFixture(t)
+	first := time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC)
+	morning := f.add(t, f.ConvID, f.Source.ID, first, false, "")
+	afternoon := f.add(t, f.ConvID, f.Source.ID, first.Add(6*time.Hour), false, "")
+	projectTimelineActivity(t, f, "UTC")
+	noon := first.Add(3 * time.Hour)
+	for _, q := range []store.BurstQuery{{After: &noon, Limit: 10}, {Before: &noon, Limit: 10}} {
+		page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+		requirements.NoError(err)
+		requirements.Len(page.Bursts, 1)
+		assertions.Equal(2, page.Bursts[0].Inbound)
+		assertions.Equal(first, page.Bursts[0].FirstAt.UTC())
+		assertions.Equal(afternoon, page.Bursts[0].AnchorMessageID)
+		messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, After: q.After, Before: q.Before, Limit: 10})
+		requirements.NoError(err)
+		requirements.Len(messages, 2)
+		assertions.Equal(morning, messages[0].MessageID)
+		assertions.Equal(afternoon, messages[1].MessageID)
+	}
+	// A deleted message still has projected activity, but cannot select a day.
+	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), afternoon)
+	requirements.NoError(err)
+	page, err := f.Store.ListActivityBurstsContext(t.Context(), store.BurstQuery{After: &noon, Limit: 10})
+	requirements.NoError(err)
+	assertions.Empty(page.Bursts)
+	messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, After: &noon, Limit: 10})
+	requirements.NoError(err)
+	assertions.Empty(messages)
+}

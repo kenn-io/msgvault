@@ -162,14 +162,6 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 		windowWhere = append(windowWhere, predicate)
 		windowArgs = append(windowArgs, ids...)
 	}
-	if w.After != nil {
-		windowWhere = append(windowWhere, `ae.occurred_at>=?`)
-		windowArgs = append(windowArgs, w.After.UTC())
-	}
-	if w.Before != nil {
-		windowWhere = append(windowWhere, `ae.occurred_at<?`)
-		windowArgs = append(windowArgs, w.Before.UTC())
-	}
 	if w.FromDate != "" || w.ToDate != "" {
 		if !validActivityDate(w.FromDate) || !validActivityDate(w.ToDate) || w.FromDate > w.ToDate {
 			return "", nil, fmt.Errorf("%w: invalid local dates", ErrInvalidActivityRequest)
@@ -181,7 +173,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	if len(windowArgs) > 0 {
 		// Fence the indexed activity window or conversation IDs before live policy.
 		// Otherwise SQLite can start from sources and scan every live message
-		// before checking the much smaller date or timestamp range.
+		// before checking the much smaller date range.
 		materialization := "MATERIALIZED"
 		if s.IsPostgreSQL() {
 			materialization = "NOT MATERIALIZED"
@@ -199,6 +191,26 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	if w.Until != nil {
 		where += ` AND ae.occurred_at<=?`
 		args = append(args, w.Until.UTC())
+	}
+	eligibleName, daySelection := "eligible", ""
+	if w.After != nil || w.Before != nil {
+		eligibleName = "day_messages"
+		instantWhere := []string{}
+		if w.After != nil {
+			instantWhere = append(instantWhere, `occurred_at>=?`)
+			args = append(args, w.After.UTC())
+		}
+		if w.Before != nil {
+			instantWhere = append(instantWhere, `occurred_at<?`)
+			args = append(args, w.Before.UTC())
+		}
+		// Only eligible messages can admit a conversation-day. Keep its full
+		// local date for classification, copy selection, totals, and anchors.
+		daySelection = `, selected_days AS MATERIALIZED (
+ SELECT source_id,conversation_id,local_date FROM day_messages WHERE ` + strings.Join(instantWhere, " AND ") + ` GROUP BY source_id,conversation_id,local_date
+ ), eligible AS MATERIALIZED (
+ SELECT m.* FROM day_messages m JOIN selected_days d ON d.source_id=m.source_id AND d.conversation_id=m.conversation_id AND d.local_date=m.local_date
+ )`
 	}
 	classification, addressArgs := s.activityClassificationCTE(ctx, f)
 	args = append(args, addressArgs...)
@@ -223,14 +235,14 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	// for the requested subject when copies differ, then the fullest thread.
 	// Thread sizes include eligible messages outside this read's window so
 	// widening the window keeps the same account's copy.
-	query := prefix + `eligible AS MATERIALIZED (
+	query := prefix + eligibleName + ` AS MATERIALIZED (
  SELECT ae.message_id,m.source_id,m.conversation_id,ae.channel,ae.direction,ae.occurred_at,ae.local_date,ae.ref_kind,
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,
  CASE WHEN ` + matrixPendingEncryptedSQL("m") + ` THEN 1 ELSE 0 END AS encrypted,
  CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible,
  CASE WHEN ae.ref_kind='meeting' OR EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id AND (LOWER(a.mime_type) IN ('text/calendar','application/ics') OR LOWER(a.filename) LIKE '%.ics')) THEN 1 ELSE 0 END AS invitation
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
- ), ` + classification + `, scored AS (
+ )` + daySelection + `, ` + classification + `, scored AS (
  SELECT f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
  f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,f.invitation,
  MAX(f.large_inbound) AS large_inbound,
