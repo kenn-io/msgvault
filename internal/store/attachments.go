@@ -406,7 +406,6 @@ const (
 	sourceTypeBeeper        = "beeper"
 	sourceTypeAppleMessages = "apple_messages"
 	sourceTypeMatrix        = "matrix"
-	sourceTypeIMAP          = "imap"
 )
 
 // membershipRecord is the provider-maintained membership a conversation's
