@@ -665,18 +665,22 @@ func getMessageDefinition(_ *handlers) toolDefinition {
 		"Get message details including recipients, labels, attachments, and a slice of the message body. "+
 			"sender_auth.verified covers only the sender domain; empty results mean the pinned receiver reported nothing. "+
 			"Returns plain text when available; HTML-only messages return a body_html slice with body_format=html. "+
+			"Set include_segments to return authored, quoted, forwarded, and signature byte ranges overlapping the body window, with absolute offsets and depth on quoted ranges. "+
+			"Authored means no relay marker was recognized; markers are recognized in English, plus Thunderbird's German and French separators and single-line dated reply headers, so other languages' history can appear authored. "+
+			"Non-email messages get one authored range. "+
 			hiddenTextFlagDoc+
 			"Body paging mirrors search pagination: body_length=total bytes, offset=where this chunk starts, body_returned=bytes in this chunk, has_more=more body follows. "+
 			"To read sequentially: call again with offset += body_returned. "+
 			"To jump to a known match location: use center_at=<byte offset> to center the window on that location. "+
 			"Note: snippet is pre-stored source metadata (may be empty for non-Gmail sources).",
 		closedObject(map[string]*jsonschema.Schema{
-			"id":            safeIDSchema("Message ID"),
-			toolArgOffset:   nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
-			"center_at":     signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
-			toolArgMaxChars: signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
-			"body_format":   bodyFormat,
-			"full_body":     booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
+			"id":               safeIDSchema("Message ID"),
+			toolArgOffset:      nonNegativeIntegerSchema("Byte offset from the start of the selected body to begin reading (default 0). Ignored when center_at is provided.", 0),
+			"center_at":        signedSafeIntegerSchema("Byte offset from the start of the selected body to center the window on. Takes precedence over offset.", -1),
+			toolArgMaxChars:    signedSafeIntegerSchema("Maximum selected-body bytes to return (default 2000, max 4000). Values above 4000 are clamped to 4000; zero or negative values use the default.", 2000),
+			"body_format":      bodyFormat,
+			"full_body":        booleanSchema("Return the complete selected body in one response, ignoring offset, center_at, and max_chars. Use only when the full content is explicitly needed."),
+			"include_segments": booleanSchema("Include plain-text body ranges; HTML returns segments_unavailable=unsupported_format."),
 		}, "id"),
 		outputSchemaFor[getMessageResponse](),
 		(*handlers).getMessage,

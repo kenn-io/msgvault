@@ -1093,3 +1093,30 @@ func TestOfficialSDKInMemoryRoundTrip(t *testing.T) {
 	must.NoError(json.Unmarshal([]byte(textContent.Text), &fallback))
 	checks.Equal(structured, fallback)
 }
+
+func TestGetMessageSegmentsSchema(t *testing.T) {
+	tools := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false)
+	var tool map[string]any
+	for _, candidate := range tools {
+		if candidate["name"] == ToolGetMessage {
+			tool = candidate
+			break
+		}
+	}
+	require.NotNil(t, tool)
+	schema := tool["outputSchema"].(map[string]any)
+	properties := schema["properties"].(map[string]any)
+	for name, typ := range map[string]string{"segments_version": "string", "segments_truncated": "boolean", "segments_unavailable": "string"} {
+		property := properties[name].(map[string]any)
+		assert.Equal(t, typ, property["type"], name)
+		assert.NotContains(t, schema["required"], name)
+	}
+	segments := properties["segments"].(map[string]any)
+	items := segments["items"].(map[string]any)
+	fields := items["properties"].(map[string]any)
+	for _, name := range []string{"kind", "start", "end", "depth"} {
+		assert.Contains(t, fields, name)
+	}
+	assert.Equal(t, "integer", fields["depth"].(map[string]any)["type"])
+	assert.NotContains(t, items["required"], "depth")
+}
