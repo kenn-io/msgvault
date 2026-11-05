@@ -63,6 +63,7 @@ func (f *timelineFixture) project() {
 	require.NoError(f.T, err)
 	_, err = p.RunOnce(f.T.Context())
 	require.NoError(f.T, err)
+	require.NoError(f.T, f.retractColdActivity(f.T.Context()))
 }
 func (f *timelineFixture) calendar(key, raw string) int64 {
 	f.T.Helper()
@@ -179,5 +180,19 @@ func (f *timelineFixture) seedConversationPolicy(ctx context.Context, sourceID i
 		return err
 	}
 	_, err := f.Store.DB().ExecContext(ctx, f.Store.Rebind(`UPDATE conversation_policy SET effective_tier=? WHERE conversation_id IN (SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=?)`), conversationpolicy.Cold, sourceID, key)
-	return err
+	if err != nil {
+		return err
+	}
+	return f.retractColdActivity(ctx)
+}
+
+// Emulate the cold eligibility producer, including retraction after projection.
+func (f *timelineFixture) retractColdActivity(ctx context.Context) error {
+	for _, table := range []string{"activity_event_persons", "activity_events"} {
+		_, err := f.Store.DB().ExecContext(ctx, `DELETE FROM `+table+` WHERE message_id IN (SELECT m.id FROM messages m JOIN conversation_policy p ON p.conversation_id=m.conversation_id WHERE p.effective_tier='cold')`)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

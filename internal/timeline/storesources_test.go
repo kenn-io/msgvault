@@ -56,7 +56,7 @@ func TestFreshnessSourcesOnlyIncludeIssues(t *testing.T) {
 			if tc.caldav {
 				cfg.Accounts = nil
 				cfg.CalDAV.Sources = []config.CalDAVSource{{Name: "personal", URL: "https://calendar.example.com/dav/", Username: "owner@example.com"}}
-				_, err := st.GetOrCreateSource("caldav", `["personal","https://calendar.example.com/dav/work/"]`)
+				_, err := st.GetOrCreateSource("caldav", `["owner@example.com","https://calendar.example.com/dav/work/"]`)
 				requirements.NoError(err)
 			}
 			src, err := NewStoreSources(st, cfg)

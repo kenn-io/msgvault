@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calrecur"
 )
 
 // calendarAttendedTranscriptIDs bounds candidate recordings before resolving
@@ -17,6 +19,17 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 		return nil, false, err
 	}
 	emails = slices.DeleteFunc(emails, func(email string) bool { return filters.Exclusions.ExcludesAddress(email) != "" })
+	contacts := emails[:0]
+	for _, email := range emails {
+		owner, err := s.IsAccountIdentityAddressContext(ctx, email)
+		if err != nil {
+			return nil, false, err
+		}
+		if !owner {
+			contacts = append(contacts, email)
+		}
+	}
+	emails = contacts
 	if len(emails) == 0 {
 		return nil, false, nil
 	}
@@ -86,7 +99,7 @@ func (s *Store) calendarAttendedTranscriptIDs(ctx context.Context, q ContactQuer
 					if loc == nil {
 						loc = time.UTC
 					}
-					at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, loc)
+					at, _, _ = calrecur.CivilDateBoundary(o.StartDate, loc)
 				}
 				if !at.IsZero() && !at.After(q.Now) {
 					for _, a := range o.Attendees {

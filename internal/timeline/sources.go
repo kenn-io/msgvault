@@ -33,6 +33,7 @@ type Sources struct {
 }
 
 type ActivitySource interface {
+	ActivityMessageRepresentativeContext(ctx context.Context, messageID int64, q store.BurstQuery) (int64, error)
 	ListActivityBurstsContext(ctx context.Context, q store.BurstQuery) (store.BurstPage, error)
 	ListActivityMessagesContext(ctx context.Context, q store.MessageQuery) ([]store.ActivityMessage, error)
 	MessageDisplayContext(ctx context.Context, ids []int64) (map[int64]store.MessageDisplay, error)
@@ -52,6 +53,7 @@ type CalendarSource interface {
 	GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error)
 }
 type MeetingsSource interface {
+	IsAccountIdentityAddressContext(ctx context.Context, address string) (bool, error)
 	ResolveMeetingIdentitiesContext(ctx context.Context, q store.MeetingIdentityRequest) (store.MeetingIdentityResult, error)
 	ParticipantsByEmailContext(ctx context.Context, emails []string) (map[string]store.AddressParticipant, error)
 	MeetingActionItemCountsContext(ctx context.Context, ids []int64) (map[int64]int, error)

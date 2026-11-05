@@ -253,3 +253,53 @@ func TestAnchorEveryEntryAnchorRefRoundTrips(t *testing.T) {
 		})
 	}
 }
+
+func TestAnchorUsesDeduplicatedEmailRepresentative(t *testing.T) {
+	f := newTimelineFixture(t)
+	representative := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
+		m.RFC822MessageID = sql.NullString{String: "<shared@example.com>", Valid: true}
+	})
+	// A fuller conversation selects this account, even when the copy is the anchor.
+	f.add(f.now.Add(-30*time.Minute), false)
+	source, err := f.Store.GetOrCreateSource("gmail", "second@example.com")
+	require.NoError(t, err)
+	require.NoError(t, f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+	conv, err := f.Store.EnsureConversationWithType(source.ID, "copy", "email_thread", "Copy")
+	require.NoError(t, err)
+	copyID := f.add(f.now.Add(-time.Hour), false, func(m *store.Message) {
+		m.SourceID, m.ConversationID = source.ID, conv
+		m.RFC822MessageID = sql.NullString{String: "shared@example.com", Valid: true}
+	})
+	f.project()
+	got, err := Build(t.Context(), f.src, anchorRequest(messageRef(copyID)))
+	require.NoError(t, err)
+	require.NotNil(t, got.Anchor)
+	assert.False(t, got.Anchor.Filtered)
+	require.Len(t, got.History, 1)
+	assert.True(t, got.History[0].Anchor)
+	require.NotNil(t, got.History[0].Burst)
+	assert.Contains(t, got.History[0].Burst.LatestMessageIDs, representative)
+}
+
+func TestSkippedMidnightKeepsTimelineCivilDate(t *testing.T) {
+	loc, err := time.LoadLocation("America/Santiago")
+	require.NoError(t, err)
+	ref, err := ParseAnchor("2026-09-06", loc)
+	require.NoError(t, err)
+	assert.Equal(t, "2026-09-06T01:00:00-03:00", ref.Time.Format(time.RFC3339))
+	f := newTimelineFixture(t)
+	f.src.Location = loc
+	_, err = f.Store.CreateDailyNoteEntryContext(t.Context(), store.DailyNoteEntryInput{LocalDate: "2026-09-06", Body: "Civil date", Author: "owner"})
+	require.NoError(t, err)
+	id := f.calendar("skipped-midnight", `{"id":"skipped-midnight","summary":"All day","start":{"date":"2026-09-06"},"end":{"date":"2026-09-07"}}`)
+	got, err := Build(t.Context(), f.src, anchorRequest("2026-09-06"))
+	require.NoError(t, err)
+	assert.Equal(t, "2026-09-06", got.Anchor.Time.In(loc).Format(time.DateOnly))
+	require.Len(t, got.History, 2)
+	for _, entry := range got.History {
+		assert.Equal(t, "2026-09-06", entry.Time.In(loc).Format(time.DateOnly))
+	}
+	meeting, err := Build(t.Context(), f.src, anchorRequest(fmt.Sprintf("evt:%d", id)))
+	require.NoError(t, err)
+	assert.Equal(t, "2026-09-06", meeting.Anchor.Time.In(loc).Format(time.DateOnly))
+}

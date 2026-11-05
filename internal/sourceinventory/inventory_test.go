@@ -409,3 +409,25 @@ func TestChatwootInventoryMatchesAccountScope(t *testing.T) {
 		}
 	}
 }
+
+func TestCalDAVCanonicalUsernameMatchesConfiguredSource(t *testing.T) {
+	for _, username := range []string{"Owner@Example.org", "calendar-user"} {
+		t.Run(username, func(t *testing.T) {
+			st := testutil.NewTestStore(t)
+			identity := "owner@example.org"
+			if username == "calendar-user" {
+				identity = username
+			}
+			source, err := st.GetOrCreateSource("caldav", `["`+identity+`","https://calendar.example.org/dav/work/"]`)
+			require.NoError(t, err)
+			cfg := config.NewDefaultConfig()
+			cfg.CalDAV.Sources = []config.CalDAVSource{{Name: "work", URL: "https://calendar.example.org/dav/", Username: username}}
+			items, err := Build(t.Context(), cfg, st)
+			require.NoError(t, err)
+			require.Len(t, items, 1)
+			require.NotNil(t, items[0].SourceID)
+			assert.Equal(t, source.ID, *items[0].SourceID)
+			assert.Equal(t, "msgvault sync-caldav work", items[0].SyncCommand)
+		})
+	}
+}

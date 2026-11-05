@@ -16,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 	"go.kenn.io/msgvault/internal/oauth"
+	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -164,8 +165,12 @@ func matches(source *store.Source, entry configuredSource) bool {
 		return true
 	}
 	if entry.kind == "caldav" {
+		username := entry.username
+		if email, err := search.ParseAccountAddress(username); err == nil {
+			username = email
+		}
 		var identity [2]string
-		if json.Unmarshal([]byte(source.Identifier), &identity) != nil || identity[0] != entry.username {
+		if json.Unmarshal([]byte(source.Identifier), &identity) != nil || identity[0] != username {
 			return false
 		}
 		collection, err := url.Parse(identity[1])

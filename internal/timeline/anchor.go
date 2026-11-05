@@ -7,6 +7,7 @@ import (
 	"slices"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -55,7 +56,7 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 		target.occurrence = &o
 		target.at = o.Start
 		if o.AllDay {
-			target.at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+			target.at, _, _ = calrecur.CivilDateBoundary(o.StartDate, c.loc)
 		}
 		return target, nil
 	case "conversation":
@@ -110,6 +111,22 @@ func (c *composer) resolveAnchor() (anchorTarget, error) {
 	}
 	if d.OccurredAt == nil {
 		return target, ErrUndatedAnchor
+	}
+
+	if !c.req.Conversation {
+		from := d.OccurredAt.In(c.loc).AddDate(0, 0, -1)
+		to := d.OccurredAt.In(c.loc).AddDate(0, 0, 1).Add(time.Nanosecond)
+		representative := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (int64, error) {
+			return c.src.Activity.ActivityMessageRepresentativeContext(ctx, target.messageID, store.BurstQuery{After: &from, Before: &to, Subject: c.subject, Filters: c.filters()})
+		})
+		c.gap("anchor", representative.err, false)
+		if representative.err == nil && representative.value > 0 && representative.value != target.messageID {
+			resolved := c.readDisplays([]int64{representative.value})
+			c.gap("anchor", resolved.err, false)
+			if copy, ok := resolved.value[representative.value]; ok && copy.OccurredAt != nil {
+				target.messageID, d = representative.value, copy
+			}
+		}
 	}
 	target.display = d
 	target.at = d.OccurredAt.In(c.loc)
@@ -193,8 +210,8 @@ func (c *composer) probeAnchor(target anchorTarget, days int) ([]Entry, error) {
 		func() {
 			if c.req.Scope.Owner && !c.req.Conversation {
 				notes = readWithin(c.ctx, requestTimeout, func(ctx context.Context) ([]store.DailyNoteEntry, error) {
-					start, _ := time.ParseInLocation(time.DateOnly, from.Format(time.DateOnly), c.loc)
-					end, _ := time.ParseInLocation(time.DateOnly, to.Format(time.DateOnly), c.loc)
+					start, _, _ := calrecur.CivilDateBoundary(from.Format(time.DateOnly), c.loc)
+					end, _, _ := calrecur.CivilDateBoundary(to.Format(time.DateOnly), c.loc)
 					return c.readNotes(ctx, start, end.AddDate(0, 0, 1))
 				})
 			}

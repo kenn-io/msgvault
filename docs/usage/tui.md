@@ -304,7 +304,7 @@ See [Timeline](timeline.md) for filters, freshness, and continuation.
 
 | Key | Action |
 |---|---|
-| `[` / `]` | Previous / next day from the start of the viewed window |
+| `[` / `]` | Previous / next day from the viewed window's edge, or from the highlighted entry in a relationship view |
 | `a` | Show activity around the selected entry |
 | `w` | Show the relationship with the entry's first person |
 | `n` | Load the next page when available |

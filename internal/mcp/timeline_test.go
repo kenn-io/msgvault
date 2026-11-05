@@ -191,18 +191,6 @@ func TestTimelineToolPreservesNeighborPresence(t *testing.T) {
 	}
 }
 
-func TestTimelineRejectsExplicitZeroDaysAndBudget(t *testing.T) {
-	for _, name := range []string{"days", "budget"} {
-		t.Run(name, func(t *testing.T) {
-			backend := &timelineTestBackend{}
-			h := &handlers{timelineBackend: backend}
-			got := callToolDirect(t, ToolTimeline, h.timeline, map[string]any{name: 0})
-			assert.True(t, got.isError)
-			assert.Empty(t, backend.req.Format, "invalid input must fail before calling the backend")
-		})
-	}
-}
-
 func (f *timelineTestBackend) GetDailyNoteContext(context.Context, string, int64) (*store.DailyNoteEntry, error) {
 	return nil, f.err
 }

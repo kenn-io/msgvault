@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -91,7 +92,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		ids = append(ids, call.MessageID)
 	}
 	r := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (store.MeetingIdentityResult, error) {
-		return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: sortedSet(refs), TranscriptIDs: sortedSet(transcriptIDs), IncludeSuggestions: c.req.Scope.Owner})
+		return c.src.Meetings.ResolveMeetingIdentitiesContext(ctx, store.MeetingIdentityRequest{OccurrenceRefs: slices.Compact(slices.Sorted(slices.Values(refs))), TranscriptIDs: slices.Compact(slices.Sorted(slices.Values(transcriptIDs))), IncludeSuggestions: c.req.Scope.Owner})
 	})
 	c.gap("meetings", r.err, false)
 	identity := r.value
@@ -120,7 +121,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		}
 	}
 	actionCounts := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (map[int64]int, error) {
-		return c.src.Meetings.MeetingActionItemCountsContext(ctx, sortedSet(actionIDs))
+		return c.src.Meetings.MeetingActionItemCountsContext(ctx, slices.Compact(slices.Sorted(slices.Values(actionIDs))))
 	})
 	actions := actionCounts.value
 	c.gap("meetings", actionCounts.err, false)
@@ -203,7 +204,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		}
 		at := o.Start
 		if o.AllDay {
-			at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+			at, _, _ = calrecur.CivilDateBoundary(o.StartDate, c.loc)
 		}
 		if at.IsZero() {
 			continue
@@ -227,7 +228,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 				}
 			}
 		}
-		e.Meeting.PossiblyRelated = sortedSet(e.Meeting.PossiblyRelated)
+		e.Meeting.PossiblyRelated = slices.Compact(slices.Sorted(slices.Values(e.Meeting.PossiblyRelated)))
 		date := at.In(c.loc).Format(time.DateOnly)
 		if o.AllDay {
 			date = o.StartDate
@@ -304,7 +305,7 @@ func (c *composer) mergeEntries(bursts []store.ActivityBurst, messages []store.A
 		if !c.admitTier(people) {
 			continue
 		}
-		at, _ := time.ParseInLocation(time.DateOnly, note.LocalDate, c.loc)
+		at, _, _ := calrecur.CivilDateBoundary(note.LocalDate, c.loc)
 		e := Entry{Kind: "note", Key: fmt.Sprintf("note:%d", note.ID), Ref: note.LocalDate, AnchorRef: note.LocalDate, Time: at, Open: c.open("get_daily_note", map[string]any{"date": note.LocalDate, "id": note.ID}), Note: &NoteEntry{Text: UntrustedText{Text: note.Body}, People: people, PeopleCount: len(people)}}
 		c.entryDates[e.Key] = note.LocalDate
 		entries = append(entries, e)
@@ -340,6 +341,13 @@ func (c *composer) occurrencePeople(o store.CalendarOccurrence) []Person {
 	emails := []string{}
 	for _, a := range o.Attendees {
 		if a.Role != "room" && !a.IsCopySelf && !calevent.IsRoomAttendee(a.Email, false) && c.src.Filters.Exclusions.ExcludesAddress(a.Email) == "" {
+			owner := readWithin(c.ctx, requestTimeout, func(ctx context.Context) (bool, error) {
+				return c.src.Meetings.IsAccountIdentityAddressContext(ctx, strings.TrimSpace(a.Email))
+			})
+			c.gap("people", owner.err, false)
+			if owner.err != nil || owner.value {
+				continue
+			}
 			emails = append(emails, a.Email)
 		}
 	}
@@ -488,7 +496,7 @@ func (c *composer) groupDays(entries []Entry) {
 	}
 	slices.Sort(dates)
 	slices.Reverse(dates)
-	newest, _ := time.ParseInLocation(time.DateOnly, c.t.Window.To, c.loc)
+	newest, _, _ := calrecur.CivilDateBoundary(c.t.Window.To, c.loc)
 	detailFrom := newest.AddDate(0, 0, -1).Format(time.DateOnly)
 	for _, date := range dates {
 		day := Day{Date: date}

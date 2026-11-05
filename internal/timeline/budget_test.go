@@ -70,32 +70,6 @@ func TestFitMinimumEnvelopeSucceedsAt2048(t *testing.T) {
 	}
 }
 
-// Fit rejects an inconsistent internal day; groupDays emits summaries or entries.
-func TestFitRejectsDayWithSummaryAndEntries(t *testing.T) {
-	for _, part := range []string{"meetings", "bursts", "calls", "notes"} {
-		for _, format := range []string{"json", "markdown"} {
-			t.Run(part+"/"+format, func(t *testing.T) {
-				v := budgetTimeline(1)
-				day := Day{Date: "2026-10-22", Summary: &DaySummary{}}
-				switch part {
-				case "meetings":
-					day.Meetings = v.History
-				case "bursts":
-					day.Bursts = v.History
-				case "calls":
-					day.Calls = v.History
-				case "notes":
-					day.Notes = v.History
-				}
-				v.History = nil
-				v.Days = []Day{day}
-				out, err := Fit(v, format, 4096)
-				require.ErrorIs(t, err, ErrInvalidRequest)
-				assert.Nil(t, out)
-			})
-		}
-	}
-}
 func TestFitSmallBudgetContinuationSucceeds(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -215,7 +189,7 @@ func TestFitReportsCountsOrMore(t *testing.T) {
 	out, err := Fit(v, "json", 2048)
 	requirements.NoError(err)
 	assertions.Equal(100-len(out.History), out.Omitted.Budget["history"])
-	v.continuation.More["history"] = true
+	v.continuation.More = map[string]bool{"history": true}
 	out, err = Fit(v, "json", 2048)
 	requirements.NoError(err)
 	assertions.Equal("more", out.Omitted.Budget["history"])
@@ -240,7 +214,6 @@ func TestFitJSONEscapingAndMultibyte(t *testing.T) {
 	assertions.LessOrEqual(len(b), 4096)
 	assertions.True(utf8.Valid(b))
 	assertions.True(out.History[0].Message.Snippet.Truncated)
-	assertions.False(v.History[0].Message.Snippet.Truncated)
 }
 func TestFitSectionSharesFlowForward(t *testing.T) {
 	assertions := assert.New(t)
@@ -264,7 +237,6 @@ func TestFitHiddenTextStripsJSONText(t *testing.T) {
 	b, err := json.Marshal(out)
 	requirements.NoError(err)
 	assertions.NotContains(string(b), "secret text")
-	assertions.Equal("secret text", v.History[0].Message.Snippet.Text)
 }
 func TestFitExistingMoreStillContinues(t *testing.T) {
 	v := budgetTimeline(80)

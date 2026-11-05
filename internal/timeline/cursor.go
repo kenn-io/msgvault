@@ -59,18 +59,13 @@ type Continuation struct {
 
 // SetContinuation attaches request-local metadata; it is never part of JSON.
 func SetContinuation(t *Timeline, c Continuation) {
-	c.Positions = copyMap(c.Positions)
-	c.More = copyMap(c.More)
-	c.SortKeys = copyMap(c.SortKeys)
+	c.Positions = maps.Clone(c.Positions)
+	c.More = maps.Clone(c.More)
+	c.SortKeys = maps.Clone(c.SortKeys)
 	c.Binding.SourceIDs = slices.Clone(c.Binding.SourceIDs)
 	c.Binding.Request.Tiers = slices.Clone(c.Binding.Request.Tiers)
 	c.Binding.Request.Scope.OpenTools = slices.Clone(c.Binding.Request.Scope.OpenTools)
 	t.continuation = &c
-}
-func copyMap[K comparable, V any](m map[K]V) map[K]V {
-	out := make(map[K]V, len(m))
-	maps.Copy(out, m)
-	return out
 }
 
 func EncodeCursor(b CursorBinding, positions map[string]string) (string, error) {
@@ -88,7 +83,7 @@ func EncodeCursor(b CursorBinding, positions map[string]string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	sections := copyMap(positions)
+	sections := maps.Clone(positions)
 	delete(sections, "open_loops")
 	wire := cursorWire{Version: 1, Archive: archive, Filter: filter, Now: b.Now.Unix(), Nanos: b.Now.Nanosecond(), Sections: sections}
 	encoded, err := store.EncodeReadCursor(wire, cursorMaxBytes, json.Deterministic(true))
@@ -155,8 +150,8 @@ func cursorHashes(b CursorBinding) (string, string, error) {
 	if req.After == 0 && !req.AfterSet {
 		req.After = 5
 	}
-	req.Tiers = sortedSet(req.Tiers)
-	req.Scope.OpenTools = sortedSet(req.Scope.OpenTools)
+	req.Tiers = slices.Compact(slices.Sorted(slices.Values(req.Tiers)))
+	req.Scope.OpenTools = slices.Compact(slices.Sorted(slices.Values(req.Scope.OpenTools)))
 	payload := struct {
 		SourceScoped      bool
 		OwnerAllOpenTools bool
@@ -164,7 +159,7 @@ func cursorHashes(b CursorBinding) (string, string, error) {
 		SourceIDs         []int64
 		Window            Window
 		Timezone          string
-	}{b.SourceIDs != nil, b.Request.Scope.Owner && b.Request.Scope.OpenTools == nil, req, sortedSet(b.SourceIDs), b.Window, b.Timezone}
+	}{b.SourceIDs != nil, b.Request.Scope.Owner && b.Request.Scope.OpenTools == nil, req, slices.Compact(slices.Sorted(slices.Values(b.SourceIDs))), b.Window, b.Timezone}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return "", "", err
@@ -172,13 +167,4 @@ func cursorHashes(b CursorBinding) (string, string, error) {
 	archive := sha256.Sum256([]byte(b.ArchiveUID))
 	filter := sha256.Sum256(encoded)
 	return hex.EncodeToString(archive[:4]), hex.EncodeToString(filter[:6]), nil
-}
-func sortedSet[T ~int | ~int64 | ~string](in []T) []T {
-	out := slices.Clone(in)
-	slices.Sort(out)
-	out = slices.Compact(out)
-	if len(out) == 0 {
-		return nil
-	}
-	return out
 }

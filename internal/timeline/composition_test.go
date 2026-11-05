@@ -147,3 +147,18 @@ func TestUpcomingExcludesCancelledAndRemovedOccurrences(t *testing.T) {
 	assertions.Contains(Markdown(got), "· cancelled")
 	assertions.Contains(Markdown(got), "· removed from source")
 }
+
+func TestICSMeetingExcludesAccountIdentities(t *testing.T) {
+	f := newTimelineFixture(t)
+	source, err := f.Store.GetOrCreateSource("ics", "synthetic-calendar")
+	require.NoError(t, err)
+	_, err = f.Store.PersistICalendarContext(t.Context(), source.ID, []byte("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:ics-owner@example.com\r\nDTSTART:20261022T100000Z\r\nDTEND:20261022T110000Z\r\nSUMMARY:Planning\r\nORGANIZER:mailto:owner@example.com\r\nATTENDEE:mailto:owner@example.com\r\nATTENDEE:mailto:alice@example.com\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"))
+	require.NoError(t, err)
+	got, err := Build(t.Context(), f.src, dayRequest())
+	require.NoError(t, err)
+	entries := allDayEntries(got)
+	require.Len(t, entries, 1)
+	require.NotNil(t, entries[0].Meeting)
+	require.Len(t, entries[0].Meeting.Attendees, 1)
+	assert.Equal(t, f.peer, entries[0].Meeting.Attendees[0].ParticipantID)
+}

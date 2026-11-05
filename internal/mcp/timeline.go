@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json/v2"
 	"errors"
-	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
 	"go.kenn.io/msgvault/internal/store"
@@ -67,14 +66,6 @@ func (h *handlers) timeline(ctx context.Context, request toolRequest) (*toolResu
 		}
 	}
 	req.Mode = timeline.Mode(mode)
-	for name, bounds := range map[string][2]int{"days": {1, 31}, "budget": {2048, 65536}} {
-		if _, set := args[name]; set {
-			value := intArg(args, name, 0)
-			if value < bounds[0] || value > bounds[1] {
-				return toolErrorResult(fmt.Sprintf("%s must be between %d and %d", name, bounds[0], bounds[1])), nil
-			}
-		}
-	}
 	req.Days = intArg(args, "days", 0)
 	req.Before = intArg(args, "before", 0)
 	req.After = intArg(args, "after", 0)

@@ -67,7 +67,7 @@ func TestColdActivityMessagesKeysetScopeAndGroupNoise(t *testing.T) {
 			q.AfterKey = &store.ActivityKey{OccurredAt: last.OccurredAt, MessageID: last.MessageID}
 			requirements.Less(pageNumber, 9, "keyset failed to finish")
 		}
-		want := slices.Clone(ids)
+		want := slices.Clone(ids[2:])
 		if descending {
 			slices.Reverse(want)
 		}

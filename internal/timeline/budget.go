@@ -4,27 +4,20 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"maps"
+
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 // Fit selects ordered prefixes of each section and measures the final wire
-// encoding, including omission metadata and the actual continuation. The input
-// and its payloads are never mutated. SetContinuation supplies cursor bindings
+// encoding, including omission metadata and the actual continuation. Fit owns
+// the input and its payloads. SetContinuation supplies cursor bindings
 // before fitting a pageable result.
 func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 	if t == nil || budget < 2048 || budget > 65536 || (format != "json" && format != "markdown") {
 		return nil, ErrInvalidRequest
 	}
-	for _, day := range t.Days {
-		if day.Summary != nil && len(day.Meetings)+len(day.Bursts)+len(day.Calls)+len(day.Notes) > 0 {
-			return nil, fmt.Errorf("%w: day %s has both summary and entries", ErrInvalidRequest, day.Date)
-		}
-	}
-	// Validate the wire values once; cloning the typed payloads preserves int64
-	// opener arguments without a lossy JSON-to-float round trip.
-	if _, err := json.Marshal(t, jsontext.AllowInvalidUTF8(true)); err != nil {
-		return nil, fmt.Errorf("encode timeline: %w", err)
-	}
-	original := cloneTimeline(t)
+	original := *t
 	var err error
 	boundTimeline(&original)
 	items := timelineItems(&original)
@@ -63,7 +56,7 @@ func Fit(t *Timeline, format string, budget int) (*Timeline, error) {
 			}
 			candidate := clonePage(out)
 			appendItem(&candidate, item, false)
-			candidateCounts := copyMap(counts)
+			candidateCounts := maps.Clone(counts)
 			candidateCounts[section]++
 			if err = preparePage(&candidate, &original, totals, candidateCounts, format); err != nil {
 				return nil, err
@@ -250,11 +243,12 @@ func clonePage(t Timeline) Timeline {
 		loops.Items = append([]Entry(nil), loops.Items...)
 		t.OpenLoops = &loops
 	}
-	t.Omitted.Budget = copyMap(t.Omitted.Budget)
+	t.Omitted.Budget = maps.Clone(t.Omitted.Budget)
 	return t
 }
 func preparePage(t, original *Timeline, totals, counts map[string]int, format string) error {
-	t.Omitted.Budget = copyMap(original.Omitted.Budget)
+	t.Omitted.Budget = make(map[string]any, len(original.Omitted.Budget))
+	maps.Copy(t.Omitted.Budget, original.Omitted.Budget)
 	truncated := 0
 	for _, item := range timelineItems(t) {
 		if item.entry != nil && item.entry.Truncated {
@@ -307,7 +301,8 @@ func preparePage(t, original *Timeline, totals, counts map[string]int, format st
 	if !needsCursor {
 		return nil
 	}
-	positions := copyMap(c.Positions)
+	positions := make(map[string]string, len(c.Positions))
+	maps.Copy(positions, c.Positions)
 	delete(positions, "open_loops")
 	for _, item := range timelineItems(t) {
 		if item.section == "open_loops" {
@@ -344,16 +339,16 @@ func timelineSize(t *Timeline, format string) (int, error) {
 	return len(b), err
 }
 func boundText(t *UntrustedText, n int) {
-	r := []rune(t.Text)
-	if len(r) > n {
-		t.Text = string(r[:n])
+	prefix := textutil.PrefixRunes(t.Text, n)
+	if len(prefix) < len(t.Text) {
+		t.Text = prefix
 		t.Truncated = true
 	}
 }
 func boundPerson(p Person) Person {
-	r := []rune(p.Name)
-	if len(r) > 80 {
-		p.Name = string(r[:80])
+	prefix := textutil.PrefixRunes(p.Name, 80)
+	if len(prefix) < len(p.Name) {
+		p.Name = prefix
 		p.Truncated = true
 	}
 	if p.PersonID == 0 {
@@ -434,63 +429,4 @@ func boundTimeline(t *Timeline) {
 			}
 		}
 	}
-}
-
-func cloneTimeline(t *Timeline) Timeline {
-	out := clonePage(*t)
-	if t.Person != nil {
-		p := *t.Person
-		p.Channels = append([]string(nil), p.Channels...)
-		p.Agenda = append([]UntrustedText(nil), p.Agenda...)
-		if p.Brief != nil {
-			brief := *p.Brief
-			p.Brief = &brief
-		}
-		out.Person = &p
-	}
-	out.Candidates = append([]Candidate(nil), t.Candidates...)
-	for i := range out.Days {
-		if out.Days[i].Summary != nil {
-			s := *out.Days[i].Summary
-			s.People = append([]Person(nil), s.People...)
-			out.Days[i].Summary = &s
-		}
-	}
-	for _, item := range timelineItems(&out) {
-		e := item.entry
-		if e == nil {
-			continue
-		}
-		if e.Meeting != nil {
-			p := *e.Meeting
-			p.Attendees = append([]Person(nil), p.Attendees...)
-			p.People = append([]Person(nil), p.People...)
-			e.Meeting = &p
-		}
-		if e.Burst != nil {
-			p := *e.Burst
-			p.People = append([]Person(nil), p.People...)
-			e.Burst = &p
-		}
-		if e.Message != nil {
-			p := *e.Message
-			p.People = append([]Person(nil), p.People...)
-			e.Message = &p
-		}
-		if e.Call != nil {
-			p := *e.Call
-			p.People = append([]Person(nil), p.People...)
-			e.Call = &p
-		}
-		if e.Loop != nil {
-			p := *e.Loop
-			e.Loop = &p
-		}
-		if e.Note != nil {
-			p := *e.Note
-			p.People = append([]Person(nil), p.People...)
-			e.Note = &p
-		}
-	}
-	return out
 }

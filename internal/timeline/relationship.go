@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/personagenda"
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -189,7 +190,7 @@ func (c *composer) buildRelationship(p store.PersonCandidate) {
 				occurrences = append(occurrences, o)
 				at := o.Start
 				if o.AllDay {
-					at, _ = time.ParseInLocation(time.DateOnly, o.StartDate, c.loc)
+					at, _, _ = calrecur.CivilDateBoundary(o.StartDate, c.loc)
 				}
 				if !at.After(c.t.Now) {
 					c.mergeContact(store.ContactAggregate{FirstAt: &at, LastAt: &at, Count: 1, Channels: []store.ActivityChannel{store.ChannelMeeting}, Monthly: monthlyAt(at, c.t.Now, c.loc)}, false)

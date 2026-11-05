@@ -277,3 +277,11 @@ func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {
 	requirements.NoError(err)
 	assertions.ElementsMatch(notes, owner)
 }
+
+func TestCalendarAttendanceExcludesUnflaggedAccountIdentity(t *testing.T) {
+	f, now, _, _ := calendarAttendanceFixture(t, "owner@example.com", "none")
+	q := store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.owner}}, Now: now, Location: time.UTC}
+	ids, _, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+	require.NoError(t, err)
+	assert.Empty(t, ids)
+}

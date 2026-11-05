@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -103,7 +104,7 @@ func ParseAnchor(s string, loc *time.Location) (AnchorRef, error) {
 		a.Kind = map[string]string{"msg": "message", "conv": "conversation", "evt": "meeting"}[m[1]]
 		return a, nil
 	}
-	if at, err := time.ParseInLocation(time.DateOnly, s, loc); err == nil {
+	if at, _, err := calrecur.CivilDateBoundary(s, loc); err == nil {
 		a.Kind = "date"
 		a.Time = at
 		return a, nil

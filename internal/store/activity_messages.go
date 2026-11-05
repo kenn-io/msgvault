@@ -28,6 +28,29 @@ type ActivityKey struct {
 	MessageID  int64
 }
 
+// ActivityMessageRepresentativeContext resolves an anchor through the same
+// scoped copy selection used by the burst reader. Zero means no projected copy.
+func (s *Store) ActivityMessageRepresentativeContext(ctx context.Context, messageID int64, q BurstQuery) (int64, error) {
+	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
+	if err != nil {
+		return 0, err
+	}
+	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{FromDate: q.FromDate, ToDate: q.ToDate, After: q.After, Before: q.Before, Subject: q.Subject}, filters)
+	if err != nil {
+		return 0, err
+	}
+	args = append(args, messageID)
+	var id int64
+	err = s.db.QueryRowContext(ctx, s.Rebind(cte+` SELECT r.message_id FROM representatives r JOIN copies anchor ON anchor.copy_key=r.copy_key WHERE anchor.message_id=?`), args...).Scan(&id)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("resolve activity message representative: %w", err)
+	}
+	return id, nil
+}
+
 func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery) ([]ActivityMessage, error) {
 	var result []ActivityMessage
 	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
