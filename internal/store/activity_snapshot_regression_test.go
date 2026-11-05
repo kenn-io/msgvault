@@ -107,3 +107,96 @@ func TestActivityReadersKeepIdentitySnapshot(t *testing.T) {
 		})
 	}
 }
+
+// A reader that already checked policy must keep the same evidence snapshot
+// when a direct-limit rebuild starts. A fresh reader must refuse that rebuild.
+func TestContactReadersKeepPolicySnapshot(t *testing.T) {
+	for _, reader := range []string{"aggregate", "transcripts"} {
+		t.Run(reader, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			gate := newGmailAuditSnapshotGate(0)
+			gate.query = "contact_messages AS"
+			if reader == "transcripts" {
+				gate.query = "SELECT r.message_id FROM representatives r"
+			}
+			var st *Store
+			if IsPostgresURL(os.Getenv("MSGVAULT_TEST_DB")) {
+				st = newGmailAuditSnapshotPostgresStore(t, gate)
+			} else {
+				st = newGmailAuditSnapshotSQLiteStore(t, gate)
+			}
+			policy, err := st.ClaimActivityDirectLimitTransitionContext(t.Context(), 25)
+			require.NoError(err)
+			require.NoError(st.CompleteActivityDirectLimitTransitionContext(t.Context(), policy))
+			source, err := st.GetOrCreateSource("gmail", "owner@example.com")
+			require.NoError(err)
+			require.NoError(st.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+			conv, err := st.EnsureConversation(source.ID, "snapshot", "Snapshot")
+			require.NoError(err)
+			owner, err := st.EnsureParticipant("owner@example.com", "Owner", "example.com")
+			require.NoError(err)
+			peer, err := st.EnsureParticipant("peer@example.com", "Peer", "example.com")
+			require.NoError(err)
+			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
+			kind, refKind := "email", "message"
+			if reader == "transcripts" {
+				kind, refKind = "meeting_transcript", "meeting"
+			}
+			id, err := st.UpsertMessage(&Message{SourceID: source.ID, ConversationID: conv, SourceMessageID: "snapshot", MessageType: kind, SenderID: sql.NullInt64{Int64: peer, Valid: true}, SentAt: sql.NullTime{Time: at, Valid: true}})
+			require.NoError(err)
+			require.NoError(st.ReplaceMessageRecipients(id, "from", []int64{peer}, []string{"Peer"}))
+			require.NoError(st.ReplaceMessageRecipients(id, "to", []int64{owner}, []string{"Owner"}))
+			_, err = st.DB().ExecContext(t.Context(), st.Rebind(`INSERT INTO activity_events(message_id,ref_kind,source_id,conversation_id,channel,occurred_at,date_origin,date_precision,timezone,utc_offset_minutes,local_date,direction,projected_last_modified,projected_identity_revision,projected_account_identity_revision) VALUES(?,?,?,?,'email',?,'sent_at','timestamp','UTC',0,'2026-10-22','inbound',?,0,0)`), id, refKind, source.ID, conv, at, at)
+			require.NoError(err)
+			writer, err := OpenForTest(st.dbPath)
+			require.NoError(err)
+			t.Cleanup(func() { assert.NoError(writer.Close()) })
+			q := ContactQuery{Subject: ActivitySubject{ParticipantIDs: []int64{peer}}, Now: at, Location: time.UTC}
+			read := func(ctx context.Context) (int, error) {
+				if reader == "aggregate" {
+					got, err := st.MessageContactAggregateContext(ctx, q)
+					return got.Count, err
+				}
+				ids, _, err := st.AttendedTranscriptIDsContext(ctx, q, 10)
+				return len(ids), err
+			}
+			count, err := read(t.Context())
+			require.NoError(err)
+			require.Equal(1, count)
+			ctx, cancel := context.WithTimeout(context.WithValue(t.Context(), gmailAuditSnapshotGateKey{}, gate), 30*time.Second)
+			defer cancel()
+			type result struct {
+				count int
+				err   error
+			}
+			done := make(chan result, 1)
+			exited := make(chan struct{})
+			go func() {
+				defer close(exited)
+				count, err := read(ctx)
+				done <- result{count, err}
+			}()
+			defer func() {
+				gate.resume()
+				cancel()
+				<-exited
+			}()
+			select {
+			case <-gate.paused:
+			case <-ctx.Done():
+				require.FailNow("contact reader did not reach the evidence query")
+			}
+			_, err = writer.ClaimActivityDirectLimitTransitionContext(t.Context(), 1)
+			require.NoError(err)
+			_, err = writer.DB().ExecContext(t.Context(), writer.Rebind(`DELETE FROM activity_events WHERE message_id=?`), id)
+			require.NoError(err)
+			gate.resume()
+			got := <-done
+			require.NoError(got.err)
+			assert.Equal(1, got.count, "in-flight reader must retain evidence from its policy snapshot")
+			_, err = read(t.Context())
+			assert.ErrorIs(err, ErrPersonTierRebuilding)
+		})
+	}
+}

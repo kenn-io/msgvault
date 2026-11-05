@@ -26,6 +26,17 @@ func activityFactSubjectClause(subject ActivitySubject) (string, []any, error) {
 }
 
 func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQuery) (ContactAggregate, error) {
+	var result ContactAggregate
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
+		var err error
+		result, err = s.messageContactAggregateContext(snapshotCtx, q)
+		return err
+	})
+	return result, err
+}
+
+func (s *Store) messageContactAggregateContext(ctx context.Context, q ContactQuery) (ContactAggregate, error) {
 	result := ContactAggregate{Channels: []ActivityChannel{}}
 	if q.Now.IsZero() {
 		return result, fmt.Errorf("%w: contact clock is required", ErrInvalidActivityRequest)
@@ -143,6 +154,18 @@ func mergeActivityTime(target **time.Time, value *time.Time, earliest bool) {
 }
 
 func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery, limit int) ([]int64, bool, error) {
+	var result []int64
+	var truncated bool
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
+		var err error
+		result, truncated, err = s.attendedTranscriptIDsContext(snapshotCtx, q, limit)
+		return err
+	})
+	return result, truncated, err
+}
+
+func (s *Store) attendedTranscriptIDsContext(ctx context.Context, q ContactQuery, limit int) ([]int64, bool, error) {
 	if q.Now.IsZero() || limit < 1 || limit > 2000 {
 		return nil, false, fmt.Errorf("%w: transcript clock and limit 1..2000 required", ErrInvalidActivityRequest)
 	}
