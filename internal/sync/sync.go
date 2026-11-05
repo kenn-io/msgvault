@@ -98,7 +98,7 @@ type Syncer struct {
 
 	acquisitionSyncID        int64
 	pendingAcquisitions      map[string]struct{}
-	pendingAttachmentRepairs map[string]struct{}
+	pendingAttachmentRepairs map[string]materializationWork
 
 	// failedRelocationGuards holds run-scoped protection for forced
 	// relocation targets that failed this run. It is set only on the scoped
@@ -1707,6 +1707,7 @@ type messageData struct {
 	bcc               []mime.Address
 	gmailLabelIDs     []string
 	attachments       []mime.Attachment
+	mimeIncomplete    bool
 	participantMap    map[string]int64
 }
 
@@ -1907,6 +1908,7 @@ func (s *Syncer) prepareMessage(
 		bcc:               parsed.Bcc,
 		gmailLabelIDs:     raw.LabelIDs,
 		attachments:       parsed.Attachments,
+		mimeIncomplete:    parsed.Incomplete,
 	}, nil
 }
 
@@ -1921,7 +1923,7 @@ func (s *Syncer) isGmailChat(labelIDs []string) bool {
 // the internal message ID to callers. No vector-search enqueue happens
 // here: persisted rows leave embed_gen NULL (column default) and the
 // scan-and-fill worker discovers them later.
-func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (int64, error) {
+func (s *Syncer) persistMessage(ctx context.Context, data *messageData, labelMap map[string]int64) (int64, error) {
 	// Map Gmail label IDs to internal IDs
 	var labelIDs []int64
 	for _, gmailLabelID := range data.gmailLabelIDs {
@@ -1950,10 +1952,18 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 	// acquisition is settled only after its required files have been stored.
 	resolution := s.acquisitionResolution(data.message.SourceMessageID)
 	materialize := s.opts.AttachmentsDir != "" && len(data.attachments) > 0
-	if materialize {
-		resolution = nil
+	work := s.requiredMaterialization(data)
+	gmailMaterialization := (s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) && work != 0
+	if gmailMaterialization {
+		if s.acquisitionSyncID == 0 {
+			return 0, errors.New("materialization requires an active acquisition run")
+		}
+		// This obligation and RAW are one transaction. A process exit or a
+		// rejected ledger write cannot leave committed RAW without retry debt.
+		resolution = &store.SyncRunItem{SyncRunID: s.acquisitionSyncID, SourceMessageID: data.message.SourceMessageID,
+			Phase: syncItemPhaseIngest, Status: store.SyncRunItemStatusError, ErrorKind: materializationKind(work), ErrorMessage: "pending materialization"}
 	}
-	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
+	messageID, err := s.store.PersistMessageContext(ctx, &store.MessagePersistData{
 		Message:     data.message,
 		Metadata:    data.metadata,
 		BodyText:    sql.NullString{String: data.bodyText, Valid: data.bodyText != ""},
@@ -1966,13 +1976,28 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 	if err != nil {
 		return 0, err
 	}
-	if !materialize {
+	if gmailMaterialization {
+		if s.pendingAcquisitions == nil {
+			s.pendingAcquisitions = make(map[string]struct{})
+		}
+		if s.pendingAttachmentRepairs == nil {
+			s.pendingAttachmentRepairs = make(map[string]materializationWork)
+		}
+		s.pendingAcquisitions[data.message.SourceMessageID] = struct{}{}
+		s.pendingAttachmentRepairs[data.message.SourceMessageID] = work
+	} else {
 		delete(s.pendingAcquisitions, data.message.SourceMessageID)
 	}
 
 	// File I/O stays outside the RAW transaction. Never hide a failed write by
 	// reducing the expected count to the successfully stored subset.
 	var attachmentErr error
+	if gmailMaterialization && work&materializeMIME != 0 && data.mimeIncomplete {
+		attachmentErr = errors.New("MIME extraction is incomplete; retained RAW requires repair")
+	}
+	if work&materializeMIME != 0 && s.opts.AttachmentsDir == "" {
+		attachmentErr = errors.Join(attachmentErr, errors.New("attachments directory is required to finish pending materialization"))
+	}
 	if materialize {
 		for _, att := range data.attachments {
 			if err := s.storeAttachment(messageID, &att); err != nil {
@@ -1983,8 +2008,14 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		if attachmentErr == nil {
 			attachmentErr = s.store.RecomputeMessageAttachmentStats(messageID)
 		}
-		if attachmentErr == nil {
-			attachmentErr = s.resolveAcquisition(data.message.SourceMessageID)
+	}
+	if attachmentErr != nil {
+		attachmentErr = fmt.Errorf("%w: %w", errAttachmentMaterialization, attachmentErr)
+	}
+	if work&archiveRemoteImages != 0 {
+		imageErr := s.archiveMessageRemoteImages(ctx, messageID, data.bodyHTML)
+		if gmailMaterialization {
+			attachmentErr = errors.Join(attachmentErr, imageErr)
 		}
 	}
 
@@ -2002,8 +2033,11 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		}
 	}
 
+	if attachmentErr == nil && gmailMaterialization {
+		attachmentErr = s.settleAcquisition(data.message.SourceMessageID)
+	}
 	if attachmentErr != nil {
-		return messageID, fmt.Errorf("%w: %w", errAttachmentMaterialization, attachmentErr)
+		return messageID, &committedMessageError{messageID: messageID, err: attachmentErr}
 	}
 	return messageID, nil
 }
@@ -2227,13 +2261,7 @@ func (s *Syncer) ingestMessage(
 	if err != nil {
 		return false, err
 	}
-	messageID, err := s.persistMessage(data, labelMap)
-	if err == nil && s.opts.RemoteImages != nil && data.message.MessageType == store.MessageTypeEmail {
-		archived := s.opts.RemoteImages.Archive(ctx, s.store, s.opts.AttachmentsDir, messageID, data.bodyHTML)
-		for _, imageErr := range archived.Errors {
-			s.logger.Warn("failed to archive remote image", "message", messageID, "error", imageErr)
-		}
-	}
+	_, err = s.persistMessage(ctx, data, labelMap)
 	return false, err
 }
 
@@ -2379,6 +2407,10 @@ func StoreMIMEAttachment(attachmentsDir string, att *mime.Attachment) (store.Att
 		return store.AttachmentWrite{}, err
 	}
 
+	return mimeAttachmentWrite(att, storagePath), nil
+}
+
+func mimeAttachmentWrite(att *mime.Attachment, storagePath string) store.AttachmentWrite {
 	role, roleSource := store.AttachmentRoleFromMIME(
 		att.Disposition, att.IsInline, att.ContentID)
 	return store.AttachmentWrite{
@@ -2391,11 +2423,21 @@ func StoreMIMEAttachment(attachmentsDir string, att *mime.Attachment) (store.Att
 		RoleSource:    roleSource,
 		SourcePartKey: att.PartKey,
 		ContentID:     att.ContentID,
-	}, nil
+	}
 }
 
 // storeAttachment stores an attachment to disk and records it in the database.
 func (s *Syncer) storeAttachment(messageID int64, att *mime.Attachment) error {
+	if s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail {
+		if len(att.Content) == 0 {
+			return nil
+		}
+		receipt, err := export.StoreAttachmentFileDurable(s.opts.AttachmentsDir, att)
+		if err != nil {
+			return err
+		}
+		return s.store.UpsertAttachmentRecord(context.Background(), messageID, mimeAttachmentWrite(att, receipt.StoragePath))
+	}
 	write, err := StoreMIMEAttachment(s.opts.AttachmentsDir, att)
 	if err != nil || write.StoragePath == "" {
 		return err

@@ -47,10 +47,9 @@ provider no longer holds are repaired too. Only derived columns are rewritten;
 raw payloads, downloaded media, and sync cursors are untouched, so it is
 idempotent.
 
-Use --attachment-message to restore the missing nonempty MIME attachments of
-one Gmail message from local RAW. Add --source-id to disambiguate the reference.
-This mode preserves valid files and existing metadata. Corrupt files, conflicting
-metadata and unusable RAW return an error and remain unchanged.
+Empty attachments are omitted. Valid files and existing metadata are preserved.
+Corrupt files, conflicting metadata or unusable archived originals cause an error
+without changes.
 
 Examples:
   msgvault repair-derived

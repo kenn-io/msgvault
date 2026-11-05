@@ -533,9 +533,10 @@ func (s *Syncer) processLabelChanges(ctx context.Context, syncID, sourceID int64
 				continue
 			}
 		}
+		_, existedBeforeChange := existingMap[item.Message.ID]
 		updated, discoverable, err := s.handleLabelChange(ctx, syncID, sourceID, item.Message.ID, item.Message.ThreadID, item.LabelIDs, labelMap, true, existingMap, checkpoint, summary)
 		if err != nil {
-			if _, exists := existingMap[item.Message.ID]; exists || errors.Is(err, errAcquisitionFailureRecord) {
+			if existedBeforeChange || errors.Is(err, errAcquisitionFailureRecord) {
 				return fmt.Errorf("add labels for message %s: %w", item.Message.ID, err)
 			}
 			s.logLabelChangeError("add", item.Message.ID, err)
@@ -588,6 +589,9 @@ func (s *Syncer) handleLabelChange(ctx context.Context, syncID, sourceID int64, 
 			if _, err := s.ingestMessage(
 				ctx, sourceID, raw, threadID, labelMap,
 			); err != nil {
+				if committed, ok := errors.AsType[*committedMessageError](err); ok {
+					existingMap[messageID] = committed.messageID
+				}
 				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
 					return false, false, recErr
 				}

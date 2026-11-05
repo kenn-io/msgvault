@@ -54,6 +54,7 @@ type Message struct {
 	BodyHTML        string
 	Attachments     []Attachment
 	Errors          []string // Non-fatal parsing errors
+	Incomplete      bool     // The parser reports that some message content was lost.
 }
 
 // Address represents an email address with optional display name.
@@ -165,6 +166,7 @@ func parse(raw []byte, inspect func(*enmime.Part)) (*Message, error) {
 	// Collect any parsing errors
 	for _, e := range env.Errors {
 		msg.Errors = append(msg.Errors, e.Error())
+		msg.Incomplete = msg.Incomplete || e.Severe
 	}
 
 	if inspect != nil {
@@ -188,6 +190,7 @@ func parseWithRecovery(raw []byte, fallbackSubject string, inspect func(*enmime.
 	}
 
 	msg = salvageHeaders(raw)
+	msg.Incomplete = true
 	if msg.Subject == "" {
 		msg.Subject = fallbackSubject
 	}

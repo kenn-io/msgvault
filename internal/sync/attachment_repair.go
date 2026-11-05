@@ -27,8 +27,11 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 	if err != nil {
 		return err
 	}
-	if len(targets) != 1 {
-		return fmt.Errorf("attachment repair requires exactly one archive row, found %d", len(targets))
+	if len(targets) == 0 {
+		return errors.New("No matching message") //nolint:staticcheck // ST1005: Preserve the command diagnostic.
+	}
+	if len(targets) > 1 {
+		return errors.New("Multiple messages match; specify --source-id") //nolint:staticcheck // ST1005: Preserve the command diagnostic.
 	}
 	target := targets[0]
 	if target.SourceType != sourceTypeGmail {
@@ -49,7 +52,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 		return fmt.Errorf("parse retained MIME for attachment repair: %w", err)
 	}
 	// Partial parses cannot certify that every expected occurrence was restored.
-	if len(parsed.Errors) > 0 {
+	if parsed.Incomplete {
 		return errors.New("retained MIME has parse diagnostics; attachment repair is inconclusive")
 	}
 	existing, err := s.store.MessageMIMEAttachmentsContext(ctx, target.ID)
@@ -63,7 +66,7 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 		matched := false
 		for _, att := range parsed.Attachments {
 			if (ref.SourcePartKey == "" || ref.SourcePartKey == att.PartKey) &&
-				ref.ContentHash == att.ContentHash && ref.Size == len(att.Content) {
+				store.AttachmentContentHashesEqual(ref.ContentHash, att.ContentHash) && ref.Size == len(att.Content) {
 				matched = true
 				break
 			}
@@ -134,13 +137,4 @@ func (s *Syncer) RepairMessageAttachments(ctx context.Context, request RepairReq
 		})
 	}
 	return s.store.RestoreMIMEAttachmentRecordsContext(ctx, target.MessageIdentityGuard, writes)
-}
-
-func (s *Syncer) repairPendingAttachments(ctx context.Context, sourceID int64, messageID string) error {
-	if _, pending := s.pendingAttachmentRepairs[messageID]; pending {
-		if err := s.RepairMessageAttachments(ctx, RepairRequest{Reference: messageID, SourceID: sourceID}); err != nil {
-			return fmt.Errorf("%w: %w", errAttachmentMaterialization, err)
-		}
-	}
-	return s.resolveAcquisition(messageID)
 }

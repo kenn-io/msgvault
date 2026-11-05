@@ -957,6 +957,12 @@ func (s *Store) RecordSyncRunItem(item SyncRunItem) error {
 
 // RecordSyncRunItemContext honors cancellation during RecordSyncRunItem.
 func (s *Store) RecordSyncRunItemContext(ctx context.Context, item SyncRunItem) error {
+	if s.syncGeneration != nil {
+		if item.SyncRunID != s.syncGeneration.runID {
+			return fmt.Errorf("record item for a different sync generation: %w", ErrSyncRunSuperseded)
+		}
+		return s.withTxContext(ctx, func(tx *loggedTx) error { return s.recordSyncRunItemWith(ctx, tx, item) })
+	}
 	return s.recordSyncRunItemWith(ctx, s.db, item)
 }
 
