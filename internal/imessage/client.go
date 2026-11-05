@@ -332,9 +332,6 @@ func (c *Client) ImportWithProgress(ctx context.Context, s *store.Store, sourceI
 		if onProgress != nil {
 			onProgress(*summary)
 		}
-		if len(rows) < c.pageSize {
-			break
-		}
 	}
 
 	var scanErr error

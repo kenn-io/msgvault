@@ -462,6 +462,31 @@ func TestImportRepairsMissingProviderLabel(t *testing.T) {
 	}
 }
 
+func TestImportLimitAdvancesPastDuplicateChatRows(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	path, db := testutil.NewIMessageChatDB(t)
+	_, err := db.Exec(`INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two'), (725760002,'three');
+		INSERT INTO chat (guid) VALUES ('any;-;one'), ('any;-;two');
+		INSERT INTO chat_message_join VALUES (1,1), (2,1)`)
+	require.NoError(err)
+	st := testutil.NewTestStore(t)
+	src, err := st.GetOrCreateSource("apple_messages", "local")
+	require.NoError(err)
+	client, err := NewClient(path, WithLimit(2))
+	require.NoError(err)
+	t.Cleanup(func() { _ = client.Close() })
+
+	summary, err := client.Import(t.Context(), st, src.ID)
+	require.NoError(err)
+	assert.Equal(2, summary.MessagesAdded)
+	var count int
+	var lastID string
+	require.NoError(st.DB().QueryRow(st.Rebind(`SELECT COUNT(*), MAX(source_message_id) FROM messages WHERE source_id = ?`), src.ID).Scan(&count, &lastID))
+	assert.Equal(2, count)
+	assert.Equal("2", lastID)
+}
+
 func TestImportMultipleChatAssociationsStayStable(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
