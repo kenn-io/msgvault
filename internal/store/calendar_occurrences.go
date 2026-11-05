@@ -61,8 +61,8 @@ type CalendarOccurrencePage struct {
 // ListCalendarOccurrencesContext expands archived series in a half-open window.
 func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query CalendarOccurrenceQuery) (CalendarOccurrencePage, error) {
 	from, to := query.From, query.To
-	if from.IsZero() || to.IsZero() || to.Before(from) || to.Equal(from) && to.Format(time.DateOnly) <= from.Format(time.DateOnly) || to.Sub(from) > 400*24*time.Hour {
-		return CalendarOccurrencePage{}, fmt.Errorf("%w: window must be positive and at most 400 days", ErrCalendarOccurrenceInvalid)
+	if from.IsZero() || to.IsZero() || to.Before(from) || to.Equal(from) {
+		return CalendarOccurrencePage{}, fmt.Errorf("%w: window must be positive", ErrCalendarOccurrenceInvalid)
 	}
 	limit := 100
 	if query.Limit != nil {
@@ -132,7 +132,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query Calend
 	if query.Cursor != "" {
 		page.Unexpandable = []CalendarUnexpandable{}
 	}
-	if len(page.Occurrences) > limit {
+	if (query.Limit != nil || query.Cursor != "") && len(page.Occurrences) > limit {
 		page.Occurrences = page.Occurrences[:limit]
 		last := page.Occurrences[len(page.Occurrences)-1]
 		page.NextCursor, err = encodeReadCursor(calendarOccurrenceCursor{Version: 1, ArchiveUID: uid, FilterHash: hash, Start: last.Start, Ref: last.Ref})

@@ -6,6 +6,7 @@ export type ListCalendarEventsParams = {
   from: string;
   to: string;
   /**
+   * Occurrences per page, 1–500; cursor alone defaults to 100. Omit both for the whole window.
    * @minimum 1
    * @maximum 500
    */

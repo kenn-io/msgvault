@@ -21,7 +21,7 @@ type CalendarEventsBackend interface {
 func listCalendarEventsDefinition() toolDefinition {
 	properties := map[string]*jsonschema.Schema{
 		"from":   meetingTimestampSchema("Inclusive RFC3339 window start"),
-		"to":     meetingTimestampSchema("Exclusive RFC3339 window end, at most 400 days after from"),
+		"to":     meetingTimestampSchema("Exclusive RFC3339 window end"),
 		"limit":  boundedIntegerWithDefault("Maximum occurrences", 1, 500, 100),
 		"cursor": stringSchema("next_cursor from the same window"),
 	}

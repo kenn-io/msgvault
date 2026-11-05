@@ -17,6 +17,44 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
+func TestCalendarOccurrenceMultiYearWindow(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, id := calendarFixture(t, st, "multi-year", `{"id":"multi-year","start":{"dateTime":"2027-12-31T10:00:00Z"},"end":{"dateTime":"2027-12-31T11:00:00Z"}}`)
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(2, 0, 0)})
+	require.NoError(t, err)
+	require.Len(t, page.Occurrences, 1)
+	assert.Equal(t, id, page.Occurrences[0].MessageID)
+}
+
+func TestCalendarOccurrenceOptionalPaging(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	calendarFixture(t, st, "daily", `{"id":"daily","start":{"dateTime":"2026-01-01T10:00:00Z"},"end":{"dateTime":"2026-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY;COUNT=600"]}`)
+	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	query := CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 200)}
+	full, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	assertions.Len(full.Occurrences, 200)
+	assertions.Empty(full.NextCursor)
+	query.Limit = new(1)
+	first, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	requirements.Len(first.Occurrences, 1)
+	requirements.NotEmpty(first.NextCursor)
+	query.Limit, query.Cursor = nil, first.NextCursor
+	next, err := st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	requirements.Len(next.Occurrences, 100)
+	assertions.Equal(full.Occurrences[1:101], next.Occurrences)
+	assertions.NotEmpty(next.NextCursor)
+	query.Cursor, query.To = "", from.AddDate(2, 0, 0)
+	full, err = st.ListCalendarOccurrencesContext(t.Context(), query)
+	requirements.NoError(err)
+	assertions.Len(full.Occurrences, 600)
+	assertions.Empty(full.NextCursor)
+}
+
 func TestCalendarOccurrencePagesMatchFullRead(t *testing.T) {
 	for _, budget := range []bool{false, true} {
 		t.Run(fmt.Sprintf("budget=%t", budget), func(t *testing.T) {
@@ -479,7 +517,7 @@ func TestCalendarOccurrenceInvalidQueries(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	from := time.Date(2027, 3, 1, 0, 0, 0, 0, time.UTC)
-	for _, q := range []CalendarOccurrenceQuery{{From: from, To: from.Add(-time.Hour)}, {From: from, To: from}, {From: from, To: from.AddDate(2, 0, 0)}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(-1)}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(501)}} {
+	for _, q := range []CalendarOccurrenceQuery{{From: from, To: from.Add(-time.Hour)}, {From: from, To: from}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(-1)}, {From: from, To: from.AddDate(0, 1, 0), Limit: new(501)}} {
 		_, err := st.ListCalendarOccurrencesContext(t.Context(), q)
 		requirements.ErrorIs(err, ErrCalendarOccurrenceInvalid)
 	}

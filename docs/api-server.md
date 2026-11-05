@@ -86,7 +86,7 @@ and [CLI usage](cli-reference.md#typo-tolerant-filenames).
 
 ### Archived calendar occurrences, unreleased
 
-`GET /api/v1/calendar/events` lists archived occurrences with required RFC3339 `from` and `to` bounds. The window is half-open, positive, and at most 400 days. `limit` defaults to 100 and accepts 1–500. The response carries `occurrences`, `unexpandable`, and optional `next_cursor`.
+`GET /api/v1/calendar/events` lists archived occurrences in a positive, half-open RFC3339 `from`/`to` window. Omit `limit` and `cursor` for the whole window; either enables paging, default 100, range 1–500. Responses carry `occurrences`, `unexpandable`, and optional `next_cursor`.
 
 Pass `next_cursor` as `cursor` with the same window, including offsets, and authorized sources. Cursors belong to one archive and format version. `GET /api/v1/calendar/events/{ref}` opens one returned occurrence with `location`, `description`, and `join_url` decoded from its archived raw message. Empty content fields are omitted. Repeating occurrences use `evt:<masterID>@<original-key>`; standalone events use `evt:<messageID>`.
 
