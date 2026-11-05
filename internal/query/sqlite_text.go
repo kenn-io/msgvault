@@ -711,6 +711,7 @@ func (e *SQLiteEngine) TextAggregate(
 
 	filterWhere := strings.Join(conditions, " AND ")
 	query := buildAggregateSQL(dim, "", filterWhere, sort)
+	args = append(args, args...)
 	args = append(args, limit)
 	return e.executeAggregateQuery(ctx, query, args)
 }
