@@ -357,6 +357,9 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 	if err != nil {
 		return nil, err
 	}
+	if exactID != nil && len(clusterMemberIDs) == 0 {
+		clusterMemberIDs = []int64{*exactID}
+	}
 	entriesCTE, entryArgs := personEntriesCTE(exactID, clusterMemberIDs,
 		e.parquetPath(datasetParticipantClusters))
 	args = append(args, entryArgs...)
@@ -397,9 +400,12 @@ func (e *DuckDBEngine) searchPeopleLegacy(
 		populationFrom = "FROM participants p LEFT JOIN person_entries pe ON pe.person_id = p.id"
 	}
 	if exactID != nil {
-		populationFrom += " JOIN canon eligible ON eligible.participant_id = p.id"
-		personWhere = append(personWhere, "person_id = ?")
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(clusterMemberIDs)), ",")
+		personWhere = append(personWhere, "person_id = ?", "EXISTS (SELECT 1 FROM participants eligible WHERE eligible.id IN ("+placeholders+") AND NOT "+identityindex.RoomDomainSQL("lower(coalesce(eligible.domain, ''))")+")")
 		args = append(args, *exactID)
+		for _, memberID := range clusterMemberIDs {
+			args = append(args, memberID)
+		}
 	}
 	if searchText := strings.TrimSpace(request.Query); searchText != "" {
 		// Listing/search rows key on the canonical identity, so a term must
@@ -541,8 +547,8 @@ FROM counted ORDER BY ` + order + ` LIMIT ? OFFSET ?`
 // than once, so DuckDB materializes it, and carrying logical_entries.* would
 // materialize every wide list/text column per row.
 //
-// For exact-ID lookups, memberIDs (the identity cluster GetPerson resolved;
-// empty means the requested ID alone) widens membership so an entry owned by
+// For exact-ID lookups, memberIDs is the caller's live cluster, defaulted to
+// the requested ID alone. It widens membership so an entry owned by
 // any linked alias counts once toward the requested person's metrics — every
 // matched entry projects exactID as its person_id, so the aggregates and the
 // participants join downstream still key on the requested row.
@@ -563,13 +569,6 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 				"a.canonical_id AS person_id, le.occurred_at, le.message_type, le.attachment_count, le.source_type",
 				"a.is_direct", "(a.is_direct OR a.is_conversation_member)"), nil
 	}
-	canon := `
-), canon AS (
-	` + identityindex.CanonicalParticipantsSQL("participants", "read_parquet('"+quoteIdentitySQLPath(clustersGlob)+"')") + `
-`
-	if len(memberIDs) == 0 {
-		memberIDs = []int64{*exactID}
-	}
 	memberList := "(" + strings.TrimSuffix(strings.Repeat("?,", len(memberIDs)), ",") + ")"
 	args := make([]any, 0, len(memberIDs)*3+1)
 	for range 3 {
@@ -578,7 +577,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 		}
 	}
 	args = append(args, *exactID)
-	return canon + `
+	return `
 ), person_message_ids AS (
 	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
 	UNION
