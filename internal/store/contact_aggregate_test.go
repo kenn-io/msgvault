@@ -223,7 +223,7 @@ func calendarAttendanceFixture(t *testing.T, address, envelope string) (*timelin
 		requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", recipients, nil))
 		notes = append(notes, note)
 	}
-	projectTimelineActivity(t, f, "UTC")
+	projectColdTimeline(t, f, "UTC")
 	return f, now, event, notes
 }
 
