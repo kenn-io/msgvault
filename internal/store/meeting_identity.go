@@ -39,6 +39,7 @@ type timelineMeetingGroup struct {
 
 // ResolveMeetingIdentitiesContext resolves references in one read snapshot.
 // A shared read budget limits calendar candidate reads and recurrence expansion.
+// Notes and occurrence references share expansions; only overlapping windows coalesce.
 // Out-of-scope and inactive references are absent.
 func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req MeetingIdentityRequest) (MeetingIdentityResult, error) {
 	result := MeetingIdentityResult{ByOccurrence: map[string]MeetingIdentityInfo{}, ByTranscript: map[int64]MeetingIdentityInfo{}}

@@ -189,6 +189,26 @@ func expandMeetingSeries(ctx context.Context, r reboundReader, master CalendarEv
 	return out, expansionErr
 }
 
+// Scalar resolution and batch planning use the same master and original identity.
+func meetingOccurrenceMaster(ctx context.Context, r reboundReader, row CalendarEventRow, ref OccurrenceRef, budget *int) (CalendarEventRow, OccurrenceRef, error) {
+	if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
+		predicate, args := meetingMasterPredicate(row)
+		masters, err := meetingEventRows(ctx, r, predicate, args, budget)
+		if err != nil {
+			return row, ref, err
+		}
+		if len(masters) == 1 {
+			if masters[0].Event.Status == meetingCancelledStatus {
+				row.Event.Status = meetingCancelledStatus
+			}
+			if row.Event.Original != nil {
+				row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
+			}
+		}
+	}
+	return row, ref, nil
+}
+
 func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref OccurrenceRef, budget *int) (linkOccurrence, error) {
 	rows, err := meetingEventRowsByID(ctx, r, ref.MessageID, budget)
 	if err != nil {
@@ -197,26 +217,9 @@ func resolveMeetingOccurrence(ctx context.Context, r reboundReader, ref Occurren
 	if len(rows) != 1 {
 		return linkOccurrence{}, sql.ErrNoRows
 	}
-	row := rows[0]
-	if row.Event.Kind == meetingExceptionKind && ref.Key == "" {
-		predicate, args := meetingMasterPredicate(row)
-		masters, err := meetingEventRows(ctx, r, predicate, args, budget)
-		if err != nil {
-			return linkOccurrence{}, err
-		}
-		if len(masters) == 1 && masters[0].Event.Status == meetingCancelledStatus {
-			row.Event.Status = meetingCancelledStatus
-		}
-		if row.Event.Original != nil && len(masters) == 1 {
-			row, ref = masters[0], OccurrenceRef{MessageID: masters[0].MessageID, Key: row.Event.Original.Key()}
-		} else if row.Event.Original != nil {
-			if row.Event.Start == nil || row.Event.End == nil {
-				return linkOccurrence{}, fmt.Errorf("%s: %w", calendarMissingBoundsReason(row.Event), sql.ErrNoRows)
-			}
-			o := occurrenceFromRow(row, row.Event.Original.Key())
-			o.Ref.Key = ""
-			return o, nil
-		}
+	row, ref, err := meetingOccurrenceMaster(ctx, r, rows[0], ref, budget)
+	if err != nil {
+		return linkOccurrence{}, err
 	}
 	if ref.Key == "" {
 		if row.Event.Kind == meetingSeriesKind {

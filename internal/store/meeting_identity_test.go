@@ -233,6 +233,26 @@ func TestMeetingIdentityNotesOnlyFourDailySeries(t *testing.T) {
 	}
 }
 
+func TestMeetingIdentitySparseReferencesKeepWindowGaps(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	_, series := calendarFixture(t, st, "daily", `{"id":"daily","iCalUID":"daily@example.org","start":{"dateTime":"2027-01-01T10:00:00Z","timeZone":"UTC"},"end":{"dateTime":"2027-01-01T11:00:00Z"},"recurrence":["RRULE:FREQ=DAILY"]}`)
+	for i := range 210 {
+		at := time.Date(2027, 2, 1, 10, 0, 0, 0, time.UTC).AddDate(0, 0, i)
+		calendarFixture(t, st, fmt.Sprintf("edit-%d", i), fmt.Sprintf(`{"id":"edit-%d","iCalUID":"daily@example.org","recurringEventId":"daily","originalStartTime":{"dateTime":%q},"start":{"dateTime":%q},"end":{"dateTime":%q}}`, i, at.Format(time.RFC3339), at.Format(time.RFC3339), at.Add(time.Hour).Format(time.RFC3339)))
+	}
+	refs := []string{fmt.Sprintf("evt:%d@20270101T100000Z", series), fmt.Sprintf("evt:%d@20271231T100000Z", series)}
+	for _, requested := range [][]string{refs[:1], refs[1:], refs} {
+		got, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: requested})
+		require.NoError(err)
+		require.Len(got.ByOccurrence, len(requested))
+		for _, ref := range requested {
+			assert.Equal("occ:"+ref, got.ByOccurrence[ref].Key)
+			assert.Equal(ref, got.ByOccurrence[ref].OccurrenceRef)
+		}
+	}
+}
+
 func TestMeetingIdentityTwoLongRunningDailySeriesSavedDecisions(t *testing.T) {
 	for _, decision := range []string{"link", "split"} {
 		t.Run(decision, func(t *testing.T) {

@@ -97,14 +97,9 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 		if len(rows) != 1 {
 			continue
 		}
-		row := rows[0]
-		if row.Event.Kind == meetingExceptionKind && ref.Key == "" && row.Event.Original != nil {
-			predicate, args := meetingMasterPredicate(row)
-			masters := r.batch.events[meetingQueryKey(predicate, args)]
-			if len(masters) == 1 {
-				ref.Key = row.Event.Original.Key()
-				row = masters[0]
-			}
+		row, ref, err := meetingOccurrenceMaster(ctx, r, rows[0], ref, budget)
+		if err != nil {
+			return err
 		}
 		if ref.Key == "" || row.Event.Kind != meetingSeriesKind && row.Event.Kind != "single" {
 			continue
@@ -122,7 +117,7 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 	}
 	queries = nil
 	masters := map[int64]CalendarEventRow{}
-	froms, tos := map[int64]time.Time{}, map[int64]time.Time{}
+	windows := map[int64][][2]time.Time{}
 	for _, ref := range recurring {
 		if _, ok := r.batch.occurrences[OccurrenceRef{MessageID: ref.row.MessageID, Key: ref.id.Key()}]; ok {
 			continue
@@ -144,36 +139,51 @@ func (s *Store) preloadMeetingOccurrences(ctx context.Context, r reboundReader, 
 		}
 		id := ref.row.MessageID
 		masters[id] = ref.row
-		from, to := at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin)
-		if froms[id].IsZero() || from.Before(froms[id]) {
-			froms[id] = from
-		}
-		if to.After(tos[id]) {
-			tos[id] = to
-		}
+		windows[id] = append(windows[id], [2]time.Time{at.Add(-calendarCandidateMargin), at.Add(calendarCandidateMargin)})
 	}
 	for id, master := range masters {
-		predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, master, froms[id], tos[id])
-		queries = append(queries, meetingEventQuery{predicate, args})
+		windows[id] = coalesceMeetingWindows(windows[id])
+		for _, window := range windows[id] {
+			predicate, args := meetingSeriesExceptionsPredicate(ctx, r.dialect, master, window[0], window[1])
+			queries = append(queries, meetingEventQuery{predicate, args})
+		}
 	}
 	if err := s.preloadMeetingQueries(ctx, r, queries, budget); err != nil {
 		return err
 	}
-	// Generate each master's requested window once, then reuse the occurrences
+	// Generate each master's overlapping windows once, then reuse the occurrences
 	// for individual references, representative selection, and note discovery.
 	for id, master := range masters {
-		occurrences, err := expandMeetingSeries(ctx, r, master, froms[id], tos[id], budget)
-		if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
-			return err
-		}
-		if r.batch.occurrences == nil {
-			r.batch.occurrences = map[OccurrenceRef]linkOccurrence{}
-		}
-		for _, o := range occurrences {
-			r.batch.occurrences[o.Ref] = o
+		for _, window := range windows[id] {
+			occurrences, err := expandMeetingSeries(ctx, r, master, window[0], window[1], budget)
+			if err != nil && !errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				return err
+			}
+			if r.batch.occurrences == nil {
+				r.batch.occurrences = map[OccurrenceRef]linkOccurrence{}
+			}
+			for _, o := range occurrences {
+				r.batch.occurrences[o.Ref] = o
+			}
 		}
 	}
 	return nil
+}
+
+// Retain gaps so unrelated edits cannot exhaust a sparse request's read budget.
+func coalesceMeetingWindows(windows [][2]time.Time) [][2]time.Time {
+	slices.SortFunc(windows, func(a, b [2]time.Time) int { return a[0].Compare(b[0]) })
+	out := windows[:0]
+	for _, window := range windows {
+		if n := len(out); n > 0 && window[0].Before(out[n-1][1]) {
+			if window[1].After(out[n-1][1]) {
+				out[n-1][1] = window[1]
+			}
+		} else {
+			out = append(out, window)
+		}
+	}
+	return out
 }
 
 // Find IDs for many predicates together, then hydrate each calendar row once.
