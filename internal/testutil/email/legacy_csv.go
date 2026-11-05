@@ -6,7 +6,6 @@ type LegacyCSVOptions struct {
 	Body      string
 	InlinePNG bool
 	Payload   string
-	BodyType  string
 	Header    string
 	ExtraPNG  bool
 	TwoCSVs   bool
@@ -25,9 +24,6 @@ func LegacyCSV(withStrayLine bool, shape LegacyCSVOptions) []byte {
 	}
 	if shape.Body == "" {
 		shape.Body = "<p>Example body</p>"
-	}
-	if shape.BodyType == "" {
-		shape.BodyType = "text/html"
 	}
 	if shape.Payload == "" {
 		shape.Payload = "first,last\r\nSample,Person"
@@ -55,6 +51,6 @@ func LegacyCSV(withStrayLine bool, shape LegacyCSVOptions) []byte {
 	return []byte("From: sender@example.org\r\nTo: recipient@example.org\r\n" +
 		"Subject: recovery fixture\r\nMIME-Version: 1.0\r\n" +
 		"Content-Type: multipart/related; boundary=related\r\n\r\n" +
-		"--related\r\nContent-Type: " + shape.BodyType + "; charset=utf-8\r\n\r\n" + shape.Body + "\r\n" +
+		"--related\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + shape.Body + "\r\n" +
 		csv + extra + "--related--\r\n")
 }

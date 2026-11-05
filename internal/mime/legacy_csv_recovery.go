@@ -8,17 +8,14 @@ import "regexp"
 var legacyCSVHeader = regexp.MustCompile(`(?m)^(--[^\r\n]{1,200}\r?\n)[ \t]*--------------040908010102080206010104[ \t]*\r?\n(Content-Type: text/csv;[^\r\n]*\r?\nContent-Transfer-Encoding: quoted-printable\r?\nContent-Disposition: attachment;[^\r\n]*\r?\n)`)
 
 func recoverLegacyCSV(raw []byte) *Message {
-	match := legacyCSVHeader.FindSubmatchIndex(raw)
-	if match == nil {
-		return nil
+	for _, match := range legacyCSVHeader.FindAllSubmatchIndex(raw, -1) {
+		// Each attempt removes one stray line from a fresh copy. Other
+		// matches may be quoted text in a body or attachment payload.
+		fixed := append([]byte(nil), raw[:match[3]]...)
+		fixed = append(fixed, raw[match[4]:]...)
+		if recovered, err := parse(fixed, nil); err == nil {
+			return recovered
+		}
 	}
-	// Remove only the first signature's stray line on a copy. Later matches
-	// may be text inside an attachment payload.
-	fixed := append([]byte(nil), raw[:match[3]]...)
-	fixed = append(fixed, raw[match[4]:]...)
-	recovered, err := parse(fixed, nil)
-	if err != nil {
-		return nil
-	}
-	return recovered
+	return nil
 }
