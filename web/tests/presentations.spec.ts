@@ -46,9 +46,10 @@ test.describe('compact toolbar', () => {
     expect(Math.max(...centers) - Math.min(...centers)).toBeLessThanOrEqual(2);
   }
 
-  async function stubVisualFiles(page: import('@playwright/test').Page) {
+  async function stubVisualFiles(page: import('@playwright/test').Page, requests?: Array<Record<string, unknown>>) {
     await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
     await page.route('**/api/v1/files/search', async route => {
+      requests?.push(route.request().postDataJSON());
       await route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } });
     });
   }
@@ -121,6 +122,71 @@ test.describe('compact toolbar', () => {
     await page.keyboard.press('Escape');
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(controls.getByRole('searchbox', { name: 'Search attachment pixels' })).toHaveValue('blue sky');
+  });
+
+  test('compact Clear filters clears visual text, drafts, and images', async ({ page }) => {
+    await page.clock.install();
+    const requests: Array<Record<string, unknown>> = [];
+    await stubVisualFiles(page, requests);
+    await page.goto('/?workspace=files');
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Filter' });
+    await dialog.getByRole('switch', { name: 'Visual search' }).click();
+    const query = dialog.getByRole('searchbox', { name: 'Search attachment pixels' });
+    const clear = dialog.getByRole('button', { name: 'Clear filters' });
+    await query.fill('blue sky');
+    await page.clock.fastForward(600);
+    await expect.poll(() => requests.at(-1)?.visual_query).toBe('blue sky');
+    await clear.click();
+    await expect(query).toHaveValue('');
+    await expect.poll(() => requests.at(-1)?.visual_query).toBeUndefined();
+    await query.fill('pending draft');
+    await clear.click();
+    await expect(query).toHaveValue('');
+    await page.clock.fastForward(750);
+    expect(requests.some(request => request.visual_query === 'pending draft')).toBe(false);
+    await dialog.getByLabel('Query image').setInputFiles({ name: 'query.png', mimeType: 'image/png', buffer: Buffer.from('image') });
+    await expect.poll(() => requests.at(-1)?.visual_image_base64).toBe(Buffer.from('image').toString('base64'));
+    await clear.click();
+    await expect(dialog.getByText('query.png', { exact: true })).toHaveCount(0);
+    await expect.poll(() => requests.at(-1)?.visual_image_base64).toBeUndefined();
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const desktopQuery = page.locator('.context-controls').getByRole('searchbox', { name: 'Search attachment pixels' });
+    await desktopQuery.fill('desktop query');
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Filter' }).getByRole('button', { name: 'Clear filters' }).click();
+    await expect(desktopQuery).toHaveValue('desktop query');
+  });
+
+  test('compact Filter indicates an active visual query or image', async ({ page }) => {
+    const requests: Array<Record<string, unknown>> = [];
+    await stubVisualFiles(page, requests);
+    await page.goto('/?workspace=files');
+    const filter = page.getByRole('button', { name: 'Filter', exact: true });
+    await filter.click();
+    const dialog = page.getByRole('dialog', { name: 'Filter' });
+    const visual = dialog.getByRole('switch', { name: 'Visual search' });
+    await visual.click();
+    await dialog.getByRole('searchbox', { name: 'Search attachment pixels' }).fill('blue sky');
+    await expect.poll(() => requests.at(-1)?.visual_query).toBe('blue sky');
+    await filter.click();
+    await expect(filter).toHaveText('Filter · 1');
+    await expect(filter).toHaveAccessibleDescription('Visual search active');
+    await filter.click();
+    await visual.click();
+    await filter.click();
+    await expect(filter).toHaveText('Filter');
+    await filter.click();
+    await visual.click();
+    await dialog.getByLabel('Query image').setInputFiles({ name: 'query.png', mimeType: 'image/png', buffer: Buffer.from('image') });
+    await expect.poll(() => requests.at(-1)?.visual_image_base64).toBe(Buffer.from('image').toString('base64'));
+    await filter.click();
+    await expect(filter).toHaveText('Filter · 1');
+    await filter.click();
+    await dialog.getByRole('button', { name: 'Clear filters' }).click();
+    await filter.click();
+    await expect(filter).toHaveText('Filter');
   });
 
   test('compact grouping and sort shortcuts open View', async ({ page }) => {
