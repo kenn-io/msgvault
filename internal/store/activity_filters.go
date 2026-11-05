@@ -242,7 +242,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  m.message_type,m.rfc822_message_id,m.list_id,src.source_type,
  CASE WHEN ` + matrixPendingEncryptedSQL("m") + ` THEN 1 ELSE 0 END AS encrypted,
  CASE WHEN ae.ref_kind='meeting' OR ` + countedMessageTypeSQL("m", "c") + ` THEN 1 ELSE 0 END AS contact_eligible,
- CASE WHEN ae.ref_kind='meeting' OR EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id AND (LOWER(a.mime_type) IN ('text/calendar','application/ics') OR LOWER(a.filename) LIKE '%.ics')) THEN 1 ELSE 0 END AS invitation
+ CASE WHEN ae.ref_kind='meeting' OR (m.list_id IS NULL AND EXISTS(SELECT 1 FROM attachments a WHERE a.message_id=m.id AND (LOWER(a.mime_type) IN ('text/calendar','application/ics') OR LOWER(a.filename) LIKE '%.ics'))) THEN 1 ELSE 0 END AS invitation
  FROM ` + events + ` ae JOIN messages m ON m.id=ae.message_id JOIN sources src ON src.id=m.source_id LEFT JOIN conversations c ON c.id=m.conversation_id WHERE ` + where + `
  )` + daySelection + `, ` + classification + `, scored AS (
  SELECT f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
@@ -251,7 +251,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
  CASE WHEN f.contact_eligible=1 AND f.encrypted=0
  THEN MAX(CASE WHEN f.excluded=''` + countedSubject + ` AND ` + counted + ` THEN 1 ELSE 0 END) ELSE 0 END AS counted,
  CASE WHEN ` + listExcluded + `=1 OR (MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END)=1
- AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded='' THEN 1 ELSE 0 END)=0) THEN 0 ELSE 1 END AS non_noise
+ AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded IN ('','owner') THEN 1 ELSE 0 END)=0) THEN 0 ELSE 1 END AS non_noise
  FROM facts f GROUP BY f.message_id,f.source_id,f.conversation_id,f.channel,f.direction,f.occurred_at,f.local_date,f.ref_kind,
  f.message_type,f.rfc822_message_id,f.list_id,f.source_type,f.encrypted,f.contact_eligible,f.invitation
  ), thread_sizes AS MATERIALIZED (

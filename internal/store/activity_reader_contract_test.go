@@ -99,28 +99,54 @@ func TestTimelineExcludesOwnerAddressInAnotherAccount(t *testing.T) {
 }
 
 func TestCoauthorExclusionsPreserveHumanCredit(t *testing.T) {
-	require := require.New(t)
-	assert := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-	require.NoError(err)
-	automated := f.EnsureParticipant("noreply@example.com", "Automated", "example.com")
-	id := f.add(t, f.ConvID, f.Source.ID, tierAsOf, false, "")
-	require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{f.peer, automated}, nil))
-	projectTierSignals(t, f.Fixture, "UTC", 0)
-	tier, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
-	require.NoError(err)
-	require.Equal(1, tier.Signals.InboundLong)
-	q := timelineContactQuery(f)
-	q.Now = tierAsOf
-	q.Subject = store.ActivitySubject{PersonID: person.ID}
-	got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-	require.NoError(err)
-	assert.Equal(1, got.Count)
-	page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-	require.NoError(err)
-	require.Len(page.Bursts, 1)
-	assert.Equal(1, page.Bursts[0].Inbound)
+	for _, direction := range []string{"inbound", "outbound"} {
+		t.Run(direction, func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+			require.NoError(err)
+			automated := f.EnsureParticipant("noreply@example.com", "Automated", "example.com")
+			outbound := direction == "outbound"
+			id := f.add(t, f.ConvID, f.Source.ID, tierAsOf, outbound, "")
+			sender := f.peer
+			if outbound {
+				sender = f.owner
+			}
+			require.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender, automated}, nil))
+			projectTierSignals(t, f.Fixture, "UTC", 0)
+			tier, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
+			require.NoError(err)
+			if outbound {
+				require.Equal(1, tier.Signals.OutboundLong)
+			} else {
+				require.Equal(1, tier.Signals.InboundLong)
+			}
+			q := timelineContactQuery(f)
+			q.Now = tierAsOf
+			q.Subject = store.ActivitySubject{PersonID: person.ID}
+			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+			require.NoError(err)
+			assert.Equal(1, got.Count)
+			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: f.ConvID, Limit: 10})
+			require.NoError(err)
+			if assert.Len(messages, 1) {
+				assert.Equal(id, messages[0].MessageID)
+			}
+			page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
+			require.NoError(err)
+			require.Len(page.Bursts, 1)
+			assert.Zero(page.NoiseOmitted)
+			assert.Equal(id, page.Bursts[0].AnchorMessageID)
+			if outbound {
+				assert.Equal(1, page.Bursts[0].Outbound)
+				assert.Zero(page.Bursts[0].Inbound)
+			} else {
+				assert.Equal(1, page.Bursts[0].Inbound)
+				assert.Zero(page.Bursts[0].Outbound)
+			}
+		})
+	}
 }
 
 func TestActivityWindowDateAndTimestampBounds(t *testing.T) {

@@ -188,16 +188,29 @@ func TestActivityEmailCopiesPreferCountedContact(t *testing.T) {
 			}
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
 			requirements.NoError(err)
+			winner := ids[0]
+			if tc.largeAudience {
+				winner = ids[1]
+			}
+			if invitation && !tc.largeAudience {
+				assertions.Empty(page.Bursts)
+				assertions.Equal(1, page.NoiseOmitted)
+				query := timelineBurstQuery()
+				query.Filters.IncludeNoise = true
+				page, err = f.Store.ListActivityBurstsContext(t.Context(), query)
+				requirements.NoError(err)
+			} else {
+				assertions.Zero(page.NoiseOmitted)
+			}
 			requirements.Len(page.Bursts, 1)
-			assertions.Equal(ids[1], page.Bursts[0].AnchorMessageID)
-			assertions.Equal(2, page.Bursts[0].CopyCounts[ids[1]])
+			assertions.Equal(winner, page.Bursts[0].AnchorMessageID)
+			assertions.Equal(2, page.Bursts[0].CopyCounts[winner])
 			assertions.Zero(page.Bursts[0].Inbound)
 			if invitation {
 				assertions.Zero(page.Bursts[0].Outbound)
 			} else {
 				assertions.Equal(1, page.Bursts[0].Outbound)
 			}
-			assertions.Zero(page.NoiseOmitted)
 		})
 	}
 	for _, person := range []struct {

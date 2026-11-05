@@ -13,12 +13,14 @@ import (
 
 func TestCalendarInvitationsFromExcludedSender(t *testing.T) {
 	for _, tc := range []struct {
-		name, sender                   string
-		event, attachment, readContact bool
-		noise                          int
+		name, sender                         string
+		event, attachment, readContact, list bool
+		noise                                int
 	}{
 		{name: "calendar event", sender: "noreply@example.com", event: true},
+		{name: "calendar event with list ID", sender: "noreply@example.com", event: true, list: true},
 		{name: "calendar file", sender: "calendar-notification@example.com", attachment: true, readContact: true},
+		{name: "newsletter calendar file", sender: "vendor@example.com", attachment: true, list: true, noise: 1},
 		{name: "inline MIME", sender: "noreply@example.com", noise: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,7 +64,11 @@ func TestCalendarInvitationsFromExcludedSender(t *testing.T) {
 						"--mixed\r\nContent-Type: application/ics; name=\"invite.ics\"\r\n" +
 						"Content-Disposition: attachment; filename=\"invite.ics\"\r\n\r\n" + calendar + "--mixed--\r\n"
 				}
-				raw := []byte("From: Calendar sender <" + tc.sender + ">\r\n" +
+				listHeader := ""
+				if tc.list {
+					listHeader = "List-Id: Newsletter <newsletter.example.com>\r\n"
+				}
+				raw := []byte(listHeader + "From: Calendar sender <" + tc.sender + ">\r\n" +
 					"To: Owner <owner@example.com>\r\nDate: Sat, 17 Oct 2026 12:00:00 +0000\r\n" +
 					"Message-ID: <invitation@example.com>\r\nSubject: Planning invitation\r\nMIME-Version: 1.0\r\n" + body)
 				require.NoError(importer.IngestRawMessage(t.Context(), f.Store, f.Source.ID, "owner@example.com", t.TempDir(), nil, "invitation", "invitation-hash", raw, tierAsOf, slog.Default()))
@@ -75,17 +81,27 @@ func TestCalendarInvitationsFromExcludedSender(t *testing.T) {
 					require.Equal(1, attachments)
 				}
 			}
+			if tc.event && tc.list {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='newsletter.example.com' WHERE id=?`), id)
+				require.NoError(err)
+			}
 			require.NoError(f.Store.DB().QueryRowContext(t.Context(), f.Store.Rebind(`SELECT conversation_id FROM messages WHERE id=?`), id).Scan(&conversationID))
 			projectTierSignals(t, f.Fixture, "UTC", 0)
 			query := timelineBurstQuery()
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), query)
 			require.NoError(err)
 			assert.Equal(tc.noise, page.NoiseOmitted)
+			messages, err := f.Store.ListActivityMessagesContext(t.Context(), store.MessageQuery{ConversationID: conversationID, Limit: 10})
+			require.NoError(err)
 			if tc.noise > 0 {
 				assert.Empty(page.Bursts)
+				assert.Empty(messages)
 				query.Filters.IncludeNoise = true
 				page, err = f.Store.ListActivityBurstsContext(t.Context(), query)
 				require.NoError(err)
+			} else {
+				require.Len(messages, 1)
+				assert.Equal(id, messages[0].MessageID)
 			}
 			require.Len(page.Bursts, 1)
 			assert.Equal(id, page.Bursts[0].AnchorMessageID)
