@@ -1,5 +1,6 @@
 import type { ChipTone } from '@kenn-io/kit-ui';
 import type { SourceStatus } from '../api/generated/models';
+import { operationStateChip } from '../operations/labels';
 import { sentenceCase } from '../explore/labels';
 
 // Curated friendly labels for daemon source types. Other codes use
@@ -90,23 +91,13 @@ export function sourceMailbox(identifier: string): string {
 }
 
 export function syncStatusChip(
-  source: Pick<SourceStatus, 'active_sync' | 'latest_sync' | 'scheduler_queued' | 'line_webhook'>
+  source: StateSource & Pick<SourceStatus, 'line_webhook'>
 ): { label: string; tone: ChipTone } {
-  const latest = source.latest_sync;
-  if (source.active_sync || latest?.status === 'running') return { label: 'Syncing', tone: 'info' };
-  if (source.scheduler_queued && (!latest || latest.status === 'cancelled')) return { label: 'Queued', tone: 'info' };
-  if (source.line_webhook && latest?.status !== 'failed') {
-    const webhook = source.line_webhook;
-    return webhook.active
+  const state = sourceRunState(source);
+  if (source.line_webhook && (state === undefined || state === 'succeeded')) {
+    return source.line_webhook.active
       ? { label: 'Listening', tone: 'success' }
       : { label: 'Receiver inactive', tone: 'warning' };
   }
-  if (!latest) return { label: 'Never synced', tone: 'muted' };
-  if (latest.status === 'completed') {
-    return latest.errors_count > 0
-      ? { label: 'Completed with errors', tone: 'warning' }
-      : { label: 'Completed', tone: 'success' };
-  }
-  if (latest.status === 'failed') return { label: 'Failed', tone: 'danger' };
-  return { label: sentenceCase(latest.status), tone: 'neutral' };
+  return operationStateChip(state ?? 'Never synced');
 }

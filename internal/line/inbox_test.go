@@ -720,7 +720,7 @@ func TestProcessorMessageOnlyMembershipSurvivesParticipantMerge(t *testing.T) {
 	}
 }
 
-func TestProcessorDirectMessageClassifiesAsInboundActivity(t *testing.T) {
+func TestProcessorDirectMessageRecordsSenderAndConversationWithoutMembership(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newInboxFixture(t)

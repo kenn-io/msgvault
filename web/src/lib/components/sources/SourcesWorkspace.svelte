@@ -426,7 +426,7 @@
       {/snippet}
       {#each sources as source (source.id)}
         {@const key = `source:${source.id}`}
-        {@const chip = source.line_webhook ? syncStatusChip(source) : operationStateChip(sourceRunState(source) ?? 'Never synced')}
+        {@const chip = syncStatusChip(source)}
         <tr class:selected={selected === key} aria-selected={selected === key} onclick={() => toggle(key)}>
           <td>
             <div class="name">
