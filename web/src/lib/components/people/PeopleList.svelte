@@ -159,7 +159,7 @@
 
 <aside class="people-list" aria-label="People">
   <div class="toolbar">
-    <div class="toolbar-row">
+    <div class="toolbar-row touch-controls">
       <SegmentedControl
         ariaLabel="List"
         value={facet}
@@ -323,16 +323,6 @@
 
   .toolbar-row :global(.sort-select) {
     min-width: 0;
-  }
-
-  @media (max-width: 640px) {
-    .toolbar-row {
-      --kit-control-height: 44px;
-    }
-
-    .toolbar-row :global([role='radio']) {
-      min-height: 44px;
-    }
   }
 
   .toolbar-row > :global(*) {

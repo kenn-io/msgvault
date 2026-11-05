@@ -1643,12 +1643,6 @@
     border-bottom: 1px solid var(--border-default);
   }
 
-  @media (max-width: 640px) {
-    .app-top-bar {
-      padding-block: var(--space-2);
-    }
-  }
-
   .app-top-bar__menu {
     display: contents;
   }

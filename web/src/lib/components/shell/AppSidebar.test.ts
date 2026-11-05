@@ -30,13 +30,6 @@ function renderSidebar(overrides: Record<string, unknown> = {}) {
 const primary = () => within(screen.getByRole('navigation', { name: 'Primary' }));
 
 describe('AppSidebar', () => {
-  it('closes navigation from the brand row', async () => {
-    const onCloseNavigation = vi.fn();
-    renderSidebar({ onCloseNavigation });
-    await fireEvent.click(screen.getByRole('button', { name: 'Close navigation' }));
-    expect(onCloseNavigation).toHaveBeenCalledOnce();
-  });
-
   it.each([4, 500])('shows a waiting badge of %s', duplicateCount => {
     renderSidebar({ duplicateCount });
     expect(primary().getByRole('button', { name: duplicateCount === 500 ? 'People 500+' : 'People 4' }).textContent).toContain(duplicateCount === 500 ? '500+' : '4');

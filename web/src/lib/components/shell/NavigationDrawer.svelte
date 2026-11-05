@@ -28,7 +28,7 @@
     onclick={onclose}
   ></button>
   <div
-    class="drawer__panel"
+    class="drawer__panel touch-controls"
     role="dialog"
     aria-modal="true"
     aria-label="Navigation"
@@ -57,25 +57,9 @@
   }
 
   .drawer__panel {
-    --control-h: 44px;
-    --control-h-lg: 44px;
-    --kit-control-height: 44px;
     position: absolute;
     inset: 0 auto 0 0;
     height: 100%;
     box-shadow: var(--shadow-lg);
-  }
-
-  .drawer__panel :global(.saved-view__menu .kit-icon-button) {
-    width: 44px;
-    height: 44px;
-  }
-
-  .drawer__panel :global(.kit-menu__item) {
-    min-height: 44px;
-  }
-
-  .drawer__panel :global(.saved-view__rename .kit-text-input) {
-    height: calc(44px + 2 * var(--border-width));
   }
 </style>

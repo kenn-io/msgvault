@@ -43,5 +43,4 @@ describe('NavigationDrawer', () => {
     await fireEvent.click(container.querySelector('.drawer__scrim')!);
     expect(onclose).toHaveBeenCalledOnce();
   });
-
 });

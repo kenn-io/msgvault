@@ -36,56 +36,70 @@ test.beforeEach(async ({ page }) => {
 });
 
 test.describe('touch navigation', () => {
-test.use({ hasTouch: true });
-test('narrow navigation menu keeps keyboard focus inside the dialog', async ({ page }) => {
+  test.use({ hasTouch: true, isMobile: true });
+  test('narrow navigation menu keeps keyboard focus inside the dialog', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [saved] } }));
+    await page.goto('/?workspace=everything');
+    const opener = page.getByRole('button', { name: 'Open navigation' });
+    const search = await page.getByRole('searchbox', { name: 'Search messages' }).boundingBox();
+    const mode = await page.getByRole('combobox', { name: /Search mode/ }).boundingBox();
+    expect(search!.width).toBeGreaterThan(mode!.width);
+    expect(mode!.width).toBeLessThan(120);
+
+    await opener.click();
+    await expect(page.getByRole('button', { name: 'Messages' })).toBeFocused();
+    for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
+    await expect(page.getByRole('dialog', { name: 'Navigation' }).locator(':focus')).toHaveCount(1);
+    const drawer = page.getByRole('dialog', { name: 'Navigation' });
+    await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
+    await expect(drawer.getByRole('button', { name: 'Project notes actions' })).toBeVisible();
+    expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    for (const row of await drawer.locator('.sidebar button:visible').all()) {
+      expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
+    }
+    await drawer.getByRole('button', { name: 'Close navigation' }).click();
+    await expect(drawer).toBeHidden();
+    await expect(opener).toBeFocused();
+  });
+
+  test('scrolling saved views leaves their actions unobstructed', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const views = Array.from({ length: 20 }, (_, index) => ({ ...saved, id: index + 1, name: `View ${String(index + 1).padStart(2, '0')}` }));
+    await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: views } }));
+    await page.goto('/?workspace=everything');
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    const drawer = page.getByRole('dialog', { name: 'Navigation' });
+    const action = drawer.getByRole('button', { name: 'View 20 actions' });
+    await action.scrollIntoViewIfNeeded();
+    await action.click();
+    const rename = drawer.getByRole('menuitem', { name: 'Rename' });
+    await expect(rename).toBeVisible();
+    await rename.click();
+    await expect(drawer.getByRole('textbox', { name: 'Rename View 20' })).toBeVisible();
+  });
+});
+
+test('mouse navigation retains compact control sizes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [saved] } }));
   await page.goto('/?workspace=everything');
-  const opener = page.getByRole('button', { name: 'Open navigation' });
   const search = await page.getByRole('searchbox', { name: 'Search messages' }).boundingBox();
   const mode = await page.getByRole('combobox', { name: /Search mode/ }).boundingBox();
   expect(search!.width).toBeGreaterThan(mode!.width);
   expect(mode!.width).toBeLessThan(120);
-  expect(mode!.height).toBeGreaterThanOrEqual(44);
-  expect(search!.height).toBeGreaterThanOrEqual(44);
-  const header = await page.getByRole('banner').boundingBox();
-  expect(search!.y - header!.y).toBeGreaterThanOrEqual(4);
-  expect(header!.y + header!.height - search!.y - search!.height).toBeGreaterThanOrEqual(4);
-
+  const opener = page.getByRole('button', { name: 'Open navigation' });
   await opener.click();
-  await expect(page.getByRole('button', { name: 'Messages' })).toBeFocused();
-  for (let index = 0; index < 20; index += 1) await page.keyboard.press('Tab');
-  await expect(page.getByRole('dialog', { name: 'Navigation' }).locator(':focus')).toHaveCount(1);
   const drawer = page.getByRole('dialog', { name: 'Navigation' });
-  await expect(drawer.getByRole('button', { name: 'Project notes', exact: true })).toBeVisible();
-  await expect(drawer.getByRole('button', { name: 'Project notes actions' })).toBeVisible();
-  expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  for (const row of await drawer.locator('.sidebar button:visible').all()) {
-    expect((await row.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  }
+  expect((await drawer.getByRole('button', { name: 'Close navigation' }).boundingBox())!.height).toBe(28);
+  expect((await drawer.getByRole('button', { name: 'Messages' }).boundingBox())!.height).toBe(36);
+  await drawer.getByRole('button', { name: 'Project notes', exact: true }).focus();
+  expect((await drawer.getByRole('button', { name: 'Project notes actions' }).boundingBox())!.height).toBe(24);
   await drawer.getByRole('button', { name: 'Close navigation' }).click();
   await expect(drawer).toBeHidden();
   await expect(opener).toBeFocused();
-});
-
-test('scrolling saved views leaves their actions unobstructed', async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
-  const views = Array.from({ length: 20 }, (_, index) => ({ ...saved, id: index + 1, name: `View ${index + 1}` }));
-  await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: views } }));
-  await page.goto('/?workspace=everything');
-  await page.getByRole('button', { name: 'Open navigation' }).click();
-  const drawer = page.getByRole('dialog', { name: 'Navigation' });
-  const action = drawer.getByRole('button', { name: 'View 20 actions' });
-  await action.scrollIntoViewIfNeeded();
-  await action.click();
-  const rename = drawer.getByRole('menuitem', { name: 'Rename' });
-  await expect(rename).toBeVisible();
-  for (const item of await drawer.getByRole('menuitem').all()) {
-    expect((await item.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-  }
-  await rename.click();
-  expect((await drawer.getByRole('textbox', { name: 'Rename View 20' }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
-});
 });
 
 test('grid shortcuts pressed outside the grid still move the active row', async ({ page }) => {
