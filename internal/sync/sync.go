@@ -123,6 +123,10 @@ type labelSnapshotCompleteness interface {
 	LabelsSnapshotComplete() bool
 }
 
+type filteredDeletionReconciler interface {
+	ReconcilesFilteredDeletions() bool
+}
+
 type authoritativeLabelReconciliationDeferrer interface {
 	DefersAuthoritativeLabelReconciliation() bool
 }
@@ -2113,8 +2117,10 @@ func (s *Syncer) ingestMessage(
 
 			complete := s.labelsSnapshotComplete()
 			if matches {
-				if complete && oldSourceMessageID != data.message.SourceMessageID {
-					if destinationOrigin.canRefresh(savedOrigin, true) && destinationOrigin.canRefresh(canonicalOrigin, true) {
+				reconciler, ok := s.client.(filteredDeletionReconciler)
+				refreshContent := complete || (ok && reconciler.ReconcilesFilteredDeletions())
+				if oldSourceMessageID != data.message.SourceMessageID {
+					if refreshContent && destinationOrigin.canRefresh(savedOrigin, true) && destinationOrigin.canRefresh(canonicalOrigin, true) {
 						storedRaw, err := s.store.GetMessageRaw(existingID)
 						if err != nil && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, store.ErrInvalidMessageRaw) {
 							return false, fmt.Errorf("read canonical IMAP raw: %w", err)
@@ -2139,7 +2145,7 @@ func (s *Syncer) ingestMessage(
 							return false, fmt.Errorf("record identical IMAP content origin: %w", err)
 						}
 					}
-					if preferred, ok := s.client.(preferredIMAPSourceID); ok &&
+					if preferred, ok := s.client.(preferredIMAPSourceID); complete && ok &&
 						preferred.IsPreferredSourceMessageID(data.message.SourceMessageID) {
 						// The preferred copy sits where the provider also files
 						// received mail (\All or unadvertised), so its content is

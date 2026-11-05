@@ -1034,8 +1034,11 @@ stays live after Trash is skipped. Skipped-only messages keep their labels and d
 Each opted-in sync also checks messages archived by earlier filtered syncs. A
 message whose folder was scanned but no longer holds it is marked deleted.
 
-Stored memberships in skipped folders are never changed. A deleted or renamed
-folder keeps its messages live until a sync without folder exclusions.
+Opted-in syncs replace an archived draft with its sent copy, as complete syncs do,
+while merging labels. A deleted or renamed folder keeps its messages live until
+a sync without folder exclusions. If the server recreates a scanned folder with
+a new UIDVALIDITY before its previously archived messages get memberships, those
+messages also stay live until a sync without exclusions.
 
 A later sync without folder filters reconciles the whole account, including
 older imports.

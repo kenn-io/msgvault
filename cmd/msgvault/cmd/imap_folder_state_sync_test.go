@@ -20,6 +20,7 @@ import (
 	imaplib "go.kenn.io/msgvault/internal/imap"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
+	testemail "go.kenn.io/msgvault/internal/testutil/email"
 )
 
 func TestIMAPSyncFolderFilter(t *testing.T) {
@@ -782,6 +783,67 @@ func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
 	sync(true)
 	assert.Equal(2, imapTombstonedMessageCount(t, st, src.ID))
 	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
+}
+
+func TestRunScheduledIMAPSync_FilteredSentRefreshesRetainedDraft(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	addr, user := testutil.StartIMAPMemServerWithSpecialUse(t,
+		map[string]int{"INBOX": 0, "Drafts": 0, "Sent": 0, "Trash": 0},
+		map[string][]imapapi.MailboxAttr{
+			"Drafts": {imapapi.MailboxAttrDrafts},
+			"Sent":   {imapapi.MailboxAttrSent},
+		})
+	st, src, cfg, ctx := scheduledIMAPSyncFixture(t, addr)
+	cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: {"Trash"}}
+	cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{src.Identifier: true}
+	sync := func() *gmail.SyncSummary {
+		t.Helper()
+		summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+		require.NoError(err)
+		require.Zero(summary.Errors)
+		return summary
+	}
+	const messageID = "<filtered-sent-refresh@example.com>"
+	draft := testemail.NewMessage().Subject("Draft subject").
+		Header("Message-ID", messageID).Body("draftobsoleteword").CRLF().Bytes()
+	testutil.AppendIMAPRawMessage(t, user, "Drafts", draft)
+	assert.Equal(int64(1), sync().MessagesAdded)
+	id, err := st.GetMessageIDByRFC822ID(src.ID, messageID)
+	require.NoError(err)
+	require.Positive(id)
+
+	sent := testemail.NewMessage().Subject("Sent subject").
+		Header("Message-ID", messageID).
+		To("Final Recipient <final-recipient@example.com>").
+		Cc("Final Copy <final-copy@example.com>").
+		Body("sentfinalword").CRLF().Bytes()
+	testutil.AppendIMAPRawMessage(t, user, "Sent", sent)
+	assert.Equal(int64(1), sync().MessagesUpdated)
+	message, err := st.GetMessage(id)
+	require.NoError(err)
+	assert.Equal("Sent|1", message.SourceMessageID)
+	assert.Equal("Sent subject", message.Subject)
+	assert.Contains(message.BodyText, "sentfinalword")
+	assert.NotContains(message.BodyText, "draftobsoleteword")
+	assert.Equal([]string{"Final Recipient <final-recipient@example.com>"}, message.To)
+	assert.Equal([]string{"Final Copy <final-copy@example.com>"}, message.Cc)
+	assert.ElementsMatch([]string{"Drafts", "Sent"}, message.Labels)
+	raw, err := st.GetMessageRaw(id)
+	require.NoError(err)
+	assert.Equal(sent, raw)
+	states, err := st.GetIMAPFolderStates(src.ID)
+	require.NoError(err)
+	require.Len(states, 3)
+
+	summary := sync()
+	assert.Zero(summary.MessagesAdded)
+	assert.Zero(summary.MessagesUpdated)
+	after, err := st.GetMessage(id)
+	require.NoError(err)
+	assert.Equal(message, after)
+	afterStates, err := st.GetIMAPFolderStates(src.ID)
+	require.NoError(err)
+	assert.Equal(states, afterStates)
 }
 
 func scheduledIMAPSyncFixture(t *testing.T, addr string) (*store.Store, *store.Source, *config.Config, context.Context) {
