@@ -2,7 +2,6 @@ package query_test
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
-	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
@@ -142,69 +140,4 @@ func TestSQLiteInstantDatePredicateUsesExpressionIndex(t *testing.T) {
 	}
 	require.NoError(rows.Err())
 	assert.Contains(plan.String(), "idx_messages_sent_at_julianday", plan.String())
-}
-
-func TestSQLiteListThreadUsesExpressionIndex(t *testing.T) {
-	t.Parallel()
-	f := storetest.New(t)
-	if f.Store.IsPostgreSQL() {
-		t.Skip("SQLite query-plan regression")
-	}
-	f.CreateMessage("indexed-thread-page")
-	// Give the planner a source containing many conversations, so selecting
-	// one thread is cheaper than reading every message from that source.
-	otherConv, err := f.Store.EnsureConversation(f.Source.ID, "other-thread", "Other thread")
-	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(t.Context(), `
-		WITH RECURSIVE n(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM n WHERE id < 1000)
-		INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, sent_at)
-		SELECT ?, CASE WHEN id <= 100 THEN ? ELSE ? END, 'thread-plan-' || id, 'email', '2026-01-15 14:00:00+00:00' FROM n
-	`, f.Source.ID, f.ConvID, otherConv)
-	require.NoError(t, err)
-	_, err = f.Store.DB().ExecContext(t.Context(), "ANALYZE")
-	require.NoError(t, err)
-
-	for _, scoped := range []bool{false, true} {
-		where := "m.conversation_id = ? AND " + store.LiveMessagesWhere("m", false)
-		args := []any{f.ConvID}
-		if scoped {
-			where += " AND m.source_id IN (?)"
-			args = append(args, f.Source.ID)
-		}
-		// Match ListThread's count and page statements, including the raw MIME lookup.
-		for name, statement := range map[string]string{
-			"count": "SELECT COUNT(*) FROM messages m WHERE " + where,
-			"page": `SELECT m.id, COALESCE(m.source_message_id, ''), COALESCE(m.subject, ''), m.sent_at,
-			       COALESCE(m.attachment_count, 0), m.deleted_from_source_at,
-			       CASE WHEN EXISTS (
-			           SELECT 1 FROM message_raw mr
-			           WHERE mr.message_id = m.id AND mr.raw_format = 'mime'
-			       ) THEN 1 ELSE 0 END
-			FROM messages m WHERE ` + where + `
-			ORDER BY ` + (query.SQLiteQueryDialect{}).DateOrderExpression("m.sent_at") + ` NULLS LAST, m.id LIMIT ? OFFSET ?`,
-		} {
-			t.Run(fmt.Sprintf("%s/scoped=%t", name, scoped), func(t *testing.T) {
-				require := require.New(t)
-				assert := assert.New(t)
-				queryArgs := append([]any{}, args...)
-				if name == "page" {
-					queryArgs = append(queryArgs, 100, 50000)
-				}
-				rows, err := f.Store.DB().QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+statement, queryArgs...)
-				require.NoError(err)
-				defer func() { require.NoError(rows.Close()) }()
-				var plan strings.Builder
-				for rows.Next() {
-					var selectID, order, from int
-					var detail string
-					require.NoError(rows.Scan(&selectID, &order, &from, &detail))
-					plan.WriteString(detail)
-					plan.WriteByte('\n')
-				}
-				require.NoError(rows.Err())
-				assert.Contains(plan.String(), "idx_messages_conversation_sent_at_julianday", plan.String())
-				assert.NotContains(plan.String(), "TEMP B-TREE", plan.String())
-			})
-		}
-	}
 }

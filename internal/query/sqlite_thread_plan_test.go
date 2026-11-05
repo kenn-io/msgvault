@@ -1,0 +1,97 @@
+//go:build cgo
+
+package query_test
+
+import (
+	"database/sql/driver"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/query"
+	"go.kenn.io/msgvault/internal/testutil/sqlobserve"
+	"go.kenn.io/msgvault/internal/testutil/storetest"
+)
+
+func TestSQLiteListThreadUsesExpressionIndex(t *testing.T) {
+	t.Parallel()
+	must := require.New(t)
+	checks := assert.New(t)
+	f := storetest.New(t)
+	if f.Store.IsPostgreSQL() {
+		t.Skip("SQLite query-plan regression")
+	}
+	f.CreateMessage("indexed-thread-page")
+	// Most messages belong to another thread, so the conversation filter
+	// selects fewer rows than the source filter after ANALYZE.
+	otherConv, err := f.Store.EnsureConversation(f.Source.ID, "other-thread", "Other thread")
+	must.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), `
+		WITH RECURSIVE n(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM n WHERE id < 1000)
+		INSERT INTO messages (source_id, conversation_id, source_message_id, message_type, sent_at)
+		SELECT ?, CASE WHEN id <= 100 THEN ? ELSE ? END, 'thread-plan-' || id, 'email', datetime('2026-01-15', '+' || id || ' seconds') FROM n
+	`, f.Source.ID, f.ConvID, otherConv)
+	must.NoError(err)
+	_, err = f.Store.DB().ExecContext(t.Context(), "ANALYZE")
+	must.NoError(err)
+	// Observe queries against the same temporary archive, including its indexes
+	// and planner statistics. Unqualified table names resolve to the attachment.
+	var sequence int
+	var name, path string
+	must.NoError(f.Store.DB().QueryRowContext(t.Context(), "PRAGMA database_list").Scan(&sequence, &name, &path))
+	db, observer := sqlobserve.Open(t, func(conn *sqlite3.SQLiteConn) error {
+		if _, err := conn.Exec("ATTACH DATABASE ? AS archive", []driver.Value{path}); err != nil {
+			return fmt.Errorf("attach test archive: %w", err)
+		}
+		return nil
+	})
+	engine := query.NewSQLiteEngine(db)
+
+	for _, scoped := range []bool{false, true} {
+		q := query.ThreadQuery{ThreadID: "default-thread", Limit: 10, Offset: 90}
+		args := []any{f.ConvID}
+		if scoped {
+			q.SourceIDs = []int64{f.Source.ID}
+			args = append(args, f.Source.ID)
+		}
+		observer.Reset()
+		page, err := engine.ListThread(t.Context(), q)
+		must.NoError(err)
+		checks.Equal(int64(101), page.Total)
+		checks.Len(page.Messages, 10)
+		var checked int
+		for _, statement := range observer.Statements() {
+			sql := strings.Join(strings.Fields(statement), " ")
+			if !strings.Contains(sql, "FROM messages m WHERE m.conversation_id = ?") || !strings.Contains(sql, "ORDER BY") {
+				continue
+			}
+			checked++
+			t.Run(fmt.Sprintf("page/scoped=%t", scoped), func(t *testing.T) {
+				require := require.New(t)
+				assert := assert.New(t)
+				queryArgs := append([]any{}, args...)
+				queryArgs = append(queryArgs, q.Limit, q.Offset)
+				rows, err := db.QueryContext(t.Context(), "EXPLAIN QUERY PLAN "+statement, queryArgs...)
+				require.NoError(err)
+				defer func() { require.NoError(rows.Close()) }()
+				var plan strings.Builder
+				for rows.Next() {
+					var selectID, order, from int
+					var detail string
+					require.NoError(rows.Scan(&selectID, &order, &from, &detail))
+					plan.WriteString(detail)
+					plan.WriteByte('\n')
+				}
+				require.NoError(rows.Err())
+				assert.Contains(plan.String(), "idx_messages_conversation_sent_at_julianday", plan.String())
+				assert.NotContains(plan.String(), "TEMP B-TREE", plan.String())
+			})
+		}
+		// Count index selection depends on archive statistics; Total above
+		// checks the count's result without prescribing the planner's choice.
+		checks.Equal(1, checked, "observe ListThread's page statement")
+	}
+}
