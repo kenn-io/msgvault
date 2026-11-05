@@ -139,6 +139,17 @@ func TestCalendarSchedulingIsNeverAttendance(t *testing.T) {
 	assertions.Empty(cancelled.Participants)
 }
 
+func TestCalendarCancellationRejectsPresentInvalidStart(t *testing.T) {
+	for _, start := range []string{`{"dateTime":"2026-10-01T09:00:00"}`, `{}`, `null`} {
+		t.Run(start, func(t *testing.T) {
+			_, err := (ImportRequest{Format: "google_calendar", Account: "example",
+				Record: []byte(`{"id":"e1","status":"cancelled","start":` + start + `}`),
+			}).Observation()
+			assert.ErrorIs(t, err, ErrInvalid)
+		})
+	}
+}
+
 func TestImportMissingAndUnsupportedFields(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)

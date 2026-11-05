@@ -7,7 +7,6 @@ import (
 	"mime"
 	"net/http"
 	"reflect"
-	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -131,22 +130,18 @@ func callQueryFromRequest(r *http.Request) (store.CallQuery, error) {
 	var q store.CallQuery
 	values := r.URL.Query()
 	for name, target := range map[string]*int64{"person_id": &q.PersonID, "after_id": &q.AfterID} {
-		if value := values.Get(name); value != "" {
-			n, err := strconv.ParseInt(value, 10, 64)
-			if err != nil {
-				return q, fmt.Errorf("parse %s: %w", name, err)
-			}
-			*target = n
+		n, _, err := queryInt64(r, name)
+		if err != nil {
+			return q, err
 		}
+		*target = n
 	}
 	for name, target := range map[string]*int{"limit": &q.Limit, "offset": &q.Offset} {
-		if value := values.Get(name); value != "" {
-			n, err := strconv.Atoi(value)
-			if err != nil {
-				return q, fmt.Errorf("parse %s: %w", name, err)
-			}
-			*target = n
+		n, _, err := queryInt(r, name)
+		if err != nil {
+			return q, err
 		}
+		*target = n
 	}
 	for name, target := range map[string]**time.Time{"after": &q.After, "before": &q.Before} {
 		if value := values.Get(name); value != "" {

@@ -22,6 +22,17 @@ type callHTTPStore struct {
 	CallHistoryStore
 }
 
+func TestCallQueryIntegerParameterErrors(t *testing.T) {
+	for _, name := range []string{"person_id", "after_id", "limit", "offset"} {
+		t.Run(name, func(t *testing.T) {
+			_, err := callQueryFromRequest(httptest.NewRequest(http.MethodGet, "/api/v1/calls?"+name+"=invalid", nil))
+			var paramErr *paramError
+			require.ErrorAs(t, err, &paramErr)
+			assert.Equal(t, name, paramErr.param)
+		})
+	}
+}
+
 func TestCallHistoryHTTPRoundtripAndAuthorization(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
