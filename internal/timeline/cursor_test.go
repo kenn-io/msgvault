@@ -42,23 +42,33 @@ func TestCursorRoundTrip(t *testing.T) {
 	requirements.NoError(err)
 }
 func TestCursorPinsFractionalNow(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	b := cursorBinding()
-	b.Now = b.Now.Add(123456789 * time.Nanosecond)
-	want := b.Now
-	var windowNow time.Time
-	b.WindowAt = func(now time.Time) (Window, error) {
-		windowNow = now
-		return b.Window, nil
+	for _, tc := range []struct {
+		name    string
+		now     time.Time
+		advance time.Duration
+	}{
+		{"fractional", cursorBinding().Now.Add(123456789 * time.Nanosecond), time.Hour},
+		{"midnight", time.Date(2026, 10, 22, 23, 59, 0, 0, time.UTC), 2 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := cursorBinding()
+			b.Now = tc.now
+			var windowNow time.Time
+			b.WindowAt = func(now time.Time) (Window, error) {
+				windowNow = now
+				return Window{From: now.AddDate(0, 0, -1).Format(time.DateOnly), To: now.Format(time.DateOnly)}, nil
+			}
+			encoded, err := EncodeCursor(b, map[string]string{"history": "key"})
+			require.NoError(t, err)
+			b.Now = b.Now.Add(tc.advance)
+			b.Window = Window{From: b.Now.AddDate(0, 0, -1).Format(time.DateOnly), To: b.Now.Format(time.DateOnly)}
+			got, err := DecodeCursor(encoded, b)
+			require.NoError(t, err)
+			assert.Equal(t, tc.now, got.Now)
+			assert.Equal(t, tc.now, windowNow)
+			assert.Equal(t, Window{From: "2026-10-21", To: "2026-10-22"}, got.Window)
+		})
 	}
-	encoded, err := EncodeCursor(b, map[string]string{"history": "key"})
-	requirements.NoError(err)
-	b.Now = b.Now.Add(time.Hour)
-	c, err := DecodeCursor(encoded, b)
-	requirements.NoError(err)
-	assertions.Equal(want, c.Now)
-	assertions.Equal(want, windowNow)
 }
 func TestCursorRejectsInvalidNanoseconds(t *testing.T) {
 	requirements := require.New(t)
@@ -125,24 +135,6 @@ func TestCursorSizeLimit(t *testing.T) {
 	var fields map[string]any
 	requirements.NoError(json.Unmarshal(raw, &fields))
 	assertions.Len(fields, 5)
-}
-func TestCursorPinsRelativeWindowAcrossMidnight(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	b := cursorBinding()
-	b.Now = time.Date(2026, 10, 22, 23, 59, 0, 0, time.UTC)
-	b.WindowAt = func(now time.Time) (Window, error) {
-		return Window{From: now.AddDate(0, 0, -1).Format(time.DateOnly), To: now.Format(time.DateOnly)}, nil
-	}
-	s, err := EncodeCursor(b, map[string]string{"history": "key"})
-	requirements.NoError(err)
-	b.Now = b.Now.Add(time.Minute * 2)
-	b.Window = Window{From: "2026-10-22", To: "2026-10-23"}
-	c, err := DecodeCursor(s, b)
-	requirements.NoError(err)
-	assertions.Equal("2026-10-21", c.Window.From)
-	assertions.Equal("2026-10-22", c.Window.To)
-	assertions.Equal(22, c.Now.Day())
 }
 
 func TestCursorBindsEffectiveZeroNeighbours(t *testing.T) {

@@ -261,6 +261,18 @@ func TestColdConversationIncludesAllMessages(t *testing.T) {
 	for _, id := range ids {
 		want = append(want, messageRef(id))
 	}
+	anchor := anchorRequest(messageRef(ids[len(ids)-1]))
+	anchor.IncludeCold = true
+	message, err := Build(t.Context(), f.src, anchor)
+	requirements.NoError(err)
+	t.Run("conversation anchor", func(t *testing.T) {
+		anchor.Around = fmt.Sprintf("conv:%d", conv)
+		conversation, err := Build(t.Context(), f.src, anchor)
+		require.NoError(t, err)
+		assert.Equal(t, message.Anchor.Time, conversation.Anchor.Time)
+		assert.Equal(t, message.History, conversation.History)
+	})
+
 	req.Budget = 2048
 	seen := map[string]bool{}
 	refs := []string{}

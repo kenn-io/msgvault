@@ -62,12 +62,6 @@ func TestCanonicalMeetingCopySuppliesDisplayAndSelectedAlias(t *testing.T) {
 	assertions.Empty(allDayEntries(hidden)[0].Meeting.Title.Text)
 }
 
-type personReadFailure struct{ PeopleSource }
-
-func (personReadFailure) ResolvePersonReferenceContext(context.Context, store.PersonRefKind, string, []int64, int) ([]store.PersonCandidate, error) {
-	return nil, errors.New("source unavailable")
-}
-
 func TestMalformedPersonReferenceIsInputError(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
@@ -77,10 +71,7 @@ func TestMalformedPersonReferenceIsInputError(t *testing.T) {
 		requirements.ErrorIs(err, ErrInvalidRequest, ref)
 		assertions.Nil(got)
 	}
-	f.src.People = personReadFailure{f.src.People}
-	got, err := Build(t.Context(), f.src, relationshipRequest("person:1"))
-	requirements.NoError(err)
-	assertions.Contains(got.Gaps, Gap{Section: "person", Code: "unavailable"})
+
 }
 
 func TestEncryptedMatrixComposerLabelsBurstAndIndividualAnchor(t *testing.T) {
@@ -167,45 +158,27 @@ func TestAmbiguousTranscriptSuggestionsAppearOnOccurrencesOwnerOnly(t *testing.T
 }
 
 func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
-	for _, saved := range []bool{false, true} {
-		for _, envelope := range []string{"other", "none", "peer"} {
-			if envelope == "peer" && !saved {
-				continue
+	for _, behavior := range []string{"attendance", "hidden text", "source scope", "future clock"} {
+		t.Run(behavior, func(t *testing.T) {
+			assertions := assert.New(t)
+			requirements := require.New(t)
+			f := newTimelineFixture(t)
+			ref := "email:alice@example.com"
+			// An unsent observation resolves the scoped subject without adding contact.
+			f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
+			raw := singleDayEvent
+			event := f.calendar("calendar-only-attendee", raw)
+			f.calendar("calendar-copy", strings.ReplaceAll(raw, `"id":"planning"`, `"id":"calendar-copy"`))
+			var notes []int64
+			for _, key := range []string{"one", "two"} {
+				note := f.transcript(key, "planning@example.com", f.now.Add(-time.Hour))
+				recipients := []int64{f.EnsureParticipant("other@example.com", "Other", "example.com")}
+				requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", recipients, nil))
+				notes = append(notes, note)
 			}
-			t.Run(fmt.Sprintf("saved=%t/envelope=%s", saved, envelope), func(t *testing.T) {
-				assertions := assert.New(t)
-				requirements := require.New(t)
-				f := newTimelineFixture(t)
-				ref := "email:alice@example.com"
-				if saved {
-					ref = fmt.Sprintf("person:%d", f.savePerson())
-				}
-				if envelope != "peer" {
-					// An unsent observation resolves the source-scoped subject without adding contact.
-					f.add(f.now, false, func(m *store.Message) { m.IsSent = sql.NullBool{Bool: false, Valid: true} })
-				}
-				raw := singleDayEvent
-				if envelope == "none" {
-					// Organizer-only calendar identity also supplies attendance.
-					raw = strings.NewReplacer(`"attendees":[{`, `"organizer":{`, `}]}`, `}}`).Replace(raw)
-				}
-				event := f.calendar("calendar-only-attendee", raw)
-				if envelope != "peer" {
-					f.calendar("calendar-copy", strings.ReplaceAll(raw, `"id":"planning"`, `"id":"calendar-copy"`))
-				}
-				var notes []int64
-				for _, key := range []string{"one", "two"} {
-					note := f.transcript(key, "planning@example.com", f.now.Add(-time.Hour))
-					recipients := []int64{}
-					if envelope != "peer" {
-						if envelope == "other" {
-							recipients = []int64{f.EnsureParticipant("other@example.com", "Other", "example.com")}
-						}
-						requirements.NoError(f.Store.ReplaceMessageRecipients(note, "to", recipients, nil))
-					}
-					notes = append(notes, note)
-				}
-				f.project()
+			f.project()
+			switch behavior {
+			case "attendance":
 				got, err := Build(t.Context(), f.src, relationshipRequest(ref))
 				requirements.NoError(err)
 				requirements.NotNil(got.Person)
@@ -219,11 +192,9 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements.Len(got.History, 1)
 				assertions.Equal(fmt.Sprintf("evt:%d", event), got.History[0].Ref)
 				assertions.ElementsMatch(notes, got.History[0].Meeting.LinkedTranscriptIDs)
-				if envelope == "peer" {
-					return
-				}
+			case "hidden text":
 				// Hidden text remains attendance evidence, but no hidden title leaks.
-				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id IN (?,?)`), notes[0], notes[1])
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET hidden_text_present=TRUE WHERE id IN (?,?)`), notes[0], notes[1])
 				requirements.NoError(err)
 				hidden, err := Build(t.Context(), f.src, relationshipRequest(ref))
 				requirements.NoError(err)
@@ -231,6 +202,7 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements.Len(hidden.History, 1)
 				assertions.True(hidden.History[0].HiddenText)
 				assertions.Empty(hidden.History[0].Meeting.Title.Text)
+			case "source scope":
 				// Source context reaches discovery and exact resolution; no visible notes means no attendance.
 				detail, err := f.Store.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d", event))
 				requirements.NoError(err)
@@ -238,14 +210,15 @@ func TestRelationshipCalendarAttendeeWithoutTranscriptEnvelope(t *testing.T) {
 				requirements.NoError(err)
 				assertions.Zero(scoped.Person.InteractionCount)
 				assertions.Empty(scoped.History)
+			case "future clock":
 				// Request clock excludes meetings in the future even if recording was imported earlier.
 				f.src.Clock = func() time.Time { return time.Date(2026, 10, 22, 9, 0, 0, 0, time.UTC) }
 				future, err := Build(t.Context(), f.src, relationshipRequest(ref))
 				requirements.NoError(err)
 				assertions.Zero(future.Person.InteractionCount)
 				assertions.Empty(future.History)
-			})
-		}
+			}
+		})
 	}
 }
 

@@ -69,6 +69,8 @@ func TestFitMinimumEnvelopeSucceedsAt2048(t *testing.T) {
 		assert.LessOrEqual(t, encodedSize(t, out, format), 2048)
 	}
 }
+
+// Fit rejects an inconsistent internal day; groupDays emits summaries or entries.
 func TestFitRejectsDayWithSummaryAndEntries(t *testing.T) {
 	for _, part := range []string{"meetings", "bursts", "calls", "notes"} {
 		for _, format := range []string{"json", "markdown"} {
@@ -144,20 +146,67 @@ func TestFitTooSmall(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidRequest)
 }
 func TestFitForwardProgressStub(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	v := budgetTimeline(2)
-	v.History[0].Message.People = []Person{
-		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
-		{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+	for _, tc := range []struct {
+		name  string
+		build func() *Timeline
+		check func(*testing.T, *Timeline, *Timeline)
+	}{
+		{name: "message", build: func() *Timeline {
+			v := budgetTimeline(2)
+			v.History[0].Message.People = []Person{
+				{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+				{Name: strings.Repeat("<", 80)}, {Name: strings.Repeat("<", 80)},
+			}
+			return v
+		}, check: func(t *testing.T, v, out *Timeline) {
+			assertions, requirements := assert.New(t), require.New(t)
+			requirements.NotEmpty(out.History)
+			assertions.Equal("msg:1", out.History[0].Ref)
+			assertions.Contains(Markdown(out), "13:30 message [details omitted] · #1")
+			assertions.Equal(v.History[0].Open, out.History[0].Open)
+			assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
+		}},
+		{name: "burst", build: func() *Timeline {
+			v := budgetTimeline(0)
+			entry := sampleTimeline().History[2]
+			entry.Burst.Inbound, entry.Burst.Outbound = 2, 1
+			entry.Burst.People = make([]Person, 8)
+			for i := range entry.Burst.People {
+				entry.Burst.People[i] = Person{Name: strings.Repeat("<", 80)}
+			}
+			v.History = []Entry{entry}
+			return v
+		}, check: func(t *testing.T, v, out *Timeline) {
+			assertions, requirements := assert.New(t), require.New(t)
+			requirements.Len(out.History, 1)
+			requirements.NotNil(out.History[0].Burst)
+			assertions.Equal(2, out.History[0].Burst.Inbound)
+			assertions.Equal(1, out.History[0].Burst.Outbound)
+			assertions.Contains(out.Omitted.Budget, "entry_fields")
+			assertions.Contains(Markdown(out), "details omitted")
+			assertions.Len(v.History[0].Burst.People, 8)
+		}},
+		{name: "upcoming", build: func() *Timeline {
+			v := budgetTimeline(0)
+			v.Upcoming = []Entry{{Kind: "meeting", Key: "evt:7", Ref: "evt:7", AnchorRef: "evt:7", Time: v.Now,
+				Open:    []Open{{Tool: "get_calendar_event", Args: map[string]any{"ref": "evt:7"}}},
+				Meeting: &MeetingEntry{Title: UntrustedText{Text: "Synthetic planning"}, Attendees: []Person{{Name: strings.Repeat("A", 80)}, {Name: strings.Repeat("B", 80)}, {Name: strings.Repeat("C", 80)}, {Name: strings.Repeat("D", 80)}}},
+			}}
+			return v
+		}, check: func(t *testing.T, v, out *Timeline) {
+			assertions, requirements := assert.New(t), require.New(t)
+			requirements.Len(out.Upcoming, 1)
+			assertions.Empty(out.Upcoming[0].Meeting.Title.Text)
+			assertions.Equal(v.Upcoming[0].Open, out.Upcoming[0].Open)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			v := tc.build()
+			out, err := Fit(v, "json", 2048)
+			require.NoError(t, err)
+			tc.check(t, v, out)
+		})
 	}
-	out, err := Fit(v, "json", 2048)
-	requirements.NoError(err)
-	requirements.NotEmpty(out.History)
-	assertions.Equal("msg:1", out.History[0].Ref)
-	assertions.Contains(Markdown(out), "13:30 message [details omitted] · #1")
-	assertions.Equal(v.History[0].Open, out.History[0].Open)
-	assertions.LessOrEqual(encodedSize(t, out, "json"), 2048)
 }
 func TestFitReportsCountsOrMore(t *testing.T) {
 	assertions := assert.New(t)
@@ -223,13 +272,7 @@ func TestFitExistingMoreStillContinues(t *testing.T) {
 	out, err := Fit(v, "json", 2048)
 	require.NoError(t, err)
 	assert.NotEmpty(t, out.Cursor)
-}
-func TestFitTruncatedTextStaysMarkedInMarkdown(t *testing.T) {
-	v := budgetTimeline(1)
-	v.History[0].Message.Snippet.Text = strings.Repeat("猫", 100)
-	out, err := Fit(v, "markdown", 4096)
-	require.NoError(t, err)
-	assert.Contains(t, Markdown(out), strings.Repeat("猫", 80)+"…")
+	assert.Equal(t, "more", out.Omitted.Budget["history"])
 }
 func TestFitDayPrefixesAndCallerSortKeys(t *testing.T) {
 	assertions := assert.New(t)
@@ -323,39 +366,4 @@ func TestFitSameEntryUsesSectionSortKeys(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("day-order", cursor.Positions["days"])
 	assertions.Equal("upcoming-order", cursor.Positions["upcoming"])
-}
-
-func TestFitUpcomingStubKeepsOpenTarget(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	v := budgetTimeline(0)
-	v.Upcoming = []Entry{{Kind: "meeting", Key: "evt:7", Ref: "evt:7", AnchorRef: "evt:7", Time: v.Now,
-		Open:    []Open{{Tool: "get_calendar_event", Args: map[string]any{"ref": "evt:7"}}},
-		Meeting: &MeetingEntry{Title: UntrustedText{Text: "Synthetic planning"}, Attendees: []Person{{Name: strings.Repeat("A", 80)}, {Name: strings.Repeat("B", 80)}, {Name: strings.Repeat("C", 80)}, {Name: strings.Repeat("D", 80)}}},
-	}}
-	out, err := Fit(v, "json", 2048)
-	requirements.NoError(err)
-	requirements.Len(out.Upcoming, 1)
-	assertions.Empty(out.Upcoming[0].Meeting.Title.Text)
-	assertions.Equal(v.Upcoming[0].Open, out.Upcoming[0].Open)
-}
-
-func TestFitStubPreservesCountsAndDisclosesOmissions(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	v := budgetTimeline(0)
-	entry := sampleTimeline().History[2]
-	entry.Burst.Inbound, entry.Burst.Outbound = 2, 1
-	entry.Burst.People = make([]Person, 8)
-	for i := range entry.Burst.People {
-		entry.Burst.People[i] = Person{Name: strings.Repeat("<", 80)}
-	}
-	v.History = []Entry{entry}
-	out, err := Fit(v, "json", 2048)
-	requirements.NoError(err)
-	requirements.Len(out.History, 1)
-	requirements.NotNil(out.History[0].Burst)
-	assertions.Equal(2, out.History[0].Burst.Inbound)
-	assertions.Equal(1, out.History[0].Burst.Outbound)
-	assertions.Contains(out.Omitted.Budget, "entry_fields")
-	assertions.Contains(Markdown(out), "details omitted")
-	assertions.Len(v.History[0].Burst.People, 8)
 }

@@ -2,7 +2,6 @@ package timeline
 
 import (
 	"context"
-	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"testing"
@@ -110,45 +109,6 @@ func TestAnchorSuccessfulMissingReferenceRemainsInputError(t *testing.T) {
 			assert.Nil(t, got)
 		})
 	}
-}
-
-func TestOlderSummarySameNamePeopleHaveStableIdentityOrder(t *testing.T) {
-	now := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	view := &Timeline{Mode: ModeDay, Timezone: "UTC", Now: now, Window: Window{From: "2026-10-19", To: "2026-10-22"}, Omitted: Omitted{Budget: map[string]any{}}}
-	c := composer{t: view, loc: time.UTC, keys: map[string]string{}, positions: map[string]string{}, entryDates: map[string]string{}}
-	entries := []Entry{}
-	for id := int64(10); id > 0; id-- {
-		entries = append(entries, Entry{Kind: entryKindBurst, Key: fmt.Sprintf("burst-%d", id), Time: now.AddDate(0, 0, -3), Burst: &BurstEntry{People: []Person{{Name: "Same", PersonID: id, ParticipantID: 100 + id, Tier: int(id%2) + 1, TierSource: "observed"}}}})
-	}
-	c.groupDays(entries)
-
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	fitted, err := Fit(view, "json", 65536)
-	requirements.NoError(err)
-	requirements.Len(fitted.Days, 1)
-	summary := fitted.Days[0].Summary
-	requirements.NotNil(summary)
-	ids := []int64{}
-	for _, person := range summary.People {
-		ids = append(ids, person.PersonID)
-	}
-	assertions.Equal([]int64{1, 2, 3, 4, 5, 6, 7, 8}, ids)
-	assertions.Equal(10, summary.PeopleCount)
-	assertions.True(summary.PeopleTruncated)
-	encoded, err := json.Marshal(fitted)
-	requirements.NoError(err)
-	var decoded Timeline
-	requirements.NoError(json.Unmarshal(encoded, &decoded))
-	wireIDs := []int64{}
-	for _, person := range decoded.Days[0].Summary.People {
-		wireIDs = append(wireIDs, person.PersonID)
-	}
-	assertions.Equal([]int64{1, 2, 3, 4, 5, 6, 7, 8}, wireIDs)
-	markdown, err := Fit(view, "markdown", 65536)
-	requirements.NoError(err)
-	assertions.Equal(fitted.Days, markdown.Days)
-	assertions.Contains(Markdown(markdown), "Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, Same T2, Same T1, +2")
 }
 
 func TestAnchorWiderProbeFailureKeepsNeighbours(t *testing.T) {

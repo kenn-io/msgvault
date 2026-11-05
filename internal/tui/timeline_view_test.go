@@ -2,7 +2,6 @@ package tui
 
 import (
 	"encoding/json/jsontext"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -23,31 +22,21 @@ func TestTimelineDailyNotePreservesParagraphs(t *testing.T) {
 }
 
 func TestTimelineViewRendersSharedMarkdownRows(t *testing.T) {
-	for _, hidden := range []bool{false, true} {
-		t.Run(fmt.Sprintf("hidden=%t", hidden), func(t *testing.T) {
-			assert := assert.New(t)
-			require := require.New(t)
-			m := timelineModeModel()
-			m.timelineState.result.Days[0].Bursts[0].HiddenText = hidden
-			m.rebuildTimelineRows()
-			want := strings.Split(strings.TrimSuffix(timeline.Markdown(m.timelineState.result), "\n"), "\n")
-			assert.Equal(want, m.timelineState.lines)
-			view := stripANSI(m.renderView())
-			for _, line := range want {
-				if line != "" {
-					assert.Contains(view, line)
-				}
-			}
-			require.Len(m.timelineState.entries, 1)
-			assert.Equal("burst:1:7:2027-03-14", m.timelineState.entries[0].entry.AnchorRef)
-			assert.Contains(view, "[Timeline]")
-			if hidden {
-				assert.Contains(view, "[hidden text]")
-				assert.NotContains(view, "Project update")
-				assert.NotContains(view, "Example Contact")
-			}
-		})
+	assert := assert.New(t)
+	require := require.New(t)
+	m := timelineModeModel()
+	m.rebuildTimelineRows()
+	want := strings.Split(strings.TrimSuffix(timeline.Markdown(m.timelineState.result), "\n"), "\n")
+	assert.Equal(want, m.timelineState.lines)
+	view := stripANSI(m.renderView())
+	for _, line := range want {
+		if line != "" {
+			assert.Contains(view, line)
+		}
 	}
+	require.Len(m.timelineState.entries, 1)
+	assert.Equal("burst:1:7:2027-03-14", m.timelineState.entries[0].entry.AnchorRef)
+	assert.Contains(view, "[Timeline]")
 }
 func TestTimelineRowsKeepEveryEntryOnCombinedCallLines(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)

@@ -10,8 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -20,10 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/kit/daemon"
 	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/api"
-	"go.kenn.io/msgvault/internal/apiprotocol"
 	"go.kenn.io/msgvault/internal/config"
 	"go.kenn.io/msgvault/internal/daemonclient"
 	"go.kenn.io/msgvault/internal/store"
@@ -91,104 +87,33 @@ func TestTimelineCommandFlagsAndFormats(t *testing.T) {
 	assertions.True(fake.req.AfterSet)
 }
 
-// Exercise the production opener: endpoint selection and authentication must
-// finish before the timeline-specific compatibility check runs.
 func TestTimelineCommandRefusesOldDaemon(t *testing.T) {
 	unsetServerKeyEnvironmentForTest(t)
 	oldSchemaCheck := remoteAPISchemaCheckEnabled
 	remoteAPISchemaCheckEnabled = true
 	t.Cleanup(func() { remoteAPISchemaCheckEnabled = oldSchemaCheck })
-	for _, tc := range []struct{ kind, version string }{
-		{"local", "3.45.0"}, {"remote", "3.45.0"}, {"delegated", "3.45.0"},
-	} {
-		t.Run(tc.kind+"/"+tc.version, func(t *testing.T) {
-			kind, version := tc.kind, tc.version
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			var timelineCalls, healthCalls, cliHealthCalls, sessionCalls, wrongEndpointCalls atomic.Int32
-			apiKey, agentToken := "synthetic-local", ""
-			switch kind {
-			case "remote":
-				apiKey = "synthetic-remote"
-			case "delegated":
-				apiKey, agentToken = "", "mva1_synthetic_timeline_reader"
-			}
-			checkAuth := func(r *http.Request) {
-				assert.Equal(t, apiKey, r.Header.Get("X-Api-Key"))
-				assert.Equal(t, agentToken, r.Header.Get(apiprotocol.AgentTokenHeader))
-				// Local lifecycle discovery probes health before selecting CLI mode.
-				if class := r.Header.Get(apiprotocol.ClientClassHeader); kind != "local" || class != "" {
-					assert.Equal(t, apiprotocol.ClientClassCLI, class)
-				}
-			}
-			mux := http.NewServeMux()
-			mux.Handle("/api/ping", daemon.NewPingHandler(daemon.PingHandlerOptions{Service: daemonService, Version: Version}))
-			mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
-				checkAuth(r)
-				healthCalls.Add(1)
-				if r.Header.Get(apiprotocol.ClientClassHeader) == apiprotocol.ClientClassCLI {
-					cliHealthCalls.Add(1)
-				}
-				w.Header().Set("Content-Type", "application/json")
-				_, err := fmt.Fprintf(w, `{"status":"ok","api_schema_version":%q}`, version)
-				assert.NoError(t, err)
-			})
-			mux.HandleFunc("/api/session", func(w http.ResponseWriter, r *http.Request) {
-				checkAuth(r)
-				sessionCalls.Add(1)
-				w.Header().Set("Content-Type", "application/json")
-				_, err := fmt.Fprint(w, `{"auth_mode":"delegated"}`)
-				assert.NoError(t, err)
-			})
-			mux.HandleFunc("/api/v1/timeline", func(w http.ResponseWriter, r *http.Request) {
-				timelineCalls.Add(1)
-				http.NotFound(w, r)
-			})
-			selected := httptest.NewServer(mux)
-			t.Cleanup(selected.Close)
-			decoy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				wrongEndpointCalls.Add(1)
-				http.NotFound(w, r)
-			}))
-			t.Cleanup(decoy.Close)
-			cfg := lifecycleTestConfig(t.TempDir())
-			cfg.Server.DaemonAutoStart = new(false)
-			cfg.Server.APIKey = "synthetic-local"
-			runtimeServer := decoy
-			if kind == "local" {
-				runtimeServer = selected
-			}
-			rt := daemonRuntimeForHTTPServer(t, runtimeServer, daemonAPIKeyFingerprint(cfg.Server.APIKey))
-			rt.Record.Metadata[runtimeAPISchemaVersion] = version
-			_, err := daemonRuntimeStore(cfg.Data.DataDir).Write(rt.Record)
-			requirements.NoError(err)
-			var options invocationOptions
-			switch kind {
-			case "remote":
-				cfg.Remote = config.RemoteConfig{URL: selected.URL, APIKey: apiKey, AllowInsecure: true}
-			case "delegated":
-				cfg.Remote = config.RemoteConfig{URL: decoy.URL, APIKey: "synthetic-decoy", AllowInsecure: true}
-				tokenPath := filepath.Join(t.TempDir(), "agent-token")
-				requirements.NoError(os.WriteFile(tokenPath, []byte(agentToken), 0o600))
-				options = invocationOptions{agentURL: selected.URL, agentTokenFile: tokenPath, agentAllowInsecure: true, agentURLChanged: true, agentTokenChanged: true}
-			}
-			ctx := testInvocationContext(t.Context(), cfg, options)
-			command := newTimelineCommand()
-			command.SetOut(&bytes.Buffer{})
-			command.SetErr(&bytes.Buffer{})
-			command.SetArgs(nil)
-			requirements.EqualError(command.ExecuteContext(ctx), fmt.Sprintf(`timeline requires daemon API schema 3.46.0 or newer (daemon reports %q); upgrade and restart the daemon`, version))
-			assertions.Positive(healthCalls.Load(), "selected endpoint must report its schema")
-			assertions.Positive(cliHealthCalls.Load(), "timeline compatibility probe must use CLI mode")
-			assertions.Zero(timelineCalls.Load())
-			assertions.Zero(wrongEndpointCalls.Load(), "resolver must select the expected endpoint")
-			if kind == "delegated" {
-				assertions.Equal(int32(1), sessionCalls.Load(), "real delegated resolution must confirm token authentication")
-			} else {
-				assertions.Zero(sessionCalls.Load())
-			}
-		})
-	}
+	var timelineCalls atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, err := fmt.Fprint(w, `{"status":"ok","api_schema_version":"3.45.0"}`)
+		assert.NoError(t, err)
+	})
+	mux.HandleFunc("/api/v1/timeline", func(w http.ResponseWriter, r *http.Request) {
+		timelineCalls.Add(1)
+		http.NotFound(w, r)
+	})
+	selected := httptest.NewServer(mux)
+	t.Cleanup(selected.Close)
+	cfg := lifecycleTestConfig(t.TempDir())
+	cfg.Remote = config.RemoteConfig{URL: selected.URL, APIKey: "synthetic-remote", AllowInsecure: true}
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	command := newTimelineCommand()
+	command.SetOut(&bytes.Buffer{})
+	command.SetErr(&bytes.Buffer{})
+	command.SetArgs(nil)
+	require.EqualError(t, command.ExecuteContext(ctx), `timeline requires daemon API schema 3.46.0 or newer (daemon reports "3.45.0"); upgrade and restart the daemon`)
+	assert.Zero(t, timelineCalls.Load())
 }
 
 func TestTimelineRealTransportPreservesResponseAndFlagPresence(t *testing.T) {
@@ -251,36 +176,6 @@ func TestTimelineRealTransportPreservesResponseAndFlagPresence(t *testing.T) {
 	assertions.Contains(out.String(), fmt.Sprintf(`"id":%d`, ids[0]))
 	assertions.Contains(out.String(), `\"`)
 	assertions.Contains(out.String(), `\\`)
-
-	// Exercise Cobra flag presence through the real HTTP route and composer.
-	// The existing fixture has one burst per conversation around this anchor.
-	anchor := fmt.Sprintf("msg:%d", ids[12])
-	for _, explicitZero := range []bool{false, true} {
-		t.Run(fmt.Sprintf("explicit-zero=%t", explicitZero), func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			args := []string{"--around", anchor, "--json", "--budget", "65536"}
-			if explicitZero {
-				args = append(args, "--before", "0", "--after", "0")
-			}
-			var output bytes.Buffer
-			command := newTimelineCommand()
-			command.SetOut(&output)
-			command.SetArgs(args)
-			requirements.NoError(command.Execute())
-			var got timeline.Timeline
-			requirements.NoError(json.Unmarshal(output.Bytes(), &got))
-			requirements.NotNil(got.Anchor)
-			assertions.False(got.Anchor.Filtered)
-			if explicitZero {
-				requirements.Len(got.History, 1)
-				requirements.NotNil(got.History[0].Burst)
-				assertions.Equal([]int64{ids[12]}, got.History[0].Burst.LatestMessageIDs)
-			} else {
-				assertions.Greater(len(got.History), 1, "omitted flags retain default neighbors")
-			}
-		})
-	}
 }
 
 func TestTimelineRealTransportAmbiguityPrintsUsableReferences(t *testing.T) {

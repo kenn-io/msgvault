@@ -13,19 +13,36 @@ import (
 )
 
 func TestRelationshipUnsavedContactOpenLoops(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	f := newTimelineFixture(t)
-	for i := range 12 {
-		f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("other-%d", i), From: "other@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the invoice?", SentAt: f.now.Add(-96 * time.Hour)})
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending=%t", pending), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineFixture(t)
+			var id int64
+			if pending {
+				for i := range 12 {
+					f.PersistEmail(storetest.EmailSpec{Thread: fmt.Sprintf("other-%d", i), From: "other@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the invoice?", SentAt: f.now.Add(-96 * time.Hour)})
+				}
+				id = f.PersistEmail(storetest.EmailSpec{Thread: "unsaved-loop", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the contract?", SentAt: f.now.Add(-48 * time.Hour)})
+			} else {
+				f.add(f.now, false)
+			}
+			f.project()
+			got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
+			requirements.NoError(err)
+			requirements.NotNil(got.OpenLoops)
+			if pending {
+				requirements.Len(got.OpenLoops.Items, 1)
+				assertions.Equal(messageRef(id), got.OpenLoops.Items[0].Ref)
+			} else {
+				assertions.Empty(got.OpenLoops.Items)
+				requirements.Len(got.History, 1)
+			}
+			assertions.False(got.OpenLoops.Truncated)
+			requirements.NotNil(got.Person)
+			assertions.Zero(got.Person.Person.PersonID)
+			assertions.Zero(got.Person.Person.Tier)
+		})
 	}
-	id := f.PersistEmail(storetest.EmailSpec{Thread: "unsaved-loop", From: "alice@example.com", To: []string{storetest.OwnerAddress}, Body: "Can you send the contract?", SentAt: f.now.Add(-48 * time.Hour)})
-	f.project()
-	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
-	requirements.NoError(err)
-	requirements.NotNil(got.OpenLoops)
-	requirements.Len(got.OpenLoops.Items, 1)
-	assertions.Equal(messageRef(id), got.OpenLoops.Items[0].Ref)
-	assertions.False(got.OpenLoops.Truncated)
 }
 
 func relationshipRequest(ref string) Request {
@@ -73,21 +90,6 @@ func TestRelationshipEvidenceOlderThanHistoryPage(t *testing.T) {
 	assertions.Equal(want, got.Person.Monthly)
 	assertions.Equal("2025-11-05", got.Person.FirstAt.Format(time.DateOnly))
 	assertions.Equal([]string{"email"}, got.Person.Channels)
-}
-func TestRelationshipUnsavedClusterHasNoTier(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	f := newTimelineFixture(t)
-	f.add(f.now, false)
-	f.project()
-	got, err := Build(t.Context(), f.src, relationshipRequest("email:alice@example.com"))
-	requirements.NoError(err)
-	requirements.NotNil(got.Person)
-	assertions.Zero(got.Person.Person.PersonID)
-	assertions.Zero(got.Person.Person.Tier)
-	requirements.NotNil(got.OpenLoops)
-	assertions.Empty(got.OpenLoops.Items)
-	requirements.Len(got.History, 1)
 }
 func TestRelationshipHistoryLastTwentyAnyAge(t *testing.T) {
 	assertions := assert.New(t)

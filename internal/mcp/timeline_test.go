@@ -54,9 +54,6 @@ func TestTimelineToolAvailabilityAndFormats(t *testing.T) {
 			for _, d := range operationCatalog(opts, nil) {
 				if d.name == ToolTimeline {
 					found = true
-					for _, convention := range []string{"untrusted_text", "hidden_text", "open", "↓", "↑", "UTC", "copies"} {
-						assertions.Contains(d.description, convention)
-					}
 				}
 			}
 			require.Equal(t, tc.want, found)

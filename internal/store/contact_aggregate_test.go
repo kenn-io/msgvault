@@ -114,30 +114,6 @@ func TestAttendedTranscriptIDsByRole(t *testing.T) {
 	got, _, err = f.Store.AttendedTranscriptIDsContext(t.Context(), q, 2)
 	requirements.NoError(err)
 	assertions.Empty(got)
-
-	for _, saved := range []bool{false, true} {
-		for _, envelope := range []string{"other", "none"} {
-			t.Run(fmt.Sprintf("calendar/saved=%t/envelope=%s", saved, envelope), func(t *testing.T) {
-				assertions, requirements := assert.New(t), require.New(t)
-				f, now, _, notes := calendarAttendanceFixture(t, "alice@example.com", envelope)
-				subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
-				if saved {
-					person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
-					requirements.NoError(err)
-					subject = store.ActivitySubject{PersonID: person.ID}
-				}
-				q := store.ContactQuery{Subject: subject, Now: now, Location: time.UTC}
-				ids, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
-				requirements.NoError(err)
-				assertions.False(more)
-				assertions.ElementsMatch(notes, ids)
-				bounded, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 1)
-				requirements.NoError(err)
-				assertions.Len(bounded, 1)
-				assertions.True(more)
-			})
-		}
-	}
 }
 func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 	requirements := require.New(t)
@@ -249,6 +225,32 @@ func calendarAttendanceFixture(t *testing.T, address, envelope string) (*timelin
 	}
 	projectTimelineActivity(t, f, "UTC")
 	return f, now, event, notes
+}
+
+func TestCalendarAttendanceTranscriptIDs(t *testing.T) {
+	for _, saved := range []bool{false, true} {
+		for _, envelope := range []string{"other", "none"} {
+			t.Run(fmt.Sprintf("calendar/saved=%t/envelope=%s", saved, envelope), func(t *testing.T) {
+				assertions, requirements := assert.New(t), require.New(t)
+				f, now, _, notes := calendarAttendanceFixture(t, "alice@example.com", envelope)
+				subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
+				if saved {
+					person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+					requirements.NoError(err)
+					subject = store.ActivitySubject{PersonID: person.ID}
+				}
+				q := store.ContactQuery{Subject: subject, Now: now, Location: time.UTC}
+				ids, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+				requirements.NoError(err)
+				assertions.False(more)
+				assertions.ElementsMatch(notes, ids)
+				bounded, more, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 1)
+				requirements.NoError(err)
+				assertions.Len(bounded, 1)
+				assertions.True(more)
+			})
+		}
+	}
 }
 
 func TestCalendarAttendanceIgnoresUnobservedPersonAddressInScope(t *testing.T) {

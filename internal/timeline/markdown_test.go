@@ -23,16 +23,22 @@ func TestMarkdownAnchorGolden(t *testing.T) {
 	golden(t, "anchor.md", []byte(Markdown(v)))
 }
 func TestMarkdownTruncatesByRunesAndStaysValidUTF8(t *testing.T) {
-	v := sampleTimeline()
-	v.Person = nil
-	v.History = nil
-	v.Days = nil
-	v.OpenLoops = nil
-	v.Upcoming[0].Meeting.Title.Text = strings.Repeat("猫😀", 250)
-	got := Markdown(v)
-	assert.True(t, utf8.ValidString(got))
-	assert.Contains(t, got, strings.Repeat("猫😀", 40)+"…")
-	assert.NotContains(t, got, strings.Repeat("猫😀", 41))
+	for _, kind := range []string{"title", "snippet"} {
+		t.Run(kind, func(t *testing.T) {
+			v := budgetTimeline(0)
+			if kind == "title" {
+				v.Upcoming = []Entry{sampleTimeline().Upcoming[0]}
+				v.Upcoming[0].Meeting.Title.Text = strings.Repeat("猫😀", 250)
+			} else {
+				v.History = budgetTimeline(1).History
+				v.History[0].Message.Snippet.Text = strings.Repeat("猫😀", 250)
+			}
+			got := Markdown(v)
+			assert.True(t, utf8.ValidString(got))
+			assert.Contains(t, got, strings.Repeat("猫😀", 40)+"…")
+			assert.NotContains(t, got, strings.Repeat("猫😀", 41))
+		})
+	}
 }
 func TestMarkdownHiddenTextShowsNoSnippet(t *testing.T) {
 	v := sampleTimeline()

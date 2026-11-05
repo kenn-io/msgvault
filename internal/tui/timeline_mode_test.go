@@ -119,20 +119,30 @@ func TestNextModeIncludesTimelineWhenAvailable(t *testing.T) {
 	require.True(handled)
 	assert.Equal(modeTimeline, updated.mode)
 }
-func TestTimelineKeysMoveDaysAndSwitchModes(t *testing.T) {
+func TestTimelineKeysSwitchModes(t *testing.T) {
 	for _, tc := range []struct {
 		key                rune
 		mode               timeline.Mode
 		date, around, with string
+		modal              modalType
+		appMode            tuiMode
 	}{
-		{key: 'a', mode: timeline.ModeAnchor, around: "burst:1:7:2027-03-14"},
-		{key: 'w', mode: timeline.ModeRelationship, with: "person:42"},
+		{key: 'a', mode: timeline.ModeAnchor, around: "burst:1:7:2027-03-14", appMode: modeTimeline},
+		{key: 'w', mode: timeline.ModeRelationship, with: "person:42", appMode: modeTimeline},
+		{key: '?', mode: timeline.ModeDay, date: "2027-03-14", modal: modalHelp, appMode: modeTimeline},
+		{key: 'm', mode: timeline.ModeDay, date: "2027-03-14", appMode: modeEmail},
 	} {
 		t.Run(string(tc.key), func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
 			m := timelineModeModel()
 			updated, cmd := sendKey(t, m, key(tc.key))
+			assert.Equal(tc.modal, updated.modal)
+			assert.Equal(allSourceScope(), updated.sourceScope)
+			assert.Equal(tc.appMode, updated.mode)
+			if tc.key == '?' || tc.key == 'm' {
+				return
+			}
 			require.NotNil(cmd)
 			assert.Equal(tc.mode, updated.timelineState.request.Mode)
 			assert.Equal(tc.date, updated.timelineState.request.Date)
@@ -143,23 +153,6 @@ func TestTimelineKeysMoveDaysAndSwitchModes(t *testing.T) {
 			assert.Equal(m.timelineState.result, returned.timelineState.result)
 			assert.Equal(m.timelineState.request, returned.timelineState.request)
 		})
-	}
-}
-func TestTimelineModeLocalKeysWinOverGlobalA(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	m := timelineModeModel()
-	updated, cmd := sendKey(t, m, key('a'))
-	require.NotNil(cmd)
-	assert.Equal(modalNone, updated.modal)
-	assert.Equal(allSourceScope(), updated.sourceScope)
-	for _, k := range []tea.KeyPressMsg{key('?'), key('m')} {
-		next, _ := sendKey(t, m, k)
-		if k.String() == "?" {
-			assert.Equal(modalHelp, next.modal)
-		} else {
-			assert.Equal(modeEmail, next.mode)
-		}
 	}
 }
 func TestTimelineCancelsAndDiscardsStaleResults(t *testing.T) {
@@ -320,20 +313,34 @@ func TestTimelineMeetingReaderSearchAndBackPreserveMeetings(t *testing.T) {
 	searching, focus := sendKey(t, loaded, key('/'))
 	require.NotNil(focus)
 	assert.True(searching.timelineState.meeting.detailSearchActive)
-	searching.timelineState.meeting.detailSearchInput.SetValue("needle")
+	for _, r := range "neel" {
+		searching, _ = sendKey(t, searching, key(r))
+	}
+	searching, _ = sendKey(t, searching, keyLeft())
+	searching, _ = sendKey(t, searching, key('d'))
+	searching, _ = sendKey(t, searching, keyRight())
+	searching, _ = sendKey(t, searching, key('e'))
+	assert.Equal("needle", searching.timelineState.meeting.detailSearchInput.Value())
+	lines := strings.Split(stripANSI(searching.renderView()), "\n")
+	footer := lines[len(lines)-1]
+	assert.Contains(footer, "needle")
+	assert.Contains(footer, "Enter find")
+	assert.NotContains(footer, "Enter open")
 	matched, _ := sendKey(t, searching, keyEnter())
 	assert.False(matched.timelineState.meeting.detailSearchActive)
 	assert.Equal("needle", matched.timelineState.meeting.detailSearchQuery)
 	assert.NotEmpty(matched.timelineState.meeting.detailSearchMatches)
+	assert.NotContains(stripANSI(matched.renderView()), "[Find]/")
+	matched, _ = sendKey(t, matched, key('/'))
+	assert.Contains(stripANSI(matched.renderView()), "[Find]/")
+	matched, _ = sendKey(t, matched, keyEsc())
+	assert.NotContains(stripANSI(matched.renderView()), "[Find]/")
+	assert.Equal(timelineReaderMeeting, matched.timelineState.reader)
 	back, _ := sendKey(t, matched, keyEsc())
 	assert.Equal(timelineReaderNone, back.timelineState.reader)
 	assert.Equal(0, back.timelineState.cursor)
-	assert.Equal(before.level, back.meetingState.level)
+	assert.Equal(before, back.meetingState)
 	assert.Same(parked, back.meetingState.detail)
-	assert.Equal(before.detailScroll, back.meetingState.detailScroll)
-	assert.Equal(before.detailSearchInput.Value(), back.meetingState.detailSearchInput.Value())
-	assert.Equal(before.detailSearchQuery, back.meetingState.detailSearchQuery)
-	assert.Equal(before.detailSearchMatches, back.meetingState.detailSearchMatches)
 }
 
 func TestTimelineNextPagePreservesRequestAndBackRestoresSelection(t *testing.T) {
@@ -432,53 +439,6 @@ func TestTimelineBurstOpensExactAnchorBeyondThreadLimit(t *testing.T) {
 	assert.Contains(stripANSI(loaded.renderView()), "Exact selected body")
 }
 
-func TestTimelineMeetingSearchAcceptsTextAndCursorEditing(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	m := timelineModeModel()
-	detail := &query.MessageDetail{ID: 55, Subject: "Archived transcript", BodyText: "hello and helxlyo"}
-	m.engine = newMockEngine(MockConfig{Detail: detail})
-	m.timelineState.result.Days[0].Bursts = nil
-	m.timelineState.result.Days[0].Meetings = []timeline.Entry{{Kind: "transcript", Ref: "msg:55", AnchorRef: "msg:55",
-		Meeting: &timeline.MeetingEntry{Title: timeline.UntrustedText{Text: "Archived transcript"}},
-		Open:    []timeline.Open{{Tool: "get_meeting_context", Args: map[string]any{"message_ids": []any{jsontext.Value("55")}}}}}}
-	m.rebuildTimelineRows()
-	parked := m.meetingState
-	m, cmd := sendKey(t, m, keyEnter())
-	require.NotNil(cmd)
-	m = sendMsg(t, m, cmd())
-	m, _ = sendKey(t, m, key('/'))
-	for _, r := range "hello" {
-		m, _ = sendKey(t, m, key(r))
-	}
-	assert.Equal("hello", m.timelineState.meeting.detailSearchInput.Value())
-	lines := strings.Split(stripANSI(m.renderView()), "\n")
-	footer := lines[len(lines)-1]
-	assert.Contains(footer, "hello")
-	assert.Contains(footer, "Enter find")
-	assert.NotContains(footer, "Enter open")
-	m, _ = sendKey(t, m, keyLeft())
-	m, _ = sendKey(t, m, keyLeft())
-	m, _ = sendKey(t, m, key('x'))
-	m, _ = sendKey(t, m, keyRight())
-	m, _ = sendKey(t, m, key('y'))
-	assert.Equal("helxlyo", m.timelineState.meeting.detailSearchInput.Value())
-	lines = strings.Split(stripANSI(m.renderView()), "\n")
-	assert.Contains(lines[len(lines)-1], "helxlyo")
-	m, _ = sendKey(t, m, keyEnter())
-	assert.Equal("helxlyo", m.timelineState.meeting.detailSearchQuery)
-	assert.NotEmpty(m.timelineState.meeting.detailSearchMatches)
-	assert.NotContains(stripANSI(m.renderView()), "[Find]/")
-	m, _ = sendKey(t, m, key('/'))
-	assert.Contains(stripANSI(m.renderView()), "[Find]/")
-	m, _ = sendKey(t, m, keyEsc())
-	assert.NotContains(stripANSI(m.renderView()), "[Find]/")
-	assert.Equal(timelineReaderMeeting, m.timelineState.reader)
-	m, _ = sendKey(t, m, keyEsc())
-	assert.Equal(timelineReaderNone, m.timelineState.reader)
-	assert.Equal("msg:55", m.highlightedTimelineEntry().Ref)
-	assert.Equal(parked, m.meetingState)
-}
-
 type timelineCalendarFixtureBackend struct {
 	timelineModeBackend
 
@@ -512,26 +472,48 @@ func timelineCalendarModel(ref string) (Model, *timelineCalendarFixtureBackend) 
 }
 
 func TestTimelineCalendarOpensExactOccurrenceAndReturns(t *testing.T) {
-	ref := "evt:42@20270314T083000.123456789Z"
-	assert, require := assert.New(t), require.New(t)
-	m, backend := timelineCalendarModel(ref)
-	result, request := m.timelineState.result, m.timelineState.request
-	opened, cmd := sendKey(t, m, keyEnter())
-	require.NotNil(cmd)
-	loaded := sendMsg(t, opened, cmd())
-	assert.Equal([]string{ref}, backend.calendarRequests)
-	view := loaded.renderView()
-	for _, text := range []string{"Archived calendar occurrence", ref, "Archived planning", "Example room", "guest@example.com", "accepted", "https://example.com/meeting", "Archived agenda"} {
-		assert.Contains(stripANSI(view), text)
+	for _, tc := range []struct {
+		name, ref string
+		configure func(*store.CalendarOccurrenceDetail)
+		text      []string
+	}{
+		{"timed", "evt:42@20270314T083000.123456789Z", func(*store.CalendarOccurrenceDetail) {}, nil},
+		{"moved", "evt:42@20270314T083000.123456789Z", func(d *store.CalendarOccurrenceDetail) {
+			d.Start = time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)
+			d.End = d.Start.Add(time.Hour)
+		}, []string{"Start: 2027-03-15T10:00:00Z", "End: 2027-03-15T11:00:00Z"}},
+		{"all day deleted", "evt:42@20270314", func(d *store.CalendarOccurrenceDetail) {
+			d.AllDay = true
+			d.StartDate, d.EndDate = "2027-03-14", "2027-03-15"
+			d.DeletedFromSource, d.Status = true, "cancelled"
+		}, []string{"All day: 2027-03-14 to 2027-03-15 (end date exclusive)", "Status: cancelled", "Deleted from source; showing the archived occurrence"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			m, backend := timelineCalendarModel(tc.ref)
+			tc.configure(&backend.calendarDetail)
+			result, request := m.timelineState.result, m.timelineState.request
+			opened, cmd := sendKey(t, m, keyEnter())
+			require.NotNil(cmd)
+			loaded := sendMsg(t, opened, cmd())
+			assert.Equal([]string{tc.ref}, backend.calendarRequests)
+			view := loaded.renderView()
+			for _, text := range []string{"Archived calendar occurrence", tc.ref, "Archived planning", "Example room", "guest@example.com", "accepted", "https://example.com/meeting", "Archived agenda"} {
+				assert.Contains(stripANSI(view), text)
+			}
+			for _, text := range tc.text {
+				assert.Contains(stripANSI(view), text)
+			}
+			assert.NotContains(view, "\x1b]52;")
+			assert.Nil(loaded.messageDetail, "calendar occurrence must not masquerade as a message")
+			back, cmd := sendKey(t, loaded, keyEsc())
+			assert.Nil(cmd)
+			assert.Equal(timelineReaderNone, back.timelineState.reader)
+			assert.Same(result, back.timelineState.result)
+			assert.Equal(request, back.timelineState.request)
+			assert.Equal(0, back.timelineState.cursor)
+		})
 	}
-	assert.NotContains(view, "\x1b]52;")
-	assert.Nil(loaded.messageDetail, "calendar occurrence must not masquerade as a message")
-	back, cmd := sendKey(t, loaded, keyEsc())
-	assert.Nil(cmd)
-	assert.Equal(timelineReaderNone, back.timelineState.reader)
-	assert.Same(result, back.timelineState.result)
-	assert.Equal(request, back.timelineState.request)
-	assert.Equal(0, back.timelineState.cursor)
 }
 
 func TestTimelineCalendarReaderScrollsWithinBounds(t *testing.T) {
@@ -635,38 +617,6 @@ func TestTimelineCalendarRejectsMismatchedResponse(t *testing.T) {
 	failed := sendMsg(t, opened, cmd())
 	require.ErrorContains(failed.timelineState.err, "mismatched occurrence")
 	assert.NotContains(stripANSI(failed.renderView()), "Archived planning")
-}
-
-func TestTimelineCalendarMovedOccurrenceRetainsOriginalRef(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	const ref = "evt:42@20270314T083000.123456789Z"
-	m, backend := timelineCalendarModel(ref)
-	backend.calendarDetail.Start = time.Date(2027, 3, 15, 10, 0, 0, 0, time.UTC)
-	backend.calendarDetail.End = backend.calendarDetail.Start.Add(time.Hour)
-	opened, cmd := sendKey(t, m, keyEnter())
-	require.NotNil(cmd)
-	loaded := sendMsg(t, opened, cmd())
-	assert.Equal([]string{ref}, backend.calendarRequests)
-	view := stripANSI(loaded.renderView())
-	assert.Contains(view, ref)
-	assert.Contains(view, "Start: 2027-03-15T10:00:00Z")
-	assert.Contains(view, "End: 2027-03-15T11:00:00Z")
-}
-
-func TestTimelineCalendarAllDayAndDeletedStatus(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	m, backend := timelineCalendarModel("evt:42@20270314")
-	backend.calendarDetail.AllDay = true
-	backend.calendarDetail.StartDate, backend.calendarDetail.EndDate = "2027-03-14", "2027-03-15"
-	backend.calendarDetail.DeletedFromSource = true
-	backend.calendarDetail.Status = "cancelled"
-	opened, cmd := sendKey(t, m, keyEnter())
-	require.NotNil(cmd)
-	loaded := sendMsg(t, opened, cmd())
-	view := stripANSI(loaded.renderView())
-	assert.Contains(view, "All day: 2027-03-14 to 2027-03-15 (end date exclusive)")
-	assert.Contains(view, "Status: cancelled")
-	assert.Contains(view, "Deleted from source; showing the archived occurrence")
 }
 
 func TestTimelineReaderKeepsLocalNavigationKeys(t *testing.T) {

@@ -134,6 +134,10 @@ func TestUpcomingExcludesCancelledAndRemovedOccurrences(t *testing.T) {
 	requirements.Len(entries, 3)
 	byRef := map[string]string{}
 	for _, e := range entries {
+		if e.Ref == fmt.Sprintf("evt:%d", removed) {
+			assertions.Equal("Planning", e.Meeting.Title.Text)
+			assertions.False(e.HiddenText)
+		}
 		data, err := json.Marshal(e.Meeting)
 		requirements.NoError(err)
 		byRef[e.Ref] = string(data)

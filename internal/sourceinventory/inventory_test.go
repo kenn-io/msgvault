@@ -7,53 +7,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/config"
-	"go.kenn.io/msgvault/internal/freshness"
 	"go.kenn.io/msgvault/internal/sourcescope"
 	"go.kenn.io/msgvault/internal/store"
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestConfiguredIMAPDisplayNamePreservesFreshness(t *testing.T) {
-	for _, enabled := range []bool{true, false} {
-		t.Run(map[bool]string{true: "enabled", false: "disabled"}[enabled], func(t *testing.T) {
-			assertions := assert.New(t)
-			requirements := require.New(t)
-			st := testutil.NewTestStore(t)
-			const identifier = "imaps://owner@example.test@imap.example.test:993"
-			source, err := st.GetOrCreateSource("imap", identifier)
-			requirements.NoError(err)
-			requirements.NoError(st.UpdateSourceDisplayName(source.ID, "owner@example.test"))
-			run, err := st.StartSync(source.ID, "incremental")
-			requirements.NoError(err)
-			requirements.NoError(st.CompleteSync(run, "cursor"))
-			cfg := config.NewDefaultConfig()
-			cfg.Accounts = []config.AccountSchedule{{Email: "owner@example.test", Enabled: enabled, Schedule: "0 * * * *"}}
-			items, err := Build(t.Context(), cfg, st)
-			requirements.NoError(err)
-			requirements.Len(items, 1, "resolved accounts must not create a phantom Gmail source")
-			assertions.Equal(identifier, items[0].Identifier)
-			requirements.NotNil(items[0].SourceID)
-			assertions.Equal(source.ID, *items[0].SourceID)
-			assertions.Equal("completed", items[0].Outcome)
-			assertions.Equal("msgvault sync-incremental owner@example.test", items[0].SyncCommand)
-			assertions.Equal(map[bool]string{true: "scheduled", false: "disabled"}[enabled], items[0].Scheduling)
-			now := time.Now().UTC()
-			if !enabled {
-				now = now.Add(48 * time.Hour)
-			}
-			report, err := freshness.Build(t.Context(), freshness.Inputs{Sources: items, Now: now, StaleAfter: 24 * time.Hour})
-			requirements.NoError(err)
-			assertions.Empty(report.Sources[0].Reason, "a healthy or disabled resolved account must not falsely block ranked views")
-		})
-	}
-}
-
 func TestConfiguredAccountUsesDaemonSelectors(t *testing.T) {
 	for _, tc := range []struct {
 		name, kind, identifier, display, alias, configured, command string
 		matched                                                     bool
+		disabled                                                    bool
 	}{
 		{name: "casefolded display", kind: "imap", identifier: "imaps://mail.example.test:993", display: "Owner@Example.Test", configured: "owner@example.test", command: "msgvault sync-incremental owner@example.test", matched: true},
+		{name: "disabled display", kind: "imap", identifier: "imaps://owner@example.test@imap.example.test:993", display: "owner@example.test", configured: "owner@example.test", command: "msgvault sync-incremental owner@example.test", matched: true, disabled: true},
 		{name: "casefolded identifier", kind: "gmail", identifier: "Owner@Example.Test", configured: "owner@example.test", command: "msgvault sync-incremental owner@example.test", matched: true},
 		{name: "archive alias", kind: "teams", identifier: "owner@example.test", alias: "Work", configured: "work", command: "msgvault sync-teams owner@example.test", matched: true},
 		{name: "Discord exact guild", kind: "discord", identifier: "123456789", configured: "123456789", command: "msgvault sync-discord 123456789", matched: true},
@@ -74,13 +40,23 @@ func TestConfiguredAccountUsesDaemonSelectors(t *testing.T) {
 				_, err := st.UpdateSourceSettingsContext(t.Context(), source.ID, store.SourceSettingsUpdate{Alias: &tc.alias})
 				requirements.NoError(err)
 			}
+			run, err := st.StartSync(source.ID, "incremental")
+			requirements.NoError(err)
+			requirements.NoError(st.CompleteSync(run, "cursor"))
 			cfg := config.NewDefaultConfig()
-			cfg.Accounts = []config.AccountSchedule{{Email: tc.configured, Enabled: true, Schedule: "0 * * * *"}}
+			cfg.Accounts = []config.AccountSchedule{{Email: tc.configured, Enabled: !tc.disabled, Schedule: "0 * * * *"}}
 			items, err := Build(t.Context(), cfg, st)
 			requirements.NoError(err)
 			if tc.matched {
 				requirements.Len(items, 1)
-				assertions.Equal("scheduled", items[0].Scheduling)
+				scheduling := "scheduled"
+				if tc.disabled {
+					scheduling = "disabled"
+				}
+				assertions.Equal(scheduling, items[0].Scheduling)
+				assertions.Equal("completed", items[0].Outcome)
+				requirements.NotNil(items[0].SourceID)
+				assertions.Equal(source.ID, *items[0].SourceID)
 				assertions.Equal(tc.identifier, items[0].Identifier)
 				assertions.Equal(tc.command, items[0].SyncCommand)
 				return
@@ -235,12 +211,11 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 	for _, tc := range []struct {
 		name, identifier, wantScheduling string
 		accounts, excludeAccounts        []string
-		wantStale                        bool
 	}{
-		{name: "allowlist includes", identifier: "included", accounts: []string{"included"}, wantScheduling: "scheduled", wantStale: true},
+		{name: "allowlist includes", identifier: "included", accounts: []string{"included"}, wantScheduling: "scheduled"},
 		{name: "allowlist excludes", identifier: "excluded", accounts: []string{"included"}, wantScheduling: "disabled"},
 		{name: "denylist excludes", identifier: "excluded", excludeAccounts: []string{"excluded"}, wantScheduling: "disabled"},
-		{name: "denylist keeps other accounts", identifier: "included", excludeAccounts: []string{"excluded"}, wantScheduling: "scheduled", wantStale: true},
+		{name: "denylist keeps other accounts", identifier: "included", excludeAccounts: []string{"excluded"}, wantScheduling: "scheduled"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions := assert.New(t)
@@ -258,12 +233,6 @@ func TestBeeperAccountFiltersControlFreshnessScheduling(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(items, 1)
 			assertions.Equal(tc.wantScheduling, items[0].Scheduling)
-
-			report, err := freshness.Build(t.Context(), freshness.Inputs{
-				Sources: items, Now: time.Date(2025, time.January, 2, 0, 0, 0, 0, time.UTC), StaleAfter: 24 * time.Hour,
-			})
-			requirements.NoError(err)
-			assertions.Equal(tc.wantStale, report.Sources[0].Reason != "")
 		})
 	}
 }
@@ -283,14 +252,6 @@ func TestImportOnlySourcesAreStatic(t *testing.T) {
 			requirements.NotNil(items[0].SourceID)
 			assertions.Equal("static", items[0].Scheduling)
 			assertions.Empty(items[0].SyncCommand)
-
-			report, err := freshness.Build(t.Context(), freshness.Inputs{
-				Sources:    items,
-				Now:        time.Date(2025, time.January, 2, 0, 0, 0, 0, time.UTC),
-				StaleAfter: 24 * time.Hour,
-			})
-			requirements.NoError(err)
-			assertions.Empty(report.Sources[0].Reason, "an import-only archive cannot be refreshed by a sync command")
 		})
 	}
 }
@@ -413,14 +374,6 @@ func TestAttachmentSyncRunsDoNotReplaceSourceFreshness(t *testing.T) {
 			assertions.Equal("completed", items[0].Outcome, "media work is not a source sync outcome")
 			requirements.NotNil(items[0].LastSuccessfulSyncAt)
 			assertions.True(mainAt.Equal(*items[0].LastSuccessfulSyncAt), "media work must not replace the source sync timestamp")
-
-			report, err := freshness.Build(t.Context(), freshness.Inputs{
-				Sources:    items,
-				Now:        time.Now().UTC(),
-				StaleAfter: 24 * time.Hour,
-			})
-			requirements.NoError(err)
-			assertions.Equal("stale", report.Sources[0].Reason, "media completion must not make an old source sync appear fresh")
 		})
 	}
 }

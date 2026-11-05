@@ -31,6 +31,9 @@ func TestAnchorPersonLookupFailureStopsRequest(t *testing.T) {
 	got, err := Build(t.Context(), f.src, req)
 	require.ErrorIs(t, err, failure)
 	assert.Nil(t, got)
+	got, err = Build(t.Context(), f.src, relationshipRequest("person:1"))
+	require.NoError(t, err)
+	assert.Contains(t, got.Gaps, Gap{Section: "person", Code: "unavailable"})
 }
 
 func TestCalendarMissingDisplayKeepsTextSuppressed(t *testing.T) {
