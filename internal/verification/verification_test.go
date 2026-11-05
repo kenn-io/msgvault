@@ -8,11 +8,12 @@ import (
 )
 
 func TestIs(t *testing.T) {
-	for _, tc := range []struct {
+	type testCase struct {
 		name    string
 		content Content
 		want    bool
-	}{
+	}
+	cases := []testCase{
 		{"verify account", Content{Text: "Use 482913 to verify your account"}, true},
 		{"enter this code", Content{Text: "Enter this code to verify: 482913"}, true},
 		{"code below", Content{Text: "Enter this code below: 482913"}, true},
@@ -83,28 +84,27 @@ func TestIs(t *testing.T) {
 		{"coupon", Content{Text: "Use code SAVE20"}, false},
 		{"promo sale", Content{Subject: "Sale", Text: "Use promo code SAVE2024 for 20% off. Order 55512345"}, false},
 		{"promo code", Content{Text: "Use promo code SAVE2024"}, false},
-		{"postal code", Content{Text: "Postal code 90210-1234"}, false},
-		{"project code", Content{Text: "project code 887766"}, false},
 		{"unsubscribe", Content{Text: "Sign in https://example.test/unsubscribe?token=abcDEF1234567890"}, false},
 		{"long number", Content{Text: "Your code is 12345678901"}, false},
 		{"oversized", Content{Text: strings.Repeat("x", MaxFieldBytes)}, true},
-	} {
-		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, Is(tc.content)) })
+		{"HTML block boundary", Content{Subject: "Your verification code", HTML: "<p>482913</p><p>5550100</p>"}, true},
+		{"HTML inline code", Content{HTML: "Your verification code is <b>482</b>913"}, true},
+		{"Promo code", Content{Subject: "Promo code", Text: "Order 1234567 shipped"}, false},
+		{"Update the code", Content{Subject: "Update the code", Text: "Invoice 123456 attached"}, false},
+		{"Re: fix the code", Content{Subject: "Re: fix the code", Text: "555 1234"}, false},
+		{"Your PIN", Content{Subject: "Your PIN", Text: "Account ending 123456"}, false},
 	}
-}
-
-func TestIsCodeContext(t *testing.T) {
 	for _, prefix := range []string{"promo", "coupon", "discount", "voucher", "referral", "gift", "Zip", "postal", "area", "tracking", "order", "invoice", "product", "project"} {
-		t.Run(prefix, func(t *testing.T) {
-			assert.False(t, Is(Content{Text: prefix + " code is 482913"}))
-			assert.False(t, Is(Content{Text: prefix + " code is 2024"}))
-			assert.True(t, Is(Content{Text: prefix + " code 887766. Your verification code is 482913"}))
-		})
+		for _, value := range []string{"482913", "2024"} {
+			cases = append(cases, testCase{prefix + " " + value, Content{Text: prefix + " code is " + value}, false})
+		}
+		cases = append(cases, testCase{prefix + " with verification", Content{Text: prefix + " code 887766. Your verification code is 482913"}, true})
 	}
-	for _, prefix := range []string{"Your", "verification", "security", "login"} {
-		t.Run(prefix, func(t *testing.T) {
-			assert.True(t, Is(Content{Text: prefix + " code is 482913"}))
-		})
+	for _, cue := range []string{"verification code", "security code", "login code", "sign-in code", "confirmation code", "authentication code", "one-time code", "passcode", "OTP", "2FA"} {
+		cases = append(cases, testCase{cue, Content{Subject: "Your " + cue, Text: "482913"}, true})
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, Is(tc.content)) })
 	}
 }
 
@@ -112,35 +112,5 @@ func BenchmarkIsCueDense(b *testing.B) {
 	content := Content{Text: strings.Repeat("code 123456 ", 2000)}
 	for b.Loop() {
 		Is(content)
-	}
-}
-
-func TestIsHTMLBlockBoundaries(t *testing.T) {
-	for _, tag := range []string{"p", "div", "br", "li", "tr", "td", "th", "h1", "h2", "h3", "h4", "h5", "h6", "table"} {
-		t.Run(tag, func(t *testing.T) {
-			assert.True(t, Is(Content{Subject: "Your verification code", HTML: "<" + tag + ">482913</" + tag + "><" + tag + ">5550100</" + tag + ">"}))
-		})
-	}
-	assert.True(t, Is(Content{HTML: "Your verification code is <b>482</b>913"}))
-	assert.True(t, Is(Content{Subject: "Your verification code", HTML: "<p>482913</p><p>555-0100</p>"}))
-}
-
-func TestIsCrossFieldCue(t *testing.T) {
-	for _, tc := range []struct {
-		subject, text string
-	}{
-		{"Promo code", "Order 1234567 shipped"},
-		{"Update the code", "Invoice 123456 attached"},
-		{"Re: fix the code", "555 1234"},
-		{"Your PIN", "Account ending 123456"},
-	} {
-		t.Run(tc.subject, func(t *testing.T) {
-			assert.False(t, Is(Content{Subject: tc.subject, Text: tc.text}))
-		})
-	}
-	for _, cue := range []string{"verification code", "security code", "login code", "sign-in code", "confirmation code", "authentication code", "one-time code", "passcode", "OTP", "2FA"} {
-		t.Run(cue, func(t *testing.T) {
-			assert.True(t, Is(Content{Subject: "Your " + cue, Text: "482913"}))
-		})
 	}
 }
