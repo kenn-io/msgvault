@@ -386,6 +386,13 @@ for (const width of [1024, 1440]) {
     }));
     expect(new Set(layout.tops).size).toBe(1);
     expect(layout.clipped).toBe(false);
+    const countText = await bar.locator('.selection-count').evaluate(element => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      return range.getBoundingClientRect().right;
+    });
+    const selectAll = (await bar.getByRole('button', { name: 'Select all 10,035 matching', exact: true }).boundingBox())!;
+    expect(selectAll.x - countText).toBeLessThanOrEqual(12);
     const trigger = bar.getByRole('button', { name: 'Meeting context…' });
     for (const remounted of [false, true]) {
       if (remounted) {

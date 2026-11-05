@@ -128,19 +128,21 @@
 >
 {#if visible}
   <div class="selection-bar">
-    <span class="selection-count">{message.replace(' matching items', '')}{#if preflight}<span class="selection-size">{' · '}{formatBytes(preflight.estimated_bytes)}</span>{/if}</span>
-    {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
-      <Button
-        size="sm"
-        tone="info"
-        surface="soft"
-        label={`Select all ${totalCount?.toLocaleString() ?? ''} matching`.replace(
-          'all  matching',
-          'all matching',
-        )}
-        onclick={() => selection.selectAllMatching(allMatching)}
-      />
-    {/if}
+    <div class="selection-summary">
+      <span class="selection-count">{message.replace(' matching items', '')}{#if preflight}<span class="selection-size">{' · '}{formatBytes(preflight.estimated_bytes)}</span>{/if}</span>
+      {#if allMatching && selection.mode === 'explicit' && selection.count > 0}
+        <Button
+          size="sm"
+          tone="info"
+          surface="soft"
+          label={`Select all ${totalCount?.toLocaleString() ?? ''} matching`.replace(
+            'all  matching',
+            'all matching',
+          )}
+          onclick={() => selection.selectAllMatching(allMatching)}
+        />
+      {/if}
+    </div>
     {#if preflight && onExport && (exportTarget || exportReason)}
       {#snippet exportControl()}
         <Button size="sm" tone="info" surface="soft" label="Export" ariaLabel="Export selection" disabled={Boolean(exportReason)} onclick={onExport} />
@@ -200,8 +202,16 @@
     font-size: var(--font-size-xs);
   }
 
+  .selection-summary {
+    display: flex;
+    align-items: center;
+    gap: var(--field-gap);
+    min-width: 0;
+    max-width: 100%;
+  }
+
   .selection-count {
-    flex: 1 1 8rem;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -212,6 +222,10 @@
   .selection-size {
     font-weight: 400;
     color: var(--text-muted);
+  }
+
+  .selection-bar > :global(:last-child) {
+    margin-inline-start: auto;
   }
 
   .meeting-panel {
