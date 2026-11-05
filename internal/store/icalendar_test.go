@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/calevent"
-	"go.kenn.io/msgvault/internal/calrecur"
 	"go.kenn.io/msgvault/internal/search"
 )
 
@@ -899,8 +898,7 @@ func TestICalendarRecurrenceEvidenceBatched(t *testing.T) {
 		queries++
 		return rebind(query)
 	}
-	remaining := calrecur.RequestReadBudget
-	requirements.NoError(loadCalendarICSRecurrenceErrors(t.Context(), st.db, google, &remaining))
+	requirements.NoError(loadCalendarICSRecurrenceErrors(t.Context(), st.db, google))
 	assertions.Zero(queries, "Google series need no ICS evidence query")
 	source := icsSource(t, st)
 	var events []CalendarEventRow
@@ -913,7 +911,7 @@ func TestICalendarRecurrenceEvidenceBatched(t *testing.T) {
 	_, err = st.db.Exec(`UPDATE message_raw SET raw_data=?,compression=NULL WHERE message_id=?`, []byte("broken"), events[2].MessageID)
 	requirements.NoError(err)
 	queries = 0
-	requirements.NoError(loadCalendarICSRecurrenceErrors(t.Context(), st.db, events, &remaining))
+	requirements.NoError(loadCalendarICSRecurrenceErrors(t.Context(), st.db, events))
 	assertions.Equal(1, queries)
 	assertions.Empty(events[0].Event.RecurrenceError)
 	assertions.Empty(events[1].Event.RecurrenceError)
