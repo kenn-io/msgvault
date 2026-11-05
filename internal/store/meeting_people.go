@@ -36,7 +36,7 @@ func (s *Store) ParticipantsByEmailContext(ctx context.Context, emails []string)
 		return nil, err
 	}
 	defer release()
-	snapshot := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
 	scope := ""
 	var scopeArgs []any
 	if sourcescope.Restricted(ctx) {
@@ -86,7 +86,7 @@ func (s *Store) MeetingActionItemCountsContext(ctx context.Context, transcriptID
 		return nil, err
 	}
 	defer release()
-	snapshot := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	query := `SELECT m.id,COUNT(a.message_id) FROM messages m LEFT JOIN meeting_action_items a ON a.message_id=m.id
  WHERE m.message_type='meeting_transcript' AND m.deleted_at IS NULL` + scope + ` AND m.id IN (%s) GROUP BY m.id`

@@ -152,6 +152,7 @@ func (s *Store) ResolveMeetingIdentitiesContext(ctx context.Context, req Meeting
 			if err != nil {
 				return result, err
 			}
+			defer func() { _ = rows.Close() }()
 			for rows.Next() {
 				var id int64
 				if err := rows.Scan(&id); err != nil {

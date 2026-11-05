@@ -85,6 +85,7 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 		if err != nil {
 			return err
 		}
+		defer func() { _ = rows.Close() }()
 		byQuery := make([][]int64, len(chunk))
 		ids := []int64{}
 		for rows.Next() {
@@ -126,7 +127,7 @@ func (s *Store) preloadMeetingQueries(ctx context.Context, r reboundReader, quer
 }
 
 func (s *Store) preloadMeetingMembers(ctx context.Context, r reboundReader, ids []int64) error {
-	snapshot := ctx.Value(readSnapshotKey{}).(*readSnapshot)
+	snapshot, _ := ctx.Value(readSnapshotKey{}).(*readSnapshot)
 	scope, args := sourceScopeClause(ctx, "m.source_id")
 	// Prefix arguments precede the chunk arguments in the shared chunking helper.
 	query := `SELECT m.id,k.kind,k.value,k.calendar_id,k.scheduled_at,d.target_ical_uid,COALESCE(d.target_message_id,0),d.occurrence_key,d.decision,d.created_at

@@ -69,7 +69,7 @@ func parseMeetingLinkRef(value string, eventOnly bool) (store.MeetingLinkRef, er
 	if err != nil || id <= 0 || id > 9007199254740991 {
 		return store.MeetingLinkRef{}, errors.New("invalid meeting reference")
 	}
-	return store.MeetingLinkRef{Kind: kind, OccurrenceRef: store.OccurrenceRef{MessageID: id}}, nil
+	return store.MeetingLinkRef{Kind: kind, MessageID: id}, nil
 }
 
 func (s *Server) handleMeetingLinkDecision(w http.ResponseWriter, r *http.Request) {
