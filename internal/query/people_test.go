@@ -1088,12 +1088,18 @@ func TestGetPersonExcludesCallRecipients(t *testing.T) {
 	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
 	email := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: at})
 	b.AddTo(email, person, "Peer")
-	call := b.AddMessage(MessageOpt{SourceID: source, MessageType: "call_record", SentAt: at.Add(time.Hour)})
-	b.AddRecipient(call, person, "call_invited", "Peer")
+	for i, role := range []string{"call_joined", "call_invited", "call_unknown"} {
+		call := b.AddMessage(MessageOpt{SourceID: source, MessageType: "call_record", SentAt: at.Add(time.Duration(i+1) * time.Hour)})
+		b.AddRecipient(call, person, role, "Peer")
+	}
 	engine := b.BuildEngine()
-	got, err := engine.GetPerson(t.Context(), person, Context{SourceIDs: []int64{source}}, nil)
-	require.NoError(t, err)
-	require.NotNil(t, got)
-	assert.Equal(t, int64(1), got.ActivityCount)
-	assert.Equal(t, at, got.LastAt)
+	for name, scope := range map[string]Context{"filtered": {SourceIDs: []int64{source}}, "unfiltered": {}} {
+		t.Run(name, func(t *testing.T) {
+			got, err := engine.GetPerson(t.Context(), person, scope, nil)
+			require.NoError(t, err)
+			require.NotNil(t, got)
+			assert.Equal(t, int64(1), got.ActivityCount)
+			assert.Equal(t, at, got.LastAt)
+		})
+	}
 }
