@@ -364,7 +364,13 @@ func newPersonFactsCommand() *cobra.Command {
 					_, _ = fmt.Fprintf(writer, "  Current: %s\n", current.Value)
 				}
 				for _, claim := range contest.Claims {
-					_, _ = fmt.Fprintf(writer, "  Claim: %s (%s; %s)\n", claim.Value, personFactCLIClaimRelation(claim.Relation), personFactCLIDecisionReason(claim.Decision.Reason))
+					detail := personFactCLIClaimRelation(claim.Relation)
+					redundantReason := personfacts.ClaimRelation(claim.Relation) == personfacts.RelationContradict && personfacts.DecisionReason(claim.Decision.Reason) == personfacts.ReasonExplicitContradiction ||
+						personfacts.ClaimRelation(claim.Relation) == personfacts.RelationSupersede && personfacts.DecisionReason(claim.Decision.Reason) == personfacts.ReasonExplicitSupersession
+					if !redundantReason {
+						detail += "; " + personFactCLIDecisionReason(claim.Decision.Reason)
+					}
+					_, _ = fmt.Fprintf(writer, "  Claim: %s (%s)\n", claim.Value, detail)
 					if claim.ValidFrom != nil {
 						_, _ = fmt.Fprintf(writer, "    Valid from: %s\n", claim.ValidFrom.Format(time.RFC3339))
 					}

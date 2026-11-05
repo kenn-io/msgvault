@@ -381,6 +381,9 @@ func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
 		},{
 			"claim_key":"claim-hinduism","value":"\"Hinduism\"","relation":"support",
 			"decision":{"reason":"competing-tie"},"evidence":[]
+		},{
+			"claim_key":"claim-contradiction","value":"\"Buddhism\"","relation":"contradict",
+			"decision":{"reason":"explicit-contradiction"},"evidence":[]
 		}]
 	}]`
 	const employmentContests = `[{
@@ -425,6 +428,7 @@ func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
 	assertions.Contains(output, "attribute/religion (resolved 2026-08-22T12:00:00Z)")
 	assertions.Contains(output, "Claim: \"Buddhism\" (supports; too close to choose)")
 	assertions.Contains(output, "Claim: \"Hinduism\" (supports; too close to choose)")
+	assertions.Contains(output, "Claim: \"Buddhism\" (contradicts)\n")
 	for _, expected := range []string{"https://example.test/buddhism", "Definition changed since resolution"} {
 		assertions.Contains(output, expected)
 	}
@@ -435,7 +439,7 @@ func TestPersonFactsContestedDisplaysClaimsAndCitations(t *testing.T) {
 	requirements.NoError(json.Unmarshal([]byte(jsonOutput), &contests))
 	requirements.Len(contests, 1)
 	assertions.Equal("religion", contests[0].Target.Slug)
-	requirements.Len(contests[0].Claims, 2)
+	requirements.Len(contests[0].Claims, 3)
 	assertions.Equal(`"Buddhism"`, contests[0].Claims[0].Value)
 	assertions.Equal(`"Hinduism"`, contests[0].Claims[1].Value)
 	requirements.Len(contests[0].Claims[0].Evidence, 1)
