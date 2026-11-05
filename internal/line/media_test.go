@@ -54,25 +54,24 @@ func TestMediaTranscodingRetry(t *testing.T) {
 	checks.Equal(2, f.api.Count(http.MethodGet, path))
 }
 
-func TestMediaPreparingAtRetryHorizonFinishesAttachment(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	path := "/v2/bot/message/1/content"
-	f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
-	f.enqueue(t, f.fileEvent(), f.now)
-	f.run(t)
-	checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
-	f.now = f.now.Add(25 * time.Hour)
-	f.run(t)
-	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-	checks.Equal("failed", state)
-	checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
-	checks.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
-}
-
 func TestMediaFailureAtRetryHorizon(t *testing.T) {
+	t.Run("after preparing", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newInboxFixture(t)
+		path := "/v2/bot/message/1/content"
+		f.api.Enqueue(http.MethodGet, path, lineapi.Response{Status: http.StatusAccepted})
+		f.enqueue(t, f.fileEvent(), f.now)
+		f.run(t)
+		checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
+		f.now = f.now.Add(25 * time.Hour)
+		f.run(t)
+		var state string
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+		checks.Equal("failed", state)
+		checks.Equal(attachmentpolicy.StateFailed, f.media(t).State)
+		checks.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
+	})
 	t.Run("at receipt", func(t *testing.T) {
 		assert := assert.New(t)
 		f := newInboxFixture(t)

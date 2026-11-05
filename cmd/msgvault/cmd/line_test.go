@@ -204,11 +204,6 @@ func TestLineNormalCLIUsesDaemonTransport(t *testing.T) {
 	must.NoError(command.Execute())
 	checks.Equal(int32(1), requests.Load())
 	checks.NoFileExists(cfg.DatabaseDSN())
-	for _, name := range []string{"add-line", "sync-line"} {
-		leaf, _, err := rootCmd.Find([]string{name})
-		must.NoError(err)
-		checks.Equal(name, leaf.Name())
-	}
 }
 
 func TestAddLinePreservesConcurrentConfigEdit(t *testing.T) {

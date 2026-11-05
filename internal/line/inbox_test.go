@@ -458,26 +458,42 @@ func TestProcessorLateOriginalReconcilesExpiredRetryInSamePass(t *testing.T) {
 }
 
 func TestProcessorEditPreservesOriginalRaw(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	message := f.message("original-raw", "original text", f.now.UnixMilli())
-	f.enqueue(t, message, time.Time{})
-	f.run(t)
-	id := f.archived(t, message.Message.ID).id
-	original, err := f.st.GetMessageRawContext(t.Context(), id)
-	must.NoError(err)
-	must.Contains(string(original), `"text":"original text"`)
+	for _, nativeMetadata := range []bool{false, true} {
+		t.Run(fmt.Sprintf("native metadata=%t", nativeMetadata), func(t *testing.T) {
+			must := require.New(t)
+			checks := assert.New(t)
+			f := newInboxFixture(t)
+			message := f.message("original-raw", "original text", f.now.UnixMilli())
+			if nativeMetadata {
+				must.NoError(json.Unmarshal([]byte(fmt.Sprintf(`{"type":"message","timestamp":%d,"webhookEventId":"event-1","source":{"type":"group","groupId":"C00000000000000000000000000000001","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"original","quoteToken":"synthetic-quote-token","emojis":[{"index":0,"length":1,"productId":"synthetic-product","emojiId":"synthetic-emoji"}],"mention":{"mentionees":[{"type":"user","userId":"U00000000000000000000000000000002"}]}}}`, message.Timestamp)), &message))
+			}
+			f.enqueue(t, message, time.Time{})
+			f.run(t)
+			id := f.archived(t, message.Message.ID).id
+			original, err := f.st.GetMessageRawContext(t.Context(), id)
+			must.NoError(err)
+			must.Contains(string(original), `"text":"`+message.Message.Text+`"`)
 
-	edit := f.message(message.Message.ID, "edited text", message.Timestamp+1)
-	edit.Type = "messageEdited"
-	edit.WebhookEventID = "edit-original-raw"
-	f.enqueue(t, edit, time.Time{})
-	f.run(t)
-	checks.Equal("edited text", f.archived(t, message.Message.ID).body)
-	raw, err := f.st.GetMessageRawContext(t.Context(), id)
-	must.NoError(err)
-	checks.Equal(original, raw)
+			edit := f.message(message.Message.ID, "edited text", message.Timestamp+1)
+			edit.Type = "messageEdited"
+			edit.WebhookEventID = "edit-original-raw"
+			f.enqueue(t, edit, time.Time{})
+			f.run(t)
+			checks.Equal("edited text", f.archived(t, message.Message.ID).body)
+			raw, err := f.st.GetMessageRawContext(t.Context(), id)
+			must.NoError(err)
+			checks.Equal(original, raw)
+			if nativeMetadata {
+				archived, err := f.st.LineMessageContext(t.Context(), f.source.ID, message.Message.ID)
+				must.NoError(err)
+				var metadata map[string]json.RawMessage
+				must.NoError(json.Unmarshal([]byte(archived.Metadata.String), &metadata))
+				checks.NotContains(metadata, "emojis")
+				checks.NotContains(metadata, "mention")
+				checks.JSONEq(`"synthetic-quote-token"`, string(metadata["quoteToken"]))
+			}
+		})
+	}
 }
 
 func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T) {
@@ -509,33 +525,6 @@ func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T
 	must.NoError(err)
 	must.Len(archived.From, 1)
 	checks.Equal("Original Name", archived.From[0].Name)
-}
-
-func TestProcessorEditDropsRemovedNativeTextMetadata(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	base := f.message("1", "original", f.now.UnixMilli())
-	must.NoError(json.Unmarshal([]byte(fmt.Sprintf(`{"type":"message","timestamp":%d,"webhookEventId":"event-1","source":{"type":"group","groupId":"C00000000000000000000000000000001","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"original","quoteToken":"synthetic-quote-token","emojis":[{"index":0,"length":1,"productId":"synthetic-product","emojiId":"synthetic-emoji"}],"mention":{"mentionees":[{"type":"user","userId":"U00000000000000000000000000000002"}]}}}`, base.Timestamp)), &base))
-	f.enqueue(t, base, time.Time{})
-	f.run(t)
-
-	edit := base
-	edit.Type = "messageEdited"
-	edit.Raw = nil
-	edit.WebhookEventID = "edit-without-native-text-fields"
-	edit.Timestamp++
-	edit.Message = &Message{ID: "1", Type: "text", Text: "edited without emoji or mention"}
-	f.enqueue(t, edit, time.Time{})
-	f.run(t)
-
-	archived, err := f.st.LineMessageContext(context.Background(), f.source.ID, "1")
-	must.NoError(err)
-	var metadata map[string]json.RawMessage
-	must.NoError(json.Unmarshal([]byte(archived.Metadata.String), &metadata))
-	checks.NotContains(metadata, "emojis")
-	checks.NotContains(metadata, "mention")
-	checks.JSONEq(`"synthetic-quote-token"`, string(metadata["quoteToken"]))
 }
 
 func TestProcessorIdlePassSkipsSyncRunAndScopesTouchedStats(t *testing.T) {
@@ -643,91 +632,92 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 	})
 }
 
-func TestProcessorGCPurgesMergedInboxPayloads(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	if f.st.IsPostgreSQL() {
-		t.Skip("archive GC is SQLite-only")
-	}
-	ctx := t.Context()
-	message := f.message("gc-merged", "text to purge after merge", f.now.UnixMilli())
-	f.enqueue(t, message, time.Time{})
-	f.run(t)
-	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-merged-unsend", Timestamp: message.Timestamp + 1, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
-	f.run(t)
-	must.True(f.archived(t, message.Message.ID).deleted)
-	into, err := f.st.GetOrCreateSource("line", "2000000002")
-	must.NoError(err)
-	_, err = f.st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: f.source.ID, IntoSourceID: into.ID})
-	must.NoError(err)
-	plan, err := f.st.PlanGCContext(ctx)
-	must.NoError(err)
-	deleted, err := f.st.ExecuteGCContext(ctx, plan)
-	must.NoError(err)
-	must.Equal(int64(1), deleted)
-	for _, eventID := range []string{message.WebhookEventID, "gc-merged-unsend"} {
-		var raw string
-		must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
-		checks.Equal("{}", raw)
-	}
-}
-
 func TestProcessorGCPurgesRetryPayloads(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	if f.st.IsPostgreSQL() {
-		t.Skip("archive GC is SQLite-only")
-	}
-	ctx := t.Context()
-	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 503})
-	message := f.message("gc-retry", "text to purge", f.now.UnixMilli())
-	f.enqueue(t, message, time.Time{})
-	f.run(t)
-	checks.Equal("text to purge", f.archived(t, message.Message.ID).body)
-	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
-	must.Equal("retry", state)
-	var retryAt time.Time
-	must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&retryAt))
+	t.Run("retry and replay", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newInboxFixture(t)
+		if f.st.IsPostgreSQL() {
+			t.Skip("archive GC is SQLite-only")
+		}
+		ctx := t.Context()
+		f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: 503})
+		message := f.message("gc-retry", "text to purge", f.now.UnixMilli())
+		f.enqueue(t, message, time.Time{})
+		f.run(t)
+		checks.Equal("text to purge", f.archived(t, message.Message.ID).body)
+		var state string
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+		must.Equal("retry", state)
+		var retryAt time.Time
+		must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&retryAt))
 
-	edit := f.message(message.Message.ID, "edited text to purge", message.Timestamp+1)
-	edit.Type = "messageEdited"
-	edit.WebhookEventID = "gc-edit"
-	f.enqueue(t, edit, time.Time{})
-	f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-unsend", Timestamp: message.Timestamp + 2, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
-	f.run(t)
-	must.True(f.archived(t, message.Message.ID).deleted)
-	plan, err := f.st.PlanGCContext(ctx)
-	must.NoError(err)
-	deleted, err := f.st.ExecuteGCContext(ctx, plan)
-	must.NoError(err)
-	must.Equal(int64(1), deleted)
+		edit := f.message(message.Message.ID, "edited text to purge", message.Timestamp+1)
+		edit.Type = "messageEdited"
+		edit.WebhookEventID = "gc-edit"
+		f.enqueue(t, edit, time.Time{})
+		f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-unsend", Timestamp: message.Timestamp + 2, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
+		f.run(t)
+		must.True(f.archived(t, message.Message.ID).deleted)
+		plan, err := f.st.PlanGCContext(ctx)
+		must.NoError(err)
+		deleted, err := f.st.ExecuteGCContext(ctx, plan)
+		must.NoError(err)
+		must.Equal(int64(1), deleted)
 
-	for _, eventID := range []string{message.WebhookEventID, edit.WebhookEventID, "gc-unsend"} {
+		for _, eventID := range []string{message.WebhookEventID, edit.WebhookEventID, "gc-unsend"} {
+			var raw string
+			must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
+			checks.Equal("{}", raw)
+		}
+		f.now = retryAt
+		f.run(t)
+		_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
+		must.ErrorIs(err, sql.ErrNoRows)
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
+		checks.Equal("ignored", state)
+		// Scrubbed edits and unsends must remain harmless when reconciled.
+		must.NoError(f.processor.reconcileMutations(ctx, message.Message.ID))
+
+		f.enqueue(t, message, time.Time{})
+		f.run(t)
+		_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
+		must.ErrorIs(err, sql.ErrNoRows)
 		var raw string
-		must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
+		var rows int
+		must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*),MIN(raw_json) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows, &raw))
+		checks.Equal(1, rows)
 		checks.Equal("{}", raw)
-	}
-	f.now = retryAt
-	f.run(t)
-	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
-	must.ErrorIs(err, sql.ErrNoRows)
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&state))
-	checks.Equal("ignored", state)
-	// Scrubbed edits and unsends must remain harmless when reconciled.
-	must.NoError(f.processor.reconcileMutations(ctx, message.Message.ID))
-
-	f.enqueue(t, message, time.Time{})
-	f.run(t)
-	_, err = f.st.LineMessageContext(ctx, f.source.ID, message.Message.ID)
-	must.ErrorIs(err, sql.ErrNoRows)
-	var raw string
-	var rows int
-	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*),MIN(raw_json) FROM line_webhook_events WHERE webhook_event_id=?`, message.WebhookEventID).Scan(&rows, &raw))
-	checks.Equal(1, rows)
-	checks.Equal("{}", raw)
+	})
+	t.Run("merged identity", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newInboxFixture(t)
+		if f.st.IsPostgreSQL() {
+			t.Skip("archive GC is SQLite-only")
+		}
+		ctx := t.Context()
+		message := f.message("gc-merged", "text to purge after merge", f.now.UnixMilli())
+		f.enqueue(t, message, time.Time{})
+		f.run(t)
+		f.enqueue(t, Event{Type: "unsend", WebhookEventID: "gc-merged-unsend", Timestamp: message.Timestamp + 1, Source: message.Source, Unsend: &Unsend{MessageID: message.Message.ID}}, time.Time{})
+		f.run(t)
+		must.True(f.archived(t, message.Message.ID).deleted)
+		into, err := f.st.GetOrCreateSource("line", "2000000002")
+		must.NoError(err)
+		_, err = f.st.MergeSourcesContext(ctx, store.MergeSourcesRequest{FromSourceID: f.source.ID, IntoSourceID: into.ID})
+		must.NoError(err)
+		plan, err := f.st.PlanGCContext(ctx)
+		must.NoError(err)
+		deleted, err := f.st.ExecuteGCContext(ctx, plan)
+		must.NoError(err)
+		must.Equal(int64(1), deleted)
+		for _, eventID := range []string{message.WebhookEventID, "gc-merged-unsend"} {
+			var raw string
+			must.NoError(f.st.DB().QueryRow(`SELECT raw_json FROM line_webhook_events WHERE webhook_event_id=?`, eventID).Scan(&raw))
+			checks.Equal("{}", raw)
+		}
+	})
 }
 
 func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
@@ -1008,28 +998,20 @@ func TestProcessorExistingChatRecordsOwner(t *testing.T) {
 				}
 			}
 			checks.Equal([]string{UserIdentifier(testChannel, bot)}, owners)
+			if source.Type == "user" {
+				messageID := f.archived(t, message.Message.ID).id
+				var senderID int64
+				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT sender_id FROM messages WHERE id=?`), messageID).Scan(&senderID))
+				checks.Positive(senderID)
+				var kind string
+				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT c.conversation_type FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE m.id=?`), messageID).Scan(&kind))
+				checks.Equal("direct_chat", kind)
+				var clocks int
+				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
+				checks.Zero(clocks, "direct chats do not infer group membership")
+			}
 		})
 	}
-}
-
-func TestProcessorDirectMessageRecordsSenderAndConversationWithoutMembership(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	message := f.message("direct-activity", "direct chat text", f.now.UnixMilli())
-	message.Source = Source{Type: "user", UserID: testUser}
-	f.enqueue(t, message, time.Time{})
-	f.run(t)
-	messageID := f.archived(t, message.Message.ID).id
-	var senderID int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT sender_id FROM messages WHERE id=?`), messageID).Scan(&senderID))
-	checks.Positive(senderID)
-	var kind string
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT c.conversation_type FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE m.id=?`), messageID).Scan(&kind))
-	checks.Equal("direct_chat", kind)
-	var clocks int
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT COUNT(*) FROM line_memberships WHERE source_id=?`), f.source.ID).Scan(&clocks))
-	checks.Zero(clocks, "direct chats do not infer group membership")
 }
 
 func TestProcessorMessageMembershipWriteFailureKeepsEventPending(t *testing.T) {

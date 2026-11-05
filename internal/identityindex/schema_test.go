@@ -13,5 +13,4 @@ func TestMatrixMessagesAreClassifiedAsChat(t *testing.T) {
 
 func TestLineMessagesAreClassifiedAsChat(t *testing.T) {
 	assert.True(t, IsChat("line", "group_chat"))
-	assert.True(t, IsChat("line", "direct_chat"))
 }

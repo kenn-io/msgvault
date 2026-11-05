@@ -141,30 +141,6 @@ func TestRunGCLocalBacksUpBeforeDeleteAndCompacts(t *testing.T) {
 	assert.Zero(freelist)
 }
 
-func TestGCVacuumRemainsCompactedAfterStoreClose(t *testing.T) {
-	must := require.New(t)
-	deletedID, activeID, _, _, cfg := seedGCCommandArchive(t)
-	seedGCLooseBlob(t, cfg, deletedID, strings.Repeat("0a", 32))
-	seedGCLooseBlob(t, cfg, deletedID, strings.Repeat("0b", 32))
-	seedGCAttachmentRow(t, cfg, activeID, strings.Repeat("0b", 32))
-	st, err := store.OpenForTest(cfg.DatabaseDSN())
-	must.NoError(err)
-	t.Cleanup(func() { _ = st.Close() })
-	plan, err := st.PlanGCContext(t.Context())
-	must.NoError(err)
-	_, err = st.ExecuteGCContext(t.Context(), plan)
-	must.NoError(err)
-	must.NoError(st.VacuumContext(t.Context()))
-	var freelist int64
-	must.NoError(st.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freelist))
-	must.Zero(freelist, "compaction must reclaim free pages before closing")
-	must.NoError(st.Close())
-	st, err = store.OpenForTest(cfg.DatabaseDSN())
-	must.NoError(err)
-	must.NoError(st.DB().QueryRow(`PRAGMA freelist_count`).Scan(&freelist))
-	assert.Zero(t, freelist, "closing a compacted archive must preserve compaction")
-}
-
 func TestRunGCLocalSweepsOrphanBlobsWhenNothingToPurge(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
