@@ -91,6 +91,29 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 	})
 }
 
+func TestImportImessageRecordedPreservesCountersAfterCheckpointFailure(t *testing.T) {
+	path, chat := testutil.NewIMessageChatDB(t)
+	_, err := chat.Exec(`INSERT INTO message (date,text) VALUES (725760000,'one'), (725760001,'two')`)
+	require.NoError(t, err)
+	st := testutil.NewSQLiteTestStore(t)
+	src, err := resolveImessageSource(st)
+	require.NoError(t, err)
+	_, err = st.DB().Exec(`CREATE TRIGGER fail_checkpoint BEFORE UPDATE OF cursor_before ON sync_runs
+		WHEN NEW.status = 'running'
+		BEGIN SELECT RAISE(ABORT, 'synthetic checkpoint failure'); END`)
+	require.NoError(t, err)
+	client, err := imessage.NewClient(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = client.Close() })
+	_, err = importImessageRecorded(t.Context(), st, client, src.ID)
+	require.ErrorContains(t, err, "synthetic checkpoint failure")
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", run.Status)
+	assert.Equal(t, int64(2), run.MessagesProcessed)
+	assert.Equal(t, int64(2), run.MessagesAdded)
+}
+
 func TestImportImessageRecordedPreservesPartialCounters(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)

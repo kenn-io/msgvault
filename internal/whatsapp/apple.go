@@ -132,7 +132,14 @@ func (imp *Importer) importApple(
 			}))
 		}
 		if retErr != nil {
-			_ = imp.store.FailSync(syncID, retErr.Error())
+			if summary != nil {
+				_ = imp.store.FailSyncWithCheckpoint(syncID, retErr.Error(), &store.Checkpoint{
+					MessagesProcessed: summary.MessagesProcessed, MessagesAdded: summary.MessagesAdded,
+					MessagesUpdated: summary.MessagesUpdated, ErrorsCount: summary.Errors,
+				})
+			} else {
+				_ = imp.store.FailSync(syncID, retErr.Error())
+			}
 			return
 		}
 		if err := imp.store.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, source.ID, ""); err != nil {

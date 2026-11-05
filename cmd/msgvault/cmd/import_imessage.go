@@ -357,7 +357,11 @@ func importImessageRecorded(ctx context.Context, s *store.Store, client *imessag
 			}
 		}
 		if retErr != nil && !attachmentImportOnly(retErr) {
-			retErr = errors.Join(retErr, scoped.FailSync(syncID, retErr.Error()))
+			if summary != nil {
+				retErr = errors.Join(retErr, scoped.FailSyncWithCheckpoint(syncID, retErr.Error(), imessageCheckpoint(*summary)))
+			} else {
+				retErr = errors.Join(retErr, scoped.FailSync(syncID, retErr.Error()))
+			}
 			return
 		}
 		if err := scoped.CompleteSyncAndPreserveSourceCursorContext(context.WithoutCancel(ctx), syncID, sourceID, ""); err != nil {
