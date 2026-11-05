@@ -117,7 +117,7 @@
     expectedAuthority?: string;
     embedded?: boolean;
     showHeader?: boolean;
-    toolbar?: Snippet<[Snippet, () => void]>;
+    toolbar?: Snippet<[Snippet, () => void, boolean]>;
     fileCount?: number | null;
     fileCountLoading?: boolean;
     sort: FileSearchSort;
@@ -881,7 +881,7 @@
   </div>
   {/snippet}
   {#if toolbar}
-    {@render toolbar(controls, clearVisualSearch)}
+    {@render toolbar(controls, clearVisualSearch, hostedVisualSearch && Boolean(visualQuery.trim() || visualImageBase64))}
   {:else}
     <div class="embedded-controls">
       <div class="embedded-filters">

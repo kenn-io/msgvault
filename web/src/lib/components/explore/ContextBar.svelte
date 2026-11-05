@@ -33,6 +33,7 @@
     lockedFilter = undefined,
     filterExtra = undefined,
     extraControls = undefined,
+    extraActive = false,
     query,
     searchMode,
     filters,
@@ -55,6 +56,7 @@
     lockedFilter?: ExploreFilter;
     filterExtra?: Snippet;
     extraControls?: Snippet;
+    extraActive?: boolean;
     query: string;
     searchMode: ExploreSearchMode;
     filters: ExploreFilter[];
@@ -122,7 +124,7 @@
 <section class="context-bar" aria-label="Active analytical context">
   <div class="context-controls">
     {#if messages}
-      <FilterMenu {client} {filters} {lockedFilter} onChange={onFiltersChange} onClear={() => { onClearFilters(); if (extraInPopover) onClearExtra?.(); }} extra={extraInPopover ? popoverExtra : filterExtra} />
+      <FilterMenu {client} {filters} {lockedFilter} extraActive={extraInPopover && extraActive} onChange={onFiltersChange} onClear={() => { onClearFilters(); if (extraInPopover) onClearExtra?.(); }} extra={extraInPopover ? popoverExtra : filterExtra} />
     {:else}
     <Button
       size="sm"

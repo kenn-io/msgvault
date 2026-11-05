@@ -119,6 +119,43 @@ test.describe('compact toolbar', () => {
     await expect(controls.getByRole('searchbox', { name: 'Search attachment pixels' })).toHaveValue('blue sky');
   });
 
+  test('compact Filter indicates an active visual query or image', async ({ page }) => {
+    const requests: Array<Record<string, unknown>> = [];
+    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
+    await page.route('**/api/v1/files/search', async route => {
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } });
+    });
+    await page.goto('/?workspace=files');
+    const filter = page.getByRole('button', { name: 'Filter', exact: true });
+    await expect(filter).toHaveText('Filter');
+    await filter.click();
+    const dialog = page.getByRole('dialog', { name: 'Filter' });
+    const visual = dialog.getByRole('switch', { name: 'Visual search' });
+    await visual.click();
+    await dialog.getByRole('searchbox', { name: 'Search attachment pixels' }).fill('blue sky');
+    await expect.poll(() => requests.at(-1)?.visual_query).toBe('blue sky');
+    await filter.click();
+    await expect(filter).toHaveText('Filter · 1');
+    await expect(filter).toHaveAccessibleDescription('Visual search active');
+    await expectOneRow(page.locator('.context-controls'));
+    await filter.click();
+    await visual.click();
+    await filter.click();
+    await expect(filter).toHaveText('Filter');
+    await expect(filter).toHaveAccessibleDescription('');
+    await filter.click();
+    await visual.click();
+    await dialog.getByLabel('Query image').setInputFiles({ name: 'query.png', mimeType: 'image/png', buffer: Buffer.from('image') });
+    await expect.poll(() => requests.at(-1)?.visual_image_base64).toBe(Buffer.from('image').toString('base64'));
+    await filter.click();
+    await expect(filter).toHaveText('Filter · 1');
+    await filter.click();
+    await dialog.getByRole('button', { name: 'Clear filters' }).click();
+    await filter.click();
+    await expect(filter).toHaveText('Filter');
+  });
+
   test('compact Clear filters clears visual text, drafts, and images', async ({ page }) => {
     const requests: Array<Record<string, unknown>> = [];
     await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
