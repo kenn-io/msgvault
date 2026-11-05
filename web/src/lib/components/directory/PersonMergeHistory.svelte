@@ -104,7 +104,7 @@
       <ul class="merges" aria-label="Person merge history">
         {#each controller.history as item (item.merge.id)}
           <li>
-            <span>Person {item.merge.absorbed_person_id} merged into person {item.merge.survivor_person_id}
+            <span>{item.merge.survivor_person_id === personID ? 'Another profile merged into this profile' : 'Two profiles merged'}
               <small>{historyTime(item.merge.created_at)} · {item.participant_count} {item.participant_count === 1 ? 'address' : 'addresses'}{item.split_count ? ` · split ${item.split_count}×` : ''}{item.pending_candidate_count ? ` · ${item.pending_candidate_count} to review` : ''}</small>
             </span>
             <Button label="Inspect" ariaLabel={`Inspect merge ${item.merge.id}`} size="sm" onclick={() => void controller.selectMerge(item.merge.id)} />
@@ -167,6 +167,7 @@
 <style>
   .merge-history, .merge-detail { display: grid; gap: var(--space-3); }
   .merge-history { gap: var(--space-2); }
+  .merge-detail > .section-heading { margin-bottom: calc(var(--space-6) - var(--space-3)); }
   .merges { display: grid; padding: 0; list-style: none; }
   .merges li { display: flex; align-items: center; justify-content: space-between; gap: var(--field-gap); padding: var(--space-2) 0; border-bottom: 1px solid var(--border-muted); }
   .merges span { display: grid; gap: var(--space-1); }

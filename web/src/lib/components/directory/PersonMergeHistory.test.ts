@@ -111,9 +111,11 @@ function renderHistory(currentPersonID: number | null = 12, options: { gone?: bo
 }
 
 function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = false) {
+  const requests: string[] = [];
   render(PersonMergeHistory, { client: createAPIClient(async input => {
     const request = input instanceof Request ? input : new Request(input);
     const path = new URL(request.url).pathname;
+    requests.push(path);
     if (path === '/api/v1/people/7/merges') return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
     if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail);
     if (path === '/api/v1/people/19' && missingDestination) return Response.json({}, { status: 404 });
@@ -128,9 +130,22 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = 
     if (path === '/api/v1/participants/702') return Response.json({ identifiers: [{ participant_id: 702, type: 'email', value: 'other@example.org' }] });
     throw new Error(`Unexpected request: ${path}`);
   }), personID: 7 });
+  return { requests };
 }
 
 describe('PersonMergeHistory', () => {
+  it.each([
+    [7, 'Another profile merged into this profile'],
+    [12, 'Two profiles merged'],
+  ])('describes a merge with survivor %i relative to the open profile', async (survivorID, label) => {
+    const mergeDetail = detail();
+    mergeDetail.merge.survivor_person_id = survivorID;
+    const { requests } = renderRegressionHistory(mergeDetail);
+    const history = await screen.findByRole('list', { name: 'Person merge history' });
+    expect(within(history).getByText(label)).toBeDefined();
+    expect(requests).toEqual(['/api/v1/people/7/merges']);
+  });
+
   it('ties split addresses to a profile when its destination was deleted', async () => {
     renderRegressionHistory(detail(), true);
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
@@ -151,7 +166,7 @@ describe('PersonMergeHistory', () => {
     renderHistory();
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     await screen.findByRole('heading', { name: 'Another profile merged into Alex Example' });
-    expect(screen.getByText('Person 9 merged into person 7')).toBeDefined();
+    expect(screen.getByText('Another profile merged into this profile')).toBeDefined();
     expect(screen.getByText(/2 addresses · split 1×/)).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Previous merge history page' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Next merge history page' })).toBeNull();
