@@ -30,12 +30,6 @@ type ftsEnvelopeExpressions struct {
 	subject, fromAddr, toAddrs, ccAddrs string
 }
 
-// lineSenderSnapshotSQL is the sender name a LINE message recorded on its from
-// recipient, so a later profile rename cannot change what search finds for it.
-// It is NULL for every other source.
-const lineSenderSnapshotSQL = `CASE WHEN m.message_type = '` + lineSourceType + `' THEN (SELECT NULLIF(mr.display_name, '')
-	FROM message_recipients mr WHERE mr.message_id = m.id AND mr.recipient_type = 'from' ORDER BY mr.id LIMIT 1) END`
-
 // storedFTSEnvelopeSQL keeps archive comparison, repair, and backfill on the
 // same stored subject, sender fallback, and recipient selection.
 // The enclosing query must alias messages as m.
@@ -45,7 +39,7 @@ func storedFTSEnvelopeSQL(aggregate string) ftsEnvelopeExpressions {
 	}
 	return ftsEnvelopeExpressions{
 		subject: "COALESCE(m.subject, '')",
-		fromAddr: `COALESCE(` + lineSenderSnapshotSQL + `, CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
+		fromAddr: `COALESCE(CASE WHEN m.message_type != 'email' AND m.message_type IS NOT NULL AND m.message_type != ''
 			THEN (SELECT COALESCE(p.phone_number, p.email_address) FROM participants p WHERE p.id = m.sender_id) END, ` + recipients("from") + `)`,
 		toAddrs: recipients("to"),
 		ccAddrs: recipients("cc"),

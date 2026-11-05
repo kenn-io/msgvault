@@ -148,7 +148,7 @@ func (p *Processor) message(ctx context.Context, e Event) error {
 		data := &store.MessagePersistData{
 			Message:      &store.Message{SourceID: p.sourceID, SourceMessageID: e.Message.ID, MessageType: SourceType, SentAt: sql.NullTime{Time: time.UnixMilli(e.Timestamp).UTC(), Valid: true}, SenderID: sql.NullInt64{Int64: pid, Valid: pid > 0}, Snippet: sql.NullString{String: meetingarchive.Snippet(text), Valid: text != ""}, SizeEstimate: int64(len(text)), PreserveAttachmentStats: true},
 			Conversation: &store.ConversationPersistData{SourceConversationID: key, ConversationType: kind, Title: p.groupNames[key], Participants: []store.ConversationParticipantRef{{ParticipantID: pid, Role: "member"}}, PreserveExistingParticipants: true},
-			Metadata:     &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: raw, RawFormat: "line_webhook_json", Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{name}}}, PreserveLabels: true, FTS: &store.FTSDoc{Body: text, FromAddr: name},
+			Metadata:     &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: raw, RawFormat: "line_webhook_json", Recipients: []store.RecipientSet{{Type: "from", ParticipantIDs: []int64{pid}, DisplayNames: []string{name}}}, PreserveLabels: true, FTS: &store.FTSDoc{Body: text},
 		}
 		if e.Source.Type == "group" || e.Source.Type == "room" {
 			identifier := participantIdentifier(p.channelID, key, e.Source.UserID)
@@ -249,7 +249,7 @@ func (p *Processor) edit(ctx context.Context, e Event) error {
 		return err
 	}
 	text := e.Message.Text
-	_, err = p.store.PersistMessageContext(ctx, &store.MessagePersistData{Message: &store.Message{ID: row.ID, SourceID: p.sourceID, SourceMessageID: e.Message.ID, ConversationID: row.ConversationID, MessageType: SourceType, SentAt: row.SentAt, InternalDate: row.InternalDate, SenderID: row.SenderID, Subject: row.Subject, Snippet: sql.NullString{String: meetingarchive.Snippet(text), Valid: text != ""}, SizeEstimate: int64(len(text)), PreserveAttachmentStats: true}, Edited: true, Metadata: &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: e.Raw, RawFormat: "line_webhook_json", PreserveLabels: true, FTS: &store.FTSDoc{Body: text, Subject: row.Subject.String, FromAddr: prior.SenderDisplayName}})
+	_, err = p.store.PersistMessageContext(ctx, &store.MessagePersistData{Message: &store.Message{ID: row.ID, SourceID: p.sourceID, SourceMessageID: e.Message.ID, ConversationID: row.ConversationID, MessageType: SourceType, SentAt: row.SentAt, InternalDate: row.InternalDate, SenderID: row.SenderID, Subject: row.Subject, Snippet: sql.NullString{String: meetingarchive.Snippet(text), Valid: text != ""}, SizeEstimate: int64(len(text)), PreserveAttachmentStats: true}, Edited: true, Metadata: &metadata, BodyText: sql.NullString{String: text, Valid: true}, RawMIME: e.Raw, RawFormat: "line_webhook_json", PreserveLabels: true, FTS: &store.FTSDoc{Body: text, Subject: row.Subject.String}})
 	if err != nil {
 		return err
 	}

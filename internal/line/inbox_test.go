@@ -432,7 +432,7 @@ func TestProcessorLateOriginalReconcilesExpiredRetryInSamePass(t *testing.T) {
 	checks.Equal("processed", state)
 }
 
-func TestProcessorEditPreservesOriginalSenderSearchAfterRename(t *testing.T) {
+func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
@@ -444,15 +444,15 @@ func TestProcessorEditPreservesOriginalSenderSearchAfterRename(t *testing.T) {
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 
-	_, total, err := f.st.SearchMessagesContext(context.Background(), "Original Name", 0, 10)
+	archived, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 	must.NoError(err)
-	checks.Equal(int64(1), total)
+	checks.Equal("Original Name", archived.SenderDisplayName)
 
 	_, err = f.st.RebuildFTSContext(t.Context(), nil)
 	must.NoError(err)
-	_, total, err = f.st.SearchMessagesContext(t.Context(), "Original Name", 0, 10)
+	archived, err = f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 	must.NoError(err)
-	checks.Equal(int64(1), total)
+	checks.Equal("Original Name", archived.SenderDisplayName)
 
 	f.now = f.now.Add(25 * time.Hour)
 	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: http.StatusOK, Body: `{"userId":"` + testUser + `","displayName":"Renamed Sender"}`})
@@ -467,14 +467,14 @@ func TestProcessorEditPreservesOriginalSenderSearchAfterRename(t *testing.T) {
 	f.enqueue(t, edit, time.Time{})
 	f.run(t)
 
-	_, total, err = f.st.SearchMessagesContext(context.Background(), "Original Name", 0, 10)
+	archived, err = f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 	must.NoError(err)
-	checks.Equal(int64(1), total)
+	checks.Equal("Original Name", archived.SenderDisplayName)
 	_, err = f.st.RebuildFTSContext(t.Context(), nil)
 	must.NoError(err)
-	_, total, err = f.st.SearchMessagesContext(t.Context(), "Original Name", 0, 10)
+	archived, err = f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 	must.NoError(err)
-	checks.Equal(int64(1), total)
+	checks.Equal("Original Name", archived.SenderDisplayName)
 }
 
 func TestProcessorEditDropsRemovedNativeTextMetadata(t *testing.T) {
@@ -586,9 +586,9 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 		f := newInboxFixture(t)
 		f.enqueue(t, f.message("1", "first message text", f.now.UnixMilli()), time.Time{})
 		f.run(t)
-		_, total, err := f.st.SearchMessagesContext(context.Background(), "Example User", 0, 10)
+		archived, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 		must.NoError(err)
-		checks.Equal(int64(1), total)
+		checks.Equal("Example User", archived.SenderDisplayName)
 		count, err := f.st.CountMessagesForSource(f.source.ID)
 		must.NoError(err)
 		checks.Equal(int64(1), count)
@@ -613,9 +613,9 @@ func TestProcessorProfileFailureKeepsText(t *testing.T) {
 		status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 		must.NoError(err)
 		checks.Zero(status.Pending)
-		_, total, err := f.st.SearchMessagesContext(context.Background(), "Example User", 0, 10)
+		archived, err := f.st.LineMessageContext(t.Context(), f.source.ID, "1")
 		must.NoError(err)
-		checks.Equal(int64(1), total)
+		checks.Equal("Example User", archived.SenderDisplayName)
 		count, err := f.st.CountMessagesForSource(f.source.ID)
 		must.NoError(err)
 		checks.Equal(int64(1), count)
@@ -1071,9 +1071,6 @@ func TestProcessorProfileRefreshUpdatesObservedPresentation(t *testing.T) {
 			if !curated {
 				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT mr.display_name FROM message_recipients mr JOIN messages m ON m.id=mr.message_id WHERE m.source_id=? AND m.source_message_id=? AND mr.recipient_type='from'`), f.source.ID, "2").Scan(&name))
 				assert.Equal(t, "Updated user", name)
-				_, total, err := f.st.SearchMessagesContext(t.Context(), "Updated user", 0, 10)
-				must.NoError(err)
-				assert.Equal(t, int64(1), total)
 			}
 		})
 	}

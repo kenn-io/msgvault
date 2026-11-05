@@ -610,7 +610,7 @@ func (s *Store) LineMessageContext(ctx context.Context, sourceID int64, messageI
 }
 
 // UpdateLineMessageSenderDisplayNameContext fills an uncached LINE sender
-// snapshot and its FTS document without replacing edits or message contents.
+// snapshot without replacing edits or message contents.
 func (s *Store) UpdateLineMessageSenderDisplayNameContext(ctx context.Context, sourceID, messageID int64, name string) error {
 	if sourceID <= 0 || messageID <= 0 {
 		return errors.New("invalid LINE message identity")
@@ -634,23 +634,10 @@ func (s *Store) UpdateLineMessageSenderDisplayNameContext(ctx context.Context, s
 		if actualSourceID != sourceID || messageType != "line" {
 			return errors.New("LINE message does not belong to the requested source")
 		}
-		result, err := tx.ExecContext(ctx, `UPDATE message_recipients SET display_name=?
+		_, err := tx.ExecContext(ctx, `UPDATE message_recipients SET display_name=?
  WHERE message_id=? AND recipient_type='from' AND COALESCE(display_name,'')=''`, name, messageID)
 		if err != nil {
 			return fmt.Errorf("update LINE sender snapshot: %w", err)
-		}
-		changed, err := result.RowsAffected()
-		if err != nil || changed == 0 || !s.fts5Available {
-			return err
-		}
-		row, err := s.loadDerivedEmailText(q, messageID)
-		if err != nil {
-			return fmt.Errorf("read LINE search document: %w", err)
-		}
-		row.fts.Body = row.body
-		_, err = s.upsertFTSOrUnsearchable(q, row.fts)
-		if err != nil {
-			return fmt.Errorf("update LINE sender search: %w", err)
 		}
 		return nil
 	})
