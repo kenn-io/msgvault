@@ -13,6 +13,8 @@ func TestIs(t *testing.T) {
 		content Content
 		want    bool
 	}{
+		{"verify account", Content{Text: "Use 482913 to verify your account"}, true},
+		{"four line breaks", Content{Text: "Your one-time passcode:\n\n\n\n482913"}, true},
 		{"newline blank", Content{Text: "Your verification code is:\n\n482913"}, true},
 		{"newline", Content{Text: "Your code:\n482913"}, true},
 		{"CRLF", Content{Text: "Your code:\r\n482913"}, true},
@@ -20,7 +22,7 @@ func TestIs(t *testing.T) {
 		{"reverse newline", Content{Text: "Order 123456 shipped.\nEnter your code below"}, false},
 		{"promo newline", Content{Text: "Promo code\n\nOrder 1234567 shipped"}, false},
 		{"same line sentence", Content{Text: "Here is your verification code. 482913"}, false},
-		{"too many lines", Content{Text: "Your code:\n\n\n482913"}, false},
+		{"too many lines", Content{Text: "Your code:\n\n\n\n\n482913"}, false},
 		{"reverse line break", Content{Text: "482913\nis your verification code"}, false},
 		{"title context", Content{Title: "Your code", Text: "482913"}, true},
 		{"filename context", Content{Text: "Your code", Filenames: []string{"482913.txt"}}, true},

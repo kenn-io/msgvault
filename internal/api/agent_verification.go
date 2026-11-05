@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.kenn.io/msgvault/internal/agentgrant"
@@ -61,7 +62,7 @@ func withholdRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows
 		ids[i] = id(&rows[i])
 	}
 	withheld, ok := s.verificationWithheld(w, r, ids)
-	if ok {
+	if ok && mask != nil {
 		for i := range rows {
 			if withheld[id(&rows[i])] {
 				mask(&rows[i])
@@ -71,30 +72,26 @@ func withholdRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows
 	return withheld, ok
 }
 
-func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, rows []MessageSummary, contexts []BodySearchContext) bool {
-	withheld, ok := withholdRows(s, w, r, rows, func(row *MessageSummary) int64 { return row.ID }, func(row *MessageSummary) {
+func (s *Server) maskMessageSummaries(w http.ResponseWriter, r *http.Request, rows []MessageSummary) bool {
+	_, ok := withholdRows(s, w, r, rows, func(row *MessageSummary) int64 { return row.ID }, func(row *MessageSummary) {
 		row.Subject, row.Snippet = verification.Masked, verification.Masked
 	})
-	for i := range contexts {
-		if withheld[contexts[i].MessageID] {
-			for j := range contexts[i].ContextSnippets {
-				contexts[i].ContextSnippets[j] = verification.Masked
-			}
-		}
-	}
 	return ok
 }
 
-func (s *Server) maskQuerySummaries(w http.ResponseWriter, r *http.Request, rows []query.MessageSummary) bool {
-	_, ok := withholdRows(s, w, r, rows, func(row *query.MessageSummary) int64 { return row.ID }, func(row *query.MessageSummary) {
-		row.Subject, row.Snippet, row.MatchSnippet, row.ConversationTitle = verification.Masked, verification.Masked, verification.Masked, verification.Masked
-		if row.BodyText != "" {
-			row.BodyText = verification.Masked
-		}
-		for j := range row.AttachmentNames {
-			row.AttachmentNames[j] = verification.Masked
-		}
-	})
+func filterVerificationRows[T any](s *Server, w http.ResponseWriter, r *http.Request, rows *[]T, id func(*T) int64) (map[int64]bool, bool) {
+	withheld, ok := withholdRows(s, w, r, *rows, id, nil)
+	if ok {
+		*rows = slices.DeleteFunc(*rows, func(row T) bool { return withheld[id(&row)] })
+	}
+	return withheld, ok
+}
+
+func (s *Server) filterSearchSummaries(w http.ResponseWriter, r *http.Request, rows *[]MessageSummary, contexts *[]BodySearchContext) bool {
+	withheld, ok := filterVerificationRows(s, w, r, rows, func(row *MessageSummary) int64 { return row.ID })
+	if contexts != nil {
+		*contexts = slices.DeleteFunc(*contexts, func(row BodySearchContext) bool { return withheld[row.MessageID] })
+	}
 	return ok
 }
 

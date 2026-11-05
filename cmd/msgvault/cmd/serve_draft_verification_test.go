@@ -18,13 +18,12 @@ import (
 func TestDraftLifecycleVerificationContent(t *testing.T) {
 	for _, tc := range []struct {
 		name, subject, body string
-		masked              bool
 		candidate           bool
 	}{
-		{"subject code", "482913 is your verification code", "Thanks", true, false},
-		{"body code", "Question", "Your verification code is 482913", true, false},
-		{"candidate code", "Question", "Thanks", true, true},
-		{"ordinary reply", "Question", "Thanks", false, false},
+		{"bare reply subject", "482913", "Thanks", false},
+		{"body code", "Question", "Your verification code is 482913", false},
+		{"candidate code", "Question", "Thanks", true},
+		{"ordinary reply", "Question", "Thanks", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
@@ -78,9 +77,9 @@ func TestDraftLifecycleVerificationContent(t *testing.T) {
 							return nil
 						})
 						requirements.NoError(err)
-						if tc.masked && reader.grant == grant {
+						if reader.grant == grant {
 							assertions.NotContains(out.String(), "482913")
-							assertions.Contains(out.String(), "[verification content masked]")
+							assertions.NotContains(out.String(), tc.body)
 						} else {
 							assertions.Contains(out.String(), tc.body)
 						}
@@ -89,10 +88,10 @@ func TestDraftLifecycleVerificationContent(t *testing.T) {
 							requirements.NoError(json.Unmarshal([]byte(out.String()), &output))
 							assertions.Equal(created.DraftID, output.DraftID)
 							assertions.Equal(created.Revision, output.Revision)
-							if tc.masked && reader.grant == grant {
-								assertions.Equal("[verification content masked]", output.Content)
-								assertions.Equal("[verification content masked]", output.RawMIME)
-								assertions.Equal("[verification content masked]", output.CandidateContent)
+							if reader.grant == grant {
+								assertions.Empty(output.Content)
+								assertions.Empty(output.RawMIME)
+								assertions.Empty(output.CandidateContent)
 							} else {
 								assertions.Contains(output.RawMIME, "Re: "+tc.subject)
 								assertions.Equal(tc.body, output.Content)
@@ -105,5 +104,76 @@ func TestDraftLifecycleVerificationContent(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestDraftLifecycleBeeperVerificationMetadata(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	f := newBeeperDraftFixture(t)
+	created, err := f.create(t, nil, "Your verification code is 482913")
+	requirements.NoError(err)
+	_, err = f.store.ClaimBeeperDraftContext(t.Context(), created.DraftID, created.Revision, store.BeeperDraftOperationEdit, "Use 482913 to verify your account")
+	requirements.NoError(err)
+	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}, Sources: []agentgrant.SourceRef{{Type: "beeper", Identifier: f.source.Identifier}}}
+	for _, reader := range []*agentgrant.Grant{grant, nil, {Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit, agentgrant.PermissionVerificationRead}, Sources: grant.Sources}} {
+		output, err := f.run(t, reader, api.CLIRunDraftGetCommand, created.DraftID)
+		requirements.NoError(err)
+		assertions.Equal(created.DraftID, output.DraftID)
+		assertions.Equal(store.BeeperDraftOperationEdit, output.PendingOperation)
+		if reader == grant {
+			assertions.Nil(output.Content)
+			assertions.Empty(output.CandidateContent)
+		} else {
+			requirements.NotNil(output.Content)
+			assertions.Contains(*output.Content, "482913")
+			assertions.Contains(output.CandidateContent, "482913")
+		}
+	}
+}
+
+func TestDraftLifecycleChatVerificationMetadata(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("slack", "workspace")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversationWithType(source.ID, "C1", "channel", "General")
+	requirements.NoError(err)
+	draft, err := st.CreateChatDraftContext(t.Context(), conversation, 0, "Your verification code is 482913", func(string, string) error { return nil })
+	requirements.NoError(err)
+	adapter := &storeAPIAdapter{store: st}
+	grant := &agentgrant.Grant{Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit}, Sources: []agentgrant.SourceRef{{Type: source.SourceType, Identifier: source.Identifier}}}
+	for _, reader := range []*agentgrant.Grant{grant, nil, {Permissions: []agentgrant.Permission{agentgrant.PermissionDraftEdit, agentgrant.PermissionVerificationRead}, Sources: grant.Sources}} {
+		var output chatDraftOutput
+		err := adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}, Grant: reader}, func(event api.CLIRunEvent) error { return json.Unmarshal([]byte(event.Data), &output) })
+		requirements.NoError(err)
+		assertions.Equal(draft.DraftID, output.DraftID)
+		if reader == grant {
+			assertions.Empty(output.Body)
+		} else {
+			assertions.Equal("Your verification code is 482913", output.Body)
+		}
+	}
+}
+
+func TestDraftLifecycleGmailVerificationMetadata(t *testing.T) {
+	requirements, assertions := require.New(t), assert.New(t)
+	fixture := newGmailDraftTestFixture(t)
+	draft := fixture.seedDraft(t)
+	grant := delegatedGmailDraftGrant(fixture, []agentgrant.Permission{agentgrant.PermissionDraftEdit}, fixture.source.SourceType, fixture.source.Identifier)
+	reveal := *grant
+	reveal.Permissions = append([]agentgrant.Permission{agentgrant.PermissionVerificationRead}, grant.Permissions...)
+	for _, reader := range []*agentgrant.Grant{grant, nil, &reveal} {
+		var output gmailDraftLifecycleOutput
+		err := fixture.adapter.runCLIDraftLifecycle(t.Context(), api.CLIRunRequest{Args: []string{api.CLIRunDraftGetCommand, draft.DraftID, "--json"}, Grant: reader}, func(event api.CLIRunEvent) error { return json.Unmarshal([]byte(event.Data), &output) })
+		requirements.NoError(err)
+		assertions.Equal(draft.DraftID, output.DraftID)
+		if reader == grant {
+			assertions.Empty(output.Content)
+			assertions.Empty(output.RawMIME)
+			assertions.Empty(output.CandidateContent)
+		} else {
+			assertions.NotEmpty(output.Content)
+			assertions.NotEmpty(output.RawMIME)
+		}
 	}
 }

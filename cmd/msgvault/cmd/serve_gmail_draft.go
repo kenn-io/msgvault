@@ -567,7 +567,7 @@ func emitGmailDraftLifecycleOutput(
 	if emit == nil {
 		return nil
 	}
-	if intent.MetadataOnly {
+	if intent.MetadataOnly || intent.WithholdVerification {
 		output.Content = ""
 		output.RawMIME = ""
 		output.CandidateContent = ""

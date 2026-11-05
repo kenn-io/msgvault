@@ -2521,7 +2521,7 @@ func (s *Server) handleCLISearch(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if !s.maskQuerySummaries(w, r, results) {
+	if _, ok := filterVerificationRows(s, w, r, &results, func(row *query.MessageSummary) int64 { return row.ID }); !ok {
 		return
 	}
 	// Search leaves summary BodyText empty; /cli/message serves full bodies.

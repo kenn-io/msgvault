@@ -28,7 +28,7 @@ var (
 	directYearCode = regexp.MustCompile(`(?:` + codeCue.String() + `)\s*(?:is|:|-)?\s*[0-9]{4}$`)
 	codeGap        = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|:|-|your|the|verification|security)[\s\x{00a0}]*)*$`)
 	reverseGap     = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
-	signInAfter    = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in)\b`)
+	signInAfter    = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in|verify your account)\b`)
 	useBefore      = regexp.MustCompile(`(?i)\buse\s+$`)
 	link           = regexp.MustCompile(`https?://[^\s<>"']+`)
 )
@@ -127,7 +127,7 @@ func nearCue(window string, before bool) bool {
 		if before {
 			gap = strings.ReplaceAll(window[loc[1]:], "\r\n", "\n")
 			gap = strings.Replace(gap, ".\n", "\n", 1) // the cue line may end a sentence
-			breaks = 2
+			breaks = 4
 		}
 		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
 			return true

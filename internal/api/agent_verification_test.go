@@ -67,7 +67,11 @@ func TestAgentVerificationReads(t *testing.T) {
 			assertions.NotContains(w.Body.String(), "482913")
 			assertions.NotContains(w.Body.String(), "4829")
 			assertions.NotContains(w.Body.String(), "abcDEF1234567890")
-			assertions.Contains(w.Body.String(), "[verification content masked]")
+			if strings.Contains(path, "q=") {
+				assertions.NotContains(w.Body.String(), "[verification content masked]")
+			} else {
+				assertions.Contains(w.Body.String(), "[verification content masked]")
+			}
 			for _, credential := range []string{"owner", revealToken} {
 				req := httptest.NewRequest(http.MethodGet, "/api/v1"+path, nil)
 				req.RemoteAddr = "127.0.0.1:1234"
@@ -91,7 +95,11 @@ func TestAgentVerificationReads(t *testing.T) {
 		srv.Router().ServeHTTP(w, req)
 		assertions.Equal(http.StatusOK, w.Code, path+": "+w.Body.String())
 		assertions.NotContains(w.Body.String(), "abcDEF1234567890", path)
-		assertions.Contains(w.Body.String(), "[verification content masked]", path)
+		if strings.Contains(path, "q=") {
+			assertions.NotContains(w.Body.String(), "[verification content masked]", path)
+		} else {
+			assertions.Contains(w.Body.String(), "[verification content masked]", path)
+		}
 	}
 }
 
@@ -208,7 +216,7 @@ func TestAgentVerificationUnavailableLoader(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/messages", nil)
 	req.Header.Set(apiprotocol.AgentTokenHeader, token)
 	w := httptest.NewRecorder()
-	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}, nil))
+	assertions.False(srv.maskMessageSummaries(w, req, []MessageSummary{{ID: id, Subject: "Your code is 482913"}}))
 	requireErrorCode(t, w, http.StatusServiceUnavailable, "source_scope_unavailable")
 	assertions.NotContains(w.Body.String(), "482913")
 }
@@ -272,7 +280,7 @@ func TestAgentVerificationFields(t *testing.T) {
 					assertions.NotContains(w.Body.String(), "abcDEF1234567890")
 					if path == fmt.Sprintf("/messages/%d", id) || strings.HasPrefix(path, "/cli/message?") {
 						assertions.Contains(w.Body.String(), "[verification content masked]")
-					} else if (tc.name != "snippet" || !strings.HasPrefix(path, "/search/deep")) && (tc.name != "title" || strings.HasPrefix(path, "/cli/search")) {
+					} else if !strings.Contains(path, "q=") && (tc.name != "snippet" || !strings.HasPrefix(path, "/search/deep")) && (tc.name != "title" || strings.HasPrefix(path, "/cli/search")) {
 						assertions.Contains(w.Body.String(), "[verification content masked]")
 					}
 				})
@@ -417,4 +425,126 @@ func TestAgentVerificationDetailUsesLoadedBody(t *testing.T) {
 	detail := &query.MessageDetail{ID: id, Subject: "Account", BodyText: "Your code is 482913"}
 	srv.maskMessageDetail(req, detail)
 	assertions.Equal("[verification content masked]", detail.BodyText)
+}
+
+func TestAgentVerificationSearchOmitsMatches(t *testing.T) {
+	requirements := require.New(t)
+	st := testutil.NewTestStore(t)
+	source, hidden, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "otp", "Your verification code is 482913", "Your verification code is 482913")
+	requirements.NoError(err)
+	_, ordinary, err := testutil.CreateIndexedSourceMessage(st, "reader@example.test", "ordinary", "Order 482913 shipped", "Order 482913 shipped")
+	requirements.NoError(err)
+	participant, err := st.EnsureParticipant("sender@example.test", "Sender", "example.test")
+	requirements.NoError(err)
+	for _, id := range []int64{hidden, ordinary} {
+		requirements.NoError(st.ReplaceMessageRecipients(id, "from", []int64{participant}, nil))
+	}
+	srv := NewServerWithOptions(ServerOptions{Config: &config.Config{HomeDir: t.TempDir(), Server: config.ServerConfig{APIKey: "owner", AgentAccess: true}}, Store: st, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
+	t.Cleanup(func() { requirements.NoError(srv.Shutdown(context.Background())) })
+	requestCount := 0
+	for _, mode := range []string{"delegate", "reveal", "owner"} {
+		permissions := []agentgrant.Permission{agentgrant.PermissionSearchRead, agentgrant.PermissionStatsRead}
+		if mode == "reveal" {
+			permissions = append(permissions, agentgrant.PermissionVerificationRead)
+		}
+		_, token, _, err := srv.agentGrants.Issue(mode, permissions, []agentgrant.SourceRef{{ID: source.ID, Type: source.SourceType, Identifier: source.Identifier}}, time.Time{})
+		requirements.NoError(err)
+		for _, route := range []string{"/search?q=", "/search/fast?q=", "/search/fast?view_type=senders&q=", "/search/deep?q=", "/search/deep?view_type=senders&q=", "/search/deep?scope=body&q=", "/cli/search?q="} {
+			for _, term := range []string{"482913", "48291", "4829", "shipped", "verification"} {
+				t.Run(mode+route+term, func(t *testing.T) {
+					requirements, assertions := require.New(t), assert.New(t)
+					req := httptest.NewRequest(http.MethodGet, "/api/v1"+route+term, nil)
+					requestCount++
+					req.RemoteAddr = fmt.Sprintf("127.0.0.%d:1234", requestCount)
+					if mode == "owner" {
+						req.Header.Set("X-Api-Key", "owner")
+					} else {
+						req.Header.Set(apiprotocol.AgentTokenHeader, token)
+					}
+					w := httptest.NewRecorder()
+					srv.Router().ServeHTTP(w, req)
+					requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+					type searchRow struct {
+						ID int64 `json:"id"`
+					}
+					var response struct {
+						Messages     []searchRow         `json:"messages"`
+						Results      []searchRow         `json:"results"`
+						Total        *int64              `json:"total"`
+						TotalCount   *int64              `json:"total_count"`
+						Stats        *TotalStatsResponse `json:"stats"`
+						BodyContexts []BodySearchContext `json:"body_contexts"`
+					}
+					requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+					ids := make([]int64, 0)
+					for _, row := range response.Messages {
+						ids = append(ids, row.ID)
+					}
+					for _, row := range response.Results {
+						ids = append(ids, row.ID)
+					}
+					if term != "verification" {
+						assertions.Contains(ids, ordinary)
+					} else {
+						assertions.NotContains(ids, ordinary)
+					}
+					if mode == "delegate" || term == "shipped" {
+						assertions.NotContains(ids, hidden)
+						if term != "verification" {
+							assertions.Len(ids, 1)
+						} else {
+							assertions.Empty(ids)
+						}
+					} else {
+						assertions.Contains(ids, hidden)
+					}
+					for _, count := range []*int64{response.Total, response.TotalCount} {
+						if count != nil {
+							assertions.Equal(int64(len(ids)), *count)
+						}
+					}
+					if mode == "delegate" {
+						assertions.Nil(response.Stats)
+						for _, context := range response.BodyContexts {
+							assertions.NotEqual(hidden, context.MessageID)
+						}
+					}
+				})
+			}
+		}
+		for _, route := range []string{"/aggregates?view_type=senders&search_query=482913", "/aggregates/sub?view_type=senders&search_query=482913", "/stats/total?search_query=482913", "/search/fast?limit=0&q=482913"} {
+			t.Run(mode+route, func(t *testing.T) {
+				requirements, assertions := require.New(t), assert.New(t)
+				req := httptest.NewRequest(http.MethodGet, "/api/v1"+route, nil)
+				requestCount++
+				req.RemoteAddr = fmt.Sprintf("127.0.0.%d:1234", requestCount)
+				if mode == "owner" {
+					req.Header.Set("X-Api-Key", "owner")
+				} else {
+					req.Header.Set(apiprotocol.AgentTokenHeader, token)
+				}
+				w := httptest.NewRecorder()
+				srv.Router().ServeHTTP(w, req)
+				requirements.Equal(http.StatusOK, w.Code, w.Body.String())
+				var response struct {
+					Rows         []AggregateRowJSON `json:"rows"`
+					MessageCount int64              `json:"message_count"`
+					TotalCount   int64              `json:"total_count"`
+				}
+				requirements.NoError(json.Unmarshal(w.Body.Bytes(), &response))
+				if mode == "delegate" {
+					assertions.Empty(response.Rows)
+					assertions.Zero(response.MessageCount)
+					assertions.Zero(response.TotalCount)
+				} else if strings.HasPrefix(route, "/search/") {
+					assertions.Equal(int64(2), response.TotalCount)
+				} else if strings.HasPrefix(route, "/stats/") {
+					assertions.Equal(int64(2), response.MessageCount)
+				} else {
+					requirements.Len(response.Rows, 1)
+					assertions.Equal(int64(2), response.Rows[0].Count)
+				}
+			})
+		}
+	}
 }
