@@ -489,29 +489,30 @@ On newer `main` builds, `get_message` with `include_segments: true` returns
 `segments_version: "seg-v1"` and `segments` with `kind`, `start`, and `end`.
 For plain-text email, kinds are `authored`, `quoted`, `forwarded`, and
 `signature`. Quoted ranges carry `depth`, the count of leading `>` markers,
-or 1 for an attribution line or unprefixed history block. Outlook history
-blocks are quoted for both replies and forwards. They require consecutive
-`From:` and `Sent:` lines, then a `Subject:` within the first eight lines,
-before any blank line. `Date:` can replace `Sent:` only when an underscore
-divider of at least ten characters precedes the block. Recognized separators
-are English `Original Message`, `Forwarded message`, and
+or 1 for an attribution line or unprefixed history block.
+
+Outlook history blocks are quoted for both replies and forwards. They require
+consecutive `From:` and `Sent:` lines, then a `Subject:` within the first 64
+lines, before any blank line. `Date:` can replace `Sent:` only when an
+underscore divider of at least ten characters precedes the block. Recognized
+separators are English `Original Message`, `Forwarded message`, and
 `Begin forwarded message:`, plus Thunderbird's German `Original-Nachricht`
 and `Weitergeleitete Nachricht` and French `Message original` and
 `Message transféré` lines. A relay label, quoted or forwarded, runs from
 the separator or Outlook history block to the end of the body.
-Reply headers are recognized on one line in English and in Thunderbird's German and French dated forms.
-Wrapped headers and other localized headers stay authored;
-the quoted lines beneath them still get quoted ranges. A signature starts
-only at an exact `-- ` line, including the trailing space.
+Reply headers are recognized on one line in English and in Thunderbird's
+German and French dated forms. Wrapped headers and other localized headers
+stay authored; the quoted lines beneath them still get quoted ranges. A
+signature starts only at an exact `-- ` line, including the trailing space.
 
 Authored means no relay marker was recognized; it doesn't prove
 who wrote the text. Only ranges overlapping the returned body window appear.
 Their byte offsets refer to the whole selected body, with an exclusive `end`,
 and stay unclipped across pages. Classification examines at most 1 MiB,
 stopping at the last complete line; remaining bytes keep the last label.
-Each response returns at most 1,000 ranges. `segments_truncated: true` reports
-either limit. Non-email messages get one authored range. HTML returns
-`segments_unavailable: "unsupported_format"` with no ranges.
+`segments_truncated: true` reports the scan limit. Non-email messages get one
+authored range. HTML returns `segments_unavailable: "unsupported_format"` with
+no ranges.
 
 For a calendar event, `get_message` also returns `calendar` with `status`,
 `sequence`, `start`, `end`, `all_day`, `time_zone`, and `ical_uid`, so an

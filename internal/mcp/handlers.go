@@ -1636,13 +1636,11 @@ func lineNumberAt(body string, byteOffset int) int {
 	return 1 + strings.Count(body[:byteOffset], "\n")
 }
 
-const maxSegmentsPerResponse = 1000
-
 type getMessageResponse struct {
 	SenderAuth           *senderauth.Verdict       `json:"sender_auth,omitempty"`
 	SegmentsVersion      string                    `json:"segments_version,omitempty" jsonschema:"Segment classification version, present when plain-text ranges were requested."`
 	Segments             []msgsegment.Segment      `json:"segments,omitempty" jsonschema:"Ranges overlapping this body window, with absolute, unclipped byte offsets."`
-	SegmentsTruncated    bool                      `json:"segments_truncated,omitzero" jsonschema:"The 1 MiB scan limit or 1,000-range response limit was reached."`
+	SegmentsTruncated    bool                      `json:"segments_truncated,omitzero" jsonschema:"The 1 MiB scan limit was reached; unexamined bytes keep the last label."`
 	SegmentsUnavailable  string                    `json:"segments_unavailable,omitempty" jsonschema:"unsupported_format when ranges were requested for HTML."`
 	WebURL               string                    `json:"web_url,omitempty"`
 	ID                   int64                     `json:"id"`
@@ -1788,10 +1786,6 @@ func (h *handlers) getMessage(ctx context.Context, req toolRequest) (*toolResult
 				}
 				if segment.End <= sliceStart {
 					continue
-				}
-				if len(response.Segments) == maxSegmentsPerResponse {
-					response.SegmentsTruncated = true
-					break
 				}
 				response.Segments = append(response.Segments, segment)
 			}

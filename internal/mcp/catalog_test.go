@@ -1098,13 +1098,7 @@ func TestGetMessageSegmentsSchema(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
 	tools := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false)
-	var tool map[string]any
-	for _, candidate := range tools {
-		if candidate["name"] == ToolGetMessage {
-			tool = candidate
-			break
-		}
-	}
+	tool := toolsByName(t, tools)[ToolGetMessage]
 	require.NotNil(tool)
 	schema, ok := tool["outputSchema"].(map[string]any)
 	require.True(ok, "outputSchema: %#v", tool["outputSchema"])

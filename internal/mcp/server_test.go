@@ -2040,7 +2040,6 @@ func TestGetMessage(t *testing.T) {
 
 	t.Run("alternating body", func(t *testing.T) {
 		assert := assert.New(t)
-		require := require.New(t)
 		body := strings.Repeat("a\n> b\n", 70000)
 		h := newTestHandlers(&querytest.MockEngine{Messages: map[int64]*query.MessageDetail{
 			42: testutil.NewMessageDetail(42).WithBodyText(body).BuildPtr(),
@@ -2048,16 +2047,6 @@ func TestGetMessage(t *testing.T) {
 		page := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "max_chars": float64(4)})
 		assert.Equal([]msgsegment.Segment{{Kind: msgsegment.Authored, Start: 0, End: 2}, {Kind: msgsegment.Quoted, Start: 2, End: 6, Depth: 1}}, page.Segments)
 		assert.False(page.SegmentsTruncated)
-		full := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "full_body": true})
-		require.Len(full.Segments, maxSegmentsPerResponse)
-		assert.True(full.SegmentsTruncated)
-		for i, segment := range full.Segments {
-			if i%2 == 0 {
-				assert.Equal(msgsegment.Segment{Kind: msgsegment.Authored, Start: i / 2 * 6, End: i/2*6 + 2}, segment)
-			} else {
-				assert.Equal(msgsegment.Segment{Kind: msgsegment.Quoted, Start: i/2*6 + 2, End: i/2*6 + 6, Depth: 1}, segment)
-			}
-		}
 		late := runTool[getMessageResponse](t, ToolGetMessage, h.getMessage, map[string]any{"id": float64(42), "include_segments": true, "offset": float64(419996), "max_chars": float64(4)})
 		assert.Equal([]msgsegment.Segment{{Kind: msgsegment.Quoted, Start: 419996, End: 420000, Depth: 1}}, late.Segments)
 		assert.False(late.SegmentsTruncated)

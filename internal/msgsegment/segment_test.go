@@ -80,8 +80,8 @@ func TestSplitThunderbirdReplyHeaders(t *testing.T) {
 	}{
 		{"German date first", "Am 05.11.2026 um 10:00 schrieb Max <m@x.de>:"},
 		{"German sender first", "Max <m@x.de> schrieb am 05.11.2026 um 10:00:"},
-		{"French date first", "Le 5 novembre 2026 à 10:00, Max <m@x.fr> a écrit :"},
-		{"French sender first", "Max <m@x.fr> a écrit le 5 novembre 2026 à 10:00 :"},
+		{"French date first", "Le 5 novembre 2026 à 10:00, Max <m@x.fr> a écrit\u00a0:"},
+		{"French sender first", "Max <m@x.fr> a écrit le 5 novembre 2026 à 10:00\u00a0:"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Run("quoted history", func(t *testing.T) {
@@ -173,8 +173,9 @@ func TestSplitOutlook(t *testing.T) {
 		{"empty From", "From: \nSent: today\nSubject: Earlier\nOld claim", false},
 		{"empty Sent", "From: sender@example.com\nSent: \nSubject: Earlier\nOld claim", false},
 		{"blank before subject", "From: sender@example.com\nSent: today\n\nSubject: Earlier\nOld claim", false},
-		{"eighth line subject", "From: sender@example.com\nSent: today\nTo: reader@example.com\nCc: a@example.com\nCc: b@example.com\nCc: c@example.com\nCc: d@example.com\nSubject: Earlier\nOld claim", true},
-		{"ninth line subject", "From: sender@example.com\nSent: today\nTo: reader@example.com\nCc: a@example.com\nCc: b@example.com\nCc: c@example.com\nCc: d@example.com\nCc: e@example.com\nSubject: Earlier\nOld claim", false},
+		{"64th line subject", "From: sender@example.com\nSent: today\n" + strings.Repeat("Cc: reader@example.com\n", 61) + "Subject: Earlier\nOld claim", true},
+		{"65th line subject", "From: sender@example.com\nSent: today\n" + strings.Repeat("Cc: reader@example.com\n", 62) + "Subject: Earlier\nOld claim", false},
+		{"wrapped recipients", "From: sender@example.com\nSent: today\nTo: reader@example.com,\n    a@example.com,\n    b@example.com,\n    c@example.com,\n    d@example.com,\n    e@example.com,\n    f@example.com\nSubject: Earlier\nOld claim", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			for _, prefix := range []string{"New\n", "-- \n"} {

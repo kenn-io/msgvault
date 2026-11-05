@@ -42,18 +42,18 @@ var wroteSuffix = regexp.MustCompile(`(?i)\bwrote:\s*$`)
 var thunderbirdDatedAttribution = regexp.MustCompile(`(?i)^(?:` +
 	`Am\s+.+\s+um\s+\d{1,2}:\d{2}\s+schrieb\s+.+:` +
 	`|.+\s+schrieb\s+am\s+.+\s+um\s+\d{1,2}:\d{2}:` +
-	`|Le\s+.+\s+à\s+\d{1,2}:\d{2},\s+.+\s+a\s+écrit\s+:` +
-	`|.+\s+a\s+écrit\s+le\s+.+\s+à\s+\d{1,2}:\d{2}\s+:` +
+	`|Le\s+.+\s+à\s+\d{1,2}:\d{2},\s+.+\s+a\s+écrit[\s\x{A0}]+:` +
+	`|.+\s+a\s+écrit\s+le\s+.+\s+à\s+\d{1,2}:\d{2}[\s\x{A0}]+:` +
 	`)\s*$`)
 
 var relaySeparator = regexp.MustCompile(`(?i)^-{2,}\s*(original message|forwarded message|original-nachricht|weitergeleitete nachricht|message original|message transféré)\s*-{2,}$`)
 var outlookDivider = regexp.MustCompile(`^_{10,}$`)
 
 // outlookHistory requires consecutive From and Sent lines and a Subject
-// within the first eight lines, before any blank line. Date can replace Sent
+// within the first 64 lines, before any blank line. Date can replace Sent
 // when an underscore divider precedes the block.
 func outlookHistory(lines []string) bool {
-	divider := len(lines) > 0 && outlookDivider.MatchString(strings.TrimSpace(lines[0]))
+	divider := outlookDivider.MatchString(strings.TrimSpace(lines[0]))
 	if divider {
 		lines = lines[1:]
 		for len(lines) > 0 && strings.TrimSpace(lines[0]) == "" {
@@ -64,7 +64,7 @@ func outlookHistory(lines []string) bool {
 		!headerValue(lines[1], "sent:") && (!divider || !headerValue(lines[1], "date:")) {
 		return false
 	}
-	for _, line := range lines[2:min(8, len(lines))] {
+	for _, line := range lines[2:min(64, len(lines))] {
 		line = strings.ToLower(strings.TrimSpace(line))
 		if line == "" {
 			return false
@@ -134,10 +134,11 @@ func Split(body string) Result {
 		}
 		if !relay {
 			depth = 0
+			m := relaySeparator.FindStringSubmatch(trimmed)
 			switch {
-			case relaySeparator.MatchString(trimmed):
+			case m != nil:
 				kind, depth = Forwarded, 0
-				phrase := strings.ToLower(relaySeparator.FindStringSubmatch(trimmed)[1])
+				phrase := strings.ToLower(m[1])
 				if phrase == "original message" || phrase == "original-nachricht" || phrase == "message original" {
 					kind, depth = Quoted, 1
 				}
