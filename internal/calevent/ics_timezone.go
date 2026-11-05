@@ -354,7 +354,14 @@ func icsZoneTransitionsInRange(loc *time.Location, start, end time.Time) map[int
 		}
 		add(next)
 		if !next.After(current) {
-			break
+			// Extrapolated ZoneBounds can end a leap year one day early.
+			// Resume at the next UTC year, where the rules are recalculated.
+			current = time.Date(current.UTC().Year()+1, 1, 1, 0, 0, 0, 0, time.UTC)
+			if current.After(end) {
+				break
+			}
+			add(current)
+			continue
 		}
 		current = next
 	}

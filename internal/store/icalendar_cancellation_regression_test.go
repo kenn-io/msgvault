@@ -105,37 +105,39 @@ func TestICalendarHistoricalMasterDoesNotCancelActivity(t *testing.T) {
 }
 
 func TestICalendarSparseMasterCancellationOfDetachedException(t *testing.T) {
-	for _, bounds := range []string{"", "\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H"} {
-		for _, cancelFirst := range []bool{false, true} {
-			t.Run(fmt.Sprintf("bounded=%t/cancel-first=%t", bounds != "", cancelFirst), func(t *testing.T) {
-				assertions, requirements := assert.New(t), require.New(t)
-				st := newRFC822IDBackfillBackendStore(t)
-				source := icsSource(t, st)
-				exception := calendarDocument("REQUEST", "SEQUENCE:3\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H")
-				cancel := calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED"+bounds)
-				docs := [][]byte{exception, cancel}
-				if cancelFirst {
-					docs = [][]byte{cancel, exception}
-				}
-				var exceptionID int64
-				for i, doc := range docs {
-					sum, err := st.PersistICalendarContext(t.Context(), source, doc)
-					requirements.NoError(err)
-					if (i == 0) != cancelFirst {
-						exceptionID = sum.MessageIDs[0]
+	for _, sequence := range []int{1, 3} {
+		for _, bounds := range []string{"", "\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H"} {
+			for _, cancelFirst := range []bool{false, true} {
+				t.Run(fmt.Sprintf("sequence=%d/bounded=%t/cancel-first=%t", sequence, bounds != "", cancelFirst), func(t *testing.T) {
+					assertions, requirements := assert.New(t), require.New(t)
+					st := newRFC822IDBackfillBackendStore(t)
+					source := icsSource(t, st)
+					exception := calendarDocument("REQUEST", fmt.Sprintf("SEQUENCE:%d\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H", sequence))
+					cancel := calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED"+bounds)
+					docs := [][]byte{exception, cancel}
+					if cancelFirst {
+						docs = [][]byte{cancel, exception}
 					}
-				}
-				from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-				page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-				requirements.NoError(err)
-				requirements.Len(page.Occurrences, 1)
-				assertions.Equal(exceptionID, page.Occurrences[0].MessageID)
-				assertions.Equal("cancelled", page.Occurrences[0].Status)
-				candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{exceptionID})
-				requirements.NoError(err)
-				requirements.Len(candidates, 1)
-				assertions.False(candidates[0].Eligible)
-			})
+					var exceptionID int64
+					for i, doc := range docs {
+						sum, err := st.PersistICalendarContext(t.Context(), source, doc)
+						requirements.NoError(err)
+						if (i == 0) != cancelFirst {
+							exceptionID = sum.MessageIDs[0]
+						}
+					}
+					from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
+					page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+					requirements.NoError(err)
+					requirements.Len(page.Occurrences, 1)
+					assertions.Equal(exceptionID, page.Occurrences[0].MessageID)
+					assertions.Equal("cancelled", page.Occurrences[0].Status)
+					candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), []int64{exceptionID})
+					requirements.NoError(err)
+					requirements.Len(candidates, 1)
+					assertions.False(candidates[0].Eligible)
+				})
+			}
 		}
 	}
 }

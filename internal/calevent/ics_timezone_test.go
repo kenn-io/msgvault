@@ -87,6 +87,16 @@ func TestICSTimeZoneMatchingTransitionRulesAcrossYears(t *testing.T) {
 	}
 }
 
+func TestICSTimeZoneUnboundedWeeklySeries(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	raw := strings.Replace(string(newYorkTimezoneCalendar(2027, 9, 0, "2SU")), "FREQ=DAILY;COUNT=365", "FREQ=WEEKLY", 1)
+	components, err := ParseICS([]byte(raw), "", "UTC")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	assertions.Empty(components[0].Event.RecurrenceError)
+	assertions.Equal([]string{"RRULE:FREQ=WEEKLY"}, components[0].Event.Recurrence)
+}
+
 func TestICSTimeZoneRejectsMismatchedTransitionRulesAcrossYears(t *testing.T) {
 	for _, year := range []int{2027, 2063, 2099} {
 		for _, clock := range []struct{ hour, minute int }{{0, 0}, {2, 0}, {23, 59}} {

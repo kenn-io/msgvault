@@ -138,6 +138,9 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		if row.rawFormat == rawFormatICS {
 			if _, err := calevent.ParseICSMetadata([]byte(messageMetadata)); err != nil {
 				row.evidenceError = "event data could not be decoded"
+				row.Event = calevent.Event{}
+				out = append(out, row)
+				continue
 			}
 		}
 		if err := json.Unmarshal([]byte(recurrence), &e.Recurrence); err != nil {
@@ -215,7 +218,7 @@ func queryICSSparseCancellationTombstones(ctx context.Context, r *loggedDB, even
 	return tombstones, nil
 }
 
-func loadCalendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, events []CalendarEventRow, remaining *int) error {
+func loadCalendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, events []CalendarEventRow) error {
 	var ids []any
 	for _, row := range events {
 		if row.Event.Kind == "series" && row.rawFormat == rawFormatICS {
@@ -225,7 +228,7 @@ func loadCalendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, events []
 	if len(ids) == 0 {
 		return nil
 	}
-	diagnostics, err := calendarICSRecurrenceErrors(ctx, r, ids, remaining)
+	diagnostics, err := calendarICSRecurrenceErrors(ctx, r, ids)
 	if errors.Is(err, calrecur.ErrBudgetExceeded) {
 		return calendarRecurrenceBudgetError()
 	}
@@ -241,7 +244,7 @@ func loadCalendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, events []
 	return nil
 }
 
-func calendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, ids []any, remaining *int) (map[int64]string, error) {
+func calendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, ids []any) (map[int64]string, error) {
 	rows, err := r.QueryContext(ctx, `SELECT m.id,r.raw_data,r.compression,m.metadata,s.sync_config
  FROM message_raw r JOIN messages m ON m.id=r.message_id JOIN sources s ON s.id=m.source_id
  WHERE r.raw_format='ics' AND m.id IN (`+placeholders(len(ids))+`)`, ids...)
@@ -257,7 +260,11 @@ func calendarICSRecurrenceErrors(ctx context.Context, r *loggedDB, ids []any, re
 		if err := rows.Scan(&id, &stored, &compression, &metadata, &config); err != nil {
 			return nil, fmt.Errorf("scan ICS recurrence evidence: %w", err)
 		}
-		event, _, err := decodeICSRecurrenceEvidence(ctx, stored, compression, metadata.String, config, remaining)
+		// Retained evidence gets the same per-event verification budget as a
+		// projection rebuild. Time zone checks must leave the listing's
+		// occurrence expansion budget available for ordinary archives.
+		budget := calevent.NewICSParseBudget()
+		event, _, err := decodeICSRecurrenceEvidence(ctx, stored, compression, metadata.String, config, budget.VerificationRemaining)
 		if errors.Is(err, calrecur.ErrBudgetExceeded) {
 			return nil, err
 		}

@@ -11,6 +11,53 @@ import (
 	"go.kenn.io/msgvault/internal/calevent"
 )
 
+func TestICalendarMessageProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name, bounds, start, end string
+		allDay                   bool
+	}{
+		{"all day", "DTSTART;VALUE=DATE:20270302\r\nDTEND;VALUE=DATE:20270304", "2027-03-02", "2027-03-04", true},
+		{"timed", "DTSTART:20270302T120000Z\r\nDTEND:20270302T130000Z", "2027-03-02T12:00:00Z", "2027-03-02T13:00:00Z", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			sum, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:3\r\n"+tc.bounds))
+			requirements.NoError(err)
+			requirements.Len(sum.MessageIDs, 1)
+			msg, err := st.GetMessageContext(t.Context(), sum.MessageIDs[0])
+			requirements.NoError(err)
+			requirements.NotNil(msg.Calendar)
+			assertions.Equal(&CalendarProjection{Status: new("confirmed"), Sequence: new(int64(3)), Start: new(tc.start), End: new(tc.end), AllDay: new(tc.allDay), TimeZone: new("UTC"), ICalUID: new("family@example.com")}, msg.Calendar)
+			_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:4\r\nSTATUS:CANCELLED"))
+			requirements.NoError(err)
+			msg, err = st.GetMessageContext(t.Context(), sum.MessageIDs[0])
+			requirements.NoError(err)
+			assertions.Equal(&CalendarProjection{Status: new("cancelled"), Sequence: new(int64(4)), Start: new(tc.start), End: new(tc.end), AllDay: new(tc.allDay), TimeZone: new("UTC"), ICalUID: new("family@example.com")}, msg.Calendar)
+		})
+	}
+}
+
+func TestICalendarListingRefusesNewerMetadata(t *testing.T) {
+	for _, props := range []string{"", "\r\nRRULE:FREQ=WEEKLY", "\r\nRECURRENCE-ID:20270302T120000Z"} {
+		t.Run(props, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			source := icsSource(t, st)
+			sum, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H"+props))
+			requirements.NoError(err)
+			_, err = st.db.Exec(`UPDATE messages SET metadata=`+st.dialect.JSONBindExpr()+` WHERE id=?`, `{"ics_version":2,"status":"cancelled"}`, sum.MessageIDs[0])
+			requirements.NoError(err)
+			from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
+			page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+			requirements.NoError(err)
+			assertions.Empty(page.Occurrences)
+			assertions.Equal([]CalendarUnexpandable{{MessageID: sum.MessageIDs[0], Reason: "event data could not be decoded"}}, page.Unexpandable)
+		})
+	}
+}
+
 func TestICalendarCancellationArrivalOrdersKeepDetails(t *testing.T) {
 	invite := calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nSUMMARY:Meeting\r\nATTENDEE:mailto:guest@example.com")
 	cancel := calendarDocument("CANCEL", "SEQUENCE:2\r\nDTSTAMP:20270301T130000Z\r\nSTATUS:CANCELLED")
@@ -110,29 +157,6 @@ func TestICalendarArchiveOnlyCancelledMasterDoesNotSuppressException(t *testing.
 	requirements.Len(page.Occurrences, 1)
 	assertions.Equal("confirmed", page.Occurrences[0].Status)
 	assertions.Equal(time.Date(2027, 3, 3, 18, 0, 0, 0, time.UTC), page.Occurrences[0].Start)
-}
-
-func TestICalendarSparseSeriesCancellationTombstoneCancelsMasterlessException(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	exception, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T180000Z\r\nDURATION:PT1H"))
-	requirements.NoError(err)
-	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:2\r\nSTATUS:CANCELLED"))
-	requirements.NoError(err)
-	requirements.Len(exception.MessageIDs, 1)
-
-	from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
-	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
-	requirements.NoError(err)
-	requirements.Len(page.Occurrences, 1)
-	assertions.Equal("cancelled", page.Occurrences[0].Status)
-	assertions.Equal(time.Date(2027, 3, 3, 18, 0, 0, 0, time.UTC), page.Occurrences[0].Start)
-
-	candidates, err := st.LoadActivityCandidatesByIDContext(t.Context(), exception.MessageIDs)
-	requirements.NoError(err)
-	requirements.Len(candidates, 1)
-	assertions.False(candidates[0].Eligible)
 }
 
 func TestICalendarRecoveredMasterSupersedesExceptionByActiveRevision(t *testing.T) {

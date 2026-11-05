@@ -28,7 +28,11 @@ type ICSMetadata struct {
 	Superseded      bool      `json:"ics_superseded,omitempty"`
 	Status          string    `json:"status,omitempty"`
 	AllDay          bool      `json:"all_day"`
-	Sequence        int64     `json:"ics_sequence"`
+	Sequence        int64     `json:"sequence"`
+	Start           string    `json:"start,omitempty"`
+	End             string    `json:"end,omitempty"`
+	TimeZone        string    `json:"time_zone,omitempty"`
+	ICalUID         string    `json:"ical_uid,omitempty"`
 	Stamp           time.Time `json:"ics_stamp"`
 	InviteOrganizer string    `json:"invite_organizer,omitempty"`
 }
@@ -555,7 +559,11 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 				nominalDuration = days > 0 && !zoneEnd.IsZero()
 				end = start
 				if days > 0 {
-					end = end.AddDate(0, 0, days)
+					wall := icsCivilTime(start).AddDate(0, 0, days)
+					end, err = calrecur.ParseLocalDateTime("20060102T150405", wall.Format("20060102T150405"), start.Location())
+					if err != nil {
+						return ICSComponent{}, fmt.Errorf("DURATION: %w", err)
+					}
 				}
 				end = end.Add(elapsed)
 			}
