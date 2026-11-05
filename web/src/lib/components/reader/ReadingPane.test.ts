@@ -42,20 +42,6 @@ function renderPane(row: EntryRow) {
 
 describe('ReadingPane header', () => {
   it.each([
-    [true, 'Back to results'],
-    [false, 'Close reading pane']
-  ])('calls onClose from the header with back=%s', async (back, label) => {
-    const onClose = vi.fn();
-    render(ReadingPane, {
-      client: createAPIClient(vi.fn<typeof fetch>()),
-      predicate: {}, ...(back ? { back: true } : {}), onClose
-    });
-    await fireEvent.click(screen.getByRole('button', { name: label }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-    if (back) expect(screen.queryByRole('button', { name: 'Close reading pane' })).toBeNull();
-  });
-
-  it.each([
     ['email', 'message', 'Email'],
     ['imessage', 'conversation', 'Conversation'],
     ['calendar', 'event', 'Calendar event'],

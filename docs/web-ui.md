@@ -213,7 +213,7 @@ Drag the divider to resize either layout, or focus it and use the arrow keys.
 Double-click the divider to reset its size. The browser remembers your layout
 choice and each layout's size. In windows 640 pixels wide or less, the reader
 fills the results area, and **Back to results** or Escape returns to the list.
-At wider narrow widths, the preview appears below the results and restores your right-side layout when there is room again. Escape closes the reader. Next/previous result shortcuts move between ordinary message previews and are inactive while a recording match is open.
+Above 640 pixels, the preview appears below the results when the results area is narrower than 960 pixels and restores your right-side layout when there is room again. Escape closes the reader. Next/previous result shortcuts move between ordinary message previews and are inactive while a recording match is open.
 
 HTML email follows the app's dark theme by replacing sender-defined text,
 background, and border colors. Images keep their original colors. Choose

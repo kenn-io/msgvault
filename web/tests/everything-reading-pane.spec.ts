@@ -337,6 +337,7 @@ test('phone reader replaces results and Back restores the focused row', async ({
   expect(Math.abs((await reading.boundingBox())!.width - resultsBox.width)).toBeLessThanOrEqual(1);
   await expect(reading.locator('.pane-title')).toHaveText(`Synthetic subject ${index}`);
   await expect(reading.getByRole('button', { name: 'Back to results' })).toBeFocused();
+  await expect(reading.getByRole('button', { name: 'Close reading pane' })).toHaveCount(0);
   await reading.getByRole('button', { name: 'Back to results' }).click();
   await expect(grid).toBeVisible();
   await expect(grid).toBeFocused();
