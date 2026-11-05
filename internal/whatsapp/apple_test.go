@@ -735,6 +735,10 @@ func TestImportAppleSkippedChatWarningsRecorded(t *testing.T) {
 	opts := ImportOptions{Phone: "+15555550100", BatchSize: 2}
 	summary, err := importer.Import(t.Context(), path, opts)
 	require.NoError(err)
+	require.Positive(summary.MessagesProcessed)
+	summary, err = importer.Import(t.Context(), path, opts)
+	require.NoError(err)
+	assert.Zero(summary.MessagesProcessed)
 	assert.Equal(int64(1), summary.Errors)
 	run, err := st.GetLatestSync(summary.SourceID)
 	require.NoError(err)
