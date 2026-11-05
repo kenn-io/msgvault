@@ -23,13 +23,14 @@
   const selectedTarget = $derived(controller.targets.find(target => target.optionID === controller.selectedTargetOption));
   const selectedField = $derived(selectedTarget ? controller.fieldName({ targetCanonical: selectedTarget.canonical, targetKey: selectedTarget.targetKey }, definitions) : undefined);
   const pins = $derived(controller.pins.rows.filter(pin => pin.pinned && (controller.selectedSection === 'pins' || !selectedTarget || pin.targetCanonical === selectedTarget.canonical)));
+  const unpins = $derived(controller.pins.rows.filter(pin => !pin.pinned && (controller.selectedSection === 'pins' || !selectedTarget || pin.targetCanonical === selectedTarget.canonical)));
   const attributeIDs = $derived(pins.filter(pin => pin.kind === 'attribute').flatMap(pin => pin.targetKey ? [pin.targetKey] : []));
   function emptyTitle(section: string): string { return selectedField ? `No ${section} for ${selectedField} yet.` : `No ${section} yet`; }
 
   onDestroy(() => { destroyed = true; });
 
   const sectionOptions = [
-    { value: 'evidence', label: 'Evidence' }, { value: 'claims', label: 'Claims' },
+    { value: 'claims', label: 'Claims' }, { value: 'evidence', label: 'Evidence' },
     { value: 'decisions', label: 'Decisions' }, { value: 'pins', label: 'Pins' }
   ];
   const targetOptions = $derived([
@@ -72,17 +73,11 @@
   {#if controller.catalogLoading}<p class="loading" role="status"><Spinner size={12} label="Loading fact targets" /> Loading fact targets…</p>
   {:else if controller.catalogError}<div class="message" role="alert"><p>{controller.catalogError}</p><Button label="Retry fact targets" size="sm" onclick={() => void controller.retryCatalog()} /></div>{/if}
 
-  {#if controller.targets.length > 0}
-    <details class="about">
-      <summary>About these fields</summary>
-      <ul class="schema">{#each controller.targets as target (target.optionID)}<li class="row"><div class="value"><strong>{controller.fieldName({ targetCanonical: target.canonical, targetKey: target.targetKey }, definitions)}</strong><small>{target.description}</small></div><span class="meta">{target.kind} · {target.valueType} · {target.cardinality}{target.sensitive ? ' · Sensitive' : ''}</span></li>{/each}</ul>
-    </details>
-  {/if}
-
   {#if controller.selectedSection === 'claims'}{@render SavedPins()}{/if}
 
   {#if controller.selectedSection === 'evidence'}
     <section id="fact-evidence-section" aria-label="Evidence" tabindex="-1">
+      <h3>Evidence</h3>
       {#if controller.evidence.loading && controller.evidence.rows.length === 0}<p class="loading" role="status"><Spinner size={12} label="Loading fact evidence" /> Loading evidence…</p>
       {:else if controller.evidence.error}<div class="message" role="alert"><p>{controller.evidence.error}</p><Button label="Retry evidence" size="sm" onclick={() => void controller.retrySection('evidence')} /></div>
       {:else}
@@ -107,6 +102,7 @@
     </section>
   {:else if controller.selectedSection === 'claims'}
     <section id="fact-claims-section" aria-label="Claims" tabindex="-1">
+      <h3>Claims</h3>
       {#if controller.claims.loading && controller.claims.rows.length === 0}<p class="loading" role="status"><Spinner size={12} label="Loading fact claims" /> Loading claims…</p>
       {:else if controller.claims.error}<div class="message" role="alert"><p>{controller.claims.error}</p><Button label="Retry claims" size="sm" onclick={() => void controller.retrySection('claims')} /></div>
       {:else}
@@ -130,7 +126,7 @@
                   {#if shown}<dl><div><dt>Submitted JSON</dt><dd><code>{row.submittedValue}</code></dd></div>{#if row.normalizedValue !== null}<div><dt>Normalized JSON</dt><dd><code>{row.normalizedValue}</code></dd></div>{/if}</dl>{/if}
                 </details>
               </div>
-              <span class="meta">{row.relation === 'contradict' ? 'Contradicted · ' : row.relation === 'invalid' ? 'Invalid · ' : ''}{row.origin === 'extraction' ? 'From a message' : 'From enrichment'} · {formatShortDate(row.createdAt)}</span>
+              <span class="meta">{row.relation === 'contradict' ? 'Contradicted' : row.relation === 'invalid' ? 'Invalid' : row.relation === 'supersede' ? 'Superseded' : 'Support'} · {row.origin === 'extraction' ? 'From a message' : row.origin === 'enrichment' ? 'From enrichment' : row.origin} · {formatShortDate(row.createdAt)}</span>
             </div>
           {:else}<EmptyState title={emptyTitle('claims')} description={selectedField ? undefined : "Facts appear as msgvault reads this person's messages."} />{/each}
         </div>
@@ -139,6 +135,7 @@
     </section>
   {:else if controller.selectedSection === 'decisions'}
     <section id="fact-decisions-section" aria-label="Decisions" tabindex="-1">
+      <h3>Decisions</h3>
       {#if controller.decisions.loading && controller.decisions.rows.length === 0}<p class="loading" role="status"><Spinner size={12} label="Loading fact decisions" /> Loading decisions…</p>
       {:else if controller.decisions.error}<div class="message" role="alert"><p>{controller.decisions.error}</p><Button label="Retry decisions" size="sm" onclick={() => void controller.retrySection('decisions')} /></div>
       {:else}
@@ -160,22 +157,33 @@
       {@render SavedPins()}
     </section>
   {/if}
+
+  {#if controller.targets.length > 0}
+    <details class="about">
+      <summary>About these fields</summary>
+      <ul class="schema">{#each controller.targets as target (target.optionID)}<li class="row"><div class="value"><strong>{controller.fieldName({ targetCanonical: target.canonical, targetKey: target.targetKey }, definitions)}</strong><small>{target.description}</small></div><span class="meta">{target.kind} · {target.valueType} · {target.cardinality}{target.sensitive ? ' · Sensitive' : ''}</span></li>{/each}</ul>
+    </details>
+  {/if}
+
 </div>
 
 {#snippet SavedPins()}
+  {#key `${controller.personID}:${controller.selectedSection}:${selectedTarget?.canonical ?? 'all'}`}
   <section aria-label="Saved pinned values">
-    {#if controller.pins.loading}<p class="loading" role="status"><Spinner size={12} label="Loading fact pins" /> Loading pins…</p>
-    {:else if controller.pins.error}<div class="message" role="alert"><p>{controller.pins.error}</p><Button label="Retry pins" size="sm" onclick={() => void controller.retrySection('pins')} /></div>
-    {:else if pins.length}
-      <h4>Saved pinned values</h4>
+    {#if controller.pins.loading}<p class="loading" role="status"><Spinner size={12} label="Loading fact pins" /> Loading pins…</p>{/if}
+    {#if controller.pins.error}<div class="message" role="alert"><p>{controller.pins.error}</p><Button label="Retry pins" size="sm" onclick={() => void controller.retrySection('pins')} /></div>{/if}
+    {#if pins.length}
+      <h3>Saved pinned values</h3>
       {#if attributeIDs.length}
+        {#if profile?.reloadPending}<p role="status">Loading saved values…</p>{/if}
         {#if !profile || profile.attributesError || !profile.attributes}
           <div class="message" role="alert"><p>Saved values unavailable.</p>{#if profile}<Button label="Retry saved values" size="sm" onclick={() => void profile?.reload()} />{/if}</div>
-        {:else}
+        {/if}
+        {#if profile?.attributes}
           <AttributeSection controller={profile} universalIDs={attributeIDs} />
           {#each pins.filter(pin => pin.kind === 'attribute') as pin (pin.targetKey)}
             {@const field = fields.find(field => field.definition.universal_id === pin.targetKey)}
-            {#if !field || (!field.current.length && !field.history.length)}
+            {#if !field || (!field.current.length && !field.history.length && !profile.attributesError && !profile.reloadPending)}
               <div class="row"><strong>{controller.fieldName(pin, definitions)}</strong><span class="meta">{field ? 'No saved value' : 'Saved field unavailable'}</span></div>
             {/if}
           {/each}
@@ -184,12 +192,12 @@
       {#each pins.filter(pin => pin.kind === 'employment') as pin (pin.targetKey)}
         <section aria-label="Saved employment">
           <h3>{controller.fieldName(pin, definitions)}</h3>
-          {#if entity?.employmentsLoading}<p role="status">Loading employment…</p>
-          {:else if !entity || entity.errors.employments}<div class="message" role="alert"><p>Saved employment unavailable.</p>{#if entity}<Button label="Retry employment" size="sm" onclick={() => void entity?.refreshEmployments()} />{/if}</div>
-          {:else}
+          {#if entity?.employmentsLoading}<p role="status">Loading employment…</p>{/if}
+          {#if !entity || entity.errors.employments}<div class="message" role="alert"><p>Saved employment unavailable.</p>{#if entity}<Button label="Retry employment" size="sm" onclick={() => void entity?.refreshEmployments()} />{/if}</div>{/if}
+          {#if entity}
             {#each entity.employments.filter(value => value.is_current) as value (value.id)}
               {@render EmploymentRow(value)}
-            {:else}{#if !entity.employments.length}<div class="row"><span>No saved value</span></div>{/if}{/each}
+            {:else}{#if !entity.employments.length && !entity.errors.employments && !entity.employmentsLoading}<div class="row"><span>No saved value</span></div>{/if}{/each}
             {@const history = entity.employments.filter(value => !value.is_current)}
             {#if history.length}
               <details><summary>{history.length} earlier {history.length === 1 ? 'value' : 'values'}</summary>
@@ -199,8 +207,14 @@
           {/if}
         </section>
       {/each}
-    {:else if controller.selectedSection === 'pins'}<EmptyState title="No pinned fields yet" />{/if}
+    {:else if controller.selectedSection === 'pins' && !controller.pins.loading && !controller.pins.error}<EmptyState title="No pinned fields yet" />{/if}
+    {#if unpins.length}
+      <details><summary>{unpins.length} unpinned {unpins.length === 1 ? 'field' : 'fields'}</summary>
+        {#each unpins as pin (pin.targetCanonical)}<div class="row"><strong>{controller.fieldName(pin, definitions)}</strong><span class="meta">Unpinned</span></div>{/each}
+      </details>
+    {/if}
   </section>
+  {/key}
 {/snippet}
 
 {#snippet EmploymentRow(value: import('../../directory/models').Employment)}
@@ -221,7 +235,7 @@
 {/snippet}
 
 <style>
-  .ledger, section, .message { display: grid; gap: var(--space-2); min-width: 0; }
+  .ledger, section, .message { display: grid; gap: var(--space-3); min-width: 0; }
   .toolbar, .pagination { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
   .field { margin-left: auto; display: grid; gap: var(--label-gap); min-width: 0; font-size: var(--font-size-sm); color: var(--text-secondary); --typeahead-min-width: 180px; }
   /* kit-ui-check-ignore: Typeahead owns this span, so its accessible metadata needs the local equivalent of kit-sr-only. */
@@ -230,8 +244,8 @@
   .value { display: grid; gap: var(--space-1); min-width: 0; overflow-wrap: anywhere; }
   .meta { text-align: right; max-width: 55%; }
   .meta, small, dt, summary, .pagination { color: var(--text-muted); font-size: var(--font-size-sm); overflow-wrap: anywhere; }
-  h3, h4, p, dl, dd, ul { margin: 0; }
-  h4 { font-size: var(--font-size-sm); color: var(--text-secondary); }
+  h3, p, dl, dd, ul { margin: 0; }
+  h3 { font-size: var(--font-size-sm); color: var(--text-secondary); }
   .schema { padding: 0; list-style: none; }
   dl { display: grid; gap: var(--space-2); padding: var(--space-2) 0; }
   summary { cursor: pointer; }

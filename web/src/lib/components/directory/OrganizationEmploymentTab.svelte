@@ -9,7 +9,6 @@
   import DetailRow from '../people/DetailRow.svelte';
   import EmploymentEditor from './EmploymentEditor.svelte';
   import OrganizationEditor from './OrganizationEditor.svelte';
-  import { organizationName } from './organization-name';
 
   interface Props {
     controller: DirectoryEntityController;
@@ -39,6 +38,12 @@
     if (!deletingEmployment) return;
     return appShortcuts.pushScope('directory-employment-delete');
   });
+
+  function organizationName(id: number): string {
+    return controller.organizationRecords.get(id)?.organization.name ?? controller.organizations.find((item) => item.id === id)?.name
+      ?? (controller.employmentProjection?.organization_id === id ? controller.employmentProjection.organization_name : undefined)
+      ?? `Organization ${id}`;
+  }
 
   function organizationRecord(id: number): Organization | undefined {
     return controller.organizations.find((item) => item.id === id);
@@ -137,7 +142,7 @@
       <div class="records">
         {#each controller.employments as employment (employment.id)}
           <DetailRow description={[periodText(employment), employment.department, employment.is_primary && controller.employments.filter((item) => item.is_current).length > 1 ? 'Primary' : ''].filter(Boolean).join(' · ')}>
-            {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(controller, employment.organization_id)}</button>
+            {employmentLabel(employment)} at <button type="button" class="org-link" onclick={() => void openRequestedOrganization(employment.organization_id)}>{organizationName(employment.organization_id)}</button>
             {#snippet actions()}
               {#if employment.is_current && !employment.is_primary}<Button size="sm" label="Make primary employment" shortLabel="Make primary" disabled={acting} onclick={() => void makePrimary(employment)} />{/if}
               {#if employment.is_current}<Button size="sm" label="End employment" shortLabel="End" onclick={() => { employmentAction = 'end'; employmentEditor = employment; }} />{/if}
@@ -171,7 +176,7 @@
 {/if}
 {#if deletingEmployment}
   <Modal title="Delete employment" ariaLabel="Delete employment" closeLabel="Close delete employment" onclose={closeDelete}>
-    <p>Delete {employmentLabel(deletingEmployment)} at {organizationName(controller, deletingEmployment.organization_id)}?</p>
+    <p>Delete {employmentLabel(deletingEmployment)} at {organizationName(deletingEmployment.organization_id)}?</p>
     {#if deleteMessage}
       <div role="alert">
         <p>{deleteMessage}</p>

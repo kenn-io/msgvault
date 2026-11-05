@@ -34,10 +34,7 @@ async function renderDetails(participantIDs: number[], options: { attributesFail
     if (path.endsWith('/person-fact-targets')) return Response.json({ fingerprint: 'synthetic', version: '1', targets: [{ kind: 'attribute', key: definition.universal_id, revision: `sha256:${'a'.repeat(64)}`, description: 'Location', value_type: 'string', cardinality: 'single', sensitive: false, choices: null, fields: null, slug: definition.slug, universal_id: definition.universal_id }] });
     if (path.endsWith('/fact-pins')) return Response.json({ pins: pinned ? [{ pinned: true, actor: 'user', event_id: 1, target: { kind: 'attribute', key: definition.universal_id, revision: `sha256:${'a'.repeat(64)}` } }] : [] });
     if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
-    if (path.endsWith('/fact-claims')) {
-      const offset = Number(new URL(request.url).searchParams.get('offset'));
-      return Response.json({ claims: options.pins ? Array.from({ length: offset ? 1 : 51 }, (_, id) => ({ target: { kind: 'attribute', key: definition.universal_id, revision: `sha256:${'a'.repeat(64)}` }, submitted_value: '"Claim City"', relation: 'support', origin: 'extraction', confidence: { reported_score: 80 }, created_at: when, id })) : [] });
-    }
+    if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
     if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
     if (path === '/api/v1/people/7') return options.personFailure ? Response.json({ error: 'unavailable', message: 'Saved profile unavailable' }, { status: 503 }) : Response.json(person, { headers: { ETag: `"person-7-r${person.revision}"` } });
     if (path.endsWith('/profile')) return Response.json(emptyProfile(person), { headers: { ETag: `"person-7-r${person.revision}"` } });
@@ -111,11 +108,11 @@ it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation wh
 });
 
 it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute %s without changing the ledger section', async operation => {
-  const options = { pins: operation, attributesFailure: false };
-  const { directory } = await renderDetails([], options);
+  await renderDetails([], { pins: operation });
   const facts = within(screen.getByRole('heading', { name: 'Facts' }).closest('section')!);
   await fireEvent.click(facts.getByRole('button', { name: 'Show' }));
-  await facts.findAllByText('Claim City');
+  await fireEvent.click(await screen.findByRole('radio', { name: 'Pins' }));
+  await screen.findByText('No pinned fields yet');
   if (operation === 'save') {
     await fireEvent.click(screen.getByRole('button', { name: 'More fields' }));
     await fireEvent.click(await screen.findByRole('menuitem', { name: 'Location' }));
@@ -127,18 +124,5 @@ it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute
     await fireEvent.click(screen.getByRole('button', { name: 'Confirm removal' }));
   }
   expect(await facts.findByText(operation === 'save' ? 'Example City' : 'No saved value')).toBeDefined();
-  expect(screen.getByRole('radio', { name: 'Claims' }).getAttribute('aria-checked')).toBe('true');
-  const saved = facts.getByRole('region', { name: 'Saved pinned values' });
-  const claims = facts.getByRole('region', { name: 'Claims' });
-  expect(saved.compareDocumentPosition(claims) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  await fireEvent.click(facts.getByRole('button', { name: 'Next claims page' }));
-  await facts.findByText('51–51');
-  expect(within(saved).getByText(operation === 'save' ? 'Example City' : 'No saved value')).toBeDefined();
-  options.attributesFailure = true;
-  await directory.profile!.reload();
-  await facts.findByText('Saved values unavailable.');
-  expect(within(saved).queryByText('No saved value')).toBeNull();
-  options.attributesFailure = false;
-  await fireEvent.click(facts.getByRole('button', { name: 'Retry saved values' }));
-  await facts.findByText(operation === 'save' ? 'Example City' : 'No saved value');
+  expect(screen.getByRole('radio', { name: 'Pins' }).getAttribute('aria-checked')).toBe('true');
 });

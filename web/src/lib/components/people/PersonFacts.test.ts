@@ -67,3 +67,40 @@ it('refreshes saved pins when employment is saved while Facts is open', async ()
   await screen.findByText('Engineer · Synthetic Org');
   directory.destroy();
 });
+
+it.each(['save', 'clear'] as const)('refreshes saved values after an attribute %s while Claims stays open', async operation => {
+  const when = '2026-08-01T00:00:00Z';
+  const definition = { id: 8, universal_id: '00000000-0000-4000-8000-000000000008', slug: 'location', label: 'Location', value_type: 'text', field_type: 'text', cardinality: 'single', object_type: 'person', ownership: 'user', display_order: 1, is_active: true, api_mutable: true, ui_editable: true, ui_creatable: true, is_sensitive: false, revision: 1 };
+  const value = { id: 41, person_id: 42, definition_id: 8, definition_slug: 'location', ordinal: 0, value: { type: 'text', text: 'Example City' }, active_from: when, created_at: when, source: 'user' };
+  let saved = false;
+  const client = createAPIClient(async input => {
+    const request = requestOf(input), path = new URL(request.url).pathname;
+    if (path.endsWith('/attributes/location')) {
+      saved = true;
+      return Response.json(operation === 'save' ? { value } : { superseded: value });
+    }
+    if (path.endsWith('/people/42')) return Response.json({ id: 42, revision: saved ? 2 : 1 });
+    if (path.endsWith('/attributes')) return Response.json({ person_id: 42, attributes: [{ definition, current: (operation === 'save' ? saved : !saved) ? [value] : [], history: [] }] });
+    if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [definition] });
+    if (path.endsWith('/fact-pins')) return Response.json({ pins: saved ? [{ target: { kind: 'attribute', key: definition.universal_id, revision: `sha256:${'a'.repeat(64)}` }, pinned: true }] : [] });
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [] });
+    if (path.endsWith('/fact-claims')) return Response.json({ claims: [] });
+    if (path.endsWith('/fact-evidence')) return Response.json({ evidence: [] });
+    if (path.endsWith('/fact-decisions')) return Response.json({ decisions: [] });
+    return Response.json({});
+  });
+  const directory = new DirectoryController(client);
+  await directory.loadSelection(42);
+  const profile = directory.profile!;
+  const view = render(PersonFacts, { props: { client, personID: 42, refreshKey: profile.person }, context: new Map([[personDirectoryContext, () => directory]]) });
+  await fireEvent.click(screen.getByRole('button', { name: 'Show' }));
+  await screen.findByText('No claims yet');
+  if (operation === 'save') await profile.setAttribute('location', { value: { type: 'text', text: 'Example City' } });
+  else await profile.clearAttribute('location', 41);
+  await view.rerender({ client, personID: 42, refreshKey: profile.person });
+  await screen.findByText(operation === 'save' ? 'Example City' : 'No saved value');
+  expect(screen.getByRole('radio', { name: 'Claims' }).getAttribute('aria-checked')).toBe('true');
+  const savedValues = screen.getByRole('region', { name: 'Saved pinned values' });
+  expect(savedValues.compareDocumentPosition(screen.getByRole('region', { name: 'Claims' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  directory.destroy();
+});

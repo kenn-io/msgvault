@@ -21,8 +21,8 @@
 
   const getDirectory = getContext<PersonDirectoryGetter | undefined>(personDirectoryContext);
   const directory = $derived(getDirectory?.());
-  const profile = $derived(directory?.selectedPersonID === personID ? directory.profile : null);
-  const entity = $derived(directory?.selectedPersonID === personID ? directory.entity : null);
+  const profile = $derived(directory?.profile);
+  const entity = $derived(directory?.entity);
   const controller = new FactLedgerController(untrack(() => client));
   let open = $state(false);
 

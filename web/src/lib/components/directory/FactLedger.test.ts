@@ -46,7 +46,7 @@ function controller(): FactLedgerController {
     validFrom: '2026-01-01', validUntil: null, reportedScore: 88, createdAt: '2026-08-03', targetCanonical: value.targets[0]!.canonical }];
   value.decisions.rows = [{ rowToken: 'decision-0', action: 'project', reason: 'highest score', score: { authority: 1, confidence: 2, corroboration: 3,
     directness: 4, freshness: 5, sourceClass: 6, total: 21 }, projectionKind: 'attribute', createdAt: '2026-08-03' }];
-  value.pins.rows = [{ rowToken: 'pin-0', description: 'Private note', kind: 'attribute', pinned: true, targetKey: 'note', targetCanonical: value.targets[0]!.canonical }];
+  value.pins.rows = [{ kind: 'attribute', pinned: true, targetKey: 'note', targetCanonical: value.targets[0]!.canonical }];
   return value;
 }
 
@@ -69,7 +69,7 @@ describe('FactLedger', () => {
     expect(rendered.container.innerHTML).not.toContain('allowed sensitive value');
     await fireEvent.click(screen.getByRole('button', { name: 'Reveal sensitive fact value' }));
     expect(screen.getByText('allowed sensitive value')).toBeDefined();
-    expect(screen.getByText(/^From a message ·/)).toBeDefined();
+    expect(screen.getByText(/^Support · From a message ·/)).toBeDefined();
     await fireEvent.click(screen.getByText('Details', { selector: 'summary' }));
     expect(screen.getByText('Reported confidence').nextElementSibling?.textContent).toBe('88');
 
@@ -193,6 +193,7 @@ it('preserves claim order and keeps claim relations visible', async () => {
     { ...claim, rowToken: 'current', submittedValue: '"Current City"', displayValue: 'Current City' },
     { ...claim, rowToken: 'contradicted', submittedValue: '"Contradicted City"', displayValue: 'Contradicted City', relation: 'contradict' },
     { ...claim, rowToken: 'invalid', submittedValue: '"Invalid City"', displayValue: 'Invalid City', relation: 'invalid' },
+    { ...claim, rowToken: 'superseded', submittedValue: '"Superseded City"', displayValue: 'Superseded City', relation: 'supersede', origin: 'system' },
     { ...claim, rowToken: 'future', submittedValue: '"Future City"', displayValue: 'Future City', validUntil: '2099-10-01' },
   ];
   const view = render(FactLedger, { controller: value });
@@ -200,10 +201,11 @@ it('preserves claim order and keeps claim relations visible', async () => {
   expect(rows[0]!.textContent).toContain('Fact value hidden');
   expect(rows[1]!.textContent).toContain('Current City');
   expect(rows[1]!.textContent).toContain('Location');
+  expect(screen.getByText(/Superseded · system/)).toBeDefined();
   expect(rows[2]!.textContent).toContain('Contradicted City');
   expect(rows[2]!.textContent).toContain('Contradicted · From a message');
   expect(rows[3]!.textContent).toContain('Invalid · From a message');
-  expect(rows[4]!.textContent).toContain('Future City');
+  expect(rows[5]!.textContent).toContain('Future City');
 });
 
 it('searches short field names and keeps sensitive metadata separate', async () => {
@@ -228,7 +230,7 @@ it.each(['claims', 'evidence', 'decisions'] as const)('names the field in empty 
 it('shows saved employment and its source in Pins', async () => {
   const value = controller();
   value.selectedSection = 'pins';
-  value.pins.rows = [{ rowToken: 'pin-0', description: 'Employment', kind: 'employment', pinned: true, targetKey: 'system:employment', targetCanonical: undefined }];
+  value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'system:employment', targetCanonical: undefined }];
   const entity = new DirectoryEntityController(createAPIClient(vi.fn<typeof fetch>()), 42);
   entity.employments = [employment()];
   entity.organizations = [organization()];
@@ -295,7 +297,7 @@ it('distinguishes unavailable employment from an empty successful read and retri
     : Response.json({ employments: [] })), 42);
   const value = controller();
   value.selectedSection = 'pins';
-  value.pins.rows = [{ rowToken: 'pin-0', description: 'Employment', kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: undefined }];
+  value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: undefined }];
   await entity.refreshEmployments();
   render(FactLedger, { controller: value, entity });
   expect(screen.getByText('Saved employment unavailable.')).toBeDefined();
@@ -321,7 +323,7 @@ it('treats a missing saved definition as unavailable rather than empty', () => {
 it('filters saved pins with claims while Pins keeps every saved field', async () => {
   const value = controller();
   value.selectedTargetOption = 'target-0';
-  value.pins.rows = [{ rowToken: 'employment', description: 'Employment', kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: 'employment:other' }];
+  value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: 'employment:other' }];
   const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
   entity.employments = [employment()];
   entity.organizations = [organization()];
@@ -336,7 +338,7 @@ it('filters saved pins with claims while Pins keeps every saved field', async ()
 it('folds historical saved employment without claiming it is empty', async () => {
   const value = controller();
   value.selectedSection = 'pins';
-  value.pins.rows = [{ rowToken: 'employment', description: 'Employment', kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: undefined }];
+  value.pins.rows = [{ kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: undefined }];
   const entity = new DirectoryEntityController(createAPIClient(vi.fn()), 42);
   entity.employments = [employment(11, 1, { is_current: false })];
   entity.organizations = [organization()];
@@ -353,20 +355,7 @@ it('folds historical saved employment without claiming it is empty', async () =>
 it.each(['current', 'history'] as const)('keeps saved %s values when the separate definition list fails', async lane => {
   const value = controller();
   value.selectedSection = 'pins';
-  const when = '2026-08-01T00:00:00Z';
-  const definition = {
-    id: 8, universal_id: 'note', object_type: 'person' as const, slug: 'location', label: 'Location',
-    value_type: 'text' as const, field_type: 'text' as const, cardinality: 'single' as const, display_order: 10,
-    is_required: false, ownership: 'user' as const, ui_creatable: true, ui_editable: true, api_mutable: true,
-    is_searchable: true, is_sensitive: false, is_audited: true, is_deletable: true, history_exempt: false,
-    is_active: true, revision: 1, created_at: when, updated_at: when,
-  };
-  const saved = { id: 1, person_id: 42, definition_id: 8, definition_slug: 'location', ordinal: 0,
-    value: { type: 'text' as const, text: 'Example City' }, source: 'user', created_at: when, active_from: when, ...(lane === 'history' ? { active_until: when } : {}) };
-  const profile = new DirectoryProfileController(createAPIClient(vi.fn()), 42, {
-    attributes: { person_id: 42, attributes: [{ definition, current: lane === 'current' ? [saved] : [], history: lane === 'history' ? [saved] : [] }] },
-    etags: {}, errors: {},
-  });
+  const profile = savedProfile(lane, false);
   profile.definitionsError = 'Definitions unavailable';
   render(FactLedger, { controller: value, profile });
   expect(screen.queryByText('Saved values unavailable.')).toBeNull();
@@ -374,4 +363,90 @@ it.each(['current', 'history'] as const)('keeps saved %s values when the separat
   if (lane === 'history') await fireEvent.click(screen.getByText('1 earlier value', { selector: 'summary' }));
   expect(screen.getByText('Example City')).toBeDefined();
   profile.destroy();
+});
+
+function savedProfile(lane: 'current' | 'history' = 'current', sensitive = true): DirectoryProfileController {
+  const when = '2026-08-01T00:00:00Z';
+  const definition = {
+    id: 8, universal_id: 'note', object_type: 'person' as const, slug: 'location', label: 'Location',
+    value_type: 'text' as const, field_type: 'text' as const, cardinality: 'single' as const, display_order: 10,
+    is_required: false, ownership: 'user' as const, ui_creatable: true, ui_editable: true, api_mutable: true,
+    is_searchable: true, is_sensitive: sensitive, is_audited: true, is_deletable: true, history_exempt: false,
+    is_active: true, revision: 1, created_at: when, updated_at: when,
+  };
+  const saved = { id: 1, person_id: 42, definition_id: 8, definition_slug: 'location', ordinal: 0,
+    value: { type: 'text' as const, text: 'Example City' }, source: 'user', created_at: when, active_from: when, ...(lane === 'history' ? { active_until: when } : {}) };
+  return new DirectoryProfileController(createAPIClient(vi.fn()), 42, {
+    attributes: { person_id: 42, attributes: [{ definition, current: lane === 'current' ? [saved] : [], history: lane === 'history' ? [saved] : [] }] },
+    etags: {}, errors: {},
+  });
+}
+
+it('requires a fresh saved-value reveal after filtering or changing tabs and preserves field identity on reorder', async () => {
+  const value = controller();
+  value.targets.push({ ...value.targets[0]!, optionID: 'target-1', canonical: 'attribute:other', targetKey: 'other' });
+  value.pins.rows.push({ pinned: true, kind: 'attribute', targetKey: 'other', targetCanonical: 'attribute:other' });
+  const profile = savedProfile();
+  const view = render(FactLedger, { controller: value, profile });
+  await fireEvent.click(screen.getByRole('button', { name: 'Reveal Location values' }));
+  expect(screen.getByText('Example City')).toBeDefined();
+  value.pins.rows.reverse();
+  await tick();
+  expect(screen.getByText('Example City')).toBeDefined();
+  value.selectedTargetOption = 'target-1';
+  await tick();
+  expect(screen.queryByText('Example City')).toBeNull();
+  value.selectedTargetOption = 'all';
+  await tick();
+  expect(screen.queryByText('Example City')).toBeNull();
+  await fireEvent.click(screen.getByRole('button', { name: 'Reveal Location values' }));
+  value.selectedSection = 'pins';
+  await tick();
+  expect(screen.queryByText('Example City')).toBeNull();
+  expect(view.container.textContent).toContain('Hidden');
+  profile.destroy();
+});
+
+it('shows explicit unpins in their own fold', async () => {
+  const value = controller();
+  value.pins.rows[0]!.pinned = false;
+  value.selectedSection = 'pins';
+  render(FactLedger, { controller: value });
+  const fold = screen.getByText('1 unpinned field', { selector: 'summary' });
+  expect(fold.closest('details')?.open).toBe(false);
+  await fireEvent.click(fold);
+  expect(fold.closest('details')?.open).toBe(true);
+  expect(screen.getByText('Unpinned')).toBeDefined();
+});
+
+it('retains saved attributes and employment alongside loading and independent errors', async () => {
+  const value = controller();
+  value.pins.rows.push({ kind: 'employment', pinned: true, targetKey: 'employment', targetCanonical: 'employment:other' });
+  const profile = savedProfile('current', false);
+  const pending = deferredResponse();
+  const entity = new DirectoryEntityController(createAPIClient(async () => pending.promise), 42);
+  entity.employments = [employment()];
+  entity.organizations = [organization()];
+  render(FactLedger, { controller: value, profile, entity });
+  value.pins.loading = true;
+  profile.reloadPending = true;
+  const refresh = entity.refreshEmployments();
+  await tick();
+  expect(screen.getByText('Loading pins…')).toBeDefined();
+  expect(screen.getByText('Example City')).toBeDefined();
+  expect(screen.getByText('Engineer · Synthetic Org')).toBeDefined();
+  value.pins.loading = false;
+  profile.reloadPending = false;
+  pending.resolve(Response.json({}, { status: 503 }));
+  await refresh;
+  value.pins.error = 'Unable to load fact pins.';
+  profile.attributesError = 'Unavailable';
+  await tick();
+  expect(screen.getByRole('button', { name: 'Retry pins' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Retry saved values' })).toBeDefined();
+  expect(screen.getByRole('button', { name: 'Retry employment' })).toBeDefined();
+  expect(screen.getByText('Example City')).toBeDefined();
+  expect(screen.getByText('Engineer · Synthetic Org')).toBeDefined();
+  expect(screen.queryByText('No saved value')).toBeNull();
+  profile.destroy(); entity.destroy();
 });

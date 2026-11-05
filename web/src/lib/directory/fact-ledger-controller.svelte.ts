@@ -85,10 +85,8 @@ export interface FactDecisionRow {
   createdAt: string;
 }
 export interface FactPinRow {
-  rowToken: string;
   pinned: boolean;
   kind: string;
-  description: string;
   targetKey?: string;
   readonly targetCanonical: string | undefined;
 }
@@ -193,7 +191,6 @@ export class FactLedgerController {
     this.selectedSection = section;
     this.clearDisclosureAndDialog();
     if (section === 'pins') {
-      this.clearPins();
       if (this.active && this.personID !== null) await this.loadPins(this.contextGeneration);
       return;
     }
@@ -343,10 +340,6 @@ export class FactLedgerController {
     else if (section === 'claims') this.claims = pageState();
     else this.decisions = pageState();
   }
-  private clearPins(): void {
-    this.abortLane('pins');
-    this.pins = { rows: [], loading: false, error: null };
-  }
   private startLane(name: keyof typeof this.lanes): {
     abort: AbortController;
     generation: number;
@@ -416,10 +409,6 @@ export class FactLedgerController {
       }
       this.targets = targets;
       this.targetByOption = new Map(targets.map((target) => [target.optionID, target]));
-      this.pins.rows = this.pins.rows.map((pin) => ({
-        ...pin,
-        description: targets.find((target) => target.canonical === pin.targetCanonical)?.name ?? pin.description,
-      }));
     } catch {
       if (this.owns('catalog', abort, generation, context)) this.catalogError = 'Unable to load fact targets.';
     } finally {
@@ -442,18 +431,14 @@ export class FactLedgerController {
       );
       if (!this.owns('pins', abort, generation, context)) return;
       if (!response.data) {
-        this.pins.rows = [];
         this.pins.error = 'Unable to load fact pins.';
         return;
       }
-      this.pins.rows = (response.data.pins ?? []).map((pin, index) => {
+      this.pins.rows = (response.data.pins ?? []).map((pin) => {
         const canonical = encodeFactTargetRef(pin.target);
-        const descriptor = this.targets.find((target) => target.canonical === canonical);
         return {
-          rowToken: `pin-${index}`,
           pinned: pin.pinned,
           kind: pin.target.kind,
-          description: descriptor?.name ?? sentenceCase(pin.target.key),
           targetKey: pin.target.key,
           targetCanonical: canonical,
         };
@@ -651,8 +636,9 @@ function projectDecision(row: RawDecision, index: number): FactDecisionRow {
 }
 
 function readableValue(value: string): string {
+  if (!value.trim()) return 'Blank submission';
   try {
     const decoded: unknown = JSON.parse(value);
-    return typeof decoded === 'string' ? decoded : value;
+    return typeof decoded === 'string' ? decoded.trim() ? decoded : 'Blank submission' : value;
   } catch { return value; }
 }

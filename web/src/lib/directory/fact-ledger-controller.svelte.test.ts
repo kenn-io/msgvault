@@ -307,6 +307,53 @@ it('keeps field context when the catalog fails', async () => {
   await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
   expect(controller.fieldName(controller.claims.rows[0]!)).toBe('Work:email');
   expect(controller.fieldName(controller.claims.rows[0]!, [{ universal_id: 'work:email', label: 'Work email' }])).toBe('Work email');
-  expect(controller.pins.rows[0]!.description).toBe('Work:email');
+  expect(controller.fieldName(controller.pins.rows[0]!)).toBe('Work:email');
+  controller.destroy();
+});
+
+it('retains pins during entry and failed refreshes, then clears them with the person context', async () => {
+  let pending: ((response: Response) => void) | undefined;
+  let hold = false;
+  const client = createAPIClient(async input => {
+    const path = new URL(requestOf(input).url).pathname;
+    if (hold && path.endsWith('/fact-pins')) return new Promise<Response>(resolve => { pending = resolve; });
+    return Response.json(payload(path));
+  });
+  const controller = new FactLedgerController(client);
+  controller.applyContext(true, 42);
+  await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+  hold = true;
+  const entry = controller.selectSection('pins');
+  expect(controller.pins.loading).toBe(true);
+  expect(controller.pins.rows).toHaveLength(1);
+  pending!(Response.json({}, { status: 503 }));
+  await entry;
+  expect(controller.pins.error).toBe('Unable to load fact pins.');
+  expect(controller.pins.rows).toHaveLength(1);
+  const retry = controller.retrySection('pins');
+  expect(controller.pins.rows).toHaveLength(1);
+  pending!(Response.json({ pins: [] }));
+  await retry;
+  expect(controller.pins.rows).toEqual([]);
+  expect(controller.pins.error).toBeNull();
+  hold = false;
+  await controller.retrySection('pins');
+  controller.applyContext(false, 42);
+  expect(controller.pins.rows).toEqual([]);
+  controller.destroy();
+});
+
+it.each(['', '   ', '\"\"', '\"   \"'])('identifies blank claim submissions while preserving original JSON: %j', async submitted => {
+  const client = createAPIClient(async input => {
+    const path = new URL(requestOf(input).url).pathname;
+    const data = payload(path);
+    if (path.endsWith('/fact-claims')) return Response.json({ claims: [{ ...payload(path).claims![0], submitted_value: submitted }] });
+    return Response.json(data);
+  });
+  const controller = new FactLedgerController(client);
+  controller.applyContext(true, 42);
+  await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
+  expect(controller.claims.rows[0]!.displayValue).toBe('Blank submission');
+  expect(controller.claims.rows[0]!.submittedValue).toBe(submitted);
   controller.destroy();
 });
