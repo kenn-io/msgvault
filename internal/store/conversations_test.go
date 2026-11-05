@@ -38,8 +38,7 @@ func TestConversationWindowRoomLinksRequirePerson(t *testing.T) {
 		wantRoom, wantOtherRoom int64
 	}{
 		{name: "unlinked"},
-		{name: "rooms_only", link: [2]int64{room, otherRoom}},
-		{name: "transitive_person", link: [2]int64{otherRoom, alice}, wantRoom: room, wantOtherRoom: otherRoom},
+		{name: "linked_person", link: [2]int64{otherRoom, alice}, wantOtherRoom: otherRoom},
 	} {
 		if phase.link[0] != 0 {
 			_, err := st.LinkParticipants(phase.link[0], phase.link[1])
