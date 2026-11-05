@@ -1,6 +1,9 @@
 package store
 
 import (
+	"context"
+	"database/sql/driver"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -35,19 +38,41 @@ func TestParticipantsByEmailMapsSavedAndUnsaved(t *testing.T) {
 }
 
 func TestParticipantsByEmailRespectsSourceScope(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
-	require.NoError(err)
-	hidden, err := st.EnsureParticipant("bob@example.com", "Bob", "example.com")
-	require.NoError(err)
-	data, note := projectionFixture(t, st, "visible", "meeting_json", `{"action_items":[]}`)
-	require.NoError(st.ReplaceMessageRecipients(note, "attendee", []int64{alice}, nil))
-	ctx := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
-	got, err := st.ParticipantsByEmailContext(ctx, []string{"alice@example.com", "bob@example.com"})
-	require.NoError(err)
-	assert.Equal(map[string]AddressParticipant{"alice@example.com": {ParticipantID: alice}}, got)
-	assert.NotContains(got, "bob@example.com", hidden)
+	t.Run("visibility", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		alice, err := st.EnsureParticipant("alice@example.com", "Alice", "example.com")
+		require.NoError(err)
+		_, err = st.EnsureParticipant("bob@example.com", "Bob", "example.com")
+		require.NoError(err)
+		data, note := projectionFixture(t, st, "visible", "meeting_json", `{"action_items":[]}`)
+		require.NoError(st.ReplaceMessageRecipients(note, "attendee", []int64{alice}, nil))
+		ctx := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
+		got, err := st.ParticipantsByEmailContext(ctx, []string{"alice@example.com", "bob@example.com"})
+		require.NoError(err)
+		assert.Equal(map[string]AddressParticipant{"alice@example.com": {ParticipantID: alice}}, got)
+	})
+	t.Run("ambiguity", func(t *testing.T) {
+		assert, require := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		visible, err := st.EnsureParticipant("visible@example.com", "Visible", "example.com")
+		require.NoError(err)
+		hidden, err := st.EnsureParticipant("hidden@example.com", "Hidden", "example.com")
+		require.NoError(err)
+		for i, id := range []int64{visible, hidden} {
+			_, err = st.db.Exec(`INSERT INTO participant_identifiers(participant_id,identifier_type,identifier_value,is_primary) VALUES (?,?,'Alias@Example.com',FALSE)`, id, []string{"email", "apple_id"}[i])
+			require.NoError(err)
+		}
+		data, note := projectionFixture(t, st, "visible-note", "plaud_json", `{}`)
+		require.NoError(st.ReplaceMessageRecipients(note, "attendee", []int64{visible}, nil))
+		ctx := sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID})
+		got, err := st.ParticipantsByEmailContext(ctx, []string{"alias@example.com"})
+		require.NoError(err)
+		assert.Equal(map[string]AddressParticipant{"alias@example.com": {ParticipantID: visible}}, got)
+		got, err = st.ParticipantsByEmailContext(t.Context(), []string{"alias@example.com"})
+		require.NoError(err)
+		assert.Empty(got)
+	})
 }
 
 func TestMeetingActionItemCountsByTranscript(t *testing.T) {
@@ -68,4 +93,32 @@ func TestMeetingActionItemCountsByTranscript(t *testing.T) {
 	scoped, err = st.MeetingActionItemCountsContext(sourcescope.WithSourceIDs(t.Context(), []int64{data.Message.SourceID}), []int64{one, empty})
 	require.NoError(err)
 	assert.Equal(map[int64]int{one: 2, empty: 0}, scoped)
+}
+
+func TestParticipantsByEmailBatchReadBound(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	var addresses []string
+	want := map[string]AddressParticipant{}
+	for i := range 20 {
+		address := fmt.Sprintf("attendee-%d@example.com", i)
+		id, err := st.EnsureParticipant(address, "Attendee", "example.com")
+		require.NoError(err)
+		addresses = append(addresses, address)
+		want[address] = AddressParticipant{ParticipantID: id}
+	}
+	reads := 0
+	observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(context.Context, string, []driver.NamedValue) error { reads++; return nil }})
+	got, err := observed.ParticipantsByEmailContext(t.Context(), addresses)
+	require.NoError(err)
+	assert.Equal(want, got)
+	assert.Equal(1, reads)
+	for i := range 500 {
+		addresses = append(addresses, fmt.Sprintf("unknown-%d@example.com", i))
+	}
+	reads = 0
+	got, err = observed.ParticipantsByEmailContext(t.Context(), addresses)
+	require.NoError(err)
+	assert.Equal(want, got)
+	assert.Equal(2, reads)
 }

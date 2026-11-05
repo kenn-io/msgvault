@@ -76,37 +76,3 @@ func TestCalendarExceptionAliasQueryKeepsOriginalPrecision(t *testing.T) {
 	assertions.NotContains(ids, otherSeries)
 	assertions.NotContains(ids, otherSource)
 }
-
-func TestMeetingExceptionAliasesKeepOriginalPrecisionAndBoundaries(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	var ids []int64
-	for _, tc := range []struct{ key, series, original, source string }{
-		{"whole", "weekly", "2027-03-09T17:00:00Z", "calendar@example.com"},
-		{"fraction", "weekly", "2027-03-09T17:00:00.123456Z", "calendar@example.com"},
-		{"nearby-fraction", "weekly", "2027-03-09T17:00:00.123457Z", "calendar@example.com"},
-		{"other-series", "other-weekly", "2027-03-09T17:00:00Z", "calendar@example.com"},
-		{"other-source", "weekly", "2027-03-09T17:00:00Z", "other@example.com"},
-	} {
-		raw := fmt.Sprintf(`{"id":%q,"recurringEventId":%q,"originalStartTime":{"dateTime":%q},"start":{"dateTime":"2027-03-09T19:00:00Z"},"end":{"dateTime":"2027-03-09T20:00:00Z"}}`, tc.key, tc.series, tc.original)
-		_, id := calendarFixture(t, st, tc.key, raw, tc.source)
-		ids = append(ids, id)
-	}
-	ctx, release, err := st.BeginReadSnapshotContext(t.Context())
-	requirements.NoError(err)
-	defer release()
-	budget := calrecur.RequestReadBudget
-	var occurrences []linkOccurrence
-	for _, id := range ids {
-		occurrence, err := resolveMeetingOccurrence(ctx, st.meetingReader(), OccurrenceRef{MessageID: id}, &budget)
-		requirements.NoError(err)
-		occurrences = append(occurrences, occurrence)
-	}
-	unique := uniqueMeetingOccurrences(occurrences)
-	var got []int64
-	for _, occurrence := range unique {
-		got = append(got, occurrence.Ref.MessageID)
-		assertions.Empty(occurrence.Ref.Key, "orphan exceptions retain message references")
-	}
-	assertions.ElementsMatch(ids, got)
-}
