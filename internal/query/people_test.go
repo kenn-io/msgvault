@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"go.kenn.io/msgvault/internal/search"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,6 +92,49 @@ func TestSearchPeopleRanksAtPrefixedUsername(t *testing.T) {
 	assert.Equal(want, got)
 	assert.NotContains(got, participants[2], "@alice excludes @malice")
 	assert.Equal(int64(len(want)), response.TotalCount)
+}
+
+func TestPeopleAndExploreExcludeRooms(t *testing.T) {
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("archive@example.com", "gmail")
+	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
+	room := b.AddParticipant("room@resource.calendar.google.com", "resource.calendar.google.com", "Room 4B")
+	when := time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC)
+	message := b.AddMessage(MessageOpt{SourceID: source, ConversationID: 201, SentAt: when, MessageType: "chat", ConversationType: "group_chat"})
+	b.AddFrom(message, alice, "Alice")
+	b.AddTo(message, room, "Room 4B")
+	b.AddConversationParticipant(201, room)
+	engine := b.BuildEngine()
+	for _, context := range []Context{{}, {SourceIDs: []int64{source}}} {
+		explore := ExploreRequest{Context: context}
+		people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Explore: explore, Page: PageSpec{Limit: 25}})
+		requirements.NoError(err)
+		requirements.Len(people.Rows, 1)
+		assertions.Equal(alice, people.Rows[0].ID)
+		domains, err := engine.SearchDomains(t.Context(), DomainSearchRequest{Explore: explore, Page: PageSpec{Limit: 25}})
+		requirements.NoError(err)
+		requirements.Len(domains.Rows, 1)
+		assertions.Equal("example.com", domains.Rows[0].Domain)
+		assertions.Equal(int64(1), domains.Rows[0].PersonCount)
+		for _, dimension := range []string{"participant", "domain"} {
+			groups, err := engine.ExploreGroups(t.Context(), ExploreGroupRequest{Explore: explore, Dimension: dimension, Page: PageSpec{Limit: 25}})
+			requirements.NoError(err)
+			requirements.Len(groups.Rows, 1)
+			assertions.Equal(int64(1), groups.Rows[0].Count)
+		}
+	}
+	people, err := engine.SearchPeople(t.Context(), PersonSearchRequest{Query: "Room", Page: PageSpec{Limit: 25}})
+	requirements.NoError(err)
+	assertions.Empty(people.Rows)
+	completion, err := engine.CompletePeople(t.Context(), PeopleCompletionRequest{Query: "Room", Limit: 8})
+	requirements.NoError(err)
+	assertions.Empty(completion.Rows)
+	messages, err := engine.SearchFast(t.Context(), &search.Query{ToAddrs: []string{"room@resource.calendar.google.com"}}, MessageFilter{}, 25, 0)
+	requirements.NoError(err)
+	requirements.Len(messages, 1)
+	assertions.Equal(message, messages[0].ID)
 }
 
 func TestSearchPeopleKeepsSameNamePeopleSeparateAndUnifiesExplicitIdentifiers(t *testing.T) {

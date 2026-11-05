@@ -9,6 +9,15 @@ import (
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
+// RoomDomain is Google's calendar resource address domain.
+const RoomDomain = "resource.calendar.google.com"
+
+// IsRoomDomain identifies the resource domain and its subdomains.
+func IsRoomDomain(domain string) bool {
+	domain = strings.ToLower(domain)
+	return domain == RoomDomain || strings.HasSuffix(domain, "."+RoomDomain)
+}
+
 // IsRoomAttendee identifies provider resource addresses and explicit resources.
 func IsRoomAttendee(email string, resourceFlag bool) bool {
 	if resourceFlag {
@@ -16,7 +25,7 @@ func IsRoomAttendee(email string, resourceFlag bool) bool {
 	}
 	email = strings.ToLower(strings.TrimSpace(email))
 	_, domain, ok := strings.Cut(email, "@")
-	return ok && (domain == "resource.calendar.google.com" || strings.HasSuffix(domain, ".resource.calendar.google.com"))
+	return ok && IsRoomDomain(domain)
 }
 
 type Attendee struct {
