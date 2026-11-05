@@ -107,6 +107,50 @@ func TestLogicalCallsPerParticipantCredit(t *testing.T) {
 	assertions.Equal([]store.CallParticipant{{ParticipantID: f.peer, PersonID: person.ID, Participation: "joined", Credited: true}, {ParticipantID: bob, Participation: "invited"}}, calls[0].Participants)
 }
 
+func TestLogicalCallsOutcomeIndependentOfParticipantCredit(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		participation string
+		owner         string
+		conflicting   bool
+		want          string
+	}{
+		{name: "answered group without roster", owner: "joined", want: "answered"},
+		{name: "answered with invited participant", participation: "invited", owner: "joined", want: "answered"},
+		{name: "unknown owner attendance", owner: "unknown", want: "unknown"},
+		{name: "conflicting group without roster", owner: "joined", conflicting: true, want: "conflicting"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLogicalCallFixture(t)
+			f.put(t, "one", func(o *callhistory.Observation) {
+				o.OwnerParticipation = tc.owner
+				if tc.participation == "" {
+					o.Participants = nil
+				} else {
+					o.Participants[0].Participation = tc.participation
+				}
+			})
+			if tc.conflicting {
+				f.put(t, "one", func(o *callhistory.Observation) {
+					o.Outcome = "missed"
+					o.OwnerParticipation = "not_joined"
+					o.Participants = nil
+				})
+			}
+			calls, _, err := f.st.ListLogicalCallsContext(t.Context(), f.query())
+			require.NoError(t, err)
+			require.Len(t, calls, 1)
+			assert.Equal(t, tc.want, calls[0].Outcome)
+			if tc.participation == "" {
+				assert.Empty(t, calls[0].Participants)
+			} else {
+				require.Len(t, calls[0].Participants, 1)
+				assert.False(t, calls[0].Participants[0].Credited)
+			}
+		})
+	}
+}
+
 func TestLogicalCallsDurationIsMax(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)

@@ -68,7 +68,7 @@ func (s *Store) ListLogicalCallsContext(ctx context.Context, q LogicalCallQuery)
 	args = append(args, bounds...)
 	args = append(args, q.Limit+1)
 	rows, err := s.db.QueryContext(ctx, s.Rebind(`WITH `+ctes+`, selected AS (
- SELECT i.*, `+callCategorySQL("COALESCE((SELECT MAX(p.confirmed) FROM call_participants p WHERE p.identity_key = i.identity_key), 0)")+` AS category
+ SELECT i.*, `+callCategorySQL("CASE WHEN EXISTS (SELECT 1 FROM active a WHERE a.identity_key = i.identity_key AND a.outcome = 'answered' AND a.owner_participation = 'joined') THEN 1 ELSE 0 END")+` AS category
  FROM identities i WHERE `+where+`
  ORDER BY i.occurred_at, i.identity_key LIMIT ?)
  SELECT i.identity_key, i.message_id, i.kind, i.occurred_at, i.category, i.duration_seconds,
