@@ -35,12 +35,13 @@ func TestToolSummariesCoverRegistries(t *testing.T) {
 		assertions.Contains(byName, definition.definition.name)
 	}
 	for _, summary := range summaries {
-		if permission, ok := agentReadToolPermission(summary.Name); ok {
-			assertions.Equal(string(permission), summary.GrantPermission)
+		if permissions := agentReadToolPermission(summary.Name); len(permissions) > 0 {
+			assertions.Equal(joinPermissions(permissions), summary.GrantPermission)
 		}
 	}
 	assertions.Equal("owner-only", byName[ToolQuerySQL].GrantPermission)
 	assertions.Equal("message.read", byName[ToolGetMessage].GrantPermission)
+	assertions.Equal("calendar.event.read or message.read", byName[ToolGetCalendarEvent].GrantPermission)
 	assertions.Equal("--allow-profile-writes", byName[ToolPromotePerson].Flag)
 	tools := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false)
 	requirements.NotEmpty(tools)
