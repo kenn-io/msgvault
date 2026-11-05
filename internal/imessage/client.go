@@ -534,7 +534,10 @@ func (c *Client) importMessage(
 	if err != nil {
 		return err
 	}
-	recipients := c.messageRecipients(s, msg, senderID, ownerPID, phoneCache, emailCache, summary)
+	recipients, err := c.messageRecipients(s, msg, senderID, ownerPID, phoneCache, emailCache, summary)
+	if err != nil {
+		return fmt.Errorf("resolve message recipients: %w", err)
+	}
 	existing, exists := stored[sourceMessageID]
 	labelID := imessageLabelID
 	if msgType == "sms" {
@@ -605,17 +608,21 @@ func (c *Client) messageRecipients(
 	ownerPID int64,
 	phoneCache, emailCache map[string]int64,
 	summary *ImportSummary,
-) []store.RecipientSet {
+) ([]store.RecipientSet, error) {
 	sets := []store.RecipientSet{{Type: "from"}, {Type: "to"}}
 	if senderID.Valid {
 		sets[0].ParticipantIDs = []int64{senderID.Int64}
 	}
 	if msg.IsFromMe != 0 {
-		sets[1].ParticipantIDs = c.getChatParticipantIDs(s, msg, phoneCache, emailCache, summary)
+		pids, err := c.getChatParticipantIDs(s, msg, phoneCache, emailCache, summary)
+		if err != nil {
+			return nil, err
+		}
+		sets[1].ParticipantIDs = pids
 	} else if ownerPID > 0 {
 		sets[1].ParticipantIDs = []int64{ownerPID}
 	}
-	return sets
+	return sets, nil
 }
 
 // getChatParticipantIDs returns participant IDs for the chat members
@@ -626,7 +633,7 @@ func (c *Client) getChatParticipantIDs(
 	phoneCache map[string]int64,
 	emailCache map[string]int64,
 	summary *ImportSummary,
-) []int64 {
+) ([]int64, error) {
 	if msg.ChatROWID == nil {
 		// No chat info; fall back to handle if available
 		if msg.HandleID != nil {
@@ -634,11 +641,14 @@ func (c *Client) getChatParticipantIDs(
 				s, *msg.HandleID,
 				phoneCache, emailCache, summary,
 			)
-			if err == nil && pid > 0 {
-				return []int64{pid}
+			if err != nil {
+				return nil, err
+			}
+			if pid > 0 {
+				return []int64{pid}, nil
 			}
 		}
-		return nil
+		return nil, nil
 	}
 
 	rows, err := c.db.Query(`
@@ -648,7 +658,7 @@ func (c *Client) getChatParticipantIDs(
 		WHERE chj.chat_id = ?
 	`, *msg.ChatROWID)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -656,19 +666,22 @@ func (c *Client) getChatParticipantIDs(
 	for rows.Next() {
 		var handleID string
 		if err := rows.Scan(&handleID); err != nil {
-			continue
+			return nil, err
 		}
 		pid, err := c.resolveParticipant(
 			s, handleID, phoneCache, emailCache, summary,
 		)
-		if err == nil && pid > 0 {
+		if err != nil {
+			return nil, err
+		}
+		if pid > 0 {
 			pids = append(pids, pid)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		c.logger.Warn("iterate chat participants", "error", err)
+		return nil, err
 	}
-	return pids
+	return pids, nil
 }
 
 // marshalMessageRaw serializes the source message for comparison and storage.
