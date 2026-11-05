@@ -249,7 +249,7 @@ func (r *run) bindACI(ctx context.Context, phoneParticipant int64, aci string) e
 	}
 	if existing != 0 && existing != phoneParticipant {
 		if err := r.imp.store.MergeParticipantsContext(ctx, existing, phoneParticipant); err != nil {
-			return fmt.Errorf("merge Signal identity into phone participant: %w", err)
+			return fmt.Errorf("merge Signal contacts: %w", err)
 		}
 		for recipient, pid := range r.participants {
 			if pid == existing {
@@ -283,7 +283,7 @@ func (r *run) participant(ctx context.Context, recipientID int64) (pid int64, ok
 	}
 	if err != nil {
 		r.summary.Errors++
-		err = fmt.Errorf("ensure participant for Signal recipient %d: %w", recipientID, err)
+		err = fmt.Errorf("save Signal contact: %w", err)
 		r.imp.progress.OnError(err)
 		pid = 0
 		r.participantErrs[recipientID] = err
