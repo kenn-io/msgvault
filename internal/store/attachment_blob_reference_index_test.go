@@ -20,7 +20,6 @@ func TestAttachmentBlobReferencedUsesIndexes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			query, args := attachmentBlobReferenceQuery(tc.hash, tc.path)
 			plan := explainPlan(t, st, query, args...)
-			t.Logf("query plan:\n%s", plan)
 			for _, index := range tc.indexes {
 				assert.Contains(t, plan, "SEARCH attachments USING INDEX "+index+" ", "blob checks must seek each reference index:\n%s", plan)
 			}

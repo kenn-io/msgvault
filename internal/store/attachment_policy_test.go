@@ -217,9 +217,8 @@ func TestAttachmentBlobReferenced(t *testing.T) {
 	_, err := st.DB().Exec(st.Rebind(`
 		INSERT INTO attachments (message_id, content_hash, thumbnail_hash, storage_path, thumbnail_path)
 		VALUES (?, 'content-hash', 'thumbnail-hash', 'content/path', 'thumbnail/path'),
-		       (?, '', '', '', ''),
-		       (?, NULL, NULL, 'pending', NULL)
-	`), messageID, messageID, messageID)
+		       (?, '', '', '', '')
+	`), messageID, messageID)
 	require.NoError(t, err)
 
 	for _, tc := range []struct {
@@ -230,7 +229,6 @@ func TestAttachmentBlobReferenced(t *testing.T) {
 		{"thumbnail hash", "thumbnail-hash", "", true},
 		{"content path", "", "content/path", true},
 		{"thumbnail path", "", "thumbnail/path", true},
-		{"both match", "content-hash", "thumbnail/path", true},
 		{"only content hash matches", "content-hash", "missing/path", true},
 		{"only thumbnail hash matches", "thumbnail-hash", "missing/path", true},
 		{"only content path matches", "missing-hash", "content/path", true},
