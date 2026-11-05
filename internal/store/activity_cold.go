@@ -20,9 +20,9 @@ type coldActivityMessage struct {
 }
 
 type coldActivityGroup struct {
-	burst    ActivityBurst
-	messages []coldActivityMessage
-	nonNoise bool
+	burst        ActivityBurst
+	messages     []coldActivityMessage
+	noiseOmitted int
 }
 
 // ListColdActivityBurstsContext reconstructs complete cold conversation-days
@@ -32,14 +32,14 @@ func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery)
 	if q.Limit < 1 || q.Limit > 5000 {
 		return page, fmt.Errorf("%w: burst limit must be 1..5000", ErrInvalidActivityRequest)
 	}
-	groups, filters, err := s.coldActivityGroupsContext(ctx, q)
+	groups, err := s.coldActivityGroupsContext(ctx, q)
 	if err != nil {
 		return page, err
 	}
 	admitted := make([]ActivityBurst, 0, len(groups))
 	for _, g := range groups {
-		if !filters.IncludeNoise && !g.nonNoise {
-			page.NoiseOmitted += len(g.messages)
+		page.NoiseOmitted += g.noiseOmitted
+		if len(g.messages) == 0 {
 			continue
 		}
 		b := g.burst
@@ -71,15 +71,13 @@ func (s *Store) ListColdActivityBurstsContext(ctx context.Context, q BurstQuery)
 // logical groups across the whole window. Burst limits and cursors do not
 // narrow omissions; request eligibility, scope, subject and noise filters do.
 func (s *Store) CountColdActivityMessagesContext(ctx context.Context, q BurstQuery) (int, error) {
-	groups, filters, err := s.coldActivityGroupsContext(ctx, q)
+	groups, err := s.coldActivityGroupsContext(ctx, q)
 	if err != nil {
 		return 0, err
 	}
 	count := 0
 	for _, g := range groups {
-		if filters.IncludeNoise || g.nonNoise {
-			count += len(g.messages)
-		}
+		count += len(g.messages)
 	}
 	return count, nil
 }
@@ -91,24 +89,35 @@ func compareColdBurstKey(a, b BurstKey) int {
 	return cmp.Compare(a.Key, b.Key)
 }
 
-func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (map[string]*coldActivityGroup, ActivityFilters, error) {
+func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (map[string]*coldActivityGroup, error) {
+	var groups map[string]*coldActivityGroup
+	err := s.withReadSnapshotContext(ctx, func(tx *loggedTx) error {
+		snapshotCtx := context.WithValue(ctx, readSnapshotKey{}, &readSnapshot{db: s.db.DB, tx: tx})
+		var err error
+		groups, err = s.readColdActivityGroupsContext(snapshotCtx, q)
+		return err
+	})
+	return groups, err
+}
+
+func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery) (map[string]*coldActivityGroup, error) {
 	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
 	if err != nil {
-		return nil, filters, err
+		return nil, err
 	}
 	if filters.maxDirect == 0 {
 		filters.maxDirect = DefaultMaxDirectActivityCounterparts
 	}
 	if q.ConversationID < 0 || (q.After != nil && q.Before != nil && !q.After.Before(*q.Before)) {
-		return nil, filters, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
+		return nil, fmt.Errorf("%w: invalid activity window", ErrInvalidActivityRequest)
 	}
 	zone, err := s.ActivityTimezoneTransitionContext(ctx)
 	if err != nil {
-		return nil, filters, err
+		return nil, err
 	}
 	loc, err := activitydate.LoadZone(zone.Target)
 	if err != nil {
-		return nil, filters, err
+		return nil, err
 	}
 	where := `m.conversation_id IN (SELECT p.conversation_id FROM conversation_policy p JOIN conversations c ON c.id=p.conversation_id WHERE p.effective_tier='cold' AND c.conversation_type IN ` + chatConversationTypesSQL + `)`
 	scope, args := sourceScopeClause(ctx, "m.source_id")
@@ -126,7 +135,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	}
 	if q.FromDate != "" || q.ToDate != "" {
 		if !validActivityDate(q.FromDate) || !validActivityDate(q.ToDate) || q.FromDate > q.ToDate {
-			return nil, filters, fmt.Errorf("%w: invalid local dates", ErrInvalidActivityRequest)
+			return nil, fmt.Errorf("%w: invalid local dates", ErrInvalidActivityRequest)
 		}
 		// A bounded SQL superset covers every IANA offset and explicit day precision.
 		// DateEvent below applies the exact archive-zone civil-date boundary.
@@ -160,7 +169,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	}
 	subject, subjectArgs, err := activitySubjectClause(q.Subject, "m")
 	if err != nil {
-		return nil, filters, err
+		return nil, err
 	}
 	// Materialize the scoped cold window before live eligibility and counterpart
 	// classification. Otherwise SQLite can evaluate those correlated queries for
@@ -173,7 +182,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
  FROM cold_window cw JOIN messages m ON m.id=cw.id JOIN sources src ON src.id=m.source_id
  WHERE `+s.activityLiveEligibleSQL()+subject+` ORDER BY m.source_id,m.id`), args...)
 	if err != nil {
-		return nil, filters, fmt.Errorf("read cold activity: %w", err)
+		return nil, fmt.Errorf("read cold activity: %w", err)
 	}
 	messages := []coldActivityMessage{}
 	ids := []int64{}
@@ -181,7 +190,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		var m coldActivityMessage
 		if err = rows.Scan(&m.ID, &m.List, &m.Encrypted); err != nil {
 			_ = rows.Close()
-			return nil, filters, fmt.Errorf("scan cold activity: %w", err)
+			return nil, fmt.Errorf("scan cold activity: %w", err)
 		}
 		messages = append(messages, m)
 		ids = append(ids, m.ID)
@@ -189,11 +198,11 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
-		return nil, filters, fmt.Errorf("iterate cold activity: %w", err)
+		return nil, fmt.Errorf("iterate cold activity: %w", err)
 	}
 	candidates, err := s.LoadActivityCandidatesByIDContext(ctx, ids)
 	if err != nil {
-		return nil, filters, err
+		return nil, err
 	}
 	byID := make(map[int64]ActivityCandidate, len(candidates))
 	for _, c := range candidates {
@@ -202,7 +211,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 	classifiedMessages := []coldActivityMessage{}
 	for _, m := range messages {
 		if err = ctx.Err(); err != nil {
-			return nil, filters, err
+			return nil, err
 		}
 		c := byID[m.ID]
 		dating, dateErr := activitydate.DateEvent(activitydate.Timestamps{SentAt: c.SentAt, ReceivedAt: c.ReceivedAt, InternalDate: c.InternalDate, DateOnly: c.DateOnly}, loc)
@@ -232,7 +241,7 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		facts[i] = m.activityReadMessage
 	}
 	if err = s.hydrateColdActivityCounterpartsContext(ctx, facts, filters); err != nil {
-		return nil, filters, err
+		return nil, err
 	}
 	groups := map[string]*coldActivityGroup{}
 	for i, m := range classifiedMessages {
@@ -244,8 +253,15 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 		key := fmt.Sprintf("burst:%d:%d:%s", m.candidate.SourceID, conv, m.dating.LocalDate)
 		g := groups[key]
 		if g == nil {
-			g = &coldActivityGroup{burst: ActivityBurst{Key: key, SourceID: m.candidate.SourceID, ConversationID: conv, Channel: m.channel, LocalDate: m.dating.LocalDate, FirstAt: m.dating.OccurredAt, LastAt: m.dating.OccurredAt, Cold: true, LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{}, Counterparts: []ActivityMessageCounterpart{}}}
+			g = &coldActivityGroup{}
 			groups[key] = g
+		}
+		if !filters.IncludeNoise && !coldActivityNonNoise(m, filters) {
+			g.noiseOmitted++
+			continue
+		}
+		if len(g.messages) == 0 {
+			g.burst = ActivityBurst{Key: key, SourceID: m.candidate.SourceID, ConversationID: conv, Channel: m.channel, LocalDate: m.dating.LocalDate, FirstAt: m.dating.OccurredAt, LastAt: m.dating.OccurredAt, Cold: true, LatestMessageIDs: []int64{}, CopyCounts: map[int64]int{}, Counterparts: []ActivityMessageCounterpart{}}
 		}
 		if m.dating.OccurredAt.Before(g.burst.FirstAt) {
 			g.burst.FirstAt = m.dating.OccurredAt
@@ -265,13 +281,12 @@ func (s *Store) coldActivityGroupsContext(ctx context.Context, q BurstQuery) (ma
 				g.burst.Outbound++
 			}
 		}
-		g.nonNoise = g.nonNoise || coldActivityNonNoise(m, filters)
 		g.messages = append(g.messages, m)
 	}
 	for _, g := range groups {
 		finishColdActivityGroup(g)
 	}
-	return groups, filters, nil
+	return groups, nil
 }
 
 // Cold messages have no projection rows. Supply their live classification to

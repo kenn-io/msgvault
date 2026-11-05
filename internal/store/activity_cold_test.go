@@ -60,6 +60,51 @@ func retractTimelineActivity(t *testing.T, f *timelineActivityFixture, messageID
 	require.NoError(t, err)
 }
 
+func TestColdAdapterFiltersMixedNoise(t *testing.T) {
+	for _, noiseType := range []string{"sender", "list"} {
+		t.Run(noiseType, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			f := newTimelineActivityFixture(t)
+			room := coldTimelineRoom(t, f, f.Source.ID, "mixed-noise")
+			at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
+			human := addColdTimelineMessage(t, f, room, f.Source.ID, at, false)
+			noise := addColdTimelineMessage(t, f, room, f.Source.ID, at.Add(time.Hour), false)
+			if noiseType == "sender" {
+				sender := f.EnsureParticipant("no-reply@example.com", "Automated sender", "example.com")
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, noise)
+				requirements.NoError(err)
+				requirements.NoError(f.Store.ReplaceMessageRecipients(noise, "from", []int64{sender}, nil))
+			} else {
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='list.example.com' WHERE id=?`), noise)
+				requirements.NoError(err)
+			}
+			q := timelineBurstQuery()
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal([]int64{human}, page.Bursts[0].LatestMessageIDs)
+			assertions.Equal(human, page.Bursts[0].AnchorMessageID)
+			assertions.Equal(at, page.Bursts[0].FirstAt)
+			assertions.Equal(at, page.Bursts[0].LastAt)
+			assertions.Equal(1, page.Bursts[0].Inbound)
+			assertions.Equal(1, page.NoiseOmitted)
+			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Equal(1, count)
+
+			q.Filters.IncludeNoise = true
+			page, err = f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, 1)
+			assertions.Equal([]int64{noise, human}, page.Bursts[0].LatestMessageIDs)
+			assertions.Zero(page.NoiseOmitted)
+			count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
+			requirements.NoError(err)
+			assertions.Equal(2, count)
+		})
+	}
+}
+
 func TestColdAdapterExcludesEmailThreads(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	f := newTimelineActivityFixture(t)
