@@ -336,6 +336,7 @@ func importRawDirectory(ctx context.Context, st *store.Store, root string,
 		}
 		return summary, nil
 	}
+	rederive.LinkEmailReplies(ctx, slog.Default(), st, source)
 	if err := st.CompleteSync(syncID, fmt.Sprintf("mailboxes:%d messages:%d", summary.MailboxesImported, summary.MessagesAdded)); err != nil {
 		return nil, fmt.Errorf("complete directory import: %w", err)
 	}

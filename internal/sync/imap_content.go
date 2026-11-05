@@ -18,7 +18,8 @@ const (
 // Location-only adoption leaves this metadata intact, including across runs
 // where the original mailbox no longer appears in LIST.
 type imapMessageMetadata struct {
-	ContentOrigin imapContentOrigin `json:"imap_content_origin"`
+	ContentOrigin  imapContentOrigin `json:"imap_content_origin"`
+	EmailInReplyTo string            `json:"email_in_reply_to,omitempty"`
 }
 
 func (s *Syncer) imapContentOrigin(sourceMessageID string) imapContentOrigin {

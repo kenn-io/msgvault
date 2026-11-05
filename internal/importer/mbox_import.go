@@ -564,6 +564,7 @@ func ImportMbox(
 	if cp.ErrorsCount > 0 {
 		finalMsg = fmt.Sprintf("offset:%d errors:%d", r.Offset(), cp.ErrorsCount)
 	}
+	rederive.LinkEmailReplies(ctx, slog.Default(), st, src)
 	if err := st.CompleteSync(syncID, finalMsg); err != nil {
 		return summary, fmt.Errorf("complete sync: %w", err)
 	}

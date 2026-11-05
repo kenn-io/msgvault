@@ -69,6 +69,18 @@ separately. SQLite is the default and stores the archive at `~/.msgvault/msgvaul
 | `has_attachments` | BOOLEAN | Attachment flag |
 | `deleted_at` | DATETIME | Soft-delete timestamp |
 | `deleted_from_source_at` | DATETIME | Records removal from the source; content may remain archived |
+| `reply_to_message_id` | INTEGER FK, nullable | The archived message this one replies to, always in the same source |
+
+An email's parent is the message whose `rfc822_message_id` equals the first
+Message-ID in its `In-Reply-To` header. Every email ingest path records that ID
+in `metadata` as `email_in_reply_to`. Linking sets `reply_to_message_id` only
+when exactly one visible email in the same source has that ID, and never
+replaces an existing link. After each sync or import, msgvault links the replies
+it archived, plus older replies in the conversations of newly archived messages,
+so a parent that arrives after its reply is linked too. A late parent filed in a
+different conversation from its reply stays unlinked. The first sync or import
+of a source after upgrading reads `In-Reply-To` from each email's stored MIME
+headers and links the whole source once; a source merge repeats that pass.
 
 The Store derives `account_address` and `account_path` in the same transaction
 as every message write that changes their inputs: raw MIME, recipients, and
