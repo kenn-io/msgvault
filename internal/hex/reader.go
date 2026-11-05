@@ -177,12 +177,27 @@ func decodeTranscript(data []byte, rolling bool) (entries []Entry, partial bool,
 		if rolling && line[len(line)-1] == '\n' && json.Unmarshal(line, &header) == nil && header.Covered != nil {
 			continue
 		}
-		var entry Entry
-		if line[len(line)-1] != '\n' || json.Unmarshal(line, &entry) != nil || !evidence.ValidEntry(entry) || strings.TrimSpace(entry.Text) == "" {
+		entry, ok := decodeEntry(line)
+		if !ok {
 			warnings++
 			continue
 		}
 		entries = append(entries, entry)
 	}
 	return entries, warnings > 0, warnings
+}
+
+// decodeEntry accepts only a complete line carrying both timestamps, as
+// Hex's serde requires; explicit zeros are legitimate, omitted or null are not.
+func decodeEntry(line []byte) (Entry, bool) {
+	var wire struct {
+		Entry
+		StartMS *int64 `json:"start_ms"`
+		EndMS   *int64 `json:"end_ms"`
+	}
+	if line[len(line)-1] != '\n' || json.Unmarshal(line, &wire) != nil || wire.StartMS == nil || wire.EndMS == nil {
+		return Entry{}, false
+	}
+	wire.Entry.StartMS, wire.Entry.EndMS = *wire.StartMS, *wire.EndMS
+	return wire.Entry, evidence.ValidEntry(wire.Entry) && strings.TrimSpace(wire.Text) != ""
 }
