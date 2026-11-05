@@ -173,10 +173,7 @@ func (d *PostgreSQLDialect) TimestampParam(t time.Time) any { return t.UTC() }
 const pgWriteLockModes = `('RowExclusiveLock', 'ShareRowExclusiveLock', ` +
 	`'ExclusiveLock', 'AccessExclusiveLock')`
 
-const pgWatermarkBoundsQuery = `
-	SELECT clock_timestamp(),
-	       transaction_timestamp(),
-	       LEAST(transaction_timestamp(),
+const pgContentCommitBoundSQL = `LEAST(transaction_timestamp(),
 	             COALESCE((SELECT MIN(a.xact_start)
 	                       FROM pg_stat_activity a
 	                       JOIN pg_locks l ON l.pid = a.pid
@@ -184,7 +181,12 @@ const pgWatermarkBoundsQuery = `
 	                         AND a.xact_start IS NOT NULL
 	                         AND l.relation = to_regclass('messages')
 	                         AND l.mode IN ` + pgWriteLockModes + `),
-	                      transaction_timestamp())),
+	                      transaction_timestamp()))`
+
+const pgWatermarkBoundsQuery = `
+	SELECT clock_timestamp(),
+	       transaction_timestamp(),
+	       ` + pgContentCommitBoundSQL + `,
 	       to_regclass('messages') IS NOT NULL,
 	       (SELECT count(*)
 	          FROM pg_stat_activity a

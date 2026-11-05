@@ -3,6 +3,7 @@ package store_test
 import (
 	"crypto/sha256"
 	"database/sql"
+	"fmt"
 	"sort"
 	"testing"
 	"time"
@@ -1207,4 +1208,97 @@ func TestApplyIMAPMailboxDeltas_ResetPersistsFlagChange(t *testing.T) {
 	assert.JSONEq(`["\\Seen","\\Flagged"]`, gotFlags)
 	_, gotSteadyFlags := membershipMessageAndFlags(t, f.store, f.source.ID, 5, 2)
 	assert.JSONEq(`["\\Seen"]`, gotSteadyFlags)
+}
+
+func TestApplyIMAPMailboxDeltas_IncrementalUntrackedReconciliation(t *testing.T) {
+	for _, scenario := range []string{"cleared tombstone", "failed apply"} {
+		t.Run(scenario, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			st := testutil.NewTestStore(t)
+			source, err := st.GetOrCreateSource("imap", "incremental@example.test")
+			requirements.NoError(err)
+			convID, err := st.EnsureConversation(source.ID, "incremental", "Incremental")
+			requirements.NoError(err)
+			f := imapMembershipFixture{store: st, source: source, convID: convID}
+			f.createMessage(t, "tracked", "")
+			baseline := store.IMAPMailboxDelta{
+				Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1},
+				Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "tracked"}},
+			}
+			var untrackedID int64
+			if scenario == "cleared tombstone" {
+				untrackedID = f.createMessage(t, "untracked", "")
+			}
+			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{baseline}))
+			if scenario == "failed apply" {
+				untrackedID = f.createMessage(t, "untracked", "")
+			} else {
+				requirements.True(messageTombstoned(t, st, untrackedID))
+				requirements.NoError(st.ClearMessageDeletedFromSource(source.ID, "untracked"))
+			}
+			labelID, err := st.EnsureLabel(source.ID, "Legacy", "Legacy", "user")
+			requirements.NoError(err)
+			requirements.NoError(st.ReplaceMessageLabels(untrackedID, []int64{labelID}))
+			requirements.False(messageTombstoned(t, st, untrackedID))
+			if scenario == "failed apply" {
+				var checkpoint string
+				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&checkpoint))
+				// Put the import before the failed apply's capture bound so a
+				// checkpoint that escaped rollback would skip it on the retry.
+				requirements.EventuallyWithT(func(c *assert.CollectT) {
+					var older bool
+					require.NoError(c, st.DB().QueryRow(st.Rebind(`
+						SELECT content_changed_at < CURRENT_TIMESTAMP FROM messages WHERE id = ?
+					`), untrackedID).Scan(&older))
+					assert.True(c, older)
+				}, 5*time.Second, 10*time.Millisecond)
+				failed := baseline
+				failed.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "missing"}}
+				requirements.ErrorIs(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{failed}), sql.ErrNoRows)
+				var after string
+				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
+					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&after))
+				assertions.Equal(checkpoint, after)
+				assertions.False(messageTombstoned(t, st, untrackedID))
+				assertions.Equal([]string{"Legacy"}, messageLabels(t, st, untrackedID))
+			}
+			baseline.Memberships = nil
+			requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{baseline}))
+			assertions.True(messageTombstoned(t, st, untrackedID))
+			assertions.Empty(messageLabels(t, st, untrackedID))
+			assertions.Equal(1, membershipCount(t, st, source.ID))
+		})
+	}
+}
+
+func TestApplyIMAPMailboxDeltas_RetiresMembershipOnlyDraftMailbox(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("imap", "draft-only@example.test")
+	requirements.NoError(err)
+	convID, err := st.EnsureConversation(source.ID, "draft-only", "Draft")
+	requirements.NoError(err)
+	receipt := store.IMAPDraftReceipt{SourceID: source.ID, Mailbox: "Drafts", UIDValidity: 7, UID: 42}
+	draft, err := st.PersistIMAPDraftContext(t.Context(), receipt, nil, func([]int64) *store.MessagePersistData {
+		return &store.MessagePersistData{Message: &store.Message{
+			SourceID: source.ID, ConversationID: convID, MessageType: store.MessageTypeEmail,
+			SourceMessageID: store.IMAPDraftSourceMessageID(receipt),
+		}}
+	})
+	requirements.NoError(err)
+	states, err := st.GetIMAPFolderStates(source.ID)
+	requirements.NoError(err)
+	requirements.Empty(states)
+	requirements.Equal(1, membershipCount(t, st, source.ID))
+	requirements.Equal([]string{"Drafts"}, messageLabels(t, st, draft.CurrentMessageID))
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{}))
+	assertions.Zero(membershipCount(t, st, source.ID))
+	assertions.True(messageTombstoned(t, st, draft.CurrentMessageID))
+	assertions.Empty(messageLabels(t, st, draft.CurrentMessageID))
+	key, err := st.GetMessageSourceID(draft.CurrentMessageID)
+	requirements.NoError(err)
+	assertions.Equal(fmt.Sprintf("msgvault-invalidated:%d", draft.CurrentMessageID), key)
 }
