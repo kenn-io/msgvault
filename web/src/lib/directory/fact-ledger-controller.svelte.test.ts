@@ -287,8 +287,6 @@ it.each([0, 50, 51])('shows at most 50 claims with a next page only for a lookah
   expect(controller.claims.rows).toHaveLength(Math.min(50, count));
   expect(controller.hasNext('claims')).toBe(count === 51);
   if (count) {
-    expect(controller.claims.rows[0]!.submittedValue).toBe('"Example City"');
-    expect(controller.claims.rows[0]!.displayValue).toBe('Example City');
     controller.revealClaim(controller.claims.rows[0]!.rowToken);
     await controller.selectSection('evidence');
     expect(controller.revealedClaims.size).toBe(0);
@@ -343,17 +341,29 @@ it('retains pins during entry and failed refreshes, then clears them with the pe
   controller.destroy();
 });
 
-it.each(['', '   ', '\"\"', '\"   \"'])('identifies blank claim submissions while preserving original JSON: %j', async submitted => {
+it.each([
+  ['attribute', '', 'Blank submission'],
+  ['attribute', '   ', 'Blank submission'],
+  ['attribute', '""', 'Blank submission'],
+  ['attribute', '"   "', 'Blank submission'],
+  ['attribute', '"Example City"', 'Example City'],
+  ['employment', '{"organization":{"name":"Synthetic Org"},"title":"Engineer"}', 'Engineer · Synthetic Org'],
+  ['attribute', '["Go","Rust"]', 'Go, Rust'],
+  ['attribute', 'true', 'Yes'],
+  ['attribute', '5', '5'],
+])('formats %s claim %j while preserving original JSON', async (kind, submitted, expected) => {
   const client = createAPIClient(async input => {
     const path = new URL(requestOf(input).url).pathname;
     const data = payload(path);
-    if (path.endsWith('/fact-claims')) return Response.json({ claims: [{ ...payload(path).claims![0], submitted_value: submitted }] });
+    if (path.endsWith('/person-fact-targets')) return Response.json({ targets: [{ kind, key: kind === 'employment' ? 'system:employment' : 'location', revision, slug: kind === 'employment' ? 'employment' : 'location', description: 'Claim field', value_type: 'text', cardinality: 'single', sensitive: false }] });
+    if (path.endsWith('/fact-claims')) return Response.json({ claims: [{ ...payload(path).claims![0], target: { kind, key: kind === 'employment' ? 'system:employment' : 'location', revision }, submitted_value: submitted }] });
     return Response.json(data);
   });
   const controller = new FactLedgerController(client);
   controller.applyContext(true, 42);
   await vi.waitFor(() => expect(controller.initialLoading).toBe(false));
-  expect(controller.claims.rows[0]!.displayValue).toBe('Blank submission');
+  expect(controller.fieldName(controller.claims.rows[0]!)).toBe(kind === 'employment' ? 'Employment' : 'Location');
+  expect(controller.claims.rows[0]!.displayValue).toBe(expected);
   expect(controller.claims.rows[0]!.submittedValue).toBe(submitted);
   controller.destroy();
 });

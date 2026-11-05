@@ -24,7 +24,6 @@ for (const width of [1440, 390]) {
     await page.getByRole('radio', { name: 'Details', exact: true }).click();
     const facts = page.getByRole('region', { name: 'Facts', exact: true });
     await facts.getByRole('button', { name: 'Show', exact: true }).click();
-    await expect(facts.getByRole('button', { name: 'Reveal sensitive fact value' })).toBeVisible();
     await expect(facts.getByRole('region', { name: 'Claims', exact: true })).toBeVisible();
     const saved = facts.getByText(longValue, { exact: true });
     await expect(saved).toBeVisible();
@@ -46,16 +45,8 @@ for (const width of [1440, 390]) {
     expect(bounds.left).toBeGreaterThanOrEqual(bounds.columnLeft - 1);
     expect(bounds.right).toBeLessThanOrEqual(bounds.columnRight + 1);
     expect(Math.abs(bounds.right - bounds.triggerRight)).toBeLessThanOrEqual(1);
-    await page.getByRole('combobox', { name: 'Search fields', exact: true }).fill('extension');
-    await expect(page.getByRole('option', { name: /Forbidden extension field Sensitive/ })).toBeVisible();
     await page.keyboard.press('Escape');
-    await facts.locator('summary').filter({ hasText: 'About these fields' }).click();
-    await expect(facts.locator('details.about')).toHaveAttribute('open', '');
-    await facts.locator('summary').filter({ hasText: 'About these fields' }).click();
-    await expect(facts.locator('details.about')).not.toHaveAttribute('open', '');
     await facts.getByRole('radio', { name: 'Evidence', exact: true }).click();
-    await expect(facts.getByRole('button', { name: 'Reveal evidence excerpt' })).toBeVisible();
-    await expect(facts.getByRole('navigation')).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }

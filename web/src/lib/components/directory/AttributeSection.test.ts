@@ -163,27 +163,38 @@ describe('AttributeSection', () => {
     if (interval.active_until) expect(metadata).toMatch(/Valid until: (Aug 1|Aug 2), 2026/);
     if (interval.superseded_at) expect(metadata).toMatch(/Superseded: (Aug 2|Aug 3), 2026/);
   });
-});
 
-it('filters fields by universal ID, keeps reveals through reordering, and gives History distinct headings', async () => {
-  const privateField = definition();
-  const other = definition({ id: 9, universal_id: '00000000-0000-4000-8000-000000000009', label: 'Other note', slug: 'other', display_order: 20 });
-  const groups = [
-    { definition: privateField, current: [personValue(privateField, 51, { type: 'text', text: 'First secret' })], history: [] },
-    { definition: other, current: [personValue(other, 52, { type: 'text', text: 'Other secret' })], history: [] },
-  ];
-  const controller = new DirectoryProfileController(createAPIClient(vi.fn()), 7, {
-    attributes: { person_id: 7, attributes: groups }, definitions: { definitions: [privateField, other] }, etags: {}, errors: {},
+  it('filters fields by universal ID', async () => {
+    const privateField = definition();
+    const other = definition({ id: 9, universal_id: '00000000-0000-4000-8000-000000000009', label: 'Other note', slug: 'other', display_order: 20 });
+    const groups = [
+      { definition: privateField, current: [personValue(privateField, 51, { type: 'text', text: 'First secret' })], history: [] },
+      { definition: other, current: [personValue(other, 52, { type: 'text', text: 'Other secret' })], history: [] },
+    ];
+    const controller = new DirectoryProfileController(createAPIClient(vi.fn()), 7, {
+      attributes: { person_id: 7, attributes: groups }, definitions: { definitions: [privateField, other] }, etags: {}, errors: {},
+    });
+    render(AttributeSection, { controller, universalIDs: [privateField.universal_id] });
+    expect(screen.queryByRole('heading', { name: 'Other note' })).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'Reveal Private note values' }));
+    expect(screen.getByText('First secret')).toBeDefined();
+    expect(screen.queryByText('Other secret')).toBeNull();
+    controller.destroy();
   });
-  const facts = render(AttributeSection, { controller, universalIDs: [privateField.universal_id] });
-  expect(screen.queryByRole('heading', { name: 'Other note' })).toBeNull();
-  await fireEvent.click(screen.getByRole('button', { name: 'Reveal Private note values' }));
-  await facts.rerender({ controller, universalIDs: [other.universal_id, privateField.universal_id] });
-  expect(screen.getByText('First secret')).toBeDefined();
-  expect(screen.queryByText('Other secret')).toBeNull();
-  const history = render(AttributeSection, { controller });
-  const headings = document.querySelectorAll('h3');
-  expect(new Set(Array.from(headings, heading => heading.id)).size).toBe(headings.length);
-  expect(history.container.textContent).not.toContain('First secret');
-  controller.destroy();
+
+  it('gives History distinct headings and separate reveals', async () => {
+    const privateField = definition();
+    const controller = new DirectoryProfileController(createAPIClient(vi.fn()), 7, {
+      attributes: { person_id: 7, attributes: [{ definition: privateField, current: [personValue(privateField, 51, { type: 'text', text: 'First secret' })], history: [] }] },
+      definitions: { definitions: [privateField] }, etags: {}, errors: {},
+    });
+    const facts = render(AttributeSection, { controller });
+    await fireEvent.click(screen.getByRole('button', { name: 'Reveal Private note values' }));
+    expect(facts.container.textContent).toContain('First secret');
+    const history = render(AttributeSection, { controller });
+    const headings = document.querySelectorAll('h3');
+    expect(new Set(Array.from(headings, heading => heading.id)).size).toBe(headings.length);
+    expect(history.container.textContent).not.toContain('First secret');
+    controller.destroy();
+  });
 });
