@@ -46,6 +46,9 @@ func TestSQLiteTimelineSnapshotRevisionTracksChanges(t *testing.T) {
 		{"sender name repair", func(s *store.Store) error {
 			return s.RepairParticipantDisplayNames([]store.ParticipantDisplayNameRepair{{ParticipantID: 11, DisplayName: "Repaired"}})
 		}, false},
+		{"sender email repair", func(s *store.Store) error {
+			return s.RepairParticipantEmailAddresses([]store.ParticipantEmailRepair{{ParticipantID: 11, EmailAddress: "repaired@example.com"}})
+		}, false},
 		{"roster removal", func(s *store.Store) error { return s.ReplaceConversationParticipants(701, nil) }, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -68,7 +68,8 @@ const sqliteTimelineSnapshotProbe = `SELECT
 	COALESCE((SELECT updated_at FROM conversations WHERE id = ?), ''),
 	COALESCE((SELECT title FROM conversations WHERE id = ?), ''),
 	COALESCE((SELECT source_conversation_id FROM conversations WHERE id = ?), ''),
-	COALESCE((SELECT value FROM archive_metadata WHERE key = 'participant_display_name_revision'), '')
+	COALESCE((SELECT group_concat(value, ',') FROM archive_metadata
+		WHERE key IN ('participant_display_name_revision', 'identity_revision')), '')
 FROM messages WHERE conversation_id = ?`
 
 func readSQLiteTimelineSnapshot(
