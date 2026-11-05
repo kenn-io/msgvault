@@ -39,7 +39,7 @@ func (p *Processor) media(ctx context.Context, messageID int64, e Event, deleted
 	}
 	key := "line:" + m.ID
 	if prior, found := refs[key]; found {
-		if prior.State == attachmentpolicy.StateStored || prior.State == attachmentpolicy.StateSkipped || prior.State == attachmentpolicy.StateUnavailable {
+		if !attachmentpolicy.RetryEligible(prior.State) {
 			return nil
 		}
 	}

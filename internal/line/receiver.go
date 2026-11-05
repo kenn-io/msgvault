@@ -87,11 +87,8 @@ func (r *Receiver) InvalidSignatures(channelID string) uint64 {
 	return 0
 }
 
+// ServeHTTP processes requests admitted by Handles.
 func (r *Receiver) ServeHTTP(w http.ResponseWriter, request *http.Request) {
-	if !r.Handles(request) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
 	channel := r.channels[strings.TrimPrefix(request.URL.Path, webhookPrefix)]
 	if channel == nil {
 		w.WriteHeader(http.StatusNotFound)

@@ -106,7 +106,7 @@ func (e *Event) UnmarshalJSON(raw []byte) error {
 		return errors.New("line: invalid event fields")
 	}
 	switch common.Type {
-	case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave", "follow", "unfollow":
+	case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave":
 	default:
 		*e = Event{Type: common.Type, Timestamp: common.Timestamp, WebhookEventID: common.WebhookEventID, Raw: snapshot}
 		return nil

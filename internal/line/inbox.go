@@ -230,7 +230,7 @@ func (p *Processor) process(ctx context.Context, dueAt time.Time, throughID int6
 		conversationKey := ""
 		if eventErr == nil {
 			switch event.Type {
-			case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave", "follow", "unfollow":
+			case "message", "messageEdited", "unsend", "memberJoined", "memberLeft", "join", "leave":
 				if key, _, keyErr := event.Source.ConversationID(); keyErr == nil {
 					conversationKey = key
 				}
@@ -375,7 +375,7 @@ func (p *Processor) apply(ctx context.Context, e Event) (string, error) {
 		return "processed", p.edit(ctx, e)
 	case "unsend":
 		return "processed", p.unsend(ctx, e)
-	case "memberJoined", "memberLeft", "join", "leave", "follow", "unfollow":
+	case "memberJoined", "memberLeft", "join", "leave":
 		return "processed", p.membership(ctx, e)
 	default:
 		return "ignored", nil
@@ -447,7 +447,7 @@ func (p *Processor) membership(ctx context.Context, e Event) error {
 	if err != nil {
 		return err
 	}
-	joined := e.Type == "memberJoined" || e.Type == "join" || e.Type == "follow"
+	joined := e.Type == "memberJoined" || e.Type == "join"
 	var users []string
 	switch e.Type {
 	case "join", "leave":
@@ -455,8 +455,6 @@ func (p *Processor) membership(ctx context.Context, e Event) error {
 			return invalidEvent("LINE bot identity missing")
 		}
 		users = []string{p.botID}
-	case "follow", "unfollow":
-		users = []string{e.Source.UserID}
 	case "memberJoined":
 		if e.Joined == nil {
 			return invalidEvent("LINE joined members missing")

@@ -227,9 +227,6 @@ func (p *Processor) edit(ctx context.Context, e Event) error {
 		}
 	}
 	if e.Timestamp < watermark.Timestamp || e.Timestamp == watermark.Timestamp && e.WebhookEventID <= watermark.EventID {
-		if watermark.Timestamp > 0 {
-			return p.store.SetMessageEditedContext(ctx, prior.ID)
-		}
 		return nil
 	}
 	stored, err := p.store.StoredMessagesContext(ctx, p.sourceID, "line_webhook_json", []string{e.Message.ID})

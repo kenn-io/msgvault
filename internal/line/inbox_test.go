@@ -361,10 +361,22 @@ func TestProcessorInterruptedEditPassCommitsBeforeFinalizationFailure(t *testing
 		_, err = f.st.DB().Exec(`DROP TRIGGER line_finalize_fails`)
 	}
 	must.NoError(err)
+	if f.st.IsPostgreSQL() {
+		_, err = f.st.DB().Exec(`CREATE FUNCTION reject_line_message_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN RAISE EXCEPTION 'completed edit must not rewrite messages'; END $$`)
+		must.NoError(err)
+		_, err = f.st.DB().Exec(`CREATE TRIGGER reject_line_message_rewrite BEFORE UPDATE ON messages FOR EACH ROW EXECUTE FUNCTION reject_line_message_rewrite()`)
+		must.NoError(err)
+	} else {
+		_, err = f.st.DB().Exec(`CREATE TRIGGER reject_line_message_rewrite BEFORE UPDATE ON messages BEGIN SELECT RAISE(ABORT,'completed edit must not rewrite messages'); END`)
+		must.NoError(err)
+	}
 	f.run(t)
 	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	must.NoError(err)
 	checks.Zero(status.Pending)
+	checks.Equal("edited", f.archived(t, "1").body)
+	checks.True(f.archived(t, "1").edited)
 }
 
 func TestProcessorUnsendBeforeMessage(t *testing.T) {
@@ -684,6 +696,23 @@ func TestProcessorProfileNotFoundCompletesText(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestProcessorFriendshipEventsAreIgnored(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
+	f := newInboxFixture(t)
+	for _, kind := range []string{"follow", "unfollow"} {
+		f.enqueue(t, Event{Type: kind, WebhookEventID: kind, Timestamp: f.now.UnixMilli(), Source: Source{Type: "user", UserID: testUser}}, time.Time{})
+	}
+	f.run(t)
+	var conversations, participants, ignored int
+	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversations`).Scan(&conversations))
+	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM conversation_participants`).Scan(&participants))
+	must.NoError(f.st.DB().QueryRow(`SELECT COUNT(*) FROM line_webhook_events WHERE state='ignored'`).Scan(&ignored))
+	checks.Zero(conversations)
+	checks.Zero(participants)
+	checks.Equal(2, ignored)
 }
 
 func TestProcessorMembershipEventsProjectTransitions(t *testing.T) {
