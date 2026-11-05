@@ -71,6 +71,16 @@ func TestParseICSCustomizedTimeZone(t *testing.T) {
 	})
 }
 
+func TestParseICSCustomizedTimeZoneWithoutDST(t *testing.T) {
+	requirements := require.New(t)
+	raw, err := os.ReadFile("testdata/customized-no-dst.ics")
+	requirements.NoError(err)
+	components, err := ParseICS(raw, "", "")
+	requirements.NoError(err)
+	requirements.Len(components, 1)
+	requirements.Equal("2026-07-15T04:30:00Z", components[0].Event.Start.Format(time.RFC3339))
+}
+
 func TestICSLibicalTZID(t *testing.T) {
 	for _, prefix := range []string{"/freeassociation.sourceforge.net/", "/freeassociation.sourceforge.net/Tzfile/"} {
 		t.Run(prefix, func(t *testing.T) {
