@@ -632,6 +632,28 @@ func (s SearchIntegrationTasksQuery) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
+type ListLoopsQuery struct {
+	// PersonID Only loops with this person
+	PersonID *int64 `json:"person_id,omitempty"`
+
+	// Limit Maximum loops to return
+	Limit *int64 `json:"limit,omitempty" validate:"omitempty,gte=1,lte=200"`
+}
+
+func (l ListLoopsQuery) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(l))
+}
+
+type MarkLoopDoneQuery struct {
+	// QuestionMessageIds The list item's question_message_ids; only these are marked. Omit to cover every question visible now.
+	QuestionMessageIds []int64 `json:"question_message_ids,omitempty"`
+}
+
+type SnoozeLoopQuery struct {
+	// QuestionMessageIds The list item's question_message_ids; only these are marked. Omit to cover every question visible now.
+	QuestionMessageIds []int64 `json:"question_message_ids,omitempty"`
+}
+
 type SearchMediaQuery struct {
 	// Q Words to find in recordings and attachments
 	Q string `json:"q" validate:"required"`
