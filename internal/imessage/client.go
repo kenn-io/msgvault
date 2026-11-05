@@ -500,18 +500,11 @@ func (c *Client) importMessage(
 	}
 	sourceMessageID := strconv.FormatInt(msg.ROWID, 10)
 	if bodyDecodeFailed {
-		var existingMessageID int64
-		err := s.DB().QueryRowContext(ctx, s.Rebind(`
-			SELECT id FROM messages
-			WHERE source_id = ? AND source_message_id = ?
-		`), sourceID, sourceMessageID).Scan(&existingMessageID)
-		if err == nil {
-			body, err = s.GetMessageBodyText(existingMessageID)
+		if existing, exists := stored[sourceMessageID]; exists {
+			body, err = s.GetMessageBodyText(existing.ID)
 			if err != nil {
 				return fmt.Errorf("read archived body after attributed body decode failure: %w", err)
 			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("find existing message after attributed body decode failure: %w", err)
 		}
 		c.logger.Warn("failed to decode attributed body; preserving archived text")
 	}
