@@ -195,6 +195,7 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<WorkspaceFileRow>();
+  const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
   let controller: AbortController | undefined;
@@ -691,7 +692,8 @@
   async function step(delta: -1 | 1): Promise<void> {
     if (!viewerFile || loadingMore) return;
     const current = viewerFile;
-    const target = rows.findIndex((row) => row.key === current.key) + delta;
+    if (viewerIndex < 0) return;
+    const target = viewerIndex + delta;
     if (target < 0 || target >= totalCount) return;
     if (target >= rows.length && nextCursor) await loadMore();
     if (viewerFile !== current || !rows[target]) return;
@@ -1094,9 +1096,10 @@
   <FileViewer
     {client}
     file={viewerFile}
-    position={{ index: rows.findIndex((row) => row.key === viewerFile?.key), total: totalCount }}
-    onStep={(delta) => { void step(delta); }}
+    position={viewerIndex >= 0 ? { index: viewerIndex, total: totalCount } : undefined}
+    onStep={viewerIndex >= 0 ? (delta) => { void step(delta); } : undefined}
     stepping={loadingMore}
+    stepError={pageError}
     returnFocus={viewerReturnFocus ?? grid}
     onClose={() => {
       viewerFile = undefined;

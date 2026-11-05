@@ -191,5 +191,3 @@
     animation-iteration-count: 1 !important;
   }
 }
-
-.kit-modal-panel:focus-visible { outline: none; }

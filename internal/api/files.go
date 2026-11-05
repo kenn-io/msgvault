@@ -858,9 +858,6 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, available := s.fileContentState(r.Context(), *file)
-	if state == FileContentLocal && file.StoragePath != "" && !s.fileContentResolvable(r.Context(), *file) {
-		state, available = FileContentMissingBlob, false
-	}
 	writeJSON(w, http.StatusOK, FileMetadataResponse{
 		ID: file.ID, MessageID: file.MessageID, ConversationID: file.ConversationID,
 		EntryKey: fileEntryKey(*file),
@@ -910,12 +907,7 @@ func (s *Server) handleGetFileContent(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", contentDisposition(file.Filename))
 	w.Header().Set("Content-Length", strconv.FormatInt(length, 10))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	var copyErr error
-	if seeker, ok := content.(io.ReadSeeker); ok {
-		http.ServeContent(w, r, file.Filename, time.Time{}, seeker)
-	} else {
-		_, copyErr = io.Copy(w, content)
-	}
+	_, copyErr := io.Copy(w, content)
 	if err := errors.Join(copyErr, content.Close()); err != nil {
 		s.logger.Error("failed to stream file", "error", err, "file_id", id)
 	}
@@ -952,12 +944,8 @@ func (s *Server) openFileContent(ctx context.Context, file store.FileMetadata) (
 	return content, length, err
 }
 
-// fileContentState classifies one authoritative attachment row. Packed
-// attachments legitimately carry only a content hash, so availability of a
-// row without a recorded storage path is determined through the blob
-// resolver — the packed CAS store first, then the loose content-addressed
-// fallback. Rows with a recorded storage path are reported as local without
-// probing, matching the legacy loose-file contract.
+// fileContentState uses the same content resolver for lists, suggestions, and
+// details, including packed blobs and recorded legacy paths.
 func (s *Server) fileContentState(ctx context.Context, file store.FileMetadata) (FileContentState, bool) {
 	if file.URL != "" {
 		return FileContentURLOnly, false
@@ -965,7 +953,7 @@ func (s *Server) fileContentState(ctx context.Context, file store.FileMetadata) 
 	if file.ContentHash == "" {
 		return FileContentMetadataOnly, false
 	}
-	if file.StoragePath == "" && !s.fileContentResolvable(ctx, file) {
+	if !s.fileContentResolvable(ctx, file) {
 		return FileContentMissingBlob, false
 	}
 	return FileContentLocal, true

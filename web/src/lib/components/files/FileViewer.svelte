@@ -1,11 +1,11 @@
 <script lang="ts">
   import { getFile as generatedGetFile, getFileContent as generatedGetFileContent } from '../../api/generated/api/api';
-  import { Button, EmptyState, IconButton, Modal, Table, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, IconButton, Modal, Table, TableHeaderCell, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { FileMetadata, FileViewerTarget } from '../../explore/models';
   import type { PDFRenderHandle } from './FileViewer.browser.svelte';
-  import { isSupportedImageMIME, readBoundedStream, validatedImageBlob } from './preview-bytes';
+  import { isSupportedImageMIME, readBoundedStream, readStreamPrefix, validatedImageBlob } from './preview-bytes';
   import ChevronLeft from '@lucide/svelte/icons/chevron-left';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import FileIcon from '@lucide/svelte/icons/file';
@@ -22,6 +22,7 @@
     position?: { index: number; total: number };
     onStep?: (delta: -1 | 1) => void;
     stepping?: boolean;
+    stepError?: string;
     onClose?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
@@ -33,12 +34,14 @@
     position = undefined,
     onStep = undefined,
     stepping = false,
+    stepError = '',
     onClose = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
   }: Props = $props();
   const MAX_IMAGE_BYTES = 25 * 1024 * 1024;
   const MAX_PDF_BYTES = 25 * 1024 * 1024;
+  const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
   const MAX_TEXT_BYTES = 2 * 1024 * 1024;
   let text = $state<string>();
   let delimited = $state<Awaited<ReturnType<typeof parseDelimited>>>();
@@ -49,6 +52,7 @@
   let loading = $state(true);
   let error = $state('');
   let imageURL = $state('');
+  let audioURL = $state('');
   let activeObjectURL: string | undefined;
   let pdfHost = $state<HTMLElement>();
   let controller: AbortController | undefined;
@@ -115,6 +119,8 @@
     loading = false;
     if (data.content_state === 'local_content' && isImage(data)) {
       void loadImage(data, currentGeneration, signal);
+    } else if (data.content_state === 'local_content' && previewKind(data) === 'audio') {
+      void loadAudio(data, currentGeneration, signal);
     } else if (data.content_state === 'local_content' && ['csv', 'tsv', 'text'].includes(previewKind(data))) {
       void loadText(data, currentGeneration, signal);
     }
@@ -127,6 +133,7 @@
   ): Promise<{
     bytes: Uint8Array;
     contentType: string | null;
+    truncated: boolean;
   }> {
     if (!truncate && value.size_bytes > maxBytes) throw new Error('File exceeds the preview byte limit.');
     const { data, response } = await generatedGetFileContent(
@@ -138,20 +145,30 @@
     );
     if (!response.ok || !(data instanceof ReadableStream)) throw new Error('Archived content could not be loaded.');
     return {
-      bytes: await readBoundedStream(data, response.headers, signal, maxBytes, truncate),
+      ...(truncate ? await readStreamPrefix(data, signal, maxBytes) : { bytes: await readBoundedStream(data, response.headers, signal, maxBytes), truncated: false }),
       contentType: response.headers.get('Content-Type'),
     };
   }
   async function loadText(value: FileMetadata, currentGeneration: number, signal: AbortSignal): Promise<void> {
     try {
-      const { bytes } = await loadBytes(value, signal, MAX_TEXT_BYTES, true);
-      const decoded = decodeText(bytes);
+      const { bytes, contentType, truncated } = await loadBytes(value, signal, MAX_TEXT_BYTES, true);
+      const decoded = decodeText(bytes, contentType ?? value.mime_type, truncated);
       const kind = previewKind(value);
       const parsed = kind === 'text' ? undefined : await parseDelimited(decoded, kind === 'tsv' ? '\t' : ',');
       if (signal.aborted || currentGeneration !== generation) return;
       text = decoded;
       delimited = parsed;
-      textTruncated = bytes.length === MAX_TEXT_BYTES;
+      textTruncated = truncated;
+    } catch (loadError) {
+      if (!signal.aborted && currentGeneration === generation) error = errorMessage(loadError);
+    }
+  }
+  async function loadAudio(value: FileMetadata, currentGeneration: number, signal: AbortSignal): Promise<void> {
+    try {
+      const { bytes } = await loadBytes(value, signal, MAX_AUDIO_BYTES);
+      if (signal.aborted || currentGeneration !== generation) return;
+      activeObjectURL = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: value.mime_type.split(';', 1)[0] }));
+      audioURL = activeObjectURL;
     } catch (loadError) {
       if (!signal.aborted && currentGeneration === generation) error = errorMessage(loadError);
     }
@@ -215,24 +232,25 @@
     controller = undefined;
     renderHandle?.destroy();
     renderHandle = undefined;
-    revokeImageURL();
+    revokePreviewURL();
     text = undefined;
     delimited = undefined;
     textTruncated = false;
     imageSize = '';
     pdfPages = 0;
   }
-  function revokeImageURL(): void {
+  function revokePreviewURL(): void {
     if (activeObjectURL) URL.revokeObjectURL(activeObjectURL);
     activeObjectURL = undefined;
     imageURL = '';
+    audioURL = '';
   }
   function releaseScope(): void {
     releaseShortcutScope?.();
     releaseShortcutScope = undefined;
   }
   function imageFailed(): void {
-    revokeImageURL();
+    revokePreviewURL();
     error = 'The browser could not decode this image preview.';
   }
   function isImage(value: FileMetadata): boolean {
@@ -263,8 +281,12 @@
     if (isPDF(value)) return 'pdf';
     if (mime === 'text/csv' || mime === 'application/csv') return 'csv';
     if (mime === 'text/tab-separated-values') return 'tsv';
-    if (mime.startsWith('text/')) return 'text';
     if (mime.startsWith('audio/')) return 'audio';
+    if (mime.startsWith('video/')) return 'none';
+    const extension = /\.(csv|tsv|txt)$/i.exec(value.filename)?.[1]?.toLowerCase();
+    if (extension === 'csv' || extension === 'tsv') return extension;
+    if (extension === 'txt') return 'text';
+    if (mime.startsWith('text/')) return 'text';
     return 'none';
   }
   function unavailableDescription(value: FileMetadata): string {
@@ -312,7 +334,7 @@
   }}
 >
   <div class="file-viewer">
-    {#if context || position}
+    {#if context || position || stepError}
       <div class="context-bar">
         <span class="context" title={context}>{context}</span>
         {#if position}
@@ -322,13 +344,14 @@
             <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || stepping} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
           </div>
         {/if}
+        {#if stepError}<p class="step-error" role="alert">{stepError}</p>{/if}
       </div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
     <div class="preview" class:tabular={!!delimited}
       class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
       {#if loading}
-        <p role="status">Loading file metadata…</p>
+        <p role="status">Loading file…</p>
       {:else if metadata}
         {#if metadata.content_state !== 'local_content'}
           <EmptyState title="This file's contents aren't in the archive" description={unavailableDescription(metadata)}>
@@ -348,15 +371,17 @@
           {#if !pdfPages}<p role="status">Loading preview…</p>{/if}
           <div class="pdf-preview" role="region" aria-label={`PDF preview ${displayFilename}`} bind:this={pdfHost}></div>
         {:else if previewKind(metadata) === 'audio'}
-          <div class="audio-preview">
-            <FileVolume size={48} />
-            <audio controls preload="metadata" src={`/api/v1/files/${metadata.id}/content`} onerror={() => { error = "This browser can't play this audio."; }}></audio>
-          </div>
+          {#if audioURL}
+            <div class="audio-preview">
+              <FileVolume size={48} />
+              <audio controls preload="metadata" src={audioURL} onerror={() => { error = "This browser can't play this audio."; }}></audio>
+            </div>
+          {:else}<p role="status">Loading preview…</p>{/if}
         {:else if text === undefined}
           <p role="status">Loading preview…</p>
         {:else if delimited}
           <Table unsorted stickyHeader zebra ariaLabel="File contents">
-            {#snippet header()}{#each delimited?.header ?? [] as cell}<th title={cell}>{cell}</th>{/each}{/snippet}
+            {#snippet header()}{#each delimited?.header ?? [] as cell}<TableHeaderCell><span title={cell}>{cell}</span></TableHeaderCell>{/each}{/snippet}
             {#each delimited.rows as row}<tr>{#each row as cell}<td title={cell}>{cell}</td>{/each}</tr>{/each}
           </Table>
           {#if delimited.truncated || textTruncated}<p class="truncated">Showing the first 200 rows.</p>{/if}
@@ -373,13 +398,14 @@
       <div class="actions">
         {#if metadata}<KataFileIssueAction {client} attachmentID={metadata.id} messageID={metadata.message_id} filename={metadata.filename || 'File'} />{/if}
         <Button size="sm" surface="soft" label="Open conversation" disabled={!metadata && !file.entry_key} onclick={openConversation} />
-        <Button size="sm" tone={metadata?.content_state === 'local_content' ? 'neutral' : 'info'} surface={metadata?.content_state === 'local_content' ? 'outline' : 'solid'} label="Open message" disabled={!metadata && !file.entry_key} onclick={openItem} />
-        {#if metadata?.content_state === 'local_content'}
+        <Button size="sm" tone={!metadata || metadata.content_state === 'local_content' ? 'neutral' : 'info'} surface={!metadata || metadata.content_state === 'local_content' ? 'outline' : 'solid'} label="Open message" disabled={!metadata && !file.entry_key} onclick={openItem} />
+        {#if !metadata || metadata.content_state === 'local_content'}
           <Button
             size="sm"
             tone="info"
             surface="solid"
             label="Download"
+            disabled={!metadata}
             ariaLabel={`Download ${displayFilename}`}
             onclick={download}
           />
@@ -474,6 +500,7 @@
   }
   :global(.kit-modal-panel:has(.file-viewer)) {
     height: calc(100svh - 64px);
+    outline: none;
   }
   :global(.kit-modal-body:has(.file-viewer)) {
     display: flex;
@@ -483,6 +510,7 @@
   }
   .context-bar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: var(--space-3);
     margin-bottom: var(--space-3);
@@ -523,11 +551,31 @@
     line-height: 1.5;
     color: var(--text-primary);
   }
-  th, td {
+  td, .tabular :global(.kit-th) {
     max-width: 32ch;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .tabular :global(tbody tr:nth-child(odd)) {
+    background: var(--bg-surface);
+  }
+  .step-error {
+    flex-basis: 100%;
+    color: var(--accent-red);
+    font-size: var(--font-size-sm);
+  }
+  @media (max-width: 640px) {
+    .viewer-footer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto 1fr;
+      min-height: 86px;
+    }
+    .actions {
+      justify-self: end;
+      align-self: end;
+    }
   }
   .truncated {
     margin-top: var(--space-3);

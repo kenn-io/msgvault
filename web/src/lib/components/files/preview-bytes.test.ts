@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   readBoundedStream,
+  readStreamPrefix,
   validatedImageBlob,
   validatedThumbnailBlob
 } from './preview-bytes';
@@ -135,7 +136,17 @@ function u32(value: number): number[] {
 it('reads and cancels only the start of a large text stream', async () => {
   const cancel = vi.fn();
   const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3, 4, 5])); }, cancel });
-  const bytes = await readBoundedStream(stream, new Headers({ 'Content-Length': '100' }), new AbortController().signal, 3, true);
-  expect([...bytes]).toEqual([1, 2, 3]);
+  const result = await readStreamPrefix(stream, new AbortController().signal, 3);
+  expect([...result.bytes]).toEqual([1, 2, 3]);
+  expect(result.truncated).toBe(true);
   expect(cancel).toHaveBeenCalledOnce();
+});
+
+it('reports a complete prefix at the exact limit, including across chunks', async () => {
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2])); controller.enqueue(new Uint8Array([3])); controller.close(); } });
+  expect(await readStreamPrefix(stream, new AbortController().signal, 3)).toEqual({ bytes: new Uint8Array([1, 2, 3]), truncated: false });
+});
+it('detects bytes after a chunk that exactly fills the prefix', async () => {
+  const stream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])); controller.enqueue(new Uint8Array([4])); controller.close(); } });
+  expect((await readStreamPrefix(stream, new AbortController().signal, 3)).truncated).toBe(true);
 });

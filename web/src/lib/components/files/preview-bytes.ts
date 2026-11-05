@@ -138,11 +138,10 @@ export async function readBoundedStream(
   stream: ReadableStream<Uint8Array> | null,
   headers: Headers,
   signal: AbortSignal,
-  maxBytes: number,
-  truncate = false
+  maxBytes: number
 ): Promise<Uint8Array> {
   const declared = headers.get('Content-Length');
-  if (!truncate && declared !== null) {
+  if (declared !== null) {
     const length = Number(declared);
     if (Number.isFinite(length) && length > maxBytes) {
       if (stream) {
@@ -155,20 +154,30 @@ export async function readBoundedStream(
       throw new Error('File exceeds the preview byte limit.');
     }
   }
-  if (!stream) return new Uint8Array();
+  return (await readStream(stream, signal, maxBytes, false)).bytes;
+}
+
+export async function readStreamPrefix(stream: ReadableStream<Uint8Array>, signal: AbortSignal, maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  return readStream(stream, signal, maxBytes, true);
+}
+
+async function readStream(stream: ReadableStream<Uint8Array> | null, signal: AbortSignal, maxBytes: number, allowPrefix: boolean): Promise<{ bytes: Uint8Array; truncated: boolean }> {
+  if (!stream) return { bytes: new Uint8Array(), truncated: false };
   const reader = stream.getReader();
   const cancel = (): void => { void reader.cancel(); };
   signal.addEventListener('abort', cancel, { once: true });
   const chunks: Uint8Array[] = [];
   let length = 0;
+  let truncated = false;
   try {
     while (true) {
       if (signal.aborted) throw new DOMException('Preview cancelled', 'AbortError');
       const { done, value } = await reader.read();
       if (done) break;
-      if (truncate && length + value.byteLength >= maxBytes) {
+      if (allowPrefix && length + value.byteLength > maxBytes) {
         chunks.push(value.subarray(0, maxBytes - length));
         length = maxBytes;
+        truncated = true;
         await reader.cancel();
         break;
       }
@@ -189,5 +198,5 @@ export async function readBoundedStream(
     bytes.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return bytes;
+  return { bytes, truncated };
 }
