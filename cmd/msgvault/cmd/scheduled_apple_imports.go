@@ -34,8 +34,16 @@ func runScheduledWhatsAppApple(ctx context.Context, s *store.Store, src config.W
 	opts := whatsapp.DefaultOptions()
 	opts.Phone = src.Phone
 	opts.DisplayName = src.DisplayName
-	summary, err := whatsapp.NewImporter(s, scheduledWhatsAppProgress{logger: state.logger, source: src.Name}).Import(ctx, path, opts)
+	progress := &scheduledWhatsAppProgress{logger: state.logger, source: src.Name}
+	summary, err := whatsapp.NewImporter(s, progress).Import(ctx, path, opts)
 	if err != nil {
+		if !progress.started {
+			source, sourceErr := s.GetOrCreateSource("whatsapp", src.Phone)
+			if sourceErr != nil {
+				return errors.Join(err, fmt.Errorf("get or create source: %w", sourceErr))
+			}
+			err = recordScheduledAppleFailure(s, source.ID, "whatsapp_apple_import", err)
+		}
 		return fmt.Errorf("whatsapp apple source %q: %w", src.Name, err)
 	}
 	confirmDefaultIdentity(io.Discard, s, summary.SourceID, src.Phone, src.Phone, "phone-e164", state.logger)
@@ -74,7 +82,7 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	}
 	client, err := imessage.NewClient(path, opts...)
 	if err != nil {
-		return fmt.Errorf("open iMessage database: %w", err)
+		return recordScheduledAppleFailure(s, src.ID, "imessage_import", fmt.Errorf("open iMessage database: %w", err))
 	}
 	defer func() { _ = client.Close() }()
 	summary, err := importImessageRecorded(ctx, s, client, src.ID)
@@ -92,14 +100,28 @@ func runScheduledIMessage(ctx context.Context, s *store.Store, cfg config.IMessa
 	return nil
 }
 
+func recordScheduledAppleFailure(s *store.Store, sourceID int64, syncType string, importErr error) error {
+	syncID, err := s.StartSync(sourceID, syncType)
+	if err != nil {
+		return errors.Join(importErr, fmt.Errorf("start sync: %w", err))
+	}
+	return errors.Join(importErr, s.FailSync(syncID, importErr.Error()))
+}
+
 // scheduledWhatsAppProgress keeps importer warnings visible in daemon logs.
 type scheduledWhatsAppProgress struct {
 	whatsapp.NullProgress
 
-	logger *slog.Logger
-	source string
+	logger  *slog.Logger
+	source  string
+	started bool
 }
 
-func (p scheduledWhatsAppProgress) OnError(err error) {
+// OnStart runs after the importer has created its sync run.
+func (p *scheduledWhatsAppProgress) OnStart() {
+	p.started = true
+}
+
+func (p *scheduledWhatsAppProgress) OnError(err error) {
 	p.logger.Warn("whatsapp apple import warning", "source", p.source, "error", err)
 }

@@ -49,6 +49,16 @@ func TestRunScheduledIMessageRecordsRunsAndLateArrivals(t *testing.T) {
 	var ids string
 	require.NoError(st.DB().QueryRow(`SELECT group_concat(source_message_id, ',') FROM (SELECT source_message_id FROM messages ORDER BY source_message_id)`).Scan(&ids))
 	assert.Equal("1,2,3,4", ids)
+
+	previous, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	require.NoError(chat.Close())
+	require.NoError(os.Remove(path))
+	require.Error(runScheduledIMessage(ctx, st, cfg.IMessage))
+	failed, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Greater(failed.ID, previous.ID)
+	assert.Equal("failed", failed.Status)
 }
 
 func TestScheduledIMessageDateClearForcesFullCacheRebuild(t *testing.T) {
@@ -161,6 +171,14 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 	assert.Equal(int64(0), second.MessagesAdded)
 	assert.Equal(int64(1), second.MessagesUpdated)
 	assert.Greater(second.ID, run.ID)
+
+	require.NoError(db.Close())
+	require.NoError(os.Remove(source.Path))
+	require.Error(runScheduledWhatsAppApple(ctx, st, source))
+	failed, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Greater(failed.ID, second.ID)
+	assert.Equal("failed", failed.Status)
 }
 
 func TestImportImessageRecordedPreservesPartialCounters(t *testing.T) {
