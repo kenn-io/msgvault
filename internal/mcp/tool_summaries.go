@@ -76,6 +76,7 @@ func summarizeTool(definition toolDefinition) ToolSummary {
 // tools available to a particular connection and credential.
 func ToolSummaries() []ToolSummary {
 	definitions := operationDefinitions(catalogCapabilities{kataDocbank: true})
+	definitions = append(definitions, stableDeliveryPolicyDefinitions...)
 	definitions = append(definitions, stableIdentityScoringDefinitions...)
 	summaries := make([]ToolSummary, 0, len(definitions))
 	for _, definition := range definitions {

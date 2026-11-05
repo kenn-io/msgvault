@@ -42,7 +42,13 @@ func TestToolSummariesCoverRegistries(t *testing.T) {
 	assertions.Equal("owner-only", byName[ToolQuerySQL].GrantPermission)
 	assertions.Equal("message.read", byName[ToolGetMessage].GrantPermission)
 	assertions.Equal("--allow-profile-writes", byName[ToolPromotePerson].Flag)
-	tools := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}}, false)
+	for _, name := range []string{ToolSetDeliveryPolicy, ToolClearDeliveryPolicy} {
+		assertions.Equal("delivery_policy_write", byName[name].Security)
+		assertions.Equal("--allow-delivery-policy-writes", byName[name].Flag)
+		assertions.Equal("owner-only", byName[name].GrantPermission)
+	}
+	assertions.Equal("owner-only", byName[ToolGetDeliveryPolicy].GrantPermission)
+	tools := rawListTools(t, ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: &policyMCPBackend{}}, false)
 	requirements.NotEmpty(tools)
 	for _, tool := range tools {
 		name, ok := tool["name"].(string)
@@ -57,7 +63,7 @@ func TestToolClassWriteGates(t *testing.T) {
 	opts := ServeOptions{
 		AllowProfileWrites: true, AllowIdentityDecisions: true, AllowIdentityScoring: true,
 		AllowDeliveryPolicyWrites: true,
-		AllowPersonMerges: true, AllowCardDAVWrites: true, AllowCalendarWrites: true, AllowKataWrites: true,
+		AllowPersonMerges:         true, AllowCardDAVWrites: true, AllowCalendarWrites: true, AllowKataWrites: true,
 	}
 	for class := toolSecurityRead; class <= toolSecurityKataWrite; class++ {
 		assertions.True(toolClassAllowed(class, opts, true))
