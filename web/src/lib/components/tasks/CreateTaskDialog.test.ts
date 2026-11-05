@@ -20,11 +20,14 @@ describe('CreateTaskDialog', () => {
       oncreated, onclose: vi.fn()
     });
 
-    expect(screen.getByText('project')).toBeDefined();
+    expect(screen.getByLabelText('Project')).toHaveProperty('value', 'project');
+    expect(screen.getByLabelText('Project')).toHaveProperty('readOnly', true);
     for (const value of ['archive-a', '42', '7', 'gmail', 'archive@example.com', 'source-42', 'Synthetic subject', 'sender@example.com', '2026-07-18T12:00:00Z']) {
       expect(screen.getByText(value)).toBeDefined();
     }
-    expect(screen.getByText(/Bodies and attachments are never sent/i)).toBeDefined();
+    expect(screen.getByLabelText('Description')).toHaveProperty('value', `${location.origin}/messages/42`);
+    expect(screen.getByText(/Bodies and attachments are never sent/i).closest('details')).toBeNull();
+    expect(document.querySelector('details')).toHaveProperty('open', false);
     await fireEvent.input(screen.getByLabelText('Task title'), { target: { value: 'Edited' } });
     await fireEvent.input(screen.getByLabelText('Description'), { target: { value: 'Notes' } });
     await chooseSelectOption(screen.getByLabelText('Priority'), 'High');
@@ -56,6 +59,9 @@ describe('CreateTaskDialog', () => {
     });
 
     await fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    for (const label of ['Task title', 'Description', 'Priority', 'Labels']) {
+      expect(screen.getByLabelText(label)).toHaveProperty('disabled', true);
+    }
     expect(screen.getByRole('button', { name: 'Cancel' })).toHaveProperty('disabled', true);
     fail(Response.json({ message: 'Unavailable' }, { status: 503 }));
     expect((await screen.findByRole('alert')).textContent).toContain('Unavailable');

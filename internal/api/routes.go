@@ -957,7 +957,7 @@ func rawRouteParameters(operationID string) []*huma.Param {
 		"reviewRejectIdentityMatchCandidate":
 		return []*huma.Param{pathIntegerParam("Identity match candidate ID")}
 	case "searchIntegrationTasks":
-		return []*huma.Param{queryStringParam("q", "Task title search within the configured project", true)}
+		return []*huma.Param{queryStringParam("q", "Task title search within the configured project; omit to list tasks", false)}
 	case "unlinkMessageTask":
 		return []*huma.Param{
 			pathIntegerParam("Archived email message ID"),

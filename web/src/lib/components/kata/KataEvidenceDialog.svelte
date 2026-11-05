@@ -1,14 +1,18 @@
 <script lang="ts">
-  import { appShortcuts, Button, escapeCloses, Modal, SelectDropdown, TextInput } from '@kenn-io/kit-ui';
+  import { appShortcuts, Button, escapeCloses, Modal, SegmentedControl, TextInput } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, untrack } from 'svelte';
-  import { createKataIssue, linkKataEvidence, prepareKataEvidence } from '../../api/generated/api/api';
+  import { createKataIssue, linkKataEvidence, prepareKataEvidence, listOpenKataIssues } from '../../api/generated/api/api';
+  import ExistingPicker from '../common/ExistingPicker.svelte';
   import type { APIClient } from '../../api/client';
-  import type { KataIssueCreateRequest, KataIssueReceipt } from '../../api/generated/models';
+  import type { KataIssueCreateRequest, KataIssueListResponse, KataIssueReceipt } from '../../api/generated/models';
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
-  let { client, selector, defaultTitle = '', onclose = () => undefined, oncreated = () => undefined }: {
+  let { client, selector, defaultTitle = '', onclose = () => undefined, oncreated = () => undefined, embedded = false, busy = $bindable(false), receipt = $bindable(undefined) }: {
     client: APIClient;
+    embedded?: boolean;
+    busy?: boolean;
+    receipt?: KataIssueReceipt;
     selector: EvidenceSelector;
     defaultTitle?: string;
     onclose?: () => void;
@@ -19,7 +23,7 @@
   // The dialog is mounted per source, so props seed its editable state once.
   let title = $state(untrack(() => defaultTitle));
   let brief = $state('');
-  let issueRef = $state('');
+  let selected = $state('');
   let start = $state(untrack(() => selector.start_rune ?? 0));
   // A message citation narrowed to text selected in the preview, in runes.
   let narrowed = $state<{ start: number; end: number }>();
@@ -28,9 +32,7 @@
   let excerptElement = $state<HTMLPreElement>();
   let preview = $state<PreparedEvidence>();
   let loading = $state(false);
-  let busy = $state(false);
   let error = $state('');
-  let receipt = $state<KataIssueReceipt>();
   let replayed = $state(false);
   // The key whose issue was deleted in Kata; filing again salts from it.
   let deletedKey = $state('');
@@ -40,12 +42,30 @@
   let controller: AbortController | undefined;
   // Exact ranges come from a chosen file passage; windows page through a body.
   const windowed = $derived(selector.end_rune == null);
-  const canSubmit = $derived(!busy && !loading && !!preview && (mode === 'create' ? !!title.trim() : !!issueRef.trim()));
-  const actionOptions = [{ value: 'create', label: 'Create issue' }, { value: 'link', label: 'Add to existing issue' }];
+  const canSubmit = $derived(!busy && !loading && !!preview && (mode === 'create' ? !!title.trim() : !!selected));
+  const actionOptions = [{ value: 'create', label: 'New' }, { value: 'link', label: 'Existing' }];
+
+  let openIssues: Promise<KataIssueListResponse> | undefined;
+  function fetchOpenIssues(): Promise<KataIssueListResponse> {
+    return openIssues ??= listOpenKataIssues(client).then(response => {
+      if (!response.data) throw new Error(errorMessage(response.error, 'Unable to load issues.'));
+      return response.data;
+    }).catch(cause => { openIssues = undefined; throw cause; });
+  }
+  async function loadIssues(query: string, _signal: AbortSignal) {
+    const text = query.trim();
+    const filter = text.toLowerCase();
+    // A typed ref can still be linked when the list is unavailable.
+    const data = await fetchOpenIssues().catch(cause => { if (text) return { issues: [], truncated: false }; throw cause; });
+    const items = data.issues.filter(issue => issue.title.toLowerCase().includes(filter) || issue.qualified_ref.toLowerCase().includes(filter))
+      .map(issue => ({ id: issue.qualified_ref, label: issue.title, detail: issue.qualified_ref }));
+    if (text && !data.issues.some(issue => issue.qualified_ref.toLowerCase() === filter)) items.push({ id: text, label: `Add quote to ${text}`, detail: '' });
+    return { items, truncated: data.truncated };
+  }
 
   $effect(() => { void prepare(start, narrowed); });
   $effect(() => { if (receipt) untrack(oncreated); });
-  onMount(() => appShortcuts.pushScope('kata-evidence-dialog'));
+  onMount(() => { if (!embedded) return appShortcuts.pushScope('kata-evidence-dialog'); });
   onDestroy(() => { generation++; controller?.abort(); });
 
   async function prepare(from: number, exact: { start: number; end: number } | undefined): Promise<void> {
@@ -110,7 +130,7 @@
         receipt = data.issue;
         replayed = data.replayed;
       } else {
-        const { data, error: failure } = await linkKataEvidence({ ref: issueRef.trim() }, { evidence: [preview.reference] }, client);
+        const { data, error: failure } = await linkKataEvidence({ ref: selected }, { evidence: [preview.reference] }, client);
         if (!data) throw new Error(errorMessage(failure, 'The evidence could not be added.'));
         receipt = data.issue;
         replayed = false;
@@ -131,10 +151,17 @@
   }
 </script>
 
-<!-- Claim Escape during capture so a modal underneath, such as the file
-     viewer, stays open; a save in flight keeps the dialog open too. -->
-<svelte:window onkeydowncapture={escapeCloses(() => { if (!busy) onclose(); })} />
-<Modal title="Kata issue" onclose={() => { if (!busy) onclose(); }}>
+<svelte:window onkeydowncapture={(event) => { if (!embedded) escapeCloses(() => { if (!busy) onclose(); })(event); }} />
+
+{#if embedded}
+  {@render body()}
+{:else}
+  <Modal width="520px" maxWidth="calc(100vw - 32px)" title="Kata issue" onclose={() => { if (!busy) onclose(); }}>
+    {@render body()}
+  </Modal>
+{/if}
+
+{#snippet body()}
   <div class="kata-dialog">
     {#if receipt}
       {#if replayed}
@@ -147,15 +174,15 @@
       {#if error}<p role="alert">{error}</p>{/if}
     {:else}
       <form onsubmit={(event) => { event.preventDefault(); void submit(); }} aria-busy={busy}>
-        <label>Action<SelectDropdown title="Action" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} /></label>
+        <div class="issue-mode"><span>Issue</span><SegmentedControl ariaLabel="Issue" options={actionOptions} value={mode} disabled={busy} onchange={(value) => mode = value === 'link' ? 'link' : 'create'} /></div>
         {#if mode === 'create'}
           <label>Issue title<TextInput ariaLabel="Issue title" bind:value={title} disabled={busy} autocomplete="off" block /></label>
           <label>Brief<textarea aria-label="Brief" bind:value={brief} disabled={busy} rows="3" maxlength="2000"></textarea></label>
         {:else}
-          <label>Kata issue<TextInput ariaLabel="Kata issue ref" bind:value={issueRef} disabled={busy} placeholder="project#abcd" block /></label>
+          <ExistingPicker load={loadIssues} noun="open issues" legend="Issues and refs" moreNote="25 most recently updated open issues. Enter a ref for others." empty="No open issues yet." disabled={busy} bind:selected />
         {/if}
         <section aria-label="Quoted passage">
-          <p class="disclosure">This exact text is saved in Kata.</p>
+          <p class="disclosure">Quote saved in Kata</p>
           {#if loading}<p role="status">Preparing the passage…</p>{/if}
           {#if preview}<pre bind:this={excerptElement}>{preview.excerpt}</pre>{/if}
           {#if windowed}
@@ -172,20 +199,27 @@
         </section>
         {#if error}<p role="alert">{error}</p>{/if}
         {#if deletedKey}<Button label="File as a new issue" disabled={busy} onclick={() => void fileAgain()} />{/if}
-        <Button type="submit" tone="info" surface="solid" label={mode === 'create' ? 'Create issue' : 'Add evidence'} disabled={!canSubmit} />
+        <div class="actions"><Button label="Cancel" surface="soft" disabled={busy} onclick={onclose} />
+        <Button type="submit" tone={canSubmit ? 'info' : 'neutral'} surface={canSubmit ? 'solid' : 'soft'} label={mode === 'create' ? 'Create issue' : 'Add quote'} disabled={!canSubmit} /></div>
       </form>
     {/if}
-    <div class="actions"><Button label="Close" surface="soft" disabled={busy} onclick={onclose} /></div>
+    {#if receipt}<div class="actions"><Button label="Done" tone="info" surface="solid" disabled={busy} onclick={onclose} /></div>{/if}
   </div>
-</Modal>
+{/snippet}
 
 <style>
-  .kata-dialog, form { display: grid; gap: var(--space-3); min-width: 0; }
-  .kata-dialog { width: min(28rem, 80vw); }
+  .kata-dialog, form { display: grid; gap: var(--space-6); min-width: 0; }
+  .kata-dialog { width: 100%; }
   p { margin: 0; }
   .disclosure { color: var(--text-secondary); font-size: var(--font-size-sm); }
-  label { display: grid; gap: var(--space-1); }
+  .issue-mode { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
+  .issue-mode :global(.kit-segmented) { justify-self: start; }
+  label { display: grid; gap: var(--space-2); color: var(--text-secondary); font-size: var(--font-size-sm); }
+  label :global(.kit-text-input__control), textarea { font-size: 16px; }
   textarea { resize: vertical; padding: var(--space-2); color: var(--text-primary); background: var(--bg-canvas); border: 1px solid var(--border-default); border-radius: var(--radius-sm); }
-  pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; font: inherit; padding: var(--space-2); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
-  .passage-controls, .actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
+  section { display: grid; gap: var(--space-2); }
+  pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow: auto; font: inherit; font-size: 16px; padding: var(--space-2) calc(var(--space-3) + 1px); border: 1px solid var(--border-muted); border-radius: var(--radius-sm); }
+  .passage-controls { display: flex; gap: var(--space-2); justify-content: flex-start; margin-top: var(--space-2); }
+  .passage-controls :global(button:disabled) { opacity: 0.35; }
+  .actions { display: flex; gap: var(--space-4); justify-content: flex-end; }
 </style>

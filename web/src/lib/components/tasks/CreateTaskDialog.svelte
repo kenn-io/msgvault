@@ -40,7 +40,7 @@
     onclose?: () => void;
   } = $props();
   let title = $state(untrack(() => defaultTitle));
-  let description = $state('');
+  let description = $state(untrack(() => `${location.origin}/messages/${messageId}`));
   let priority = $state('');
   let labels = $state('');
   let error = $state('');
@@ -131,13 +131,14 @@
       void create();
     }}
   >
-    <p class="project"><span>Project</span><strong>{project}</strong></p>
-    <label>Task title<TextInput ariaLabel="Task title" bind:value={title} autocomplete="off" block /></label>
-    <label>Description<textarea aria-label="Description" bind:value={description}></textarea></label>
+    <label>Project<TextInput ariaLabel="Project" value={project} readonly block /></label>
+    <label>Task title<TextInput ariaLabel="Task title" bind:value={title} disabled={pending} autocomplete="off" block /></label>
+    <label>Description<textarea aria-label="Description" bind:value={description} disabled={pending}></textarea></label>
     <label
       >Priority<SelectDropdown
         title="Priority"
         value={priority}
+        disabled={pending}
         options={priorityOptions}
         onchange={(value) => {
           priority = value;
@@ -148,6 +149,7 @@
       >Labels<TextInput
         ariaLabel="Labels"
         bind:value={labels}
+        disabled={pending}
         placeholder="mail, follow-up"
         autocomplete="off"
         block
@@ -197,8 +199,8 @@
           <dd>{addedAt}</dd>
         </div>
       </dl>
-      <p>Bodies and attachments are never sent.</p>
     </details>
+    <p class="disclosure">Bodies and attachments are never sent.</p>
     {#if error}<p role="alert">{error}</p>{/if}
     <div class="actions">
       <Button surface="soft" label="Cancel" disabled={pending} onclick={requestClose} />
@@ -209,30 +211,27 @@
 <style>
   form {
     display: grid;
-    gap: var(--space-4);
-    min-width: min(28rem, 80vw);
+    gap: var(--space-6);
+    min-width: 0;
   }
+  .disclosure { margin: 0; color: var(--text-secondary); font-size: 12px; }
   label {
     display: grid;
-    gap: var(--space-1);
-    color: var(--text-muted);
-    font-size: var(--font-size-xs);
+    gap: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
   }
+  label :global(.kit-text-input__control), label :global(.kit-select-dropdown__trigger), textarea { font-size: 16px; }
+  label :global(.kit-select-dropdown__trigger) { font-weight: 400; }
   textarea {
     min-height: 6rem;
     resize: vertical;
-    padding: var(--space-2);
+    padding: var(--space-2) calc(var(--space-3) + 1px);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-sm);
     background: var(--bg-canvas);
     color: var(--text-primary);
   }
-  .project {
-    display: flex;
-    justify-content: space-between;
-    margin: 0;
-  }
-  .project span,
   details {
     color: var(--text-muted);
     font-size: var(--font-size-xs);
@@ -257,6 +256,6 @@
   .actions {
     display: flex;
     justify-content: flex-end;
-    gap: var(--space-2);
+    gap: var(--space-4);
   }
 </style>

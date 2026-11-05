@@ -22,6 +22,7 @@ const kataEvidencePreparePath = "/api/v1/integrations/kata/evidence/prepare"
 
 // KataIssueOperations quotes archive evidence and files it in Kata.
 type KataIssueOperations interface {
+	Open(ctx context.Context) ([]taskclient.KataTask, bool, error)
 	Prepare(ctx context.Context, selectors []kataevidence.Selector) ([]kataevidence.Evidence, error)
 	Create(ctx context.Context, key string, input kataissues.CreateInput) (kataissues.Result, error)
 	Link(ctx context.Context, ref string, evidence []kataevidence.Reference) (taskclient.KataTask, error)
@@ -76,7 +77,7 @@ type KataIssueConflictResponse struct {
 
 type KataIssueListResponse struct {
 	Issues    []KataIssueReceipt `json:"issues"`
-	Truncated bool               `json:"truncated" doc:"The list may omit issues that cite this source: more matched than were returned, or some issues could not be checked"`
+	Truncated bool               `json:"truncated" doc:"The list may omit matching issues: more matched than were returned, or some citations could not be checked"`
 }
 
 type KataIssueContextResponse struct {
@@ -105,6 +106,11 @@ func (s *Server) registerKataIssueRoutes(api huma.API) {
 	addErrorResponses(api, create.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusPreconditionRequired, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
 	create.Responses[httpStatusKey(http.StatusConflict)] = jsonResponsesFor[KataIssueConflictResponse](api, http.StatusConflict)[httpStatusKey(http.StatusConflict)]
 	registerRawHumaRoute(api, create, s.handleCreateKataIssue)
+
+	search := rawAPIV1Operation("listOpenKataIssues", http.MethodGet, "/integrations/kata/open-issues", "List most recently updated open Kata issues in the configured project")
+	search.Responses = jsonResponsesFor[KataIssueListResponse](api)
+	addErrorResponses(api, search.Responses, http.StatusBadRequest, http.StatusUnauthorized, http.StatusNotFound, http.StatusUnprocessableEntity, http.StatusServiceUnavailable)
+	registerRawHumaRoute(api, search, s.handleListOpenKataIssues)
 
 	find := rawAPIV1Operation("findKataIssues", http.MethodGet, "/integrations/kata/issues", "Find Kata issues, open or closed, that cite a message or one of its files")
 	messageID := queryIntegerParam("message_id", "Message the issues cite")
@@ -207,6 +213,23 @@ func (s *Server) handleKataIssueContext(w http.ResponseWriter, r *http.Request) 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, KataIssueContextResponse{Issue: kataIssueReceipt(result.Issue), Passages: result.Passages, NextOffset: result.NextOffset})
+}
+
+func (s *Server) handleListOpenKataIssues(w http.ResponseWriter, r *http.Request) {
+	if !s.requireKataIssues(w) {
+		return
+	}
+	issues, truncated, err := s.kataIssueOperations.Open(r.Context())
+	if err != nil {
+		s.writeKataIssueError(w, err)
+		return
+	}
+	response := KataIssueListResponse{Issues: make([]KataIssueReceipt, len(issues)), Truncated: truncated}
+	for i, issue := range issues {
+		response.Issues[i] = kataIssueReceipt(issue)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleFindKataIssues(w http.ResponseWriter, r *http.Request) {
@@ -390,4 +413,12 @@ func (b *kataIssueBackend) Find(ctx context.Context, messageID, attachmentID int
 		keys = append(keys, sourceKeys[len(sourceKeys)-1])
 	}
 	return service.Citing(ctx, keys, kataIssueFindLimit)
+}
+
+func (b *kataIssueBackend) Open(ctx context.Context) ([]taskclient.KataTask, bool, error) {
+	client, err := connectKata(ctx, b.config)
+	if err != nil {
+		return nil, false, err
+	}
+	return client.OpenIssues(ctx, strings.TrimSpace(b.config.DefaultProject), 25)
 }

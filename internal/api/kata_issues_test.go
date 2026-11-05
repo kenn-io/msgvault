@@ -34,6 +34,10 @@ type fakeKataIssueOperations struct {
 	err       error
 }
 
+func (f *fakeKataIssueOperations) Open(_ context.Context) ([]taskclient.KataTask, bool, error) {
+	return []taskclient.KataTask{{UID: "01ISSUE", Ref: "abcd", QualifiedRef: "example#abcd", Project: "example", Title: "Send the budget", Status: "open", Revision: "3"}}, true, f.err
+}
+
 func (f *fakeKataIssueOperations) Find(_ context.Context, messageID, attachmentID int64) ([]taskclient.KataTask, bool, error) {
 	f.found = [2]int64{messageID, attachmentID}
 	return []taskclient.KataTask{{UID: "01ISSUE", Ref: "abcd", QualifiedRef: "example#abcd", Project: "example", Title: "Send the budget", Status: "closed", Revision: "3"}}, true, f.err
@@ -223,4 +227,27 @@ func TestKataIssueBackendWarnsWithoutMediaRevisions(t *testing.T) {
 	assert.Contains(t, logs.String(), "Kata transcript citations disabled: the archive store cannot read media revisions")
 	_, err := backend.Prepare(t.Context(), []kataevidence.Selector{{Kind: "docbank_rendition", MessageID: 1, AttachmentID: 1, MaxChars: new(10)}})
 	require.ErrorIs(t, err, kataevidence.ErrUnsupported)
+}
+
+func TestListOpenKataIssues(t *testing.T) {
+	t.Parallel()
+	assert := assert.New(t)
+	require := require.New(t)
+	server := NewServerWithOptions(ServerOptions{Config: &config.Config{}, Store: &mockStore{}, Logger: testLogger(), KataIssueOperations: &fakeKataIssueOperations{}})
+	recorder := httptest.NewRecorder()
+	server.router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/open-issues", nil))
+	require.Equal(http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.Equal("no-store", recorder.Header().Get("Cache-Control"))
+	var body KataIssueListResponse
+	require.NoError(json.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Len(body.Issues, 1)
+	assert.Equal("example#abcd", body.Issues[0].QualifiedRef)
+	assert.Equal("Send the budget", body.Issues[0].Title)
+	assert.Equal("open", body.Issues[0].Status)
+	assert.True(body.Truncated)
+	server.kataIssueOperations = nil
+	recorder = httptest.NewRecorder()
+	server.router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/api/v1/integrations/kata/open-issues", nil))
+	assert.Equal(http.StatusServiceUnavailable, recorder.Code)
+	assert.Contains(recorder.Body.String(), "kata_unavailable")
 }

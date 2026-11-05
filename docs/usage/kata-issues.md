@@ -38,7 +38,8 @@ handle a person:
 3. If Kata's own MCP server is connected, use its `kata.search` tool for
    person or topic searches. Search closed issues too: a completed task may
    hold the answer. Configuring `[integrations.kata]` in msgvault does not
-   connect that separate MCP server or expose general search in msgvault.
+   connect that separate MCP server. The Web UI filters its most recently updated open issues
+   by title and ref; use Kata for broader searches.
 4. If the available context does not answer the question, ask the owner once.
    With explicit user intent, record the answer in a Kata issue or comment
    through Kata itself. Msgvault's Kata write tools create issues from
@@ -68,8 +69,8 @@ profile and Notes read surfaces.
 ## In the Web UI
 
 Expand a chat message or meeting transcript and choose **⋯ → Add to task…** to
-open its quote editor. For email, select **Kata** in the provider picker and choose
-**Add quote to Kata…**. The dialog shows the passage
+open its quote editor. For email, choose **Kata** under **Send to** in the same
+dialog. Choose **New** to create an issue. The dialog shows the passage
 that will be saved, up to 1,000 characters. Use **Earlier passage** and **Later
 passage** to move through a long message or transcript; each step moves half a
 window, so neighbouring passages overlap. The text in the
@@ -80,8 +81,11 @@ To quote a file, open it and choose **Add to task…**, search for
 a passage, and pick one; the dialog then pages and narrows it like a message.
 This needs text that document indexing has already extracted.
 
-Choose **Add to existing issue** to add the passage to an issue instead; it
-appears there as a comment that quotes it.
+Choose **Existing** to list the 25 most recently updated open issues in the configured project.
+Filter by any part of a title or ref, pick an issue, and choose **Add quote**.
+The passage appears there as a comment that quotes it. To reach an older or
+closed issue, type its ref. When no listed issue matches, choose
+**Add quote to {ref}**, then **Add quote**.
 
 ## From the CLI or an agent
 

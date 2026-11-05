@@ -624,12 +624,8 @@ type GetKataIssueContextQuery struct {
 }
 
 type SearchIntegrationTasksQuery struct {
-	// Q Task title search within the configured project
-	Q string `json:"q" validate:"required"`
-}
-
-func (s SearchIntegrationTasksQuery) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+	// Q Task title search within the configured project; omit to list tasks
+	Q *string `json:"q,omitempty"`
 }
 
 type SearchMediaQuery struct {

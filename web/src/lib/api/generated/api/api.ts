@@ -2165,6 +2165,17 @@ export const linkKataEvidence = (
   );
 };
 /**
+ * @summary List most recently updated open Kata issues in the configured project
+ */
+export const listOpenKataIssues = (
+  options?: SecondParameter<typeof orvalFetch<KataIssueListResponse>>,
+) => {
+  return orvalFetch<KataIssueListResponse>(
+    { url: `/api/v1/integrations/kata/open-issues`, method: "GET" },
+    options,
+  );
+};
+/**
  * @summary Get Kata person agenda availability
  */
 export const getKataIntegrationStatus = (
@@ -2179,7 +2190,7 @@ export const getKataIntegrationStatus = (
  * @summary Search tasks in the configured project
  */
 export const searchIntegrationTasks = (
-  params: SearchIntegrationTasksParams,
+  params?: SearchIntegrationTasksParams,
   options?: SecondParameter<typeof orvalFetch<TaskSearchResponse>>,
 ) => {
   return orvalFetch<TaskSearchResponse>(

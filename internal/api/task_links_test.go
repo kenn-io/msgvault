@@ -49,6 +49,7 @@ type fakeTaskLinkOperations struct {
 	identities []tasklinks.MessageIdentity
 	lookup     tasklinks.LookupResult
 	search     []tasklinks.TaskSummary
+	truncated  bool
 	err        error
 }
 
@@ -71,8 +72,8 @@ func (f *fakeTaskLinkOperations) Lookup(_ context.Context, identity tasklinks.Me
 	f.identities = append(f.identities, identity)
 	return f.lookup
 }
-func (f *fakeTaskLinkOperations) Search(context.Context, string) ([]tasklinks.TaskSummary, error) {
-	return f.search, f.err
+func (f *fakeTaskLinkOperations) Search(context.Context, string) ([]tasklinks.TaskSummary, bool, error) {
+	return f.search, f.truncated, f.err
 }
 
 func emailMessage(messageType string) *APIMessage {
@@ -358,16 +359,26 @@ func TestTaskLookupDisclosesExactSanitizedOutboundMetadata(t *testing.T) {
 
 func TestTaskSearchReturnsConfiguredProjectResults(t *testing.T) {
 	t.Parallel()
-	ops := &fakeTaskLinkOperations{search: []tasklinks.TaskSummary{{ID: "task-1", Title: "Synthetic result", Revision: "r1"}}}
+	assert := assert.New(t)
+	require := require.New(t)
+	ops := &fakeTaskLinkOperations{truncated: true, search: []tasklinks.TaskSummary{{ID: "task-1", Title: "Synthetic result", Revision: "r1"}}}
 	srv := taskLinkServer(t, "email", ops)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/tasks/search?q=Synthetic", nil)
+	for _, query := range []string{"", "?q=Synthetic"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/tasks/search"+query, nil)
+		req.Header.Set("X-Api-Key", "test-key")
+		resp := httptest.NewRecorder()
+		srv.Router().ServeHTTP(resp, req)
+		require.Equal(http.StatusOK, resp.Code, resp.Body.String())
+		var got TaskSearchResponse
+		require.NoError(json.Unmarshal(resp.Body.Bytes(), &got))
+		assert.Equal(ops.search, got.Tasks)
+		assert.True(got.Truncated)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/integrations/tasks/search?q="+strings.Repeat("x", 257), nil)
 	req.Header.Set("X-Api-Key", "test-key")
 	resp := httptest.NewRecorder()
 	srv.Router().ServeHTTP(resp, req)
-	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
-	var got TaskSearchResponse
-	require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &got))
-	assert.Equal(t, ops.search, got.Tasks)
+	assert.Equal(http.StatusBadRequest, resp.Code)
 }
 
 func TestTaskLinkSecondConflictIsSurfaced(t *testing.T) {
