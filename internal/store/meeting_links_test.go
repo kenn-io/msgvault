@@ -176,6 +176,24 @@ func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
 	// Metadata is the UID source even if the archived provider payload differs.
 	requirements.NoError(st.SetMessageMetadata(id, sql.NullString{String: `{"ical_uid":"metadata@example.org"}`, Valid: true}))
 	_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"metadata@example.org"}}`)
+	// Distinct calendar UIDs make an indexed lookup cheaper than scanning events.
+	series := `(WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<3000) SELECT n FROM nums)`
+	metadata := `json_object('ical_uid', 'history-' || n || '@example.org')`
+	if st.IsPostgreSQL() {
+		series = `generate_series(1,3000) AS n`
+		metadata = `jsonb_build_object('ical_uid', 'history-' || n || '@example.org')`
+	}
+	_, err := st.db.Exec(`INSERT INTO messages(source_id,conversation_id,source_message_id,message_type,metadata)
+		SELECT source_id,conversation_id,'history-' || n,'calendar_event',`+metadata+`
+		FROM messages CROSS JOIN `+series+` WHERE id = ?`, id)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`INSERT INTO calendar_events(message_id,projection_version,content_hash,provider_event_id,kind)
+		SELECT id,1,'history',source_message_id,'single' FROM messages WHERE source_message_id LIKE 'history-%'`)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`ANALYZE messages`)
+	requirements.NoError(err)
+	_, err = st.db.Exec(`ANALYZE calendar_events`)
+	requirements.NoError(err)
 	var query string
 	var args []any
 	observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, q string, values []driver.NamedValue) error {
@@ -195,16 +213,7 @@ func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
 	if st.IsPostgreSQL() {
 		explain = "EXPLAIN "
 	}
-	// The fixture tables are tiny, so PostgreSQL prefers a sequential scan
-	// unless the planner is told to take an index when one can serve the query.
-	tx, err := st.db.BeginTx(t.Context(), nil)
-	requirements.NoError(err)
-	defer func() { _ = tx.Rollback() }()
-	if st.IsPostgreSQL() {
-		_, err = tx.ExecContext(t.Context(), "SET LOCAL enable_seqscan = off")
-		requirements.NoError(err)
-	}
-	rows, err := tx.QueryContext(t.Context(), explain+query, args...)
+	rows, err := st.db.QueryContext(t.Context(), explain+query, args...)
 	requirements.NoError(err)
 	defer func() { requirements.NoError(rows.Close()) }()
 	var plan []string
@@ -219,7 +228,11 @@ func TestMeetingLinksCalendarUIDLookupPlan(t *testing.T) {
 		plan = append(plan, detail)
 	}
 	requirements.NoError(rows.Err())
-	assertions.Contains(strings.Join(plan, "\n"), "idx_messages_calendar_ical_uid")
+	planText := strings.Join(plan, "\n")
+	assertions.Contains(planText, "idx_messages_calendar_ical_uid")
+	if st.IsPostgreSQL() {
+		assertions.Regexp(`Index Cond:.*ical_uid`, planText)
+	}
 }
 
 func TestMeetingLinksWindowedExceptions(t *testing.T) {
