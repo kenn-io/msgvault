@@ -55,3 +55,12 @@ it('pads ragged headers and rows to the widest visible record', async () => {
     header: ['Name', 'Amount', ''], rows: [['Example', '42', 'extra'], ['Other', '', '']], truncated: false, hasErrors: false
   });
 });
+
+it('bounds ragged CSV expansion to 100 columns and 200 rows', async () => {
+  const text = Array(20_000).fill('Header').join(',') + '\n' + Array(200).fill('Value').join('\n');
+  const result = await parseDelimited(text, ',');
+  expect(result.header).toHaveLength(100);
+  expect(result.rows).toHaveLength(200);
+  expect(result.rows.every((row) => row.length === 100 && row[0] === 'Value')).toBe(true);
+  expect(result.rows.reduce((count, row) => count + row.length, 0)).toBeLessThanOrEqual(20_000);
+});
