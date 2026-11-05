@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/calevent"
 )
 
 // ConversationWindow is a bounded, stable slice of full message details.
@@ -316,6 +318,9 @@ func (s *Store) GetConversationWindowContext(
 			&metadata,
 		); err != nil {
 			return nil, fmt.Errorf("scan conversation message: %w", err)
+		}
+		if calevent.IsRoomAttendee(message.FromEmail, false) {
+			message.FromParticipantID = 0
 		}
 		message.RelatedMessageID = RelatedMessageCandidate(message.ID, message.MessageType, metadata.String)
 		message.IsFromMe = isFromMe.Bool

@@ -38,6 +38,26 @@ func TestConversationWindowRoomRecipientsStayPlainText(t *testing.T) {
 	}, window.Messages[0].ToParticipants)
 }
 
+func TestConversationWindowRoomSenderStaysPlainText(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("gmail", "archive@example.com")
+	requirements.NoError(err)
+	conversation, err := st.EnsureConversation(source.ID, "room-declined", "Declined: Planning")
+	requirements.NoError(err)
+	room, err := st.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
+	requirements.NoError(err)
+	message, err := st.UpsertMessage(&store.Message{SourceID: source.ID, ConversationID: conversation, SourceMessageID: "room-declined", MessageType: "email", SenderID: sql.NullInt64{Int64: room, Valid: true}, SentAt: sql.NullTime{Time: time.Date(2026, 7, 12, 9, 0, 0, 0, time.UTC), Valid: true}})
+	requirements.NoError(err)
+	requirements.NoError(st.ReplaceMessageRecipients(message, "from", []int64{room}, []string{"Room"}))
+	window, err := st.GetConversationWindow(conversation, message, 0, 0)
+	requirements.NoError(err)
+	requirements.Len(window.Messages, 1)
+	assertions.Zero(window.Messages[0].FromParticipantID)
+	assertions.Equal("room@resource.calendar.google.com", window.Messages[0].FromEmail)
+	assertions.Equal("Room <room@resource.calendar.google.com>", window.Messages[0].From)
+}
+
 func TestConversationWindowHydratesParticipantsLabelsBodiesAndAttachments(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
