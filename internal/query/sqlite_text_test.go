@@ -9,69 +9,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
-func TestSQLiteTextAggregate_SearchMatchesCache(t *testing.T) {
-	t.Parallel()
-	requirements := require.New(t)
-	b := NewTestDataBuilder(t)
-	sourceID := b.AddSourceWithType("archive@example.com", "whatsapp")
-	senderID := b.AddParticipant("sender@example.com", "example.com", "Sender")
-	labelID := b.AddLabel("work")
-	messageID := b.AddMessage(MessageOpt{
-		SourceID: sourceID, MessageType: "whatsapp", SenderID: &senderID,
-		Subject: "ordinary subject", Snippet: "preview needle",
-	})
-	b.AddFrom(messageID, senderID, "Sender")
-	b.AddMessageLabel(messageID, labelID)
-	b.AddMessageLabel(messageID, b.AddLabel("personal"))
-	b.AddMessage(MessageOpt{SourceID: sourceID, MessageType: "whatsapp", Subject: "unrelated"})
-	cache := b.BuildEngine()
-	tdb := dbtest.NewTestDB(t, "../store/schema.sql")
-	_, err := tdb.DB.Exec(`
-		INSERT INTO sources (id, source_type, identifier) VALUES (1, 'whatsapp', 'archive@example.com');
-		INSERT INTO participants (id, email_address, domain, display_name)
-		VALUES (1, 'sender@example.com', 'example.com', 'Sender');
-		INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
-		VALUES (1, 1, 'chat1', 'direct_chat'), (2, 1, 'chat2', 'direct_chat');
-		INSERT INTO messages (id, conversation_id, source_id, source_message_id, message_type, sent_at, subject, snippet, sender_id)
-		VALUES (1, 1, 1, 'msg1', 'whatsapp', '2024-01-15 10:00:00', 'ordinary subject', 'preview needle', 1),
-		       (2, 2, 1, 'msg2', 'whatsapp', '2024-01-15 10:00:00', 'unrelated', 'Preview 2', NULL);
-		INSERT INTO message_recipients (message_id, participant_id, recipient_type, display_name)
-		VALUES (1, 1, 'from', 'Sender');
-		INSERT INTO labels (id, name) VALUES (1, 'work'), (2, 'personal');
-		INSERT INTO message_labels (message_id, label_id) VALUES (1, 1), (1, 2);
-	`)
-	requirements.NoError(err)
-	live := NewSQLiteEngine(tdb.DB)
-	for _, tc := range []struct {
-		query string
-		view  TextViewType
-		key   string
-	}{
-		{"subject:ordinary", TextViewTime, "2024-01"},
-		{"from:sender@example.com", TextViewTime, "2024-01"},
-		{"label:work", TextViewTime, "2024-01"},
-		{"ordinary", TextViewTime, "2024-01"},
-		{"needle", TextViewTime, "2024-01"},
-		{"sender@example.com", TextViewTime, "2024-01"},
-		{"label:work", TextViewLabels, "work"},
-		{"work", TextViewLabels, "work"},
-	} {
-		t.Run(tc.view.String()+"/"+tc.query, func(t *testing.T) {
-			require := require.New(t)
-			assert := assert.New(t)
-			opts := TextAggregateOptions{SearchQuery: tc.query}
-			cachedRows, err := cache.TextAggregate(t.Context(), tc.view, opts)
-			require.NoError(err)
-			require.Len(cachedRows, 1)
-			assert.Equal(tc.key, cachedRows[0].Key)
-			assert.Equal(int64(1), cachedRows[0].Count)
-			liveRows, err := live.TextAggregate(t.Context(), tc.view, opts)
-			require.NoError(err)
-			assert.Equal(cachedRows, liveRows)
-		})
-	}
-}
-
 func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

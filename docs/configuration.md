@@ -1306,10 +1306,9 @@ The daemon starts HTTP health and API routing before analytics cache
 maintenance. In auto mode, message and text analytics answer from live SQL while the cache
 is unusable, including at startup, after a failed rebuild, or while
 `remove-account`, `repair-dates --apply`, or `repair-encoding` rebuilds it.
-Cache-only views (Explore, Files, and people) report the cache unavailable until
-the rebuild publishes.
-With `engine = "duckdb"`, analytics remain unavailable until a
-usable cache is ready. If no usable cache can be built or opened, `msgvault serve`
+Cache-only views (Explore, Files, and people) fail until the rebuild publishes.
+With `engine = "duckdb"`, analytics return HTTP 503 until a
+usable cache publishes. If no usable cache can be built or opened, `msgvault serve`
 fails instead of silently falling back. A failed automatic refresh after a sync
 keeps serving the last usable publication, and the daemon checks again 15
 minutes later even if later syncs write nothing. With `auto_build_cache = false`, use

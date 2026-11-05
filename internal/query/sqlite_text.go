@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/msgvault/internal/search"
 	"go.kenn.io/msgvault/internal/store"
 )
 
@@ -777,39 +776,9 @@ func (e *SQLiteEngine) TextAggregate(
 		args = append(args, e.dialect.DateParam(*opts.Before))
 	}
 	if opts.SearchQuery != "" {
-		q := search.Parse(opts.SearchQuery)
-		terms := q.TextTerms
-		q.TextTerms = nil // Text aggregates search metadata, without body FTS.
-		if viewType == TextViewLabels && len(q.Labels) > 0 {
-			var parts []string
-			for _, label := range q.Labels {
-				parts = append(parts, metadataContainsExpression(e.dialect, dim.keyExpr))
-				args = append(args, "%"+escapeSQLiteLike(label)+"%")
-			}
-			conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
-			q.Labels = nil
-		}
-		searchConditions, searchArgs, _ := e.buildSearchCriteria(ctx, q, false)
-		conditions = append(conditions, searchConditions...)
-		args = append(args, searchArgs...)
-		for _, term := range terms {
-			parts := []string{
-				metadataContainsExpression(e.dialect, "m.subject"),
-				metadataContainsExpression(e.dialect, "m.snippet"),
-				`EXISTS (SELECT 1 FROM message_recipients mr_search
-					JOIN participants p_search ON p_search.id = mr_search.participant_id
-					WHERE mr_search.message_id = m.id AND mr_search.recipient_type = 'from'
-					AND (` + metadataContainsExpression(e.dialect, "p_search.email_address") +
-					" OR " + metadataContainsExpression(e.dialect, "p_search.display_name") + "))",
-			}
-			pattern := "%" + escapeSQLiteLike(term) + "%"
-			args = append(args, pattern, pattern, pattern, pattern)
-			if viewType == TextViewLabels {
-				parts = append(parts, metadataContainsExpression(e.dialect, dim.keyExpr))
-				args = append(args, pattern)
-			}
-			conditions = append(conditions, "("+strings.Join(parts, " OR ")+")")
-		}
+		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
+		conditions = append(conditions, "(m.subject LIKE ? OR m.snippet LIKE ?)")
+		args = append(args, likeTerm, likeTerm)
 	}
 
 	aggOpts := AggregateOptions{

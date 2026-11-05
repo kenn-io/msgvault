@@ -492,12 +492,13 @@ func writeError(w http.ResponseWriter, status int, err string, message string) {
 	writeJSON(w, status, ErrorResponse{Error: err, Message: message})
 }
 
-// writeIfContextError converts a context deadline/cancellation into a
-// structured 503 response and returns true. A request that overran its
+// writeIfContextError converts context errors and cache unavailability into
+// structured 503 responses and returns true. A request that overran its
 // server-side query budget (see requestTimeoutForPath) or was abandoned by
 // the client surfaces here as context.DeadlineExceeded/Canceled; without this
 // mapping those bubble up as a misleading 400/500 with a raw driver message.
 func (s *Server) writeIfContextError(w http.ResponseWriter, err error) bool {
+	var unavailable *query.CacheUnavailableError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusServiceUnavailable, "query_timeout",
@@ -506,6 +507,10 @@ func (s *Server) writeIfContextError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, context.Canceled):
 		writeError(w, http.StatusServiceUnavailable, "query_canceled",
 			"the query was canceled before it completed")
+		return true
+	case errors.As(err, &unavailable) || errors.Is(err, query.ErrCacheUnavailable):
+		writeError(w, http.StatusServiceUnavailable, "analytical_cache_unavailable",
+			"the analytics cache is being rebuilt or is unavailable; retry shortly")
 		return true
 	default:
 		return false
