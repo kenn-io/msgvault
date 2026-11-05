@@ -1,6 +1,7 @@
 package timeline
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -246,15 +247,15 @@ func (c *composer) addLoops(r readResult[loops.Result]) {
 		if !ok {
 			continue
 		}
-		p := c.tierPeople([]Person{{PersonID: loop.Counterparty.PersonID, ParticipantID: loop.Counterparty.ParticipantID, Name: loop.Counterparty.DisplayName}})[0]
-		if p.Name == "" {
-			p.Name = loop.Counterparty.Address
-		}
+		p := c.tierPeople([]Person{{PersonID: loop.Counterparty.PersonID, ParticipantID: loop.Counterparty.ParticipantID, Name: cmp.Or(loop.Counterparty.DisplayName, loop.Counterparty.Address)}})[0]
 		if !c.admitTier([]Person{p}) {
 			continue
 		}
 		age := max(0, int(c.t.Now.Sub(loop.OwedSince).Hours()/24))
 		ref := messageRef(loop.Anchor.ID)
 		c.t.OpenLoops.Items = append(c.t.OpenLoops.Items, Entry{Kind: "loop", Key: ref, Ref: ref, AnchorRef: ref, Time: loop.Anchor.OccurredAt, HiddenText: d.HiddenText, Open: c.messageOpen(loop.Anchor.ID), Loop: &LoopEntry{Kind: loop.Kind, Age: strconv.Itoa(age) + "d", Person: p}})
+	}
+	if limit := c.loopLimit(); len(c.t.OpenLoops.Items) > limit {
+		c.t.OpenLoops.Items, c.t.OpenLoops.Truncated = c.t.OpenLoops.Items[:limit], true
 	}
 }

@@ -366,10 +366,19 @@ func counterpartPeople(counterparts []store.ActivityMessageCounterpart) []Person
 	return people
 }
 
-func (c *composer) collectLoops(personID int64) readResult[loops.Result] {
-	limit := 10
+func (c *composer) loopLimit() int {
 	if c.req.Brief {
-		limit = 5
+		return 5
+	}
+	return 10
+}
+
+// collectLoops reads loops past the visible limit when tiers filter them;
+// addLoops applies the limit after resolving each counterparty's tier.
+func (c *composer) collectLoops(personID int64) readResult[loops.Result] {
+	limit := c.loopLimit()
+	if len(c.req.Tiers) > 0 {
+		limit = loops.MaxLimit
 	}
 	return readWithin(c.ctx, loopsTimeout, func(ctx context.Context) (loops.Result, error) {
 		return c.src.Loops.List(ctx, loops.Options{PersonID: personID, ParticipantIDs: c.subject.ParticipantIDs, Limit: limit}, c.t.Now)
