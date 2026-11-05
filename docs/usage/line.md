@@ -128,7 +128,7 @@ ranges; the [signature authenticates delivery](https://developers.line.biz/en/do
 | External-provider media | URLs retained as metadata; msgvault never fetches those URLs |
 | Stickers | Native sticker metadata and available text or keywords; no scraped sticker art |
 | Quotes | Linked when the quoted message is archived in the same chat; missing targets can resolve later |
-| Text edits in groups | Latest text replaces the archived text and is marked edited; earlier edit versions are not kept |
+| Text edits in groups | Latest text replaces the archived text and is marked edited; earlier versions remain in sanitized inbox payloads |
 | Unsends | Previously archived body and media retained and marked deleted from the source; see [retention](#privacy-and-retention) |
 
 LINE user IDs belong to a provider's identity space. msgvault qualifies them by
@@ -195,8 +195,10 @@ This integration has no option to purge content automatically on unsend.
 
 Reply and mark-as-read capability tokens are removed recursively before events
 are persisted. Native metadata, including `quoteToken`, may remain in the
-archive. Inbox events remain available for duplicate detection and lifecycle
-reconciliation.
+archive. Inbox rows and their sanitized payloads remain after processing for
+duplicate detection and lifecycle reconciliation, including earlier text versions.
+Archive garbage collection clears inbox payloads for messages it purges while
+keeping event IDs for duplicate detection.
 
 Official Account Manager's [Chat Pro history export](https://www.lycbiz.com/jp/service/line-official-account/chat-pro-option/)
 is a separate paid feature. Check its availability for your account and region.

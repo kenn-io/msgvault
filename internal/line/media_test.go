@@ -2,6 +2,8 @@ package line
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -196,16 +198,18 @@ func TestMediaUnavailable(t *testing.T) {
 }
 
 func TestMediaExternalProvider(t *testing.T) {
+	must := require.New(t)
+	checks := assert.New(t)
 	f := newInboxFixture(t)
 	e := f.fileEvent()
 	e.Message.Type = "image"
-	e.Message.ContentProvider = &ContentProvider{Type: "external", OriginalContentURL: "https://media.example.com/external", PreviewImageURL: "https://media.example.com/preview"}
+	must.NoError(json.Unmarshal([]byte(fmt.Sprintf(`{"type":"message","timestamp":%d,"webhookEventId":"event-1","source":{"type":"group","groupId":"C00000000000000000000000000000001","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"image","contentProvider":{"type":"external","originalContentUrl":"https://media.example.com/external","previewImageUrl":"https://media.example.com/preview"}}}`, e.Timestamp)), &e))
 	f.enqueue(t, e, time.Time{})
 	f.run(t)
-	assert.Zero(t, f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
+	checks.Zero(f.api.Count(http.MethodGet, "/v2/bot/message/1/content"))
 	row, err := f.st.LineMessageContext(context.Background(), f.source.ID, "1")
-	require.NoError(t, err)
-	assert.Contains(t, row.Metadata.String, "https://media.example.com/external")
+	must.NoError(err)
+	checks.Contains(row.Metadata.String, "https://media.example.com/external")
 }
 
 func TestMediaCapAndEmpty(t *testing.T) {

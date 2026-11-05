@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"net/http"
@@ -63,8 +62,12 @@ func newInboxFixture(t *testing.T) *inboxFixture {
 }
 func (f *inboxFixture) enqueue(t *testing.T, e Event, received time.Time) {
 	t.Helper()
-	raw, err := json.Marshal(e)
-	require.NoError(t, err)
+	raw := []byte(e.Raw)
+	if len(raw) == 0 {
+		var err error
+		raw, err = json.Marshal(e)
+		require.NoError(t, err)
+	}
 	clean, err := SanitizeEvent(raw)
 	require.NoError(t, err)
 	target := ""
@@ -140,7 +143,7 @@ func TestProcessorQuoteResolvesWhenParentArrives(t *testing.T) {
 	f := newInboxFixture(t)
 	parent := f.message("1", "parent", f.now.UnixMilli())
 	child := f.message("2", "child", f.now.UnixMilli()+1)
-	child.Message.QuotedMessageID = "1"
+	require.NoError(t, json.Unmarshal([]byte(fmt.Sprintf(`{"type":"message","timestamp":%d,"webhookEventId":"event-2","source":{"type":"group","groupId":"C00000000000000000000000000000001","userId":"U00000000000000000000000000000002"},"message":{"id":"2","type":"text","text":"child","quotedMessageId":"1"}}`, child.Timestamp)), &child))
 	for _, e := range []Event{child, parent} {
 		f.enqueue(t, e, time.Time{})
 		f.run(t)
@@ -176,7 +179,7 @@ func TestProcessorInterruptedPassSettlesCompletedConversations(t *testing.T) {
 
 	parent := f.message("repair-parent", "parent", f.now.UnixMilli())
 	child := f.message("repair-child", "child", f.now.UnixMilli()+1)
-	child.Message.QuotedMessageID = "repair-parent"
+	must.NoError(json.Unmarshal([]byte(fmt.Sprintf(`{"type":"message","timestamp":%d,"webhookEventId":"event-repair-child","source":{"type":"group","groupId":"C00000000000000000000000000000001","userId":"U00000000000000000000000000000002"},"message":{"id":"repair-child","type":"text","text":"child","quotedMessageId":"repair-parent"}}`, child.Timestamp)), &child))
 	f.enqueue(t, parent, time.Time{})
 	f.enqueue(t, child, time.Time{})
 	f.enqueue(t, Event{
@@ -490,14 +493,13 @@ func TestProcessorEditDropsRemovedNativeTextMetadata(t *testing.T) {
 	checks := assert.New(t)
 	f := newInboxFixture(t)
 	base := f.message("1", "original", f.now.UnixMilli())
-	base.Message.QuoteToken = "synthetic-quote-token"
-	base.Message.Emojis = jsontext.Value(`[{"index":0,"length":1,"productId":"synthetic-product","emojiId":"synthetic-emoji"}]`)
-	base.Message.Mention = jsontext.Value(`{"mentionees":[{"type":"user","userId":"U00000000000000000000000000000002"}]}`)
+	must.NoError(json.Unmarshal([]byte(fmt.Sprintf(`{"type":"message","timestamp":%d,"webhookEventId":"event-1","source":{"type":"group","groupId":"C00000000000000000000000000000001","userId":"U00000000000000000000000000000002"},"message":{"id":"1","type":"text","text":"original","quoteToken":"synthetic-quote-token","emojis":[{"index":0,"length":1,"productId":"synthetic-product","emojiId":"synthetic-emoji"}],"mention":{"mentionees":[{"type":"user","userId":"U00000000000000000000000000000002"}]}}}`, base.Timestamp)), &base))
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 
 	edit := base
 	edit.Type = "messageEdited"
+	edit.Raw = nil
 	edit.WebhookEventID = "edit-without-native-text-fields"
 	edit.Timestamp++
 	edit.Message = &Message{ID: "1", Type: "text", Text: "edited without emoji or mention"}

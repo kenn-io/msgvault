@@ -41,34 +41,25 @@ func (s Source) ConversationID() (string, string, error) {
 type ContentProvider struct {
 	Type               string `json:"type"`
 	OriginalContentURL string `json:"originalContentUrl,omitempty"`
-	PreviewImageURL    string `json:"previewImageUrl,omitempty"`
 }
 
 // Message contains common native fields. Raw is the sanitized, lossless
 // snapshot, including fields introduced by LINE after this client was built.
 // File messages have no ContentProvider and use LINE's content endpoint.
 type Message struct {
-	ID                  string           `json:"id"`
-	Type                string           `json:"type"`
-	Text                string           `json:"text,omitempty"`
-	FileName            string           `json:"fileName,omitempty"`
-	FileSize            int64            `json:"fileSize,omitempty"`
-	QuotedMessageID     string           `json:"quotedMessageId,omitempty"`
-	QuoteToken          string           `json:"quoteToken,omitempty"`
-	ContentProvider     *ContentProvider `json:"contentProvider,omitempty"`
-	Duration            int64            `json:"duration,omitempty"`
-	PackageID           string           `json:"packageId,omitempty"`
-	StickerID           string           `json:"stickerId,omitempty"`
-	StickerResourceType string           `json:"stickerResourceType,omitempty"`
-	Keywords            []string         `json:"keywords,omitempty"`
-	Title               string           `json:"title,omitempty"`
-	Address             string           `json:"address,omitempty"`
-	Latitude            float64          `json:"latitude,omitempty"`
-	Longitude           float64          `json:"longitude,omitempty"`
-	Emojis              jsontext.Value   `json:"emojis,omitempty"`
-	Mention             jsontext.Value   `json:"mention,omitempty"`
-	ImageSet            jsontext.Value   `json:"imageSet,omitempty"`
-	Raw                 jsontext.Value   `json:"-"`
+	ID              string           `json:"id"`
+	Type            string           `json:"type"`
+	Text            string           `json:"text,omitempty"`
+	FileName        string           `json:"fileName,omitempty"`
+	FileSize        int64            `json:"fileSize,omitempty"`
+	ContentProvider *ContentProvider `json:"contentProvider,omitempty"`
+	Duration        int64            `json:"duration,omitempty"`
+	Keywords        []string         `json:"keywords,omitempty"`
+	Title           string           `json:"title,omitempty"`
+	Address         string           `json:"address,omitempty"`
+	Latitude        float64          `json:"latitude,omitempty"`
+	Longitude       float64          `json:"longitude,omitempty"`
+	Raw             jsontext.Value   `json:"-"`
 }
 
 type Unsend struct {
