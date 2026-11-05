@@ -373,7 +373,7 @@ func outboundEvidenceExistsSQL(m, src string) string {
 func accountSink(sourceType, identifier string) string {
 	address := strings.TrimSpace(identifier)
 	switch sourceType {
-	case sourceTypeIMAP, "imaps", "imap+starttls":
+	case "imap", "imaps", "imap+starttls":
 		address = imapIdentifierUser(address)
 	}
 	if !isExactMailbox(address) {
@@ -393,7 +393,7 @@ func imapIdentifierUser(identifier string) string {
 		return identifier
 	}
 	switch strings.ToLower(scheme) {
-	case sourceTypeIMAP, "imaps", "imap+starttls":
+	case "imap", "imaps", "imap+starttls":
 	default:
 		return identifier
 	}
