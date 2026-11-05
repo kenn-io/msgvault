@@ -18,25 +18,17 @@ func TestColdActivityMessagesKeysetScopeAndGroupNoise(t *testing.T) {
 	requirements := require.New(t)
 	f := newTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "cold-messages")
-	_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type='email_thread' WHERE id=?`), room)
-	requirements.NoError(err)
+	var err error
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	ids := []int64{}
 	for i := range 8 {
-		copyID := ""
-		if i == 0 {
-			copyID = "<cold-copy@example.com>"
-		}
-		id := f.add(t, room, f.Source.ID, at.Add(time.Duration(i/2)*time.Second), false, copyID)
+		id := f.add(t, room, f.Source.ID, at.Add(time.Duration(i/2)*time.Second), false, "")
 		ids = append(ids, id)
 		if i < 2 {
 			_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='updates.example.com' WHERE id=?`), id)
 			requirements.NoError(err)
 		}
 	}
-	copyID := f.add(t, room, f.Source.ID, at, false, "<cold-copy@example.com>")
-	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='updates.example.com' WHERE id=?`), copyID)
-	requirements.NoError(err)
 	for i := range 2 {
 		id := f.add(t, room, f.Source.ID, at.Add(24*time.Hour+time.Duration(i)*time.Second), false, "")
 		_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET list_id='updates.example.com' WHERE id=?`), id)

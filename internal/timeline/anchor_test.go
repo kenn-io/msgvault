@@ -28,9 +28,11 @@ type anchorBurstRead struct {
 type anchorBurstSnapshot struct {
 	ActivitySource
 
-	reads      []anchorBurstRead
-	restricted bool
-	sourceIDs  []int64
+	contactQuery *store.ContactQuery
+	contact      store.ContactAggregate
+	reads        []anchorBurstRead
+	restricted   bool
+	sourceIDs    []int64
 }
 
 func (s anchorBurstSnapshot) ListActivityBurstsContext(ctx context.Context, q store.BurstQuery) (store.BurstPage, error) {
@@ -45,10 +47,34 @@ func (s anchorBurstSnapshot) ListActivityBurstsContext(ctx context.Context, q st
 	return s.ActivitySource.ListActivityBurstsContext(ctx, q)
 }
 
-// These tests exercise repeated anchor probes and mutation visibility, rather
-// than requiring six real SQL reads to finish within one request deadline.
-// Capture the actual authorized reader for each Build; delegate every other
-// method so display, latest-anchor and projection-state reads remain live.
+func (s anchorBurstSnapshot) MessageContactAggregateContext(ctx context.Context, q store.ContactQuery) (store.ContactAggregate, error) {
+	if s.contactQuery != nil && reflect.DeepEqual(*s.contactQuery, q) && sourcescope.Restricted(ctx) == s.restricted && slices.Equal(sourcescope.IDs(ctx), s.sourceIDs) {
+		return s.contact, nil
+	}
+	return s.ActivitySource.MessageContactAggregateContext(ctx, q)
+}
+
+// Capture real archive pages before composition so these boundary tests don't
+// require repeated SQL reads to finish within one request deadline.
+func snapshotActivityBurstReads(ctx context.Context, t *testing.T, src Sources, queries ...store.BurstQuery) Sources {
+	t.Helper()
+	snapshot := anchorBurstSnapshot{ActivitySource: src.Activity, restricted: sourcescope.Restricted(ctx), sourceIDs: slices.Clone(sourcescope.IDs(ctx))}
+	for _, q := range queries {
+		for {
+			page, err := src.Activity.ListActivityBurstsContext(ctx, q)
+			require.NoError(t, err)
+			snapshot.reads = append(snapshot.reads, anchorBurstRead{query: q, page: page})
+			if page.NextKey == nil {
+				break
+			}
+			q.AfterKey = page.NextKey
+		}
+	}
+	src.Activity = snapshot
+	return src
+}
+
+// Capture each authorized probe while keeping display and policy reads live.
 func snapshotAnchorBurstReads(ctx context.Context, t *testing.T, src Sources, req Request, anchorID int64) Sources {
 	t.Helper()
 	require.Empty(t, req.With)
@@ -59,17 +85,14 @@ func snapshotAnchorBurstReads(ctx context.Context, t *testing.T, src Sources, re
 	at := display[anchorID].OccurredAt.In(src.Location)
 	filters := src.Filters
 	filters.IncludeNoise = req.IncludeNoise
-	snapshot := anchorBurstSnapshot{ActivitySource: src.Activity, restricted: sourcescope.Restricted(ctx), sourceIDs: slices.Clone(sourcescope.IDs(ctx))}
+	queries := []store.BurstQuery{}
 	for _, days := range []int{1, 2, 4, 8, 16, 31} {
 		from := at.AddDate(0, 0, -days)
 		to := at.AddDate(0, 0, days).Add(time.Nanosecond)
 		q := store.BurstQuery{After: &from, Before: &to, Filters: filters, Limit: 5000}
-		page, err := src.Activity.ListActivityBurstsContext(ctx, q)
-		require.NoError(t, err)
-		snapshot.reads = append(snapshot.reads, anchorBurstRead{query: q, page: page})
+		queries = append(queries, q)
 	}
-	src.Activity = snapshot
-	return src
+	return snapshotActivityBurstReads(ctx, t, src, queries...)
 }
 
 func TestAnchorNeighboursChronologicalWithProbeGrowth(t *testing.T) {
@@ -122,7 +145,9 @@ func TestAnchorFilteredAnchorStillShown(t *testing.T) {
 				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind("UPDATE messages SET list_id='list.example.com' WHERE id=?"), id)
 				requirements.NoError(err)
 			}
-			got, err := Build(t.Context(), f.src, anchorRequest(messageRef(id)))
+			req := anchorRequest(messageRef(id))
+			src := snapshotAnchorBurstReads(t.Context(), t, f.src, req, id)
+			got, err := Build(t.Context(), src, req)
 			requirements.NoError(err)
 			requirements.NotNil(got.Anchor)
 			assertions.Equal(tc.filtered, got.Anchor.Filtered)

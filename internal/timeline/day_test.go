@@ -537,7 +537,8 @@ func TestBuildDayReadsBeyondBurstPage(t *testing.T) {
 	}
 	f.project()
 	f.src.Loops, f.src.Inventory = nil, nil
-	got, err := Build(t.Context(), f.src, dayRequest())
+	src := snapshotActivityBurstReads(t.Context(), t, f.src, store.BurstQuery{FromDate: "2026-10-22", ToDate: "2026-10-22", Filters: f.src.Filters, Limit: maxBursts})
+	got, err := Build(t.Context(), src, dayRequest())
 	requirements.NoError(err)
 	entries := allDayEntries(got)
 	requirements.NotEmpty(entries)

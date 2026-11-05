@@ -9,7 +9,7 @@ import (
 )
 
 // ListColdActivityMessagesContext supplies individual conversation messages
-// using the cold adapter's live eligibility, copy collapse and group noise rule.
+// using the cold adapter's live eligibility and group noise rule.
 func (s *Store) ListColdActivityMessagesContext(ctx context.Context, q MessageQuery) ([]ActivityMessage, error) {
 	if q.ConversationID <= 0 || q.Limit < 1 || q.Limit > 500 {
 		return nil, fmt.Errorf("%w: messages require a conversation and limit 1..500", ErrInvalidActivityRequest)
@@ -24,7 +24,7 @@ func (s *Store) ListColdActivityMessagesContext(ctx context.Context, q MessageQu
 	}
 	result := []ActivityMessage{}
 	for _, group := range groups {
-		if !filters.IncludeNoise && coldActivityNoise(group) {
+		if !filters.IncludeNoise && !group.nonNoise {
 			continue
 		}
 		for _, m := range group.messages {

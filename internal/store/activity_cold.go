@@ -128,7 +128,7 @@ func (s *Store) readColdActivityGroupsContext(ctx context.Context, q BurstQuery)
 	if err != nil {
 		return nil, err
 	}
-	where := `m.conversation_id IN (SELECT p.conversation_id FROM conversation_policy p JOIN conversations c ON c.id=p.conversation_id WHERE p.effective_tier='cold' AND c.conversation_type IN ` + chatConversationTypesSQL + `)`
+	where := `COALESCE(m.message_type,'')<>'call_record' AND m.conversation_id IN (SELECT p.conversation_id FROM conversation_policy p JOIN conversations c ON c.id=p.conversation_id WHERE p.effective_tier='cold' AND c.conversation_type IN ` + chatConversationTypesSQL + `)`
 	if q.IncludeCold {
 		where = `COALESCE(m.message_type,'')<>'call_record' AND (` + FullMessageWhere("m") + ` OR m.conversation_id IN (SELECT p.conversation_id FROM conversation_policy p JOIN conversations c ON c.id=p.conversation_id WHERE p.effective_tier='cold' AND c.conversation_type IN ` + chatConversationTypesSQL + `))`
 	}

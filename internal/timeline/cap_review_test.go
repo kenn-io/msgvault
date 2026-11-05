@@ -2,6 +2,8 @@ package timeline
 
 import (
 	"database/sql"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"testing"
 	"time"
@@ -13,6 +15,7 @@ import (
 )
 
 func TestBuildInvalidUTF8Snippet(t *testing.T) {
+	testutil.SkipIfPostgres(t, "PostgreSQL rejects invalid UTF-8 before a snippet can be stored")
 	f := newTimelineFixture(t)
 	f.add(f.now, false, func(m *store.Message) { m.Snippet = sql.NullString{String: "damaged \xff\xfe", Valid: true} })
 	f.project()
@@ -27,8 +30,9 @@ func TestBuildInvalidUTF8Snippet(t *testing.T) {
 			entries := allDayEntries(got)
 			require.Len(entries, 1)
 			if format == "json" {
-				require.NotNil(entries[0].Burst)
-				assert.Equal("damaged \xff\xfe", entries[0].Burst.Snippet.Text)
+				wire, err := json.Marshal(got, jsontext.AllowInvalidUTF8(true))
+				require.NoError(err)
+				assert.Contains(string(wire), "damaged \ufffd\ufffd")
 			} else {
 				assert.Contains(Markdown(got), "damaged \ufffd\ufffd")
 			}
@@ -75,12 +79,20 @@ func TestRelationshipHistoryBeyondBurstCap(t *testing.T) {
 	f.project()
 	f.src.Loops, f.src.Inventory = nil, nil
 	req := Request{With: "email:alice@example.com", Mode: ModeRelationship, Format: "json", Budget: 65536, Scope: Scope{Owner: true}}
-	// Resume after the 5,000th burst without rebuilding the preceding 250 pages.
+	src := snapshotActivityBurstReads(t.Context(), t, f.src, store.BurstQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Filters: f.src.Filters, After: new(time.Time), Descending: true, Limit: maxBursts})
+	snapshot, ok := src.Activity.(anchorBurstSnapshot)
+	require.True(ok)
+	contactQuery := store.ContactQuery{Subject: store.ActivitySubject{ParticipantIDs: []int64{f.peer}}, Filters: f.src.Filters, Now: f.now, Location: f.src.Location}
+	snapshot.contactQuery = &contactQuery
 	var err error
+	snapshot.contact, err = f.src.Activity.MessageContactAggregateContext(t.Context(), contactQuery)
+	require.NoError(err)
+	src.Activity = snapshot
+	// Resume after the 5,000th burst without rebuilding the preceding 250 pages.
 	req.Cursor, err = EncodeCursor(CursorBinding{ArchiveUID: f.src.ArchiveUID, Request: req, Window: Window{From: "2026-10-21", To: "2026-10-22"}, Timezone: f.src.Location.String(), Now: f.now}, map[string]string{"history": historyKey(cutoff)})
 	require.NoError(err)
 	require.NotEmpty(req.Cursor)
-	got, err := Build(t.Context(), f.src, req)
+	got, err := Build(t.Context(), src, req)
 	require.NoError(err)
 	require.Len(got.History, 1)
 	assert.Equal([]int64{oldest}, got.History[0].Burst.LatestMessageIDs)
