@@ -6,6 +6,7 @@ import type { CalendarSourceCoverageStatus } from "./calendarSourceCoverageStatu
 export interface CalendarSourceCoverage {
   /** @nullable */
   as_of: string | null;
+  name: string;
   source_id: number;
   source_type: string;
   status: CalendarSourceCoverageStatus;

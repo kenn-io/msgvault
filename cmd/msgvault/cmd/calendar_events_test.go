@@ -46,10 +46,10 @@ func TestCalendarEventsCommand(t *testing.T) {
 		Complete: false,
 		Notice:   "Archived calendar data, not live availability.",
 		Sources: []store.CalendarSourceCoverage{
-			{SourceID: 42, SourceType: "gcal", Status: "stale", AsOf: &asOf},
-			{SourceID: 43, SourceType: "gcal", Status: "no_baseline"},
-			{SourceID: 44, SourceType: "gcal", Status: "sync_failed"},
-			{SourceID: 45, SourceType: "gcal", Status: "complete"},
+			{SourceID: 42, SourceType: "gcal", Name: "Work\x1b[31m\x1b[0m", Status: "stale", AsOf: &asOf},
+			{SourceID: 43, SourceType: "gcal", Name: "Personal", Status: "no_baseline"},
+			{SourceID: 44, SourceType: "gcal", Name: "Team", Status: "sync_failed"},
+			{SourceID: 45, SourceType: "gcal", Name: "Holidays", Status: "complete"},
 		},
 	}
 	for _, tc := range []struct {
@@ -60,7 +60,7 @@ func TestCalendarEventsCommand(t *testing.T) {
 		want, wantErr, wantWarning, wantCoverageNotice, wantCoverageSource string
 		err                                                                error
 	}{
-		{name: "table", page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)", wantCoverageNotice: "Coverage: Archived calendar data, not live availability.", wantCoverageSource: "Source 42: stale\nSource 43: not fully synced\nSource 44: sync failed\nSource 45: complete\n"},
+		{name: "table", page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)", wantCoverageNotice: "Coverage: Archived calendar data, not live availability.", wantCoverageSource: "Work: stale (as of 2027-03-01T12:00:00Z)\nPersonal: not fully synced\nTeam: sync failed\nHolidays: complete\n"},
 		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
 		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "next cursor: next-page"},
 		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},

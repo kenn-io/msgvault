@@ -53,6 +53,7 @@ func calendarCoverageFromAPI(decoded generated.CalendarCoverage) store.CalendarC
 			row := store.CalendarSourceCoverage{
 				SourceID:   source.SourceID,
 				SourceType: source.SourceType,
+				Name:       source.Name,
 				Status:     string(source.Status),
 				AsOf:       source.AsOf,
 			}

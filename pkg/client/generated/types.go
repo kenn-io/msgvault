@@ -1567,6 +1567,7 @@ func (c CalendarResult) Validate() error {
 
 type CalendarSourceCoverage struct {
 	AsOf       *time.Time                   `json:"as_of" validate:"required"`
+	Name       string                       `json:"name" validate:"required"`
 	SourceID   int64                        `json:"source_id"`
 	SourceType string                       `json:"source_type" validate:"required"`
 	Status     CalendarSourceCoverageStatus `json:"status" validate:"required"`
@@ -1578,6 +1579,9 @@ func (c CalendarSourceCoverage) Validate() error {
 		if err := typesValidator.Var(c.AsOf, "required"); err != nil {
 			errors = errors.Append("AsOf", err)
 		}
+	}
+	if err := typesValidator.Var(c.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
 	}
 	if err := typesValidator.Var(c.SourceType, "required"); err != nil {
 		errors = errors.Append("SourceType", err)

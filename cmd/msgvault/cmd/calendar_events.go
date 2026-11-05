@@ -187,7 +187,10 @@ func printCalendarCoverageWarning(cmd *cobra.Command, coverage store.CalendarCov
 		case "sync_failed":
 			status = "sync failed"
 		}
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Source %d: %s\n", source.SourceID, textutil.SanitizeTerminal(status)); err != nil {
+		if source.AsOf != nil {
+			status += " (as of " + source.AsOf.Format(time.RFC3339) + ")"
+		}
+		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s\n", textutil.SanitizeTerminal(source.Name), textutil.SanitizeTerminal(status)); err != nil {
 			return fmt.Errorf("write calendar coverage source: %w", err)
 		}
 	}

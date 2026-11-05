@@ -25,7 +25,7 @@ func TestCalendarEventsClient(t *testing.T) {
 		Complete: false,
 		Notice:   "Archived calendar data, not live availability.",
 		Sources: []store.CalendarSourceCoverage{{
-			SourceID: 9, SourceType: "gcal", Status: "stale", AsOf: &asOf,
+			SourceID: 9, SourceType: "gcal", Name: "Work", Status: "stale", AsOf: &asOf,
 		}},
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

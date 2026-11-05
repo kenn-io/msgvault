@@ -17,6 +17,7 @@ type CalendarCoverage struct {
 type CalendarSourceCoverage struct {
 	SourceID   int64      `json:"source_id"`
 	SourceType string     `json:"source_type"`
+	Name       string     `json:"name"`
 	Status     string     `json:"status" enum:"complete,stale,sync_failed,no_baseline"`
 	AsOf       *time.Time `json:"as_of"`
 }
@@ -26,15 +27,17 @@ const calendarCoverageNotice = "Archived calendar data, not live availability. A
 func calendarCoverageContext(ctx context.Context, s *Store, r SQLReader, unexpandable bool, now time.Time) (CalendarCoverage, error) {
 	coverage := CalendarCoverage{Notice: calendarCoverageNotice, Sources: []CalendarSourceCoverage{}}
 	scoped, args := sourceScopeClause(ctx, "s.id")
-	// Both correlated lookups use the existing source/started_at index. A bounded
-	// completion cannot replace a baseline, or hide a failure after that baseline.
-	query := `SELECT s.id,s.source_type,COALESCE(s.sync_cursor,'')<>'',
+	// A completed full sync establishes the baseline. Later completed incremental
+	// runs refresh it; bounded runs cannot establish or refresh coverage.
+	query := `SELECT s.id,s.source_type,COALESCE(NULLIF(s.display_name,''),s.identifier),COALESCE(s.sync_cursor,'')<>'',
   baseline.completed_at,
   EXISTS(SELECT 1 FROM sync_runs failed WHERE failed.source_id=s.id
    AND failed.status IN ('failed','cancelled')
    AND (failed.started_at>baseline.started_at OR (failed.started_at=baseline.started_at AND failed.id>baseline.id)))
  FROM sources s
- LEFT JOIN sync_runs baseline ON baseline.id=(SELECT id FROM sync_runs WHERE source_id=s.id AND status='completed' AND COALESCE(cursor_after,'')<>'' ORDER BY started_at DESC,id DESC LIMIT 1)
+ LEFT JOIN sync_runs full_run ON full_run.id=(SELECT id FROM sync_runs WHERE source_id=s.id AND sync_type='full' AND status='completed' AND COALESCE(cursor_after,'')<>'' ORDER BY started_at DESC,id DESC LIMIT 1)
+ LEFT JOIN sync_runs baseline ON baseline.id=(SELECT id FROM sync_runs WHERE source_id=s.id AND sync_type IN ('full','incremental') AND status='completed' AND COALESCE(cursor_after,'')<>''
+  AND (started_at>full_run.started_at OR (started_at=full_run.started_at AND id>=full_run.id)) ORDER BY started_at DESC,id DESC LIMIT 1)
  WHERE 1=1` + scoped + `
  AND NOT EXISTS (SELECT 1 FROM source_settings merged
   WHERE merged.source_id=s.id AND merged.merged_into_source_id IS NOT NULL)
@@ -51,7 +54,7 @@ func calendarCoverageContext(ctx context.Context, s *Store, r SQLReader, unexpan
 		var hasCursor bool
 		var asof sql.NullTime
 		var failed bool
-		if err := rows.Scan(&c.SourceID, &c.SourceType, &hasCursor, &asof, &failed); err != nil {
+		if err := rows.Scan(&c.SourceID, &c.SourceType, &c.Name, &hasCursor, &asof, &failed); err != nil {
 			return CalendarCoverage{}, fmt.Errorf("scan calendar coverage: %w", err)
 		}
 		hasCalendar = true

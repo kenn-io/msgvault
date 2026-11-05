@@ -96,6 +96,7 @@ func TestCalendarCoverageStates(t *testing.T) {
 			requirements.NoError(err)
 			requirements.Len(page.Coverage.Sources, 1)
 			c := page.Coverage.Sources[0]
+			assertions.Equal("coverage@example.com", c.Name)
 			assertions.Equal(tc.want, c.Status)
 			assertions.Equal(tc.asof, c.AsOf != nil)
 			assertions.Equal(tc.want == "complete", page.Coverage.Complete)
@@ -113,6 +114,17 @@ func TestCalendarCoverageStates(t *testing.T) {
 		assertions.Empty(page.Coverage.Sources)
 		assertions.Contains(page.Coverage.Notice, "does not prove free time")
 	})
+}
+
+func TestCalendarCoverageSourceDisplayName(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	src := occurrenceSource(t, st, "work@example.com")
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET display_name=? WHERE id=?`), "Work calendar", src)
+	require.NoError(t, err)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), occurrenceWindow(t))
+	require.NoError(t, err)
+	require.Len(t, page.Coverage.Sources, 1)
+	assert.Equal(t, "Work calendar", page.Coverage.Sources[0].Name)
 }
 
 func TestCalendarCoverageExcludesRetiredSources(t *testing.T) {
@@ -250,4 +262,31 @@ func TestCalendarCoverageExpiredTokenReset(t *testing.T) {
 	assertions.Equal("no_baseline", after.Coverage.Sources[0].Status)
 	assertions.Equal(before.Coverage.Sources[0].AsOf, after.Coverage.Sources[0].AsOf)
 	assertions.False(after.Coverage.Complete)
+}
+
+func TestCalendarCoverageIncrementalRequiresFullBaseline(t *testing.T) {
+	st := testutil.NewTestStore(t)
+	src := occurrenceSource(t, st, "subset@example.com")
+	// Subsets retain the source cursor but omit events and sync history.
+	_, err := st.DB().ExecContext(t.Context(), st.Rebind(`UPDATE sources SET sync_cursor='copied-token' WHERE id=?`), src)
+	require.NoError(t, err)
+	incremental, err := st.StartSync(src, "incremental")
+	require.NoError(t, err)
+	require.NoError(t, st.CompleteSyncAndUpdateSourceCursorContext(t.Context(), incremental, src, "next-token"))
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), occurrenceWindow(t))
+	require.NoError(t, err)
+	require.Len(t, page.Coverage.Sources, 1)
+	assert.Empty(t, page.Occurrences)
+	assert.Equal(t, "no_baseline", page.Coverage.Sources[0].Status)
+	assert.Nil(t, page.Coverage.Sources[0].AsOf)
+	assert.False(t, page.Coverage.Complete)
+
+	coverageRunFixture(t, st, src, time.Now().UTC(), coverageRun{"completed", "full-token", 25 * time.Hour})
+	page, err = st.ListCalendarOccurrencesContext(t.Context(), occurrenceWindow(t))
+	require.NoError(t, err)
+	assert.True(t, page.Coverage.Complete)
+	require.NotNil(t, page.Coverage.Sources[0].AsOf)
+	var completedAt time.Time
+	require.NoError(t, st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT completed_at FROM sync_runs WHERE id=?`), incremental).Scan(&completedAt))
+	assert.Equal(t, completedAt.UTC(), *page.Coverage.Sources[0].AsOf)
 }

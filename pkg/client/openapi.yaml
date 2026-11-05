@@ -1697,6 +1697,8 @@ components:
           format: date-time
           nullable: true
           type: string
+        name:
+          type: string
         source_id:
           format: int64
           type: integer
@@ -1717,6 +1719,7 @@ components:
       required:
         - source_id
         - source_type
+        - name
         - status
         - as_of
       type: object
