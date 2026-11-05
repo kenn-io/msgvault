@@ -556,6 +556,10 @@ func TestDuckDBEngine_ReloadsOwnerEventIDsAfterPublication(t *testing.T) {
 	_, err = engine.db.Exec("COPY (SELECT * REPLACE (false AS is_owner) FROM read_parquet('" + escapePath(activity) + "')) TO '" + escapePath(activity) + ".tmp' (FORMAT PARQUET)")
 	require.NoError(err)
 	require.NoError(os.Rename(activity+".tmp", activity))
+	owners := firstRequiredParquetForTest(t, root, datasetOwnerParticipants)
+	_, err = engine.db.Exec("COPY (SELECT * FROM read_parquet('" + escapePath(owners) + "') WHERE false) TO '" + escapePath(owners) + ".tmp' (FORMAT PARQUET)")
+	require.NoError(err)
+	require.NoError(os.Rename(owners+".tmp", owners))
 	republishCacheStateForTest(t, root)
 
 	after, err := engine.Explore(t.Context(), request)
