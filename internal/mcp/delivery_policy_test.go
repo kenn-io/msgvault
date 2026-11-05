@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,4 +69,25 @@ func TestDeliveryPolicyMCPWriteNeedsConfirmation(t *testing.T) {
 		PersonUID: "synthetic-uid", ExpectedRevision: 1, Policy: store.DeliverySendAllowed,
 		ScopeAcknowledgement: "person_all_routes", Reason: "Explicit synthetic approval",
 	}, backend.last)
+}
+
+func TestDeliveryPolicyMCPConfirmationPrompt(t *testing.T) {
+	for _, test := range []struct {
+		tool, prefix string
+	}{
+		{ToolSetDeliveryPolicy, "Set delivery policy: "},
+		{ToolClearDeliveryPolicy, "Clear delivery policy: "},
+	} {
+		t.Run(test.tool, func(t *testing.T) {
+			backend := &policyMCPBackend{}
+			opts := ServeOptions{Engine: &querytest.MockEngine{}, DeliveryPolicies: backend, AllowDeliveryPolicyWrites: true}
+			args := map[string]any{"person_uid": "synthetic-uid", "endpoint": "alice@example.test", "expected_revision": 3, "policy": "send_allowed", "scope_acknowledgement": "person_all_routes", "reason": "Explicit synthetic approval"}
+			var prompt string
+			confirmedCallTool(t, opts, test.tool, args, false, func(message string) { prompt = message })
+			require.True(t, strings.HasPrefix(prompt, test.prefix), "prompt: %s", prompt)
+			require.True(t, strings.HasSuffix(prompt, ". No message will be sent."), "prompt: %s", prompt)
+			assert.JSONEq(t, `{"person_uid":"synthetic-uid","endpoint":"alice@example.test","expected_revision":3,"policy":"send_allowed","scope_acknowledgement":"person_all_routes","reason":"Explicit synthetic approval"}`, strings.TrimSuffix(strings.TrimPrefix(prompt, test.prefix), ". No message will be sent."))
+			assert.Zero(t, backend.writes)
+		})
+	}
 }
