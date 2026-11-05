@@ -351,10 +351,10 @@ func sortClause(opts AggregateOptions) (string, error) {
 // This is used for SubAggregate to apply drill-down filters before sub-grouping.
 func (e *SQLiteEngine) buildFilterJoinsAndConditions(filter MessageFilter) (string, []string, []any) {
 	predicate, args := senderMatchSQL(filter, 0)
-	return e.buildFilterWithSender(filter, predicate, args)
+	return e.buildFilterWithSender(filter, "m.source_id", predicate, args)
 }
 
-func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, senderPredicate string, senderArgs []any) (string, []string, []any) {
+func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, sourceColumn string, senderPredicate string, senderArgs []any) (string, []string, []any) {
 	// Structured filters use membership or correlated subqueries, so this
 	// builder emits no JOIN of its own. The empty join slot is preserved because callers
 	// (SubAggregate) concatenate the search-side FTS join onto it.
@@ -369,8 +369,8 @@ func (e *SQLiteEngine) buildFilterWithSender(filter MessageFilter, senderPredica
 	// source-deleted on filter.HideDeletedFromSource via the helper.
 	conditions = append(conditions, store.LiveMessagesWhere("m", filter.HideDeletedFromSource))
 
-	conditions, args = appendSourceFilter(
-		conditions, args, prefix, filter.SourceID, filter.SourceIDs,
+	conditions, args = appendIDFilter(
+		conditions, args, sourceColumn, filter.SourceID, filter.SourceIDs,
 	)
 	conditions, args = appendAccountScopeConditions(conditions, args, filter.AccountScopes, "m")
 
@@ -1004,8 +1004,12 @@ func (e *SQLiteEngine) ListMessages(ctx context.Context, filter MessageFilter) (
 			membership = true
 		}
 	}
-	filterJoins, conditions, args := e.buildFilterWithSender(filter, senderPredicate, senderArgs)
-	conditions, args = appendSourceFilter(conditions, args, "m.", nil, sourcescope.IDs(ctx))
+	sourceColumn := "m.source_id"
+	if filter.Sorting.Field == MessageSortByDate && filter.ConversationID == nil {
+		sourceColumn = e.dialect.SourceTimelineColumn()
+	}
+	filterJoins, conditions, args := e.buildFilterWithSender(filter, sourceColumn, senderPredicate, senderArgs)
+	conditions, args = appendIDFilter(conditions, args, sourceColumn, nil, sourcescope.IDs(ctx))
 
 	// IN and EXISTS predicates keep each matching message to one row, so
 	// SELECT DISTINCT is unnecessary (and avoided per the SQL guideline:
