@@ -17,30 +17,6 @@ Large archives open, search, and refresh faster.
 [GitHub release](https://github.com/kenn-io/msgvault/releases/tag/v0.23.0) ·
 [All changes since 0.22.0](https://github.com/kenn-io/msgvault/compare/v0.22.0...v0.23.0)
 
-### Before upgrading
-
-- **Back up your archive and allow time for the first start.** The first
-  startup updates the archive and builds new indexes, which takes time and disk
-  space on large archives. The analytics cache also rebuilds once so drafts and
-  unsent messages stop counting as contact. See [backup and restore](usage/backup.md).
-- **Upgrade clients and the daemon together.** The daemon now reports API schema
-  **3.42.0** (0.22.0 reported 3.24.0). Newer CLI and MCP features check the
-  daemon's schema and report an upgrade error against an older daemon.
-- **Rewrite invalid wrapped schedule ranges.** Settings and the daemon now
-  reject a wrapped range with an out-of-range value, such as `60-5`. Use valid
-  values for the field; see [cron schedules](configuration.md#cron-schedules).
-- **Update Mistral document extraction.** Mistral retired `mistral-ocr-4-0`.
-  If your configuration sets it, change `model` to `mistral-ocr-4-1` or remove
-  the line, then run `msgvault documents probe-mistral` and
-  `msgvault documents consent-mistral` again. See
-  [document indexing](usage/document-indexing.md).
-- **Optional: recover Gmail Spam and Trash.** Full sync now includes them. To
-  pick up messages earlier full syncs skipped, run one `sync-full` without a
-  query, date, or limit. This can increase Gmail API use, transfer, and storage.
-- **Optional: decrypt Matrix history.** Existing Matrix sources keep encrypted
-  placeholders until you run `add-matrix` again with a recovery secret. See
-  [Matrix](usage/matrix.md).
-
 ### New features
 
 - Import Telegram Desktop JSON exports with
