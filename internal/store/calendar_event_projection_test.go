@@ -38,7 +38,10 @@ func calendarFixture(t *testing.T, st *Store, key, raw string, calendars ...stri
 	if err := json.Unmarshal([]byte(raw), &event); err != nil {
 		event.ICalUID = ""
 	}
-	metadata := map[string]any{"calendar_id": calendar, "ical_uid": event.ICalUID}
+	metadata := map[string]any{"calendar_id": calendar}
+	if event.ICalUID != "" {
+		metadata["ical_uid"] = event.ICalUID
+	}
 	if !event.Updated.IsZero() {
 		metadata["provider_updated_at_unix_nano"] = event.Updated.UTC().UnixNano()
 	}

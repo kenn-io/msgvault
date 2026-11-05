@@ -195,7 +195,7 @@ func TestMeetingLinksSourceMerge(t *testing.T) {
 	assertions.Equal(fmt.Sprintf("evt:%d", event), linkedMeetingRefs(t, st, note)[note])
 }
 
-func TestMeetingLinksSubsetCopy(t *testing.T) {
+func testMeetingLinksSubsetCopy(t *testing.T) {
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -231,7 +231,7 @@ func TestMeetingLinksSubsetCopy(t *testing.T) {
 	}
 }
 
-func TestMeetingLinksSubsetSplitSurvivesCalendarRemoval(t *testing.T) {
+func testMeetingLinksSubsetSplitSurvivesCalendarRemoval(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	path := filepath.Join(t.TempDir(), "source.db")
 	st, err := OpenForTest(path)
@@ -252,4 +252,16 @@ func TestMeetingLinksSubsetSplitSurvivesCalendarRemoval(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, dst.Close()) })
 	_, imported := calendarFixture(t, dst, "event", singleLinkRaw("event", "subset@example.org"))
 	assertions.Empty(linkedMeetingRefs(t, dst, note)[note], "reimported event %d must remain unlinked", imported)
+}
+
+func TestMeetingSubsetDecisions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingLinksSubsetSplitSurvivesCalendarRemoval", testMeetingLinksSubsetSplitSurvivesCalendarRemoval},
+		{"MeetingLinksSubsetCopy", testMeetingLinksSubsetCopy},
+	} {
+		t.Run(tc.name, tc.run)
+	}
 }

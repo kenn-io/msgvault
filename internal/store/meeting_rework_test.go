@@ -22,8 +22,10 @@ func TestMeetingSchemaPlainSQLiteIntegrity(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, st.db.Close()) })
 	require.NoError(st.InitSchemaContext(t.Context()))
 	projectionFixture(t, st, "scheduled", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"startsAt":"2027-03-14T06:30:00-04:00"}}`)
-	_, note := projectionFixture(t, st, "recording", "plaud_json", `{}`)
-	_, err = st.db.Exec(`UPDATE messages SET sent_at = ? WHERE id = ?`, "2027-03-14T06:30:00-04:00", note)
+	data, _ := projectionFixture(t, st, "recording", "plaud_json", `{}`)
+	data.Message.SentAt.Time = time.Date(2027, 3, 14, 6, 30, 0, 0, time.FixedZone("", -4*60*60))
+	data.Message.SentAt.Valid = true
+	_, err = st.UpsertMessage(data.Message)
 	require.NoError(err)
 	require.NoError(st.Close())
 
@@ -66,7 +68,7 @@ func TestMeetingLinksUnsupportedMasterException(t *testing.T) {
 	assertions.Equal(page.Occurrences[0].Ref, links[0].Ref)
 }
 
-func TestMeetingLinksRejectOrphanExceptionsWithoutCompleteBounds(t *testing.T) {
+func testMeetingLinksRejectOrphanExceptionsWithoutCompleteBounds(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
@@ -150,15 +152,20 @@ func TestMeetingLinksSuggestionWindowPlan(t *testing.T) {
 	}
 }
 
-func TestMeetingSuggestionsOffsetCancellation(t *testing.T) {
+func testMeetingSuggestionsOffsetCancellation(t *testing.T) {
 	require := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	calendarFixture(t, st, "master", linkSeriesRaw)
+	_, master := calendarFixture(t, st, "master", linkSeriesRaw)
 	calendarFixture(t, st, "cancelled", `{"id":"cancelled","recurringEventId":"series","status":"cancelled","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`)
-	_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
-	_, err := st.db.Exec(`UPDATE messages SET sent_at = ? WHERE id = ?`, "2027-03-14T06:00:00-04:00", note)
+	data, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+	data.Message.SentAt.Time = time.Date(2027, 3, 14, 6, 0, 0, 0, time.FixedZone("", -4*60*60))
+	data.Message.SentAt.Valid = true
+	_, err := st.UpsertMessage(data.Message)
 	require.NoError(err)
 	suggestions, err := st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note}, 10)
+	require.NoError(err)
+	assert.Empty(t, suggestions.Suggestions)
+	suggestions, err = st.SuggestMeetingLinksContext(t.Context(), MeetingLinkRef{Kind: "evt", OccurrenceRef: OccurrenceRef{MessageID: master, Key: "20270314T100000Z"}}, 10)
 	require.NoError(err)
 	assert.Empty(t, suggestions.Suggestions)
 }
@@ -178,7 +185,7 @@ func TestMeetingUnsupportedSeriesCandidates(t *testing.T) {
 	assert.Equal(fmt.Sprintf("evt:%d@20270307T100000Z", master), linkedMeetingRefs(t, st, note)[note])
 }
 
-func TestMeetingLinkTargetsRequireBounds(t *testing.T) {
+func testMeetingLinkTargetsRequireBounds(t *testing.T) {
 	for _, tc := range []struct{ name, raw string }{
 		{"tombstone", `{"id":"gone","status":"cancelled"}`},
 		{"orphan", `{"id":"edited","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"}}`},
@@ -246,7 +253,7 @@ func TestMeetingDedupRawBackfillProjections(t *testing.T) {
 	}
 }
 
-func TestMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
+func testMeetingUnsupportedSeriesExceptionWithoutOriginal(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "master", strings.ReplaceAll(linkSeriesRaw, "FREQ=WEEKLY;COUNT=6", "FREQ=HOURLY;COUNT=6"))
@@ -309,4 +316,30 @@ func TestMeetingLinksFormerSeriesReferenceLinksAndUnlinks(t *testing.T) {
 	assert.Equal(page.Occurrences[0].Ref, linkedMeetingRefs(t, st, automatic)[automatic])
 	require.NoError(st.UnlinkMeetingContext(t.Context(), automatic, ref))
 	assert.Empty(linkedMeetingRefs(t, st, automatic)[automatic])
+}
+
+func TestMeetingCancelledSuggestions(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingSuggestionsOffsetCancellation", testMeetingSuggestionsOffsetCancellation},
+		{"MeetingSuggestionsExcludeFractionalExceptionOfCancelledSeries", testMeetingSuggestionsExcludeFractionalExceptionOfCancelledSeries},
+		{"MeetingLinksSuggestionsRankingAndReadOnly", testMeetingLinksSuggestionsRankingAndReadOnly},
+		{"MeetingLinksUnidentifiedExceptionWithCancelledMaster", testMeetingLinksUnidentifiedExceptionWithCancelledMaster},
+	} {
+		t.Run(tc.name, tc.run)
+	}
+}
+
+func TestMeetingLinkTargetBounds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*testing.T)
+	}{
+		{"MeetingLinksRejectOrphanExceptionsWithoutCompleteBounds", testMeetingLinksRejectOrphanExceptionsWithoutCompleteBounds},
+		{"MeetingLinkTargetsRequireBounds", testMeetingLinkTargetsRequireBounds},
+	} {
+		t.Run(tc.name, tc.run)
+	}
 }

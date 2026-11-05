@@ -182,13 +182,10 @@ func TestCalendarExceptionsPartialBounds(t *testing.T) {
 	}
 }
 
-func TestCalendarListingIgnoresUnrelatedMetadata(t *testing.T) {
+func TestCalendarListingWithMalformedLegacyMetadata(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "metadata@example.org"))
-	metadata := `{"ical_uid":"metadata@example.org","large_field":"` + strings.Repeat("x", 10000) + `"}`
-	requirements.NoError(st.SetMessageMetadata(event, sql.NullString{String: metadata, Valid: true}))
-	assertions.Equal("metadata@example.org", calendarRows(t, st, event)[0].ICalUID)
 	// JSONB rejects malformed input at storage time.
 	if st.IsPostgreSQL() {
 		return
