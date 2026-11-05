@@ -92,6 +92,7 @@ func TestIs(t *testing.T) {
 		{"help line", Content{Text: "Sign in help line 1800555"}, false},
 		{"article", Content{Text: "Sign in to read more https://example.test/articles/interesting-article-title"}, false},
 		{"coupon", Content{Text: "Use code SAVE20"}, false},
+		{"booking reference", Content{Subject: "Your trip", Text: "Confirmation code: KXPL2M"}, false},
 		{"promo sale", Content{Subject: "Sale", Text: "Use promo code SAVE2024 for 20% off. Order 55512345"}, false},
 		{"promo code", Content{Text: "Use promo code SAVE2024"}, false},
 		{"unsubscribe", Content{Text: "Sign in https://example.test/unsubscribe?token=abcDEF1234567890"}, false},
