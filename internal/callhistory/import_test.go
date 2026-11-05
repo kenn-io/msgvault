@@ -282,3 +282,17 @@ func FuzzScheduledContradictionsAreRejected(f *testing.F) {
 		requirements.ErrorIs(err, ErrInvalid)
 	})
 }
+
+func TestSignalDeletedRetainsEarlierEnd(t *testing.T) {
+	o, err := (ImportRequest{Format: "signal_desktop", Account: "a", Record: []byte(`{"callId":"7","mode":"Direct","status":"Deleted","timestamp":1790841720000,"endedTimestamp":1790841660000}`)}).Observation()
+	require.NoError(t, err)
+	assert.True(t, o.Withdrawn)
+	assert.Nil(t, o.EndedAt)
+}
+
+func TestCalendarLongEventID(t *testing.T) {
+	id := strings.Repeat("a", 257)
+	o, err := (ImportRequest{Format: "google_calendar", Account: "a", Record: []byte(fmt.Sprintf(`{"id":%q,"start":{"date":"2026-10-01"}}`, id))}).Observation()
+	require.NoError(t, err)
+	assert.Equal(t, id, o.RecordID)
+}

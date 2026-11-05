@@ -2,7 +2,6 @@ package callhistory
 
 import (
 	"encoding/json/v2"
-	"fmt"
 	"net/url"
 	"regexp"
 	"slices"
@@ -12,54 +11,32 @@ import (
 	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
-type calendarTime struct {
-	Date     string `json:"date"`
-	DateTime string `json:"dateTime"`
-	TimeZone string `json:"timeZone"`
-}
-
-func (v calendarTime) parse() (time.Time, string, error) {
-	if v.DateTime != "" && v.Date == "" {
-		at, _ := gcalmodel.ParseEventDateTime(v.DateTime, v.TimeZone)
-		if at.IsZero() {
-			return time.Time{}, "", invalid("calendar date-time")
-		}
-		return at, "instant", nil
-	}
-	if v.Date != "" && v.DateTime == "" {
-		at, err := time.Parse(time.DateOnly, v.Date)
-		if err != nil {
-			return time.Time{}, "", fmt.Errorf("parse calendar date: %w", err)
-		}
-		return at, "day", nil
-	}
-	return time.Time{}, "", invalid("calendar start/end")
-}
-
 var calendarLink = regexp.MustCompile(`https?://[^\s<>"']+|tel:\+?[0-9][0-9().;-]*`)
 
 func (r ImportRequest) calendarObservation() (Observation, error) {
-	var event struct {
-		ID, Status            string
-		Description, Location string
-		HangoutLink           string
-		Start, End            calendarTime
-		Recurrence            []string
-		Attendees             []struct{ Email string }
-		ConferenceData        struct {
+	event, err := gcalmodel.DecodeEvent(r.Record)
+	if err != nil || len(event.Recurrence) != 0 {
+		return Observation{}, invalid("calendar event; recurring masters require expanded instances")
+	}
+	var conference struct {
+		ConferenceData struct {
 			EntryPoints []struct{ EntryPointType, URI string }
 		}
 	}
-	if err := json.Unmarshal(r.Record, &event, json.MatchCaseInsensitiveNames(true)); err != nil || len(event.Recurrence) != 0 {
-		return Observation{}, invalid("calendar event; recurring masters require expanded instances")
+	if err := json.Unmarshal(r.Record, &conference, json.MatchCaseInsensitiveNames(true)); err != nil {
+		return Observation{}, invalid("calendar conference data")
 	}
 	var start time.Time
 	var precision string
-	if event.Status != "cancelled" || event.Start != (calendarTime{}) {
-		var err error
-		start, precision, err = event.Start.parse()
-		if err != nil {
+	if event.Status != "cancelled" || !event.Start.IsZero() {
+		var ok bool
+		start, ok = event.Start.Instant()
+		if !ok {
 			return Observation{}, invalid("calendar start requires a date or RFC3339 offset")
+		}
+		precision = "instant"
+		if event.Start.IsAllDay() {
+			precision = "day"
 		}
 	}
 	o := Observation{
@@ -71,9 +48,9 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 
 		Raw: r.Record,
 	}
-	if event.End.Date != "" || event.End.DateTime != "" {
-		end, _, err := event.End.parse()
-		if err != nil {
+	if !event.End.IsZero() {
+		end, ok := event.End.Instant()
+		if !ok {
 			return Observation{}, invalid("calendar end")
 		}
 		o.EndedAt = &end
@@ -97,7 +74,7 @@ func (r ImportRequest) calendarObservation() (Observation, error) {
 			o.AccessPoints = append(o.AccessPoints, point)
 		}
 	}
-	for _, entry := range event.ConferenceData.EntryPoints {
+	for _, entry := range conference.ConferenceData.EntryPoints {
 		if entry.EntryPointType == "phone" {
 			add("phone", entry.URI)
 		} else if isMeetingURL(entry.URI) {

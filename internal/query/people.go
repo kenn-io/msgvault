@@ -577,6 +577,7 @@ func personEntriesCTE(exactID *int64, memberIDs []int64, clustersGlob string) (s
 	return `
 ), person_message_ids AS (
 	SELECT mr.message_id FROM message_recipients mr WHERE mr.participant_id IN ` + memberList + `
+	  AND mr.recipient_type NOT IN ('call_joined', 'call_invited', 'call_unknown')
 	UNION
 	SELECT m.id AS message_id FROM messages m WHERE m.sender_id IN ` + memberList + `
 ), person_chat_conversation_ids AS (

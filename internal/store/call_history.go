@@ -18,50 +18,6 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 	if err := o.Validate(); err != nil {
 		return 0, err
 	}
-	if o.OccurredAt.IsZero() {
-		if err := requireSourceWritableWith(boundQuerier{ctx: ctx, q: s.db}, sourceID); err != nil {
-			return 0, err
-		}
-		var id int64
-		err := s.db.QueryRowContext(ctx, s.Rebind(`
-			SELECT m.id FROM messages m JOIN call_details c ON c.message_id = m.id
-			WHERE m.source_id = ? AND m.source_message_id = ?`), sourceID, o.RecordID).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			return 0, fmt.Errorf("%w: calendar event to cancel does not exist", callhistory.ErrInvalid)
-		}
-		if err != nil {
-			return 0, fmt.Errorf("find calendar event to cancel: %w", err)
-		}
-		metadata, err := s.GetMessageMetadataContext(ctx, id)
-		if err != nil {
-			return 0, err
-		}
-		var evidence callhistory.Evidence
-		if err := json.Unmarshal([]byte(metadata.String), &evidence); err != nil {
-			return 0, fmt.Errorf("decode calendar evidence: %w", err)
-		}
-		evidence.Outcome = "cancelled"
-		data, err := json.Marshal(evidence)
-		if err != nil {
-			return 0, fmt.Errorf("encode calendar evidence: %w", err)
-		}
-		if err := s.SetMessageMetadataContext(ctx, id, sql.NullString{String: string(data), Valid: true}); err != nil {
-			return 0, err
-		}
-		return id, nil
-	}
-	metadata, err := json.Marshal(o.Evidence)
-	if err != nil {
-		return 0, fmt.Errorf("encode call evidence: %w", err)
-	}
-	sets := []RecipientSet{{Type: "call_joined"}, {Type: "call_invited"}, {Type: "call_unknown"}}
-	for _, p := range o.Participants {
-		for i := range sets {
-			if sets[i].Type == "call_"+p.Participation {
-				sets[i].ParticipantIDs = append(sets[i].ParticipantIDs, p.ID)
-			}
-		}
-	}
 	// Source locking serializes absent-row creation as well as later updates.
 	// The identity lock held by persistence also orders participant merges.
 	before := func(ctx context.Context, tx *loggedTx) error {
@@ -99,6 +55,70 @@ func (s *Store) PutCallObservationContext(ctx context.Context, sourceID int64, o
 			return ErrCallObservationWithdrawn
 		}
 		return nil
+	}
+	if o.Kind == "scheduled_meeting" && o.Outcome == "cancelled" {
+		var id int64
+		err := s.withAttributionTxContext(ctx, attributionLock{Sources: []int64{sourceID}}, func(tx *loggedTx) error {
+			if s.dialect.DriverName() != postgresDriverName {
+				if _, err := tx.ExecContext(ctx, `UPDATE embedding_change_clock SET sequence = sequence WHERE singleton = 1`); err != nil {
+					return fmt.Errorf("lock calendar cancellation: %w", err)
+				}
+			}
+			if err := before(ctx, tx); err != nil {
+				return err
+			}
+			var metadata sql.NullString
+			err := tx.QueryRowContext(ctx, `
+				SELECT m.id, m.metadata FROM messages m JOIN call_details c ON c.message_id = m.id
+				WHERE m.source_id = ? AND m.source_message_id = ? AND c.kind = 'scheduled_meeting'`, sourceID, o.RecordID).Scan(&id, &metadata)
+			if errors.Is(err, sql.ErrNoRows) {
+				if o.OccurredAt.IsZero() {
+					return fmt.Errorf("%w: calendar event to cancel does not exist", callhistory.ErrInvalid)
+				}
+				return nil
+			}
+			if err != nil {
+				return fmt.Errorf("find calendar event to cancel: %w", err)
+			}
+			var evidence callhistory.Evidence
+			if err := json.Unmarshal([]byte(metadata.String), &evidence); err != nil {
+				return fmt.Errorf("decode calendar evidence: %w", err)
+			}
+			evidence.Outcome = "cancelled"
+			data, err := json.Marshal(evidence)
+			if err != nil {
+				return fmt.Errorf("encode calendar evidence: %w", err)
+			}
+			if err := s.lockMeetingEvidenceWith(ctx, tx, id); err != nil {
+				return err
+			}
+			q := boundQuerier{ctx: ctx, q: tx}
+			if err := s.requireSyncMessageSourceTx(q, id); err != nil {
+				return err
+			}
+			if err := setMessageMetadataWith(q, s.dialect, id, sql.NullString{String: string(data), Valid: true}); err != nil {
+				return err
+			}
+			if err := s.refreshMeetingProjectionWith(ctx, tx, id); err != nil {
+				return err
+			}
+			return s.refreshCalendarEventProjectionWith(ctx, tx, id)
+		})
+		if err != nil || id != 0 {
+			return id, err
+		}
+	}
+	metadata, err := json.Marshal(o.Evidence)
+	if err != nil {
+		return 0, fmt.Errorf("encode call evidence: %w", err)
+	}
+	sets := []RecipientSet{{Type: "call_joined"}, {Type: "call_invited"}, {Type: "call_unknown"}}
+	for _, p := range o.Participants {
+		for i := range sets {
+			if sets[i].Type == "call_"+p.Participation {
+				sets[i].ParticipantIDs = append(sets[i].ParticipantIDs, p.ID)
+			}
+		}
 	}
 	return s.persistMessageWithParticipantsTransaction(ctx, attributionLock{Sources: []int64{sourceID}},
 		before, nil, func([]int64) *MessagePersistData {

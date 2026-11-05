@@ -75,7 +75,9 @@ func TestCallHistoryHTTPRoundtripAndAuthorization(t *testing.T) {
 	request.Bindings["peer"] = 9223372036854775807
 	invalidBody, err := json.Marshal(request)
 	requirements.NoError(err)
-	assertions.Equal(422, do("POST", "/api/v1/import/calls", string(invalidBody), meetingImportTestAPIKey, "").Code)
+	invalid := do("POST", "/api/v1/import/calls", string(invalidBody), meetingImportTestAPIKey, "")
+	assertions.Equal(422, invalid.Code)
+	assertions.Contains(invalid.Body.String(), "participant does not exist")
 	unchanged := do("GET", "/api/v1/calls", "", meetingImportTestAPIKey, "")
 	assertions.JSONEq(out.Body.String(), unchanged.Body.String())
 	for _, path := range []string{"/api/v1/calls?offset=1", "/api/v1/calls/summary?after_id=1"} {

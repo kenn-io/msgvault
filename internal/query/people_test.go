@@ -1080,3 +1080,20 @@ func TestGetPersonByAliasUsesCanonicalRelationshipTemperature(t *testing.T) {
 		assert.Equal(canonical.PeakRelationshipYear, alias.PeakRelationshipYear)
 	}
 }
+
+func TestGetPersonExcludesCallRecipients(t *testing.T) {
+	b := NewTestDataBuilder(t)
+	source := b.AddSourceWithType("owner@example.com", "imap")
+	person := b.AddParticipant("peer@example.com", "example.com", "Peer")
+	at := time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC)
+	email := b.AddMessage(MessageOpt{SourceID: source, MessageType: "email", SentAt: at})
+	b.AddTo(email, person, "Peer")
+	call := b.AddMessage(MessageOpt{SourceID: source, MessageType: "call_record", SentAt: at.Add(time.Hour)})
+	b.AddRecipient(call, person, "call_invited", "Peer")
+	engine := b.BuildEngine()
+	got, err := engine.GetPerson(t.Context(), person, Context{SourceIDs: []int64{source}}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, int64(1), got.ActivityCount)
+	assert.Equal(t, at, got.LastAt)
+}

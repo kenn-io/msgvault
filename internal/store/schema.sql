@@ -4526,7 +4526,6 @@ BEGIN
     WHERE person_id = OLD.person_id;
 END;
 
--- Current normalized source evidence, rebuilt from authoritative meeting raw.
 -- Call claims are message-backed observations, never inferred attendance.
 CREATE TABLE IF NOT EXISTS call_details (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
@@ -4543,6 +4542,7 @@ CREATE TABLE IF NOT EXISTS call_details (
 CREATE INDEX IF NOT EXISTS idx_call_details_identity ON call_details(canonical_key, message_id);
 CREATE INDEX IF NOT EXISTS idx_call_details_time ON call_details(occurred_at, message_id);
 
+-- Current normalized source evidence, rebuilt from authoritative meeting raw.
 CREATE TABLE IF NOT EXISTS meeting_details (
     message_id INTEGER PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
     projection_version INTEGER NOT NULL,
