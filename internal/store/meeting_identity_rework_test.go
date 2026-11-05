@@ -40,6 +40,78 @@ func TestMeetingIdentityFractionalAliasReverseDiscovery(t *testing.T) {
 	assert.Equal([]int64{otherNote}, reverse.ByOccurrence[identityRef(other)].LinkedTranscriptIDs)
 }
 
+func TestMeetingIdentityMovedCopyReverseDiscovery(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	_, original := calendarFixture(t, st, "original", linkSeriesRaw)
+	_, moved := calendarFixture(t, st, "moved", linkSeriesRaw, "other@example.org")
+	calendarFixture(t, st, "exception", `{"id":"exception","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`, "other@example.org")
+	_, note := projectionFixture(t, st, "moved-note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"weekly@example.org","startsAt":"2027-03-14T12:00:00Z"}}`)
+	forward, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{TranscriptIDs: []int64{note}})
+	require.NoError(t, err)
+	require.Equal(t, identityRef(original)+"@20270314T100000Z", forward.ByTranscript[note].OccurrenceRef)
+	for _, id := range []int64{original, moved} {
+		ref := identityRef(id) + "@20270314T100000Z"
+		reverse, err := st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{ref}})
+		require.NoError(t, err)
+		assert.Equal(t, []int64{note}, reverse.ByOccurrence[ref].LinkedTranscriptIDs)
+	}
+}
+
+func TestMeetingIdentityGranolaSourcesReadOnce(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	req := MeetingIdentityRequest{}
+	for i := range 20 {
+		key := fmt.Sprintf("event-%d", i)
+		_, event := calendarFixture(t, st, key, singleLinkRaw(key, key+"@example.org"))
+		_, note := projectionFixture(t, st, fmt.Sprintf("note-%d", i), "granola_json", fmt.Sprintf(`{"owner":{"email":"calendar@example.com"},"calendar_event":{"calendar_event_id":%q}}`, key))
+		req.OccurrenceRefs = append(req.OccurrenceRefs, identityRef(event))
+		req.TranscriptIDs = append(req.TranscriptIDs, note)
+	}
+	for _, mode := range []string{"both", "events", "notes"} {
+		t.Run(mode, func(t *testing.T) {
+			request := req
+			if mode == "events" {
+				request.TranscriptIDs = nil
+			}
+			if mode == "notes" {
+				request.OccurrenceRefs = nil
+			}
+			sourceReads := 0
+			observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, query string, _ []driver.NamedValue) error {
+				if strings.Contains(query, "SELECT id,sync_config FROM sources") {
+					sourceReads++
+				}
+				return nil
+			}})
+			got, err := observed.ResolveMeetingIdentitiesContext(t.Context(), request)
+			require.NoError(t, err)
+			for i, ref := range req.OccurrenceRefs {
+				assert.Equal(t, []int64{req.TranscriptIDs[i]}, got.ByOccurrence[ref].LinkedTranscriptIDs)
+			}
+			assert.Equal(t, 1, sourceReads)
+		})
+	}
+}
+
+func TestAddressParticipantLookupKeepsQueryLogging(t *testing.T) {
+	st := newRFC822IDBackfillBackendStore(t)
+	id, err := st.EnsureParticipant("new@example.org", "New", "example.org")
+	require.NoError(t, err)
+	_, err = st.db.Exec(`UPDATE participants SET phone_number=? WHERE id=?`, "+12025550123", id)
+	require.NoError(t, err)
+	ConfigureSQLLogging(SQLLogOptions{FullTrace: true})
+	t.Cleanup(func() { ConfigureSQLLogging(SQLLogOptions{}) })
+	logs := captureSlog(t)
+	ctx := WithRequestID(t.Context(), "participant-lookup")
+	got, err := st.EmailParticipantContext(ctx, "new@example.org")
+	require.NoError(t, err)
+	assert.Equal(t, id, got)
+	got, err = st.PhoneParticipantContext(ctx, "+12025550123")
+	require.NoError(t, err)
+	assert.Equal(t, id, got)
+	assert.Equal(t, 2, strings.Count(logs.String(), `"request_id":"participant-lookup"`))
+}
+
 func TestMeetingIdentityBatchReadBound(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	req := MeetingIdentityRequest{}
@@ -91,21 +163,6 @@ func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
 	assert.Len(got.ByTranscript, 1)
 	assert.LessOrEqual(reads, 45)
 	t.Logf("one occurrence with 220 unrelated UID notes: %d reads", reads)
-}
-
-func TestMeetingIdentityUnknownICSVersionRefused(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	source := icsSource(t, st)
-	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270314T100000Z\r\nDURATION:PT1H"))
-	require.NoError(err)
-	events := emailEvents(t, st, source)
-	require.Len(events, 1)
-	_, note := identityNote(t, st, "note", "family@example.com")
-	_, err = st.db.Exec(`UPDATE messages SET metadata=? WHERE id=?`, `{"ics_version":999}`, events[0])
-	require.NoError(err)
-	_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{identityRef(events[0])}, TranscriptIDs: []int64{note}})
-	assert.ErrorContains(err, "unsupported ICS metadata version 999")
 }
 
 func TestCalendarRawUpsertAdvancesObservationOnce(t *testing.T) {

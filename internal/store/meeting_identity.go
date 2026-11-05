@@ -367,11 +367,9 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 	}
 	clauses := []string{`(d.target_ical_uid=? AND d.target_ical_uid<>'' AND d.occurrence_key=?)`}
 	args := []any{o.Identity.ICalUID, o.Identity.OccurrenceKey}
-	keyClauses := []string{`(k.kind='ical_uid' AND k.value=? AND k.value<>'')`}
-	keyArgs := []any{o.Identity.ICalUID}
-	if o.Identity.OccurrenceKey != "" {
-		keyClauses[0] = `(k.kind='ical_uid' AND k.value=? AND k.value<>'' AND k.scheduled_at=?)`
-		keyArgs = append(keyArgs, o.Start)
+	keyClauses, keyArgs, err := meetingIdentityUIDMemberClauses(ctx, r, o, copies, budget)
+	if err != nil {
+		return "", nil, err
 	}
 	for _, copy := range copies {
 		clauses = append(clauses, `(d.target_message_id=? AND (d.occurrence_key=? OR d.occurrence_key=''))`)
@@ -392,4 +390,23 @@ func (s *Store) meetingIdentityMemberQuery(ctx context.Context, r reboundReader,
 	scope, scopeArgs := sourceScopeClause(ctx, "m.source_id")
 	args = append(args, scopeArgs...)
 	return query + scope, args, nil
+}
+
+// Each calendar copy can move the same occurrence to a different start.
+// Discovery admits all of those starts; forward resolution decides the link.
+func meetingIdentityUIDMemberClauses(ctx context.Context, r reboundReader, o linkOccurrence, rows []CalendarEventRow, budget *int) ([]string, []any, error) {
+	clause := `(k.kind='ical_uid' AND k.value=? AND k.value<>'')`
+	if o.Identity.OccurrenceKey == "" {
+		return []string{clause}, []any{o.Identity.ICalUID}, nil
+	}
+	copies, err := meetingIdentityCopyOccurrences(ctx, r, o.Identity, rows, budget)
+	if err != nil {
+		return nil, nil, err
+	}
+	starts := []any{o.Start}
+	for _, copy := range copies {
+		starts = append(starts, copy.Start)
+	}
+	clause = `(k.kind='ical_uid' AND k.value=? AND k.value<>'' AND k.scheduled_at IN (` + placeholders(len(starts)) + `))`
+	return []string{clause}, append([]any{o.Identity.ICalUID}, starts...), nil
 }

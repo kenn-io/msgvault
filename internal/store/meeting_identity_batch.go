@@ -11,10 +11,11 @@ import (
 // Each cache belongs to the request's read snapshot. The scalar meeting-link
 // resolver consumes the same evidence as the batch reader.
 type meetingIdentityBatch struct {
-	events    map[string][]CalendarEventRow
-	keys      map[int64]meetingLinkKey
-	decisions map[int64][]meetingLinkDecision
-	visible   map[int64]bool
+	calendarSources map[string][]any
+	events          map[string][]CalendarEventRow
+	keys            map[int64]meetingLinkKey
+	decisions       map[int64][]meetingLinkDecision
+	visible         map[int64]bool
 }
 
 type meetingEventQuery struct {
