@@ -149,7 +149,6 @@ func TestWithdrawnCallAbsentFromMetadataSearch(t *testing.T) {
 }
 
 func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
-	assert := assert.New(t)
 	require := require.New(t)
 	st := storetest.New(t).Store
 	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
@@ -168,9 +167,9 @@ func TestCallReadersRejectUnsupportedEvidenceVersion(t *testing.T) {
 		_, err = st.DB().Exec(st.Rebind(`UPDATE messages SET metadata = ? WHERE id = ?`), string(metadata), id)
 		require.NoError(err)
 		_, err = st.ListCallObservationsContext(t.Context(), store.CallQuery{})
-		assert.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
+		require.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
 		_, err = st.SummarizeCallsContext(t.Context(), store.CallQuery{})
-		assert.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
+		require.ErrorIs(err, callhistory.ErrInvalid, "version %d", version)
 	}
 }
 
