@@ -14,6 +14,9 @@ func TestIs(t *testing.T) {
 		want    bool
 	}{
 		{"verify account", Content{Text: "Use 482913 to verify your account"}, true},
+		{"enter this code", Content{Text: "Enter this code to verify: 482913"}, true},
+		{"code below", Content{Text: "Enter this code below: 482913"}, true},
+		{"build verification prose", Content{Text: "The code to verify the build is in the repo, 482913 files were scanned"}, false},
 		{"four line breaks", Content{Text: "Your one-time passcode:\n\n\n\n482913"}, true},
 		{"newline blank", Content{Text: "Your verification code is:\n\n482913"}, true},
 		{"newline", Content{Text: "Your code:\n482913"}, true},
@@ -58,6 +61,10 @@ func TestIs(t *testing.T) {
 		{"Unicode window", Content{Text: "code " + strings.Repeat("\u00a0", 59) + "482913"}, true},
 		{"outside window", Content{Text: "code " + strings.Repeat("\u00a0", 61) + "482913"}, false},
 		{"French", Content{Text: "code de vérification: 482913"}, true},
+		{"French copula", Content{Text: "Votre code de vérification est 482913"}, true},
+		{"German copula", Content{Text: "Ihr Bestätigungscode ist 482913"}, true},
+		{"Spanish copula", Content{Text: "Tu código de verificación es 482913"}, true},
+		{"Italian copula", Content{Text: "Il tuo codice di verifica è 482913"}, true},
 		{"UUID", Content{Text: "Reset your password https://example.test/r/12345678-1234-4321-1234-123456789abc"}, true},
 		{"Firebase", Content{Text: "https://example.test/reset?oobCode=Qm9_xK3-abc1234567890"}, true},
 		{"Supabase", Content{Text: "https://example.test/login?token=0123456789abcdef0123456789abcdef0123456789abcdef01234567"}, true},
