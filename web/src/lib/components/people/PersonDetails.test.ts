@@ -94,7 +94,10 @@ it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation wh
   const { person, directory } = await renderDetails([5], { taskChange: operation });
   await screen.findByText(operation === 'merge' ? 'No tasks yet' : 'Ask about the proposal');
   await fireEvent.input(screen.getByLabelText('New agenda item'), { target: { value: 'Send meeting notes' } });
-  await fireEvent.input(screen.getByLabelText('List'), { target: { value: 'Follow ups' } });
+  await fireEvent.click(screen.getByRole('button', { name: 'List: Agenda' }));
+  await fireEvent.input(screen.getByRole('combobox', { name: 'List' }), { target: { value: 'Follow ups' } });
+  await fireEvent.keyDown(screen.getByRole('combobox', { name: 'List' }), { key: 'Enter' });
+  await screen.findByRole('button', { name: 'List: Follow ups' });
 
   person.revision = 2;
   if (operation === 'merge') await directory.refreshSelectedPerson();
@@ -103,7 +106,7 @@ it.each(['merge', 'split'] as const)('refreshes tasks after %s reconciliation wh
   expect(await screen.findByText(operation === 'merge' ? 'Ask about the proposal' : 'No tasks yet')).toBeDefined();
   if (operation === 'split') expect(screen.queryByText('Ask about the proposal')).toBeNull();
   expect(screen.getByLabelText('New agenda item')).toHaveProperty('value', 'Send meeting notes');
-  expect(screen.getByLabelText('List')).toHaveProperty('value', 'Follow ups');
+  expect(screen.getByRole('button', { name: 'List: Follow ups' })).toBeDefined();
 });
 
 it.each(['save', 'clear'] as const)('refreshes open fact pins after an attribute %s without changing the ledger section', async operation => {

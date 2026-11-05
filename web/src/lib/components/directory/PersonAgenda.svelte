@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { Button, IconButton, TextInput } from '@kenn-io/kit-ui';
+  import { Button, Chip, IconButton, TextInput, Typeahead } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
   import { onDestroy, untrack } from 'svelte';
   import DetailRow from '../people/DetailRow.svelte';
+  import { sentenceCase } from '../../explore/labels';
   import {
     createPersonAgendaItem,
     getKataIntegrationStatus,
@@ -30,6 +31,10 @@
   let truncated = $state(false);
   let title = $state('');
   let listName = $state('agenda');
+  const listOptions = $derived(
+    [...new Set(['agenda', ...items.map((item) => item.list), listName])]
+      .map((name) => ({ name, label: sentenceCase(name) })),
+  );
   let generation = 0;
   let mutationToken = 0;
   let controller: AbortController | null = null;
@@ -202,10 +207,6 @@
       ? value.message
       : fallback;
   }
-
-  function label(value: string): string {
-    return value.replace(/\b\w/g, (letter) => letter.toUpperCase());
-  }
 </script>
 
 <section class="person-agenda" aria-labelledby={`person-${personID}-agenda-heading`}>
@@ -216,18 +217,27 @@
   {#if truncated}<p class="notice" role="status">More tasks are linked to this person.</p>{/if}
   {#each items as item (item.uid)}
     <DetailRow>
-      {#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}
-      {#if item.list !== 'agenda'}<small>{item.list}</small>{/if}
-      {#if item.state !== 'open'}<small>{label(item.state)}</small>{/if}
-      {#if item.status !== item.state}<small>{label(item.status)}</small>{/if}
+      <div class="task-row">
+        <span class="task-title">{#if item.web_url}<a href={item.web_url} target="_blank" rel="noreferrer">{item.title}</a>{:else}{item.title}{/if}</span>
+        {#if item.list !== 'agenda'}<Chip size="xs" uppercase={false} tone="info"><span class="list-label">{sentenceCase(item.list)}</span></Chip>{/if}
+      </div>
       {#snippet actions()}<IconButton size="sm" ariaLabel={`Unlink ${item.title}`} disabled={mutating || !mutationReady} onclick={() => void unlink(item.ref)}><X size={14} /></IconButton>{/snippet}
     </DetailRow>
   {/each}
   {#if mutationReady}
     <form onsubmit={(event) => { event.preventDefault(); void createItem(); }}>
-      <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task" block disabled={mutating} />
-      <TextInput bind:value={listName} ariaLabel="List" placeholder="agenda" disabled={mutating} />
-      <Button type="submit" label="Add item" disabled={mutating || !title.trim()} />
+      <TextInput bind:value={title} ariaLabel="New agenda item" placeholder="Add a task…" block disabled={mutating}>
+        {#snippet suffix()}
+          <div class="list-picker">
+            <Typeahead options={listOptions} value={listName} fallbackLabel="Agenda" placeholder="List" allowCustom customLabel={'New list "{query}"'} disabled={mutating} onselect={(value) => { listName = value; }}>
+              {#snippet trigger({ attachment })}
+                <button {@attach attachment} type="button" class="list-trigger" aria-label={`List: ${sentenceCase(listName)}`} disabled={mutating}>{sentenceCase(listName)} ▾</button>
+              {/snippet}
+            </Typeahead>
+          </div>
+        {/snippet}
+      </TextInput>
+      <Button type="submit" label="Add" disabled={mutating || !title.trim()} />
     </form>
   {/if}
 
@@ -241,7 +251,13 @@
   h3 { font-size: var(--font-size-md); }
   form { flex-wrap: wrap; justify-content: flex-start; }
   form :global(.kit-text-input) { min-width: 0; flex: 1; }
-  small { margin-left: var(--space-2); color: var(--text-muted); }
+  .task-row { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--field-gap); }
+  .task-title { flex: 1 1 12rem; min-width: 0; overflow-wrap: anywhere; }
+  .task-row :global(.kit-chip) { box-sizing: border-box; max-width: 100%; }
+  .list-label { white-space: normal; overflow-wrap: anywhere; }
+  .list-picker { max-width: 9rem; --typeahead-panel-min-width: 16rem; }
+  .list-trigger { max-width: 100%; padding: 0; border: 0; background: none; color: var(--text-secondary); font: inherit; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list-trigger:disabled { cursor: not-allowed; }
   a { color: var(--link-ink); }
   .notice { color: var(--text-muted); font-size: var(--font-size-sm); }
 </style>
