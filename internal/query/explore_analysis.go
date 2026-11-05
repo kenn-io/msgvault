@@ -377,10 +377,10 @@ func (e *DuckDBEngine) expandParticipantFilterClusters(ctx context.Context, expl
 	if err := validateIdentityPredicate(explore.Context); err != nil {
 		return explore, err
 	}
-	// Every public Explore/Files consumer prepares its predicate here. SentOnly
-	// requests need current exclusions even when they have no participant filter.
-	if explore.SentOnly {
-		if _, err := e.sentIdentityConditions("true"); err != nil {
+	// Every public Explore/Files consumer prepares its predicate here. SentOnly and
+	// PersonInteractionsOnly requests need current relationship query sets even without a participant filter.
+	if explore.SentOnly || explore.PersonInteractionsOnly {
+		if err := e.relationshipQuerySetsError(); err != nil {
 			return explore, err
 		}
 	}

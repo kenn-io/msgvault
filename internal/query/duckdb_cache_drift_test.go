@@ -529,6 +529,45 @@ func TestDuckDBEngine_AnalyticalEndpointsFollowCommittedCacheSchemaSwap(t *testi
 		"relationship reads must report the newly committed revision")
 }
 
+func TestDuckDBEngine_ReloadsOwnerEventIDsAfterPublication(t *testing.T) {
+	t.Parallel()
+	require := require.New(t)
+	assert := assert.New(t)
+	b := NewTestDataBuilder(t)
+	source := b.AddSource("owner@example.test")
+	owner := b.AddParticipant("owner@example.test", "example.test", "Owner")
+	person := b.AddParticipant("person@example.test", "example.test", "Person")
+	b.AddOwnerParticipant(source, owner)
+	event := b.AddMessage(MessageOpt{SourceID: source, MessageType: "calendar_event"})
+	b.AddFrom(event, person, "Person")
+	b.AddTo(event, owner, "Owner")
+	root, cleanup := b.Build()
+	t.Cleanup(cleanup)
+	engine, err := NewDuckDBEngine(root, "", nil)
+	require.NoError(err)
+	t.Cleanup(func() { require.NoError(engine.Close()) })
+	request := ExploreRequest{PersonInteractionsOnly: true, Context: Context{ParticipantIDs: []int64{person}}}
+	before, err := engine.Explore(t.Context(), request)
+	require.NoError(err)
+	require.Len(before.Rows, 1)
+	assert.Equal(event, *before.Rows[0].AnchorMessageID)
+
+	activity := firstRequiredParquetForTest(t, root, identityindex.DatasetActivity)
+	_, err = engine.db.Exec("COPY (SELECT * REPLACE (false AS is_owner) FROM read_parquet('" + escapePath(activity) + "')) TO '" + escapePath(activity) + ".tmp' (FORMAT PARQUET)")
+	require.NoError(err)
+	require.NoError(os.Rename(activity+".tmp", activity))
+	owners := firstRequiredParquetForTest(t, root, datasetOwnerParticipants)
+	_, err = engine.db.Exec("COPY (SELECT * FROM read_parquet('" + escapePath(owners) + "') WHERE false) TO '" + escapePath(owners) + ".tmp' (FORMAT PARQUET)")
+	require.NoError(err)
+	require.NoError(os.Rename(owners+".tmp", owners))
+	republishCacheStateForTest(t, root)
+
+	after, err := engine.Explore(t.Context(), request)
+	require.NoError(err)
+	assert.Empty(after.Rows, "republication removes events the owner no longer attended")
+	assert.Equal(int64(0), after.TotalCount)
+}
+
 func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t *testing.T) {
 	t.Parallel()
 	for _, outcome := range []string{"reloads after sent publication", "retries after unreadable activity is restored"} {
@@ -578,6 +617,8 @@ func TestDuckDBEngine_ReloadsUnsentIDsAfterPublicationAndRetriesFailedRefresh(t 
 				require.ErrorContains(err, "load unsent message IDs", "surface the refresh failure instead of querying a missing exclusion table")
 				_, err = engine.ExploreSelectionStats(t.Context(), ExploreSelectionRequest{Explore: ExploreRequest{SentOnly: true}})
 				require.ErrorContains(err, "load unsent message IDs", "SentOnly analysis must reject the prior exclusion set")
+				_, err = engine.Explore(t.Context(), ExploreRequest{PersonInteractionsOnly: true})
+				require.ErrorContains(err, "load unsent message IDs", "person interactions must reject the prior owner event set")
 				_, err = engine.RelationshipCalendar(t.Context(), RelationshipCalendarRequest{CanonicalID: 2, Year: 2024})
 				require.ErrorContains(err, "load unsent message IDs", "calendar must reject stale owners")
 				_, err = engine.RelationshipTimeline(t.Context(), RelationshipTimelineRequest{CanonicalID: 2})

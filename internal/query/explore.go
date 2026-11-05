@@ -312,9 +312,8 @@ func buildExploreConditions(request ExploreRequest) (string, []any) {
 		conditions = append(conditions, sentIdentityConditions("true"))
 	}
 	if request.PersonInteractionsOnly {
-		conditions = append(conditions, `(`+identityindex.EntryKindSQL("analytical_entries.message_type")+` NOT IN ('event', 'meeting') OR EXISTS (
-			SELECT 1 FROM relationship_activity_expanded a
-			WHERE a.message_id = analytical_entries.message_id AND a.is_owner AND a.is_direct
+		conditions = append(conditions, `(`+identityindex.EntryKindSQL("analytical_entries.message_type")+` NOT IN ('event', 'meeting') OR analytical_entries.message_id IN (
+			SELECT message_id FROM relationship_owner_event_messages
 		))`)
 	}
 	appendIntAnyOf := func(values []int64, expression string) {
