@@ -328,12 +328,16 @@ func TestLoadPersonSweepWindowOtherLaneChangesPreservePaging(t *testing.T) {
 			f := newPersonSweepJournalFixture(t, true, false)
 			id := f.insertMessage(t, "other-lane", "email", f.aliceID, time.Now().UTC())
 			addSweepBody(t, f, id, "Conversation evidence")
+			input := sweepEvidenceInput(t, sweepItem(t, loadSweepWindow(t, f, peoplesweep.SourceConversationText, 0).Seeds, id))
+			key, err := personfacts.EvidenceKey(input)
+			require.NoError(err)
+			persistSweepEvidence(t, f.store, key, input)
 			before := latestPersonSweepSequence(t, f.store)
 			args := []any{id}
 			if tc.reason == personfacts.EvidenceStatusIdentityReassigned {
 				args = []any{f.bobID, id}
 			}
-			_, err := f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), args...)
+			_, err = f.store.DB().ExecContext(t.Context(), f.store.Rebind(tc.query), args...)
 			require.NoError(err)
 
 			window, err := f.store.LoadPersonSweepWindow(t.Context(), peoplesweep.WindowRequest{
