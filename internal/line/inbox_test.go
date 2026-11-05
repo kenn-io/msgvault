@@ -428,27 +428,35 @@ func TestProcessorLateOriginalReconcilesExpiredRetryInSamePass(t *testing.T) {
 	checks.Equal("processed", state)
 }
 
-func TestProcessorEditPreservesCachedSenderSearch(t *testing.T) {
+func TestProcessorEditPreservesOriginalSenderSearchAfterRename(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
 	f := newInboxFixture(t)
-	profile, err := json.Marshal(Profile{UserID: testUser, DisplayName: "Cached Sender"})
+	profile, err := json.Marshal(Profile{UserID: testUser, DisplayName: "Original Name"})
 	must.NoError(err)
 	must.NoError(f.st.CacheLineProfileContext(context.Background(), f.source.ID, testUser, string(profile), f.now))
 	base := f.message("1", "original searchable text", f.now.UnixMilli())
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 
-	_, total, err := f.st.SearchMessagesContext(context.Background(), "Cached Sender", 0, 10)
+	_, total, err := f.st.SearchMessagesContext(context.Background(), "Original Name", 0, 10)
 	must.NoError(err)
 	checks.Equal(int64(1), total)
 
 	_, err = f.st.RebuildFTSContext(t.Context(), nil)
 	must.NoError(err)
-	_, total, err = f.st.SearchMessagesContext(t.Context(), "Cached Sender", 0, 10)
+	_, total, err = f.st.SearchMessagesContext(t.Context(), "Original Name", 0, 10)
 	must.NoError(err)
 	checks.Equal(int64(1), total)
+
+	f.now = f.now.Add(25 * time.Hour)
+	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: http.StatusOK, Body: `{"userId":"` + testUser + `","displayName":"Renamed Sender"}`})
+	f.enqueue(t, f.message("2", "after profile refresh", f.now.UnixMilli()), time.Time{})
+	f.run(t)
+	current, err := f.st.LineMessageContext(t.Context(), f.source.ID, "2")
+	must.NoError(err)
+	checks.Equal("Renamed Sender", current.SenderDisplayName)
 
 	edit := base
 	edit.Type = "messageEdited"
@@ -458,12 +466,12 @@ func TestProcessorEditPreservesCachedSenderSearch(t *testing.T) {
 	f.enqueue(t, edit, time.Time{})
 	f.run(t)
 
-	_, total, err = f.st.SearchMessagesContext(context.Background(), "Cached Sender", 0, 10)
+	_, total, err = f.st.SearchMessagesContext(context.Background(), "Original Name", 0, 10)
 	must.NoError(err)
 	checks.Equal(int64(1), total)
 	_, err = f.st.RebuildFTSContext(t.Context(), nil)
 	must.NoError(err)
-	_, total, err = f.st.SearchMessagesContext(t.Context(), "Cached Sender", 0, 10)
+	_, total, err = f.st.SearchMessagesContext(t.Context(), "Original Name", 0, 10)
 	must.NoError(err)
 	checks.Equal(int64(1), total)
 }

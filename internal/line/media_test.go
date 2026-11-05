@@ -428,3 +428,17 @@ func TestMediaLocalFailureDoesNotStarveLaterBatch(t *testing.T) {
 	must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&next))
 	checks.True(next.After(f.now))
 }
+
+func TestMediaOversizeImageRecordsObservedSize(t *testing.T) {
+	f := newInboxFixture(t)
+	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "123456789"})
+	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: 8}))
+	event := f.message("1", "", f.now.UnixMilli())
+	event.Message = &Message{ID: "1", Type: "image"}
+	f.enqueue(t, event, time.Time{})
+	f.run(t)
+	ref := f.media(t)
+	assert.Equal(t, attachmentpolicy.StateSkipped, ref.State)
+	assert.Equal(t, attachmentpolicy.SkipSizeCap, ref.SkipReason)
+	assert.Equal(t, 9, ref.Size)
+}
