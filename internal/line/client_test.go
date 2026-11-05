@@ -344,13 +344,16 @@ func TestClientSeparateDataHost(t *testing.T) {
 }
 
 func TestClientTimeout(t *testing.T) {
-	release := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-release }))
-	defer server.Close()
-	defer close(release)
-	client := line.NewClient("2000000000", "synthetic-secret", line.WithBaseURLs(server.URL, server.URL), line.WithHTTPClient(&http.Client{Timeout: 25 * time.Millisecond})) //nolint:kennlint // deadlinetest: HTTP timeout expiry is asserted as context.DeadlineExceeded.
-	_, err := client.BotInfo(context.Background())
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	synctest.Test(t, func(t *testing.T) {
+		client := line.NewClient("2000000000", "synthetic-secret", line.WithBaseURLs("https://api.example.test", "https://data.example.test"), line.WithHTTPClient(&http.Client{Timeout: time.Hour, Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		})}))
+		started := time.Now()
+		_, err := client.BotInfo(context.Background())
+		require.ErrorIs(t, err, context.DeadlineExceeded)
+		assert.Equal(t, 30*time.Second, time.Since(started), "the client caps an injected timeout at 30 seconds")
+	})
 }
 
 func TestClientContentUsesAttachmentDownloadTimeout(t *testing.T) {

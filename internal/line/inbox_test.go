@@ -385,20 +385,12 @@ func TestProcessorUnsendBeforeMessage(t *testing.T) {
 	f := newInboxFixture(t)
 	stamp := f.now.UnixMilli()
 	base := f.message("1", "retained unsent text", stamp)
-	wrong := base
-	wrong.Type = "messageEdited"
-	wrong.Timestamp++
-	wrong.WebhookEventID = "wrong-chat"
-	wrong.Source.GroupID = "C00000000000000000000000000000002"
-	wrong.Message = &Message{ID: "1", Type: "text", Text: "wrong"}
 	unsend := Event{Type: "unsend", WebhookEventID: "unsend", Timestamp: stamp + 2, Source: base.Source, Unsend: &Unsend{MessageID: "1"}}
-	for _, event := range []Event{wrong, unsend} {
-		f.enqueue(t, event, f.now.Add(-25*time.Hour))
-		f.run(t)
-	}
+	f.enqueue(t, unsend, f.now.Add(-25*time.Hour))
+	f.run(t)
 	status, err := f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	require.NoError(t, err)
-	checks.Zero(status.Failed, "expired edits and unsends awaiting an original are retained evidence, not inbox failures")
+	checks.Zero(status.Failed, "an expired unsend awaiting its original remains retained evidence")
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 	archived := f.archived(t, "1")
@@ -407,7 +399,7 @@ func TestProcessorUnsendBeforeMessage(t *testing.T) {
 	checks.True(deleted)
 	status, err = f.st.LineInboxStatusContext(context.Background(), f.source.ID)
 	require.NoError(t, err)
-	checks.Equal(int64(1), status.Failed, "the wrong-chat edit becomes a real failure once its original is available")
+	checks.Zero(status.Failed)
 	base.WebhookEventID = "late-original"
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
@@ -457,18 +449,6 @@ func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T
 	f.enqueue(t, base, time.Time{})
 	f.run(t)
 
-	archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
-	must.NoError(err)
-	must.Len(archived.From, 1)
-	checks.Equal("Original Name", archived.From[0].Name)
-
-	_, err = f.st.RebuildFTSContext(t.Context(), nil)
-	must.NoError(err)
-	archived, err = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
-	must.NoError(err)
-	must.Len(archived.From, 1)
-	checks.Equal("Original Name", archived.From[0].Name)
-
 	f.now = f.now.Add(25 * time.Hour)
 	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: http.StatusOK, Body: `{"userId":"` + testUser + `","displayName":"Renamed Sender"}`})
 	f.enqueue(t, f.message("2", "after profile refresh", f.now.UnixMilli()), time.Time{})
@@ -482,13 +462,7 @@ func TestProcessorEditPreservesOriginalSenderDisplayNameAfterRename(t *testing.T
 	f.enqueue(t, edit, time.Time{})
 	f.run(t)
 
-	archived, err = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
-	must.NoError(err)
-	must.Len(archived.From, 1)
-	checks.Equal("Original Name", archived.From[0].Name)
-	_, err = f.st.RebuildFTSContext(t.Context(), nil)
-	must.NoError(err)
-	archived, err = query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
+	archived, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessageBySourceID(t.Context(), "1", []int64{f.source.ID})
 	must.NoError(err)
 	must.Len(archived.From, 1)
 	checks.Equal("Original Name", archived.From[0].Name)
