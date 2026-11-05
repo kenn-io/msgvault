@@ -287,6 +287,8 @@ func TestAgentVerificationAttachments(t *testing.T) {
 		{"shared.txt", "text/plain", "482914", true, false, true},
 		{"nul.txt", "text/plain", "Y\x00o\x00u\x00r\x00", true, false, false},
 		{"nested.txt", "text/plain", "Content-Transfer-Encoding: base64\r\n\r\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
+		{"encoding-notes.txt", "text/plain", "Set the Content-Transfer-Encoding header to base64 for binary parts.\n", false, false, false},
+		{"nested-lf.txt", "text/plain", "Content-Type: text/plain\ncontent-transfer-encoding:base64\n\nWW91ciBjb2RlIGlzIDQ4MjkxMw==", true, false, false},
 		{"invalid.txt", "text/plain", "Your \xff attachment", true, false, false},
 		{"large.txt", "text/plain", strings.Repeat("x", 1024*1024+1), true, false, false},
 		{"image.png", "image/png", "\x89PNG\r\n\x1a\n\x00Ordinary image", false, false, false},

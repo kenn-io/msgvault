@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -149,6 +150,8 @@ func (s *Server) attachmentWithheld(w http.ResponseWriter, r *http.Request, cand
 	return true, withheld, ok
 }
 
+var nestedEncoding = regexp.MustCompile(`(?im)^content-transfer-encoding[ \t]*:`)
+
 // The caller owns content. Sniffing preserves the original download bytes.
 func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, refuse, withheld bool) (io.Reader, *apiHTTPError) {
 	if !refuse {
@@ -190,7 +193,7 @@ func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, 
 	} else {
 		c.Text = s
 	}
-	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || strings.Contains(strings.ToLower(s), "content-transfer-encoding") || verification.Is(c) {
+	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || nestedEncoding.MatchString(s) || verification.Is(c) {
 		return nil, denied
 	}
 	return bytes.NewReader(data), nil
