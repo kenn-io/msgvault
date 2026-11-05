@@ -12,7 +12,7 @@ function catalog(includeSensitive = false) {
       kind: 'attribute',
       key: includeSensitive ? 'forbidden-sensitive-key' : 'forbidden-public-key',
       revision: `sha256:${'a'.repeat(64)}`,
-      slug: includeSensitive ? 'private-note' : 'timezone',
+      slug: includeSensitive ? 'private_note' : 'time_zone',
       universal_id: 'forbidden-universal-id',
       description: includeSensitive ? 'Private note' : 'Time zone',
       value_type: 'text',
@@ -71,7 +71,7 @@ describe('PersonTrackingController', () => {
     expect(requests.some(({ path }) => path.includes('/participants/'))).toBe(false);
     expect(controller.tracking).toEqual({ person_id: 7, tracked: true, tracked_at: null });
     expect(controller.targets).toEqual([{
-      kind: 'attribute', slug: 'timezone', sensitive: false
+      kind: 'attribute', slug: 'time_zone', sensitive: false
     }]);
     expect(JSON.stringify(controller.targets)).not.toMatch(/fingerprint|universal|forbidden/i);
     controller.destroy();
@@ -120,7 +120,7 @@ describe('PersonTrackingController', () => {
     expect(controller.personID).toBe(9);
     expect(controller.tracking).toEqual({ person_id: 9, tracked: false, tracked_at: null });
     expect(controller.targets).toEqual([{
-      kind: 'attribute', slug: 'timezone', sensitive: false
+      kind: 'attribute', slug: 'time_zone', sensitive: false
     }]);
     controller.destroy();
   });
@@ -304,15 +304,15 @@ describe('PersonTrackingController', () => {
 
     expect(controller.tracking).toBeUndefined();
     expect(controller.trackingError).toBe('Unable to load profile maintenance state.');
-    expect(controller.targets[0]?.slug).toBe('timezone');
+    expect(controller.targets[0]?.slug).toBe('time_zone');
     await controller.retryTracking();
     expect(controller.tracking?.tracked).toBe(false);
     await controller.retryCatalog(true);
-    expect(controller.targets[0]?.slug).toBe('timezone');
+    expect(controller.targets[0]?.slug).toBe('time_zone');
     expect(controller.catalogError).toBe('Unable to load eligible profile fields.');
     expect(controller.catalogIncludesSensitive).toBe(false);
     await controller.retryCatalog(true);
-    expect(controller.targets[0]?.slug).toBe('private-note');
+    expect(controller.targets[0]?.slug).toBe('private_note');
     expect(controller.catalogIncludesSensitive).toBe(true);
     expect(queries).toEqual(['?include_sensitive=false', '?include_sensitive=true', '?include_sensitive=true']);
     controller.destroy();

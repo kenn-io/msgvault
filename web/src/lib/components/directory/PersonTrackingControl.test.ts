@@ -41,6 +41,7 @@ describe('PersonTrackingControl', () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const path = new URL(requestOf(input).url).pathname;
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
@@ -56,18 +57,33 @@ describe('PersonTrackingControl', () => {
     expect(document.body.innerHTML).not.toMatch(/forbidden\.example/i);
   });
 
-  it('uses definition labels, slug fallbacks, and a compact Work history row', async () => {
+  it('uses supplied and asynchronously loaded labels, slug fallbacks, and a compact Work history row', async () => {
+    const definitions = deferredResponse();
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
-      if (new URL(requestOf(input).url).pathname.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: true, tracked_at: null });
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/attribute-definitions')) return definitions.promise;
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: true, tracked_at: null });
       const target = catalog(false).targets[0]!;
-      return Response.json({ targets: [target, { ...target, slug: 'favorite_foods' }, { ...target, kind: 'employment', slug: 'employment' }] });
+      return Response.json({ targets: [target, { ...target, slug: 'favorite_foods' }, { ...target, slug: 'conversation_topics' }, { ...target, kind: 'employment', slug: 'employment' }] });
     });
-    render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [definition({ slug: 'time_zone', label: 'Local time zone' })] });
+    const view = render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, definitions: [definition({ slug: 'time_zone', label: 'Local time zone' })] });
     expect(await screen.findByText('Local time zone')).toBeDefined();
     expect(screen.getByText('Favorite foods')).toBeDefined();
+    expect(screen.getByText('Conversation topics')).toBeDefined();
     expect(screen.getByText('Work history')).toBeDefined();
     expect(screen.getByText('Employer, title, and dates')).toBeDefined();
     expect(screen.getByText('On', { exact: true })).toBeDefined();
+    definitions.resolve(Response.json({ definitions: [definition({ slug: 'conversation_topics', label: 'Conversation starters' })] }));
+    expect(await screen.findByText('Conversation starters')).toBeDefined();
+
+    view.unmount();
+    render(PersonTrackingControl, { client: createAPIClient(vi.fn<typeof fetch>(async input => {
+      const path = new URL(requestOf(input).url).pathname;
+      if (path.endsWith('/attribute-definitions')) return Response.json({ message: 'Registry temporarily unavailable' }, { status: 503 });
+      if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      return Response.json({ targets: [{ kind: 'attribute', slug: 'favorites_food', sensitive: false }] });
+    })), personID: 7 });
+    expect(await screen.findByText('Favorites food')).toBeDefined();
   });
 
   it('submits once, announces once, shows tracked time, and returns focus to the connected toggle', async () => {
@@ -82,6 +98,7 @@ describe('PersonTrackingControl', () => {
         return Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T01:00:00Z' });
       }
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7, onAnnounce });
@@ -115,6 +132,7 @@ describe('PersonTrackingControl', () => {
         if (gets === 2) throw new TypeError('synthetic reconciliation failure');
         return Response.json({ person_id: 7, tracked: gets > 2, tracked_at: gets > 2 ? '2026-08-29T01:00:00Z' : null });
       }
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     render(PersonTrackingControl, { client: createAPIClient(fetchFn), personID: 7 });
@@ -163,6 +181,7 @@ describe('PersonTrackingControl', () => {
   it('keeps a loaded tracking toggle usable when catalog loading fails', async () => {
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
       const request = requestOf(input);
+      if (new URL(request.url).pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       if (new URL(request.url).pathname.endsWith('/tracking')) {
         return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       }
@@ -190,6 +209,7 @@ describe('PersonTrackingControl', () => {
         const id = Number(url.pathname.split('/').at(-2));
         return Response.json({ person_id: id, tracked: false, tracked_at: null });
       }
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     const view = render(PersonTrackingControl, {
@@ -231,6 +251,7 @@ describe('PersonTrackingControl', () => {
       if (url.pathname.endsWith('/tracking')) {
         return Response.json({ person_id: id, tracked: false, tracked_at: null });
       }
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     let view!: ReturnType<typeof render>;
@@ -269,6 +290,7 @@ describe('PersonTrackingControl', () => {
         return Response.json({ person_id: 7, tracked: true, tracked_at: '2026-08-29T01:00:00Z' });
       }
       if (path.endsWith('/tracking')) return Response.json({ person_id: 7, tracked: false, tracked_at: null });
+      if (path.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     let destroyed = false;
@@ -307,6 +329,7 @@ describe('PersonTrackingControl', () => {
         if (trackingReads === 1) return Response.json({ error: 'unavailable' }, { status: 503 });
         return Response.json({ person_id: 7, tracked: false, tracked_at: null });
       }
+      if (url.pathname.endsWith('/attribute-definitions')) return Response.json({ definitions: [] });
       return Response.json(catalog(false));
     });
     let replaced = false;
