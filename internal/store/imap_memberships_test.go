@@ -1242,18 +1242,15 @@ func TestApplyIMAPMailboxDeltas_IncrementalUntrackedReconciliation(t *testing.T)
 			requirements.NoError(st.ReplaceMessageLabels(untrackedID, []int64{labelID}))
 			requirements.False(messageTombstoned(t, st, untrackedID))
 			if scenario == "failed apply" {
-				var checkpoint string
-				requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT checkpoint_value FROM sync_checkpoints
-					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), source.ID).Scan(&checkpoint))
 				// Put the import before the failed apply's capture bound so a
 				// checkpoint that escaped rollback would skip it on the retry.
-				requirements.EventuallyWithT(func(c *assert.CollectT) {
-					var older bool
-					require.NoError(c, st.DB().QueryRow(st.Rebind(`
-						SELECT content_changed_at < CURRENT_TIMESTAMP FROM messages WHERE id = ?
-					`), untrackedID).Scan(&older))
-					assert.True(c, older)
-				}, 5*time.Second, 10*time.Millisecond)
+				checkpoint := "2000-01-01 00:00:00.000"
+				_, err = st.DB().Exec(st.Rebind(`UPDATE sync_checkpoints SET checkpoint_value = ?
+					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), checkpoint, source.ID)
+				requirements.NoError(err)
+				_, err = st.DB().Exec(st.Rebind(`UPDATE messages
+					SET content_changed_at = '2001-01-01 00:00:00.000' WHERE id = ?`), untrackedID)
+				requirements.NoError(err)
 				failed := baseline
 				failed.Memberships = []store.IMAPMembershipObservation{{UID: 2, SourceMessageID: "missing"}}
 				requirements.ErrorIs(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{failed}), sql.ErrNoRows)

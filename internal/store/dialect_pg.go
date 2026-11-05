@@ -2368,8 +2368,8 @@ func (d *PostgreSQLDialect) IsFTSValueTooLargeError(err error) bool {
 //
 //   - source_import_items: written by UpsertSourceImportItem (internal/store/sync.go)
 //     and cascade-reachable from sources — a real race before it was added here.
-//   - sync_checkpoints: cascade-reachable from sources; no writer today, but
-//     included so a future checkpoint writer cannot race the cascade.
+//   - sync_checkpoints: written during authoritative IMAP apply and
+//     cascade-reachable from sources.
 //   - imap_folder_state and imap_message_memberships: written after IMAP syncs
 //     and cascade-reachable from sources.
 //

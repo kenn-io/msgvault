@@ -198,7 +198,11 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err := resolver.primeIdentities(normalizedDeltas); err != nil {
 			return err
 		}
-		if err := resolver.retireObsoleteKeys(normalizedDeltas); err != nil {
+		generations, err := imapMembershipGenerations(tx, sourceID)
+		if err != nil {
+			return err
+		}
+		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations); err != nil {
 			return err
 		}
 
@@ -211,7 +215,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 			currentMailboxes[normalized.mailbox] = struct{}{}
 		}
 		if err := retireAbsentIMAPMailboxes(
-			tx, sourceID, currentMailboxes, affected,
+			tx, sourceID, currentMailboxes, generations, affected,
 		); err != nil {
 			return err
 		}
@@ -621,6 +625,7 @@ func retireAbsentIMAPMailboxes(
 	tx *loggedTx,
 	sourceID int64,
 	current map[string]struct{},
+	generations []imapMembershipUIDGeneration,
 	affected map[int64]struct{},
 ) error {
 	rows, err := tx.Query(`
@@ -649,10 +654,6 @@ func retireAbsentIMAPMailboxes(
 		return fmt.Errorf("close prior IMAP mailbox topology: %w", err)
 	}
 
-	generations, err := imapMembershipGenerations(tx, sourceID)
-	if err != nil {
-		return err
-	}
 	for _, generation := range generations {
 		if _, ok := current[generation.mailbox]; !ok {
 			retired[generation.mailbox] = struct{}{}
@@ -761,7 +762,7 @@ type imapMembershipResolver struct {
 	legacyMessages    map[string]int64
 }
 
-func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta) error {
+func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration) error {
 	current := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
 	for _, delta := range deltas {
 		current[delta.mailbox] = delta
@@ -785,10 +786,6 @@ func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailb
 	}
 	err = rows.Err()
 	_ = rows.Close()
-	if err != nil {
-		return err
-	}
-	generations, err := imapMembershipGenerations(r.tx, r.sourceID)
 	if err != nil {
 		return err
 	}
