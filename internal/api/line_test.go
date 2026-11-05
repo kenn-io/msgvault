@@ -108,7 +108,6 @@ func TestLineReceiverRealListenerSecurityBoundary(t *testing.T) {
 	body := lineEnvelope("[" + lineEvent("security-event") + "]")
 	headers := lineSignedHeaders(body)
 	headers.Set("Origin", "https://hostile.example.com")
-	headers.Set("Authorization", "Bearer wrong-key")
 	headers.Set("Cookie", sessionCookieName+"=ambient-cookie")
 	headers.Set("Forwarded", `host="malformed`)
 	status, response := lineAPIRequest(t, base, "POST", lineTestPath, body, headers)

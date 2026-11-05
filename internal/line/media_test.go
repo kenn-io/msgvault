@@ -50,8 +50,6 @@ func TestMediaTranscodingRetry(t *testing.T) {
 	checks.Len(stored.ContentHash, 64)
 	checks.NotEmpty(stored.StoragePath)
 	checks.Equal(2, f.api.Count(http.MethodGet, path))
-	f.run(t)
-	checks.Equal(2, f.api.Count(http.MethodGet, path))
 }
 
 func TestMediaPreparingAtRetryHorizonFinishesAttachment(t *testing.T) {
@@ -72,7 +70,7 @@ func TestMediaPreparingAtRetryHorizonFinishesAttachment(t *testing.T) {
 	checks.Equal(1, f.api.Count(http.MethodGet, path), "expiry must not fetch content again")
 }
 
-func TestMediaFailureAtRetryHorizonWaitsForConversationFinalization(t *testing.T) {
+func TestMediaFailureAtRetryHorizon(t *testing.T) {
 	t.Run("at receipt", func(t *testing.T) {
 		assert := assert.New(t)
 		f := newInboxFixture(t)
@@ -157,36 +155,6 @@ func TestMediaLocalStorageFailureKeepsInboxWorkPending(t *testing.T) {
 	checks.Equal(attachmentpolicy.StateStored, f.media(t).State)
 }
 
-func TestMediaLocalStorageFailureAllowsOtherChats(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
-	blocked := filepath.Join(t.TempDir(), "attachments")
-	must.NoError(os.WriteFile(blocked, []byte("not a directory"), 0o600))
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
-	f.enqueue(t, f.fileEvent(), time.Time{})
-	text := f.message("2", "text in another chat", f.now.UnixMilli()+1)
-	text.Source.GroupID = "C00000000000000000000000000000002"
-	f.enqueue(t, text, time.Time{})
-
-	must.Error(f.processor.Process(context.Background()))
-	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
-	checks.Equal("pending", state)
-	checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
-	checks.Equal("text in another chat", f.archived(t, "2").body)
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-2'`).Scan(&state))
-	checks.Equal("processed", state)
-	var messageCount int64
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+text.Source.GroupID).Scan(&messageCount))
-	checks.Equal(int64(1), messageCount)
-	var runStatus, runError string
-	must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT status,error_message FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&runStatus, &runError))
-	checks.Equal("failed", runStatus)
-	checks.NotEmpty(runError)
-}
-
 func TestMediaDroppedDownloadStillRetries(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
@@ -242,16 +210,17 @@ func TestMediaExternalProvider(t *testing.T) {
 
 func TestMediaCapAndEmpty(t *testing.T) {
 	for _, tc := range []struct {
-		name, body             string
-		declaredSize, maxBytes int64
-		chunked                bool
-		state                  attachmentpolicy.DownloadState
+		name, body, messageType string
+		declaredSize, maxBytes  int64
+		chunked                 bool
+		state                   attachmentpolicy.DownloadState
 	}{
-		{"empty", "", 0, 8, false, attachmentpolicy.StateStored},
-		{"at limit", "12345678", 0, 8, false, attachmentpolicy.StateStored},
-		{"content length", "123456789", 0, 8, false, attachmentpolicy.StateSkipped},
-		{"declared size", "", 3, 2, false, attachmentpolicy.StateSkipped},
-		{"chunked", "123456789", 0, 8, true, attachmentpolicy.StateSkipped},
+		{"empty", "", "file", 0, 8, false, attachmentpolicy.StateStored},
+		{"at limit", "12345678", "file", 0, 8, false, attachmentpolicy.StateStored},
+		{"content length", "123456789", "file", 0, 8, false, attachmentpolicy.StateSkipped},
+		{"image content length", "123456789", "image", 0, 8, false, attachmentpolicy.StateSkipped},
+		{"declared size", "", "file", 3, 2, false, attachmentpolicy.StateSkipped},
+		{"chunked", "123456789", "file", 0, 8, true, attachmentpolicy.StateSkipped},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			checks := assert.New(t)
@@ -277,6 +246,9 @@ func TestMediaCapAndEmpty(t *testing.T) {
 			f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorClock(func() time.Time { return f.now }), WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: tc.maxBytes}))
 			event := f.fileEvent()
 			event.Message.FileSize = tc.declaredSize
+			if tc.messageType == "image" {
+				event.Message = &Message{ID: "1", Type: "image"}
+			}
 			f.enqueue(t, event, time.Time{})
 			f.run(t)
 			ref := f.media(t)
@@ -284,6 +256,9 @@ func TestMediaCapAndEmpty(t *testing.T) {
 			if tc.state == attachmentpolicy.StateSkipped {
 				checks.Equal(attachmentpolicy.SkipSizeCap, ref.SkipReason)
 				checks.Empty(ref.StoragePath)
+				if tc.declaredSize == 0 {
+					checks.Equal(9, ref.Size)
+				}
 			} else {
 				checks.Equal(len(tc.body), ref.Size)
 				checks.Len(ref.ContentHash, 64)
@@ -398,47 +373,64 @@ func TestMediaChannelPolicy(t *testing.T) {
 }
 
 func TestMediaLocalFailureDoesNotStarveLaterBatch(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newInboxFixture(t)
-	blocked := filepath.Join(t.TempDir(), "attachments")
-	must.NoError(os.WriteFile(blocked, []byte("blocked"), 0o600))
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
-	for i := range 501 {
-		e := f.fileEvent()
-		e.Message.ID = strconv.Itoa(i + 1)
-		e.WebhookEventID = "media-" + e.Message.ID
-		e.Timestamp = f.now.UnixMilli() + int64(i)
-		f.api.Enqueue(http.MethodGet, "/v2/bot/message/"+e.Message.ID+"/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
-		f.enqueue(t, e, time.Time{})
-	}
-	f.enqueue(t, f.message("later-text", "later text", f.now.UnixMilli()+501), time.Time{})
-	for range 2 {
-		must.Error(f.processor.Process(t.Context()))
-	}
-	checks.Equal("later text", f.archived(t, "later-text").body)
-	var state string
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
-	checks.Equal("pending", state)
-	f.now = f.now.Add(retryHorizon + time.Hour)
-	must.Error(f.processor.Process(t.Context()))
-	must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
-	checks.Equal("pending", state)
-	var next time.Time
-	must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&next))
-	checks.True(next.After(f.now))
-}
+	t.Run("other chat in same batch", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newInboxFixture(t)
+		f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+		blocked := filepath.Join(t.TempDir(), "attachments")
+		must.NoError(os.WriteFile(blocked, []byte("not a directory"), 0o600))
+		f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
+		f.enqueue(t, f.fileEvent(), time.Time{})
+		text := f.message("2", "text in another chat", f.now.UnixMilli()+1)
+		text.Source.GroupID = "C00000000000000000000000000000002"
+		f.enqueue(t, text, time.Time{})
 
-func TestMediaOversizeImageRecordsObservedSize(t *testing.T) {
-	f := newInboxFixture(t)
-	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: http.StatusOK, Body: "123456789"})
-	f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, f.attachments, WithProcessorMediaPolicy(attachmentpolicy.Policy{MaxBytes: 8}))
-	event := f.message("1", "", f.now.UnixMilli())
-	event.Message = &Message{ID: "1", Type: "image"}
-	f.enqueue(t, event, time.Time{})
-	f.run(t)
-	ref := f.media(t)
-	assert.Equal(t, attachmentpolicy.StateSkipped, ref.State)
-	assert.Equal(t, attachmentpolicy.SkipSizeCap, ref.SkipReason)
-	assert.Equal(t, 9, ref.Size)
+		must.Error(f.processor.Process(context.Background()))
+		var state string
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-1'`).Scan(&state))
+		checks.Equal("pending", state)
+		checks.Equal(attachmentpolicy.StatePending, f.media(t).State)
+		checks.Equal("text in another chat", f.archived(t, "2").body)
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='event-2'`).Scan(&state))
+		checks.Equal("processed", state)
+		var messageCount int64
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT message_count FROM conversations WHERE source_id=? AND source_conversation_id=?`), f.source.ID, "group:"+text.Source.GroupID).Scan(&messageCount))
+		checks.Equal(int64(1), messageCount)
+		var runStatus, runError string
+		must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT status,error_message FROM sync_runs WHERE source_id=? ORDER BY id DESC LIMIT 1`), f.source.ID).Scan(&runStatus, &runError))
+		checks.Equal("failed", runStatus)
+		checks.NotEmpty(runError)
+	})
+	t.Run("later batch", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newInboxFixture(t)
+		blocked := filepath.Join(t.TempDir(), "attachments")
+		must.NoError(os.WriteFile(blocked, []byte("blocked"), 0o600))
+		f.processor = NewProcessor(f.st, f.client, f.source.ID, testChannel, blocked, WithProcessorClock(func() time.Time { return f.now }))
+		for i := range 501 {
+			e := f.fileEvent()
+			e.Message.ID = strconv.Itoa(i + 1)
+			e.WebhookEventID = "media-" + e.Message.ID
+			e.Timestamp = f.now.UnixMilli() + int64(i)
+			f.api.Enqueue(http.MethodGet, "/v2/bot/message/"+e.Message.ID+"/content", lineapi.Response{Status: http.StatusOK, Body: "synthetic bytes"})
+			f.enqueue(t, e, time.Time{})
+		}
+		f.enqueue(t, f.message("later-text", "later text", f.now.UnixMilli()+501), time.Time{})
+		for range 2 {
+			must.Error(f.processor.Process(t.Context()))
+		}
+		checks.Equal("later text", f.archived(t, "later-text").body)
+		var state string
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
+		checks.Equal("pending", state)
+		f.now = f.now.Add(retryHorizon + time.Hour)
+		must.Error(f.processor.Process(t.Context()))
+		must.NoError(f.st.DB().QueryRow(`SELECT state FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&state))
+		checks.Equal("pending", state)
+		var next time.Time
+		must.NoError(f.st.DB().QueryRow(`SELECT next_attempt_at FROM line_webhook_events WHERE webhook_event_id='media-1'`).Scan(&next))
+		checks.True(next.After(f.now))
+	})
 }

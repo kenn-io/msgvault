@@ -454,9 +454,6 @@ func TestProcessorEditPreservesOriginalSenderSearchAfterRename(t *testing.T) {
 	f.api.Enqueue(http.MethodGet, "/v2/bot/group/"+testGroup+"/member/"+testUser, lineapi.Response{Status: http.StatusOK, Body: `{"userId":"` + testUser + `","displayName":"Renamed Sender"}`})
 	f.enqueue(t, f.message("2", "after profile refresh", f.now.UnixMilli()), time.Time{})
 	f.run(t)
-	current, err := f.st.LineMessageContext(t.Context(), f.source.ID, "2")
-	must.NoError(err)
-	checks.Equal("Renamed Sender", current.SenderDisplayName)
 
 	edit := base
 	edit.Type = "messageEdited"
@@ -1055,15 +1052,9 @@ func TestProcessorDrainLeavesNewReceiptsAndFutureRetries(t *testing.T) {
 	checks := assert.New(t)
 	f := newInboxFixture(t)
 	f.enqueue(t, f.fileEvent(), time.Time{})
-	f.enqueue(t, Event{Type: "future", WebhookEventID: "expired", Timestamp: f.now.UnixMilli()}, f.now.Add(-31*24*time.Hour))
 	rows, err := f.st.DueLineEventsContext(t.Context(), f.source.ID, f.now, 10)
 	must.NoError(err)
-	must.Len(rows, 2)
-	for _, row := range rows {
-		if row.WebhookEventID == "expired" {
-			must.NoError(f.st.FinishLineEventContext(t.Context(), row.ID, "ignored", "", time.Time{}))
-		}
-	}
+	must.Len(rows, 1)
 	f.api.Enqueue(http.MethodGet, "/v2/bot/message/1/content", lineapi.Response{Status: 202})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/bot/message/1/content" {

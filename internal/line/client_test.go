@@ -110,7 +110,7 @@ func TestClientRefreshBeforeExpiration(t *testing.T) {
 	checks.Equal(2, api.Count("POST", "/oauth2/v3/token"))
 }
 
-func TestClientCancellationAndRateLimit(t *testing.T) {
+func TestClientRetryAfterAndErrorRedaction(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 
