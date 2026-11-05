@@ -44,7 +44,7 @@ func TestCaptureInitialIMAPBaselineSkipsReconciledHistory(t *testing.T) {
 
 	affected := make(map[int64]struct{})
 	requirements.NoError(st.withTx(func(tx *loggedTx) error {
-		return captureUntrackedIMAPMessageIDs(tx, source.ID, true, false, affected)
+		return st.captureUntrackedIMAPMessageIDs(tx, source.ID, false, affected)
 	}))
 	got := make([]int64, 0, len(affected))
 	for messageID := range affected {

@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // IMAPMembershipObservation records one observed mailbox UID and its message identity.
@@ -207,7 +208,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		affected := make(map[int64]struct{})
-		if err := captureUntrackedIMAPMessageIDs(tx, sourceID, resolver.sqlite, len(generations) != 0, affected); err != nil {
+		if err := s.captureUntrackedIMAPMessageIDs(tx, sourceID, len(generations) != 0, affected); err != nil {
 			return err
 		}
 		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
@@ -491,10 +492,9 @@ func deleteUnobservedIMAPMemberships(
 func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
 	index, changed := "", ""
 	if incremental {
-		changed = " AND messages.content_changed_at >= CAST(? AS TIMESTAMPTZ)"
+		changed = " AND messages.content_changed_at >= ?"
 		if sqlite {
 			index = " INDEXED BY idx_messages_content_changed_at"
-			changed = " AND messages.content_changed_at >= ?"
 		}
 	}
 	return `
@@ -514,8 +514,8 @@ func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
 	`
 }
 
-func captureUntrackedIMAPMessageIDs(
-	tx *loggedTx, sourceID int64, sqlite, hasMembership bool, affected map[int64]struct{},
+func (s *Store) captureUntrackedIMAPMessageIDs(
+	tx *loggedTx, sourceID int64, hasMembership bool, affected map[int64]struct{},
 ) error {
 	var checkpoint string
 	err := tx.QueryRow(`SELECT checkpoint_value FROM sync_checkpoints
@@ -524,26 +524,36 @@ func captureUntrackedIMAPMessageIDs(
 		return fmt.Errorf("read IMAP capture checkpoint: %w", err)
 	}
 	incremental := err == nil
-	bound := pgContentCommitBoundSQL
-	guard := pgRedactedMessageWritersSQL + " = 0"
+	args := []any{sourceID}
+	if incremental {
+		previous, err := time.Parse(time.RFC3339Nano, checkpoint)
+		if err != nil {
+			return fmt.Errorf("parse IMAP capture checkpoint: %w", err)
+		}
+		args = append(args, s.dialect.TimestampParam(previous))
+	}
+	sqlite := !s.IsPostgreSQL()
+	boundSQL, redactedSQL := pgContentCommitBoundSQL, pgRedactedMessageWritersSQL
 	if sqlite {
-		bound = (&SQLiteDialect{}).ContentChangedNow()
-		guard = "1 = 1"
+		boundSQL, redactedSQL = s.dialect.ContentChangedNow(), "0"
+	}
+	var bound requiredTimestamp
+	var redacted int
+	if err := tx.QueryRow("SELECT "+boundSQL+", "+redactedSQL).Scan(&bound, &redacted); err != nil {
+		return fmt.Errorf("read IMAP capture bound: %w", err)
 	}
 	// Save the bound before reading candidates. PostgreSQL writers can commit
 	// during capture; the bound keeps their stamps in the next apply's window.
 	// Both the checkpoint and reconciliation roll back if apply fails.
 	// A redacted PostgreSQL writer leaves the old checkpoint in place so its
 	// uncommitted stamp remains in the next apply's capture window.
-	if _, err := tx.Exec(`INSERT INTO sync_checkpoints (source_id, checkpoint_type, checkpoint_value)
-		SELECT ?, 'imap_untracked_complete_through', CAST(`+bound+` AS TEXT) WHERE `+guard+`
+	if redacted == 0 {
+		if _, err := tx.Exec(`INSERT INTO sync_checkpoints (source_id, checkpoint_type, checkpoint_value)
+		VALUES (?, 'imap_untracked_complete_through', ?)
 		ON CONFLICT(source_id, checkpoint_type) DO UPDATE SET
-			checkpoint_value = excluded.checkpoint_value, updated_at = CURRENT_TIMESTAMP`, sourceID); err != nil {
-		return fmt.Errorf("save IMAP capture checkpoint: %w", err)
-	}
-	args := []any{sourceID}
-	if incremental {
-		args = append(args, checkpoint)
+			checkpoint_value = excluded.checkpoint_value, updated_at = CURRENT_TIMESTAMP`, sourceID, bound.Time.UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("save IMAP capture checkpoint: %w", err)
+		}
 	}
 	// Imports and cleared tombstones move content_changed_at. After the first
 	// full capture, only those changed rows can have become live and untracked.

@@ -1244,7 +1244,7 @@ func TestApplyIMAPMailboxDeltas_IncrementalUntrackedReconciliation(t *testing.T)
 			if scenario == "failed apply" {
 				// Put the import before the failed apply's capture bound so a
 				// checkpoint that escaped rollback would skip it on the retry.
-				checkpoint := "2000-01-01 00:00:00.000"
+				checkpoint := "2000-01-01T00:00:00Z"
 				_, err = st.DB().Exec(st.Rebind(`UPDATE sync_checkpoints SET checkpoint_value = ?
 					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), checkpoint, source.ID)
 				requirements.NoError(err)
@@ -1323,7 +1323,7 @@ func TestApplyIMAPMailboxDeltas_RedactedWriterRetainsCaptureWindow(t *testing.T)
 			labelID, err := st.EnsureLabel(source.ID, "Legacy", "Legacy", "user")
 			requirements.NoError(err)
 			requirements.NoError(st.ReplaceMessageLabels(heldID, []int64{labelID}))
-			const checkpoint = "2000-01-01 00:00:00.000"
+			const checkpoint = "2000-01-01T00:00:00Z"
 			if hasCheckpoint {
 				_, err = st.DB().Exec(st.Rebind(`UPDATE sync_checkpoints SET checkpoint_value = ?
 					WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`), checkpoint, source.ID)
@@ -1369,4 +1369,35 @@ func TestApplyIMAPMailboxDeltas_RedactedWriterRetainsCaptureWindow(t *testing.T)
 			assertions.NotEqual(checkpoint, saved, "an idle peer connection allows the checkpoint to advance")
 		})
 	}
+}
+
+func TestApplyIMAPMailboxDeltas_CheckpointIgnoresPostgreSQLDateStyle(t *testing.T) {
+	requirements := require.New(t)
+	assertions := assert.New(t)
+	st := testutil.NewTestStore(t)
+	if !st.IsPostgreSQL() {
+		t.Skip("PostgreSQL session timestamp settings")
+	}
+	st.DB().SetMaxOpenConns(1)
+	st.DB().SetMaxIdleConns(1)
+	_, err := st.DB().Exec(`SET DateStyle = 'SQL, YMD'`)
+	requirements.NoError(err)
+	_, err = st.DB().Exec(`SET TimeZone = 'Pacific/Honolulu'`)
+	requirements.NoError(err)
+	source, err := st.GetOrCreateSource("imap", "datestyle@example.test")
+	requirements.NoError(err)
+	convID, err := st.EnsureConversation(source.ID, "datestyle", "Checkpoint encoding")
+	requirements.NoError(err)
+	f := imapMembershipFixture{store: st, source: source, convID: convID}
+	f.createMessage(t, "tracked", "")
+	delta := store.IMAPMailboxDelta{
+		Mailbox: "INBOX", State: store.IMAPFolderState{Mailbox: "INBOX", UIDValidity: 1},
+		Memberships: []store.IMAPMembershipObservation{{UID: 1, SourceMessageID: "tracked"}},
+	}
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
+	untrackedID := f.createMessage(t, "untracked", "")
+	delta.Memberships = nil
+	requirements.NoError(st.ApplyIMAPMailboxDeltas(source.ID, []store.IMAPMailboxDelta{delta}))
+	assertions.True(messageTombstoned(t, st, untrackedID))
+	assertions.Equal(1, membershipCount(t, st, source.ID))
 }
