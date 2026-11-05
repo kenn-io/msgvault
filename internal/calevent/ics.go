@@ -198,11 +198,15 @@ func propText(props ical.Props, name string) (string, error) {
 	return textutil.ReplaceNUL(text), nil
 }
 
-// Outlook names zones by their Windows IDs.
+// Resolve Windows IDs and libical's prefixed IANA names.
 func normalizeICSParams(props ical.Props) {
 	for _, values := range props {
 		for _, prop := range values {
 			zone := prop.Params.Get("TZID")
+			if iana, ok := strings.CutPrefix(zone, "/freeassociation.sourceforge.net/"); ok {
+				zone = strings.TrimPrefix(iana, "Tzfile/")
+				prop.Params.Set("TZID", zone)
+			}
 			if mapped := windowsZones[zone]; mapped != "" {
 				if _, err := time.LoadLocation(zone); err != nil {
 					prop.Params.Set("TZID", mapped)
@@ -427,10 +431,10 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		case "NEEDS-ACTION":
 			rsvp = "needs_action"
 		}
-		e.Attendees = append(e.Attendees, Attendee{Email: email, DisplayName: a.Params.Get("CN"), Role: role, RSVP: rsvp})
+		e.Attendees = append(e.Attendees, Attendee{Email: email, DisplayName: textutil.ReplaceNUL(a.Params.Get("CN")), Role: role, RSVP: rsvp})
 	}
 	if organizer := p.Get("ORGANIZER"); c.OrganizerEmail != "" && !organizerSeen {
-		e.Attendees = append(e.Attendees, Attendee{Email: c.OrganizerEmail, DisplayName: organizer.Params.Get("CN"), Role: "organizer", RSVP: "unknown"})
+		e.Attendees = append(e.Attendees, Attendee{Email: c.OrganizerEmail, DisplayName: textutil.ReplaceNUL(organizer.Params.Get("CN")), Role: "organizer", RSVP: "unknown"})
 	}
 	stamp, _, err := icsTime(p.Get("DTSTAMP"), time.UTC)
 	if err != nil {
@@ -444,5 +448,5 @@ func icsEmail(p *ical.Prop) string {
 	if p == nil || !strings.HasPrefix(strings.ToLower(p.Value), "mailto:") {
 		return ""
 	}
-	return strings.ToLower(strings.TrimSpace(p.Value[len("mailto:"):]))
+	return textutil.ReplaceNUL(strings.ToLower(strings.TrimSpace(p.Value[len("mailto:"):])))
 }
