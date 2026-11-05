@@ -509,18 +509,7 @@ func deleteUnobservedIMAPMemberships(
 	return nil
 }
 
-func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
-	index, changed := "", ""
-	if incremental {
-		changed = " AND messages.content_changed_at >= ?"
-		if sqlite {
-			index = " INDEXED BY idx_messages_content_changed_at"
-		}
-	}
-	return `
-		SELECT messages.id
-		FROM messages` + index + `
-		WHERE messages.source_id = ?` + changed + `
+const untrackedIMAPMessagePredicates = `
 		  AND messages.deleted_from_source_at IS NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM source_merge_archive_only_messages marker
@@ -532,6 +521,19 @@ func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
 			  AND membership.message_id = messages.id
 		  )
 	`
+
+func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
+	index, changed := "", ""
+	if incremental {
+		changed = " AND messages.content_changed_at >= ?"
+		if sqlite {
+			index = " INDEXED BY idx_messages_content_changed_at"
+		}
+	}
+	return `
+		SELECT messages.id
+		FROM messages` + index + `
+		WHERE messages.source_id = ?` + changed + untrackedIMAPMessagePredicates
 }
 
 func (s *Store) captureUntrackedIMAPMessageIDs(
@@ -966,14 +968,8 @@ func (r *imapMembershipResolver) captureScannedUntracked(
 	delta normalizedIMAPMailboxDelta, newGeneration bool, affected map[int64]struct{},
 ) error {
 	predicate, keyArgs := r.sourceKeyPrefix(delta.mailbox)
-	rows, err := r.tx.Query(`
-		SELECT id, source_message_id FROM messages
-		WHERE source_id = ? AND deleted_from_source_at IS NULL AND `+predicate+`
-		  AND NOT EXISTS (SELECT 1 FROM source_merge_archive_only_messages marker
-			WHERE marker.message_id = messages.id)
-		  AND NOT EXISTS (SELECT 1 FROM imap_message_memberships m
-			WHERE m.source_id = messages.source_id AND m.message_id = messages.id)
-	`, append([]any{r.sourceID}, keyArgs...)...)
+	rows, err := r.tx.Query(`SELECT id, source_message_id FROM messages WHERE messages.source_id = ? `+untrackedIMAPMessagePredicates+` AND `+predicate,
+		append([]any{r.sourceID}, keyArgs...)...)
 	if err != nil {
 		return fmt.Errorf("read untracked IMAP messages for %q: %w", delta.mailbox, err)
 	}

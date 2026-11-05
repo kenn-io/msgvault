@@ -351,8 +351,8 @@ func (c *Client) statusFolder(ctx context.Context, mailbox string) (FolderState,
 	}, nil
 }
 
-// WithFilteredDeletionReconciliation opts folder-filtered sessions into complete
-// membership observations for the selected mailboxes. Date filters remain excluded.
+// WithFilteredDeletionReconciliation opts sessions into complete membership
+// observations when only Trash or Junk are excluded and no allow list is set.
 func WithFilteredDeletionReconciliation(enabled bool) Option {
 	return func(c *Client) { c.reconcileFilteredDeletions = enabled }
 }
@@ -366,6 +366,15 @@ func (c *Client) ReconcilesFilteredDeletions() bool {
 }
 
 func (c *Client) scannedMailboxSnapshotLocked() bool {
-	return c.reconcileFilteredDeletions && c.since.IsZero() && c.before.IsZero() &&
-		c.labelsSnapshotFilteredLocked()
+	if !c.reconcileFilteredDeletions || !c.since.IsZero() || !c.before.IsZero() ||
+		c.config == nil || c.mailboxCache == nil ||
+		len(c.effectiveFolderIncludeLocked()) > 0 || len(c.folderFilterExclude) == 0 {
+		return false
+	}
+	for _, mailbox := range filterMailboxes(c.mailboxCache, c.folderFilterExclude, nil) {
+		if mailbox != c.trashMailbox && mailbox != c.junkMailbox {
+			return false
+		}
+	}
+	return true
 }

@@ -897,7 +897,7 @@ type SyncConfig struct {
 	// folders excluded from sync unless command folder flags override them.
 	IMAPSkipFolders map[string][]string `toml:"imap_skip_folders"`
 	// IMAPReconcileFilteredDeletions opts exact source identifiers into source
-	// deletion tracking in fully scanned folders, even when others are excluded.
+	// deletion tracking when only Trash or Junk are excluded and no allow list is set.
 	IMAPReconcileFilteredDeletions map[string]bool `toml:"imap_reconcile_filtered_deletions"`
 	// TrustedIMAPSentMailboxes maps an exact IMAP source identifier (the
 	// ACCOUNT value printed by `msgvault list-accounts`, e.g.

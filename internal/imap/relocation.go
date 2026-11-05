@@ -52,8 +52,9 @@ func (c *Client) finalizeMessageListLocked(ctx context.Context, mailboxes []stri
 }
 
 func (c *Client) addRelocationMessagesLocked(ctx context.Context, mailboxes []string, messages *[]gmail.MessageID) error {
+	additiveSnapshot := c.labelsSnapshotFilteredLocked() && !c.scannedMailboxSnapshotLocked()
 	if c.relocationCandidateLoader == nil || !c.labelMapComplete ||
-		!c.since.IsZero() || !c.before.IsZero() || (c.labelsSnapshotFilteredLocked() && !c.scannedMailboxSnapshotLocked()) ||
+		!c.since.IsZero() || !c.before.IsZero() || additiveSnapshot ||
 		c.observedMailboxDeltas == nil || !deltasCoverMailboxes(mailboxes, c.observedMailboxDeltas) {
 		return nil
 	}

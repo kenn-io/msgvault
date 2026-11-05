@@ -114,13 +114,15 @@ func TestRelocationPlanRequiresAuthoritativeCoverage(t *testing.T) {
 func TestRelocationScopedPlanPreservesSkippedCanonical(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	loaded := false
-	target := gmail.MessageRelocationTarget{InternalID: 12, SourceID: 3, SourceMessageID: "Drafts|1", RFC822MessageID: "same@example.test"}
+	target := gmail.MessageRelocationTarget{InternalID: 12, SourceID: 3, SourceMessageID: "Trash|1", RFC822MessageID: "same@example.test"}
 	c := &Client{config: &Config{}, labelMapComplete: true,
 		reconcileFilteredDeletions: true,
-		folderFilterExclude:        []string{"Drafts", "Trash"},
+		folderFilterExclude:        []string{"Trash"},
+		mailboxCache:               []string{"INBOX", "Sent", "Trash"},
+		trashMailbox:               "Trash",
 		priorFolderStates: map[string]FolderState{
-			"Drafts": {UIDValidity: 77, KnownUIDs: []uint32{1}},
-			"INBOX":  {UIDValidity: 78, KnownUIDs: []uint32{2}},
+			"Trash": {UIDValidity: 77, KnownUIDs: []uint32{1}},
+			"INBOX": {UIDValidity: 78, KnownUIDs: []uint32{2}},
 		},
 		observedMailboxDeltas: []MailboxDelta{
 			{Mailbox: "INBOX", State: FolderState{UIDValidity: 78}},

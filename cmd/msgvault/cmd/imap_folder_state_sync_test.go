@@ -785,6 +785,60 @@ func TestRunScheduledIMAPSync_FilteredDeletionReconciliation(t *testing.T) {
 	assert.Equal(1, imapMembershipRowCount(t, st, src.ID))
 }
 
+func TestRunScheduledIMAPSync_FilteredDeletionMailboxRoles(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		skip           []string
+		folders        []string
+		moveNewsletter bool
+		wantTombstones int
+	}{
+		{"newsletters skipped", []string{"Trash", "Junk", "Archive/Newsletters"}, nil, true, 0},
+		{"trash and junk only", []string{"trash", "JUNK"}, nil, false, 1},
+		{"stored allow list", []string{"Trash", "Junk"}, []string{"INBOX"}, true, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert, require := assert.New(t), require.New(t)
+			addr, _ := testutil.StartIMAPMemServer(t, map[string]int{
+				"INBOX": 2, "Trash": 0, "Junk": 0, "Archive/Newsletters": 0,
+			})
+			st, src, cfg, ctx := scheduledIMAPSyncFixture(t, addr)
+			imapCfg, err := imaplib.ConfigFromJSON(src.SyncConfig.String)
+			require.NoError(err)
+			imapCfg.Folders = tc.folders
+			configJSON, err := imapCfg.ToJSON()
+			require.NoError(err)
+			require.NoError(st.UpdateSourceSyncConfig(src.ID, configJSON))
+			src, err = st.GetSourceByID(src.ID)
+			require.NoError(err)
+			cfg.Sync.IMAPSkipFolders = map[string][]string{src.Identifier: tc.skip}
+			cfg.Sync.IMAPReconcileFilteredDeletions = map[string]bool{src.Identifier: true}
+			for run := range 2 {
+				summary, err := runScheduledIMAPSync(ctx, src, st, invocationFromContext(ctx))
+				require.NoError(err)
+				require.Zero(summary.Errors)
+				if run == 0 {
+					require.Zero(imapTombstonedMessageCount(t, st, src.ID))
+					mover, err := imapclient.DialInsecure(addr, nil)
+					require.NoError(err)
+					t.Cleanup(func() { _ = mover.Close() })
+					require.NoError(mover.Login(testutil.IMAPTestUsername, testutil.IMAPTestPassword).Wait())
+					_, err = mover.Select("INBOX", nil).Wait()
+					require.NoError(err)
+					_, err = mover.Move(imapapi.UIDSetNum(1), "Trash").Wait()
+					require.NoError(err)
+					if tc.moveNewsletter {
+						_, err = mover.Move(imapapi.UIDSetNum(2), "Archive/Newsletters").Wait()
+						require.NoError(err)
+					}
+					require.NoError(mover.Close())
+				}
+			}
+			assert.Equal(tc.wantTombstones, imapTombstonedMessageCount(t, st, src.ID))
+		})
+	}
+}
+
 func TestRunScheduledIMAPSync_FilteredSentRefreshesRetainedDraft(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	addr, user := testutil.StartIMAPMemServerWithSpecialUse(t,

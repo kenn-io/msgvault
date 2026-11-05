@@ -990,7 +990,7 @@ Use `msgvault logs` to view and tail log files from the selected local or remote
 | `imap_max_commands_per_minute` | `0` | Evenly spaces each IMAP client's explicit sync read commands and authentication attempts. `0` disables pacing; negative values are invalid. Applies to manual and scheduled syncs. Retries wait for the full delay requested by the server, with at most three retries per command. See [IMAP command limits](usage/imap.md#handle-server-command-limits) for retry behavior and scope. |
 | `archive_remote_images` | `false` | Download remote email images during Gmail/IMAP sync and EML, EMLX, MBOX, and PST imports |
 | `imap_skip_folders` | `{}` | Per-IMAP-account folders excluded from scheduled syncs and manual syncs without folder flags |
-| `imap_reconcile_filtered_deletions` | `{}` | Per-IMAP-account opt-in to deletion tracking within fully scanned folders during folder-filtered syncs; off by default |
+| `imap_reconcile_filtered_deletions` | `{}` | Per-IMAP-account opt-in to deletion tracking when saved exclusions skip only Trash or Junk and no folder allow list is set; off by default |
 | `trusted_imap_sent_mailboxes` | `{}` | Per-IMAP-account Sent-folder names (keyed by the ACCOUNT identifier from `msgvault list-accounts`) that enable edited-copy snapshot refresh for servers without advertised special-use roles |
 
 To skip folders on every sync, key `imap_skip_folders` by the exact `ACCOUNT`
@@ -1016,20 +1016,25 @@ To reconcile deletions within scanned folders, enable the setting for the exact
 imap_reconcile_filtered_deletions = { "imaps://user@example.com@imap.example.com:993" = true }
 ```
 
-Restart the daemon after editing the file. This opt-in gives deletion
-reconciliation for the folders a sync with the saved exclusions scanned. It
-applies to scheduled and manual syncs without `--folder` or `--skip-folder`
-overrides, including stored folder allow lists. After a clean, complete run,
+Restart the daemon after editing the file. This opt-in reconciles deletions in
+scanned folders only when every mailbox skipped by the saved exclusions is the
+account's Trash or Junk mailbox and no `folders` allow list is set. Msgvault
+identifies Trash and Junk from LIST special-use roles, falling back to common
+folder names. If any other mailbox is skipped or an allow list is set, the sync
+preserves memberships and deletion markers as it does by default.
+
+This applies to scheduled and manual syncs without `--folder` or `--skip-folder`
+overrides. After a clean, complete run,
 msgvault advances cursors and replaces memberships only for scanned folders.
 Date-filtered, limited, resumed, failed, or interrupted runs do not commit this
 reconciliation.
 
-A message is marked deleted from its source only when no stored folder membership
-remains. Moving it into any unscanned folder can therefore make it eligible for
-`gc`, even if it still exists on the server. Stored memberships in skipped folders
-remain unchanged and can keep messages live indefinitely, until those folders are
-scanned again. A message already recorded in Trash by an earlier unfiltered sync
-stays live after Trash is skipped. Skipped-only messages keep their labels and deletion markers.
+A message moved into skipped Trash or Junk becomes eligible for `gc` only when
+no stored folder membership remains. Stored memberships in skipped folders
+remain unchanged and can keep messages live until those folders are scanned
+again. A message already recorded in Trash by an earlier unfiltered sync stays
+live after Trash is skipped. Skipped-only messages keep their labels and deletion
+markers.
 
 Each opted-in sync also checks messages archived by earlier filtered syncs. A
 message whose folder was scanned but no longer holds it is marked deleted.

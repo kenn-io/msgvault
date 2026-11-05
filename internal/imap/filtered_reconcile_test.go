@@ -34,6 +34,11 @@ func TestFilteredReconciliation_CompleteSelectedMailboxes(t *testing.T) {
 				require.NotEmpty(ids)
 				assert.True(first.LabelsSnapshotFiltered())
 				assert.False(first.LabelsSnapshotComplete())
+				if all != "" && excludeAll {
+					assert.False(first.ReconcilesFilteredDeletions())
+					return
+				}
+				assert.True(first.ReconcilesFilteredDeletions())
 				require.NotNil(first.ObservedMailboxDeltas())
 				want := []string{"INBOX"}
 				if all != "" && !excludeAll {
