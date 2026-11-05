@@ -1,5 +1,5 @@
 import { stubOperationStatus } from './kit-ui';
-import { setKitTheme } from './kit-ui';
+import { setKitTheme, setTemporaryDensity } from './kit-ui';
 import { expect, test, type Page } from '@playwright/test';
 import { meetingAction, meetingActions, meetingMetrics } from '../src/lib/meetings/fixtures.test-support';
 import { exploreHistoryState } from './explore-state';
@@ -358,17 +358,74 @@ test('person messages keep their kind icon on hover at phone width', async ({ pa
   await expect(kind).toBeVisible();
 });
 
+for (const facet of ['person', 'domain'] as const) {
+  for (const [width, height] of [[1280, 720], [420, 900]]) {
+    test(`${facet} Messages stay filled while scrolling and paging at ${width}px`, async ({ page }) => {
+      await page.setViewportSize({ width, height });
+      await prepare(page);
+      const requests: Array<{ cursor?: string }> = [];
+      const timeline = facet === 'person' ? '**/api/v1/participants/*/timeline' : '**/api/v1/domains/example.com/timeline';
+      await page.route(timeline, route => {
+        const body = route.request().postDataJSON() as { cursor?: string };
+        requests.push(body);
+        const offset = body.cursor ? Number(body.cursor.slice('page:'.length)) : 0;
+        const count = Math.min(500, 1200 - offset);
+        return route.fulfill({ json: {
+          rows: Array.from({ length: count }, (_, index) => ({
+            ...timelineRows[0], key: `message:${offset + index + 1}`, title: `Synthetic subject ${offset + index + 1}`,
+            anchor_message_id: offset + index + 1, preview: `Synthetic preview ${offset + index + 1}`
+          })),
+          total_count: 1200, cache_revision: 'cache-relationships', search_provenance: {},
+          ...(offset + count < 1200 ? { next_cursor: `page:${offset + count}` } : {})
+        } });
+      });
+      if (facet === 'domain') {
+        await page.route('**/api/v1/domains/example.com', route => route.fulfill({ json: domainSummary }));
+        await page.route('**/api/v1/explore/groups', route => route.fulfill({ json: {
+          rows: [{ key: '2026-07-18', label: '2026-07-18', count: 1200, estimated_bytes: 0, latest_at: when, level: 'FOURTH_QUARTILE' }],
+          total_count: 1, cache_revision: 'cache-domain', search_provenance: {}
+        } }));
+      }
+      await page.goto('/?workspace=relationships');
+      // Comfortable density exercises the wrapped meeting summary at phone width.
+      if (width === 420) await setTemporaryDensity(page, 'Comfortable');
+      if (facet === 'domain') await page.getByRole('radio', { name: 'Domains', exact: true }).click();
+      await page.getByRole('grid', { name: 'People results' }).getByText(facet === 'person' ? 'Alice Example' : 'example.com', { exact: true }).click();
+      const grid = page.getByRole('grid', { name: 'Messages results' });
+      const primary = page.locator('.results-split > [data-split-pane] > [data-pane="primary"]');
+      const secondary = page.locator('.results-split > [data-split-pane] > [data-pane="secondary"]');
+      await expect(grid.getByText('Synthetic subject 1', { exact: true })).toBeVisible();
+      await page.getByRole('group', { name: 'Person page' }).evaluate(element => element.scrollTo(0, element.scrollHeight));
+      await expect(grid.locator('[data-row-key]').first()).toBeInViewport();
+
+      const rowHeight = (await grid.locator('[data-row-key]').first().boundingBox())!.height;
+      await grid.evaluate((element, height) => element.scrollTo(0, 490 * height), rowHeight);
+      await expect.poll(() => requests.length).toBe(2);
+      await grid.evaluate((element, height) => element.scrollTo(0, 500 * height), rowHeight);
+      await expect(grid.getByText('Synthetic subject 501', { exact: true })).toBeInViewport();
+      await grid.focus();
+      await page.keyboard.press('End');
+      await expect(grid).toHaveAttribute('aria-activedescendant', /message-3a-1200$/);
+      const activeID = await grid.getAttribute('aria-activedescendant');
+      await expect(page.locator(`#${activeID}`)).toBeInViewport();
+      await expect(grid).toBeFocused();
+      await page.keyboard.press('Enter');
+      const reader = page.getByRole('complementary', { name: 'Reading pane: Synthetic subject 1200' });
+      await expect(reader.getByText('Synthetic preview 1200', { exact: true })).toBeVisible();
+      expect((await primary.boundingBox())!.height).toBeGreaterThanOrEqual(120);
+      expect((await secondary.boundingBox())!.height).toBeGreaterThanOrEqual(160);
+    });
+  }
+}
+
 for (const [width, height] of [[1440, 900], [420, 900], [1280, 720]]) {
-  test(`person calendar, messages, and files remain usable at ${width}px`, async ({ page }) => {
+  test(`person calendar and files remain usable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height });
     await prepare(page);
     await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipTarget: 'cluster:1' }))}`);
     await expect(page.getByRole('region', { name: 'Relationship activity calendar' })).toBeVisible();
-    const messages = page.getByRole('grid', { name: 'Messages results' });
     await page.getByRole('group', { name: 'Person page' }).hover();
     await page.mouse.wheel(0, 700);
-    await expect(messages.getByText('Subject line')).toBeInViewport();
-    expect((await messages.boundingBox())!.height).toBeGreaterThan(100);
     await page.getByRole('radio', { name: 'Files', exact: true }).click();
     await expect(page.getByRole('grid', { name: 'Files results' }).getByText('notes.pdf')).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(1);
@@ -582,6 +639,35 @@ test('typing in the top bar narrows People without pressing Search', async ({ pa
   await expect(list.getByText('Bob Example')).toBeVisible();
   await expect(list.getByText('Alice Example')).toBeHidden();
   expect(queries).toEqual(['bob']);
+});
+
+test.describe('touch People toolbar', () => {
+  test.use({ hasTouch: true, isMobile: true });
+  test('phone People toolbar fits touch while the Sort menu stays compact', async ({ page }) => {
+    await prepare(page);
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(true);
+    await page.goto(`/?explore=${encodeURIComponent(JSON.stringify({ workspace: 'relationships', relationshipShowAll: true }))}`);
+    await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
+    const toolbar = page.locator('.people-list .toolbar');
+    await expect(toolbar.locator('.chips button')).toBeVisible();
+    for (const button of await toolbar.locator('button:visible').all()) {
+      expect((await button.boundingBox())!.height, await button.getAttribute('aria-label') ?? await button.innerText()).toBeGreaterThanOrEqual(44);
+    }
+    await page.getByRole('combobox', { name: 'Sort: Closest' }).click();
+    expect((await page.getByRole('option', { name: 'Most recent' }).boundingBox())!.height).toBeLessThan(44);
+    await page.keyboard.press('Escape');
+  });
+});
+
+test('narrow mouse People toolbar retains compact control sizes', async ({ page }) => {
+  await prepare(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(false);
+  await page.goto('/?workspace=relationships');
+  await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
+  expect((await page.getByRole('button', { name: 'Filter', exact: true }).boundingBox())!.height).toBeLessThan(44);
+  expect((await page.getByRole('combobox', { name: 'Sort: Closest', exact: true }).boundingBox())!.height).toBeLessThan(44);
 });
 
 for (const close of ['Escape', 'Back to People']) {

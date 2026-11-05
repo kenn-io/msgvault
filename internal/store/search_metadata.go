@@ -17,6 +17,11 @@ type SearchMetadata struct {
 	MatchSnippet    string
 }
 
+// The + keeps the ID list from becoming one MATCH per ID.
+// The rowid range limits that MATCH to the span between the page's smallest and largest id.
+const searchMetadataSnippetSQL = `SELECT rowid, snippet(messages_fts, -1, char(1), char(2), '…', 24)
+		FROM messages_fts WHERE messages_fts MATCH ? AND rowid BETWEEN ? AND ? AND +rowid IN (%s)`
+
 func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Query, includeSnippet bool) (map[int64]SearchMetadata, error) {
 	result := make(map[int64]SearchMetadata, len(ids))
 	// Attachment rows can lag the authoritative stored count while sync is writing them.
@@ -44,7 +49,7 @@ func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Qu
 	if err != nil {
 		return nil, fmt.Errorf("search attachment metadata: %w", err)
 	}
-	if !includeSnippet || !q.HasTextTerms() || s.IsPostgreSQL() || !s.FTS5Available() {
+	if len(ids) == 0 || !includeSnippet || !q.HasTextTerms() || s.IsPostgreSQL() || !s.FTS5Available() {
 		return result, nil
 	}
 	expression := s.dialect.BuildFTSArg(q.TextTerms)
@@ -60,8 +65,8 @@ func (s *Store) GetSearchMetadata(ctx context.Context, ids []int64, q *search.Qu
 	if expression == "" {
 		return result, nil
 	}
-	err = queryInChunksContext(ctx, s.db, ids, []any{expression}, `SELECT rowid, snippet(messages_fts, -1, char(1), char(2), '…', 24)
-		FROM messages_fts WHERE messages_fts MATCH ? AND rowid IN (%s)`, func(rows *loggedRows) error {
+	minID, maxID := slices.Min(ids), slices.Max(ids)
+	err = queryInChunksContext(ctx, s.db, ids, []any{expression, minID, maxID}, searchMetadataSnippetSQL, func(rows *loggedRows) error {
 		var id int64
 		var excerpt string
 		if err := rows.Scan(&id, &excerpt); err != nil {
