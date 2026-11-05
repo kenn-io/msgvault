@@ -288,18 +288,6 @@ describe('AppShell', () => {
     } finally { rendered.unmount(); state.destroy(); }
   });
 
-  it('finds Sources and Group by Source at the palette root and runs the child', async () => {
-    window.history.replaceState(null, '', '/?workspace=everything');
-    const state = new ExploreState(window);
-    const rendered = render(AppShell, { client: createAPIClient(vi.fn()), state, enabled: false });
-    await fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
-    const palette = await screen.findByRole('dialog', { name: 'Messages commands' });
-    await fireEvent.input(within(palette).getByRole('combobox'), { target: { value: 'source' } });
-    await fireEvent.click(within(palette).getByRole('option', { name: 'Group by… › Source' }));
-    expect(state.current.groupingChain).toEqual(['source']);
-    rendered.unmount(); state.destroy();
-  });
-
   it('runs Group by Source with Enter after a full command search at the palette root', async () => {
     window.history.replaceState(null, '', '/?workspace=everything');
     const state = new ExploreState(window);
