@@ -3308,7 +3308,7 @@ Without `verification.read`, downloads declared `message/*` or named `.eml` on a
 
 A token issued before this change now sees masked verification messages and the attachment refusals above. The owner can add `verification.read` to allow verification content.
 
-A cue can precede its value by up to four line breaks. A period is allowed at the end of the cue line; `Here is your verification code. 482913` on one line is missed.
+A cue can precede its value by up to four line breaks. A period is allowed at the end of the cue line; `Here is your verification code. 482913` on one line is missed. Up to six words, with one short parenthetical, can separate a cue from its value when the value follows `is`, `:` or `=`; ordinary phrases such as `Error code from the processor: 50213` are withheld as a result.
 
 These heuristics can miss unfamiliar wording and layouts, codes containing lowercase letters such as `a8f3k2`, short link tokens, credentials inside binary files, or text stored under a binary type that sniffing misses. Non-English text such as `Tu código es 482913` is not detected. Lists and threads classify a message whose body exists only in its original MIME by subject, snippet, title, and filenames.
 

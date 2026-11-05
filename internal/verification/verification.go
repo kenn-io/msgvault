@@ -35,9 +35,10 @@ var (
 	compactCode = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\n", "")
 	codeToken   = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
 	codeGap     = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:(?:is|est|ist|es|è|:|-|your|the|verification|security|to verify|this|below)[\s\x{00a0}]*)*$`)
+	introGap    = regexp.MustCompile(`(?i)^[\s\x{00a0}]*(?:\([^()\n]{0,30}\)[\s\x{00a0}]*)?(?:\pL[\pL'’-]*[\s\x{00a0}]*(?:\([^()\n]{0,30}\)[\s\x{00a0}]*)?){0,6}(?:is[\s\x{00a0}]*:?|:|=)[\s\x{00a0}]*$`)
 	reverseGap  = regexp.MustCompile(`(?i)^\s+is (?:your |the )?(?:[a-z]+ ){0,3}$`)
-	signInAfter = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in|verify your account)\b`)
-	useBefore   = regexp.MustCompile(`(?i)\buse\s+$`)
+	signInAfter = regexp.MustCompile(`(?i)^\s+to (?:sign[ -]in|log in|verify your (?:account|identity|email))\b`)
+	useBefore   = regexp.MustCompile(`(?i)\b(?:use|enter|type)\s+$`)
 	link        = regexp.MustCompile(`https?://[^\s<>"']+`)
 )
 
@@ -79,7 +80,7 @@ func Is(c Content) bool {
 		}, field)
 		localizedFields[i] = containsAny(lower, strings.Split(localizedCodeCues, "|")...)
 		codeFields[i] = containsAny(lower, "code", "password", "number", "pin", "otp") || localizedFields[i]
-		useFields[i] = strings.Contains(lower, "use")
+		useFields[i] = containsAny(lower, "use", "enter", "type")
 		qualified := englishQualifiedCodeCue
 		if localizedFields[i] {
 			qualified = qualifiedCodeCue
@@ -174,7 +175,7 @@ func nearCue(window string, before bool, cue *regexp.Regexp) bool {
 			gap = strings.Replace(gap, ".\n", "\n", 1) // the cue line may end a sentence
 			breaks = 4
 		}
-		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
+		if utf8.RuneCountInString(gap) <= 60 && strings.Count(gap, "\n") <= breaks && !strings.ContainsAny(gap, ".!?") && (codeGap.MatchString(gap) || before && introGap.MatchString(gap) || !before && reverseGap.MatchString(gap)) {
 			return true
 		}
 	}
