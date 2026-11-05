@@ -399,10 +399,19 @@ func TestReviewSenderLabelUsesKnownIdentifier(t *testing.T) {
 	id := b.AddMessage(MessageOpt{SenderID: &sender, MessageType: "whatsapp", HasAttachments: true})
 	b.AddTo(id, other, "Recipient")
 	b.AddAttachment(id, 37, "example.txt")
+	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
+	emailID := b.AddMessage(MessageOpt{SenderID: &emailSender, MessageType: "chat"})
 	e := b.BuildEngine()
-	labels, err := e.SenderLabels(t.Context(), []int64{id})
+	labels, err := e.SenderLabels(t.Context(), []int64{id, emailID})
 	require.NoError(t, err)
 	assert.Equal(t, "+12025550123", labels[id])
+	assert.Equal(t, "sender@example.com", labels[emailID])
+	for _, messageID := range []int64{id, emailID} {
+		var fromName string
+		err := e.db.QueryRowContext(t.Context(), "SELECT from_name FROM v_messages WHERE id = ?", messageID).Scan(&fromName)
+		require.NoError(t, err)
+		assert.Empty(t, fromName)
+	}
 }
 
 func TestSenderLabelsAggregationIsPageBounded(t *testing.T) {
