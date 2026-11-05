@@ -15,7 +15,6 @@ import (
 // ProcessingHandler models Docbank's profile, plan, job stream, and status routes.
 // Configure fields between worker passes; request records are guarded by Mu.
 type ProcessingHandler struct {
-	NodeIDs           map[string]int64
 	JobFaults         map[string]int
 	PollFaults        map[string]int
 	Reasons           map[string]string
@@ -39,7 +38,7 @@ func ProcessingJobID(version, fingerprint string) string {
 
 func NewProcessingHandler(t *testing.T) *ProcessingHandler {
 	t.Helper()
-	return &ProcessingHandler{NodeIDs: map[string]int64{}, JobFaults: map[string]int{}, PollFaults: map[string]int{}, Reasons: map[string]string{}, T: t, Fingerprint: strings.Repeat("a", 64), Rendition: true, PlanFingerprint: strings.Repeat("b", 64), Faults: map[string]int{}, States: map[string][3]string{}}
+	return &ProcessingHandler{JobFaults: map[string]int{}, PollFaults: map[string]int{}, Reasons: map[string]string{}, T: t, Fingerprint: strings.Repeat("a", 64), Rendition: true, PlanFingerprint: strings.Repeat("b", 64), Faults: map[string]int{}, States: map[string][3]string{}}
 }
 
 func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +67,6 @@ func (h *ProcessingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		assert.Positive(h.T, input.Selector.NodeID)
 		assert.Equal(h.T, "documents", input.Selector.Profile)
 		version := input.Selector.Version
-		h.NodeIDs[version] = input.Selector.NodeID
 		if r.URL.Path == "/api/v1/processing/plans" {
 			h.Plans = append(h.Plans, version)
 			if status := h.Faults[version]; status != 0 {
