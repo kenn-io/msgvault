@@ -1115,9 +1115,9 @@ func TestManager_CheckpointCancelSerialize(t *testing.T) {
 	assertSingleValidManifest(t, mgr, m.ID)
 }
 
-// TestManager_WriteInProgressCheckpoint_Writes verifies the happy path: a
-// checkpoint on a live in_progress manifest is applied when loading progress.
-func TestManager_WriteInProgressCheckpoint_Writes(t *testing.T) {
+// TestManager_WriteInProgressCheckpoint_FoldsAroundTornTail verifies that loading
+// progress folds complete records before and after an incomplete journal record.
+func TestManager_WriteInProgressCheckpoint_FoldsAroundTornTail(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	mgr := testManager(t)

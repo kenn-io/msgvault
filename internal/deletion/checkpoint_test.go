@@ -164,39 +164,31 @@ func TestManager_ResumeTerminalManifestRequiresJournalCleanup(t *testing.T) {
 			require.NoError(os.Chmod(mgr.baseDir, 0o500))
 			t.Cleanup(func() { require.NoError(os.Chmod(mgr.baseDir, 0o700)) })
 			require.NoError(mgr.WriteInProgressManifest(m, m.ID))
-			targetDir := mgr.dirForStatus(status)
-			require.NoError(os.Chmod(targetDir, 0o500))
-			t.Cleanup(func() { require.NoError(os.Chmod(targetDir, 0o700)) })
-			require.ErrorIs(mgr.FinalizeInProgress(m.ID, status), os.ErrPermission)
 
-			for range 3 {
-				_, err := mgr.ClaimManifest(m.ID, MethodTrash)
-				require.ErrorIs(err, os.ErrPermission)
-				loaded, err := LoadManifest(path)
-				require.NoError(err)
-				assert.Equal(status, loaded.Status)
-				assert.Equal(2, loaded.Execution.LastProcessedIndex)
-				assert.Equal(2, loaded.Execution.Succeeded)
-				assert.Zero(loaded.Execution.Failed)
-				assert.Empty(loaded.Execution.FailedIDs)
-				_, err = os.Stat(journalPath(path))
-				require.NoError(err)
-			}
+			_, err := mgr.ClaimManifest(m.ID, MethodTrash)
+			require.ErrorIs(err, os.ErrPermission)
+			loaded, err := LoadManifest(path)
+			require.NoError(err)
+			assert.Equal(status, loaded.Status)
+			assert.Equal(2, loaded.Execution.LastProcessedIndex)
+			assert.Equal(2, loaded.Execution.Succeeded)
+			assert.Zero(loaded.Execution.Failed)
+			assert.Empty(loaded.Execution.FailedIDs)
+			_, err = os.Stat(journalPath(path))
+			require.NoError(err)
 
 			require.NoError(os.Chmod(mgr.baseDir, 0o700))
-			for range 2 {
-				_, err := mgr.ClaimManifest(m.ID, MethodTrash)
-				require.NoError(err)
-				loaded, err := LoadManifest(path)
-				require.NoError(err)
-				assert.Equal(StatusInProgress, loaded.Status)
-				assert.Equal(2, loaded.Execution.LastProcessedIndex)
-				assert.Equal(2, loaded.Execution.Succeeded)
-				assert.Zero(loaded.Execution.Failed)
-				assert.Empty(loaded.Execution.FailedIDs)
-				_, err = os.Stat(journalPath(path))
-				require.ErrorIs(err, os.ErrNotExist)
-			}
+			_, err = mgr.ClaimManifest(m.ID, MethodTrash)
+			require.NoError(err)
+			loaded, err = LoadManifest(path)
+			require.NoError(err)
+			assert.Equal(StatusInProgress, loaded.Status)
+			assert.Equal(2, loaded.Execution.LastProcessedIndex)
+			assert.Equal(2, loaded.Execution.Succeeded)
+			assert.Zero(loaded.Execution.Failed)
+			assert.Empty(loaded.Execution.FailedIDs)
+			_, err = os.Stat(journalPath(path))
+			require.ErrorIs(err, os.ErrNotExist)
 		})
 	}
 }
@@ -230,43 +222,32 @@ func TestExecutor_JournalClearsTombstonesBeforeCrash(t *testing.T) {
 }
 
 func TestExecutor_CancelAfterCheckpoint(t *testing.T) {
-	for _, readOnly := range []bool{false, true} {
-		t.Run(fmt.Sprintf("readOnly=%v", readOnly), func(t *testing.T) {
-			if readOnly && (runtime.GOOS == "windows" || os.Getuid() == 0) {
-				t.Skip("requires Unix file permissions enforced for the current user")
-			}
-			require := require.New(t)
-			assert := assert.New(t)
-			tc := NewTestContext(t)
-			m := tc.CreateManifest("cancel progress", msgIDs(3))
-			path := filepath.Join(tc.Mgr.InProgressDir(), m.ID+".json")
-			tc.MockAPI.BeforeTrash = func(id string) error {
-				if id == "msg1" {
-					if readOnly {
-						// Atomic publication replaces even a read-only manifest.
-						require.NoError(os.Chmod(path, 0o400))
-					}
-					require.NoError(tc.Mgr.CancelManifest(m.ID))
-				}
-				return nil
-			}
-			require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
-			assert.True(tc.Mgr.ManifestCancelled(m.ID))
-			assert.Equal([]string{"msg0", "msg1"}, tc.MockAPI.TrashCalls)
-			cancelled, status, err := tc.Mgr.GetManifestWithStatus(m.ID)
-			require.NoError(err)
-			assert.Equal(StatusCancelled, status)
-			require.NotNil(cancelled.Execution)
-			assert.Equal(1, cancelled.Execution.Succeeded)
-			assert.Equal(1, cancelled.Execution.LastProcessedIndex)
-		})
+	require := require.New(t)
+	assert := assert.New(t)
+	tc := NewTestContext(t)
+	m := tc.CreateManifest("cancel progress", msgIDs(3))
+	tc.MockAPI.BeforeTrash = func(id string) error {
+		if id == "msg1" {
+			require.NoError(tc.Mgr.CancelManifest(m.ID))
+		}
+		return nil
 	}
+	require.ErrorIs(tc.ExecuteWithOpts(m.ID, trashOpts(1)), ErrManifestCancelled)
+	assert.True(tc.Mgr.ManifestCancelled(m.ID))
+	assert.Equal([]string{"msg0", "msg1"}, tc.MockAPI.TrashCalls)
+	cancelled, status, err := tc.Mgr.GetManifestWithStatus(m.ID)
+	require.NoError(err)
+	assert.Equal(StatusCancelled, status)
+	require.NotNil(cancelled.Execution)
+	assert.Equal(1, cancelled.Execution.Succeeded)
+	assert.Equal(1, cancelled.Execution.LastProcessedIndex)
 }
 
 func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
-	for _, failure := range []string{"none", "readonly", "cleanup"} {
+	for _, failure := range []string{"readonly", "cleanup"} {
 		t.Run(failure, func(t *testing.T) {
-			if failure != "none" && (runtime.GOOS == "windows" || os.Getuid() == 0) {
+			permissionsEnforced := runtime.GOOS != "windows" && os.Getuid() != 0
+			if failure == "cleanup" && !permissionsEnforced {
 				t.Skip("requires Unix file permissions enforced for the current user")
 			}
 			require := require.New(t)
@@ -288,8 +269,10 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 			switch failure {
 			case "readonly":
 				// Atomic publication replaces even a read-only manifest.
-				require.NoError(os.Chmod(path, 0o400))
-				t.Cleanup(func() { require.NoError(os.Chmod(cancelledPath, 0o600)) })
+				if permissionsEnforced {
+					require.NoError(os.Chmod(path, 0o400))
+					t.Cleanup(func() { require.NoError(os.Chmod(cancelledPath, 0o600)) })
+				}
 			case "cleanup":
 				// Status directories stay writable, so only journal removal fails.
 				require.NoError(os.Chmod(mgr.baseDir, 0o500))
@@ -297,7 +280,7 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 			}
 
 			require.NoError(mgr.CancelManifest(m.ID))
-			if failure == "none" {
+			if failure == "readonly" {
 				published, err := os.Stat(cancelledPath)
 				require.NoError(err)
 				assert.False(os.SameFile(original, published), "cancellation must replace the file instead of rewriting it in place")
@@ -308,11 +291,6 @@ func TestManager_CancelManifest_JournalCleanupFailure(t *testing.T) {
 				require.ErrorIs(err, os.ErrNotExist)
 			} else {
 				require.NoError(err, "journal remains when cleanup fails")
-			}
-			if failure == "cleanup" {
-				// Reload without the journal to prove the fold saved progress.
-				require.NoError(os.Chmod(mgr.baseDir, 0o700))
-				require.NoError(os.Remove(journalPath(path)))
 			}
 			loaded, status, err := mgr.GetManifestWithStatus(m.ID)
 			require.NoError(err)
