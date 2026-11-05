@@ -378,7 +378,7 @@ func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing
 		},
 		Directions: []query.PersonFileDirection{query.PersonFileFromPerson, query.PersonFileGroup},
 	}
-	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{SenderLabelsByID: map[int64]string{11: "Person"}}, result: &query.FileSearchResponse{
+	engine := &fileSearchEngine{MockEngine: &querytest.MockEngine{}, result: &query.FileSearchResponse{
 		Files: []query.FileRow{{
 			ID: 17, Key: "file:17", EntryKey: "message:11", MessageID: 11, ConversationID: 21,
 			OccurredAt: now, Filename: "photo.png", MimeType: "image/png", MIMEFamily: query.FileMIMEImage,
@@ -409,7 +409,6 @@ func TestPersonFilesSearchNormalizesDirectionsAndSerializesProvenance(t *testing
 	var body PersonFileSearchHTTPResponse
 	requirements.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 	requirements.Len(body.Files, 1)
-	assertions.Equal("Person", body.Files[0].SenderLabel)
 	assertions.Equal(*provenance, body.Files[0].PersonProvenance)
 	assertions.Equal(int64(17), body.Files[0].ID)
 

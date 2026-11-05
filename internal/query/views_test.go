@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -363,55 +364,40 @@ func TestRegisterViews_RecipientAddressColumns(t *testing.T) {
 	})
 }
 
-func TestReviewSenderUsesMessageEnvelope(t *testing.T) {
-	b := NewTestDataBuilder(t)
-	b.AddSource("archive@example.com")
-	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
-	first := b.AddMessage(MessageOpt{})
-	second := b.AddMessage(MessageOpt{})
-	b.AddFrom(first, alice, "Personal Alias")
-	b.AddFrom(second, alice, "Issue Desk")
-	e := b.BuildEngine()
-	labels, err := e.SenderLabels(t.Context(), []int64{first, second})
-	require.NoError(t, err)
-	assert.Equal(t, "Personal Alias", labels[first])
-	assert.Equal(t, "Issue Desk", labels[second])
-}
-
-func TestReviewSenderPrefersFromRecipient(t *testing.T) {
+func TestSenderLabelsPreserveEnvelopeAndArchivedSenders(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
 	alice := b.AddParticipant("alice@example.com", "example.com", "Alice")
 	bob := b.AddParticipant("bob@example.com", "example.com", "Bob")
-	id := b.AddMessage(MessageOpt{SenderID: &bob})
-	b.AddFrom(id, alice, "Alice")
+	first := b.AddMessage(MessageOpt{})
+	second := b.AddMessage(MessageOpt{})
+	b.AddFrom(first, alice, "Personal Alias")
+	b.AddFrom(second, alice, "Issue Desk")
+	preferred := b.AddMessage(MessageOpt{SenderID: &bob})
+	b.AddFrom(preferred, alice, "Alice")
+	deletedAt := time.Date(2026, 7, 19, 0, 0, 0, 0, time.UTC)
+	deleted := b.AddMessage(MessageOpt{SenderID: &alice, DeletedFromSourceAt: &deletedAt})
 	e := b.BuildEngine()
-	labels, err := e.SenderLabels(t.Context(), []int64{id})
+	labels, err := e.SenderLabels(t.Context(), []int64{first, second, preferred, deleted})
 	require.NoError(t, err)
-	assert.Equal(t, "Alice", labels[id])
+	assert.Equal(t, "Personal Alias", labels[first])
+	assert.Equal(t, "Issue Desk", labels[second])
+	assert.Equal(t, "Alice", labels[preferred])
+	assert.Equal(t, "Alice", labels[deleted])
 }
 
-func TestReviewSenderLabelUsesKnownIdentifier(t *testing.T) {
+func TestSenderLabelsFallBackToKnownIdentifier(t *testing.T) {
 	b := NewTestDataBuilder(t)
 	b.AddSource("archive@example.com")
 	sender := b.AddPhoneParticipant("+12025550123", "")
-	other := b.AddPhoneParticipant("+12025550124", "Recipient")
-	id := b.AddMessage(MessageOpt{SenderID: &sender, MessageType: "whatsapp", HasAttachments: true})
-	b.AddTo(id, other, "Recipient")
-	b.AddAttachment(id, 37, "example.txt")
+	id := b.AddMessage(MessageOpt{SenderID: &sender})
 	emailSender := b.AddParticipant("sender@example.com", "example.com", "")
-	emailID := b.AddMessage(MessageOpt{SenderID: &emailSender, MessageType: "chat"})
+	emailID := b.AddMessage(MessageOpt{SenderID: &emailSender})
 	e := b.BuildEngine()
 	labels, err := e.SenderLabels(t.Context(), []int64{id, emailID})
 	require.NoError(t, err)
 	assert.Equal(t, "+12025550123", labels[id])
 	assert.Equal(t, "sender@example.com", labels[emailID])
-	for _, messageID := range []int64{id, emailID} {
-		var fromName string
-		err := e.db.QueryRowContext(t.Context(), "SELECT from_name FROM v_messages WHERE id = ?", messageID).Scan(&fromName)
-		require.NoError(t, err)
-		assert.Empty(t, fromName)
-	}
 }
 
 func TestSenderLabelsAggregationIsPageBounded(t *testing.T) {

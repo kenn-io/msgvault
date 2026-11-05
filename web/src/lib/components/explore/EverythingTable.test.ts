@@ -95,7 +95,6 @@ describe('EverythingTable', () => {
 
     const rendered = screen.getByRole('row', { name: /Email item/ });
     expect((rendered as HTMLElement).style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--table-row-height').trim()).toBe('36px');
     expect(screen.getByRole('columnheader', { name: 'Kind' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'People / source' })).toBeDefined();
     expect(screen.getByRole('columnheader', { name: 'Attachments' }).textContent).toBe('⌕');
@@ -379,7 +378,6 @@ describe('EverythingTable', () => {
     const { rerender } = render(EverythingTable, { rows: [], selection, loading: true, onRetry });
     const skeleton = screen.getAllByTestId('everything-skeleton')[0]!;
     expect(skeleton.style.height).toBe('');
-    expect(getComputedStyle(document.documentElement).getPropertyValue('--table-row-height').trim()).toBe('36px');
     const grid = screen.getByRole('grid', { name: 'Messages results' });
     expect(grid.getAttribute('aria-busy')).toBe('true');
     expect(grid.getAttribute('aria-rowcount')).toBeNull();

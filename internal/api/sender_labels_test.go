@@ -35,6 +35,14 @@ func TestExploreSenderLabelsKeepConversationRoster(t *testing.T) {
 	assert.Empty(t, result.Rows[1].SenderLabel)
 	assert.Empty(t, result.Rows[2].SenderLabel)
 	assert.Equal(t, []string{"Alice Recipient", "Zoe Sender"}, result.Rows[2].ParticipantLabels)
+
+	archivedEngine, _ := newExploreDuckDBFixtureWithMessages(t, `(1::BIGINT, 1::BIGINT, 'deleted', 101::BIGINT, 'Archived', 'snippet', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, TIMESTAMP '2026-07-19 00:00:00', 1::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, 1)
+	archived := postExploreJSON(t, newTestServerWithEngine(t, archivedEngine), "/api/v1/explore", `{"filters":[{"dimension":"deletion","values":["deleted"]}]}`)
+	require.Equal(t, http.StatusOK, archived.Code, archived.Body.String())
+	var archivedBody ExploreHTTPResponse
+	require.NoError(t, json.Unmarshal(archived.Body.Bytes(), &archivedBody))
+	require.Len(t, archivedBody.Rows, 1)
+	assert.Equal(t, "Alice", archivedBody.Rows[0].SenderLabel)
 }
 
 func TestExploreSenderLookupFailureKeepsRows(t *testing.T) {

@@ -14,17 +14,6 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/storetest"
 )
 
-func TestExploreSourceDeletedMessageKeepsSender(t *testing.T) {
-	engine, _ := newExploreDuckDBFixtureWithMessages(t, `(1::BIGINT, 1::BIGINT, 'deleted', 101::BIGINT, 'Archived', 'snippet', TIMESTAMP '2026-07-18 10:00:00', 100::BIGINT, false, 0::INTEGER, TIMESTAMP '2026-07-19 00:00:00', 1::BIGINT, NULL::BIGINT, 'email', NULL::VARCHAR, false, 2026, 7)`, 1)
-	srv := newTestServerWithEngine(t, engine)
-	response := postExploreJSON(t, srv, "/api/v1/explore", `{"filters":[{"dimension":"deletion","values":["deleted"]}]}`)
-	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
-	var body ExploreHTTPResponse
-	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
-	require.Len(t, body.Rows, 1)
-	assert.Equal(t, "Alice", body.Rows[0].SenderLabel)
-}
-
 // TestExploreFullTextHonorsDeletionScope drives the explore handler
 // end-to-end with a real store resolving lexical candidates: the FTS index
 // keeps entries for source-deleted messages, so a deletion:deleted full-text
