@@ -191,7 +191,11 @@ func runImessageImport(t *testing.T, home string, args ...string) {
 
 func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 	for _, explicitPath := range []bool{true, false} {
-		t.Run(fmt.Sprintf("explicit db path=%t", explicitPath), func(t *testing.T) {
+		name := "configured database"
+		if explicitPath {
+			name = "flag overrides configured database"
+		}
+		t.Run(name, func(t *testing.T) {
 			home := t.TempDir()
 			path, chat := testutil.NewIMessageChatDB(t)
 			_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT);
@@ -203,8 +207,6 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			cfg.Analytics.AutoBuildCache = false
 			cfg.IMessage.DBPath = path
 			cfg.IMessage.Me = "owner@example.test"
-			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), fmt.Appendf(nil,
-				"[analytics]\nauto_build_cache = false\n[imessage]\ndb_path = %q\nme = %q\n", path, cfg.IMessage.Me), 0o600))
 			st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
 			ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
 			require.NoError(t, runScheduledIMessage(ctx, st, cfg.IMessage))
@@ -212,6 +214,12 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			require.NoError(t, st.DB().QueryRow(`SELECT p.email_address FROM messages m JOIN participants p ON p.id = m.sender_id WHERE m.source_message_id = '1'`).Scan(&owner))
 			assert.Equal(t, "owner@example.test", owner)
 			require.NoError(t, st.Close())
+
+			if explicitPath {
+				cfg.IMessage.DBPath = filepath.Join(home, "unused-chat.db")
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(home, "config.toml"), fmt.Appendf(nil,
+				"[analytics]\nauto_build_cache = false\n[imessage]\ndb_path = %q\nme = %q\n", cfg.IMessage.DBPath, cfg.IMessage.Me), 0o600))
 
 			args := []string{"--no-attachments"}
 			if explicitPath {
@@ -223,10 +231,7 @@ func TestManualImessageImportUsesScheduledConfig(t *testing.T) {
 			done := captureStdout(t)
 			err = executeRootContext(t.Context(), rootCmd)
 			output := done()
-			// Attribution is persisted before the independent analytics rebuild.
-			if err != nil {
-				require.ErrorContains(t, err, "refresh analytics cache:", output)
-			}
+			require.NoError(t, err, output)
 			st, err = store.Open(cfg.DatabaseDSN())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = st.Close() })

@@ -9353,7 +9353,12 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 			var resp SourceStatusResponse
 			require.NoError(json.NewDecoder(w.Body).Decode(&resp))
 			require.Len(resp.Sources, len(sources))
+			var wantIDs, gotIDs []int64
+			for _, src := range sources {
+				wantIDs = append(wantIDs, src.ID)
+			}
 			for _, status := range resp.Sources {
+				gotIDs = append(gotIDs, status.ID)
 				assert.Equal(status.Identifier == tc.wantSelected, status.CanSync, status.Identifier)
 				if status.Identifier != tc.wantSelected {
 					assert.Equal("source_not_schedulable", status.SyncUnavailableReason)
@@ -9367,6 +9372,7 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 					assert.Empty(status.SyncUnavailableReason)
 				}
 			}
+			assert.ElementsMatch(wantIDs, gotIDs)
 
 			response := servePOSTTestRequest(srv, "/api/v1/sync/"+tc.trigger+"?source_type=apple_messages")
 			assert.Equal(tc.wantCode, response.Code, response.Body.String())

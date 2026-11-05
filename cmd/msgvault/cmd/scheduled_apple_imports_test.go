@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"database/sql"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,7 +17,7 @@ import (
 	"go.kenn.io/msgvault/internal/testutil"
 )
 
-func TestRunScheduledIMessageRecordsRuns(t *testing.T) {
+func TestRunScheduledIMessage(t *testing.T) {
 	req := require.New(t)
 	check := assert.New(t)
 	cfg := config.NewDefaultConfig()
@@ -42,16 +43,85 @@ func TestRunScheduledIMessageRecordsRuns(t *testing.T) {
 	src, err = st.GetSourceByID(src.ID)
 	req.NoError(err)
 	check.True(src.LastSyncAt.Valid)
-	t.Run("late arrivals through scheduler", func(t *testing.T) {
+	_, err = chat.Exec(`INSERT INTO message (date,text) VALUES (?, 'late'), (?, 'older')`,
+		time.Now().Add(-7*24*time.Hour).Unix()-978307200, time.Now().Add(-30*24*time.Hour).Unix()-978307200)
+	req.NoError(err)
+	req.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+	var ids string
+	req.NoError(st.DB().QueryRow(`SELECT group_concat(source_message_id, ',') FROM (SELECT source_message_id FROM messages ORDER BY source_message_id)`).Scan(&ids))
+	check.Equal("1,2,3,4", ids)
+	t.Run("retitling leaves the disabled cache stale", func(t *testing.T) {
 		req := require.New(t)
 		check := assert.New(t)
-		_, err = chat.Exec(`INSERT INTO message (date,text) VALUES (?, 'late'), (?, 'older')`,
-			time.Now().Add(-7*24*time.Hour).Unix()-978307200, time.Now().Add(-30*24*time.Hour).Unix()-978307200)
+		cfg := config.NewDefaultConfig()
+		cfg.Data.DataDir = t.TempDir()
+		cfg.Analytics.AutoBuildCache = false
+		path, chat := testutil.NewIMessageChatDB(t)
+		cfg.IMessage.DBPath = path
+		_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT);
+	 CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+	 INSERT INTO chat VALUES ('any;-;synthetic', NULL, 'peer@example.test');
+	 INSERT INTO message (date,text) VALUES (725760000,'hello');
+	 INSERT INTO chat_message_join VALUES (1,1)`)
+		req.NoError(err)
+		st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+		req.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+		_, err = buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+		req.NoError(err)
+		_, err = st.DB().Exec(`UPDATE participants SET display_name = 'Renamed peer' WHERE email_address = 'peer@example.test'`)
 		req.NoError(err)
 		req.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
-		var ids string
-		req.NoError(st.DB().QueryRow(`SELECT group_concat(source_message_id, ',') FROM (SELECT source_message_id FROM messages ORDER BY source_message_id)`).Scan(&ids))
-		check.Equal("1,2,3,4", ids)
+		var title string
+		req.NoError(st.DB().QueryRow(`SELECT title FROM conversations`).Scan(&title))
+		check.Equal("Renamed peer", title)
+		stale := cacheNeedsBuildForScheduledRefresh(ctx, cfg.DatabaseDSN(), cfg.AnalyticsDir())
+		check.True(stale.NeedsBuild)
+		check.True(stale.HasConversationTypeDrift)
+		check.False(stale.FullRebuild)
+	})
+
+	t.Run("scheduled import with automatic cache disabled", func(t *testing.T) {
+		require := require.New(t)
+		assert := assert.New(t)
+		cfg := config.NewDefaultConfig()
+		cfg.Data.DataDir = t.TempDir()
+		cfg.Analytics.AutoBuildCache = false
+		path, chat := testutil.NewIMessageChatDB(t)
+		cfg.IMessage.DBPath = path
+		cfg.IMessage.Me = "owner@example.test"
+		_, err := chat.Exec(`CREATE TABLE attachment (filename TEXT);
+	 CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
+	 INSERT INTO chat VALUES ('any;-;synthetic', NULL, 'peer@example.test');
+	 INSERT INTO message (date, text) VALUES (?, 'Synthetic message');
+	 INSERT INTO chat_message_join VALUES (1,1);`, time.Now().UnixNano()-978307200000000000)
+		require.NoError(err)
+		st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+		require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+		src, err := resolveImessageSource(st)
+		require.NoError(err)
+		require.NoError(st.AddAccountIdentity(src.ID, cfg.IMessage.Me, "manual"))
+		_, err = buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+		require.NoError(err)
+		assert.False(cacheNeedsBuild(cfg.DatabaseDSN(), cfg.AnalyticsDir()).NeedsBuild)
+		_, err = chat.Exec(`UPDATE message SET text = 'Edited message'`)
+		require.NoError(err)
+		require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+		edited := cacheNeedsBuild(cfg.DatabaseDSN(), cfg.AnalyticsDir())
+		assert.True(edited.NeedsBuild)
+		assert.True(edited.FullRebuild)
+		_, err = buildCache(cfg.DatabaseDSN(), cfg.AnalyticsDir(), true)
+		require.NoError(err)
+		_, err = chat.Exec(`UPDATE message SET date = ?`, int64(math.MaxInt64))
+		require.NoError(err)
+		require.NoError(runScheduledIMessage(ctx, st, cfg.IMessage))
+		run, err := st.GetLastSuccessfulSyncByType(src.ID, "imessage_import")
+		require.NoError(err)
+		assert.Equal(int64(1), run.MessagesUpdated)
+		stale := cacheNeedsBuild(cfg.DatabaseDSN(), cfg.AnalyticsDir())
+		assert.True(stale.NeedsBuild)
+		assert.True(stale.FullRebuild)
 	})
 }
 
@@ -75,21 +145,17 @@ func TestRunScheduledWhatsAppApple(t *testing.T) {
 	req.NoError(err)
 	req.Len(identities, 1)
 	check.Equal(source.Phone, identities[0].Address)
-	t.Run("scheduled rerun records edits", func(t *testing.T) {
-		req := require.New(t)
-		check := assert.New(t)
-		db, err := sql.Open("sqlite3", source.Path)
-		req.NoError(err)
-		t.Cleanup(func() { _ = db.Close() })
-		_, err = db.Exec(`UPDATE ZWAMESSAGE SET ZTEXT = 'Edited message'`)
-		req.NoError(err)
-		req.NoError(runScheduledWhatsAppApple(ctx, st, source))
-		second, err := st.GetLatestSync(src.ID)
-		req.NoError(err)
-		check.Equal(int64(0), second.MessagesAdded)
-		check.Equal(int64(1), second.MessagesUpdated)
-		check.Greater(second.ID, run.ID)
-	})
+	db, err := sql.Open("sqlite3", source.Path)
+	req.NoError(err)
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`UPDATE ZWAMESSAGE SET ZTEXT = 'Edited message'`)
+	req.NoError(err)
+	req.NoError(runScheduledWhatsAppApple(ctx, st, source))
+	second, err := st.GetLatestSync(src.ID)
+	req.NoError(err)
+	check.Equal(int64(0), second.MessagesAdded)
+	check.Equal(int64(1), second.MessagesUpdated)
+	check.Greater(second.ID, run.ID)
 }
 
 func TestRunScheduledWhatsAppAppleSkipsMergedSource(t *testing.T) {
@@ -167,43 +233,43 @@ func TestImportImessageRecordedPreservesPartialCounters(t *testing.T) {
 	assert.Equal(int64(2), run.ErrorsCount)
 }
 
-func TestImportImessageRecordedRecordsWarningsAndFailures(t *testing.T) {
-	t.Run("scheduled failure records status and requests refresh", func(t *testing.T) {
-		require := require.New(t)
-		assert := assert.New(t)
-		cfg := config.NewDefaultConfig()
-		cfg.Data.DataDir = t.TempDir()
-		cfg.Analytics.AutoBuildCache = true
-		cfg.IMessage.DBPath, _ = testutil.NewIMessageChatDB(t)
-		st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
-		ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
-		requested := make(chan string, 1)
-		refresher := newBackgroundCacheRefresher(ctx, func(_ context.Context, id string) error {
-			requested <- id
-			return nil
-		}, nil)
-		previous := daemonCacheRefresher
-		daemonCacheRefresher = refresher
-		t.Cleanup(func() {
-			require.NoError(refresher.Shutdown(context.Background()))
-			daemonCacheRefresher = previous
-		})
-		canceled, cancel := context.WithCancel(ctx)
-		cancel()
-		require.ErrorIs(runScheduledIMessage(canceled, st, cfg.IMessage), context.Canceled)
-		src, err := resolveImessageSource(st)
-		require.NoError(err)
-		run, err := st.GetLatestSync(src.ID)
-		require.NoError(err)
-		assert.Equal("failed", run.Status)
-		select {
-		case id := <-requested:
-			assert.Equal("apple-messages", id)
-		case <-time.After(serveLifecycleTestTimeout):
-			require.FailNow("failed import did not request a refresh")
-		}
+func TestRunScheduledIMessageFailureRequestsRefresh(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	cfg := config.NewDefaultConfig()
+	cfg.Data.DataDir = t.TempDir()
+	cfg.Analytics.AutoBuildCache = true
+	cfg.IMessage.DBPath, _ = testutil.NewIMessageChatDB(t)
+	st := testutil.NewSQLiteTestStoreAt(t, cfg.DatabaseDSN())
+	ctx := testInvocationContext(t.Context(), cfg, invocationOptions{})
+	requested := make(chan string, 1)
+	refresher := newBackgroundCacheRefresher(ctx, func(_ context.Context, id string) error {
+		requested <- id
+		return nil
+	}, nil)
+	previous := daemonCacheRefresher
+	daemonCacheRefresher = refresher
+	t.Cleanup(func() {
+		require.NoError(refresher.Shutdown(context.Background()))
+		daemonCacheRefresher = previous
 	})
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	require.ErrorIs(runScheduledIMessage(canceled, st, cfg.IMessage), context.Canceled)
+	src, err := resolveImessageSource(st)
+	require.NoError(err)
+	run, err := st.GetLatestSync(src.ID)
+	require.NoError(err)
+	assert.Equal("failed", run.Status)
+	select {
+	case id := <-requested:
+		assert.Equal("apple-messages", id)
+	case <-time.After(serveLifecycleTestTimeout):
+		require.FailNow("failed import did not request a refresh")
+	}
+}
 
+func TestImportImessageRecordedRecordsWarningsAndFailures(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
 	path, chat := testutil.NewIMessageAttachmentChatDB(t)
