@@ -14,7 +14,11 @@ func recoverLegacyCSV(raw []byte) *Message {
 		fixed := append([]byte(nil), raw[:match[3]]...)
 		fixed = append(fixed, raw[match[4]:]...)
 		if recovered, err := parse(fixed, nil); err == nil {
-			return recovered
+			for _, attachment := range recovered.Attachments {
+				if attachment.ContentType == "text/csv" && len(attachment.Content) > 0 {
+					return recovered
+				}
+			}
 		}
 	}
 	return nil

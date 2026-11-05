@@ -75,6 +75,21 @@ func TestLegacyCSVRecoveryMatchesValidMail(t *testing.T) {
 	}
 }
 
+func TestLegacyCSVRecoveryRejectsMissingSeparator(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	raw := testemail.LegacyCSV(true, testemail.LegacyCSVOptions{})
+	raw = bytes.Replace(raw, []byte("filename=example.csv\r\n\r\n"), []byte("filename=example.csv\r\n"), 1)
+	_, strictErr := Parse(raw)
+	require.Error(strictErr)
+	assert.Nil(recoverLegacyCSV(raw))
+	msg, err := ParseWithRecovery(raw, "")
+	require.EqualError(err, strictErr.Error())
+	assert.Contains(msg.BodyText, "[MIME parsing failed:")
+	assert.Empty(msg.BodyHTML)
+	assert.Empty(msg.Attachments)
+}
+
 func TestLegacyCSVRecoveryFallsBack(t *testing.T) {
 	for name, shape := range map[string]testemail.LegacyCSVOptions{
 		"unknown delimiter":       {StrayLine: "--unrecognized"},

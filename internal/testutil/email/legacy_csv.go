@@ -48,9 +48,13 @@ func LegacyCSV(withStrayLine bool, shape LegacyCSVOptions) []byte {
 			"Content-Transfer-Encoding: base64\r\n" +
 			"Content-Disposition: " + disposition + "; filename=example.png\r\n" + contentID + "\r\niVBORw0KGgo=\r\n"
 	}
-	return []byte("From: sender@example.org\r\nTo: recipient@example.org\r\n" +
-		"Subject: recovery fixture\r\nMIME-Version: 1.0\r\n" +
-		"Content-Type: multipart/related; boundary=related\r\n\r\n" +
-		"--related\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + shape.Body + "\r\n" +
-		csv + extra + "--related--\r\n")
+	return MakeRaw(Options{
+		From:        "sender@example.org",
+		To:          "recipient@example.org",
+		Subject:     "recovery fixture",
+		ContentType: "multipart/related; boundary=related",
+		Headers:     map[string]string{"MIME-Version": "1.0"},
+		Body: "--related\r\nContent-Type: text/html; charset=utf-8\r\n\r\n" + shape.Body + "\r\n" +
+			csv + extra + "--related--\r\n",
+	})
 }
