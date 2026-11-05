@@ -42,6 +42,7 @@ func TestCallsRetryBusyResponse(t *testing.T) {
 }
 
 func TestImportCallObservationPreservesRawInteger(t *testing.T) {
+	require := require.New(t)
 	var captured []byte
 	var readErr error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -51,10 +52,10 @@ func TestImportCallObservationPreservesRawInteger(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	client, err := New(Config{URL: server.URL, APIKey: "example-key", AllowInsecure: true})
-	require.NoError(t, err)
+	require.NoError(err)
 	t.Cleanup(func() { _ = client.Close() })
 	_, err = client.ImportCallObservation(t.Context(), []byte(`{"format":"normalized","account":"a","record":{"version":1,"provider":"signal","account":"a","record_id":"7","kind":"call","direction":"incoming","outcome":"answered","owner_participation":"joined","occurred_at":"2026-10-01T09:00:00Z","precision":"instant","raw":{"sequence":9007199254740993}}}`))
-	require.NoError(t, err)
-	require.NoError(t, readErr)
+	require.NoError(err)
+	require.NoError(readErr)
 	assert.Contains(t, string(captured), `9007199254740993`)
 }

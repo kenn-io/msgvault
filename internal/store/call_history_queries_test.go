@@ -15,11 +15,12 @@ import (
 )
 
 func TestCallReadersExcludeUndatedLegacyCalls(t *testing.T) {
+	requirements := require.New(t)
 	f := storetest.New(t)
 	peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Example", "google_voice")
-	require.NoError(t, err)
+	requirements.NoError(err)
 	person, _, err := f.Store.CreatePersonFromParticipant(peer)
-	require.NoError(t, err)
+	requirements.NoError(err)
 	at := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	var datedID int64
 	for _, dated := range []bool{false, true} {
@@ -27,27 +28,62 @@ func TestCallReadersExcludeUndatedLegacyCalls(t *testing.T) {
 		message.MessageType = store.MessageTypeGoogleVoiceCall
 		message.SentAt = sql.NullTime{Time: at, Valid: dated}
 		id, err := f.Store.UpsertMessage(message)
-		require.NoError(t, err)
-		require.NoError(t, f.Store.ReplaceMessageRecipients(id, "from", []int64{peer}, nil))
-		require.NoError(t, f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
+		requirements.NoError(err)
+		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{peer}, nil))
+		requirements.NoError(f.Store.SetMessageMetadata(id, store.CallConnectedMetadata(600)))
 		if dated {
 			datedID = id
 		}
 	}
 	t.Run("list", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		items, err := f.Store.ListCallObservationsContext(t.Context(), store.CallQuery{})
-		require.NoError(t, err)
-		require.Len(t, items, 1)
-		assert.Equal(t, datedID, items[0].MessageID)
-		assert.True(t, at.Equal(items[0].OccurredAt))
+		require.NoError(err)
+		require.Len(items, 1)
+		assert.Equal(datedID, items[0].MessageID)
+		assert.True(at.Equal(items[0].OccurredAt))
 	})
 	t.Run("summary", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
 		summary, err := f.Store.SummarizeCallsContext(t.Context(), store.CallQuery{})
-		require.NoError(t, err)
-		require.Len(t, summary, 1)
-		assert.Equal(t, person.ID, summary[0].PersonID)
-		assert.Equal(t, 1, summary[0].Answered)
+		require.NoError(err)
+		require.Len(summary, 1)
+		assert.Equal(person.ID, summary[0].PersonID)
+		assert.Equal(1, summary[0].Answered)
 	})
+}
+
+func TestCallSummaryExcludesArchiveOwner(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	f := storetest.New(t)
+	peer, err := f.Store.EnsureParticipantByPhone("+12025550101", "Peer", "signal")
+	require.NoError(err)
+	person, _, err := f.Store.CreatePersonFromParticipant(peer)
+	require.NoError(err)
+	owner, err := f.Store.EnsureParticipantByPhone("+12025550102", "Owner", "signal")
+	require.NoError(err)
+	_, _, err = f.Store.CreatePersonFromParticipant(owner)
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(f.Source.ID, "+12025550102", "manual"))
+	o := callhistory.Observation{
+		RecordID: "owner-and-peer", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "outgoing", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC), Precision: "instant",
+		Participants: []callhistory.Participant{{ID: peer, Participation: "joined"}, {ID: owner, Participation: "joined"}},
+		Raw:          []byte(`{}`),
+	}
+	src, err := f.Store.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(err)
+	_, err = f.Store.PutCallObservationContext(t.Context(), src.ID, o)
+	require.NoError(err)
+	summary, err := f.Store.SummarizeCallsContext(t.Context(), store.CallQuery{})
+	require.NoError(err)
+	require.Len(summary, 1)
+	assert.Equal(person.ID, summary[0].PersonID)
+	assert.Equal(1, summary[0].Answered)
 }
 
 func TestCallSummaryRequiresWholeObservationAndDeduplicates(t *testing.T) {
