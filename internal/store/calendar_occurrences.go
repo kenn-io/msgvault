@@ -117,9 +117,6 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 		}
 		switch e.Kind {
 		case "exception", "single":
-			if e.Kind == "exception" && row.SourceType == calevent.CalDAVSourceType && row.OverrideRemoved {
-				continue
-			}
 			if e.Kind == "exception" && masters[seriesKey{row.SourceID, e.SeriesProviderID}] {
 				continue
 			}
@@ -139,7 +136,7 @@ func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, from, to tim
 					report(exception.MessageID, "exception original type differs from series and event bounds are missing")
 				}
 			}
-			occurrences, count, reason, err := expandCalendarSeries(ctx, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
+			occurrences, count, reason, err := expandCalendarSeries(ctx, s.db, row, exceptions[seriesKey{row.SourceID, e.ProviderEventID}], from, to, remaining)
 			remaining -= count
 			if err != nil {
 				return page, err
@@ -174,13 +171,10 @@ func calendarMissingBoundsReason(event calevent.Event) string {
 }
 
 // Resolve archived exceptions once, then suppress their original generated instances.
-func expandCalendarSeries(ctx context.Context, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
-	// A removed CalDAV override restores the original occurrence. Overrides
-	// deleted with their resource remain part of its final archived snapshot.
-	if row.SourceType == calevent.CalDAVSourceType {
-		exceptionRows = slices.DeleteFunc(slices.Clone(exceptionRows), func(x CalendarEventRow) bool {
-			return x.OverrideRemoved || x.DeletedFromSource && !row.DeletedFromSource
-		})
+func expandCalendarSeries(ctx context.Context, r *loggedDB, row CalendarEventRow, exceptionRows []CalendarEventRow, from, to time.Time, remaining int) ([]calrecur.Occurrence, int, string, error) {
+	exceptionRows, err := currentCalendarExceptions(ctx, r, row, exceptionRows)
+	if err != nil {
+		return nil, 0, "", err
 	}
 	set, duration, days, prepareErr := prepareCalendarRecurrence(row.Event)
 	var prepared *calrecur.Set

@@ -371,17 +371,17 @@ func syncResponse(events, token string) string {
 }
 
 func changedResponse(href, etag string) string {
-	return `<D:response><D:href>` + href + `</D:href><D:propstat><D:prop><D:getetag>` + etag + `</D:getetag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
+	return testutil.DAVPropResponse(href, `<D:getetag>`+etag+`</D:getetag>`)
 }
 
 func cardResponse(href, etag, uid string) string {
-	return `<D:response><D:href>` + href + `</D:href><D:propstat><D:prop><D:getetag>` + etag + `</D:getetag><C:address-data>BEGIN:VCARD&#13;
+	return testutil.DAVPropResponse(href, `<D:getetag>`+etag+`</D:getetag><C:address-data>BEGIN:VCARD&#13;
 VERSION:4.0&#13;
-UID:` + uid + `&#13;
-FN:` + uid + `&#13;
-EMAIL:` + uid + `@example.test&#13;
+UID:`+uid+`&#13;
+FN:`+uid+`&#13;
+EMAIL:`+uid+`@example.test&#13;
 END:VCARD&#13;
-</C:address-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>`
+</C:address-data>`)
 }
 
 func writeDAVXML(t *testing.T, w http.ResponseWriter, body string) {

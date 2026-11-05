@@ -19,10 +19,8 @@ var ErrQueryTooBroad = errors.New("calendar query is too broad")
 
 type CalendarEventRow struct {
 	MessageID, SourceID int64
-	SourceType          string
 	Subject             string
 	DeletedFromSource   bool
-	OverrideRemoved     bool
 	Event               calevent.Event
 }
 
@@ -30,14 +28,14 @@ const maxCalendarSeries = 2000
 const maxCalendarExceptions = 20000
 const calendarCandidateMargin = 28 * time.Hour
 
-var calendarEventSelect = `SELECT e.message_id, m.source_id, s.source_type, COALESCE(m.subject, ''),
-	m.deleted_from_source_at IS NOT NULL, m.metadata,
+var calendarEventSelect = `SELECT e.message_id, m.source_id, COALESCE(m.subject, ''),
+	m.deleted_from_source_at IS NOT NULL,
  e.provider_event_id, e.series_provider_id, e.kind, e.original_start_at, e.original_start_date,
  e.status, e.all_day, e.start_at, e.end_at, e.start_date, e.end_date,
  e.event_time_zone, e.calendar_time_zone, e.recurrence_json, e.recurrence_duration_days
  ` + calendarEventFrom
 
-var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id JOIN sources s ON s.id = m.source_id
+var calendarEventFrom = `FROM calendar_events e JOIN messages m ON m.id = e.message_id
  WHERE m.deleted_at IS NULL
  AND ` + calendarEventVisibility("e", "m") + `
  AND `
@@ -93,23 +91,13 @@ func queryCalendarEventRows(ctx context.Context, r *loggedDB, predicate string, 
 		var row CalendarEventRow
 		e := &row.Event
 		var original, start, end sql.NullTime
-		var metadata sql.NullString
 		var originalDate, recurrence string
-		err := result.Scan(&row.MessageID, &row.SourceID, &row.SourceType, &row.Subject, &row.DeletedFromSource,
-			&metadata,
+		err := result.Scan(&row.MessageID, &row.SourceID, &row.Subject, &row.DeletedFromSource,
 			&e.ProviderEventID, &e.SeriesProviderID, &e.Kind, &original, &originalDate, &e.Status, &e.AllDay,
 			&start, &end, &e.StartDate, &e.EndDate, &e.EventTimeZone, &e.CalendarTimeZone, &recurrence, &e.RecurrenceDurationDays)
 		if err != nil {
 			_ = result.Close()
 			return nil, fmt.Errorf("scan calendar event: %w", err)
-		}
-		if row.SourceType == calevent.CalDAVSourceType && metadata.Valid {
-			var calDAVMetadata calevent.CalDAVMetadata
-			if err := json.Unmarshal([]byte(metadata.String), &calDAVMetadata); err != nil {
-				_ = result.Close()
-				return nil, fmt.Errorf("decode CalDAV event metadata %d: %w", row.MessageID, err)
-			}
-			row.OverrideRemoved = calDAVMetadata.OverrideRemoved
 		}
 		if originalDate != "" {
 			e.Original = &calrecur.Identity{Date: originalDate, AllDay: true}
@@ -358,4 +346,36 @@ func inheritSparseCalendarAttendees(own, master []calevent.Attendee, fields map[
 			return organizer.Role == "organizer" && gcalmodel.NormalizeParticipantEmail(organizer.Email) == gcalmodel.NormalizeParticipantEmail(a.Email)
 		})
 	})
+}
+
+// CalDAV overrides apply only while they belong to the master's latest snapshot,
+// including when the provider has since deleted the entire resource.
+func currentCalendarExceptions(ctx context.Context, r *loggedDB, master CalendarEventRow, exceptions []CalendarEventRow) ([]CalendarEventRow, error) {
+	if len(exceptions) == 0 {
+		return exceptions, nil
+	}
+	var stored []byte
+	var compression sql.NullString
+	var format string
+	if err := r.QueryRowContext(ctx, `SELECT raw_data, compression, raw_format FROM message_raw WHERE message_id = ?`, master.MessageID).Scan(&stored, &compression, &format); err != nil {
+		return nil, fmt.Errorf("read calendar master evidence: %w", err)
+	}
+	if format != calevent.CalDAVRawFormat {
+		return exceptions, nil
+	}
+	raw, _, err := decodeMessageRawBounded(stored, compression, maxMeetingRawBytes, errMeetingRawTooLarge)
+	if err != nil {
+		return nil, err
+	}
+	events, err := calevent.ParseCalDAVResource(ctx, raw, master.Event.CalendarTimeZone)
+	if err != nil {
+		return nil, fmt.Errorf("decode calendar master evidence: %w", err)
+	}
+	members := make(map[string]bool, len(events))
+	for _, event := range events {
+		members[event.Event.ProviderEventID] = true
+	}
+	return slices.DeleteFunc(slices.Clone(exceptions), func(row CalendarEventRow) bool {
+		return !members[row.Event.ProviderEventID]
+	}), nil
 }

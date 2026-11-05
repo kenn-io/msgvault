@@ -371,9 +371,6 @@ func TestCalendarClearedMasterRestoresRemovedCalDAVStartOverride(t *testing.T) {
 		requirements.NoError(err)
 	}
 	requirements.NoError(st.UpsertMessageRawWithFormat(ids[0], []byte(masterRaw), calevent.CalDAVRawFormat))
-	metadata, err := json.Marshal(calevent.CalDAVMetadata{EventID: events[1].Event.ProviderEventID, OverrideRemoved: true})
-	requirements.NoError(err)
-	requirements.NoError(st.SetMessageMetadata(ids[1], sql.NullString{String: string(metadata), Valid: true}))
 
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 2))
