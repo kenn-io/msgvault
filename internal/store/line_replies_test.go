@@ -148,57 +148,69 @@ func acceptedReply(t *testing.T, st *store.Store, draft store.ChatDraft) store.L
 }
 
 func TestLineReplyCompletionArchivesReceiptOnce(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, draft, parent := replyStoreFixture(t)
-	accepted := acceptedReply(t, st, draft)
-	sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	assert.Equal(store.LineReplySent, sent.State)
-	require.Positive(sent.MessageID)
-	assert.Equal(accepted.RemoteMessageID, sent.RemoteMessageID)
-	_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
-	require.ErrorIs(err, store.ErrChatDraftNotFound)
-	repeated, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	assert.Equal(sent, repeated)
-	var conversation, reply, sender int64
-	var fromMe bool
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id,reply_to_message_id,sender_id,is_from_me FROM messages WHERE id=?`), sent.MessageID).Scan(&conversation, &reply, &sender, &fromMe))
-	assert.Equal(draft.ConversationID, conversation)
-	assert.Equal(parent, reply)
-	assert.True(fromMe)
-	assert.Positive(sender)
-	body, raw, err := st.GetMessageBodyAndRawContext(t.Context(), sent.MessageID)
-	require.NoError(err)
-	assert.Equal("Thanks!", body)
-	assert.JSONEq(`{"status_code":200,"request_id":"original-request","sentMessages":[{"id":"900000000000000001","quoteToken":"synthetic-sent-quote"}]}`, string(raw))
-	count, err := st.CountMessagesForSourceContext(t.Context(), draft.SourceID)
-	require.NoError(err)
-	assert.Equal(int64(2), count)
-}
-
-func TestLineReplyCompletionResolvesEarlierIncomingQuote(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, draft, _ := replyStoreFixture(t)
-	quoteMetadata := sql.NullString{String: `{"quotedMessageId":"900000000000000001"}`, Valid: true}
-	quotedMessageID, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
-		Message:  &store.Message{SourceID: draft.SourceID, ConversationID: draft.ConversationID, SourceMessageID: "200", MessageType: "line"},
-		BodyText: sql.NullString{String: "Reply received before local recovery", Valid: true}, Metadata: &quoteMetadata,
-		FTS: &store.FTSDoc{Body: "Reply received before local recovery"},
+	t.Run("receipt and conversation summary", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, draft, parent := replyStoreFixture(t)
+		require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
+		accepted := acceptedReply(t, st, draft)
+		sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(store.LineReplySent, sent.State)
+		require.Positive(sent.MessageID)
+		assert.Equal(accepted.RemoteMessageID, sent.RemoteMessageID)
+		_, err = st.GetChatDraftContext(t.Context(), draft.DraftID)
+		require.ErrorIs(err, store.ErrChatDraftNotFound)
+		var summaryCount int64
+		var latest sql.NullTime
+		var preview sql.NullString
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count,last_message_at,last_message_preview FROM conversations WHERE id=?`), draft.ConversationID).Scan(&summaryCount, &latest, &preview))
+		assert.Equal(int64(2), summaryCount)
+		require.True(latest.Valid)
+		assert.True(accepted.AdmittedAt.Equal(latest.Time))
+		assert.Equal(sql.NullString{String: "Thanks!", Valid: true}, preview)
+		repeated, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		assert.Equal(sent, repeated)
+		var conversation, reply, sender int64
+		var fromMe bool
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT conversation_id,reply_to_message_id,sender_id,is_from_me FROM messages WHERE id=?`), sent.MessageID).Scan(&conversation, &reply, &sender, &fromMe))
+		assert.Equal(draft.ConversationID, conversation)
+		assert.Equal(parent, reply)
+		assert.True(fromMe)
+		assert.Positive(sender)
+		body, raw, err := st.GetMessageBodyAndRawContext(t.Context(), sent.MessageID)
+		require.NoError(err)
+		assert.Equal("Thanks!", body)
+		assert.JSONEq(`{"status_code":200,"request_id":"original-request","sentMessages":[{"id":"900000000000000001","quoteToken":"synthetic-sent-quote"}]}`, string(raw))
+		count, err := st.CountMessagesForSourceContext(t.Context(), draft.SourceID)
+		require.NoError(err)
+		assert.Equal(int64(2), count)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&summaryCount))
+		assert.Equal(int64(2), summaryCount)
 	})
-	require.NoError(err)
-	var parent sql.NullInt64
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
-	assert.False(parent.Valid)
+	t.Run("earlier incoming quote", func(t *testing.T) {
+		assert := assert.New(t)
+		require := require.New(t)
+		st, draft, _ := replyStoreFixture(t)
+		quoteMetadata := sql.NullString{String: `{"quotedMessageId":"900000000000000001"}`, Valid: true}
+		quotedMessageID, err := st.PersistMessageContext(t.Context(), &store.MessagePersistData{
+			Message:  &store.Message{SourceID: draft.SourceID, ConversationID: draft.ConversationID, SourceMessageID: "200", MessageType: "line"},
+			BodyText: sql.NullString{String: "Reply received before local recovery", Valid: true}, Metadata: &quoteMetadata,
+			FTS: &store.FTSDoc{Body: "Reply received before local recovery"},
+		})
+		require.NoError(err)
+		var parent sql.NullInt64
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
+		assert.False(parent.Valid)
 
-	acceptedReply(t, st, draft)
-	sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
-	require.True(parent.Valid)
-	assert.Equal(sent.MessageID, parent.Int64)
+		acceptedReply(t, st, draft)
+		sent, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+		require.NoError(err)
+		require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT reply_to_message_id FROM messages WHERE id=?`), quotedMessageID).Scan(&parent))
+		require.True(parent.Valid)
+		assert.Equal(sent.MessageID, parent.Int64)
+	})
 }
 
 func TestLineReplyCompletionFailureKeepsAcceptedDraft(t *testing.T) {
@@ -350,28 +362,6 @@ func TestLineReplyAdmissionHonorsSyncSourceScope(t *testing.T) {
 	require.ErrorContains(t, err, "scoped to source")
 }
 
-func TestLineReplyCompletionUpdatesConversationSummary(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	st, draft, _ := replyStoreFixture(t)
-	require.NoError(st.RecomputeConversationStatsForConversationContext(t.Context(), draft.ConversationID))
-	accepted := acceptedReply(t, st, draft)
-	_, err := st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	var count int64
-	var latest sql.NullTime
-	var preview sql.NullString
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count,last_message_at,last_message_preview FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count, &latest, &preview))
-	assert.Equal(int64(2), count)
-	require.True(latest.Valid)
-	assert.True(accepted.AdmittedAt.Equal(latest.Time))
-	assert.Equal(sql.NullString{String: "Thanks!", Valid: true}, preview)
-	_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-	require.NoError(err)
-	require.NoError(st.DB().QueryRowContext(t.Context(), st.Rebind(`SELECT message_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
-	assert.Equal(int64(2), count)
-}
-
 func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 	for _, phase := range []string{"before admission", "lost response", "known receipt"} {
 		t.Run(phase, func(t *testing.T) {
@@ -412,7 +402,7 @@ func TestLineReplyMissingParentAdmissionAndRecovery(t *testing.T) {
 }
 
 func TestLineReplyTerminalReceiptAllowsSourceMerge(t *testing.T) {
-	for _, state := range []string{store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
+	for _, state := range []string{store.LineReplyAdmitted, store.LineReplyProviderRejected, store.LineReplyRemoteUnknownExpired, store.LineReplyAcceptedUnresolvedExpired, store.LineReplySent} {
 		t.Run(state, func(t *testing.T) {
 			require := require.New(t)
 			assert := assert.New(t)
@@ -420,36 +410,49 @@ func TestLineReplyTerminalReceiptAllowsSourceMerge(t *testing.T) {
 			now := time.Date(2026, 10, 30, 0, 0, 0, 0, time.UTC)
 			attempt, err := st.AdmitLineReplyContext(t.Context(), draft.DraftID, 1, now, allowLineReply)
 			require.NoError(err)
-			_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
-			require.NoError(err)
-			outcome := store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
-			if state == store.LineReplyAcceptedUnresolvedExpired || state == store.LineReplySent {
-				outcome = store.LineReplyOutcome{StatusCode: 200, Accepted: true}
-				if state == store.LineReplySent {
-					outcome.MessageID = "200"
+			if state != store.LineReplyAdmitted {
+				_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now, now.Add(time.Minute))
+				require.NoError(err)
+				outcome := store.LineReplyOutcome{StatusCode: 400, DefiniteRejection: true}
+				if state == store.LineReplyAcceptedUnresolvedExpired || state == store.LineReplySent {
+					outcome = store.LineReplyOutcome{StatusCode: 200, Accepted: true}
+					if state == store.LineReplySent {
+						outcome.MessageID = "200"
+					}
 				}
-			}
-			if state != store.LineReplyRemoteUnknownExpired {
-				_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
-				require.NoError(err)
-			}
-			if state == store.LineReplySent {
-				_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
-				require.NoError(err)
-			} else {
-				if state != store.LineReplyProviderRejected {
+				if state != store.LineReplyRemoteUnknownExpired {
+					_, err = st.RecordLineReplyOutcomeContext(t.Context(), draft.DraftID, outcome)
+					require.NoError(err)
+				}
+				if state == store.LineReplySent {
+					_, err = st.CompleteLineReplyContext(t.Context(), draft.DraftID)
+					require.NoError(err)
+				} else if state != store.LineReplyProviderRejected {
 					_, err = st.StartLineReplyRequestContext(t.Context(), draft.DraftID, now.Add(23*time.Hour), now.Add(24*time.Hour))
 					require.ErrorIs(err, store.ErrLineReplyExpired)
 				}
+			}
+			if state != store.LineReplySent {
 				require.NoError(st.DeleteChatDraftContext(t.Context(), draft.DraftID, 1))
 			}
 			target, err := st.GetOrCreateSource("line", "2000000002")
 			require.NoError(err)
+			if state == store.LineReplyAdmitted {
+				_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID, DryRun: true})
+				require.NoError(err)
+				previewed, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
+				require.NoError(err)
+				assert.Equal(store.LineReplyAdmitted, previewed.State)
+			}
 			_, err = st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: draft.SourceID, IntoSourceID: target.ID})
 			require.NoError(err)
 			receipt, err := st.GetLineReplyAttemptContext(t.Context(), draft.DraftID)
 			require.NoError(err)
-			assert.Equal(state, receipt.State)
+			want := state
+			if state == store.LineReplyAdmitted {
+				want = store.LineReplyRemoteUnknownExpired
+			}
+			assert.Equal(want, receipt.State)
 			assert.Equal(attempt.RetryKey, receipt.RetryKey)
 		})
 	}

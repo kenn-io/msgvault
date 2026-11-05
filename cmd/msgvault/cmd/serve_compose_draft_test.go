@@ -49,92 +49,91 @@ func TestDraftComposeArgs(t *testing.T) {
 }
 
 func TestDraftComposeEndToEnd(t *testing.T) {
-	t.Run("IMAP", func(t *testing.T) {
-		assertions := assert.New(t)
-		requirements := require.New(t)
-		fixture := newDraftReplyFixture(t)
-		adapter := fixture.grantedAdapter()
-		events := make([]api.CLIRunEvent, 0, 1)
-		err := adapter.runCLIComposeDraft(t.Context(), api.CLIRunRequest{Args: []string{
-			"draft-compose", "--source-id", strconv.FormatInt(fixture.source.ID, 10),
-			"--from", testutil.IMAPTestUsername,
-			"--to", "to@example.test", "--cc", "copy@example.test", "--bcc", "hidden@example.test",
-			"--subject", "Compose subject", "--body", "compose body", "--json",
-		}}, func(event api.CLIRunEvent) error {
-			events = append(events, event)
-			return nil
-		})
-		requirements.NoError(err)
-		requirements.Len(events, 1)
-		var result draftReplyOutput
-		requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
-		assertions.Equal(draftReplyStatusCreated, result.Status)
-		assertions.Equal(int64(1), result.Revision)
-
-		message, err := fixture.store.GetMessage(result.MessageID)
-		requirements.NoError(err)
-		assertions.Equal([]string{"to@example.test"}, message.To)
-		assertions.Equal([]string{"copy@example.test"}, message.Cc)
-		assertions.Equal([]string{"hidden@example.test"}, message.Bcc)
-		raw, err := fixture.store.GetMessageRaw(result.MessageID)
-		requirements.NoError(err)
-		assertions.Contains(string(raw), "Bcc:")
-		assertions.Contains(string(raw), "hidden@example.test")
-
-		// The backends tokenize punctuation in full email queries differently.
-		matches, total, err := fixture.store.SearchMessages("copy", 0, 10)
-		requirements.NoError(err)
-		requirements.Equal(int64(1), total)
-		requirements.Len(matches, 1)
-		assertions.Equal(result.MessageID, matches[0].ID)
+	assertions := assert.New(t)
+	requirements := require.New(t)
+	fixture := newDraftReplyFixture(t)
+	adapter := fixture.grantedAdapter()
+	events := make([]api.CLIRunEvent, 0, 1)
+	err := adapter.runCLIComposeDraft(t.Context(), api.CLIRunRequest{Args: []string{
+		"draft-compose", "--source-id", strconv.FormatInt(fixture.source.ID, 10),
+		"--from", testutil.IMAPTestUsername,
+		"--to", "to@example.test", "--cc", "copy@example.test", "--bcc", "hidden@example.test",
+		"--subject", "Compose subject", "--body", "compose body", "--json",
+	}}, func(event api.CLIRunEvent) error {
+		events = append(events, event)
+		return nil
 	})
-	t.Run("LINE owner CLI", func(t *testing.T) {
-		assert := assert.New(t)
-		require := require.New(t)
-		a, draft, fake := lineReplyAdapterFixture(t)
-		refreshed := 0
-		a.draftCacheRefresh = func(ctx context.Context, source string) error {
-			refreshed++
-			require.NoError(ctx.Err())
-			assert.Equal("2000000001", source)
-			execution, err := a.store.AcquireSyncExecutionContext(ctx, draft.SourceID)
-			require.NoError(err)
-			require.NoError(execution.Release())
-			return errors.New("synthetic cache failure")
-		}
-		server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
-		defer server.Close()
-		ctx := configureRemoteDaemonForTest(t, server.URL)
-		run := func(args ...string) (string, error) {
-			root := &cobra.Command{Use: "msgvault"}
-			root.SetContext(ctx)
-			root.AddCommand(newSendLineReplyCommand(), newDraftComposeCommand())
-			silenceUsageInRunE(root)
-			var output bytes.Buffer
-			root.SetOut(&output)
-			root.SetErr(&output)
-			root.SetArgs(args)
-			err := root.ExecuteContext(ctx)
-			return output.String(), err
-		}
-		parent, err := a.store.LineMessageContext(t.Context(), draft.SourceID, "100")
+	requirements.NoError(err)
+	requirements.Len(events, 1)
+	var result draftReplyOutput
+	requirements.NoError(json.Unmarshal([]byte(events[0].Data), &result))
+	assertions.Equal(draftReplyStatusCreated, result.Status)
+	assertions.Equal(int64(1), result.Revision)
+
+	message, err := fixture.store.GetMessage(result.MessageID)
+	requirements.NoError(err)
+	assertions.Equal([]string{"to@example.test"}, message.To)
+	assertions.Equal([]string{"copy@example.test"}, message.Cc)
+	assertions.Equal([]string{"hidden@example.test"}, message.Bcc)
+	raw, err := fixture.store.GetMessageRaw(result.MessageID)
+	requirements.NoError(err)
+	assertions.Contains(string(raw), "Bcc:")
+	assertions.Contains(string(raw), "hidden@example.test")
+
+	// The backends tokenize punctuation in full email queries differently.
+	matches, total, err := fixture.store.SearchMessages("copy", 0, 10)
+	requirements.NoError(err)
+	requirements.Equal(int64(1), total)
+	requirements.Len(matches, 1)
+	assertions.Equal(result.MessageID, matches[0].ID)
+}
+
+func TestLineDraftComposeThroughOwnerCLI(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	a, draft, fake := lineReplyAdapterFixture(t)
+	refreshed := 0
+	a.draftCacheRefresh = func(ctx context.Context, source string) error {
+		refreshed++
+		require.NoError(ctx.Err())
+		assert.Equal("2000000001", source)
+		execution, err := a.store.AcquireSyncExecutionContext(ctx, draft.SourceID)
 		require.NoError(err)
-		createdJSON, err := run("draft-compose", "--conversation", strconv.FormatInt(draft.ConversationID, 10), "--reply-to", strconv.FormatInt(parent.ID, 10), "--body", "Other reviewed draft", "--json")
-		require.NoError(err)
-		var created chatDraftOutput
-		require.NoError(json.Unmarshal([]byte(createdJSON), &created))
-		assert.Equal("line", created.SourceType)
-		out, err := run("send-line-reply", draft.DraftID, "--revision", "1", "--json")
-		require.NoError(err)
-		var sent line.ReplyReceipt
-		require.NoError(json.Unmarshal([]byte(out), &sent))
-		assert.Equal("sent", sent.Status)
-		assert.True(sent.Accepted)
-		_, err = run("send-line-reply", created.DraftID, "--revision", "1", "--json")
-		require.NoError(err)
-		assert.Equal(2, refreshed)
-		assert.Equal(2, fake.Count("POST", "/v2/bot/message/push"))
-	})
+		require.NoError(execution.Release())
+		return errors.New("synthetic cache failure")
+	}
+	server := httptest.NewServer(api.NewServerWithOptions(api.ServerOptions{Config: a.config, Store: a, Logger: a.logger}).Router())
+	defer server.Close()
+	ctx := configureRemoteDaemonForTest(t, server.URL)
+	run := func(args ...string) (string, error) {
+		root := &cobra.Command{Use: "msgvault"}
+		root.SetContext(ctx)
+		root.AddCommand(newSendLineReplyCommand(), newDraftComposeCommand())
+		silenceUsageInRunE(root)
+		var output bytes.Buffer
+		root.SetOut(&output)
+		root.SetErr(&output)
+		root.SetArgs(args)
+		err := root.ExecuteContext(ctx)
+		return output.String(), err
+	}
+	parent, err := a.store.LineMessageContext(t.Context(), draft.SourceID, "100")
+	require.NoError(err)
+	createdJSON, err := run("draft-compose", "--conversation", strconv.FormatInt(draft.ConversationID, 10), "--reply-to", strconv.FormatInt(parent.ID, 10), "--body", "Other reviewed draft", "--json")
+	require.NoError(err)
+	var created chatDraftOutput
+	require.NoError(json.Unmarshal([]byte(createdJSON), &created))
+	assert.Equal("line", created.SourceType)
+	out, err := run("send-line-reply", draft.DraftID, "--revision", "1", "--json")
+	require.NoError(err)
+	var sent line.ReplyReceipt
+	require.NoError(json.Unmarshal([]byte(out), &sent))
+	assert.Equal("sent", sent.Status)
+	assert.True(sent.Accepted)
+	_, err = run("send-line-reply", created.DraftID, "--revision", "1", "--json")
+	require.NoError(err)
+	assert.Equal(2, refreshed)
+	assert.Equal(2, fake.Count("POST", "/v2/bot/message/push"))
 }
 
 func TestDraftComposeHTTPPublishesManagedDraft(t *testing.T) {

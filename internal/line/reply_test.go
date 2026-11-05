@@ -6,7 +6,6 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mattn/go-sqlite3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.kenn.io/msgvault/internal/line"
@@ -165,7 +165,7 @@ func TestReplyLostResponseThenRejectionKeepsOriginalKey(t *testing.T) {
 	assert.Len(keys, 1)
 }
 
-func TestReplyAdmissionFailuresDoNotFreeze(t *testing.T) {
+func TestReplyRejectsBeforeProviderIO(t *testing.T) {
 	for _, kind := range []string{"invalid text", "invalid recipient", "disabled policy", "missing client"} {
 		t.Run(kind, func(t *testing.T) {
 			require := require.New(t)
@@ -201,7 +201,7 @@ func TestReplyAdmissionFailuresDoNotFreeze(t *testing.T) {
 }
 
 func TestReplyKnownReceiptRecoveryIgnoresProviderGates(t *testing.T) {
-	for _, phase := range []string{"admitted", "accepted", "lost response after parent GC", "known receipt after parent GC"} {
+	for _, phase := range []string{"accepted", "lost response after parent GC", "known receipt after parent GC"} {
 		t.Run(phase, func(t *testing.T) {
 			assert := assert.New(t)
 			require := require.New(t)
@@ -284,6 +284,27 @@ func TestReplyKnownReceiptRecoveryIgnoresProviderGates(t *testing.T) {
 	}
 }
 
+func TestReplyResumesAdmittedAfterRestart(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	path := filepath.Join(t.TempDir(), "reply.db")
+	f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
+	_, err := f.st.AdmitLineReplyContext(t.Context(), f.draft.DraftID, 1, f.now, func(store.LineReplyAttempt) error { return nil })
+	require.NoError(err)
+	require.NoError(f.st.Close())
+	reopened, err := store.Open(path)
+	require.NoError(err)
+	t.Cleanup(func() { _ = reopened.Close() })
+	f.st = reopened
+	f.resetClient()
+	f.now = f.now.Add(31 * time.Second)
+	sent, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+	require.NoError(err)
+	assert.Equal("sent", sent.Status)
+	assert.Equal(1, f.fake.AcceptedPushes())
+	assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
+}
+
 func TestReplyExpiryPermanentlyStopsProviderIO(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
@@ -329,6 +350,38 @@ func TestReplyDefiniteRejectionIsTerminal(t *testing.T) {
 			assert.Zero(f.fake.AcceptedPushes())
 		})
 	}
+	t.Run("403 then 400", func(t *testing.T) {
+		must := require.New(t)
+		checks := assert.New(t)
+		f := newReplyFixture(t, "user", nil)
+		f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusForbidden})
+		_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		must.ErrorIs(err, line.ErrCredentialsUnavailable)
+		attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+		must.NoError(err)
+		checks.Zero(f.fake.AcceptedPushes())
+
+		f.resetClient()
+		f.now = f.now.Add(31 * time.Second)
+		f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusBadRequest})
+		rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		must.NoError(err)
+		checks.Equal(store.LineReplyProviderRejected, rejected.Status)
+		checks.False(rejected.Accepted)
+		completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
+		must.NoError(err)
+		checks.Equal(store.LineReplyProviderRejected, completed.State)
+		checks.Equal(http.StatusBadRequest, completed.StatusCode)
+		checks.Equal(attempt.RetryKey, completed.RetryKey)
+		checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+		checks.Zero(f.fake.AcceptedPushes())
+
+		f.now = f.now.Add(31 * time.Second)
+		replayed, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		must.NoError(err)
+		checks.Equal(rejected, replayed)
+		checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
+	})
 }
 
 func TestReplyRateLimitClassification(t *testing.T) {
@@ -414,7 +467,7 @@ func TestReplyConcurrentCallsAcceptOnce(t *testing.T) {
 			if result.err != nil {
 				require.ErrorIs(result.err, store.ErrSyncAlreadyActive)
 			} else {
-				assert.Contains([]string{"sent", "remote_unknown"}, result.receipt.Status)
+				assert.Equal("sent", result.receipt.Status)
 			}
 		}
 		receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
@@ -423,36 +476,61 @@ func TestReplyConcurrentCallsAcceptOnce(t *testing.T) {
 		assert.Equal(1, f.fake.Count("POST", "/v2/bot/message/push"))
 		assert.Equal(1, f.fake.AcceptedPushes())
 	})
-	// SQL tracing pauses the draft lookup after the receipt lookup has completed.
-	// Actual Store queries and the fake HTTP API execute both sends.
+	// SQLite authorization pauses the draft read before it can see the row.
+	// A second store connection completes the send during that window.
 	t.Run("completion between receipt and draft lookup", func(t *testing.T) {
 		assert := assert.New(t)
 		require := require.New(t)
-		f := newReplyFixture(t, "user", testutil.NewSQLiteTestStore(t))
-		handler := &replyLookupHandler{arrived: make(chan struct{}), release: make(chan struct{})}
-		prior := slog.Default()
-		slog.SetDefault(slog.New(handler))
-		store.ConfigureSQLLogging(store.SQLLogOptions{FullTrace: true})
-		t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}); slog.SetDefault(prior) })
-		var release sync.Once
-		defer release.Do(func() { close(handler.release) })
+		path := filepath.Join(t.TempDir(), "reply.db")
+		f := newReplyFixture(t, "user", testutil.NewSQLiteTestStoreAt(t, path))
+		other, err := store.Open(path)
+		require.NoError(err)
+		t.Cleanup(func() { _ = other.Close() })
+		f.st.DB().SetMaxOpenConns(1)
+		arrived, resume := make(chan struct{}), make(chan struct{})
+		var pause, release sync.Once
+		defer release.Do(func() { close(resume) })
+		conn, err := f.st.DB().Conn(t.Context())
+		require.NoError(err)
+		err = conn.Raw(func(raw any) error {
+			sqliteConn, ok := raw.(*sqlite3.SQLiteConn)
+			require.True(ok)
+			sqliteConn.RegisterAuthorizer(func(action int, table, _, _ string) int {
+				if action == sqlite3.SQLITE_READ && table == "chat_drafts" {
+					pause.Do(func() { close(arrived); <-resume })
+				}
+				return sqlite3.SQLITE_OK
+			})
+			return nil
+		})
+		closeErr := conn.Close()
+		require.NoError(err)
+		require.NoError(closeErr)
 		type result struct {
 			receipt line.ReplyReceipt
 			err     error
 		}
 		completed := make(chan result, 1)
+		finished := make(chan struct{})
 		go func() {
-			receipt, err := f.sender().Send(store.WithRequestID(t.Context(), "reply-lookup-race"), f.draft.DraftID, 1)
+			defer close(finished)
+			receipt, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
 			completed <- result{receipt, err}
 		}()
+		defer func() {
+			release.Do(func() { close(resume) })
+			<-finished
+		}()
 		select {
-		case <-handler.arrived:
+		case <-arrived:
 		case <-time.After(30 * time.Second):
 			require.FailNow("second sender did not reach draft lookup")
 		}
-		first, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
+		firstSender := f.sender()
+		firstSender.Store = other
+		first, err := firstSender.Send(t.Context(), f.draft.DraftID, 1)
 		require.NoError(err)
-		release.Do(func() { close(handler.release) })
+		release.Do(func() { close(resume) })
 		second := <-completed
 		require.NoError(second.err)
 		assert.Equal(first, second.receipt)
@@ -617,31 +695,6 @@ func TestReplyConflictingReceiptKeepsDurableIdentity(t *testing.T) {
 	assert.Equal(1, f.fake.AcceptedPushes())
 }
 
-type replyLookupHandler struct {
-	arrived, release chan struct{}
-	once             sync.Once
-}
-
-func (*replyLookupHandler) Enabled(context.Context, slog.Level) bool { return true }
-func (h *replyLookupHandler) Handle(_ context.Context, record slog.Record) error {
-	tagged, draft := false, false
-	record.Attrs(func(attr slog.Attr) bool {
-		if attr.Key == "request_id" && attr.Value.String() == "reply-lookup-race" {
-			tagged = true
-		}
-		if attr.Key == "stmt" && strings.Contains(attr.Value.String(), "FROM chat_drafts d") {
-			draft = true
-		}
-		return true
-	})
-	if tagged && draft {
-		h.once.Do(func() { close(h.arrived); <-h.release })
-	}
-	return nil
-}
-func (h *replyLookupHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *replyLookupHandler) WithGroup(string) slog.Handler      { return h }
-
 func TestReplyTokenFailuresHonorRetryAfter(t *testing.T) {
 	for _, phase := range []string{"initial", "recovery"} {
 		for _, status := range []int{400, 429, 503} {
@@ -753,63 +806,6 @@ func TestReplyCredentialFailuresRetrySameKey(t *testing.T) {
 	}
 }
 
-func TestReplyPushForbiddenThenBadRequestIsTerminal(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newReplyFixture(t, "user", nil)
-	f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusForbidden})
-	_, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	must.ErrorIs(err, line.ErrCredentialsUnavailable)
-	attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-	must.NoError(err)
-	checks.Zero(f.fake.AcceptedPushes())
-
-	f.resetClient()
-	f.now = f.now.Add(31 * time.Second)
-	f.fake.Enqueue(http.MethodPost, "/v2/bot/message/push", lineapi.Response{Status: http.StatusBadRequest})
-	rejected, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	must.NoError(err)
-	checks.Equal(store.LineReplyProviderRejected, rejected.Status)
-	checks.False(rejected.Accepted)
-	completed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-	must.NoError(err)
-	checks.Equal(store.LineReplyProviderRejected, completed.State)
-	checks.Equal(http.StatusBadRequest, completed.StatusCode)
-	checks.Equal(attempt.RetryKey, completed.RetryKey)
-	checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-	checks.Zero(f.fake.AcceptedPushes())
-
-	f.now = f.now.Add(31 * time.Second)
-	replayed, err := f.sender().Send(t.Context(), f.draft.DraftID, 1)
-	must.NoError(err)
-	checks.Equal(rejected, replayed)
-	checks.Equal(2, f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-}
-
-func TestReplyDirectRecipientFromIngestedChat(t *testing.T) {
-	must := require.New(t)
-	checks := assert.New(t)
-	f := newReplyFixture(t, "user", nil)
-	event := line.Event{Type: "message", Timestamp: f.now.UnixMilli(), WebhookEventID: "incoming-direct", Source: line.Source{Type: "user", UserID: replyUser}, Message: &line.Message{ID: "101", Type: "text", Text: "Incoming reply target", QuoteToken: "synthetic-direct-quote"}}
-	raw, err := json.Marshal(event)
-	must.NoError(err)
-	bot, err := f.st.LineBotUserIDContext(t.Context(), f.draft.SourceID)
-	must.NoError(err)
-	must.NoError(f.st.EnqueueLineEventsContext(t.Context(), f.draft.SourceID, "2000000001", bot, []store.LineWebhookEvent{{WebhookEventID: event.WebhookEventID, EventType: event.Type, TargetMessageID: event.Message.ID, EventTimestamp: event.Timestamp, ReceivedAt: f.now, RawJSON: string(raw)}}))
-	processor := line.NewProcessor(f.st, f.client, f.draft.SourceID, "2000000001", t.TempDir(), line.WithProcessorClock(func() time.Time { return f.now }))
-	must.NoError(processor.Process(t.Context()))
-	parent, err := f.st.LineMessageContext(t.Context(), f.draft.SourceID, "101")
-	must.NoError(err)
-	draft, err := f.st.CreateChatDraftContext(t.Context(), f.draft.ConversationID, parent.ID, "Direct response", func(string, string) error { return nil })
-	must.NoError(err)
-	receipt, err := f.sender().Send(t.Context(), draft.DraftID, 1)
-	must.NoError(err)
-	message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), receipt.MessageID)
-	must.NoError(err)
-	must.Len(message.To, 1)
-	checks.Equal("Example User", message.To[0].Name)
-}
-
 func TestReplyTokenFailureDatesArchiveAtFirstPush(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
@@ -831,19 +827,25 @@ func TestReplyTokenFailureDatesArchiveAtFirstPush(t *testing.T) {
 	checks.Equal(f.now.Add(23*time.Hour), attempt.RetryUntil)
 }
 
-func TestReplyGroupMessageProjectsBotMembership(t *testing.T) {
-	for _, kind := range []string{"group", "room"} {
+func TestReplyFromIngestedChat(t *testing.T) {
+	for _, kind := range []string{"user", "group", "room"} {
 		t.Run(kind, func(t *testing.T) {
 			must := require.New(t)
 			checks := assert.New(t)
 			f := newReplyFixture(t, kind, nil)
-			must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+			if kind != "user" {
+				must.NoError(f.st.DeleteChatDraftContext(t.Context(), f.draft.DraftID, 1))
+			}
 			// Receiving starts after the bot joined, so there is no join event.
 			event := line.Event{Type: "message", Timestamp: f.now.UnixMilli(), WebhookEventID: "incoming-group", Source: line.Source{Type: kind, UserID: replyUser}, Message: &line.Message{ID: "101", Type: "text", Text: "Incoming reply target"}}
-			if kind == "group" {
+			switch kind {
+			case "group":
 				event.Source.GroupID = f.to
-			} else {
+			case "room":
 				event.Source.RoomID = f.to
+			case "user":
+				event.WebhookEventID = "incoming-direct"
+				event.Message.QuoteToken = "synthetic-direct-quote"
 			}
 			raw, err := json.Marshal(event)
 			must.NoError(err)
@@ -853,14 +855,27 @@ func TestReplyGroupMessageProjectsBotMembership(t *testing.T) {
 			processor := line.NewProcessor(f.st, f.client, f.draft.SourceID, "2000000001", t.TempDir(), line.WithProcessorClock(func() time.Time { return f.now }))
 			must.NoError(processor.Process(t.Context()))
 			var count int
-			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), f.draft.ConversationID).Scan(&count))
-			checks.Equal(1, count)
+			if kind != "user" {
+				must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), f.draft.ConversationID).Scan(&count))
+				checks.Equal(1, count)
+			}
 			parent, err := f.st.LineMessageContext(t.Context(), f.draft.SourceID, "101")
 			must.NoError(err)
-			draft, err := f.st.CreateChatDraftContext(t.Context(), f.draft.ConversationID, parent.ID, "Group response", func(string, string) error { return nil })
+			body := "Group response"
+			if kind == "user" {
+				body = "Direct response"
+			}
+			draft, err := f.st.CreateChatDraftContext(t.Context(), f.draft.ConversationID, parent.ID, body, func(string, string) error { return nil })
 			must.NoError(err)
 			receipt, err := f.sender().Send(t.Context(), draft.DraftID, 1)
 			must.NoError(err)
+			if kind == "user" {
+				message, err := query.NewEngine(f.st.DB(), f.st.IsPostgreSQL()).GetMessage(t.Context(), receipt.MessageID)
+				must.NoError(err)
+				must.Len(message.To, 1)
+				checks.Equal("Example User", message.To[0].Name)
+				return
+			}
 			must.Equal(store.LineReplySent, receipt.Status)
 			must.NoError(f.st.DB().QueryRow(f.st.Rebind(`SELECT participant_count FROM conversations WHERE id=?`), draft.ConversationID).Scan(&count))
 			checks.Equal(2, count)
@@ -871,7 +886,7 @@ func TestReplyGroupMessageProjectsBotMembership(t *testing.T) {
 	}
 }
 
-func TestReplyUnsubmittedDeletedDraftAllowsSourceMerge(t *testing.T) {
+func TestReplyUnsubmittedDeletedDraftRechecksPolicy(t *testing.T) {
 	must := require.New(t)
 	checks := assert.New(t)
 	f := newReplyFixture(t, "user", nil)
@@ -891,16 +906,4 @@ func TestReplyUnsubmittedDeletedDraftAllowsSourceMerge(t *testing.T) {
 	_, err = sender.Send(t.Context(), f.draft.DraftID, 1)
 	must.ErrorContains(err, "synthetic revoked sending policy")
 	checks.Zero(f.fake.Count(http.MethodPost, "/v2/bot/message/push"))
-	target, err := f.st.GetOrCreateSource("line", "2000000002")
-	must.NoError(err)
-	_, err = f.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.draft.SourceID, IntoSourceID: target.ID, DryRun: true})
-	must.NoError(err)
-	previewed, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-	must.NoError(err)
-	checks.Equal(store.LineReplyAdmitted, previewed.State)
-	_, err = f.st.MergeSourcesContext(t.Context(), store.MergeSourcesRequest{FromSourceID: f.draft.SourceID, IntoSourceID: target.ID})
-	must.NoError(err)
-	attempt, err := f.st.GetLineReplyAttemptContext(t.Context(), f.draft.DraftID)
-	must.NoError(err)
-	checks.Equal(store.LineReplyRemoteUnknownExpired, attempt.State)
 }

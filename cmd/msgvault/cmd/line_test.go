@@ -68,10 +68,13 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	checks.Contains(output, "Use webhook")
 	checks.Contains(output, "Webhook redelivery")
 	checks.NotContains(output, "Webhook route:")
+	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	must.NoError(err)
+	checks.False(loaded.GetLineSource("2000000001").AllowSend)
 	output, err = executeLineCommand(t, cfg, newAddLineCmd(), "--channel-id", "2000000002", "--secret-env", "OTHER_LINE_SECRET")
 	must.NoError(err)
 	checks.Contains(output, "Webhook route: /webhooks/line/2000000002")
-	loaded, err := config.Load(cfg.ConfigFilePath(), "")
+	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	must.Len(loaded.Line, 2)
 	checks.Equal("OTHER_LINE_SECRET", loaded.GetLineSource("2000000002").SecretEnv)
@@ -90,6 +93,8 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	checks.Equal("OTHER_LINE_SECRET", loaded.GetLineSource("2000000001").SecretEnv)
 	for index := range loaded.Line {
 		if loaded.Line[index].ChannelID == "2000000001" {
+			checks.False(loaded.Line[index].AllowSend)
+			loaded.Line[index].AllowSend = true
 			loaded.Line[index].Enabled = false
 		}
 	}
@@ -99,6 +104,7 @@ func TestLineRegistrationPreservesSettingsAndPrintsSetup(t *testing.T) {
 	loaded, err = config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.False(loaded.GetLineSource("2000000001").Enabled)
+	checks.True(loaded.GetLineSource("2000000001").AllowSend)
 }
 
 func TestLineCommandValidation(t *testing.T) {
@@ -230,25 +236,4 @@ func TestAddLinePreservesConcurrentConfigEdit(t *testing.T) {
 	loaded, err := config.Load(cfg.ConfigFilePath(), "")
 	must.NoError(err)
 	checks.Equal(17, loaded.Sync.RateLimitQPS)
-}
-
-func TestLineSendConfigSurvivesRegistration(t *testing.T) {
-	assert := assert.New(t)
-	require := require.New(t)
-	cfg, _, _ := lineWiringFixture(t)
-	args := []string{"--channel-id", "2000000001", "--secret-env", "EXAMPLE_LINE_SECRET"}
-	_, err := executeLineCommand(t, cfg, newAddLineCmd(), args...)
-	require.NoError(err)
-	loaded, err := config.Load(cfg.ConfigFilePath(), "")
-	require.NoError(err)
-	assert.False(loaded.Line[0].AllowSend)
-	loaded.Line[0].AllowSend = true
-	loaded.Line[0].Enabled = false
-	require.NoError(loaded.Save())
-	_, err = executeLineCommand(t, cfg, newAddLineCmd(), args...)
-	require.NoError(err)
-	loaded, err = config.Load(cfg.ConfigFilePath(), "")
-	require.NoError(err)
-	assert.True(loaded.Line[0].AllowSend)
-	assert.False(loaded.Line[0].Enabled)
 }
