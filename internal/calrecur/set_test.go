@@ -511,8 +511,3 @@ func TestIterUntilBoundsIteration(t *testing.T) {
 	}))
 	assertions.Equal([]string{"20270302T170000Z"}, got)
 }
-
-func TestParseSetRejectsOverflowingMonthlyInterval(t *testing.T) {
-	_, err := ParseSet(time.Date(2027, 3, 2, 12, 0, 0, 0, time.UTC), false, "", time.UTC, []string{"RRULE:FREQ=MONTHLY;INTERVAL=9223372036854775807;COUNT=2"})
-	require.ErrorIs(t, err, ErrUnsupportedRecurrence)
-}

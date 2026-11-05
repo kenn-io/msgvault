@@ -2051,14 +2051,13 @@ An invitation, its updates, and its cancellation share one event. Every
 contributing email keeps its full MIME and attachments, and the event survives
 deletion of any of them. A later email applies only when its `ORGANIZER`
 address matches the organizer of the email that created the event, ignoring
-case. Otherwise the event stays unchanged and the email records
-`update ignored: ORGANIZER does not match invite_organizer` in its
-`calendar_invite_errors` metadata. Organizer addresses are unauthenticated: a
+case. An event with no organizer accepts a revision that sets its organizer.
+An organizer mismatch leaves the event unchanged and logs a warning with the email message ID. Organizer addresses are unauthenticated: a
 sender who copies the `ORGANIZER` address can update or cancel the event.
-Invalid calendar parts leave the email intact and record
-`calendar_invite_errors`.
+Invalid calendar parts leave the email intact and log a warning with its message ID.
 
-To extract invites from emails already in the archive, run
+The next email re-derivation extracts invites from archived MIME automatically
+after a sync or import. To run it on demand, use
 [`repair-derived`](#repair-derived). It works from stored MIME without a provider
 connection:
 

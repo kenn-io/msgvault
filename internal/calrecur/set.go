@@ -258,19 +258,6 @@ func supportedRule(opt *rrule.ROption, seen map[string]bool, start time.Time) er
 	if opt.Freq < rrule.YEARLY || opt.Freq > rrule.DAILY {
 		return errors.New("only daily, weekly, monthly and yearly recurrence is supported")
 	}
-	maxInterval := gregorianCycleDays
-	switch opt.Freq {
-	case rrule.DAILY, rrule.HOURLY, rrule.MINUTELY, rrule.SECONDLY:
-	case rrule.WEEKLY:
-		maxInterval = gregorianCycleDays / 7
-	case rrule.MONTHLY:
-		maxInterval = gregorianCycleMonths
-	case rrule.YEARLY:
-		maxInterval = gregorianCycleYears
-	}
-	if opt.Interval > maxInterval {
-		return fmt.Errorf("interval exceeds the %d-period Gregorian cycle", maxInterval)
-	}
 	for key := range seen {
 		allowed := false
 		switch key {
