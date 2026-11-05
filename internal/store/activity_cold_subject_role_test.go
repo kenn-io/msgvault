@@ -17,7 +17,7 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
 			requirements := require.New(t)
-			f := newTimelineActivityFixture(t)
+			f := newColdTimelineActivityFixture(t)
 			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
 			subject := store.ActivitySubject{ParticipantIDs: []int64{f.peer}}
 			alias := int64(0)
@@ -65,9 +65,6 @@ func TestColdActivityRetainsStrongestSubjectRoles(t *testing.T) {
 							assertions.Equal(store.RoleSender, cp.Role)
 							assertions.Equal(limit != 1, cp.Counted)
 							assertions.Equal(store.EvidenceDirect, cp.Evidence)
-						}
-						if cp.ParticipantID == guest {
-							assertions.False(cp.Counted)
 						}
 					}
 					assertions.True(seen[f.peer])

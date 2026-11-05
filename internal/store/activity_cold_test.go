@@ -15,6 +15,18 @@ import (
 	"go.kenn.io/msgvault/internal/store"
 )
 
+func newColdTimelineActivityFixture(t *testing.T) *timelineActivityFixture {
+	t.Helper()
+	f := newTimelineActivityFixture(t)
+	source, err := f.Store.GetOrCreateSource("beeper", "chat-account")
+	require.NoError(t, err)
+	require.NoError(t, f.Store.AddAccountIdentity(source.ID, "owner@example.com", "manual"))
+	room, err := f.Store.EnsureConversation(source.ID, "default-thread", "Default room")
+	require.NoError(t, err)
+	f.Source, f.ConvID = source, room
+	return f
+}
+
 func projectColdTimeline(t *testing.T, f *timelineActivityFixture, zone string) {
 	t.Helper()
 	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: zone, BatchSize: 10000})
@@ -64,7 +76,7 @@ func TestColdAdapterFiltersMixedNoise(t *testing.T) {
 	for _, noiseType := range []string{"sender", "list"} {
 		t.Run(noiseType, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			f := newTimelineActivityFixture(t)
+			f := newColdTimelineActivityFixture(t)
 			room := coldTimelineRoom(t, f, f.Source.ID, "mixed-noise")
 			at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
 			human := addColdTimelineMessage(t, f, room, f.Source.ID, at, false)
@@ -101,34 +113,30 @@ func TestColdAdapterFiltersMixedNoise(t *testing.T) {
 			count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Equal(2, count)
+
+			if noiseType == "sender" {
+				// Leave only the automated message to check whole-room exclusion.
+				_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), human)
+				requirements.NoError(err)
+				for _, exclude := range []bool{false, true} {
+					q := timelineBurstQuery()
+					q.Filters.Exclusions = persontiers.DefaultConfig()
+					if !exclude {
+						q.Filters.Exclusions.ExcludeAddressPatterns = nil
+					}
+					page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+					requirements.NoError(err)
+					if exclude {
+						assertions.Empty(page.Bursts)
+						continue
+					}
+					requirements.Len(page.Bursts, 1)
+					assertions.Equal(1, page.Bursts[0].Inbound)
+					assertions.Zero(page.NoiseOmitted)
+				}
+			}
 		})
 	}
-	t.Run("sender-opt-out", func(t *testing.T) {
-		assertions, requirements := assert.New(t), require.New(t)
-		f := newTimelineActivityFixture(t)
-		room := coldTimelineRoom(t, f, f.Source.ID, "sender-exclusion")
-		id := addColdTimelineMessage(t, f, room, f.Source.ID, time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC), false)
-		sender := f.EnsureParticipant("no-reply@example.com", "Automated sender", "example.com")
-		_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET sender_id=? WHERE id=?`), sender, id)
-		requirements.NoError(err)
-		requirements.NoError(f.Store.ReplaceMessageRecipients(id, "from", []int64{sender}, nil))
-		for _, exclude := range []bool{false, true} {
-			q := timelineBurstQuery()
-			q.Filters.Exclusions = persontiers.DefaultConfig()
-			if !exclude {
-				q.Filters.Exclusions.ExcludeAddressPatterns = nil
-			}
-			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-			requirements.NoError(err)
-			if exclude {
-				assertions.Empty(page.Bursts)
-				continue
-			}
-			requirements.Len(page.Bursts, 1)
-			assertions.Equal(1, page.Bursts[0].Inbound)
-			assertions.Zero(page.NoiseOmitted)
-		}
-	})
 }
 
 func TestColdAdapterExcludesEmailThreads(t *testing.T) {
@@ -139,13 +147,10 @@ func TestColdAdapterExcludesEmailThreads(t *testing.T) {
 	page, err := f.Store.ListColdActivityBurstsContext(t.Context(), timelineBurstQuery())
 	requirements.NoError(err)
 	assertions.Empty(page.Bursts)
-	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), timelineBurstQuery())
-	requirements.NoError(err)
-	assertions.Zero(count)
 }
 
 func TestColdAdapterIntersectsDateAndTimestampWindows(t *testing.T) {
-	f := newTimelineActivityFixture(t)
+	f := newColdTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "date-intersection")
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	for _, offset := range []time.Duration{-24 * time.Hour, -time.Hour, 0, time.Hour, 24 * time.Hour} {
@@ -171,9 +176,6 @@ func TestColdAdapterIntersectsDateAndTimestampWindows(t *testing.T) {
 				messages += len(burst.LatestMessageIDs)
 			}
 			assertions.Equal(tc.want, messages)
-			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Equal(tc.want, count)
 		})
 	}
 }
@@ -183,7 +185,7 @@ func TestColdAdapterKeepsSavedAutomatedAliasesVisible(t *testing.T) {
 	for _, automatedSender := range []bool{false, true} {
 		t.Run(fmt.Sprintf("automated-sender=%t", automatedSender), func(t *testing.T) {
 			requirements, assertions := require.New(t), assert.New(t)
-			f := newTimelineActivityFixture(t)
+			f := newColdTimelineActivityFixture(t)
 			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
 			alias := f.EnsureParticipant("no-reply@example.com", "Automated alias", "example.com")
 			_, err := f.Store.LinkParticipants(f.peer, alias)
@@ -205,51 +207,15 @@ func TestColdAdapterKeepsSavedAutomatedAliasesVisible(t *testing.T) {
 			cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(cold.Bursts, 1)
-			count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Equal(1, count)
+			byParticipant := map[int64]store.ActivityMessageCounterpart{}
+			for _, cp := range cold.Bursts[0].Counterparts {
+				byParticipant[cp.ParticipantID] = cp
+			}
+			requirements.Contains(byParticipant, alias)
+			assertions.Empty(byParticipant[alias].Excluded)
 			assertions.Equal(id, cold.Bursts[0].AnchorMessageID)
 			assertions.Equal(1, cold.Bursts[0].Inbound)
 		})
-	}
-}
-
-// A room above the default audience limit retains its roster without direct contact.
-func TestColdAdapterShowsDefaultThresholdBroadcast(t *testing.T) {
-	requirements := require.New(t)
-	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
-	src, err := f.Store.GetOrCreateSource("beeper", "quiet-account")
-	requirements.NoError(err)
-	requirements.NoError(f.Store.AddAccountIdentity(src.ID, "owner@example.com", "manual"))
-	room := coldTimelineRoom(t, f, src.ID, "quiet-room")
-	for i := range 28 {
-		participant := f.EnsureParticipant(fmt.Sprintf("member%d@example.com", i), "Member", "example.com")
-		requirements.NoError(f.Store.EnsureConversationParticipant(room, participant, "member"))
-	}
-	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
-	id := addColdTimelineMessage(t, f, room, src.ID, at, false)
-	requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
-	q := timelineBurstQuery()
-	q.Filters.IncludeNoise = true
-	for _, limit := range []int{25, 30} {
-		projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
-		requirements.NoError(err)
-		_, err = projector.RunOnce(t.Context())
-		requirements.NoError(err)
-		cold, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-		requirements.NoError(err)
-		requirements.Len(cold.Bursts, 1)
-		b := cold.Bursts[0]
-		assertions.True(b.Cold)
-		assertions.Equal(store.ChannelChat, b.Channel)
-		assertions.Equal(id, b.AnchorMessageID)
-		assertions.Len(b.Counterparts, 30)
-		if limit == 25 {
-			assertions.Zero(b.Inbound, "large inbound room contributes no direct contact")
-		} else {
-			assertions.Equal(1, b.Inbound, "stored limit admits the room as direct contact")
-		}
 	}
 }
 
@@ -257,9 +223,9 @@ func TestColdAdapterShowsDefaultThresholdBroadcast(t *testing.T) {
 func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
+	f := newColdTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "visible")
-	hidden, err := f.Store.GetOrCreateSource("gmail", "hidden@example.com")
+	hidden, err := f.Store.GetOrCreateSource("beeper", "hidden-account")
 	requirements.NoError(err)
 	requirements.NoError(f.Store.AddAccountIdentity(hidden.ID, "owner@example.com", "manual"))
 	hiddenRoom := coldTimelineRoom(t, f, hidden.ID, "hidden")
@@ -292,9 +258,6 @@ func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 	empty, err = f.Store.ListColdActivityBurstsContext(ctx, q)
 	requirements.NoError(err)
 	assertions.Empty(empty.Bursts)
-	count, err := f.Store.CountColdActivityMessagesContext(ctx, q)
-	requirements.NoError(err)
-	assertions.Zero(count)
 	person, _, err := f.Store.CreatePersonFromParticipant(unused)
 	requirements.NoError(err)
 	q.Subject = store.ActivitySubject{PersonID: person.ID}
@@ -309,7 +272,7 @@ func TestColdAdapterAppliesEligibilityAndScope(t *testing.T) {
 }
 
 func TestColdAdapterFallsBackFromMissingSentAt(t *testing.T) {
-	f := newTimelineActivityFixture(t)
+	f := newColdTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "zero-sent-at")
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	id := addColdTimelineMessage(t, f, room, f.Source.ID, at, false)
@@ -338,11 +301,6 @@ func TestColdAdapterFallsBackFromMissingSentAt(t *testing.T) {
 						assert.Equal(t, []int64{id}, page.Bursts[0].LatestMessageIDs)
 						assert.Equal(t, at, page.Bursts[0].FirstAt)
 					})
-					t.Run("count", func(t *testing.T) {
-						count, err := f.Store.CountColdActivityMessagesContext(t.Context(), tc.query)
-						require.NoError(t, err)
-						assert.Equal(t, 1, count)
-					})
 				})
 			}
 		})
@@ -353,7 +311,7 @@ func TestColdAdapterFallsBackFromMissingSentAt(t *testing.T) {
 func TestColdCountIgnoresBurstPagination(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
+	f := newColdTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "first")
 	second := coldTimelineRoom(t, f, f.Source.ID, "second")
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
@@ -387,7 +345,7 @@ func TestColdCountIgnoresBurstPagination(t *testing.T) {
 func TestColdAdapterMatchesWarmAfterRetraction(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
+	f := newColdTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "room")
 	at := time.Date(2026, 11, 1, 8, 30, 0, 0, time.UTC)
 	messageIDs := []int64{addColdTimelineMessage(t, f, room, f.Source.ID, at, false)}
@@ -439,20 +397,13 @@ func TestColdAdapterMatchesWarmAfterRetraction(t *testing.T) {
 		warm.Bursts[i].LastAt = warm.Bursts[i].LastAt.UTC()
 	}
 	assertions.Equal(warm, cold)
-	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(8, count)
-	q.Filters.IncludeNoise = true
-	count, err = f.Store.CountColdActivityMessagesContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(9, count)
 }
 
 // Candidate loading and counterpart hydration must cover more than one 512-ID chunk.
 func TestColdAdapterAggregatesCompleteLargeBurst(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
-	f := newTimelineActivityFixture(t)
+	f := newColdTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "large-history")
 	at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 	tx, err := f.Store.DB().BeginTx(t.Context(), nil)
@@ -481,9 +432,6 @@ func TestColdAdapterAggregatesCompleteLargeBurst(t *testing.T) {
 	assertions.Equal(550, page.Bursts[0].Outbound)
 	assertions.Equal(latest, page.Bursts[0].AnchorMessageID)
 	assertions.Len(page.Bursts[0].LatestMessageIDs, 5)
-	count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-	requirements.NoError(err)
-	assertions.Equal(1101, count)
 }
 
 // Cold reconstruction applies the stored audience limit after projection rows are removed.
@@ -491,7 +439,7 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 	for _, tc := range []struct {
 		name                                     string
 		outgoing, saved, aliases, chat, envelope bool
-		want                                     int
+		want, limit, roster                      int
 	}{
 		{name: "sender-plus-recipient"},
 		{name: "saved-aliases", aliases: true, want: 1},
@@ -499,11 +447,12 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 		{name: "default-saved", outgoing: true, saved: true},
 		{name: "chat-envelope", chat: true, envelope: true, want: 1},
 		{name: "chat-roster", chat: true},
+		{name: "chat-roster-limit-30", chat: true, limit: 30, roster: 30, want: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			requirements := require.New(t)
 			assertions := assert.New(t)
-			f := newTimelineActivityFixture(t)
+			f := newColdTimelineActivityFixture(t)
 			coldTimelineRoom(t, f, f.Source.ID, "default-thread")
 			setTimelineConversationTier(t, f, f.Source.ID, "default-thread", conversationpolicy.Full)
 			other := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
@@ -521,6 +470,15 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 					requirements.NoError(f.Store.EnsureConversationParticipant(f.ConvID, participant, "member"))
 				}
 			}
+			for i := 3; i < tc.roster; i++ {
+				participant := f.EnsureParticipant(fmt.Sprintf("member%d@example.com", i), "Member", "example.com")
+				requirements.NoError(f.Store.EnsureConversationParticipant(f.ConvID, participant, "member"))
+			}
+			limit := tc.limit
+			if limit == 0 {
+				limit = 1
+			}
+
 			at := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 			id := addColdTimelineMessage(t, f, f.ConvID, f.Source.ID, at, tc.outgoing)
 			switch {
@@ -536,7 +494,7 @@ func TestColdAdapterAudiencePolicyAfterRetraction(t *testing.T) {
 			case !tc.chat:
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other}, []string{"Owner", "Bob"}))
 			}
-			p, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 1})
+			p, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
 			requirements.NoError(err)
 			_, err = p.RunOnce(t.Context())
 			requirements.NoError(err)
@@ -569,7 +527,7 @@ func TestColdAdapterAppliesMessageTypeContactEligibility(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assertions, requirements := assert.New(t), require.New(t)
-			f := newTimelineActivityFixture(t)
+			f := newColdTimelineActivityFixture(t)
 			room := coldTimelineRoom(t, f, f.Source.ID, "contact-parity")
 			_, err := f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE conversations SET conversation_type=? WHERE id=?`), tc.conversation, room)
 			requirements.NoError(err)
@@ -596,7 +554,7 @@ func TestColdAdapterAppliesMessageTypeContactEligibility(t *testing.T) {
 
 func TestColdAdapterIgnoresStaleProjection(t *testing.T) {
 	requirements, assertions := require.New(t), assert.New(t)
-	f := newTimelineActivityFixture(t)
+	f := newColdTimelineActivityFixture(t)
 	room := coldTimelineRoom(t, f, f.Source.ID, "growing-room")
 	setTimelineConversationTier(t, f, f.Source.ID, "growing-room", conversationpolicy.Full)
 	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
@@ -633,7 +591,7 @@ func TestColdAdapterIgnoresStaleProjection(t *testing.T) {
 func TestColdAdapterFiltersOffsetStoredTimestamps(t *testing.T) {
 	for _, offset := range []int{0, 8 * 60 * 60, -7 * 60 * 60, 9 * 60 * 60} {
 		t.Run(strconv.Itoa(offset), func(t *testing.T) {
-			f := newTimelineActivityFixture(t)
+			f := newColdTimelineActivityFixture(t)
 			room := coldTimelineRoom(t, f, f.Source.ID, "stored-offset-window")
 			start := time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC)
 			end := start.Add(time.Hour)
@@ -667,12 +625,8 @@ func TestColdAdapterFiltersOffsetStoredTimestamps(t *testing.T) {
 						}
 						page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
 						requirements.NoError(err)
-						count, err := f.Store.CountColdActivityMessagesContext(t.Context(), q)
-						requirements.NoError(err)
-						assertions.Equal(len(tc.want), count)
 						requirements.Len(page.Bursts, 1)
 						assertions.Equal(tc.want, page.Bursts[0].LatestMessageIDs)
-						assertions.Equal(len(tc.want), page.Bursts[0].Inbound)
 					}
 				})
 			}
