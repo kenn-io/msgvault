@@ -526,6 +526,8 @@ func TestListThreadMixedOffsetsBeforePagination(t *testing.T) {
 	// Instants a millisecond apart sort by time, not by id or raw text.
 	assert.Equal(later, firstID("2026-01-15 14:00:00.002+00:00", "2026-01-15 14:00:00.001+00:00"))
 	assert.Equal(earlier, firstID("2026-01-15 14:00:00.001+00:00", "2026-01-15 09:00:00.002-05:00"))
+	// Instants within one millisecond tie and fall back to id.
+	assert.Equal(earlier, firstID("2026-01-15 14:00:00.000200+00:00", "2026-01-15 14:00:00.000100+00:00"))
 	// Equal instants written with different offsets fall back to id.
 	assert.Equal(earlier, firstID("2026-01-15 14:00:00+00:00", "2026-01-15 09:00:00-05:00"))
 }
