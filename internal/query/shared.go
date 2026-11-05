@@ -94,11 +94,11 @@ func appendAccountScopeConditions(
 }
 
 // statsRequireSourceNative reports whether totals count only records that exist
-// in their source provider. Deletion previews and search totals need that scope.
-// A caller that filters on calendar events asks for every one, including those
-// extracted from email, so the totals match the listing.
+// in their source provider. Unsearched deletion previews need that scope.
+// Searches and explicit calendar filters include events extracted from email
+// so their totals match the listing.
 func statsRequireSourceNative(opts StatsOptions) bool {
-	if opts.SearchScope {
+	if opts.SearchScope || opts.SearchQuery != "" {
 		return false
 	}
 	return opts.Filter == nil || opts.Filter.MessageType != messageTypeCalendar

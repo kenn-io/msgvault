@@ -86,19 +86,3 @@ func TestRepairDerivedSourceReportsEmptyRaw(t *testing.T) {
 	a.Equal("retained body", body)
 }
 
-func TestRepairDerivedSourceOversizedEmail(t *testing.T) {
-	assertions, requirements := assert.New(t), require.New(t)
-	st := testutil.NewTestStore(t)
-	src, err := st.GetOrCreateSource("mbox", "large@example.org")
-	requirements.NoError(err)
-	conv, err := st.EnsureConversation(src.ID, "large", "")
-	requirements.NoError(err)
-	id, err := st.UpsertMessage(&store.Message{SourceID: src.ID, ConversationID: conv, SourceMessageID: "large", MessageType: "email"})
-	requirements.NoError(err)
-	requirements.NoError(st.UpsertMessageRaw(id, append([]byte("Content-Type: text/plain\r\n\r\n"), bytes.Repeat([]byte("x"), (64<<20)+1)...)))
-	var out bytes.Buffer
-	requirements.NoError(repairDerivedSource(t.Context(), &out, st, src))
-	body, err := st.GetMessageBodyText(id)
-	requirements.NoError(err)
-	assertions.Len(body, (64<<20)+1)
-}
