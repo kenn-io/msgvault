@@ -9,9 +9,8 @@ import (
 // ActivityFilters selects the stored evidence admitted to an activity result.
 type ActivityFilters struct {
 	Exclusions   persontiers.Config
-	MaxDirect    int
 	IncludeNoise bool
-	// maxDirect is the archive projection policy for an omitted MaxDirect.
+	// maxDirect is the archive projection policy.
 	maxDirect int
 }
 

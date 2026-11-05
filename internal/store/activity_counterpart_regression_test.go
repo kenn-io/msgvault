@@ -86,3 +86,36 @@ func TestInvitationFromExcludedAutomatedSenderRemainsVisible(t *testing.T) {
 	require.NoError(err)
 	assert.Zero(aggregate.Count)
 }
+
+func TestInboundAudienceIncludesOtherAccountOwner(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	f := newTimelineActivityFixture(t)
+	person, _, err := f.Store.CreatePersonFromParticipant(f.peer)
+	require.NoError(err)
+	other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+	require.NoError(err)
+	require.NoError(f.Store.AddAccountIdentity(other.ID, "other@example.com", "manual"))
+	otherOwner := f.EnsureParticipant("other@example.com", "Other owner", "example.com")
+	id := f.add(t, f.ConvID, f.Source.ID, tierAsOf, false, "")
+	require.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, otherOwner}, nil))
+	projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", MaxDirectCounterparts: 1})
+	require.NoError(err)
+	_, err = projector.RunOnce(t.Context())
+	require.NoError(err)
+	tier, err := f.Store.ExplainPersonTierContext(t.Context(), person.ID, tierOptions())
+	require.NoError(err)
+	assert.Zero(tier.Signals.InboundLong)
+	q := timelineBurstQuery()
+	q.Subject = store.ActivitySubject{PersonID: person.ID}
+	q.Filters.IncludeNoise = true
+	page, err := f.Store.ListActivityBurstsContext(t.Context(), q)
+	require.NoError(err)
+	require.Len(page.Bursts, 1)
+	assert.Zero(page.Bursts[0].Inbound)
+	for _, cp := range page.Bursts[0].Counterparts {
+		if cp.ParticipantID == f.peer {
+			assert.False(cp.Counted)
+		}
+	}
+}

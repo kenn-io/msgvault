@@ -13,39 +13,29 @@ import (
 type activityReadWindow struct {
 	FromDate, ToDate string
 	After, Before    *time.Time
+	Until            *time.Time
 	ConversationID   int64
 	MessageIDs       []int64
 	Subject          ActivitySubject
 }
 
 func (s *Store) normalizedActivityFilters(ctx context.Context, f ActivityFilters) (ActivityFilters, error) {
-	if f.MaxDirect < 0 {
-		return f, fmt.Errorf("%w: negative direct counterpart limit", ErrInvalidActivityRequest)
-	}
 	if f.Exclusions.ShortWindowDays == 0 && f.Exclusions.LongWindowDays == 0 && f.Exclusions.ExcludeAddressPatterns == nil && f.Exclusions.ExcludeDomainPatterns == nil {
 		f.Exclusions = persontiers.DefaultConfig()
 	}
 	if err := f.Exclusions.Validate(); err != nil {
 		return f, fmt.Errorf("%w: %w", ErrInvalidActivityRequest, err)
 	}
-	if f.MaxDirect == 0 {
-		policy, err := s.ActivityDirectLimitTransitionContext(ctx)
-		if err != nil {
-			return f, err
-		}
-		f.maxDirect = policy.Target
+	policy, err := s.ActivityDirectLimitTransitionContext(ctx)
+	if err != nil {
+		return f, err
 	}
+	f.maxDirect = policy.Target
 	return f, nil
 }
 
 func (f ActivityFilters) directLimit() int {
-	if f.MaxDirect > 0 {
-		return f.MaxDirect
-	}
-	if f.maxDirect > 0 {
-		return f.maxDirect
-	}
-	return DefaultMaxDirectActivityCounterparts
+	return f.maxDirect
 }
 
 func activitySubjectClause(subject ActivitySubject, message string) (string, []any, error) {
@@ -193,6 +183,10 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	}
 	where += subject
 	args = append(args, subjectArgs...)
+	if w.Until != nil {
+		where += ` AND ae.occurred_at<=?`
+		args = append(args, w.Until.UTC())
+	}
 	classification, addressArgs := s.activityClassificationCTE(ctx, f)
 	args = append(args, addressArgs...)
 	listExcluded := "0"
@@ -244,39 +238,10 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 	return query, args, nil
 }
 
-// activityRepresentativesCTE keeps one copy per logical message and files
-// mailbox threads that continue one another under one logical thread. Threads
-// sharing a copy continue each other only when the shared copy ends one of
-// them; threads that both continue past it are separate replies to it. Each
-// group takes the thread holding most representatives, then the fullest one.
+// activityRepresentativesCTE keeps one copy per logical message in its mailbox conversation.
 func (s *Store) activityRepresentativesCTE() string {
-	return `kept_copies AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1), thread_copies AS MATERIALIZED (
- SELECT ` + s.dialect.RFC822CanonicalIDExpr("rfc822_message_id") + ` AS copy_key,source_id,conversation_id,occurred_at FROM scored
- WHERE channel='email' AND COALESCE(rfc822_message_id,'')<>'' AND conversation_id IS NOT NULL
- ), thread_ends AS MATERIALIZED (
- SELECT t.source_id,t.conversation_id,(SELECT MAX(ae.occurred_at) FROM messages m JOIN activity_events ae ON ae.message_id=m.id JOIN sources src ON src.id=m.source_id
- WHERE m.source_id=t.source_id AND m.conversation_id=t.conversation_id AND ` + s.activityLiveEligibleSQL() + ` AND ` + FullActivityEventWhere("ae") + `) AS last_at
- FROM thread_copies t GROUP BY t.source_id,t.conversation_id
- ), thread_edges AS MATERIALIZED (
- SELECT DISTINCT a.source_id,a.conversation_id,b.source_id AS member_source_id,b.conversation_id AS member_conversation_id
- FROM thread_copies a JOIN thread_copies b ON b.copy_key=a.copy_key
- JOIN thread_ends ae ON ae.source_id=a.source_id AND ae.conversation_id=a.conversation_id
- JOIN thread_ends be ON be.source_id=b.source_id AND be.conversation_id=b.conversation_id
- WHERE a.occurred_at>=ae.last_at OR b.occurred_at>=be.last_at
- ), thread_reach(source_id,conversation_id,member_source_id,member_conversation_id) AS (
- SELECT source_id,conversation_id,source_id,conversation_id FROM thread_edges
- UNION SELECT r.source_id,r.conversation_id,e.member_source_id,e.member_conversation_id FROM thread_reach r
- JOIN thread_edges e ON e.source_id=r.member_source_id AND e.conversation_id=r.member_conversation_id
- ), thread_reps AS (
- SELECT source_id,conversation_id,COUNT(*) AS kept FROM kept_copies GROUP BY source_id,conversation_id
- ), thread_groups AS (
- SELECT r.source_id,r.conversation_id,r.member_source_id,r.member_conversation_id,ROW_NUMBER() OVER (PARTITION BY r.source_id,r.conversation_id
- ORDER BY COALESCE(k.kept,0) DESC,COALESCE(ts.thread_messages,1) DESC,r.member_source_id,r.member_conversation_id) AS member_rank
- FROM thread_reach r LEFT JOIN thread_reps k ON k.source_id=r.member_source_id AND k.conversation_id=r.member_conversation_id
- LEFT JOIN thread_sizes ts ON ts.source_id=r.member_source_id AND ts.conversation_id=r.member_conversation_id
- ), representatives AS (
- SELECT c.*,COALESCE(g.member_source_id,c.source_id) AS thread_source_id,COALESCE(g.member_conversation_id,c.conversation_id,0) AS thread_conversation_id
- FROM kept_copies c LEFT JOIN thread_groups g ON g.source_id=c.source_id AND g.conversation_id=c.conversation_id AND g.member_rank=1
+	return `kept_copies AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1), representatives AS (
+ SELECT c.*,c.source_id AS thread_source_id,COALESCE(c.conversation_id,0) AS thread_conversation_id FROM kept_copies c
  )`
 }
 
@@ -289,14 +254,8 @@ func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters
 	exclusion := `CASE WHEN cp.link_owner=1 THEN 'owner' ELSE ax.excluded END`
 	role := `CASE WHEN cp.recipient_type='from' THEN CASE WHEN e.ref_kind='meeting' THEN 'organizer' ELSE 'sender' END WHEN cp.recipient_type='member' THEN 'member' WHEN e.ref_kind='meeting' THEN 'attendee' ELSE 'addressed' END`
 	// Persisted person links carry the projector's strongest saved-person role.
-	// Explicit limits recompute evidence before the same strongest-link arbitration.
-	if f.MaxDirect == 0 {
-		role = `COALESCE(aep.role,` + role + `)`
-	}
-	evidence := `CASE WHEN e.direction='outbound' AND cp.audience_n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END`
-	if f.MaxDirect == 0 {
-		evidence = `COALESCE(aep.evidence,` + evidence + `)`
-	}
+	role = `COALESCE(aep.role,` + role + `)`
+	evidence := `COALESCE(aep.evidence,CASE WHEN e.direction='outbound' AND cp.audience_n<=` + maxSQL + ` THEN 'direct' WHEN e.direction='inbound' AND cp.recipient_type='from' THEN 'direct' ELSE 'co_presence' END)`
 	large := `CASE WHEN e.direction='inbound' AND COALESCE(cp.audience_n,0)>` + maxSQL + ` THEN 1 ELSE 0 END`
 	return `population AS MATERIALIZED (` + s.activityCounterpartsSQL(`SELECT message_id FROM eligible`) + `), owner_population AS (
  SELECT *,MAX(is_owner) OVER person_link AS link_owner,ROW_NUMBER() OVER person_link AS link_rank
@@ -304,7 +263,7 @@ func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters
  ), ` + addressCTE + `, exclusions AS (
  SELECT cp.*,` + exclusion + ` AS excluded FROM owner_population cp JOIN address_exclusions ax ON ax.participant_id=cp.participant_id
  ), audience_facts AS (
- SELECT *,SUM(CASE WHEN excluded<>'owner' AND link_rank=1 THEN 1 ELSE 0 END) OVER (PARTITION BY message_id) AS audience_n FROM exclusions
+ SELECT *,SUM(CASE WHEN link_owner=0 AND link_rank=1 THEN 1 ELSE 0 END) OVER (PARTITION BY message_id) AS audience_n FROM exclusions
  ), raw_facts AS MATERIALIZED (
  SELECT e.*,cp.participant_id,cp.person_id,cp.recipient_type,cp.excluded,
  ` + large + ` AS large_inbound,` + role + ` AS raw_role,` + evidence + ` AS raw_evidence

@@ -6,11 +6,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/msgvault/internal/activity"
 	"go.kenn.io/msgvault/internal/store"
 )
 
 // A coauthor who is also addressed retains the projector's stronger sender
-// role, including unsaved participants and explicit effective-limit overrides.
+// role for saved and unsaved participants under the projection policy.
 func TestActivityStrongestRoleMatchesProjector(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(fmt.Sprintf("saved=%t", saved), func(t *testing.T) {
@@ -34,12 +35,15 @@ func TestActivityStrongestRoleMatchesProjector(t *testing.T) {
 				to = append(to, alias)
 			}
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", to, nil))
-			projectTimelineActivity(t, f, "UTC")
-			for _, limit := range []int{0, 25, 1} {
+			for _, limit := range []int{25, 1} {
 				t.Run(fmt.Sprintf("limit=%d", limit), func(t *testing.T) {
 					assertions := assert.New(t)
 					requirements := require.New(t)
-					q.Filters = store.ActivityFilters{IncludeNoise: true, MaxDirect: limit}
+					projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: limit})
+					requirements.NoError(err)
+					_, err = projector.RunOnce(t.Context())
+					requirements.NoError(err)
+					q.Filters = store.ActivityFilters{IncludeNoise: true}
 					aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
 					requirements.NoError(err)
 					assertions.Zero(aggregate.Count)

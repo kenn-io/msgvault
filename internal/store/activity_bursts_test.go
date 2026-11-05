@@ -233,7 +233,7 @@ func TestBurstsAggregateLargeConversationDayExactly(t *testing.T) {
 		assertions.Equal(4, total)
 	}
 }
-func TestBurstsCustomExclusionAndDirectLimit(t *testing.T) {
+func TestBurstsCustomExclusionAndProjectionDirectLimit(t *testing.T) {
 	for _, saved := range []bool{false, true} {
 		t.Run(strconv.FormatBool(saved), func(t *testing.T) {
 			requirements := require.New(t)
@@ -247,13 +247,18 @@ func TestBurstsCustomExclusionAndDirectLimit(t *testing.T) {
 			id := f.add(t, f.ConvID, f.Source.ID, at, true, "")
 			bob := f.EnsureParticipant("bob@example.com", "Bob", "example.com")
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.peer, bob}, []string{"Alice", "Bob"}))
-			projectTimelineActivity(t, f, "UTC")
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", MaxDirectCounterparts: 1})
+			requirements.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			requirements.NoError(err)
 			q := timelineBurstQuery()
-			q.Filters.MaxDirect = 1
 			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			assertions.Empty(got.Bursts)
-			q.Filters.MaxDirect = 25
+			projector, err = activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", MaxDirectCounterparts: 25})
+			requirements.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			requirements.NoError(err)
 			q.Filters.Exclusions = persontiers.DefaultConfig()
 			q.Filters.Exclusions.ExcludeDomainPatterns = []string{"example.com"}
 			got, err = f.Store.ListActivityBurstsContext(t.Context(), q)

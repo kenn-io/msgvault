@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,66 +10,71 @@ import (
 	"go.kenn.io/msgvault/internal/sourcescope"
 )
 
-func TestOverlappingMailboxThreadsShareBurstAndInitiation(t *testing.T) {
+func TestOverlappingMailboxThreadsKeepMailboxConversations(t *testing.T) {
 	for _, shape := range []struct {
-		name                     string
-		partial                  bool
-		count, inbound, outbound int
+		name       string
+		threads    [][]int
+		wantCounts []int
+		count      int
 	}{
-		{"ends one thread", false, 3, 2, 1},
-		{"partial account", true, 2, 1, 1},
+		{"partial overlap", [][]int{{0, 1}, {1, 2}}, []int{2, 1}, 3},
+		{"contained thread", [][]int{{0}, {0, 1}}, []int{0, 2}, 2},
+		{"divergent replies with incomplete bridge", [][]int{{0, 1}, {0, 2}, {0}}, []int{2, 1, 0}, 3},
 	} {
 		t.Run(shape.name, func(t *testing.T) {
-			requirements := require.New(t)
-			assertions := assert.New(t)
+			require := require.New(t)
+			assert := assert.New(t)
 			f := newTimelineActivityFixture(t)
 			q := timelineContactQuery(f)
 			at := q.Now.Add(-2 * time.Hour)
-			if shape.partial {
-				at = q.Now.Add(-time.Hour)
-			}
-			first := f.add(t, f.ConvID, f.Source.ID, at, false, "<a@example.com>")
-			shared := first
-			sharedAt, sharedID, sharedOut := at, "<a@example.com>", false
-			if !shape.partial {
-				sharedAt, sharedID, sharedOut = at.Add(time.Hour), "<b@example.com>", true
-				shared = f.add(t, f.ConvID, f.Source.ID, sharedAt, sharedOut, sharedID)
-			}
-			other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
-			requirements.NoError(err)
-			requirements.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
-			conv, err := f.Store.EnsureConversation(other.ID, "overlap", "Overlapping thread")
-			requirements.NoError(err)
-			otherShared := f.add(t, conv, other.ID, sharedAt, sharedOut, sharedID)
-			f.add(t, conv, other.ID, sharedAt.Add(time.Hour), !sharedOut, "<c@example.com>")
-			if shape.partial {
-				shared = otherShared
+			convs := []int64{f.ConvID}
+			for i, messages := range shape.threads {
+				source, conv := f.Source.ID, f.ConvID
+				if i > 0 {
+					other, err := f.Store.GetOrCreateSource("gmail", fmt.Sprintf("account-%d@example.com", i))
+					require.NoError(err)
+					require.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
+					source = other.ID
+					conv, err = f.Store.EnsureConversation(source, "overlap", "Overlapping thread")
+					require.NoError(err)
+					convs = append(convs, conv)
+				}
+				for _, message := range messages {
+					f.add(t, conv, source, at.Add(time.Duration(message)*time.Hour), false, fmt.Sprintf("<message-%d@example.com>", message))
+				}
 			}
 			projectTimelineActivity(t, f, "UTC")
 			page, err := f.Store.ListActivityBurstsContext(t.Context(), timelineBurstQuery())
-			requirements.NoError(err)
-			requirements.Len(page.Bursts, 1)
-			assertions.Equal(shape.inbound, page.Bursts[0].Inbound)
-			assertions.Equal(shape.outbound, page.Bursts[0].Outbound)
-			assertions.Equal(2, page.Bursts[0].CopyCounts[shared])
-			if shape.partial {
-				assertions.Equal(conv, page.Bursts[0].ConversationID)
+			require.NoError(err)
+			counts := map[int64]int{}
+			seen := map[int64]bool{}
+			for _, burst := range page.Bursts {
+				assert.Zero(burst.Outbound)
+				counts[burst.ConversationID] += burst.Inbound
+				for _, id := range burst.LatestMessageIDs {
+					assert.False(seen[id])
+					seen[id] = true
+				}
 			}
+			rows := 0
+			for i, want := range shape.wantCounts {
+				assert.Equal(want, counts[convs[i]])
+				if want > 0 {
+					rows++
+				}
+			}
+			assert.Len(page.Bursts, rows)
+			assert.Len(seen, shape.count)
 			aggregate, err := f.Store.MessageContactAggregateContext(t.Context(), q)
-			requirements.NoError(err)
-			assertions.Equal(shape.count, aggregate.Count)
-			assertions.Equal(1, aggregate.InitiatedByContact)
-			assertions.Zero(aggregate.InitiatedByOwner)
+			require.NoError(err)
+			assert.Equal(shape.count, aggregate.Count)
+			assert.Equal(1, aggregate.InitiatedByContact)
+			assert.Zero(aggregate.InitiatedByOwner)
 			scoped, err := f.Store.ListActivityBurstsContext(sourcescope.WithSourceIDs(t.Context(), []int64{f.Source.ID}), timelineBurstQuery())
-			requirements.NoError(err)
-			requirements.Len(scoped.Bursts, 1)
-			assertions.Equal(f.Source.ID, scoped.Bursts[0].SourceID)
-			assertions.Equal(1, scoped.Bursts[0].Inbound)
-			if shape.partial {
-				assertions.Zero(scoped.Bursts[0].Outbound)
-			} else {
-				assertions.Equal(1, scoped.Bursts[0].Outbound)
-			}
+			require.NoError(err)
+			require.Len(scoped.Bursts, 1)
+			assert.Equal(f.Source.ID, scoped.Bursts[0].SourceID)
+			assert.Equal(len(shape.threads[0]), scoped.Bursts[0].Inbound)
 		})
 	}
 }

@@ -81,9 +81,12 @@ func TestActivityReadersInboundAudienceMatchesClassifier(t *testing.T) {
 				requirements.NoError(err)
 			}
 			requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", []int64{f.owner, other}, []string{"Owner", "Other"}))
-			projectTimelineActivity(t, f, "UTC")
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 1})
+			requirements.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			requirements.NoError(err)
 			q := timelineBurstQuery()
-			q.Filters = store.ActivityFilters{MaxDirect: 1, IncludeNoise: true}
+			q.Filters = store.ActivityFilters{IncludeNoise: true}
 			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(got.Bursts, 1)
@@ -164,9 +167,12 @@ func TestActivityReadersChatAudienceUsesEnvelopeOrRoster(t *testing.T) {
 			if !envelope {
 				requirements.NoError(f.Store.ReplaceMessageRecipients(id, "to", nil, nil))
 			}
-			projectTimelineActivity(t, f, "UTC")
+			projector, err := activity.NewProjector(f.Store, activity.Options{Timezone: "UTC", BatchSize: 100, MaxDirectCounterparts: 1})
+			requirements.NoError(err)
+			_, err = projector.RunOnce(t.Context())
+			requirements.NoError(err)
 			q := timelineBurstQuery()
-			q.Filters = store.ActivityFilters{MaxDirect: 1, IncludeNoise: true}
+			q.Filters = store.ActivityFilters{IncludeNoise: true}
 			got, err := f.Store.ListActivityBurstsContext(t.Context(), q)
 			requirements.NoError(err)
 			requirements.Len(got.Bursts, 1)

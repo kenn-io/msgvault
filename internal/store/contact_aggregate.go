@@ -30,8 +30,7 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 	if q.Now.IsZero() {
 		return result, fmt.Errorf("%w: contact clock is required", ErrInvalidActivityRequest)
 	}
-	subject, subjectArgs, err := activityFactSubjectClause(q.Subject)
-	if err != nil {
+	if _, _, err := activityFactSubjectClause(q.Subject); err != nil {
 		return result, err
 	}
 	filters, err := s.normalizedActivityFilters(ctx, q.Filters)
@@ -39,17 +38,10 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 		return result, err
 	}
 	filters.IncludeNoise = false
-	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{Subject: q.Subject}, filters)
+	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{Subject: q.Subject, Until: &q.Now}, filters)
 	if err != nil {
 		return result, err
 	}
-	listExcluded := "0"
-	if filters.Exclusions.ExcludeListMessages {
-		listExcluded = `CASE WHEN r.list_id IS NOT NULL THEN 1 ELSE 0 END`
-	}
-	counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "r.direction", RefKind: "r.ref_kind", ListExcluded: listExcluded, LargeInbound: "r.large_inbound"})
-	args = append(args, q.Now.UTC())
-	args = append(args, subjectArgs...)
 	loc := q.Location
 	if loc == nil {
 		loc = time.UTC
@@ -84,12 +76,10 @@ func (s *Store) MessageContactAggregateContext(ctx context.Context, q ContactQue
 		args = append(args, firstMonth.AddDate(0, i, 0).Format("2006-01"), boundaries[i], boundaries[i+1])
 	}
 	initiation := `(previous_at IS NULL OR ` + gap + `) AND bucket.month IS NOT NULL`
-	query := cte + activityBurstGroupsCTE + `, contact_messages AS (
- SELECT r.* FROM representatives r JOIN burst_groups b ON b.source_id=r.thread_source_id AND b.conversation_id=r.thread_conversation_id AND b.local_date=r.local_date
- WHERE b.noise=0 AND r.ref_kind='message' AND r.contact_eligible=1 AND r.encrypted=0 AND r.occurred_at<=?
- AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND ` + subject + ` AND ` + counted + `)
+	query := cte + `, contact_messages AS (
+ SELECT * FROM representatives WHERE ref_kind='message' AND counted=1
  ), contact_months(month,start_at,end_at) AS (VALUES ` + strings.Join(months, ",") + `), exchanges AS (
- SELECT *,LAG(occurred_at) OVER(PARTITION BY thread_source_id,thread_conversation_id ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages
+ SELECT *,LAG(occurred_at) OVER(ORDER BY occurred_at,message_id) AS previous_at FROM contact_messages
  ) SELECT channel,COALESCE(bucket.month,''),MIN(occurred_at),MAX(occurred_at),
  MAX(CASE WHEN direction='inbound' THEN occurred_at END),MAX(CASE WHEN direction='outbound' THEN occurred_at END),COUNT(*),
  SUM(CASE WHEN direction='inbound' AND ` + initiation + ` THEN 1 ELSE 0 END),
@@ -165,14 +155,13 @@ func (s *Store) AttendedTranscriptIDsContext(ctx context.Context, q ContactQuery
 		return nil, false, err
 	}
 	filters.IncludeNoise = false
-	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{Subject: q.Subject}, filters)
+	cte, args, err := s.activityReadCTE(ctx, activityReadWindow{Subject: q.Subject, Until: &q.Now}, filters)
 	if err != nil {
 		return nil, false, err
 	}
-	args = append(args, q.Now.UTC())
 	args = append(args, subjectArgs...)
 	args = append(args, limit+1)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+` SELECT r.message_id FROM representatives r WHERE r.message_type='meeting_transcript' AND r.occurred_at<=? AND r.list_id IS NULL
+	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+` SELECT r.message_id FROM representatives r WHERE r.message_type='meeting_transcript' AND r.list_id IS NULL
  AND EXISTS(SELECT 1 FROM facts f WHERE f.message_id=r.message_id AND f.excluded='' AND f.role IN ('attendee','organizer') AND `+subject+`)
  ORDER BY r.occurred_at DESC,r.message_id DESC LIMIT ?`), args...)
 	if err != nil {

@@ -1,6 +1,7 @@
 package store_test
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -149,4 +150,43 @@ func TestCadenceForPersonUsesSuppliedLastContact(t *testing.T) {
 	requirements.NoError(err)
 	assertions.Equal("unknown", status)
 	assertions.Nil(due)
+}
+
+func TestContactReadersDiscardFutureCopyBeforeRanking(t *testing.T) {
+	for _, transcript := range []bool{false, true} {
+		t.Run(fmt.Sprintf("transcript=%t", transcript), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+			f := newTimelineActivityFixture(t)
+			q := timelineContactQuery(f)
+			past := q.Now.Add(-time.Hour)
+			// The lower-ID future copy wins the normal tie between equal threads.
+			futureID := f.add(t, f.ConvID, f.Source.ID, q.Now.Add(time.Hour), false, "<copy@example.com>")
+			other, err := f.Store.GetOrCreateSource("gmail", "other@example.com")
+			require.NoError(err)
+			require.NoError(f.Store.AddAccountIdentity(other.ID, "owner@example.com", "manual"))
+			conv, err := f.Store.EnsureConversation(other.ID, "past-copy", "Past copy")
+			require.NoError(err)
+			pastID := f.add(t, conv, other.ID, past, false, "<copy@example.com>")
+			if transcript {
+				_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET message_type='meeting_transcript' WHERE id IN (?,?)`), futureID, pastID)
+				require.NoError(err)
+			}
+			projectTimelineActivity(t, f, "UTC")
+			if transcript {
+				ids, truncated, err := f.Store.AttendedTranscriptIDsContext(t.Context(), q, 10)
+				require.NoError(err)
+				assert.Equal([]int64{pastID}, ids)
+				assert.False(truncated)
+				return
+			}
+			got, err := f.Store.MessageContactAggregateContext(t.Context(), q)
+			require.NoError(err)
+			assert.Equal(1, got.Count)
+			assert.Equal(&past, got.FirstAt)
+			assert.Equal(&past, got.LastAt)
+			assert.Equal(&past, got.LastInboundAt)
+			assert.Equal(1, got.Monthly[11])
+		})
+	}
 }
