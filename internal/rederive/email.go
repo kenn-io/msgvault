@@ -15,8 +15,8 @@ import (
 	"go.kenn.io/msgvault/internal/textutil"
 )
 
-// Bump the version when parsing the same retained MIME produces different text.
-const emailVersion = "email-v2"
+// Bump the version when parsing the same retained MIME produces different text or calendar events.
+const emailVersion = "email-v3"
 
 // emailRetrySlots caps exact failed-row markers; later failures widen one
 // overflow range, so retry state is at most emailRetrySlots+2 ledger rows.
@@ -260,7 +260,15 @@ func (w *emailWalk) repairRow(ctx context.Context, item *store.ArchivedRawMessag
 		sum.Errors++
 		return true, nil
 	}
-	sum.unchanged = sum.unchanged && !changed
+	calendarChanged, err := w.s.RefreshArchivedEmailCalendarContext(ctx, w.sourceID, item, parsed)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		sum.Errors++
+		return true, nil
+	}
+	sum.unchanged = sum.unchanged && !changed && !calendarChanged
 	if changed && item.BodyText != body {
 		sum.BodiesRewritten++
 	}

@@ -6,9 +6,38 @@ import (
 	"testing"
 	"time"
 
+	"go.kenn.io/msgvault/internal/calrecur"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestICSFloatingRecurrenceUsesSourceZone(t *testing.T) {
+	for _, zone := range []string{"", "America/Chicago"} {
+		t.Run(zone, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			raw := strings.Replace(icsExample, "SUMMARY:", "RDATE:20270315T090000\r\nEXDATE:20270314T090000\r\nSUMMARY:", 1)
+			components, err := ParseICS([]byte(raw), "", zone)
+			requirements.NoError(err)
+			e := components[0].Event
+			loc := time.UTC
+			if zone != "" {
+				loc, err = time.LoadLocation(zone)
+				requirements.NoError(err)
+			}
+			startZone, err := time.LoadLocation(e.EventTimeZone)
+			requirements.NoError(err)
+			set, err := calrecur.ParseSet(*e.Start, false, "", startZone, e.Recurrence)
+			requirements.NoError(err)
+			assertions.Equal(time.Date(2027, 3, 15, 9, 0, 0, 0, loc).UTC(), set.RDates[0].Instant)
+			assertions.Equal(time.Date(2027, 3, 14, 9, 0, 0, 0, loc).UTC(), set.ExDates[0].Instant)
+			raw = strings.Replace(raw, "SUMMARY:", "RECURRENCE-ID:20270315T090000\r\nSUMMARY:", 1)
+			components, err = ParseICS([]byte(raw), "", zone)
+			requirements.NoError(err)
+			assertions.Equal(set.RDates[0].Instant, components[0].Event.Original.Instant)
+		})
+	}
+}
 
 func TestICSOutlookTZID(t *testing.T) {
 	assertions := assert.New(t)
