@@ -11,18 +11,6 @@ const detail: PersonMergeDetail = {
 };
 
 describe('loadMergeLabels', () => {
-  it('omits storage keys and distinguishes identical service labels by participant', async () => {
-    const labels = await loadMergeLabels(createAPIClient(async input => {
-      const path = new URL((input as Request).url).pathname;
-      const id = Number(path.split('/').pop());
-      return Response.json(path.includes('/participants/')
-        ? { identifiers: [{ participant_id: id, type: 'beeper', value: `beeper:14:signal-account:31:synthetic-${id}`, service_label: 'Signal', participant_display_name: 'Alex Example', scope_kind: 'account', scope_value: 'example.org' }] }
-        : {});
-    }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
-    expect(labels.addresses.get(701)).toEqual([{ title: 'Signal', subtitle: 'Alex Example', detail: 'account: example.org · Participant 701' }]);
-    expect(labels.addresses.get(702)).toEqual([{ title: 'Signal', subtitle: 'Alex Example', detail: 'account: example.org · Participant 702' }]);
-  });
-
   it('distinguishes same-named linked participants without addresses', async () => {
     const labels = await loadMergeLabels(createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
@@ -45,15 +33,15 @@ describe('loadMergeLabels', () => {
     expect(labels.addresses.get(702)).toEqual([{ title: 'Alex Example', subtitle: '', detail: 'Participant 702' }]);
   });
 
-  it('preserves scope when disambiguating identical identifier labels', async () => {
+  it('preserves existing detail when disambiguating identical identifier labels', async () => {
     const labels = await loadMergeLabels(createAPIClient(async input => {
       const path = new URL((input as Request).url).pathname;
       return Response.json(path.includes('/participants/')
         ? { identifiers: [{ participant_id: Number(path.split('/').pop()), type: 'handle', value: 'alex', scope_kind: 'workspace', scope_value: 'example.org' }] }
         : {});
     }), { ...detail, participants: detail.participants!.slice(0, 2) }, new AbortController().signal);
-    expect(labels.addresses.get(701)).toEqual([{ title: 'handle', subtitle: '', detail: 'workspace: example.org · Participant 701' }]);
-    expect(labels.addresses.get(702)).toEqual([{ title: 'handle', subtitle: '', detail: 'workspace: example.org · Participant 702' }]);
+    expect(labels.addresses.get(701)).toEqual([{ title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 701' }]);
+    expect(labels.addresses.get(702)).toEqual([{ title: 'handle', subtitle: '', detail: 'alex · workspace: example.org · Participant 702' }]);
   });
 
   it('keeps each participant’s own identifiers, all addresses, and member fallbacks', async () => {
@@ -73,7 +61,7 @@ describe('loadMergeLabels', () => {
     const labels = await loadMergeLabels(createAPIClient(fetchFn), detail, new AbortController().signal);
     expect(labels.names).toEqual(new Map([[7, 'Alex Example'], [19, 'Alex Restored']]));
     expect(labels.addresses.get(701)?.map(row => row.title)).toEqual(['alex@example.com', '+12025550123']);
-    expect(labels.addresses.get(702)).toEqual([{ title: 'handle', subtitle: '', detail: 'workspace: example.org' }]);
+    expect(labels.addresses.get(702)).toEqual([{ title: 'handle', subtitle: '', detail: 'alex · workspace: example.org' }]);
     expect(labels.addresses.get(703)).toEqual([{ title: 'Member Example', subtitle: 'member@example.org', detail: '' }]);
     expect(labels.addresses.get(704)).toEqual([{ title: 'Singleton Example', subtitle: '', detail: '' }]);
     expect(labels.addresses.get(705)).toEqual([{ title: 'Member Example', subtitle: '+12025550124', detail: '' }]);

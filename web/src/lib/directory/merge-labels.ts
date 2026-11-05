@@ -23,10 +23,7 @@ export async function loadMergeLabels(client: APIClient, detail: PersonMergeDeta
       const member = response.data.cluster?.members?.find(member => member.participant_id === id);
       const identifiers = (response.data.identifiers ?? []).filter(identifier => identifier.participant_id === id);
       addresses.set(id, identifiers.length
-        ? identifiers.map(identifier => ({
-          ...identityChipText(identifier, member, []),
-          detail: [identifier.scope_kind, identifier.scope_value].filter(Boolean).join(': '),
-        }))
+        ? identifiers.map(identifier => identityChipText(identifier, member, []))
         : member ? [identityChipText(undefined, member, [])] : response.data.display_name?.trim() ? [{ title: response.data.display_name.trim(), subtitle: '', detail: '' }] : []);
     }),
   ]);
