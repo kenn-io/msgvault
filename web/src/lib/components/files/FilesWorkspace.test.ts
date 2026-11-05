@@ -780,7 +780,8 @@ describe('FilesWorkspace', () => {
     expect(await screen.findByRole('dialog', { name: 'View fixture.pdf' })).toBeDefined();
     await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledWith('message:11');
-    await fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open conversation' }));
     expect(onOpenConversation).toHaveBeenCalledWith('message:11', 11, 21);
     await waitFor(() => expect(fetchFn).toHaveBeenCalledTimes(2));
   });
@@ -1345,91 +1346,74 @@ describe('FilesWorkspace', () => {
   });
 });
 
-it.each([false, true])('steps across loaded pages and keeps the current file on paging failure=%s', async (failPage) => {
+it('prefetches once near the end and waits at the boundary before stepping', async () => {
   const first = response().files[0]!;
-  const second = { ...first, id: 8, key: 'file:8', filename: 'second.txt' };
+  const rows = Array.from({ length: 8 }, (_, i) => ({ ...first, id: 7 + i, key: `file:${7 + i}`, filename: `file-${i}.txt` }));
+  let release: (value: Response) => void = () => {};
+  const nextPage = new Promise<Response>((resolve) => { release = resolve; });
+  let cursorCalls = 0;
   const onSelectedKey = vi.fn();
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname.endsWith('/files/search')) {
       const body = await request.json();
-      if (body.cursor) return failPage ? Response.json({ message: 'Page unavailable' }, { status: 500 }) : Response.json({ ...response(), files: [second], total_count: 2 });
-      return Response.json({ ...response(), total_count: 2, next_cursor: 'page-2' });
+      if (body.cursor) { cursorCalls++; expect(body.cursor).toBe('page-2'); return nextPage; }
+      return Response.json({ ...response(), files: rows, total_count: 9, next_cursor: 'page-2' });
     }
-    return Response.json({ ...(new URL(request.url).pathname.endsWith('/8') ? second : first), content_state: 'metadata_only' });
+    return Response.json({ ...first, content_state: 'metadata_only' });
   });
   renderReady({ client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' }, onSelectedKey });
-  await screen.findByText('fixture.pdf');
-  const grid = screen.getByRole('grid', { name: 'Files results' });
-  grid.focus();
+  const grid = await screen.findByRole('grid', { name: 'Files results' });
+  await screen.findByText('file-0.txt');
   await fireEvent.keyDown(grid, { key: 'Enter' });
-  await screen.findByRole('dialog', { name: 'View fixture.pdf' });
   expect(screen.getByRole('button', { name: 'Previous file' }).hasAttribute('disabled')).toBe(true);
-  await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
-  if (failPage) {
-    const dialog = screen.getByRole('dialog', { name: 'View fixture.pdf' });
-    expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'Page unavailable');
-    expect(within(dialog).getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(false);
-    expect(onSelectedKey).toHaveBeenCalledTimes(1);
-  } else {
-    await screen.findByRole('dialog', { name: 'View second.txt' });
-    expect(onSelectedKey).toHaveBeenLastCalledWith('file:8', { replace: true });
-    expect(screen.getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
+  for (let i = 1; i < 8; i++) {
+    await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
+    await waitFor(() => expect(onSelectedKey).toHaveBeenLastCalledWith(`file:${7 + i}`, { replace: true }));
   }
+  expect(cursorCalls).toBe(1);
+  await fireEvent.click(screen.getByRole('button', { name: 'Next file' }));
+  expect(onSelectedKey).toHaveBeenLastCalledWith('file:14', { replace: true });
+  release(Response.json({ ...response(), files: [{ ...first, id: 15, key: 'file:15', filename: 'page-two.txt' }], total_count: 9 }));
+  await waitFor(() => expect(onSelectedKey).toHaveBeenLastCalledWith('file:15', { replace: true }));
+  expect(cursorCalls).toBe(1);
 });
-
-it('keeps the file open after a terminal step failure and reloads before resuming', async () => {
+it.each([503, 409])('leaves recovery with the list after a %s and keeps the boundary notice after Previous', async (status) => {
   const first = response().files[0]!;
   const second = { ...first, id: 8, key: 'file:8', filename: 'second.txt' };
-  let restarted = false;
-  let initialCalls = 0;
+  let fail = true;
   const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
     const request = input instanceof Request ? input : new Request(input, init);
     if (new URL(request.url).pathname.endsWith('/files/search')) {
       const body = await request.json();
-      if (body.cursor) return restarted ? Response.json({ ...response(), files: [second], total_count: 2 }) : Response.json({ message: 'The committed analytical cache changed; restart pagination' }, { status: 409 });
-      initialCalls += 1;
-      if (initialCalls > 1) restarted = true;
-      return Response.json({ ...response(), total_count: 2, next_cursor: restarted ? 'fresh-page-2' : 'page-2' });
+      if (body.cursor) return fail ? Response.json({ message: 'Page unavailable' }, { status }) : Response.json({ ...response(), files: [{ ...first, id: 9, key: 'file:9' }], total_count: 3 });
+      return Response.json({ ...response(), files: [first, second], total_count: 3, next_cursor: 'page-2' });
     }
     return Response.json({ ...(new URL(request.url).pathname.endsWith('/8') ? second : first), content_state: 'metadata_only' });
-  });
-  renderReady({ client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
-  const grid = await screen.findByRole('grid', { name: 'Files results' });
-  await screen.findByText('fixture.pdf');
-  await fireEvent.keyDown(grid, { key: 'Enter' });
-  let dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
-  await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
-  expect(await within(dialog).findByRole('alert')).toHaveProperty('textContent', 'The committed analytical cache changed; restart pagination');
-  expect(within(dialog).getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
-  const calls = fetchFn.mock.calls.length;
-  await fireEvent.keyDown(window, { key: 'ArrowRight' });
-  expect(fetchFn).toHaveBeenCalledTimes(calls);
-  await fireEvent.click(within(dialog).getByRole('button', { name: 'Reload files' }));
-  await waitFor(() => expect(within(dialog).queryByRole('alert')).toBeNull());
-  await waitFor(() => expect(within(dialog).getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(false));
-  expect(initialCalls).toBe(2);
-  await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
-  dialog = await screen.findByRole('dialog', { name: 'View second.txt' });
-  expect(within(dialog).queryByRole('alert')).toBeNull();
-});
-it('keeps a preexisting list paging error out of a newly opened viewer', async () => {
-  const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
-    const request = input instanceof Request ? input : new Request(input, init);
-    if (new URL(request.url).pathname.endsWith('/files/search')) {
-      const body = await request.json();
-      return body.cursor ? Response.json({ message: 'Earlier list failure' }, { status: 503 }) : Response.json({ ...response(), total_count: 2, next_cursor: 'page-2' });
-    }
-    return Response.json({ ...response().files[0], content_state: 'metadata_only' });
   });
   renderReady({ client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' } });
   const grid = await screen.findByRole('grid', { name: 'Files results' });
   await screen.findByText('fixture.pdf');
   await fireEvent.scroll(grid);
-  expect((await screen.findByRole('alert')).textContent).toContain('Earlier list failure');
+  await screen.findByRole('alert');
   await fireEvent.keyDown(grid, { key: 'Enter' });
-  const dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
+  let dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
   expect(within(dialog).queryByRole('alert')).toBeNull();
+  await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
+  dialog = await screen.findByRole('dialog', { name: 'View second.txt' });
+  expect(within(dialog).getByRole('alert').textContent).toBe('Page unavailable');
+  expect(within(dialog).getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
+  await fireEvent.click(within(dialog).getByRole('button', { name: 'Previous file' }));
+  dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
+  expect(within(dialog).queryByRole('alert')).toBeNull();
+  await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
+  dialog = await screen.findByRole('dialog', { name: 'View second.txt' });
+  expect(within(dialog).getByRole('alert').textContent).toBe('Page unavailable');
+  await fireEvent.click(within(dialog).getByRole('button', { name: 'Close file viewer' }));
+  fail = false;
+  await fireEvent.click(screen.getByRole('button', { name: status === 409 ? 'Reload files' : 'Retry loading more files' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  await waitFor(() => expect(grid.getAttribute('aria-busy')).toBe('false'));
 });
 
 it('keeps a successful step visible while the controlled selection awaits its parent update', async () => {
@@ -1446,4 +1430,29 @@ it('keeps a successful step visible while the controlled selection awaits its pa
   await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
   expect(await screen.findByRole('dialog', { name: 'View second.txt' })).toBeDefined();
   expect(onSelectedKey).toHaveBeenCalledWith('file:8', { replace: true });
+});
+
+it('steps after a pending page when the URL controls the current file', async () => {
+  const first = response().files[0]!;
+  const second = { ...first, id: 8, key: 'file:8', filename: 'next.txt' };
+  let release: (response: Response) => void = () => {};
+  let cursorCalls = 0;
+  const pending = new Promise<Response>((resolve) => release = resolve);
+  const fetchFn = vi.fn<typeof fetch>(async (input, init) => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    if (new URL(request.url).pathname.endsWith('/files/search')) {
+      const body = await request.json();
+      if (body.cursor) { cursorCalls++; return pending; }
+      return Response.json({ ...response(), total_count: 2, next_cursor: 'page-2' });
+    }
+    return Response.json({ ...(new URL(request.url).pathname.endsWith('/8') ? second : first), content_state: 'metadata_only' });
+  });
+  const onSelectedKey = vi.fn();
+  renderReady({ client: createAPIClient(fetchFn), predicate: { filters: [], presentation: 'table' }, sort: { field: 'occurred_at', direction: 'desc' }, selectedKey: 'file:7', activeKey: 'file:8', restorationEpoch: 1, onSelectedKey });
+  const dialog = await screen.findByRole('dialog', { name: 'View fixture.pdf' });
+  await fireEvent.click(within(dialog).getByRole('button', { name: 'Next file' }));
+  release(Response.json({ ...response(), files: [second], total_count: 2 }));
+  expect(await screen.findByRole('dialog', { name: 'View next.txt' })).toBeDefined();
+  expect(onSelectedKey).toHaveBeenCalledWith('file:8', { replace: true });
+  expect(cursorCalls).toBe(1);
 });

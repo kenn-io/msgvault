@@ -1,11 +1,14 @@
 <script lang="ts">
   import { getFile as generatedGetFile, getFileContent as generatedGetFileContent } from '../../api/generated/api/api';
-  import { Button, EmptyState, IconButton, Modal, Table, TableHeaderCell, appShortcuts } from '@kenn-io/kit-ui';
+  import { Button, EmptyState, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Table, TableHeaderCell, appShortcuts } from '@kenn-io/kit-ui';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import type { APIClient } from '../../api/client';
   import type { FileMetadata, FileViewerTarget } from '../../explore/models';
   import type { PDFRenderHandle } from './FileViewer.browser.svelte';
   import { isSupportedImageMIME, readBoundedStream, readStreamPrefix, validatedImageBlob } from './preview-bytes';
+  import Ellipsis from '@lucide/svelte/icons/ellipsis';
+  import Minus from '@lucide/svelte/icons/minus';
+  import Plus from '@lucide/svelte/icons/plus';
   import ChevronLeft from '@lucide/svelte/icons/chevron-left';
   import ChevronRight from '@lucide/svelte/icons/chevron-right';
   import FileIcon from '@lucide/svelte/icons/file';
@@ -20,10 +23,8 @@
     returnFocus?: HTMLElement;
     position?: { index: number; total: number };
     onStep?: (delta: -1 | 1) => void;
-    stepping?: boolean;
-    stepError?: string;
+    notice?: string;
     canStepForward?: boolean;
-    onReload?: () => void;
     onClose?: () => void;
     onOpenItem?: (entryKey: string) => void;
     onOpenConversation?: (entryKey: string, messageID: number, conversationID: number) => void;
@@ -34,10 +35,8 @@
     returnFocus = undefined,
     position = undefined,
     onStep = undefined,
-    stepping = false,
-    stepError = '',
+    notice = '',
     canStepForward = true,
-    onReload = undefined,
     onClose = undefined,
     onOpenItem = undefined,
     onOpenConversation = undefined,
@@ -51,6 +50,20 @@
   let textTruncated = $state(false);
   let imageSize = $state('');
   let pdfPages = $state(0);
+  let pdfPage = $state(1);
+  let pdfZoom = $state(1);
+  const zoomSteps = [0.75, 1, 1.5, 2];
+  function zoomPDF(value: number): void {
+    pdfZoom = value;
+    renderHandle?.setZoom(value);
+  }
+  function updatePDFPage(event: Event): void {
+    const preview = event.currentTarget as HTMLElement;
+    const top = preview.getBoundingClientRect().top + preview.clientHeight / 3;
+    const pages = [...preview.querySelectorAll<HTMLElement>('.pdf-page')];
+    const index = pages.findIndex((page) => page.getBoundingClientRect().bottom > top);
+    if (pages.length) pdfPage = index < 0 ? pages.length : index + 1;
+  }
   let metadata = $state<FileMetadata>();
   let loading = $state(true);
   let error = $state('');
@@ -138,7 +151,7 @@
     contentType: string | null;
     truncated: boolean;
   }> {
-    if (!truncate && value.size_bytes > maxBytes) throw new Error('File exceeds the preview byte limit.');
+    if (!truncate && value.size_bytes > maxBytes) throw new Error('This file is too large to preview.');
     const { data, response } = await generatedGetFileContent(
       { id: value.id },
       {
@@ -241,6 +254,8 @@
     textTruncated = false;
     imageSize = '';
     pdfPages = 0;
+    pdfPage = 1;
+    pdfZoom = 1;
   }
   function revokePreviewURL(): void {
     if (activeObjectURL) URL.revokeObjectURL(activeObjectURL);
@@ -307,7 +322,7 @@
       if (preview?.querySelector('pre, table') && [...preview.querySelectorAll<HTMLElement>('.kit-table-wrapper'), preview].some((element) => element.scrollWidth > element.clientWidth)) return;
     }
     const delta = event.key === 'ArrowLeft' ? -1 : 1;
-    if (stepping || delta === 1 && !canStepForward || position.index + delta < 0 || position.index + delta >= position.total) return;
+    if (delta === 1 && !canStepForward || position.index + delta < 0 || position.index + delta >= position.total) return;
     event.preventDefault();
     onStep(delta);
   }
@@ -337,23 +352,29 @@
   }}
 >
   <div class="file-viewer">
-    {#if context || position || stepError}
+    {#if context || position || notice}
       <div class="context-bar">
         <span class="context" title={context}>{context}</span>
         {#if position}
           <div class="navigation">
-            <IconButton size="sm" ariaLabel="Previous file" disabled={position.index === 0 || stepping} onclick={() => onStep?.(-1)}><ChevronLeft size={14} /></IconButton>
+            <IconButton size="sm" ariaLabel="Previous file" disabled={position.index === 0} onclick={() => onStep?.(-1)}><ChevronLeft size={14} /></IconButton>
             <span class="data-mono">{(position.index + 1).toLocaleString()} of {position.total.toLocaleString()}</span>
-            <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || stepping || !canStepForward} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
+            <IconButton size="sm" ariaLabel="Next file" disabled={position.index >= position.total - 1 || !canStepForward} onclick={() => onStep?.(1)}><ChevronRight size={14} /></IconButton>
           </div>
         {/if}
-        {#if stepError}
-          <div class="step-error"><p role="alert">{stepError}</p>{#if onReload}<Button size="sm" surface="outline" label="Reload files" disabled={stepping} onclick={onReload} />{/if}</div>
-        {/if}
+        {#if notice}<p class="notice" role="alert">{notice}</p>{/if}
+      </div>
+    {/if}
+    {#if pdfPages}
+      <div class="pdf-controls" role="group" aria-label="PDF reading controls">
+        <span class="data-mono">Page {pdfPage} of {pdfPages}</span>
+        <IconButton size="sm" ariaLabel="Zoom out" disabled={pdfZoom === zoomSteps[0]} onclick={() => zoomPDF(zoomSteps[zoomSteps.indexOf(pdfZoom) - 1]!)}><Minus size={14} /></IconButton>
+        <Button size="sm" surface="soft" label="Fit" onclick={() => zoomPDF(1)} />
+        <IconButton size="sm" ariaLabel="Zoom in" disabled={pdfZoom === zoomSteps.at(-1)} onclick={() => zoomPDF(zoomSteps[zoomSteps.indexOf(pdfZoom) + 1]!)}><Plus size={14} /></IconButton>
       </div>
     {/if}
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (Scrollable preview regions need keyboard access.) -->
-    <div class="preview" class:tabular={!!delimited}
+    <div class="preview" onscroll={updatePDFPage} class:tabular={!!delimited}
       class:centered={metadata && (error || metadata.content_state !== 'local_content' || ['image', 'audio', 'none'].includes(previewKind(metadata)))} role="region" aria-label={`File preview ${displayFilename}`} tabindex="0">
       {#if loading}
         <p role="status">Loading file…</p>
@@ -403,19 +424,22 @@
     <div class="viewer-footer">
       <div class="metadata" title={metadata?.mime_type ?? file.mime_type}>{footerMeta}</div>
       <div class="actions">
-        <Button size="sm" surface="soft" label="Open conversation" disabled={!metadata && !file.entry_key} onclick={openConversation} />
+        <Menu align="end">
+          <MenuTrigger ariaLabel="More file actions" title="More actions"><Ellipsis size={16} /></MenuTrigger>
+          <MenuContent ariaLabel="File actions">
+            <MenuItem disabled={!metadata && !file.entry_key} onselect={openConversation}>Open conversation</MenuItem>
+          </MenuContent>
+        </Menu>
         <Button size="sm" tone={!metadata || metadata.content_state === 'local_content' ? 'neutral' : 'info'} surface={!metadata || metadata.content_state === 'local_content' ? 'outline' : 'solid'} label="Open message" disabled={!metadata && !file.entry_key} onclick={openItem} />
-        {#if !metadata || metadata.content_state === 'local_content'}
-          <Button
-            size="sm"
-            tone="info"
-            surface="solid"
-            label="Download"
-            disabled={!metadata}
-            ariaLabel={`Download ${displayFilename}`}
-            onclick={download}
-          />
-        {/if}
+        <Button
+          size="sm"
+          tone="info"
+          surface="solid"
+          label="Download"
+          disabled={!metadata || metadata.content_state !== 'local_content'}
+          ariaLabel={`Download ${displayFilename}`}
+          onclick={download}
+        />
       </div>
     </div>
   {/snippet}
@@ -459,20 +483,22 @@
   }
   .pdf-preview {
     display: grid;
-    justify-items: center;
+    justify-items: start;
     gap: var(--space-5);
   }
   .pdf-preview :global(.pdf-page) {
-    max-width: 100%;
-    padding: var(--space-3);
-    background: var(--bg-surface);
+    position: relative;
+    border: var(--space-3) solid var(--bg-surface);
+    box-sizing: content-box;
+    justify-self: center;
+    background: white;
     box-shadow: var(--shadow-md);
     color: var(--text-primary);
   }
   .pdf-preview :global(.pdf-canvas) {
     display: block;
-    max-width: 100%;
-    height: auto;
+    width: 100%;
+    height: 100%;
   }
   .error {
     padding: var(--pane-pad-y) var(--pane-pad-x);
@@ -566,13 +592,18 @@
   .tabular :global(tbody tr:nth-child(odd)) {
     background: var(--bg-surface);
   }
-  .step-error {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-3);
+  .notice {
     flex-basis: 100%;
     color: var(--accent-red);
+    font-size: var(--font-size-sm);
+  }
+  .pdf-controls {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding-bottom: var(--space-3);
+    color: var(--text-secondary);
     font-size: var(--font-size-sm);
   }
   @media (max-width: 640px) {

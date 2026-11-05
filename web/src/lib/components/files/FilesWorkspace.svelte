@@ -199,7 +199,6 @@
   let scrollTop = $state(0);
   let activeKey = $state<string | null>(untrack(() => providedActiveKey));
   let viewerFile = $state<WorkspaceFileRow>();
-  let viewerStepError = $state('');
   const viewerIndex = $derived(viewerFile ? rows.findIndex((row) => row.key === viewerFile?.key) : -1);
   let pendingViewerKey = $state<string | null>(null);
   let viewerReturnFocus = $state<HTMLElement>();
@@ -326,7 +325,6 @@
     if (controlledKey) {
       const file = rows.find((row) => row.key === controlledKey);
       if (file) {
-        if (untrack(() => viewerFile?.key) !== file.key) viewerStepError = '';
         viewerFile = file;
         pendingViewerKey = null;
       } else if (keyChanged) {
@@ -422,7 +420,6 @@
     seenCursors = new Set<string>();
     error = '';
     pageError = '';
-    viewerStepError = '';
     unavailable = undefined;
     pendingRestoration = undefined;
     completingRestoration = '';
@@ -438,7 +435,12 @@
       if (loaded) return restoreDeepState(currentGeneration, epoch, signal);
     });
   }
-  async function loadPage(
+  let pageLoad: Promise<boolean> | undefined;
+  function loadPage(currentGeneration: number, cursor: string | undefined, signal: AbortSignal): Promise<boolean> {
+    pageLoad = requestPage(currentGeneration, cursor, signal);
+    return pageLoad;
+  }
+  async function requestPage(
     currentGeneration: number,
     cursor: string | undefined,
     signal: AbortSignal,
@@ -652,15 +654,17 @@
     );
   }
   async function loadMore(): Promise<void> {
-    if (!nextCursor || loadingMore || !controller) return;
+    if (loadingMore) { await pageLoad; return; }
+    if (!nextCursor || !controller) return;
     pageError = '';
     // A transient cursor failure may have interrupted restoreDeepState. Resume
     // the restoration loop so later-page targets are still found, scrolled to,
     // and the epoch acknowledged only after focus completes. pendingRestoration
     // set means the loop already handed off; page normally in that case.
     if (unacknowledgedRestorationEpoch !== undefined && pendingRestoration === undefined) {
+      const loadedCount = rows.length;
       await restoreDeepState(generation, unacknowledgedRestorationEpoch, controller.signal);
-      return;
+      if (rows.length > loadedCount || pageError || error || !nextCursor) return;
     }
     loadingMore = true;
     await loadPage(generation, nextCursor, controller.signal);
@@ -690,7 +694,6 @@
     return `file-row-${row.id}`;
   }
   function open(row: WorkspaceFileRow, returnFocus: HTMLElement | undefined = grid, options: { replace?: boolean } | undefined = undefined): void {
-    viewerStepError = '';
     activeKey = row.key;
     onActiveKey?.(row.key);
     viewerReturnFocus = returnFocus;
@@ -699,29 +702,14 @@
     onSelectedKey?.(row.key, options);
   }
   async function step(delta: -1 | 1): Promise<void> {
-    if (!viewerFile || loadingMore) return;
     const current = viewerFile;
-    if (viewerIndex < 0) return;
+    if (!current || viewerIndex < 0) return;
     const target = viewerIndex + delta;
     if (target < 0 || target >= totalCount) return;
-    if (target >= rows.length && nextCursor) {
-      viewerStepError = '';
-      await loadMore();
-      if (viewerFile === current) viewerStepError = pageError || error;
-    }
+    await moveAcrossLoadedBoundary(target);
     if (viewerFile !== current || !rows[target]) return;
-    move(target);
+    if (nextCursor && !pageError && target >= rows.length - OVERSCAN) void loadMore();
     open(rows[target], viewerReturnFocus, { replace: true });
-  }
-  async function reloadViewer(): Promise<void> {
-    const key = viewerFile?.key;
-    const { generation: currentGeneration, signal } = restartListing();
-    let loaded = await loadPage(currentGeneration, undefined, signal);
-    while (loaded && viewerFile?.key === key && !rows.some((row) => row.key === key) && nextCursor) {
-      loadingMore = true;
-      loaded = await loadPage(currentGeneration, nextCursor, signal);
-    }
-    if (viewerFile?.key === key) viewerStepError = pageError || error;
   }
   function move(index: number): void {
     const height = rowHeight;
@@ -762,7 +750,7 @@
     return Math.max(1, Math.floor(visibleHeight / height));
   }
   async function moveAcrossLoadedBoundary(index: number): Promise<void> {
-    if (index < rows.length || !nextCursor || loadingMore) {
+    if (index < rows.length || !nextCursor) {
       move(index);
       return;
     }
@@ -1140,10 +1128,8 @@
     file={viewerFile}
     position={viewerIndex >= 0 ? { index: viewerIndex, total: totalCount } : undefined}
     onStep={viewerIndex >= 0 ? (delta) => { void step(delta); } : undefined}
-    stepping={loading || loadingMore}
-    stepError={viewerStepError}
-    canStepForward={viewerIndex + 1 < rows.length || !!nextCursor}
-    onReload={viewerStepError && !nextCursor ? () => { void reloadViewer(); } : undefined}
+    canStepForward={viewerIndex + 1 < rows.length || !!nextCursor && !pageError && !error}
+    notice={viewerIndex + 1 >= rows.length && totalCount > rows.length ? pageError || error : ''}
     returnFocus={viewerReturnFocus ?? grid}
     onClose={() => {
       viewerFile = undefined;

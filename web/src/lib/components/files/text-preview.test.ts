@@ -45,3 +45,7 @@ it('retains the final record when the byte prefix ends at a record terminator', 
 it('reports malformed quoted fields', async () => {
   expect((await parseDelimited('Name,Amount\nExample,"42\nOther,73', ',')).hasErrors).toBe(true);
 });
+
+it.each(['Name\nOne\nTwo', 'Name,Amount\nExample,42,extra\nOther,73'])('keeps readable rows without an unreadable warning', async (text) => {
+  expect((await parseDelimited(text)).hasErrors).toBe(false);
+});

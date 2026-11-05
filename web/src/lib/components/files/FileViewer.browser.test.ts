@@ -7,6 +7,7 @@ const pdf = vi.hoisted(() => ({
 
 vi.mock('pdfjs-dist', () => ({
   getDocument: pdf.getDocument,
+  TextLayer: class { render() { return Promise.resolve(); } update() {} cancel() {} },
   GlobalWorkerOptions: pdf.workerOptions,
   version: '5.4.296'
 }));

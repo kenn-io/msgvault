@@ -11,7 +11,7 @@ const { renderPDF } = vi.hoisted(() => ({
     const canvas = document.createElement('canvas');
     canvas.setAttribute('aria-label', 'PDF page 1');
     host.append(canvas);
-    return { pages: 1, destroy: vi.fn() };
+    return { pages: 1, setZoom: vi.fn(), destroy: vi.fn() };
   })
 }));
 
@@ -168,7 +168,7 @@ describe('FileViewer', () => {
     render(FileViewer, { client: createAPIClient(fetchFn), file: file({ content_state: contentState, content_available: false }) });
     expect(await screen.findByText(message)).toBeDefined();
     expect(fetchFn).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('button', { name: /Download/ })).toBeNull();
+    expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('button', { name: 'Open message' }).className).toContain('solid');
   });
 
@@ -224,7 +224,8 @@ describe('FileViewer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Open message' }));
     expect(onOpenItem).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11');
 
-    await fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'More file actions' }));
+    await fireEvent.click(screen.getByRole('menuitem', { name: 'Open conversation' }));
     expect(onOpenConversation).toHaveBeenCalledExactlyOnceWith('source:1:message:m-11', 11, 21);
     expect(fetchFn).toHaveBeenCalledOnce();
   });
@@ -446,4 +447,20 @@ it('detects semicolon columns in the CSV viewer', async () => {
   render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), filename: 'regional.csv', mime_type: 'text/csv' }, new TextEncoder().encode('Name;Amount\nExample;42\nOther;73'))), file: file() });
   expect(await screen.findByRole('columnheader', { name: 'Amount' })).toBeDefined();
   expect(screen.getByRole('cell', { name: '42' })).toBeDefined();
+});
+
+it('stops at the loaded end and shows the list notice', async () => {
+  const onStep = vi.fn();
+  render(FileViewer, { client: createAPIClient(viewerFetch(file())), file: file(), position: { index: 1, total: 4 }, onStep, canStepForward: false, notice: 'Could not load more files' });
+  expect(screen.getByRole('button', { name: 'Next file' }).hasAttribute('disabled')).toBe(true);
+  await fireEvent.keyDown(window, { key: 'ArrowRight' });
+  expect(onStep).not.toHaveBeenCalled();
+  expect(screen.getByRole('alert').textContent).toBe('Could not load more files');
+  await fireEvent.keyDown(window, { key: 'ArrowLeft' });
+  expect(onStep).toHaveBeenCalledWith(-1);
+});
+it.each(['audio/wav', 'application/pdf', 'image/png'])('offers Download when %s exceeds the preview bound', async (mime_type) => {
+  render(FileViewer, { client: createAPIClient(viewerFetch({ ...file(), mime_type, size_bytes: 26 * 1024 * 1024 })), file: file() });
+  expect(await screen.findByText('This file is too large to preview.')).toBeDefined();
+  expect(screen.getByRole('button', { name: /Download/ }).hasAttribute('disabled')).toBe(false);
 });
