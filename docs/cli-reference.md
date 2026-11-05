@@ -901,9 +901,11 @@ the reconciliation commit and that checkpoint repeats reconciliation safely.
 The source cursor advances only after catch-up succeeds. If the saved recovery
 cursor also expires, msgvault starts a new complete recovery; one invocation
 attempts at most one such restart.
-Like an ordinary sync, recovery records per-message fetch and ingest
-errors without stopping, so one failing message cannot hold the account in
-recovery. Fetches that fail during catch-up are retried by the next `sync`.
+Recovery re-reads each archived message's labels with one metadata request,
+without downloading MIME again. A failed label read or save stops recovery at
+that page. The next `sync` retries it. Other per-message fetch and ingest errors
+are recorded without stopping. Fetches that fail during catch-up are retried by
+the next `sync`.
 
 While recovery is pending, a Gmail `sync-full` with query, date, or limit
 filters is rejected. Finish the complete recovery first. `--noresume` restarts

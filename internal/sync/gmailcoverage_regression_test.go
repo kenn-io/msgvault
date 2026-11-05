@@ -137,7 +137,7 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 		body = resp
 	case strings.Contains(p, "/messages/"):
 		id := p[strings.LastIndex(p, "/")+1:]
-		if q.Get("format") != "raw" {
+		if q.Get("format") != "raw" && q.Get("format") != "metadata" {
 			return nil, fmt.Errorf("unexpected format: %s", r.URL)
 		}
 		if f.failGet && id == "spam" {
@@ -152,7 +152,10 @@ func (f *gmailCoverageTransport) RoundTrip(r *http.Request) (*http.Response, err
 		if id == "trash" {
 			label = "TRASH"
 		}
-		body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}, "historyId": strconv.FormatUint(f.history, 10), "internalDate": "1700000000000", "raw": base64.RawURLEncoding.EncodeToString(testMIME())}
+		body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}}
+		if q.Get("format") == "raw" {
+			body = map[string]any{"id": id, "threadId": "thread_" + id, "labelIds": []string{label}, "historyId": strconv.FormatUint(f.history, 10), "internalDate": "1700000000000", "raw": base64.RawURLEncoding.EncodeToString(testMIME())}
+		}
 	default:
 		return nil, fmt.Errorf("unexpected synthetic endpoint: %s", r.URL)
 	}
