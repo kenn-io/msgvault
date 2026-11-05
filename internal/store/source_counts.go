@@ -43,8 +43,8 @@ func (s *Store) CountMessagesBySourceContext(ctx context.Context) (map[int64]Sou
 	return counts, nil
 }
 
-// SourceNativeMessagesWhere restricts counts and deletion previews to records
-// that exist in the source provider. Aliases and table names are trusted SQL.
+// SourceNativeMessagesWhere restricts verify and remove-account counts and
+// samples to records in the source provider. Aliases and table names are trusted SQL.
 func SourceNativeMessagesWhere(alias, sources string) string {
 	return fmt.Sprintf("(COALESCE(%s.message_type, '') <> 'calendar_event' OR EXISTS (SELECT 1 FROM %s native_source WHERE native_source.id = %s.source_id AND native_source.source_type IN ('gcal', 'ics')))", alias, sources, alias)
 }
