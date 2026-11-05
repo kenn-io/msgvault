@@ -577,31 +577,39 @@ func captureUntrackedIMAPMessageIDs(
 	return nil
 }
 
-// imapMembershipGenerationSeekQuery skips all UIDs of the previous generation.
+// Seek each column separately so SQLite skips all UIDs of the previous epoch.
 func imapMembershipGenerationSeekQuery() string {
 	return `SELECT mailbox, uidvalidity FROM imap_message_memberships
-		WHERE source_id = ? AND (mailbox, uidvalidity) > (?, ?)
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity > ?
+		ORDER BY uidvalidity LIMIT 1`
+}
+
+func imapMembershipMailboxSeekQuery() string {
+	return `SELECT mailbox, uidvalidity FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox > ?
 		ORDER BY mailbox, uidvalidity LIMIT 1`
 }
 
 func imapMembershipGenerations(tx *loggedTx, sourceID int64) ([]imapMembershipUIDGeneration, error) {
 	var generations []imapMembershipUIDGeneration
-	query := `SELECT mailbox, uidvalidity FROM imap_message_memberships
-		WHERE source_id = ? ORDER BY mailbox, uidvalidity LIMIT 1`
-	args := []any{sourceID}
-	for {
-		var generation imapMembershipUIDGeneration
-		err := tx.QueryRow(query, args...).Scan(&generation.mailbox, &generation.uidValidity)
-		if errors.Is(err, sql.ErrNoRows) {
-			return generations, nil
-		}
-		if err != nil {
-			return nil, fmt.Errorf("read IMAP membership generations: %w", err)
-		}
+	var generation imapMembershipUIDGeneration
+	err := tx.QueryRow(`SELECT mailbox, uidvalidity FROM imap_message_memberships
+		WHERE source_id = ? ORDER BY mailbox, uidvalidity LIMIT 1`, sourceID).
+		Scan(&generation.mailbox, &generation.uidValidity)
+	for err == nil {
 		generations = append(generations, generation)
-		query = imapMembershipGenerationSeekQuery()
-		args = []any{sourceID, generation.mailbox, generation.uidValidity}
+		mailbox := generation.mailbox
+		err = tx.QueryRow(imapMembershipGenerationSeekQuery(), sourceID, mailbox, generation.uidValidity).
+			Scan(&generation.mailbox, &generation.uidValidity)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRow(imapMembershipMailboxSeekQuery(), sourceID, mailbox).
+				Scan(&generation.mailbox, &generation.uidValidity)
+		}
 	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("read IMAP membership generations: %w", err)
+	}
+	return generations, nil
 }
 
 type imapMembershipUIDGeneration struct {

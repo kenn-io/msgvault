@@ -87,24 +87,36 @@ func TestUntrackedIMAPMessagesUsesStampIndexSQLite(t *testing.T) {
 
 func TestIMAPMembershipGenerationSeekUsesPrimaryKeySQLite(t *testing.T) {
 	requirements := require.New(t)
-	assertions := assert.New(t)
 	st, err := OpenForTest(filepath.Join(t.TempDir(), "imap-generation-plan.db"))
 	requirements.NoError(err)
 	t.Cleanup(func() { requirements.NoError(st.Close()) })
 	requirements.NoError(st.InitSchema())
-	rows, err := st.db.Query("EXPLAIN QUERY PLAN "+imapMembershipGenerationSeekQuery(), 1, "INBOX", 1)
-	requirements.NoError(err)
-	defer func() { requirements.NoError(rows.Close()) }()
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		requirements.NoError(rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
+	for _, test := range []struct {
+		name  string
+		query string
+		args  []any
+	}{
+		{"next epoch", imapMembershipGenerationSeekQuery(), []any{1, "INBOX", 1}},
+		{"next mailbox", imapMembershipMailboxSeekQuery(), []any{1, "INBOX"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			requirements := require.New(t)
+			assertions := assert.New(t)
+			rows, err := st.db.Query("EXPLAIN QUERY PLAN "+test.query, test.args...)
+			requirements.NoError(err)
+			defer func() { requirements.NoError(rows.Close()) }()
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				requirements.NoError(rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			requirements.NoError(rows.Err())
+			plan := strings.Join(details, "\n")
+			assertions.Contains(plan, "SEARCH imap_message_memberships USING COVERING INDEX sqlite_autoindex_imap_message_memberships_1")
+			assertions.NotContains(plan, "SCAN imap_message_memberships")
+			assertions.NotContains(plan, "USE TEMP B-TREE")
+		})
 	}
-	requirements.NoError(rows.Err())
-	plan := strings.Join(details, "\n")
-	assertions.Contains(plan, "SEARCH imap_message_memberships USING COVERING INDEX sqlite_autoindex_imap_message_memberships_1")
-	assertions.NotContains(plan, "SCAN imap_message_memberships")
-	assertions.NotContains(plan, "USE TEMP B-TREE")
 }
