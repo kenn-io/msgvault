@@ -706,6 +706,29 @@ func TestMeetingLinksSplitSurvivesSourceRemoval(t *testing.T) {
 	}
 }
 
+func TestMeetingLinksUnlinkAfterCalendarSourceRemoval(t *testing.T) {
+	for _, recurring := range []bool{false, true} {
+		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, automatic := calendarFixture(t, st, "automatic", singleLinkRaw("automatic", "automatic@example.org"))
+			_, note := projectionFixture(t, st, "note", "twenty_json", `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"automatic@example.org"}}`)
+			raw, key := singleLinkRaw("manual", "manual@example.org"), ""
+			if recurring {
+				raw, key = linkSeriesRaw, "20270314T100000Z"
+			}
+			data, manual := calendarFixture(t, st, "manual", raw, "manual@example.com")
+			ref := OccurrenceRef{MessageID: manual, Key: key}
+			requirements.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
+			requirements.NoError(st.LinkMeetingContext(t.Context(), note, ref))
+			requirements.NoError(st.RemoveSource(data.Message.SourceID))
+			requirements.Empty(linkedMeetingRefs(t, st, note)[note])
+			assertions.NoError(st.UnlinkMeetingContext(t.Context(), note, ref))
+			assertions.Equal(fmt.Sprintf("evt:%d", automatic), linkedMeetingRefs(t, st, note)[note])
+		})
+	}
+}
+
 func TestMeetingLinksManualOverrideSurvivesSourceRemoval(t *testing.T) {
 	for _, recurring := range []bool{false, true} {
 		t.Run(fmt.Sprintf("recurring=%t", recurring), func(t *testing.T) {
