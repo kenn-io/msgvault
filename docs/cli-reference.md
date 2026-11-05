@@ -881,8 +881,12 @@ Folder filters are applied only to IMAP accounts. See
 [IMAP Folder Sync](/docs/usage/imap/) for examples and matching rules.
 
 For Gmail, normal incremental sync consumes History API deletion events and
-marks those messages as deleted from the source. If Gmail says the saved history
-cursor has expired, msgvault recovers with an unfiltered, unlimited snapshot of
+marks those messages as deleted from the source. If saving a label change or
+source-deletion marker fails, sync returns an error and keeps its previous
+History position. The next sync retries those changes.
+
+If Gmail says the saved history cursor has expired, msgvault recovers with an
+unfiltered, unlimited snapshot of
 the complete mailbox, then consumes changes made while that snapshot was in
 progress. Only a successfully completed snapshot is used to mark missing
 messages as source-deleted; interrupted or partial listings do not reconcile
