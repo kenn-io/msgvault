@@ -4,7 +4,7 @@
   import { createKataIssue, linkKataEvidence, prepareKataEvidence, listOpenKataIssues } from '../../api/generated/api/api';
   import ExistingPicker from '../common/ExistingPicker.svelte';
   import type { APIClient } from '../../api/client';
-  import type { KataIssueCreateRequest, KataIssueReceipt } from '../../api/generated/models';
+  import type { KataIssueCreateRequest, KataIssueListResponse, KataIssueReceipt } from '../../api/generated/models';
   import { errorMessage } from '../../api/session.svelte';
   import { EVIDENCE_STEP, EVIDENCE_WINDOW, retryKey, type EvidenceSelector, type PreparedEvidence } from '../../kata/evidence';
 
@@ -45,20 +45,18 @@
   const canSubmit = $derived(!busy && !loading && !!preview && (mode === 'create' ? !!title.trim() : !!selected));
   const actionOptions = [{ value: 'create', label: 'New' }, { value: 'link', label: 'Existing' }];
 
-  let openIssues: ReturnType<typeof listOpenKataIssues> | undefined;
-  async function loadIssues(query: string, _signal: AbortSignal) {
-    openIssues ??= listOpenKataIssues(client);
-    let data;
-    try {
-      const response = await openIssues;
+  let openIssues: Promise<KataIssueListResponse> | undefined;
+  function fetchOpenIssues(): Promise<KataIssueListResponse> {
+    return openIssues ??= listOpenKataIssues(client).then(response => {
       if (!response.data) throw new Error(errorMessage(response.error, 'Unable to load issues.'));
-      data = response.data;
-    } catch (cause) {
-      openIssues = undefined;
-      throw cause;
-    }
+      return response.data;
+    }).catch(cause => { openIssues = undefined; throw cause; });
+  }
+  async function loadIssues(query: string, _signal: AbortSignal) {
     const text = query.trim();
     const filter = text.toLowerCase();
+    // A typed ref can still be linked when the list is unavailable.
+    const data = await fetchOpenIssues().catch(cause => { if (text) return { issues: [], truncated: false }; throw cause; });
     const items = data.issues.filter(issue => issue.title.toLowerCase().includes(filter) || issue.qualified_ref.toLowerCase().includes(filter))
       .map(issue => ({ id: issue.qualified_ref, label: issue.title, detail: issue.qualified_ref }));
     if (text && !data.issues.some(issue => issue.qualified_ref.toLowerCase() === filter)) items.push({ id: text, label: `Add quote to ${text}`, detail: '' });

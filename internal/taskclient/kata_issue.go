@@ -2,8 +2,11 @@ package taskclient
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -91,7 +94,76 @@ func (c *KataClient) listAllIssues(ctx context.Context, query string) ([]KataTas
 	return tasks, nil
 }
 
-// OpenIssues lists the project's newest open issues.
+// OpenIssues lists the project's most recently updated open issues without
+// their bodies. Every Kata API msgvault accepts orders an unsorted list this
+// way, while sort=created needs a newer one.
 func (c *KataClient) OpenIssues(ctx context.Context, project string, limit int) ([]KataTask, bool, error) {
-	return c.listIssues(ctx, project, url.Values{"status": {"open"}, "sort": {"created"}, "limit": {strconv.Itoa(limit)}})
+	return c.listIssueSummaries(ctx, project, url.Values{"status": {"open"}, "limit": {strconv.Itoa(limit)}})
+}
+
+// listIssueSummaries streams an issue list and drops each body as it arrives,
+// so the response bound counts everything but bodies and the list's cost
+// does not grow with them.
+func (c *KataClient) listIssueSummaries(ctx context.Context, project string, query url.Values) ([]KataTask, bool, error) {
+	path, err := c.issuePath(ctx, project, "?"+query.Encode())
+	if err != nil {
+		return nil, false, err
+	}
+	resp, err := c.transport.send(ctx, http.MethodGet, path, nil, nil, http.StatusOK)
+	if err != nil {
+		return nil, false, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	reader := &bodyDroppingReader{reader: resp.Body, maximum: max(c.transport.maxResponseBytes, issueListMaxResponseBytes)}
+	var response struct {
+		kata.ListIssuesResponseBody `json:",inline"`
+		Issues                      []issueSummary `json:"issues"`
+	}
+	if err := decodeResponse(reader, &response, json.WithUnmarshalers(json.UnmarshalFromFunc(reader.drop))); err != nil {
+		return nil, false, err
+	}
+	issues := make([]kata.IssueOut, 0, len(response.Issues))
+	for _, issue := range response.Issues {
+		issues = append(issues, issue.IssueOut)
+	}
+	return tasksFromKataIssues(project, issues), response.Truncated, nil
+}
+
+// issueSummary is a listed issue whose body was dropped unread.
+type issueSummary struct {
+	kata.IssueOut `json:",inline"`
+	Body          droppedBody `json:"body"`
+}
+
+type droppedBody struct{}
+
+// bodyDroppingReader bounds the bytes it keeps, and separately the bytes of
+// any one dropped body, at maximum.
+type bodyDroppingReader struct {
+	reader        io.Reader
+	maximum       int64
+	kept, dropped int64
+	dropping      bool
+}
+
+func (r *bodyDroppingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	if r.dropping {
+		r.dropped += int64(n)
+	} else {
+		r.kept += int64(n)
+	}
+	if r.kept > r.maximum || r.dropped > r.maximum {
+		return n, ErrResponseTooLarge
+	}
+	return n, err
+}
+
+func (r *bodyDroppingReader) drop(decoder *jsontext.Decoder, _ *droppedBody) error {
+	r.dropping, r.dropped = true, 0
+	defer func() { r.dropping = false }()
+	if decoder.PeekKind() != '"' {
+		return ErrInvalidResponse
+	}
+	return decoder.SkipValue()
 }

@@ -348,6 +348,24 @@ func (c *Client) doJSON(ctx context.Context, method, path string, requestBody an
 // URL.Path with an empty RawPath makes URL.String percent-encode it exactly
 // once during serialization.
 func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, requestBody any, headers http.Header, result any, successStatuses ...int) (http.Header, error) {
+	resp, err := c.send(ctx, method, path, requestBody, headers, successStatuses...)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	data, err := readBounded(resp.Body, c.maxResponseBytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeResponse(bytes.NewReader(data), result); err != nil {
+		return nil, err
+	}
+	return resp.Header.Clone(), nil
+}
+
+// send returns a response with one of successStatuses for the caller to read
+// and close.
+func (c *Client) send(ctx context.Context, method, path string, requestBody any, headers http.Header, successStatuses ...int) (*http.Response, error) {
 	target := *c.baseURL
 	parts := strings.SplitN(path, "?", 2)
 	target.Path = strings.TrimRight(target.Path, "/") + parts[0]
@@ -387,27 +405,30 @@ func (c *Client) doJSONWithHeaders(ctx context.Context, method, path string, req
 		}
 		return nil, fmt.Errorf("%w: request failed", ErrUnreachable)
 	}
-	defer func() { _ = resp.Body.Close() }()
 	if !containsStatus(successStatuses, resp.StatusCode) {
+		defer func() { _ = resp.Body.Close() }()
 		return nil, &httpStatusError{
 			statusCode:     resp.StatusCode,
 			classification: classifyHTTPStatus(resp.StatusCode),
 			code:           errorCode(resp),
 		}
 	}
-	data, err := readBounded(resp.Body, c.maxResponseBytes)
-	if err != nil {
-		return nil, err
-	}
-	decoder := jsontext.NewDecoder(bytes.NewReader(data), json.RejectUnknownMembers(true))
+	return resp, nil
+}
 
-	if err := json.UnmarshalDecode(decoder, result); err != nil {
-		return nil, fmt.Errorf("%w: decode response", ErrInvalidResponse)
+// decodeResponse decodes exactly one JSON value from reader into result.
+func decodeResponse(reader io.Reader, result any, options ...json.Options) error {
+	decoder := jsontext.NewDecoder(reader, json.RejectUnknownMembers(true))
+	if err := json.UnmarshalDecode(decoder, result, options...); err != nil {
+		if errors.Is(err, ErrResponseTooLarge) {
+			return ErrResponseTooLarge
+		}
+		return fmt.Errorf("%w: decode response", ErrInvalidResponse)
 	}
 	if err := json.UnmarshalDecode(decoder, &struct{}{}); !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("%w: trailing response data", ErrInvalidResponse)
+		return fmt.Errorf("%w: trailing response data", ErrInvalidResponse)
 	}
-	return resp.Header.Clone(), nil
+	return nil
 }
 
 func classifyCapabilityHTTPStatus(statusCode int) error {
