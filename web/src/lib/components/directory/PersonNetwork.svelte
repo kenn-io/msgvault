@@ -92,7 +92,7 @@
       const a = layout.place.get(edge.source_node_id);
       const b = layout.place.get(edge.target_node_id);
       return a && b && a.x === b.x ? [{ key, x: a.x, first: Math.min(a.y, b.y), last: Math.max(a.y, b.y) }] : [];
-    }).sort((a, b) => a.x - b.x || a.first - b.first || a.last - b.last);
+    }).sort((a, b) => a.first - b.first);
     const ends = new Map<number, number[]>();
     const result = new Map<string, number>();
     for (const span of spans) {
@@ -155,7 +155,7 @@
         break;
       }
       rectangles.push({ x: x - width / 2, y: y - height / 2, width, height });
-      positions.push({ key: group.key, labels: group.labels, x, y, width });
+      positions.push({ key: group.key, labels: group.labels, x, y, room: line.room });
     }
     return positions;
   });
@@ -188,7 +188,7 @@
           {/each}
         </svg>
         {#each place as label (label.key)}
-          <span class="edge-label" aria-hidden="true" style:left={`${label.x}px`} style:top={`${label.y}px`} style:max-width={`${label.width}px`} title={label.labels.join(' · ')}>
+          <span class="edge-label" aria-hidden="true" style:left={`${label.x}px`} style:top={`${label.y}px`} style:max-width={`${label.room}px`} title={label.labels.join(' · ')}>
             {#each label.labels as text}<span>{text}</span>{/each}
           </span>
         {/each}
