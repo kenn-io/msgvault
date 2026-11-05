@@ -85,4 +85,3 @@ func TestRepairDerivedSourceReportsEmptyRaw(t *testing.T) {
 	r.NoError(err)
 	a.Equal("retained body", body)
 }
-

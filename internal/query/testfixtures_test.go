@@ -47,8 +47,7 @@ type MessageFixture struct {
 	SenderID            *int64     // nil = NULL (direct sender for WhatsApp/chat messages)
 	OwnerParticipantID  *int64     // nil = NULL (message-relative owner identity)
 	MessageType         string     // e.g. "email", "whatsapp"; "" defaults to "email"
-	ArchiveOnly         bool
-	ListID              *string // nil = NULL (RFC 2919 List-Id for email messages)
+	ListID              *string    // nil = NULL (RFC 2919 List-Id for email messages)
 	// LegacyEmptyMessageType writes '' instead of the "email" default,
 	// modeling rows imported before message_type existed.
 	LegacyEmptyMessageType bool
@@ -253,7 +252,6 @@ func (b *TestDataBuilder) AddLabel(name string) int64 {
 
 // MessageOpt configures a message to add.
 type MessageOpt struct {
-	ArchiveOnly         bool
 	Subject             string
 	Snippet             string
 	SentAt              time.Time
@@ -302,7 +300,6 @@ func (b *TestDataBuilder) AddMessage(opt MessageOpt) int64 {
 	}
 
 	b.messages = append(b.messages, MessageFixture{
-		ArchiveOnly:            opt.ArchiveOnly,
 		ID:                     id,
 		SourceID:               srcID,
 		SourceMessageID:        fmt.Sprintf("msg%d", id),
@@ -746,16 +743,16 @@ func (b *TestDataBuilder) addMessageTables(pb *parquetBuilder) {
 		byYear[m.Year] = append(byYear[m.Year], m)
 	}
 	for year, msgs := range byYear {
-		cols := messagesCols + ", archive_only"
-		columns := append(slices.Clone(messagesColumns), "archive_only")
+		cols := messagesCols
+		columns := messagesColumns
 		rowFormatter := func(message MessageFixture) string {
-			return formatMessageFixture(b.t, columns, append(message.sqlValues(), strconv.FormatBool(message.ArchiveOnly)))
+			return formatMessageFixture(b.t, columns, message.sqlValues())
 		}
 		if slices.ContainsFunc(msgs, func(message MessageFixture) bool { return message.InternalDeletedAt != nil }) {
-			cols = messagesColsWithDeletedAt + ", archive_only"
-			columns = append(slices.Clone(messagesColumnsWithDeletedAt), "archive_only")
+			cols = messagesColsWithDeletedAt
+			columns = messagesColumnsWithDeletedAt
 			rowFormatter = func(message MessageFixture) string {
-				return formatMessageFixture(b.t, columns, append(message.sqlValuesWithInternalDeletion(), strconv.FormatBool(message.ArchiveOnly)))
+				return formatMessageFixture(b.t, columns, message.sqlValuesWithInternalDeletion())
 			}
 		}
 		rows := joinRows(msgs, rowFormatter)

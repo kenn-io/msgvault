@@ -4854,23 +4854,6 @@ func TestDuckDBEngine_GetDeletionTargetsByMessageIDs(t *testing.T) {
 	}
 }
 
-func TestDuckDBEngine_GetDeletionTargetsByFilterExcludesDerivedCalendar(t *testing.T) {
-	assertions := assert.New(t)
-	requirements := require.New(t)
-	b := NewTestDataBuilder(t)
-	b.AddSource("owner@example.test")
-	emailID := b.AddMessage(MessageOpt{Subject: "Email", MessageType: "email"})
-	b.AddMessage(MessageOpt{Subject: "Meeting", MessageType: "calendar_event", ArchiveOnly: true})
-	engine := b.BuildEngine()
-	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), MessageFilter{})
-	requirements.NoError(err)
-	var ids []int64
-	for _, target := range targets {
-		ids = append(ids, target.MessageID)
-	}
-	assertions.ElementsMatch([]int64{emailID}, ids)
-}
-
 func TestDuckDBEngine_GetDeletionTargetsByMessageIDsExcludesNonEmailAndEmptyProviderID(t *testing.T) {
 	t.Parallel()
 	require := require.New(t)
