@@ -783,12 +783,13 @@ func TestImportHasAttachmentsFollowsSourceFlagWithoutRows(t *testing.T) {
 					WHERE source_id = ? AND source_message_id = '1'`), f.source).Scan(&flag))
 				return flag
 			}
-			for _, flag := range []int{0, 1, 0, 1} {
+			for i, flag := range []int{0, 1, 0, 1, 1} {
 				_, err := f.db.Exec(`UPDATE message SET cache_has_attachments = ?`, flag)
 				require.NoError(err)
-				_, err = c.Import(t.Context(), f.st, f.source)
+				summary, err := c.Import(t.Context(), f.st, f.source)
 				require.NoError(err)
 				require.Equal(flag == 1, hasAttachments(), "source flag %d", flag)
+				require.Equal([]int{0, 2, 2, 2, 0}[i], summary.MessagesUpdated)
 			}
 		})
 	}

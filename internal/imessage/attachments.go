@@ -199,9 +199,13 @@ func (c *Client) importAttachments(ctx context.Context, s *store.Store, messageI
 		}
 		// With no rows to count, the archived flag follows the source flag.
 		flag := msg.HasAttachments != 0
-		_, err := s.DB().ExecContext(ctx, s.Rebind(`UPDATE messages SET has_attachments = ? WHERE id = ? AND has_attachments <> ?`),
+		result, err := s.DB().ExecContext(ctx, s.Rebind(`UPDATE messages SET has_attachments = ? WHERE id = ? AND has_attachments <> ?`),
 			flag, messageID, flag)
-		return false, err
+		if err != nil {
+			return false, err
+		}
+		rows, err := result.RowsAffected()
+		return rows > 0, err
 	}
 	conversation := attachmentpolicy.Conversation{Type: "direct_chat", ParticipantCount: 2}
 	if msg.ChatROWID != nil {
