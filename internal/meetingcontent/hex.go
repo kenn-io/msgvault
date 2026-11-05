@@ -61,7 +61,7 @@ func decodeHex(fields map[string]jsontext.Value) Content {
 		content.Transcript.State = StateAvailable
 		content.Transcript.Text = strings.Join(lines, "\n")
 	}
-	if m.TranscriptState == "missing" || m.TranscriptState == "unreadable" {
+	if m.TranscriptState == "missing" {
 		content.Transcript.State = StateUnavailable
 	}
 	if m.TranscriptState != "final" {

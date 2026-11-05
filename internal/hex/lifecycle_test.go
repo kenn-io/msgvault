@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.kenn.io/msgvault/internal/hex/evidence"
 	"go.kenn.io/msgvault/internal/meetingcontent"
 	"go.kenn.io/msgvault/internal/meetingimport"
 )
@@ -187,40 +186,4 @@ func TestHexFutureReceiptVersionIsPreserved(t *testing.T) {
 	after, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Equal(t, string(original), string(after), "unknown future state must remain intact")
-}
-
-func TestHexLegacyUnreadableEvidenceCanRecover(t *testing.T) {
-	st, imp, opts := importFixture(t)
-	dir := fixtureMeeting(t, opts.MeetingsDir, "legacy-unreadable", "failed")
-	sum, err := imp.Import(t.Context(), opts)
-	require.NoError(t, err)
-	id := messageID(t, st, sum.SourceID, "legacy-unreadable")
-	raw, err := st.GetMessageRaw(id)
-	require.NoError(t, err)
-	var legacy evidence.Envelope
-	require.NoError(t, json.Unmarshal(raw, &legacy))
-	// The original recorder emitted this state on a transcript read error.
-	legacy.Meeting.TranscriptState = "unreadable"
-	raw, err = json.Marshal(legacy)
-	require.NoError(t, err)
-	require.NoError(t, st.UpsertMessageRawWithFormat(id, raw, RawFormat))
-	content := meetingcontent.Decode(RawFormat, raw, nil)
-	assert.Equal(t, meetingcontent.StateAvailable, content.Summary.State)
-	assert.Equal(t, meetingcontent.StateUnavailable, content.Transcript.State)
-	assert.Equal(t, "hex_unreadable", content.Transcript.Reason)
-	fixtureTranscript(t, dir)
-	sum, err = imp.Import(t.Context(), opts)
-	require.NoError(t, err, "stored unreadable evidence must not block clean recovery")
-	assert.Equal(t, int64(1), sum.MeetingsUpdated)
-	recovered, err := st.GetMessageRaw(id)
-	require.NoError(t, err)
-	assert.Contains(t, meetingcontent.Decode(RawFormat, recovered, nil).Transcript.Text, "Synthetic transcript")
-	// An older recorder's subsequent unreadable upload must not erase recovery.
-	m := Meeting(legacy.Meeting)
-	result, err := imp.ImportRemote(t.Context(), RemoteRequest{Action: "upsert", Source: meetingimport.Source{Identifier: opts.Identifier, AccountEmail: opts.AccountEmail}, Meeting: &m, Full: true})
-	require.NoError(t, err)
-	assert.Positive(t, result.Warnings)
-	untouched, err := st.GetMessageRaw(id)
-	require.NoError(t, err)
-	assert.Equal(t, string(recovered), string(untouched))
 }

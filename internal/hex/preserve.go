@@ -26,7 +26,7 @@ func (imp *Importer) prepareArchive(ctx context.Context, m Meeting, sourceID int
 		if m.TitleSourceInferred && m.Manifest.Title == stored.Meeting.Manifest.Title && m.Manifest.App == stored.Meeting.Manifest.App && m.Manifest.CreatedAtMS == stored.Meeting.Manifest.CreatedAtMS && stored.Meeting.Manifest.TitleSource != "" {
 			m.Manifest.TitleSource = stored.Meeting.Manifest.TitleSource
 		}
-		if (stored.Meeting.HasTranscript() && (m.TranscriptState == "missing" || m.TranscriptState == "unreadable" || m.TranscriptPartial)) || (stored.Meeting.TranscriptState == "final" && m.TranscriptState == "rolling") {
+		if (stored.Meeting.HasTranscript() && (m.TranscriptState == "missing" || m.TranscriptPartial)) || (stored.Meeting.TranscriptState == "final" && m.TranscriptState == "rolling") {
 			return meetingarchive.Snapshot{}, previous.ID, nil
 		}
 	}
