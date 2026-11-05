@@ -57,7 +57,7 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 				return usageErr(cmd, fmt.Errorf("--%s: use YYYY-MM-DD or RFC3339 with an offset", []string{"from", "to"}[i]))
 			}
 		}
-		if bounds[1].Before(bounds[0]) || bounds[1].Equal(bounds[0]) {
+		if bounds[1].Before(bounds[0]) || bounds[1].Equal(bounds[0]) && bounds[1].Format(time.DateOnly) <= bounds[0].Format(time.DateOnly) {
 			return usageErr(cmd, errors.New("--to must be after --from"))
 		}
 		return nil

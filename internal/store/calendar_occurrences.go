@@ -61,7 +61,7 @@ type CalendarOccurrencePage struct {
 // ListCalendarOccurrencesContext expands archived series in a half-open window.
 func (s *Store) ListCalendarOccurrencesContext(ctx context.Context, query CalendarOccurrenceQuery) (CalendarOccurrencePage, error) {
 	from, to := query.From, query.To
-	if from.IsZero() || to.IsZero() || to.Before(from) || to.Equal(from) {
+	if from.IsZero() || to.IsZero() || to.Before(from) || to.Equal(from) && to.Format(time.DateOnly) <= from.Format(time.DateOnly) {
 		return CalendarOccurrencePage{}, fmt.Errorf("%w: window must be positive", ErrCalendarOccurrenceInvalid)
 	}
 	limit := 100
