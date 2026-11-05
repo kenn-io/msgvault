@@ -409,3 +409,80 @@ func TestImportPst_32BitPST(t *testing.T) {
 	assert.Equal(t, int64(0), summary.MessagesProcessed, "MessagesProcessed")
 	assert.False(t, summary.HardErrors, "HardErrors")
 }
+
+// A cancel that lands after an existing message's header repair commits
+// leaves the checkpoint at that message, so a resumed import never revisits
+// it. Its folder label must be restored before the import stops.
+//
+// Not parallel: it replaces the process-wide slog default and SQL log options.
+func TestImportPst_CancelAfterHeaderRepairRestoresFolderLabel(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := openIntegrationStore(t)
+	pstPath := filepath.Join(pstTestdataDir, "support.pst")
+	opts := PstImportOptions{Identifier: "owner@example.test"}
+	first, err := ImportPst(t.Context(), st, pstPath, opts)
+	require.NoError(err)
+	require.Zero(first.Errors)
+
+	db := st.DB()
+	messageLabels := func() []string {
+		rows, err := db.QueryContext(t.Context(), `
+			SELECT ml.message_id || ':' || ml.label_id FROM message_labels ml
+			JOIN messages m ON m.id = ml.message_id
+			WHERE m.source_id = ? ORDER BY ml.message_id, ml.label_id`, first.SourceID)
+		require.NoError(err)
+		defer func() { require.NoError(rows.Close()) }()
+		var labels []string
+		for rows.Next() {
+			var label string
+			require.NoError(rows.Scan(&label))
+			labels = append(labels, label)
+		}
+		require.NoError(rows.Err())
+		return labels
+	}
+	want := messageLabels()
+	require.NotEmpty(want)
+
+	// Drop the folder labels the re-import must restore, and the header facts
+	// whose repair is the commit the cancel waits for.
+	_, err = db.ExecContext(t.Context(), `DELETE FROM message_labels
+		WHERE message_id IN (SELECT id FROM messages WHERE source_id = ?)`, first.SourceID)
+	require.NoError(err)
+	_, err = db.ExecContext(t.Context(),
+		`UPDATE messages SET rfc822_message_id = NULL WHERE source_id = ?`, first.SourceID)
+	require.NoError(err)
+
+	queryCtx := context.WithoutCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	handler := &cancelAfterMessageCommitHandler{
+		Handler: slog.DiscardHandler,
+		cancel:  cancel,
+		messageCommitted: func() bool {
+			var repaired int
+			require.NoError(db.QueryRowContext(queryCtx, `SELECT COUNT(*) FROM messages
+				WHERE source_id = ? AND rfc822_message_id IS NOT NULL`, first.SourceID).Scan(&repaired))
+			return repaired > 0
+		},
+	}
+	// A commit over the slow threshold logs "sql tx slow" in place of the
+	// line the handler waits for.
+	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	previous := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	interrupted, err := ImportPst(ctx, st, pstPath, opts)
+	require.NoError(err, "an interrupted import reports through the summary, not an error")
+	require.True(handler.canceled, "the cancel must land after a header repair commits")
+	require.Less(interrupted.MessagesProcessed, first.MessagesProcessed, "the cancel must stop the import")
+	slog.SetDefault(previous)
+
+	resumed, err := ImportPst(t.Context(), st, pstPath, opts)
+	require.NoError(err)
+	require.True(resumed.WasResumed)
+	assert.Equal(want, messageLabels(), "every message must regain its folder labels")
+}

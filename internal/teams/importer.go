@@ -167,7 +167,9 @@ func (imp *Importer) BackfillInlineMedia(ctx context.Context, opts ImportOptions
 		}
 		itemOpts.MediaConversation = conversation
 		if imp.downloadInlineImages(ctx, messageID, bodyHTML, itemOpts, sum) {
-			if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+			// The attachment rows are already replaced; refresh the message's
+			// attachment flags even after a cancel so they match those rows.
+			if err := imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
 				sum.Errors++
 			}
 		}
@@ -1070,7 +1072,9 @@ func (imp *Importer) persistMessage(ctx context.Context, convID, sourceID int64,
 		sum.AttachmentsFound += int64(len(linkAttachments))
 	}
 	if inlineImagesChanged {
-		if err := imp.store.RecomputeMessageAttachmentStatsContext(ctx, messageID); err != nil {
+		// The attachment rows are already replaced; refresh the message's
+		// attachment flags even after a cancel so they match those rows.
+		if err := imp.store.RecomputeMessageAttachmentStatsContext(context.WithoutCancel(ctx), messageID); err != nil {
 			sum.Errors++
 		}
 	}

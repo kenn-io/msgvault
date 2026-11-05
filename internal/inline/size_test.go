@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,6 +16,7 @@ import (
 	"go.kenn.io/msgvault/internal/attachmentpolicy"
 	"go.kenn.io/msgvault/internal/query"
 	"go.kenn.io/msgvault/internal/search"
+	"go.kenn.io/msgvault/internal/store"
 )
 
 func assertInlineMessageSize(t *testing.T, imp *Importer, messageID, wantSize int64) {
@@ -181,4 +184,90 @@ func TestMediaSizeIncludesPendingExcludedAndFailedOccurrences(t *testing.T) {
 			assertions.Equal(tc.wantSize, int64(refs["inline:document:1"].Size))
 		})
 	}
+}
+
+// cancelAfterCommitHandler cancels synchronously on the first committed
+// transaction after which committed reports true. The writes that follow it
+// then run with an already-canceled context.
+type cancelAfterCommitHandler struct {
+	slog.Handler
+
+	mu        sync.Mutex
+	cancel    context.CancelFunc
+	committed func() bool
+	canceled  bool
+}
+
+func (*cancelAfterCommitHandler) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *cancelAfterCommitHandler) Handle(_ context.Context, record slog.Record) error {
+	if record.Message != "sql tx commit" {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.canceled && h.committed() {
+		h.cancel()
+		h.canceled = true
+	}
+	return nil
+}
+
+// A cancel that lands after a backfill commits the downloaded attachment row
+// must still leave the message size counting the downloaded bytes. Later
+// backfills skip the message because its media is complete.
+//
+// Not parallel: it replaces the process-wide slog default and SQL log options.
+func TestMediaBackfillCancelAfterStoredRowKeepsMessageSize(t *testing.T) {
+	assertions := assert.New(t)
+	requires := require.New(t)
+	imp, client, opts := importerFixture(t)
+	message := syntheticMessage(1, 1, "note")
+	message.Media = []Media{{ID: "document:1", ChatID: 1, MessageID: 1, Role: "document", Size: 40}}
+	client.messages[1] = []Message{message}
+	opts.NoMedia = true
+	first, err := imp.Import(t.Context(), opts)
+	requires.NoError(err)
+	id := archivedMessage(t, imp.store, first.SourceID, 1, 1)
+	assertInlineMessageSize(t, imp, id, int64(len(message.Text))+40)
+
+	content := "downloaded"
+	client.files = func(_ context.Context, _ int64, _ []int64) ([]Media, error) {
+		return []Media{{ID: "document:1", ChatID: 1, MessageID: 1, Role: "document", Size: 40, URL: "https://api.inline.chat/file"}}, nil
+	}
+	imp.mediaTransport = mediaRoundTripper(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, ContentLength: int64(len(content)), Body: io.NopCloser(strings.NewReader(content)), Request: request}, nil
+	})
+	queryCtx := context.WithoutCancel(t.Context())
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	handler := &cancelAfterCommitHandler{
+		Handler: slog.DiscardHandler,
+		cancel:  cancel,
+		committed: func() bool {
+			var stored int
+			requires.NoError(imp.store.DB().QueryRowContext(queryCtx, imp.store.Rebind(`SELECT COUNT(*) FROM attachments
+				WHERE message_id = ? AND content_hash IS NOT NULL AND content_hash <> ''`), id).Scan(&stored))
+			return stored > 0
+		},
+	}
+	// A commit over the slow threshold logs "sql tx slow" in place of the
+	// line the handler waits for.
+	store.ConfigureSQLLogging(store.SQLLogOptions{SlowMs: -1})
+	t.Cleanup(func() { store.ConfigureSQLLogging(store.SQLLogOptions{}) })
+	previous := slog.Default()
+	slog.SetDefault(slog.New(handler))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	opts.NoMedia = false
+	_, err = imp.BackfillMedia(ctx, opts)
+	requires.ErrorIs(err, context.Canceled)
+	requires.True(handler.canceled, "the cancel must land after the downloaded row commits")
+	slog.SetDefault(previous)
+
+	refs, err := imp.store.MessageInlineProviderAttachments(t.Context(), id)
+	requires.NoError(err)
+	requires.Len(refs, 1)
+	assertions.Equal(attachmentpolicy.StateStored, refs["inline:document:1"].State)
+	assertInlineMessageSize(t, imp, id, int64(len(message.Text)+len(content)))
 }

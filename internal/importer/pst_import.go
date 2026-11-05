@@ -412,7 +412,10 @@ func importPstWithBatchSize(
 				}
 				summary.MessagesSkipped++
 				if p.LabelID != 0 {
-					if err := st.AddMessageLabels(ctx, existingID, []int64{p.LabelID}); err != nil {
+					// The header repair above has committed and a cancel will
+					// checkpoint at this message, so a resume never revisits it.
+					// Restore its folder label even after a cancel.
+					if err := st.AddMessageLabels(context.WithoutCancel(ctx), existingID, []int64{p.LabelID}); err != nil {
 						log.Warn("add labels to existing message", "error", err)
 					}
 				}

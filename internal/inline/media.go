@@ -148,7 +148,10 @@ func (imp *Importer) persistMediaReferences(ctx context.Context, messageID int64
 			size += n
 		}
 	}
-	return imp.store.SetMessageSizeEstimate(ctx, messageID, size)
+	// The rows above are already replaced; refresh the size estimate even
+	// after a cancel so it matches them. Backfills skip messages whose
+	// attachments are complete, so none would correct it later.
+	return imp.store.SetMessageSizeEstimate(context.WithoutCancel(ctx), messageID, size)
 }
 
 func (imp *Importer) persistMedia(ctx context.Context, messageID int64, body string, conversation Conversation, media []Media, opts ImportOptions, sum *ImportSummary) error {
