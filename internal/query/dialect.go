@@ -362,6 +362,6 @@ func (PostgreSQLQueryDialect) SanitizeFTSQuery(query string) string {
 }
 
 func (SQLiteQueryDialect) DateOrderExpression(column string) string {
-	return sqliteutil.TimestampKeyFunction + "(" + column + ")"
+	return "julianday(" + column + ")"
 }
 func (PostgreSQLQueryDialect) DateOrderExpression(column string) string { return column }
