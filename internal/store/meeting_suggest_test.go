@@ -263,3 +263,33 @@ func TestMeetingAllDayExceptionStates(t *testing.T) {
 		t.Run(tc.name, tc.run)
 	}
 }
+
+func TestMeetingSuggestionsExcludeSavedDecisions(t *testing.T) {
+	for _, decision := range []string{"link", "split"} {
+		t.Run(decision, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, event := calendarFixture(t, st, "event", singleLinkRaw("event", "suggest@example.org"))
+			data, note := projectionFixture(t, st, "note", "circleback_json", `{"meeting":{"url":"https://meet.example.com/room"}}`)
+			data.Message.SentAt = sql.NullTime{Time: time.Date(2027, 3, 14, 10, 0, 0, 0, time.UTC), Valid: true}
+			_, err := st.UpsertMessage(data.Message)
+			require.NoError(err)
+			refs := []MeetingLinkRef{{Kind: "msg", MessageID: note}, {Kind: "evt", MessageID: event}}
+			for _, ref := range refs {
+				page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10)
+				require.NoError(err)
+				require.Len(page.Suggestions, 1)
+			}
+			if decision == "link" {
+				require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+			} else {
+				require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
+			}
+			for _, ref := range refs {
+				page, err := st.SuggestMeetingLinksContext(t.Context(), ref, 10)
+				require.NoError(err)
+				assert.Empty(page.Suggestions, "ref %s", ref.Kind)
+			}
+		})
+	}
+}

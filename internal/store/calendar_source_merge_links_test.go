@@ -31,3 +31,37 @@ func TestMeetingLinksCalendarSourceMergeUniqueHistoricalEvent(t *testing.T) {
 	assertions.Equal(event, page.Occurrences[0].MessageID)
 	assertions.Equal(destination.ID, page.Occurrences[0].SourceID)
 }
+
+func TestMeetingDecisionsSurviveHiddenCalendarCopyAfterMerge(t *testing.T) {
+	for _, decision := range []string{"link", "split"} {
+		t.Run(decision, func(t *testing.T) {
+			require, assert := require.New(t), assert.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			history, archived := calendarFixture(t, st, "historical", singleLinkRaw("event", "merge@example.org"), "history@example.com")
+			_, live := calendarFixture(t, st, "live", singleLinkRaw("event", "merge@example.org"), "calendar@example.com")
+			raw := `{"schema_version":1,"recording":{}}`
+			if decision == "split" {
+				raw = `{"schema_version":1,"recording":{},"calendar_event":{"iCalUid":"merge@example.org","startsAt":"2027-03-14T10:00:00Z"}}`
+			}
+			_, note := projectionFixture(t, st, "note", "twenty_json", raw)
+			if decision == "link" {
+				require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: archived}))
+				require.NotEmpty(linkedMeetingRefs(t, st, note)[note])
+			} else {
+				require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: archived}))
+				require.Empty(linkedMeetingRefs(t, st, note)[note])
+			}
+			var destination int64
+			require.NoError(st.db.QueryRow(`SELECT source_id FROM messages WHERE id = ?`, live).Scan(&destination))
+			_, err := st.MergeSourcesContext(t.Context(), MergeSourcesRequest{FromSourceID: history.Message.SourceID, IntoSourceID: destination})
+			require.NoError(err)
+			record, err := st.MeetingRecordContext(t.Context(), MeetingLinkRef{Kind: "msg", MessageID: note})
+			require.NoError(err)
+			if decision == "link" {
+				assert.NotEmpty(record.Links)
+			} else {
+				assert.Empty(record.Links)
+			}
+		})
+	}
+}
