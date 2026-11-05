@@ -83,6 +83,7 @@ msgvault meetings suggest msg:42
 msgvault meetings suggest evt:81@20270314T100000Z --json
 msgvault meetings link 42 --event evt:81@20270314T100000Z
 msgvault meetings links 42
+msgvault meetings links evt:81@20270314T100000Z
 msgvault meetings unlink 42 --event evt:81@20270314T100000Z
 ```
 
