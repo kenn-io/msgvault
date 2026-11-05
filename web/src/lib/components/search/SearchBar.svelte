@@ -119,4 +119,14 @@
     min-width: 0;
     flex: none;
   }
+
+  @media (max-width: 640px) {
+    .global-search {
+      --kit-control-height: 44px;
+    }
+
+    .global-search__query :global(.kit-search-input) {
+      height: calc(44px + 2 * var(--border-width));
+    }
+  }
 </style>

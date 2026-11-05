@@ -1526,6 +1526,7 @@
       <AppSidebar
         active={exploreState.current.workspace}
         collapsed={false}
+        onCloseNavigation={() => void closeDrawer()}
         showCollapseToggle={false}
         jobs={shellData.jobs}
         duplicateCount={shellData.duplicateCount}
@@ -1640,6 +1641,12 @@
     padding: 0 var(--page-gutter);
     background: var(--bg-surface);
     border-bottom: 1px solid var(--border-default);
+  }
+
+  @media (max-width: 640px) {
+    .app-top-bar {
+      padding-block: var(--space-2);
+    }
   }
 
   .app-top-bar__menu {

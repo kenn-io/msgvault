@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { appShortcuts, ROOT_SCOPE, Button, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
+  import { appShortcuts, ROOT_SCOPE, Button, MEDIA, Modal, PageHeader, TextInput, SelectDropdown, type FilterDropdownSection } from '@kenn-io/kit-ui';
   import { deletePerson } from '../../api/generated/api/api';
   import { onMount, tick, untrack } from 'svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import type { RelationshipsController, RelationshipsMergeContext } from '../../relationships/controller.svelte';
   import type { DirectoryController } from '../../directory/controller.svelte';
   import { PRIMARY_CHANNELS, channelLabel, contactStateLabel, formatDay } from '../../directory/labels';
@@ -30,6 +31,7 @@
   const selection = new ExploreSelectionState();
   let root = $state<HTMLElement>();
   let narrow = $state(false);
+  const compact = new MediaQuery(MEDIA.compact);
   let details = $state(false);
   let selectedDate = $state<string | null>(null);
   let domainYear = $state<number | null>(null);
@@ -260,7 +262,7 @@
 {/snippet}
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Escape returns from a person to the list. -->
 <main class="people" aria-label="People" bind:this={root} onkeydown={escape}>
-  <div class="heading" class:kit-sr-only={narrow && !urlState.peopleDuplicates}><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
+  <div class="heading" class:kit-sr-only={compact.current && !urlState.peopleDuplicates}><PageHeader title={urlState.peopleDuplicates ? 'Possible duplicates' : 'People'}>{#snippet actions()}{#if urlState.peopleDuplicates}<Button label="Back to People" onclick={() => onNavigate({ peopleDuplicates: false })} />{/if}{/snippet}</PageHeader></div>
   {#if urlState.peopleDuplicates}
     <PossibleDuplicates controller={reviews} onDecide={(candidate, decision) => reviews.queueDecision(candidate, decision)} />
   {:else}

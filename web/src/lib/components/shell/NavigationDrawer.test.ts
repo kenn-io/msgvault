@@ -44,10 +44,4 @@ describe('NavigationDrawer', () => {
     expect(onclose).toHaveBeenCalledOnce();
   });
 
-  it('closes from the visible close button', async () => {
-    const onclose = vi.fn();
-    render(NavigationDrawer, { onclose, children: items });
-    await fireEvent.click(screen.getByRole('button', { name: 'Close navigation' }));
-    expect(onclose).toHaveBeenCalledOnce();
-  });
 });

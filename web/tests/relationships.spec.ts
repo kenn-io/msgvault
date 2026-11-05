@@ -584,7 +584,7 @@ test('phone People toolbar fits touch and preserves the duplicates heading', asy
     page.getByRole('button', { name: 'Filter', exact: true }),
     page.getByRole('combobox', { name: 'Sort: Closest', exact: true })
   ]) {
-    await expect.poll(async () => (await control.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+    await expect.poll(async () => (await control.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   }
   const heading = page.getByRole('heading', { name: 'People', exact: true });
   await expect(heading).toHaveCount(1);
@@ -594,6 +594,15 @@ test('phone People toolbar fits touch and preserves the duplicates heading', asy
   await page.getByRole('button', { name: 'Possible duplicates', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Possible duplicates', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Back to People', exact: true })).toBeVisible();
+});
+
+test('desktop People keeps its heading when its pane is narrow', async ({ page }) => {
+  await prepare(page);
+  await page.setViewportSize({ width: 930, height: 844 });
+  await page.goto('/?workspace=relationships');
+  await expect(page.getByRole('grid', { name: 'People results' }).getByText('Alice Example')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
+  expect((await page.locator('.heading').boundingBox())!.height).toBeGreaterThan(1);
 });
 
 for (const close of ['Escape', 'Back to People']) {
