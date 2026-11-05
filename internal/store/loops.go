@@ -747,6 +747,24 @@ type LoopMessageEvidence struct {
 	Unreadable      bool `json:"unreadable"`
 }
 
+// CachedLoopMessageEvidenceContext returns saved facts for the requested rules
+// without reserving a computation, so a reader that must not write can still
+// use the cache.
+func (s *Store) CachedLoopMessageEvidenceContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, bool, error) {
+	var e LoopMessageEvidence
+	var facts sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT facts FROM loop_message_evidence
+ WHERE message_id = ? AND rule_version = ?`, id, version).Scan(&facts)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !facts.Valid) {
+		return e, false, nil
+	}
+	if err != nil {
+		return e, false, err
+	}
+	err = json.Unmarshal([]byte(facts.String), &e)
+	return e, err == nil, err
+}
+
 // LoopMessageEvidenceContext returns cached facts only for the requested rules.
 // A version mismatch replaces derived evidence so every reader can make progress.
 func (s *Store) LoopMessageEvidenceContext(ctx context.Context, id int64, version int) (LoopMessageEvidence, string, bool, error) {
