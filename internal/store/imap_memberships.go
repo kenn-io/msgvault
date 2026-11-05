@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // IMAPMembershipObservation records one observed mailbox UID and its message identity.
@@ -198,12 +199,16 @@ func (s *Store) applyIMAPMailboxDeltas(
 		if err := resolver.primeIdentities(normalizedDeltas); err != nil {
 			return err
 		}
-		if err := resolver.retireObsoleteKeys(normalizedDeltas); err != nil {
+		generations, err := imapMembershipGenerations(tx, sourceID)
+		if err != nil {
+			return err
+		}
+		if err := resolver.retireObsoleteKeys(normalizedDeltas, generations); err != nil {
 			return err
 		}
 
 		affected := make(map[int64]struct{})
-		if err := captureUntrackedIMAPMessageIDs(tx, sourceID, affected); err != nil {
+		if err := s.captureUntrackedIMAPMessageIDs(tx, sourceID, len(generations) != 0, affected); err != nil {
 			return err
 		}
 		currentMailboxes := make(map[string]struct{}, len(normalizedDeltas))
@@ -211,7 +216,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 			currentMailboxes[normalized.mailbox] = struct{}{}
 		}
 		if err := retireAbsentIMAPMailboxes(
-			tx, sourceID, currentMailboxes, affected,
+			tx, sourceID, currentMailboxes, generations, affected,
 		); err != nil {
 			return err
 		}
@@ -329,7 +334,7 @@ func (s *Store) applyIMAPMailboxDeltas(
 		}
 
 		for _, messageID := range sortedIMAPMessageIDs(affected) {
-			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
+			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
@@ -484,16 +489,18 @@ func deleteUnobservedIMAPMemberships(
 	return nil
 }
 
-func captureUntrackedIMAPMessageIDs(
-	tx *loggedTx, sourceID int64, affected map[int64]struct{},
-) error {
-	// Partial, filtered, interrupted, or failed runs can import a live message
-	// without publishing its membership. Every later authoritative apply must
-	// reconcile such rows even after the initial membership baseline exists.
-	if err := captureIMAPMembershipMessageIDs(tx, affected, `
+func untrackedIMAPMessagesQuery(sqlite, incremental bool) string {
+	index, changed := "", ""
+	if incremental {
+		changed = " AND messages.content_changed_at >= ?"
+		if sqlite {
+			index = " INDEXED BY idx_messages_content_changed_at"
+		}
+	}
+	return `
 		SELECT messages.id
-		FROM messages
-		WHERE messages.source_id = ?
+		FROM messages` + index + `
+		WHERE messages.source_id = ?` + changed + `
 		  AND messages.deleted_from_source_at IS NULL
 		  AND NOT EXISTS (
 			SELECT 1 FROM source_merge_archive_only_messages marker
@@ -504,25 +511,65 @@ func captureUntrackedIMAPMessageIDs(
 			WHERE membership.source_id = messages.source_id
 			  AND membership.message_id = messages.id
 		  )
-	`, sourceID); err != nil {
+	`
+}
+
+func (s *Store) captureUntrackedIMAPMessageIDs(
+	tx *loggedTx, sourceID int64, hasMembership bool, affected map[int64]struct{},
+) error {
+	var checkpoint string
+	err := tx.QueryRow(`SELECT checkpoint_value FROM sync_checkpoints
+		WHERE source_id = ? AND checkpoint_type = 'imap_untracked_complete_through'`, sourceID).Scan(&checkpoint)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("read IMAP capture checkpoint: %w", err)
+	}
+	incremental := err == nil
+	args := []any{sourceID}
+	if incremental {
+		previous, err := time.Parse(time.RFC3339Nano, checkpoint)
+		if err != nil {
+			return fmt.Errorf("parse IMAP capture checkpoint: %w", err)
+		}
+		args = append(args, s.dialect.TimestampParam(previous))
+	}
+	sqlite := !s.IsPostgreSQL()
+	boundSQL, redactedSQL := pgContentCommitBoundSQL, pgRedactedMessageWritersSQL
+	if sqlite {
+		boundSQL, redactedSQL = s.dialect.ContentChangedNow(), "0"
+	}
+	var bound requiredTimestamp
+	var redacted int
+	if err := tx.QueryRow("SELECT "+boundSQL+", "+redactedSQL).Scan(&bound, &redacted); err != nil {
+		return fmt.Errorf("read IMAP capture bound: %w", err)
+	}
+	// Save the bound before reading candidates. PostgreSQL writers can commit
+	// during capture; the bound keeps their stamps in the next apply's window.
+	// Both the checkpoint and reconciliation roll back if apply fails.
+	// A redacted PostgreSQL writer leaves the old checkpoint in place so its
+	// uncommitted stamp remains in the next apply's capture window.
+	if redacted == 0 {
+		if _, err := tx.Exec(`INSERT INTO sync_checkpoints (source_id, checkpoint_type, checkpoint_value)
+		VALUES (?, 'imap_untracked_complete_through', ?)
+		ON CONFLICT(source_id, checkpoint_type) DO UPDATE SET
+			checkpoint_value = excluded.checkpoint_value, updated_at = CURRENT_TIMESTAMP`, sourceID, bound.Time.UTC().Format(time.RFC3339Nano)); err != nil {
+			return fmt.Errorf("save IMAP capture checkpoint: %w", err)
+		}
+	}
+	// Imports and cleared tombstones move content_changed_at. After the first
+	// full capture, only those changed rows can have become live and untracked.
+	if err := captureIMAPMembershipMessageIDs(tx, affected,
+		untrackedIMAPMessagesQuery(sqlite, incremental), args...); err != nil {
 		return fmt.Errorf("capture live messages without IMAP membership: %w", err)
 	}
 
-	var membershipCount int64
-	if err := tx.QueryRow(`
-		SELECT COUNT(*) FROM imap_message_memberships WHERE source_id = ?
-	`, sourceID).Scan(&membershipCount); err != nil {
-		return fmt.Errorf("count prior IMAP memberships: %w", err)
-	}
-	if membershipCount != 0 {
+	if hasMembership || incremental {
 		return nil
 	}
 
 	// The membership table is introduced after messages and mailbox labels may
 	// already exist. Live rows were captured above; on the first authoritative
-	// baseline also include tombstoned rows that still carry legacy labels. Rows
-	// already both tombstoned and label-free were reconciled by an earlier empty
-	// baseline, so later empty-mailbox syncs stay proportional to live state.
+	// baseline also include tombstoned rows that still carry legacy labels. The
+	// checkpoint records that this baseline has completed.
 	if err := captureIMAPMembershipMessageIDs(
 		tx, affected, `
 			SELECT messages.id
@@ -541,22 +588,61 @@ func captureUntrackedIMAPMessageIDs(
 	return nil
 }
 
+// Seek each column separately so SQLite skips all UIDs of the previous epoch.
+func imapMembershipGenerationSeekQuery() string {
+	return `SELECT mailbox, uidvalidity FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox = ? AND uidvalidity > ?
+		ORDER BY uidvalidity LIMIT 1`
+}
+
+func imapMembershipMailboxSeekQuery() string {
+	return `SELECT mailbox, uidvalidity FROM imap_message_memberships
+		WHERE source_id = ? AND mailbox > ?
+		ORDER BY mailbox, uidvalidity LIMIT 1`
+}
+
+func imapMembershipGenerations(tx *loggedTx, sourceID int64) ([]imapMembershipUIDGeneration, error) {
+	var generations []imapMembershipUIDGeneration
+	var generation imapMembershipUIDGeneration
+	err := tx.QueryRow(`SELECT mailbox, uidvalidity FROM imap_message_memberships
+		WHERE source_id = ? ORDER BY mailbox, uidvalidity LIMIT 1`, sourceID).
+		Scan(&generation.mailbox, &generation.uidValidity)
+	for err == nil {
+		generations = append(generations, generation)
+		mailbox := generation.mailbox
+		err = tx.QueryRow(imapMembershipGenerationSeekQuery(), sourceID, mailbox, generation.uidValidity).
+			Scan(&generation.mailbox, &generation.uidValidity)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = tx.QueryRow(imapMembershipMailboxSeekQuery(), sourceID, mailbox).
+				Scan(&generation.mailbox, &generation.uidValidity)
+		}
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("read IMAP membership generations: %w", err)
+	}
+	return generations, nil
+}
+
+type imapMembershipUIDGeneration struct {
+	mailbox     string
+	uidValidity uint32
+}
+
 func retireAbsentIMAPMailboxes(
 	tx *loggedTx,
 	sourceID int64,
 	current map[string]struct{},
+	generations []imapMembershipUIDGeneration,
 	affected map[int64]struct{},
 ) error {
 	rows, err := tx.Query(`
 		SELECT mailbox FROM imap_folder_state WHERE source_id = ?
-		UNION
-		SELECT mailbox FROM imap_message_memberships WHERE source_id = ?
 		ORDER BY mailbox
-	`, sourceID, sourceID)
+	`, sourceID)
 	if err != nil {
 		return fmt.Errorf("query prior IMAP mailbox topology: %w", err)
 	}
-	var retired []string
+	retired := make(map[string]struct{})
 	for rows.Next() {
 		var mailbox string
 		if err := rows.Scan(&mailbox); err != nil {
@@ -564,7 +650,7 @@ func retireAbsentIMAPMailboxes(
 			return fmt.Errorf("scan prior IMAP mailbox topology: %w", err)
 		}
 		if _, ok := current[mailbox]; !ok {
-			retired = append(retired, mailbox)
+			retired[mailbox] = struct{}{}
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -575,7 +661,13 @@ func retireAbsentIMAPMailboxes(
 		return fmt.Errorf("close prior IMAP mailbox topology: %w", err)
 	}
 
-	for _, mailbox := range retired {
+	for _, generation := range generations {
+		if _, ok := current[generation.mailbox]; !ok {
+			retired[generation.mailbox] = struct{}{}
+		}
+	}
+
+	for mailbox := range retired {
 		if err := captureIMAPMembershipMessageIDs(
 			tx, affected,
 			`SELECT message_id FROM imap_message_memberships WHERE source_id = ? AND mailbox = ?`,
@@ -677,15 +769,14 @@ type imapMembershipResolver struct {
 	legacyMessages    map[string]int64
 }
 
-func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta) error {
+func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailboxDelta, generations []imapMembershipUIDGeneration) error {
 	current := make(map[string]normalizedIMAPMailboxDelta, len(deltas))
 	for _, delta := range deltas {
 		current[delta.mailbox] = delta
 	}
 	rows, err := r.tx.Query(`
-		SELECT mailbox, uidvalidity, true FROM imap_folder_state WHERE source_id = ?
-		UNION SELECT mailbox, uidvalidity, false FROM imap_message_memberships WHERE source_id = ?
-	`, r.sourceID, r.sourceID)
+		SELECT mailbox, uidvalidity FROM imap_folder_state WHERE source_id = ?
+	`, r.sourceID)
 	if err != nil {
 		return fmt.Errorf("read IMAP key generations: %w", err)
 	}
@@ -694,27 +785,26 @@ func (r *imapMembershipResolver) retireObsoleteKeys(deltas []normalizedIMAPMailb
 	for rows.Next() {
 		var mailbox string
 		var generation uint32
-		var folder bool
-		if err := rows.Scan(&mailbox, &generation, &folder); err != nil {
+		if err := rows.Scan(&mailbox, &generation); err != nil {
 			_ = rows.Close()
 			return err
 		}
-		if folder {
-			previous[mailbox] = generation
-		} else {
-			if _, known := previous[mailbox]; !known {
-				previous[mailbox] = 0
-			}
-			if generation != current[mailbox].uidValidity {
-				staleMemberships[mailbox] = true
-			}
-		}
+		previous[mailbox] = generation
 	}
 	err = rows.Err()
 	_ = rows.Close()
 	if err != nil {
 		return err
 	}
+	for _, generation := range generations {
+		if _, known := previous[generation.mailbox]; !known {
+			previous[generation.mailbox] = 0
+		}
+		if generation.uidValidity != current[generation.mailbox].uidValidity {
+			staleMemberships[generation.mailbox] = true
+		}
+	}
+
 	for _, delta := range deltas {
 		if _, ok := previous[delta.mailbox]; !ok {
 			previous[delta.mailbox] = 0
@@ -1021,15 +1111,25 @@ func imapRFC822MessageIDCandidates(messageID string) []string {
 	return candidates
 }
 
-func imapMembershipMailboxes(
-	ctx context.Context, tx *loggedTx, sourceID, messageID int64,
-) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT mailbox FROM imap_message_memberships
+func imapMembershipMailboxesQuery(sqlite bool) string {
+	index := ""
+	if sqlite {
+		// Small, stale statistics can favor the primary key's source prefix
+		// for grouping, reading the whole source for each affected message.
+		index = " INDEXED BY idx_imap_message_memberships_source_message"
+	}
+	return `
+		SELECT mailbox FROM imap_message_memberships` + index + `
 		WHERE source_id = ? AND message_id = ?
 		GROUP BY mailbox
 		ORDER BY mailbox
-	`, sourceID, messageID)
+	`
+}
+
+func (s *Store) imapMembershipMailboxes(
+	ctx context.Context, tx *loggedTx, sourceID, messageID int64,
+) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, imapMembershipMailboxesQuery(!s.IsPostgreSQL()), sourceID, messageID)
 	if err != nil {
 		return nil, fmt.Errorf("query memberships for IMAP message %d: %w", messageID, err)
 	}
@@ -1127,7 +1227,7 @@ func (s *Store) RepairIMAPSourceLabels(
 			if s.imapLabelRepairPerMessageHook != nil {
 				s.imapLabelRepairPerMessageHook(messageID)
 			}
-			mailboxes, err := imapMembershipMailboxes(ctx, tx, sourceID, messageID)
+			mailboxes, err := s.imapMembershipMailboxes(ctx, tx, sourceID, messageID)
 			if err != nil {
 				return err
 			}
