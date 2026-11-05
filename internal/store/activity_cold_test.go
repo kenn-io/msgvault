@@ -109,21 +109,33 @@ func TestColdAdapterFiltersMixedNoise(t *testing.T) {
 	// Leave only the automated message to check whole-room exclusion.
 	_, err = f.Store.DB().ExecContext(t.Context(), f.Store.Rebind(`UPDATE messages SET deleted_at=CURRENT_TIMESTAMP WHERE id=?`), human)
 	requirements.NoError(err)
-	for _, exclude := range []bool{false, true} {
-		q := timelineBurstQuery()
-		q.Filters.Exclusions = persontiers.DefaultConfig()
-		if !exclude {
-			q.Filters.Exclusions.ExcludeAddressPatterns = nil
-		}
-		page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
-		requirements.NoError(err)
-		if exclude {
-			assertions.Empty(page.Bursts)
-			continue
-		}
-		requirements.Len(page.Bursts, 1)
-		assertions.Equal(1, page.Bursts[0].Inbound)
-		assertions.Zero(page.NoiseOmitted)
+	for _, tc := range []struct {
+		name       string
+		exclude    bool
+		from       []int64
+		wantBursts int
+	}{
+		{name: "sender included", from: []int64{sender}, wantBursts: 1},
+		{name: "sender excluded", exclude: true, from: []int64{sender}},
+		{name: "owner and excluded sender", exclude: true, from: []int64{f.owner, sender}, wantBursts: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			requirements.NoError(f.Store.ReplaceMessageRecipients(noise, "from", tc.from, nil))
+			q := timelineBurstQuery()
+			q.Filters.Exclusions = persontiers.DefaultConfig()
+			if !tc.exclude {
+				q.Filters.Exclusions.ExcludeAddressPatterns = nil
+			}
+			page, err := f.Store.ListColdActivityBurstsContext(t.Context(), q)
+			requirements.NoError(err)
+			requirements.Len(page.Bursts, tc.wantBursts)
+			if tc.wantBursts == 0 {
+				return
+			}
+			assertions.Equal([]int64{noise}, page.Bursts[0].LatestMessageIDs)
+			assertions.Zero(page.NoiseOmitted)
+		})
 	}
 }
 

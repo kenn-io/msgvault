@@ -224,7 +224,7 @@ func (s *Store) hydrateActivityCounterpartsWithCTEContext(ctx context.Context, m
 		counted := CountedEventWhere(CountedEventInputs{Evidence: "f.evidence", Role: "f.role", Direction: "f.direction", RefKind: "f.ref_kind", ListExcluded: listExcluded, LargeInbound: "f.large_inbound"})
 		rows, err := s.db.QueryContext(ctx, s.Rebind(cte+`, counterpart_flags AS (
  SELECT f.*,CASE WHEN MAX(CASE WHEN f.recipient_type='from' AND f.excluded NOT IN ('','owner') THEN 1 ELSE 0 END) OVER (PARTITION BY f.message_id)=1
- AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded='' THEN 1 ELSE 0 END) OVER (PARTITION BY f.message_id)=0 THEN 1 ELSE 0 END AS excluded_sender,
+ AND MAX(CASE WHEN f.recipient_type='from' AND f.excluded IN ('','owner') THEN 1 ELSE 0 END) OVER (PARTITION BY f.message_id)=0 THEN 1 ELSE 0 END AS excluded_sender,
  CASE WHEN f.contact_eligible=1 AND f.encrypted=0 AND f.excluded='' AND `+counted+` THEN 1 ELSE 0 END AS counterpart_counted
  FROM facts f WHERE f.participant_id IS NOT NULL
  ), ranked_counterparts AS (
