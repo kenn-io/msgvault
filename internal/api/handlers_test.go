@@ -9306,12 +9306,14 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 				_, err := st.DB().Exec(st.Rebind(`INSERT INTO source_settings (source_id, merged_into_source_id) VALUES (?, ?)`), sources[2].ID, sources[1].ID)
 				require.NoError(err)
 			}
+			sources, err := st.ListSourcesContext(t.Context(), "apple_messages")
+			require.NoError(err)
 			sched := newMockScheduler()
 			sched.scheduledJobs = map[string]bool{"apple-messages": true}
 			sched.jobStatuses = []JobStatus{{Name: "apple-messages", Schedule: "*/10 * * * *"}}
 			srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
 			for _, src := range sources {
-				status, err := srv.sourceStatus(t.Context(), st, src)
+				status, err := srv.sourceStatus(t.Context(), st, src, sources)
 				require.NoError(err)
 				assert.Equal(src.Identifier == tc.wantSelected, status.CanSync, src.Identifier)
 				if src.Identifier != tc.wantSelected {
@@ -9329,6 +9331,35 @@ func TestAppleSourceSchedulingAndTrigger(t *testing.T) {
 	}
 }
 
+func TestAppleSourceStatusReusesLoadedSources(t *testing.T) {
+	require := require.New(t)
+	assert := assert.New(t)
+	st := &agentReadGateStore{Store: testutil.NewTestStore(t)}
+	for _, identifier := range []string{"local", "selected"} {
+		_, err := st.GetOrCreateSource("apple_messages", identifier)
+		require.NoError(err)
+	}
+	_, err := st.GetOrCreateSource("whatsapp", "+15550000000")
+	require.NoError(err)
+	sched := newMockScheduler()
+	sched.scheduledJobs = map[string]bool{"apple-messages": true}
+	sched.jobStatuses = []JobStatus{{Name: "apple-messages", Schedule: "*/10 * * * *"}}
+	srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
+	for _, query := range []string{"", "?source_type=apple_messages"} {
+		st.sourceLists.Store(0)
+		w := httptest.NewRecorder()
+		srv.Router().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/sources/status"+query, nil))
+		require.Equal(http.StatusOK, w.Code)
+		var response SourceStatusResponse
+		require.NoError(json.NewDecoder(w.Body).Decode(&response))
+		require.NotEmpty(response.Sources)
+		for _, source := range response.Sources {
+			assert.Equal(source.Identifier == "selected", source.CanSync, source.Identifier)
+		}
+		assert.Equal(int32(1), st.sourceLists.Load())
+	}
+}
+
 func TestWhatsAppSourceWithoutSchedule(t *testing.T) {
 	require := require.New(t)
 	assert := assert.New(t)
@@ -9337,7 +9368,7 @@ func TestWhatsAppSourceWithoutSchedule(t *testing.T) {
 	require.NoError(err)
 	sched := newMockScheduler()
 	srv := NewServer(config.NewDefaultConfig(), st, sched, testLogger())
-	status, err := srv.sourceStatus(t.Context(), st, src)
+	status, err := srv.sourceStatus(t.Context(), st, src, nil)
 	require.NoError(err)
 	assert.False(status.CanSync)
 	assert.Equal("sync_not_configured", status.SyncUnavailableReason)
