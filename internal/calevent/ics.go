@@ -147,13 +147,17 @@ func ParseICS(raw []byte, method, calendarZone string) (out []ICSComponent, err 
 	if err != nil {
 		return nil, fmt.Errorf("calendar time zone: %w", err)
 	}
+	zones, err := customICSZones(cal)
+	if err != nil {
+		return nil, err
+	}
 	doc := splitICSDocument(unfolded)
 	index := 0
 	for _, comp := range cal.Children {
 		if comp.Name != ical.CompEvent {
 			continue
 		}
-		normalizeICSParams(comp.Props)
+		normalizeICSParams(comp.Props, zones)
 		result, err := parseICSEvent(comp, method, loc)
 		if err != nil {
 			return nil, fmt.Errorf("VEVENT %d: %w", index+1, err)
@@ -199,21 +203,28 @@ func propText(props ical.Props, name string) (string, error) {
 }
 
 // Resolve Windows IDs and libical's prefixed IANA names.
-func normalizeICSParams(props ical.Props) {
+func normalizeICSParams(props ical.Props, zones map[string]string) {
 	for _, values := range props {
 		for _, prop := range values {
-			zone := prop.Params.Get("TZID")
-			if iana, ok := strings.CutPrefix(zone, "/freeassociation.sourceforge.net/"); ok {
-				zone = strings.TrimPrefix(iana, "Tzfile/")
-				prop.Params.Set("TZID", zone)
+			zone := normalizeICSZone(prop.Params.Get("TZID"))
+			if custom := zones[zone]; custom != "" {
+				zone = custom
 			}
-			if mapped := windowsZones[zone]; mapped != "" {
-				if _, err := time.LoadLocation(zone); err != nil {
-					prop.Params.Set("TZID", mapped)
-				}
-			}
+			prop.Params.Set("TZID", zone)
 		}
 	}
+}
+
+func normalizeICSZone(zone string) string {
+	if iana, ok := strings.CutPrefix(zone, "/freeassociation.sourceforge.net/"); ok {
+		zone = strings.TrimPrefix(iana, "Tzfile/")
+	}
+	if mapped := windowsZones[zone]; mapped != "" {
+		if _, err := time.LoadLocation(zone); err != nil {
+			return mapped
+		}
+	}
+	return zone
 }
 
 func icsTime(p *ical.Prop, loc *time.Location) (time.Time, bool, error) {
@@ -233,7 +244,7 @@ func icsTime(p *ical.Prop, loc *time.Location) (time.Time, bool, error) {
 	}
 	if zone := p.Params.Get("TZID"); zone != "" {
 		var err error
-		if loc, err = time.LoadLocation(zone); err != nil {
+		if loc, err = LoadZone(zone); err != nil {
 			return time.Time{}, false, fmt.Errorf("load calendar time zone: %w", err)
 		}
 	}
@@ -379,13 +390,14 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 		for _, prop := range p.Values(name) {
 			var line strings.Builder
 			line.WriteString(name)
+			custom := customZonePattern.MatchString(prop.Params.Get("TZID"))
 			for _, param := range []string{"VALUE", "TZID"} {
-				if v := prop.Params.Get(param); v != "" {
+				if v := prop.Params.Get(param); v != "" && (param != "TZID" || !custom) {
 					line.WriteString(";" + param + "=" + v)
 				}
 			}
 			value := prop.Value
-			if (name == "RDATE" || name == "EXDATE") && prop.Params.Get("TZID") == "" && prop.ValueType() == ical.ValueDateTime {
+			if (name == "RDATE" || name == "EXDATE") && (prop.Params.Get("TZID") == "" || custom) && prop.ValueType() == ical.ValueDateTime {
 				values := strings.Split(value, ",")
 				for i, v := range values {
 					date := prop
