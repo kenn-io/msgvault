@@ -59,6 +59,34 @@ func TestImportedCallReadableAndSearchable(t *testing.T) {
 	}
 }
 
+func TestWithdrawnCallReimportLeavesSearch(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	st := storetest.New(t).Store
+	o := callhistory.Observation{RecordID: "call", Version: 1, Provider: "signal", Account: "example",
+		Kind: "call", Direction: "incoming", Outcome: "answered", OwnerParticipation: "joined",
+		OccurredAt: time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC), Precision: "instant", Raw: []byte(`{}`),
+	}
+	src, err := st.GetOrCreateSource(callhistory.SourceType, o.SourceIdentifier())
+	require.NoError(err)
+	id, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	require.NoError(err)
+	matches, total, err := st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
+	require.NoError(err)
+	require.EqualValues(1, total)
+	require.Len(matches, 1)
+	require.Equal(id, matches[0].ID)
+
+	o.Withdrawn = true
+	again, err := st.PutCallObservationContext(t.Context(), src.ID, o)
+	require.NoError(err)
+	require.Equal(id, again)
+	matches, total, err = st.SearchMessagesQueryContext(t.Context(), search.Parse("incoming"), 0, 10)
+	require.NoError(err)
+	assert.Zero(total, "withdrawn calls leave archive search")
+	assert.Empty(matches)
+}
+
 func TestCallReimportPreservesLabels(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)
