@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"go.kenn.io/msgvault/internal/gcal/gcalmodel"
 )
 
 type calendarTime struct {
@@ -18,9 +20,9 @@ type calendarTime struct {
 
 func (v calendarTime) parse() (time.Time, string, error) {
 	if v.DateTime != "" && v.Date == "" {
-		at, err := time.Parse(time.RFC3339Nano, v.DateTime)
-		if err != nil {
-			return time.Time{}, "", fmt.Errorf("parse calendar date-time: %w", err)
+		at, _ := gcalmodel.ParseEventDateTime(v.DateTime, v.TimeZone)
+		if at.IsZero() {
+			return time.Time{}, "", invalid("calendar date-time")
 		}
 		return at, "instant", nil
 	}

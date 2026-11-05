@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	_ "time/tzdata"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,17 @@ func TestSignalNativeStatuses(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCalendarOffsetFreeTimeZone(t *testing.T) {
+	o, err := (ImportRequest{
+		Format: "google_calendar", Account: "calendar@example.com",
+		Record: []byte(`{"id":"event-zone","start":{"dateTime":"2026-10-01T09:00:00","timeZone":"America/Los_Angeles"},"end":{"dateTime":"2026-10-01T10:00:00","timeZone":"America/Los_Angeles"}}`),
+	}).Observation()
+	require.NoError(t, err)
+	assert.Equal(t, "2026-10-01T16:00:00Z", o.OccurredAt.UTC().Format(time.RFC3339))
+	require.NotNil(t, o.EndedAt)
+	assert.Equal(t, "2026-10-01T17:00:00Z", o.EndedAt.UTC().Format(time.RFC3339))
 }
 
 func TestCalendarSchedulingIsNeverAttendance(t *testing.T) {
