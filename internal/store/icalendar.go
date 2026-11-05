@@ -83,10 +83,6 @@ func icsRevisionNewer(c calevent.ICSComponent, old calevent.ICSMetadata) bool {
 
 func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID int64, items []preparedICS, summary *ICalendarImportSummary) error {
 	q := boundQuerier{ctx: ctx, q: tx}
-	items, err := acceptedICSSnapshot(q, sourceID, items, summary)
-	if err != nil {
-		return err
-	}
 	if len(items) > 0 {
 		if err := s.lockParticipantDirectoryMutationTxContext(ctx, tx); err != nil {
 			return fmt.Errorf("lock ICS participant directory: %w", err)
@@ -96,12 +92,20 @@ func (s *Store) persistICalendarWith(ctx context.Context, tx *loggedTx, sourceID
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		accepted, err := acceptedICSSnapshot(q, sourceID, []preparedICS{item}, summary)
+		if err != nil {
+			return err
+		}
+		if len(accepted) == 0 {
+			continue
+		}
+		item = accepted[0]
 		e := item.component.Event
 		sourceMessageID := e.ProviderEventID
 		var id int64
 		var metadata sql.NullString
 		var format string
-		err := q.QueryRow(`SELECT m.id,m.metadata,r.raw_format,m.source_message_id FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_messages WHERE original_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format, &sourceMessageID)
+		err = q.QueryRow(`SELECT m.id,m.metadata,r.raw_format,m.source_message_id FROM messages m JOIN message_raw r ON r.message_id=m.id WHERE m.source_id=? AND m.id IN (SELECT id FROM messages WHERE source_id=? AND source_message_id=? UNION ALL SELECT message_id FROM source_merge_messages WHERE original_message_id=?) ORDER BY CASE WHEN m.source_message_id=? THEN 0 ELSE 1 END, m.id LIMIT 1`, sourceID, sourceID, e.ProviderEventID, e.ProviderEventID, e.ProviderEventID).Scan(&id, &metadata, &format, &sourceMessageID)
 		exists := err == nil
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return fmt.Errorf("read prior ICS identity: %w", err)
@@ -242,6 +246,9 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 		title = ""
 	}
 	familyKey := calevent.ICSMessageID(c.UID, "")
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT c.source_conversation_id FROM conversations c WHERE c.source_id=? AND c.id IN (SELECT id FROM conversations WHERE source_id=? AND source_conversation_id=? UNION ALL SELECT conversation_id FROM source_merge_conversations WHERE original_conversation_id=?) ORDER BY CASE WHEN c.source_conversation_id=? THEN 0 ELSE 1 END, c.id LIMIT 1), ?)`, sourceID, sourceID, familyKey, familyKey, familyKey, familyKey).Scan(&familyKey); err != nil {
+		return fmt.Errorf("resolve ICS family conversation: %w", err)
+	}
 	id, err := s.persistMessageWithParticipantsTx(ctx, tx, nil, participants, func(ids []int64) *MessagePersistData {
 		from, to := RecipientSet{Type: meetingSenderRole}, RecipientSet{Type: "to"}
 		var sender sql.NullInt64
