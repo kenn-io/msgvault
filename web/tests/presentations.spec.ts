@@ -4,6 +4,9 @@ import { selectKitOption, selectWorkspace } from './kit-ui';
 import { exploreHistoryState } from './explore-state';
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/session', route => route.fulfill({ json: {
+    auth_mode: 'session', csrf_token: 'csrf', https: true, plain_http_warning: false
+  } }));
   await page.route('**/api/v1/saved-views', route => route.fulfill({ json: { saved_views: [] } }));
   await stubOperationStatus(page);
   await page.route('**/api/v1/sources/status', route => route.fulfill({ json: { sources: [] } }));
@@ -116,6 +119,48 @@ test.describe('compact toolbar', () => {
     await expect(controls.getByRole('searchbox', { name: 'Search attachment pixels' })).toHaveValue('blue sky');
   });
 
+  test('compact Clear filters clears visual text, drafts, and images', async ({ page }) => {
+    const requests: Array<Record<string, unknown>> = [];
+    await page.route('**/api/v1/multimodal/status', route => route.fulfill({ json: { generation: { state: 'active', consented: true } } }));
+    await page.route('**/api/v1/files/search', async route => {
+      requests.push(route.request().postDataJSON());
+      await route.fulfill({ json: { files: [], total_count: 0, cache_revision: 'toolbar' } });
+    });
+    await page.goto('/?workspace=files');
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Filter' });
+    await dialog.getByRole('switch', { name: 'Visual search' }).click();
+    const query = dialog.getByRole('searchbox', { name: 'Search attachment pixels' });
+    const clear = dialog.getByRole('button', { name: 'Clear filters' });
+
+    await query.fill('blue sky');
+    await expect.poll(() => requests.at(-1)?.visual_query).toBe('blue sky');
+    await clear.click();
+    await expect(query).toHaveValue('');
+    await expect.poll(() => requests.at(-1)?.visual_query).toBeUndefined();
+
+    await query.fill('pending draft');
+    await clear.click();
+    await expect(query).toHaveValue('');
+    await page.waitForTimeout(750);
+    expect(requests.some(request => request.visual_query === 'pending draft')).toBe(false);
+
+    await dialog.getByLabel('Query image').setInputFiles({ name: 'query.png', mimeType: 'image/png', buffer: Buffer.from('image') });
+    await expect.poll(() => requests.at(-1)?.visual_image_base64).toBe(Buffer.from('image').toString('base64'));
+    await clear.click();
+    await expect(dialog.getByText('query.png', { exact: true })).toHaveCount(0);
+    await expect.poll(() => requests.at(-1)?.visual_image_base64).toBeUndefined();
+
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const desktopQuery = page.locator('.context-controls').getByRole('searchbox', { name: 'Search attachment pixels' });
+    await desktopQuery.fill('desktop query');
+    await expect.poll(() => requests.at(-1)?.visual_query).toBe('desktop query');
+    await page.getByRole('button', { name: 'Filter', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Filter' }).getByRole('button', { name: 'Clear filters' }).click();
+    await expect(desktopQuery).toHaveValue('desktop query');
+  });
+
   test('compact grouping and sort shortcuts open View', async ({ page }) => {
     await page.route('**/api/v1/explore', route => route.fulfill({ json: { rows, total_count: rows.length, cache_revision: 'toolbar' } }));
     await page.route('**/api/v1/files/search', route => route.fulfill({ json: { files: [fileRow(1, 'Presentation message 1')], total_count: 1234567, cache_revision: 'toolbar' } }));
@@ -173,9 +218,6 @@ test('desktop Files keeps visual search and the three selects in the toolbar', a
 test('Show as Files opens the Files workspace with the same context, and Back returns', async ({ page }) => {
   const filePredicates: Array<Record<string, unknown>> = [];
   const savedViews: Array<Record<string, unknown>> = [];
-  await page.route('**/api/session', (route) => route.fulfill({ json: {
-    auth_mode: 'session', csrf_token: 'csrf', https: true, plain_http_warning: false
-  } }));
   await page.route('**/api/v1/files/search', async (route) => {
     const body = route.request().postDataJSON() as { predicate: Record<string, unknown> };
     filePredicates.push(body.predicate);
@@ -277,9 +319,6 @@ test('an old Everything-as-Files link opens Files at its deep anchor with bounde
   const pageSize = 100;
   const total = 650;
   let requests = 0;
-  await page.route('**/api/session', (route) => route.fulfill({ json: {
-    auth_mode: 'loopback', https: false, plain_http_warning: false
-  } }));
   await page.route('**/api/v1/files/search', async (route) => {
     requests += 1;
     const body = route.request().postDataJSON() as { cursor?: string };
@@ -335,9 +374,6 @@ test('an old Everything-as-Files link opens Files at its deep anchor with bounde
 test('attachment deep links restore with one bounded metadata lookup', async ({ page }) => {
   let filePageRequests = 0;
   let metadataRequests = 0;
-  await page.route('**/api/session', (route) => route.fulfill({ json: {
-    auth_mode: 'loopback', https: false, plain_http_warning: false
-  } }));
   await page.route('**/api/v1/files/search', (route) => {
     filePageRequests += 1;
     return route.fulfill({ json: {

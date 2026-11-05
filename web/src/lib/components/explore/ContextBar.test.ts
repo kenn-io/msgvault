@@ -8,10 +8,16 @@ import ContextBar from './ContextBar.svelte';
 
 const sort = { options: [{ value: 'newest', label: 'Newest first' }], value: 'newest' };
 
-it.each([true, false])('places extra controls in the Filter dialog only when compact is %s', async (compact) => {
+function mockCompact(compact: boolean): void {
   const matchMedia = window.matchMedia.bind(window);
-  const spy = vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...matchMedia(query), matches: compact && query === MEDIA.compact }));
-  try {
+  vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...matchMedia(query), matches: compact && query === MEDIA.compact }));
+}
+
+describe('ContextBar extra controls', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([true, false])('places extra controls in the Filter dialog only when compact is %s', async (compact) => {
+    mockCompact(compact);
     const { container } = render(ContextBar, {
       client: createAPIClient(vi.fn(async () => Response.json({ rows: [] }))),
       messages: true, query: '', searchMode: 'full_text', filters: [], groupingChain: [], countLabel: '20 files', sort,
@@ -24,16 +30,11 @@ it.each([true, false])('places extra controls in the Filter dialog only when com
     const dialog = screen.getByRole('dialog', { name: 'Filter' });
     expect(dialog.textContent).toContain('Filename filter');
     expect(dialog.textContent?.includes('Visual search')).toBe(compact);
-  } finally {
-    spy.mockRestore();
-  }
+  });
 });
 
 describe('ContextBar compact View menu', () => {
-  beforeEach(() => {
-    const matchMedia = window.matchMedia.bind(window);
-    vi.spyOn(window, 'matchMedia').mockImplementation((query) => ({ ...matchMedia(query), matches: query === MEDIA.compact }));
-  });
+  beforeEach(() => mockCompact(true));
   afterEach(() => vi.restoreAllMocks());
 
   it('offers presentation, grouping, and sort in View', async () => {
