@@ -173,7 +173,7 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 }
 
 func printCalendarCoverageWarning(cmd *cobra.Command, coverage store.CalendarCoverage) error {
-	if coverage.Complete || coverage.Notice == "" {
+	if coverage.Complete {
 		return nil
 	}
 	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Coverage: %s\n", textutil.SanitizeTerminal(coverage.Notice)); err != nil {

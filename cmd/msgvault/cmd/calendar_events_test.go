@@ -114,13 +114,13 @@ func TestCalendarEventsCommand(t *testing.T) {
 		err                                                                error
 	}{
 		{name: "table", page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Status: "confirmed", Start: start, End: start.Add(time.Hour)}, {MessageID: 412, Subject: "Offsite", Status: "confirmed", AllDay: true, StartDate: "2027-03-03", EndDate: "2027-03-04"}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}}, want: "Standup", wantWarning: "1 event could not be expanded: message 500 (unsupported recurrence)", wantCoverageNotice: "Coverage: Archived calendar data, not live availability.", wantCoverageSource: "Work: stale (as of 2027-03-01T12:00:00Z)\nPersonal: not fully synced\nTeam: sync failed\nHolidays: complete\n"},
-		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
-		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "next cursor: next-page"},
-		{name: "empty", want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
+		{name: "limit only", args: []string{"--limit", "1"}, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "\nnext cursor: next-page\n"},
+		{name: "cursor only", args: []string{"--cursor", "previous-page"}, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{Subject: "Planning", Start: start, End: start.Add(time.Hour)}}, NextCursor: "next-page"}, want: "next cursor: next-page"},
+		{name: "empty", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}}, want: "No archived calendar events from 2027-03-01 to 2027-04-01."},
 		{name: "json", args: []string{"--json", "--limit", "1"}, page: store.CalendarOccurrencePage{Coverage: coverage, Occurrences: []store.CalendarOccurrence{{Ref: "evt:378", MessageID: 378, SeriesMessageID: 377, Subject: "Standup", Start: start, End: start.Add(time.Hour)}}, Unexpandable: []store.CalendarUnexpandable{{MessageID: 500, Reason: "unsupported recurrence"}}, NextCursor: "next-page"}, want: `"message_id":378`},
-		{name: "unpaged json", args: []string{"--from", "2026-01-01", "--to", "2028-01-01", "--json"}, page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{Subject: "First event"}, {Subject: "Second event"}}}, want: `"subject":"First event"`},
-		{name: "deleted", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
-		{name: "terminal controls", page: store.CalendarOccurrencePage{Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
+		{name: "unpaged json", args: []string{"--from", "2026-01-01", "--to", "2028-01-01", "--json"}, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{Subject: "First event"}, {Subject: "Second event"}}}, want: `"subject":"First event"`},
+		{name: "deleted", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Removed event", Status: "confirmed", DeletedFromSource: true, Start: start, End: start.Add(time.Hour)}}}, want: "deleted"},
+		{name: "terminal controls", page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}, Occurrences: []store.CalendarOccurrence{{MessageID: 378, Subject: "Planning\x1b[31m red\x1b[0m\nmeeting", Status: "confirmed", Start: start, End: start.Add(time.Hour)}}}, want: "Planning red meeting"},
 		{name: "too broad", err: &daemonclient.APIError{Status: 400, Code: "query_too_broad", Message: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"}, wantErr: "calendar query is too broad; long-running series count steps from their start; a narrower window may not reduce the work"},
 		{name: "old daemon", version: "3.44.0", wantErr: "calendar events require daemon API schema 3.46.0 or newer"},
 		{name: "account", args: []string{"--account", "calendar@example.com"}, wantErr: "--account is only valid"},
@@ -247,7 +247,7 @@ func TestCalendarEventsHelpOmitsLiveOnlyFlags(t *testing.T) {
 }
 
 func TestCalendarEventsRFC3339Bounds(t *testing.T) {
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}}}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -264,7 +264,7 @@ func TestCalendarEventsDateBoundsSkippedMidnight(t *testing.T) {
 	previous := time.Local
 	time.Local = zone
 	t.Cleanup(func() { time.Local = previous })
-	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion}
+	fake := &calendarEventsFakeClient{version: calendarEventsMinAPISchemaVersion, page: store.CalendarOccurrencePage{Coverage: store.CalendarCoverage{Complete: true}}}
 	cmd := newCalendarEventsCommand(func(context.Context) (calendarEventsClient, func(), error) { return fake, func() {}, nil })
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetArgs([]string{"--from", "2018-11-04", "--to", "2018-11-05"})

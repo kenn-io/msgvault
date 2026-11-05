@@ -46,18 +46,15 @@ func calendarOccurrencePageFromAPI(decoded *generated.ListCalendarEventsResponse
 }
 
 func calendarCoverageFromAPI(decoded generated.CalendarCoverage) store.CalendarCoverage {
-	coverage := store.CalendarCoverage{Complete: decoded.Complete, Notice: decoded.Notice}
-	if decoded.Sources != nil {
-		coverage.Sources = make([]store.CalendarSourceCoverage, 0, len(decoded.Sources))
-		for _, source := range decoded.Sources {
-			coverage.Sources = append(coverage.Sources, store.CalendarSourceCoverage{
-				SourceID:   source.SourceID,
-				SourceType: source.SourceType,
-				Name:       source.Name,
-				Status:     string(source.Status),
-				AsOf:       source.AsOf,
-			})
-		}
+	coverage := store.CalendarCoverage{Complete: decoded.Complete, Notice: decoded.Notice, Sources: make([]store.CalendarSourceCoverage, 0, len(decoded.Sources))}
+	for _, source := range decoded.Sources {
+		coverage.Sources = append(coverage.Sources, store.CalendarSourceCoverage{
+			SourceID:   source.SourceID,
+			SourceType: source.SourceType,
+			Name:       source.Name,
+			Status:     string(source.Status),
+			AsOf:       source.AsOf,
+		})
 	}
 	return coverage
 }
