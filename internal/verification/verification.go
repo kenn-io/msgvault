@@ -106,7 +106,7 @@ func Is(c Content) bool {
 				right += n
 			}
 			if len(value) == 4 && value >= "1900" && value <= "2099" {
-				if directYearCode.MatchString(field[left:end]) && nearCue(field[left:start], true) {
+				if directYearCode.MatchString(field[left:start]+value) && nearCue(field[left:start], true) {
 					return true
 				}
 			} else if separateCue || nearCue(field[left:start], true) || nearCue(field[end:right], false) || useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right]) {
