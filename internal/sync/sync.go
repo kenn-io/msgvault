@@ -96,8 +96,9 @@ type Syncer struct {
 	successfulHookName string
 	successfulHook     SuccessfulSyncHook
 
-	acquisitionSyncID   int64
-	pendingAcquisitions map[string]struct{}
+	acquisitionSyncID        int64
+	pendingAcquisitions      map[string]struct{}
+	pendingAttachmentRepairs map[string]struct{}
 
 	// failedRelocationGuards holds run-scoped protection for forced
 	// relocation targets that failed this run. It is set only on the scoped
@@ -732,6 +733,19 @@ func (s *Syncer) processBatch(ctx context.Context, syncID, sourceID int64, listR
 			continue
 		}
 		existingCount++
+		if _, pending := s.pendingAcquisitions[id]; pending &&
+			(s.opts.SourceType == "" || s.opts.SourceType == sourceTypeGmail) {
+			if err := s.repairPendingAttachments(ctx, sourceID, id); err != nil {
+				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
+					return nil, err
+				}
+				if recErr := s.recordAcquisitionFailure(syncID, id, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
+				checkpoint.ErrorsCount++
+				continue
+			}
+		}
 		if canReadLabels {
 			labelRefreshIDs = append(labelRefreshIDs, id)
 			continue
@@ -1908,7 +1922,13 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		recipientSets = append(recipientSets, rs)
 	}
 
-	// Persist atomically
+	// Retain the original even if later file publication fails. A pending
+	// acquisition is settled only after its required files have been stored.
+	resolution := s.acquisitionResolution(data.message.SourceMessageID)
+	materialize := s.opts.AttachmentsDir != "" && len(data.attachments) > 0
+	if materialize {
+		resolution = nil
+	}
 	messageID, err := s.store.PersistMessage(&store.MessagePersistData{
 		Message:     data.message,
 		Metadata:    data.metadata,
@@ -1917,34 +1937,30 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		RawMIME:     data.rawMIME,
 		Recipients:  recipientSets,
 		LabelIDs:    labelIDs,
-		SyncRunItem: s.acquisitionResolution(data.message.SourceMessageID),
+		SyncRunItem: resolution,
 	})
 	if err != nil {
 		return 0, err
 	}
-	delete(s.pendingAcquisitions, data.message.SourceMessageID)
+	if !materialize {
+		delete(s.pendingAcquisitions, data.message.SourceMessageID)
+	}
 
-	// Store attachments (best-effort, file I/O outside transaction)
-	if s.opts.AttachmentsDir != "" && len(data.attachments) > 0 {
+	// File I/O stays outside the RAW transaction. Never hide a failed write by
+	// reducing the expected count to the successfully stored subset.
+	var attachmentErr error
+	if materialize {
 		for _, att := range data.attachments {
 			if err := s.storeAttachment(messageID, &att); err != nil {
-				s.logger.Warn("failed to store attachment", "message", messageID, "filename", att.Filename, "error", err)
+				attachmentErr = errors.Join(attachmentErr, fmt.Errorf("store attachment %q: %w", att.Filename, err))
 			}
 		}
 
-		// Correct metadata if any attachments failed to store
-		var storedCount int
-		if err := s.store.DB().QueryRow( // #nosec G701 -- Rebind only rewrites placeholders in this literal; messageID is bound separately.
-			s.store.Rebind(`SELECT COUNT(*) FROM attachments WHERE message_id = ?`),
-			messageID,
-		).Scan(&storedCount); err != nil {
-			s.logger.Warn("failed to count stored attachments",
-				"message", messageID, "error", err)
-		} else if storedCount != len(data.attachments) {
-			if err := s.store.RecomputeMessageAttachmentStats(messageID); err != nil {
-				s.logger.Warn("failed to update attachment metadata",
-					"message", messageID, "error", err)
-			}
+		if attachmentErr == nil {
+			attachmentErr = s.store.RecomputeMessageAttachmentStats(messageID)
+		}
+		if attachmentErr == nil {
+			attachmentErr = s.resolveAcquisition(data.message.SourceMessageID)
 		}
 	}
 
@@ -1962,6 +1978,9 @@ func (s *Syncer) persistMessage(data *messageData, labelMap map[string]int64) (i
 		}
 	}
 
+	if attachmentErr != nil {
+		return messageID, fmt.Errorf("%w: %w", errAttachmentMaterialization, attachmentErr)
+	}
 	return messageID, nil
 }
 

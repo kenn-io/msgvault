@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.kenn.io/msgvault/internal/rederive"
 	"go.kenn.io/msgvault/internal/store"
+	syncer "go.kenn.io/msgvault/internal/sync"
 )
 
 var (
@@ -21,6 +22,8 @@ var (
 )
 
 func newRepairDerivedCmd() *cobra.Command {
+	var attachmentMessage string
+	var sourceID int64
 	cmd := &cobra.Command{
 		Use:   "repair-derived",
 		Short: "Re-derive message text and metadata from stored payloads",
@@ -44,6 +47,11 @@ provider no longer holds are repaired too. Only derived columns are rewritten;
 raw payloads, downloaded media, and sync cursors are untouched, so it is
 idempotent.
 
+Use --attachment-message to restore the missing nonempty MIME attachments of
+one Gmail message from local RAW. Add --source-id to disambiguate the reference.
+This mode preserves valid files and existing metadata. Corrupt files, conflicting
+metadata and unusable RAW return an error and remain unchanged.
+
 Examples:
   msgvault repair-derived
   msgvault repair-derived --source-type imap
@@ -56,6 +64,15 @@ Examples:
 				return errors.New("configuration is unavailable")
 			}
 			cfg := state.cfg
+			if cmd.Flags().Changed("attachment-message") && strings.TrimSpace(attachmentMessage) == "" {
+				return usageErr(cmd, errors.New("--attachment-message requires a nonempty reference"))
+			}
+			if cmd.Flags().Changed("source-id") && (sourceID <= 0 || attachmentMessage == "") {
+				return errors.New("--source-id requires --attachment-message and a positive ID")
+			}
+			if attachmentMessage != "" && (len(repairDerivedSourceTypes) > 0 || len(repairDerivedIdentifiers) > 0) {
+				return errors.New("--attachment-message uses --source-id rather than source filters")
+			}
 			if !isDaemonCLISubprocess() {
 				return runDaemonCLICommandHTTPFromCobra(cmd, args)
 			}
@@ -67,6 +84,14 @@ Examples:
 			defer cleanup()
 			ctx, stop := withInterruptCancel(cmd, "\nInterrupted. Stopping...")
 			defer stop()
+			if attachmentMessage != "" {
+				service := syncer.New(nil, s, &syncer.Options{AttachmentsDir: cfg.AttachmentsDir()})
+				if err := service.RepairMessageAttachments(ctx, syncer.RepairRequest{Reference: attachmentMessage, SourceID: sourceID}); err != nil {
+					return fmt.Errorf("repair message attachments: %w", err)
+				}
+				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Message attachments restored from retained MIME")
+				return rebuildCacheAfterWrite(cfg.DatabaseDSN(), state)
+			}
 
 			sources, err := repairDerivedTargets(s)
 			if err != nil {
@@ -99,6 +124,8 @@ Examples:
 		"source type to repair (repeatable; default: every source)")
 	cmd.Flags().StringArrayVar(&repairDerivedIdentifiers, "identifier", nil,
 		"source identifier to repair (repeatable; default: all matching sources)")
+	cmd.Flags().StringVar(&attachmentMessage, "attachment-message", "", "restore one Gmail message's missing MIME attachments from local RAW")
+	cmd.Flags().Int64Var(&sourceID, "source-id", 0, "scope --attachment-message to one positive source ID")
 	return cmd
 }
 

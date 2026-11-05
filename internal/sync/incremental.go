@@ -433,8 +433,14 @@ func (s *Syncer) replayAcquisitionFailures(
 		if _, ok := existing[messageID]; !ok {
 			fetchIDs = append(fetchIDs, messageID)
 		} else {
-			if err := s.resolveAcquisition(messageID); err != nil {
-				return nil, err
+			if err := s.repairPendingAttachments(ctx, sourceID, messageID); err != nil {
+				if ctx.Err() != nil || errors.Is(err, store.ErrSyncRunSuperseded) {
+					return nil, err
+				}
+				if recErr := s.recordAcquisitionFailure(syncID, messageID, syncItemPhaseIngest, syncItemKindIngestError, err); recErr != nil {
+					return nil, recErr
+				}
+				checkpoint.ErrorsCount++
 			}
 		}
 	}

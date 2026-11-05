@@ -5216,6 +5216,27 @@ them. Source syncs and imports run the same work first, so use this command
 for on-demand repair, file imports you will not run again, or retrying an
 interrupted pass.
 
+Restore the missing nonempty MIME attachments of one Gmail message with:
+
+```bash
+msgvault repair-derived --attachment-message <internal-id-or-gmail-id> --source-id <source-id>
+```
+
+This mode uses retained RAW without Gmail access. It preserves original payloads,
+message fields, existing attachment rows and valid loose or packed blobs. It adds
+missing MIME occurrences and reconstructs missing loose files. Empty MIME parts
+remain omitted, as in ordinary sync. Provider-owned attachments are preserved.
+The source selector disambiguates references; omit it only for a unique reference.
+Source filters cannot be combined with this mode.
+
+Missing, empty, undecodable or diagnostically incomplete RAW, conflicting metadata,
+corrupt files and missing packs return an error without replacing existing evidence.
+Correct the reported problem and repeat the same command. Ordinary Gmail syncs
+also retry recorded materialization failures locally; a successful full scan does
+not inspect every previously archived attachment. `repair-message --audit` compares
+MIME occurrences but does not check file contents. The normal `repair-derived` and
+automatic `Heal` text passes do not reconstruct files.
+
 ## gc
 
 Permanently purge **all source-deleted messages** from a SQLite archive,

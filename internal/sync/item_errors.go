@@ -20,6 +20,7 @@ const (
 	syncItemKindGmailNotFound   = "gmail_not_found"
 	syncItemKindMessageGone     = "message_gone"
 	syncItemKindIngestError     = "ingest_error"
+	syncItemKindAttachmentError = "attachment_error"
 	syncItemKindDeleteError     = "delete_error"
 	syncItemKindAcquired        = "acquired"
 )
@@ -29,13 +30,14 @@ const (
 func isAcquisitionReplayCandidate(item store.SyncRunItem) bool {
 	return ((item.Phase == syncItemPhaseFetch &&
 		(item.ErrorKind == syncItemKindFetchError || item.ErrorKind == syncItemKindBatchFetchError)) ||
-		(item.Phase == syncItemPhaseIngest && item.ErrorKind == syncItemKindIngestError)) &&
+		(item.Phase == syncItemPhaseIngest && (item.ErrorKind == syncItemKindIngestError || item.ErrorKind == syncItemKindAttachmentError))) &&
 		item.SourceMessageID != "" && item.SourceMessageID != "(unknown)"
 }
 
 var (
-	errRawBatchMissing          = errors.New("missing raw message in batch result")
-	errAcquisitionFailureRecord = errors.New("record acquisition failure")
+	errRawBatchMissing           = errors.New("missing raw message in batch result")
+	errAcquisitionFailureRecord  = errors.New("record acquisition failure")
+	errAttachmentMaterialization = errors.New("materialize MIME attachments")
 )
 
 type rawBatchWithErrors interface {
@@ -127,12 +129,16 @@ func (s *Syncer) pendingAcquisitionReplayIDs(ctx context.Context, sourceID int64
 		return nil, fmt.Errorf("list unresolved acquisition errors: %w", err)
 	}
 
+	s.pendingAttachmentRepairs = make(map[string]struct{})
 	ids := make([]string, 0, len(items))
 	for _, item := range items {
 		if !isAcquisitionReplayCandidate(item) {
 			continue
 		}
 		ids = append(ids, item.SourceMessageID)
+		if item.ErrorKind == syncItemKindAttachmentError {
+			s.pendingAttachmentRepairs[item.SourceMessageID] = struct{}{}
+		}
 	}
 	sort.Strings(ids)
 	return ids, nil
@@ -176,6 +182,7 @@ func (s *Syncer) resolveAcquisition(messageID string) error {
 			return fmt.Errorf("resolve acquisition %q: %w", messageID, err)
 		}
 		delete(s.pendingAcquisitions, messageID)
+		delete(s.pendingAttachmentRepairs, messageID)
 	}
 	return nil
 }
@@ -212,6 +219,9 @@ func syncItemErrorMessage(err error, fallback string) string {
 // acquisition. Callers must stop on error: even completing an idle incremental
 // run hides older retry debt behind ListUnresolvedSyncItemErrors' lower bound.
 func (s *Syncer) recordAcquisitionFailure(syncID int64, sourceMessageID, phase, kind string, acquisitionErr error) error {
+	if errors.Is(acquisitionErr, errAttachmentMaterialization) {
+		kind = syncItemKindAttachmentError
+	}
 	if s.opts.SourceType != "" && s.opts.SourceType != sourceTypeGmail {
 		s.recordSyncItem(syncID, sourceMessageID, phase, store.SyncRunItemStatusError, kind, acquisitionErr)
 		return nil
@@ -226,6 +236,12 @@ func (s *Syncer) writeSyncItem(syncID int64, sourceMessageID, phase, status, kin
 	if s.pendingAcquisitions != nil && syncID == s.acquisitionSyncID && status == store.SyncRunItemStatusError &&
 		isAcquisitionReplayCandidate(store.SyncRunItem{SourceMessageID: sourceMessageID, Phase: phase, ErrorKind: kind}) {
 		s.pendingAcquisitions[sourceMessageID] = struct{}{}
+		if kind == syncItemKindAttachmentError {
+			if s.pendingAttachmentRepairs == nil {
+				s.pendingAttachmentRepairs = make(map[string]struct{})
+			}
+			s.pendingAttachmentRepairs[sourceMessageID] = struct{}{}
+		}
 	}
 	if sourceMessageID == "" {
 		sourceMessageID = "(unknown)"
