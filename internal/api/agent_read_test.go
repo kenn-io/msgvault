@@ -127,8 +127,8 @@ func TestAgentReadAuthorization(t *testing.T) {
 	storagePath, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(storagePath), 0700))
-	requirements.NoError(os.WriteFile(storagePath, []byte("synthetic attachment"), 0600))
-	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "sample.bin"), []byte("synthetic attachment"), 0600))
+	requirements.NoError(os.WriteFile(storagePath, []byte("\x00ynthetic attachment"), 0600))
+	requirements.NoError(os.WriteFile(filepath.Join(cfg.AttachmentsDir(), "sample.bin"), []byte("\x00ynthetic attachment"), 0600))
 	requirements.NoError(st.UpsertAttachment(ids[0], "sample.bin", "application/octet-stream", "sample.bin", hash, 20))
 	var attID int64
 	requirements.NoError(st.DB().QueryRow(st.Rebind("SELECT id FROM attachments WHERE message_id=?"), ids[0]).Scan(&attID))
@@ -743,7 +743,7 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 	path, err := msgexport.StoragePath(cfg.AttachmentsDir(), hash)
 	requirements.NoError(err)
 	requirements.NoError(os.MkdirAll(filepath.Dir(path), 0700))
-	requirements.NoError(os.WriteFile(path, []byte("fallback"), 0600))
+	requirements.NoError(os.WriteFile(path, []byte("\x00allback"), 0600))
 	protected := &agentReadGateStore{Store: st}
 	srv := NewServerWithOptions(ServerOptions{Config: cfg, Store: protected, Engine: query.NewEngine(st.DB(), st.IsPostgreSQL()), Logger: testLogger()})
 	defer srv.agentGrants.Close()
@@ -770,7 +770,7 @@ func TestAgentAttachmentCanonicalFallback(t *testing.T) {
 			assertions.Equal(before+1, protected.sourceLists.Load())
 			assertions.Zero(protected.sourceLookups.Load())
 			requirements.Equal(http.StatusOK, w.Code, w.Body.String())
-			assertions.Equal("fallback", w.Body.String())
+			assertions.Equal("\x00allback", w.Body.String())
 			assertions.NotContains(w.Header().Get("Content-Disposition"), "private.bin")
 			if strings.Contains(path, "/content") {
 				assertions.Contains(w.Header().Get("Content-Disposition"), "allowed.bin")
