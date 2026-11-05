@@ -285,6 +285,28 @@ func TestClusterMembersAndEdgesWithinMultiComponentGraph(t *testing.T) {
 	require.NoError(err)
 	assert.ElementsMatch([]store.LinkEdge{{A: loAB, B: hiAB}, {A: loBC, B: hiBC}}, edges,
 		"ClusterEdges must return only b's own component edges")
+
+	room := f.EnsureParticipant("room@resource.calendar.google.com", "Room", "resource.calendar.google.com")
+	subroom := f.EnsureParticipant("room@floor.resource.calendar.google.com", "Subroom", "floor.resource.calendar.google.com")
+	resource := f.EnsureParticipant("resource@example.com", "Resource", "example.com")
+	message := f.CreateMessage("calendar-room")
+	_, err = f.Store.DB().Exec(`INSERT INTO calendar_events (message_id, projection_version, content_hash) VALUES (?, 1, 'test')`, message)
+	require.NoError(err)
+	_, err = f.Store.DB().Exec(`INSERT INTO calendar_event_attendees (message_id, ordinal, email, role, rsvp) VALUES (?, 0, 'resource@example.com', 'room', '')`, message)
+	require.NoError(err)
+	for _, tc := range []struct {
+		members []int64
+		want    int64
+	}{
+		{[]int64{room, a}, a},
+		{[]int64{subroom, a}, a},
+		{[]int64{resource, a}, a},
+		{[]int64{room, subroom, resource}, 0},
+	} {
+		canonical, err := f.Store.ClusterCanonicalID(tc.members)
+		require.NoError(err)
+		assert.Equal(tc.want, canonical)
+	}
 }
 
 // normalizeEdgeForTest mirrors the unexported normalizeEdge in

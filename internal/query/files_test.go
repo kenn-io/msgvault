@@ -177,7 +177,7 @@ func TestFilesIdentityPredicateSeparatesDirectionsAndSources(t *testing.T) {
 	assertions.Equal(int64(2), grouped.Rows[0].Count)
 }
 
-func TestReviewLinkedRoomFilesStayOutOfPerson(t *testing.T) {
+func TestLinkedRoomFilesStayOutOfPerson(t *testing.T) {
 	requirements := require.New(t)
 	assertions := assert.New(t)
 	b := NewTestDataBuilder(t)

@@ -1100,7 +1100,7 @@ func writeTableParquet(tb testing.TB, db *sql.DB, path, columns, values string, 
 	}
 	projection := "*"
 	if slices.Contains(expectedColumns, "phone_number") && slices.Contains(expectedColumns, "domain") {
-		projection += ", " + identityindex.RoomDomainSQL("lower(coalesce(domain, ''))") + " AS is_room"
+		projection += ", (domain = 'resource.calendar.google.com') AS is_room"
 	}
 	if slices.Contains(expectedColumns, "source_message_id") && !slices.Contains(expectedColumns, "archive_only") {
 		// Ordinary fixture messages belong to their current provider account.

@@ -4702,10 +4702,16 @@ func TestDuckDBEngineRejectsPreRoomCache(t *testing.T) {
 	b.AddTo(message, alice, "Alice")
 	analytics, cleanup := b.Build()
 	t.Cleanup(cleanup)
-	rewriteParquetForTest(t, filepath.Join(analytics, "participants", "participants.parquet"), "id, email_address, domain, display_name, phone_number", `(1::BIGINT, 'alice@example.com', 'example.com', 'Alice', '')`)
+	participantFile := filepath.Join(analytics, "participants", "participants.parquet")
+	db, err := sql.Open("duckdb", "")
+	requirements.NoError(err)
+	_, err = db.Exec("COPY (SELECT id, email_address, domain, display_name, phone_number FROM read_parquet(?)) TO ? (FORMAT PARQUET)", participantFile, participantFile+".old")
+	requirements.NoError(err)
+	requirements.NoError(db.Close())
+	requirements.NoError(os.Rename(participantFile+".old", participantFile))
 	state, err := ReadCacheSyncState(analytics)
 	requirements.NoError(err)
-	state.SchemaVersion = 34
+	state.SchemaVersion = CacheSchemaVersion - 1
 	data, err := json.Marshal(state)
 	requirements.NoError(err)
 	requirements.NoError(os.WriteFile(CacheStatePath(analytics), data, 0o600))

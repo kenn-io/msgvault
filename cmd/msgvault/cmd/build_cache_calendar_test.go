@@ -25,7 +25,55 @@ import (
 	"golang.org/x/oauth2"
 )
 
-func TestBuildCacheExcludesExplicitCalendarResource(t *testing.T) {
+func TestBuildCacheResourceDiscoveredAfterCache(t *testing.T) {
+	t.Run("resource_present_before_build", func(t *testing.T) {
+		for _, mode := range []struct{ name, csv string }{{"sqlite", ""}, {"csv", "1"}} {
+			t.Run(mode.name, func(t *testing.T) {
+				t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", mode.csv)
+				requirements := require.New(t)
+				assertions := assert.New(t)
+				if mode.csv == "" {
+					probe, err := sql.Open("duckdb", "")
+					requirements.NoError(err)
+					t.Cleanup(func() { requirements.NoError(probe.Close()) })
+					requireSQLiteScanner(t, probe)
+				}
+				root := t.TempDir()
+				dbPath, analytics := filepath.Join(root, "archive.db"), filepath.Join(root, "analytics")
+				st := testutil.NewSQLiteTestStoreAt(t, dbPath)
+				mock := gcal.NewMockAPI()
+				mock.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
+				mock.FullEvents["primary"] = [][]gcal.Event{{{
+					ID: "resource-event", Status: gcal.StatusConfirmed, Summary: "Planning",
+					Organizer: gcal.Person{Email: "alice@example.com", DisplayName: "Alice"},
+					Start:     gcal.EventDateTime{DateTime: time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)},
+					End:       gcal.EventDateTime{DateTime: time.Date(2026, 1, 2, 11, 0, 0, 0, time.UTC)},
+					Attendees: []gcal.Attendee{{Email: "boardroom@example.com", DisplayName: "Boardroom", Resource: true}},
+				}}}
+				mock.FullSyncToken["primary"] = "T1"
+				_, err := calsync.New(mock, st, calsync.Options{AccountEmail: "alice@example.com"}).Full(t.Context())
+				requirements.NoError(err)
+				_, err = st.DB().Exec(`INSERT INTO participants (email_address, domain) VALUES (CAST(? AS TEXT), 'example.com')`, []byte{'x', 0xff})
+				requirements.NoError(err)
+				requirements.NoError(st.Close())
+				_, err = buildCache(dbPath, analytics, true)
+				requirements.NoError(err)
+				engine, err := query.NewDuckDBEngine(analytics, "", nil)
+				requirements.NoError(err)
+				t.Cleanup(func() { requirements.NoError(engine.Close()) })
+				people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "Boardroom", Page: query.PageSpec{Limit: 10}})
+				requirements.NoError(err)
+				assertions.Empty(people.Rows)
+				completion, err := engine.CompletePeople(t.Context(), query.PeopleCompletionRequest{Query: "Boardroom", Limit: 10})
+				requirements.NoError(err)
+				assertions.Empty(completion.Rows)
+				messages, err := engine.SearchFast(t.Context(), &search.Query{ToAddrs: []string{"boardroom@example.com"}}, query.MessageFilter{}, 10, 0)
+				requirements.NoError(err)
+				requirements.Len(messages, 1)
+				assertions.Equal("Planning", messages[0].Subject)
+			})
+		}
+	})
 	for _, mode := range []struct{ name, csv string }{{"sqlite", ""}, {"csv", "1"}} {
 		t.Run(mode.name, func(t *testing.T) {
 			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", mode.csv)
@@ -34,53 +82,9 @@ func TestBuildCacheExcludesExplicitCalendarResource(t *testing.T) {
 			if mode.csv == "" {
 				probe, err := sql.Open("duckdb", "")
 				requirements.NoError(err)
-				_, err = probe.Exec("INSTALL sqlite; LOAD sqlite;")
-				requirements.NoError(err)
-				requirements.NoError(probe.Close())
+				t.Cleanup(func() { requirements.NoError(probe.Close()) })
+				requireSQLiteScanner(t, probe)
 			}
-			root := t.TempDir()
-			dbPath, analytics := filepath.Join(root, "archive.db"), filepath.Join(root, "analytics")
-			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
-			mock := gcal.NewMockAPI()
-			mock.Calendars = []gcal.Calendar{{ID: "primary", AccessRole: "owner"}}
-			mock.FullEvents["primary"] = [][]gcal.Event{{{
-				ID: "resource-event", Status: gcal.StatusConfirmed, Summary: "Planning",
-				Organizer: gcal.Person{Email: "alice@example.com", DisplayName: "Alice"},
-				Start:     gcal.EventDateTime{DateTime: time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC)},
-				End:       gcal.EventDateTime{DateTime: time.Date(2026, 1, 2, 11, 0, 0, 0, time.UTC)},
-				Attendees: []gcal.Attendee{{Email: "boardroom@example.com", DisplayName: "Boardroom", Resource: true}},
-			}}}
-			mock.FullSyncToken["primary"] = "T1"
-			_, err := calsync.New(mock, st, calsync.Options{AccountEmail: "alice@example.com"}).Full(t.Context())
-			requirements.NoError(err)
-			_, err = st.DB().Exec(`INSERT INTO participants (email_address, domain) VALUES (CAST(? AS TEXT), 'example.com')`, []byte{'x', 0xff})
-			requirements.NoError(err)
-			requirements.NoError(st.Close())
-			_, err = buildCache(dbPath, analytics, true)
-			requirements.NoError(err)
-			engine, err := query.NewDuckDBEngine(analytics, "", nil)
-			requirements.NoError(err)
-			t.Cleanup(func() { requirements.NoError(engine.Close()) })
-			people, err := engine.SearchPeople(t.Context(), query.PersonSearchRequest{Query: "Boardroom", Page: query.PageSpec{Limit: 10}})
-			requirements.NoError(err)
-			assertions.Empty(people.Rows)
-			completion, err := engine.CompletePeople(t.Context(), query.PeopleCompletionRequest{Query: "Boardroom", Limit: 10})
-			requirements.NoError(err)
-			assertions.Empty(completion.Rows)
-			messages, err := engine.SearchFast(t.Context(), &search.Query{ToAddrs: []string{"boardroom@example.com"}}, query.MessageFilter{}, 10, 0)
-			requirements.NoError(err)
-			requirements.Len(messages, 1)
-			assertions.Equal("Planning", messages[0].Subject)
-		})
-	}
-}
-
-func TestBuildCacheResourceDiscoveredAfterCache(t *testing.T) {
-	for _, mode := range []struct{ name, csv string }{{"sqlite", ""}, {"csv", "1"}} {
-		t.Run(mode.name, func(t *testing.T) {
-			t.Setenv("MSGVAULT_FORCE_CSV_SNAPSHOT", mode.csv)
-			requirements := require.New(t)
-			assertions := assert.New(t)
 			root := t.TempDir()
 			dbPath, analytics := filepath.Join(root, "archive.db"), filepath.Join(root, "analytics")
 			st := testutil.NewSQLiteTestStoreAt(t, dbPath)
