@@ -19,6 +19,8 @@ import (
 const calendarEventsMinAPISchemaVersion = "3.43.0"
 const calendarEventDeletedStatus = "deleted"
 
+var calendarLiveOnlyFlags = []string{"account", "dry-run", "read-only", "send-updates"}
+
 type calendarEventsClient interface {
 	ListCalendarOccurrencesContext(ctx context.Context, query store.CalendarOccurrenceQuery) (store.CalendarOccurrencePage, error)
 	GetCalendarOccurrenceContext(ctx context.Context, ref string) (store.CalendarOccurrenceDetail, error)
@@ -47,12 +49,11 @@ func newCalendarEventsCommand(open calendarEventsOpen) *cobra.Command {
 	_ = command.MarkFlagRequired("to")
 	// Shadow the live-command flags with hidden local copies so help does not
 	// offer them; RunE still rejects them if passed.
-	liveOnly := []string{"account", "dry-run", "read-only", "send-updates"}
 	command.Flags().String("account", "", "")
 	command.Flags().String("send-updates", "", "")
 	command.Flags().Bool("dry-run", false, "")
 	command.Flags().Bool("read-only", false, "")
-	for _, name := range liveOnly {
+	for _, name := range calendarLiveOnlyFlags {
 		_ = command.Flags().MarkHidden(name)
 	}
 	bounds := make([]time.Time, 2)
@@ -166,7 +167,7 @@ func calendarOccurrenceStatus(o store.CalendarOccurrence) string {
 
 func archiveCalendarRun(open calendarEventsOpen, prepare func(*cobra.Command) error, run func(*cobra.Command, []string, calendarEventsClient) error) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		for _, name := range []string{"account", "dry-run", "read-only", "send-updates"} {
+		for _, name := range calendarLiveOnlyFlags {
 			if cmd.Flags().Changed(name) {
 				return usageErr(cmd, fmt.Errorf("--%s is only valid for live calendar commands", name))
 			}
