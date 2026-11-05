@@ -107,7 +107,63 @@ function renderHistory(currentPersonID: number | null = 12, options: { gone?: bo
   return { requests };
 }
 
+function renderRegressionHistory(mergeDetail: MergeDetail, missingAddress = false, missingDestination = false) {
+  render(PersonMergeHistory, { client: createAPIClient(async input => {
+    const request = input instanceof Request ? input : new Request(input);
+    const path = new URL(request.url).pathname;
+    if (path === '/api/v1/people/7/merges') return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
+    if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail);
+    if (path === '/api/v1/people/19' && missingDestination) return Response.json({}, { status: 404 });
+    if (path.startsWith('/api/v1/people/')) {
+      const id = Number(path.split('/').at(-1));
+      return Response.json(person(id, 4, [701], id === 19 ? 'Alex Restored' : 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
+    }
+    if (path === '/api/v1/participants/701') return Response.json({ identifiers: missingAddress ? [] : [
+      { participant_id: 701, type: 'email', value: 'alex@example.org' },
+      { participant_id: 701, type: 'phone', value: '+12025550101' },
+    ] });
+    if (path === '/api/v1/participants/702') return Response.json({ identifiers: [{ participant_id: 702, type: 'email', value: 'other@example.org' }] });
+    throw new Error(`Unexpected request: ${path}`);
+  }), personID: 7 });
+}
+
 describe('PersonMergeHistory', () => {
+  it.each([
+    [false, false, 'Split out to Alex Restored'],
+    [true, false, 'Split out to a profile'],
+    [false, true, 'Split out'],
+  ])('ties split addresses to their destination, missing name %s, missing split %s', async (missingDestination, missingSplit, expected) => {
+    const mergeDetail = detail();
+    if (missingSplit) mergeDetail.splits = [];
+    renderRegressionHistory(mergeDetail, false, missingDestination);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    const heading = await screen.findByRole('heading', { name: 'Message addresses from Alex Example' });
+    expect(within(heading.parentElement!).getByText(expected)).toBeDefined();
+  });
+
+  it.each([false, true])('uses Inspect address labels in split choices and confirmation, missing address %s', async missingAddress => {
+    renderRegressionHistory(detail(), missingAddress);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    const heading = await screen.findByRole('heading', { name: 'Message addresses from the merged-in profile' });
+    const labels = missingAddress ? ['Participant 701'] : ['alex@example.org', '+12025550101'];
+    for (const label of labels) expect(within(heading.parentElement!).getByText(label)).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Split merged profile' }));
+    const choice = await screen.findByRole('checkbox', { name: labels.join(', ') });
+    await fireEvent.click(choice);
+    expect(screen.getByRole('checkbox', { name: `I confirm splitting ${labels.join(', ')} from Alex Example (Person 12).` })).toBeDefined();
+  });
+
+  it('titles a section containing only decided candidates Review decisions', async () => {
+    const mergeDetail = detail();
+    mergeDetail.review_candidates = mergeDetail.review_candidates!.filter(candidate => candidate.state !== 'pending');
+    renderRegressionHistory(mergeDetail);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    expect(await screen.findByRole('heading', { name: 'Review decisions' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Needs review' })).toBeNull();
+    await fireEvent.click(screen.getByText('1 earlier decision'));
+    expect(screen.getByText(/^Accepted · You ·/)).toBeDefined();
+  });
+
   it('groups addresses, splits, and review decisions like profile history', async () => {
     const { requests } = renderHistory();
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));

@@ -90,6 +90,38 @@ function deferredResponse() {
 }
 
 describe('PersonMergeHistoryController', () => {
+  it('refreshes matching labels after a stale split reload', async () => {
+    let stale = false;
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST') {
+        stale = true;
+        return Response.json({ error: 'person_merge_revision_conflict' }, { status: 409 });
+      }
+      if (path === '/api/v1/person-merges/41') return Response.json(detail({ survivor_revision_after: stale ? 5 : 4 }));
+      if (path === '/api/v1/people/12') {
+        const revision = stale ? 5 : 4;
+        return Response.json(person(12, revision, [701]), { headers: { ETag: `"person-12-r${revision}"` } });
+      }
+      if (path === '/api/v1/people/7') return Response.json(person(7, 1, [], stale ? 'Fresh Example' : 'Earlier Example'));
+      return Response.json({ identifiers: [] });
+    }), 7);
+    try {
+      await controller.selectMerge(41);
+      expect(controller.labels?.names.get(7)).toBe('Earlier Example');
+      await controller.openSplit();
+      controller.setParticipantSelected(701, true);
+      expect(controller.confirmSplit()).toBe(true);
+      await controller.submitSplit();
+      expect(controller.detail?.merge.survivor_revision_after).toBe(5);
+      expect(controller.labels?.for).toBe(controller.detail);
+      expect(controller.labels?.names.get(7)).toBe('Fresh Example');
+    } finally {
+      controller.destroy();
+    }
+  });
+
   it('uses exact pagination and keeps Previous on a successful empty nonzero page', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {

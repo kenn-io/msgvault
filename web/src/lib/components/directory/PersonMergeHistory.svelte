@@ -138,7 +138,7 @@
         {#if controller.detail.splits?.length}
           <HistorySection level={5} title="Splits" rows={controller.detail.splits.map(split => ({ id: split.id, value: labels?.names.get(split.new_person_id) ?? 'A profile', detail: split.exact_reversal ? 'Exact restore' : 'Partial restore', meta: `${historySource(split.actor)} · ${historyTime(split.created_at)}` }))} />
         {/if}
-        {#if controller.detail.review_candidates?.length}<HistorySection level={5} title="Needs review" rows={reviewRows(true)} earlier={reviewRows(false)} earlierNoun="decision" />{/if}
+        {#if controller.detail.review_candidates?.length}<HistorySection level={5} title={controller.detail.review_candidates.some(candidate => candidate.state === 'pending') ? 'Needs review' : 'Review decisions'} rows={reviewRows(true)} earlier={reviewRows(false)} earlierNoun="decision" />{/if}
       {/if}
 
       {#if controller.snapshot}
