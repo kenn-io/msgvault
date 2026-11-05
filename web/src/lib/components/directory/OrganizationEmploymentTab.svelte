@@ -167,7 +167,9 @@
 </section>
 
 {#if endingEmployment}
+  {#key endingEmployment.employment.id}
   <EmploymentEndPopover {controller} employment={endingEmployment.employment} trigger={endingEmployment.trigger} onClose={() => { endingEmployment = undefined; }} />
+  {/key}
 {/if}
 {#if organizationEditor !== undefined}
   <OrganizationEditor controller={controller} organization={organizationEditor ?? undefined}

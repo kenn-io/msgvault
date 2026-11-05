@@ -346,6 +346,7 @@
     {#if controller.createBlocked.organizations}<Button label="Refresh organizations" disabled={submitting} onclick={() => void refreshAfterUnknown()} />{/if}
   </div>
   {#snippet footer()}
+    <div class="organization-actions">
     {#if confirmDelete}
       <Button label="Cancel" ariaLabel="Cancel organization deletion" disabled={submitting} onclick={() => { confirmDelete = false; message = ''; }} />
       <Button tone="danger" surface="solid" label="Delete" ariaLabel="Confirm delete organization" busy={submitting} disabled={checkingDelete || !!deleteError || !holders || holders.count > 0} onclick={() => void remove()} />
@@ -354,6 +355,7 @@
       <Button label="Cancel" disabled={submitting} onclick={requestClose} />
       <Button tone="info" surface="solid" type="submit" label={initialOrganization ? 'Save organization' : 'Create organization'} busy={submitting} disabled={loading || !name.trim() || controller.createBlocked.organizations} />
     {/if}
+    </div>
   {/snippet}
 </Modal>
 </form>
@@ -361,6 +363,7 @@
 <style>
   .editor { display: grid; gap: var(--field-gap); }
   .deletion { display: grid; gap: var(--space-2); }
+  .organization-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); width: 100%; }
   :global(.kit-button.kit-button--danger.delete-organization) { margin-right: auto; border-color: transparent; background: transparent; color: var(--text-danger); }
   label { display: grid; gap: var(--label-gap); color: var(--text-muted); font-size: var(--font-size-xs); }
   textarea { min-height: 5rem; resize: vertical; padding: var(--space-2); border: 1px solid var(--border-default); border-radius: var(--radius-sm); background: var(--bg-canvas); color: var(--text-primary); }

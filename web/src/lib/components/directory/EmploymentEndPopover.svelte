@@ -1,7 +1,7 @@
 <script lang="ts">
   import { appShortcuts, autoReposition, Button, dismissable, floatingPopoverStyle, IconButton, localDateStr, TextInput } from '@kenn-io/kit-ui';
   import X from '@lucide/svelte/icons/x';
-  import { onMount, tick } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { intervalDateError } from '../../directory/dates';
   import type { DirectoryEntityController } from '../../directory/entity-controller.svelte';
   import type { Employment } from '../../directory/models';
@@ -14,6 +14,8 @@
   let submitting = $state(false);
   let message = $state('');
   let current = $state<Employment>();
+  let active = true;
+  let rowActions: HTMLElement | null = null;
   const uid = $props.id();
   const dateError = $derived(intervalDateError(endDate));
 
@@ -22,11 +24,12 @@
     style = floatingPopoverStyle({ trigger: trigger.getBoundingClientRect(), viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, popoverWidth: panel.offsetWidth, popoverHeight: panel.offsetHeight, align: 'start' });
   }
   function close(): void {
-    if (submitting) return;
-    trigger.focus();
+    if (submitting || !active) return;
+    rowActions?.querySelector<HTMLButtonElement>('[aria-label="Edit employment"]')?.focus();
     onClose();
   }
-  onMount(() => { void tick().then(() => {
+  onDestroy(() => { active = false; });
+  onMount(() => { rowActions = trigger.parentElement; void tick().then(() => {
     position();
     panel?.querySelector<HTMLInputElement>('input')?.focus();
   }); });

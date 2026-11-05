@@ -123,7 +123,7 @@ describe('OrganizationEmploymentTab', () => {
       expect(reads).toBe(2);
       await fireEvent.keyDown(document, { key: 'Escape' });
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
-      expect(document.activeElement).toBe(trigger);
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Edit employment' }));
       await fireEvent.click(trigger);
       expect(screen.queryByRole('alert')).toBeNull();
       await fireEvent.mouseDown(document.body);
