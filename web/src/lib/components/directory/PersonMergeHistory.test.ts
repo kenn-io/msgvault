@@ -181,7 +181,7 @@ describe('PersonMergeHistory', () => {
     expect(within(survivor).getByText('Split out to Alex Restored')).toBeDefined();
     expect(screen.getByText('Alex Restored')).toBeDefined();
     expect(screen.getByText('Partial restore')).toBeDefined();
-    expect(screen.getByText('Waiting for review')).toBeDefined();
+    expect(screen.queryByText('Waiting for review')).toBeNull();
     expect(screen.getByText('Field')).toBeDefined();
     await fireEvent.click(screen.getByText('1 earlier decision'));
     expect(screen.getByText('Role')).toBeDefined();

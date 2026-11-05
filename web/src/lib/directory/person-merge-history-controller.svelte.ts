@@ -212,7 +212,7 @@ export class PersonMergeHistoryController {
         this.detailLoading = false;
         const detail = this.detail;
         const labels = await loadMergeLabels(this.client, detail, request.signal);
-        if (this.ownsDetail(request, generation, context, mergeID)) this.labels = { for: detail, ...labels };
+        if (this.ownsDetail(request, generation, context, mergeID) && this.detail === detail) this.labels = { for: detail, ...labels };
       } else {
         this.detail = retainedDetail;
         this.detailError = failureMessage(response.error, response.response.status);

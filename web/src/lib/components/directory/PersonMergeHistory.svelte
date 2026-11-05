@@ -75,7 +75,7 @@
   function reviewRows(pending: boolean) {
     return (controller.detail?.review_candidates ?? []).filter(candidate => (candidate.state === 'pending') === pending).map(candidate => ({
       id: candidate.id, value: definitions.find(definition => definition.id === candidate.definition_id)?.label ?? 'Field',
-      meta: pending ? 'Waiting for review' : [reviewStateChip(candidate.state).label, candidate.reviewed_by ? historySource(candidate.reviewed_by) : '', candidate.reviewed_at ? historyTime(candidate.reviewed_at) : ''].filter(Boolean).join(' · ')
+      meta: pending ? '' : [reviewStateChip(candidate.state).label, candidate.reviewed_by ? historySource(candidate.reviewed_by) : '', candidate.reviewed_at ? historyTime(candidate.reviewed_at) : ''].filter(Boolean).join(' · ')
     }));
   }
 

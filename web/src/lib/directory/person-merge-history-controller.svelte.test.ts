@@ -177,6 +177,47 @@ describe('PersonMergeHistoryController', () => {
     controller.destroy();
   });
 
+  it('retains refreshed labels when the initial lookup finishes after stale split recovery', async () => {
+    const late = deferredResponse();
+    let nameReads = 0;
+    let detailReads = 0;
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (path === '/api/v1/person-merges/41') {
+        detailReads += 1;
+        return Response.json(detail({ survivor_revision_after: detailReads === 1 ? 4 : 5 }));
+      }
+      if (path === '/api/v1/people/7') {
+        nameReads += 1;
+        return nameReads === 1 ? late.promise : Response.json(person(7, 1, [], 'Fresh Example'));
+      }
+      if (path === '/api/v1/people/12') {
+        return Response.json(person(12, 5, [701, 702]), { headers: { ETag: '"person-12-r5"' } });
+      }
+      if (path === '/api/v1/people/12/split') {
+        return Response.json({ error: 'person_merge_revision_conflict', message: 'Source changed' }, { status: 409 });
+      }
+      if (path.startsWith('/api/v1/participants/')) return Response.json({ identifiers: [] });
+      throw new Error(`Unexpected request: ${request.method} ${path}`);
+    }), 7);
+    const first = controller.selectMerge(41);
+    await vi.waitFor(() => expect(nameReads).toBe(1));
+    await controller.openSplit();
+    controller.setParticipantSelected(701, true);
+    expect(controller.confirmSplit()).toBe(true);
+    await controller.submitSplit();
+    expect(controller.detail?.merge.survivor_revision_after).toBe(5);
+    expect(controller.labels?.names.get(7)).toBe('Fresh Example');
+
+    late.resolve(Response.json(person(7, 1, [], 'Earlier Example')));
+    await first;
+
+    expect(controller.labels?.names.get(7)).toBe('Fresh Example');
+    expect(controller.labels?.for).toBe(controller.detail);
+    controller.destroy();
+  });
+
   it('uses detail current_person_id and its fresh strong ETag for the exact split request', async () => {
     const requests: Request[] = [];
     const fetchFn = vi.fn<typeof fetch>(async (input) => {
