@@ -204,9 +204,8 @@ func (s *Store) ExplainPersonTierContext(ctx context.Context, personID int64, op
 	return explanation, nil
 }
 
-// personTierPlan is what a request needs: the as-of civil date and the settings
-// the stored rows were built under. asOf holds the projection's local calendar
-// date in UTC for date-only arithmetic, not an instant in that timezone.
+// personTierPlan is what a request needs: the as-of date and the settings the
+// stored rows were built under.
 type personTierPlan struct {
 	asOf       time.Time
 	projection PersonTierProjection
@@ -252,9 +251,7 @@ func (s *Store) planPersonTiers(ctx context.Context, tx *loggedTx, options Perso
 		at = time.Now()
 	}
 	local := at.In(location)
-	// Midnight can be skipped by timezone transitions. Once the local date is
-	// chosen, use UTC so both it and window boundaries keep their civil dates.
-	plan.asOf = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, time.UTC)
+	plan.asOf = time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
 	return plan, nil
 }
 

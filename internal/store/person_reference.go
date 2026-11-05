@@ -81,13 +81,13 @@ func (s *Store) ResolvePersonReferenceContext(ctx context.Context, kind PersonRe
 		predicate = "p.id=?"
 		args = append(args, numeric)
 	case PersonRefKind(ContactAddressEmail):
-		predicate = `(LOWER(p.email_address)=? OR EXISTS(SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email' AND LOWER(pi.identifier_value)=?))`
+		predicate = `(` + s.dialect.UnicodeLowerExpression("p.email_address") + `=? OR EXISTS(SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='email' AND ` + s.dialect.UnicodeLowerExpression("pi.identifier_value") + `=?))`
 		args = append(args, value, value)
 	case "phone":
 		predicate = `(p.phone_number=? OR EXISTS(SELECT 1 FROM participant_identifiers pi WHERE pi.participant_id=p.id AND pi.identifier_type='phone' AND pi.identifier_value=?))`
 		args = append(args, value, value)
 	case "name":
-		predicate = `LOWER(p.display_name)=LOWER(?)`
+		predicate = s.dialect.UnicodeLowerExpression("p.display_name") + `=` + s.dialect.UnicodeLowerExpression("?")
 		args = append(args, value)
 	}
 	// matching is evaluated once; a saved name may also match its curated name.
@@ -96,7 +96,7 @@ func (s *Store) ResolvePersonReferenceContext(ctx context.Context, kind PersonRe
 		args = append(args, numeric)
 	}
 	if kind == "name" {
-		personMatch = "LOWER(person.display_name)=LOWER(?)"
+		personMatch = s.dialect.UnicodeLowerExpression("person.display_name") + `=` + s.dialect.UnicodeLowerExpression("?")
 		args = append(args, value)
 	}
 	grant := ""

@@ -115,10 +115,10 @@ func (s *Store) activityAddressExclusionsCTE(ctx context.Context, subjects strin
  FROM exclusion_links member JOIN exclusion_visible p ON p.id=member.member_id
  LEFT JOIN participant_identifiers pi ON pi.participant_id=p.id
  ), exclusion_addresses AS (
- SELECT participant_id,is_account_owner,LOWER(TRIM(COALESCE(email_address,''))) AS address,
+ SELECT participant_id,is_account_owner,` + s.dialect.UnicodeLowerExpression(`TRIM(COALESCE(email_address,''))`) + ` AS address,
  CASE WHEN TRIM(COALESCE(phone_number,''))<>'' OR (identifier_type<>'email' AND TRIM(identifier_value)<>'') THEN 1 ELSE 0 END AS has_phone
  FROM exclusion_members
- UNION ALL SELECT participant_id,is_account_owner,LOWER(TRIM(identifier_value)),0 FROM exclusion_members WHERE identifier_type='email'
+ UNION ALL SELECT participant_id,is_account_owner,` + s.dialect.UnicodeLowerExpression(`TRIM(identifier_value)`) + `,0 FROM exclusion_members WHERE identifier_type='email'
  ), address_exclusions AS (
  SELECT participant_id,CASE WHEN MAX(is_account_owner)=1 THEN 'owner'
  WHEN MAX(CASE WHEN address<>'' THEN 1 ELSE 0 END)=0 THEN ''
@@ -241,7 +241,7 @@ func (s *Store) activityReadCTE(ctx context.Context, w activityReadWindow, f Act
 // activityRepresentativesCTE keeps one copy per logical message in its mailbox conversation.
 func (s *Store) activityRepresentativesCTE() string {
 	return `kept_copies AS MATERIALIZED (SELECT * FROM copies WHERE copy_rank=1), representatives AS (
- SELECT c.*,c.source_id AS thread_source_id,COALESCE(c.conversation_id,0) AS thread_conversation_id FROM kept_copies c
+ SELECT c.*,c.source_id AS thread_source_id,c.conversation_id AS thread_conversation_id FROM kept_copies c
  )`
 }
 
@@ -278,7 +278,14 @@ func (s *Store) activityClassificationCTE(ctx context.Context, f ActivityFilters
  )`, addressArgs
 }
 
-const activityBurstGroupsCTE = `, burst_groups AS (
+func activityBurstGroupsCTE(f ActivityFilters) string {
+	where := ""
+	if !f.IncludeNoise {
+		where = " WHERE non_noise=1 OR ref_kind='meeting'"
+	}
+	return `, displayed AS (
+ SELECT * FROM representatives` + where + `
+ ), burst_groups AS (
  SELECT thread_source_id AS source_id,thread_conversation_id AS conversation_id,local_date,MIN(channel) AS channel,
  'burst:'||CAST(thread_source_id AS TEXT)||':'||CAST(thread_conversation_id AS TEXT)||':'||local_date AS key,
  MIN(occurred_at) AS first_at,MAX(occurred_at) AS last_at,
@@ -286,5 +293,6 @@ const activityBurstGroupsCTE = `, burst_groups AS (
  SUM(CASE WHEN direction='outbound' THEN counted ELSE 0 END) AS outbound,
  COUNT(*) AS message_count,CASE WHEN MAX(CASE WHEN ref_kind='meeting' THEN 1 ELSE 0 END)=1 THEN 0
  WHEN SUM(counted)=0 OR SUM(non_noise)=0 THEN 1 ELSE 0 END AS noise
- FROM representatives GROUP BY thread_source_id,thread_conversation_id,local_date
+ FROM displayed GROUP BY thread_source_id,thread_conversation_id,local_date
 )`
+}

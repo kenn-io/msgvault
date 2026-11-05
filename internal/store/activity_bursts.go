@@ -51,11 +51,8 @@ type BurstPage struct {
 }
 
 type activityReadMessage struct {
-	ID                                     int64
-	Direction                              ActivityDirection
-	Meeting, List, Encrypted, LargeInbound bool
-	ContactEligible                        bool
-	Counterparts                           []ActivityMessageCounterpart
+	ID           int64
+	Counterparts []ActivityMessageCounterpart
 }
 
 func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (BurstPage, error) {
@@ -84,12 +81,12 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 		args = append(args, q.AfterKey.FirstAt.UTC(), q.AfterKey.FirstAt.UTC(), q.AfterKey.Key)
 	}
 	args = append(args, q.Limit+1)
-	query := cte + activityBurstGroupsCTE + `, selected AS (
+	query := cte + activityBurstGroupsCTE(filters) + `, selected AS (
  SELECT *,ROW_NUMBER() OVER(ORDER BY first_at ` + order + `,key ` + order + `) AS page_number FROM burst_groups WHERE ` + where + ` ORDER BY first_at ` + order + `,key ` + order + ` LIMIT ?
- ), omitted AS (SELECT COALESCE(SUM(message_count),0) AS n FROM burst_groups WHERE noise=1)
+ ), omitted AS (SELECT COALESCE(SUM(message_count),0) + (SELECT COUNT(*) FROM representatives) - (SELECT COUNT(*) FROM displayed) AS n FROM burst_groups WHERE noise=1)
  SELECT omitted.n,b.key,b.source_id,b.conversation_id,b.channel,b.local_date,b.first_at,b.last_at,b.inbound,b.outbound,b.page_number,
- r.message_id,r.direction,r.message_type,r.list_id,r.encrypted,r.large_inbound,r.contact_eligible,r.copy_count
- FROM omitted LEFT JOIN selected b ON TRUE LEFT JOIN representatives r
+ r.message_id,r.copy_count
+ FROM omitted LEFT JOIN selected b ON TRUE LEFT JOIN displayed r
  ON b.page_number<=` + strconv.Itoa(q.Limit) + ` AND r.thread_source_id=b.source_id AND r.thread_conversation_id=b.conversation_id AND r.local_date=b.local_date
  ORDER BY b.first_at ` + order + `,b.key ` + order + `,r.occurred_at DESC,r.message_id DESC`
 	rows, err := s.db.QueryContext(ctx, s.Rebind(query), args...)
@@ -102,10 +99,10 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 	hasMore := false
 	for rows.Next() {
 		var b ActivityBurst
-		var key, channel, date, direction, kind, list sql.NullString
-		var source, conv, in, out, number, id, encrypted, large, eligible, copies sql.NullInt64
+		var key, channel, date sql.NullString
+		var source, conv, in, out, number, id, copies sql.NullInt64
 		var first, last nullableTimestamp
-		if err = rows.Scan(&page.NoiseOmitted, &key, &source, &conv, &channel, &date, &first, &last, &in, &out, &number, &id, &direction, &kind, &list, &encrypted, &large, &eligible, &copies); err != nil {
+		if err = rows.Scan(&page.NoiseOmitted, &key, &source, &conv, &channel, &date, &first, &last, &in, &out, &number, &id, &copies); err != nil {
 			_ = rows.Close()
 			return page, fmt.Errorf("scan activity burst: %w", err)
 		}
@@ -135,7 +132,7 @@ func (s *Store) ListActivityBurstsContext(ctx context.Context, q BurstQuery) (Bu
 		if burst.Channel == ChannelEmail {
 			burst.CopyCounts[id.Int64] = int(copies.Int64)
 		}
-		messages = append(messages, activityReadMessage{ID: id.Int64, Direction: ActivityDirection(direction.String), Meeting: IsMeetingMessageType(kind.String), List: list.Valid, Encrypted: encrypted.Int64 != 0, LargeInbound: large.Int64 != 0, ContactEligible: eligible.Int64 != 0})
+		messages = append(messages, activityReadMessage{ID: id.Int64})
 		indices[id.Int64] = index
 	}
 	err = rows.Err()

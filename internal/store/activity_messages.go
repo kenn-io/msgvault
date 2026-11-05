@@ -53,9 +53,9 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 		args = append(args, q.AfterKey.OccurredAt.UTC(), q.AfterKey.OccurredAt.UTC(), q.AfterKey.MessageID)
 	}
 	args = append(args, q.Limit)
-	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+activityBurstGroupsCTE+`
- SELECT r.message_id,r.source_id,COALESCE(r.conversation_id,0),r.channel,r.direction,r.occurred_at,r.local_date,r.message_type,r.list_id,r.encrypted,r.large_inbound,r.contact_eligible
- FROM representatives r JOIN burst_groups b ON b.source_id=r.thread_source_id AND b.conversation_id=r.thread_conversation_id AND b.local_date=r.local_date
+	rows, err := s.db.QueryContext(ctx, s.Rebind(cte+activityBurstGroupsCTE(filters)+`
+ SELECT r.message_id,r.source_id,r.conversation_id,r.channel,r.direction,r.occurred_at,r.local_date
+ FROM displayed r JOIN burst_groups b ON b.source_id=r.thread_source_id AND b.conversation_id=r.thread_conversation_id AND b.local_date=r.local_date
  WHERE `+where+` ORDER BY r.occurred_at `+order+`,r.message_id `+order+` LIMIT ?`), args...)
 	if err != nil {
 		return nil, fmt.Errorf("read activity messages: %w", err)
@@ -65,16 +65,13 @@ func (s *Store) ListActivityMessagesContext(ctx context.Context, q MessageQuery)
 	for rows.Next() {
 		var m ActivityMessage
 		var at nullableTimestamp
-		var kind string
-		var list sql.NullString
-		var encrypted, large, eligible int
-		if err = rows.Scan(&m.MessageID, &m.SourceID, &m.ConversationID, &m.Channel, &m.Direction, &at, &m.LocalDate, &kind, &list, &encrypted, &large, &eligible); err != nil {
+		if err = rows.Scan(&m.MessageID, &m.SourceID, &m.ConversationID, &m.Channel, &m.Direction, &at, &m.LocalDate); err != nil {
 			_ = rows.Close()
 			return nil, fmt.Errorf("scan activity message: %w", err)
 		}
 		m.OccurredAt = at.Time
 		result = append(result, m)
-		facts = append(facts, activityReadMessage{ID: m.MessageID, Direction: m.Direction, Meeting: IsMeetingMessageType(kind), List: list.Valid, Encrypted: encrypted != 0, LargeInbound: large != 0, ContactEligible: eligible != 0})
+		facts = append(facts, activityReadMessage{ID: m.MessageID})
 	}
 	err = rows.Err()
 	_ = rows.Close()
