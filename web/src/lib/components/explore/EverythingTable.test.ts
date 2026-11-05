@@ -125,7 +125,7 @@ describe('EverythingTable', () => {
     });
 
     const emailRow = screen.getByRole('row', { name: /Synthetic subject 1/ });
-    expect(within(emailRow).getByText('Original From Header <sender@example.test>')).toBeDefined();
+    expect(within(emailRow.querySelector('.desktop-people') as HTMLElement).getByText('Original From Header <sender@example.test>')).toBeDefined();
     expect(within(emailRow).getByText('Sent via: send-as@example.test')).toBeDefined();
     expect(within(emailRow).getByText('Via: masked@example.test')).toBeDefined();
     expect(screen.getByText('Sent via: legacy-email@example.test')).toBeDefined();
@@ -139,7 +139,7 @@ describe('EverythingTable', () => {
     });
 
     const rendered = screen.getByRole('row', { name: /Synthetic subject 1/ });
-    expect(within(rendered).getByText('Charlie')).toBeDefined();
+    expect(within(rendered.querySelector('.desktop-people') as HTMLElement).getByText('Charlie')).toBeDefined();
     expect(rendered.textContent).not.toContain(', Charlie');
   });
 
