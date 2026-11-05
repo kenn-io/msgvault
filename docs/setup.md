@@ -10,9 +10,6 @@ terminal. The Gmail walkthrough below includes Google OAuth setup. For other
 mail providers, chats, meetings, contacts, or local exports, use
 [Choose a Source](guides/sources.md) after installation.
 
-Already have an archive? Read [the upgrade notes](changelog.md#before-upgrading) before
-opening an existing archive with a newer build.
-
 ## Install Release
 
 **macOS / Linux:**
