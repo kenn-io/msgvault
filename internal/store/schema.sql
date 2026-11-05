@@ -4866,6 +4866,7 @@ OR (OLD.provider_observation_order IS NOT NEW.provider_observation_order
                 WHERE c.series_provider_id = NEW.series_provider_id
                   AND c.kind = 'exception'
                   AND c.message_id <> NEW.message_id
+                  AND (SELECT source_id FROM messages WHERE id = c.message_id) = (SELECT source_id FROM messages WHERE id = NEW.message_id)
                   AND c.original_start_at IS NEW.original_start_at
                   AND c.original_start_date = NEW.original_start_date)) BEGIN
     INSERT INTO cache_related_change_journal (dataset, message_id) VALUES ('meeting_links', OLD.message_id);

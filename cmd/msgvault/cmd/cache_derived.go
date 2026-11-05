@@ -21,10 +21,6 @@ var ErrDerivedRefreshRequiresFullBuild = errors.New(
 	"derived cache refresh requires a full rebuild",
 )
 
-// ErrDerivedRefreshNeedsAppend defers related-row repairs until the next cache
-// build can publish them together with uncached messages.
-var ErrDerivedRefreshNeedsAppend = errors.New("derived cache refresh deferred to the next cache build")
-
 var derivedPublishBeforeMarkerHook func() error
 
 // derivedRefreshBeforeSnapshotHook is a deterministic test seam for writes
@@ -35,7 +31,7 @@ var derivedRefreshBeforeSnapshotHook func()
 func refreshDerivedDatasetsOnly(
 	ctx context.Context,
 	dbPath, analyticsDir string,
-	repairRelated bool,
+	repairRelated, deferRelated bool,
 	builderOverrides ...duckdbutil.BuilderOverrides,
 ) (result *buildResult, buildErr error) {
 	readiness, err := query.InspectCacheReadiness(analyticsDir)
@@ -90,7 +86,7 @@ func refreshDerivedDatasetsOnly(
 			_ = st.Close()
 			return nil, fmt.Errorf("classify derived-data revision: %w", relatedErr)
 		}
-		if !repairRelated || !relatedOnly {
+		if !relatedOnly || !repairRelated && !deferRelated {
 			_ = st.Close()
 			return nil, fmt.Errorf("%w: derived-data revision changed",
 				ErrDerivedRefreshRequiresFullBuild)
@@ -297,15 +293,17 @@ func refreshDerivedDatasetsOnly(
 		sourceSnapshot.identityPresenceSQL("email_address", "primary_email_present"))); err != nil {
 		return nil, fmt.Errorf("export derived owner participants: %w", err)
 	}
-	meetingKeys, err := readMeetingCountKeys(ctx, dbPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := stageMeetingKeys(ctx, exportDB, meetingKeys, state.LastMessageID); err != nil {
-		return nil, err
-	}
-	if err := derivedCopy(tableMeetingKeys, meetingKeysSelectSQL); err != nil {
-		return nil, err
+	if repairRelated {
+		meetingKeys, err := readMeetingCountKeys(ctx, dbPath)
+		if err != nil {
+			return nil, err
+		}
+		if err := stageMeetingKeys(ctx, exportDB, meetingKeys, state.LastMessageID); err != nil {
+			return nil, err
+		}
+		if err := derivedCopy(tableMeetingKeys, meetingKeysSelectSQL); err != nil {
+			return nil, err
+		}
 	}
 	if err := stageParticipantClusters(ctx, exportDB, clusters); err != nil {
 		return nil, err
@@ -410,6 +408,7 @@ func refreshDerivedDatasetsOnly(
 		personDisplayNamesChanged || identityChanged,
 	)
 	if repairRelated {
+		plan.Replace[tableMeetingKeys] = true
 		for dataset := range relatedReplacements {
 			plan.Replace[dataset] = true
 		}
@@ -495,22 +494,32 @@ func stageParticipantClusters(ctx context.Context, db sqlRunner, clusters map[in
 		`CREATE TEMP TABLE tmp_participant_clusters (participant_id BIGINT, canonical_id BIGINT)`); err != nil {
 		return fmt.Errorf("create participant clusters temp table: %w", err)
 	}
-	if len(clusters) == 0 {
-		return nil
+	if err := stageCacheMapping(ctx, db, `INSERT INTO tmp_participant_clusters VALUES `, clusters, func(id, canonicalID int64) string {
+		return fmt.Sprintf("(%d,%d)", id, canonicalID)
+	}); err != nil {
+		return fmt.Errorf("populate participant clusters temp table: %w", err)
 	}
+	return nil
+}
+
+func stageCacheMapping[V any](ctx context.Context, db sqlRunner, insert string, entries map[int64]V, format func(int64, V) string) error {
 	values := make([]string, 0, participantClusterMaxBatchRows)
 	flush := func() error {
 		if len(values) == 0 {
 			return nil
 		}
-		if _, err := db.ExecContext(ctx, `INSERT INTO tmp_participant_clusters VALUES `+strings.Join(values, ",")); err != nil {
-			return fmt.Errorf("populate participant clusters temp table: %w", err)
+		if _, err := db.ExecContext(ctx, insert+strings.Join(values, ",")); err != nil {
+			return err
 		}
 		values = values[:0]
 		return nil
 	}
-	for participantID, canonicalID := range clusters {
-		values = append(values, fmt.Sprintf("(%d,%d)", participantID, canonicalID))
+	for id, value := range entries {
+		row := format(id, value)
+		if row == "" {
+			continue
+		}
+		values = append(values, row)
 		if len(values) >= participantClusterMaxBatchRows {
 			if err := flush(); err != nil {
 				return err
@@ -561,7 +570,6 @@ func derivedCachePublishPlan(
 	for _, dataset := range []string{
 		tableOwnerParticipants,
 		tableParticipantClusters,
-		tableMeetingKeys,
 		identityindex.DatasetActivity,
 		identityindex.DatasetPeople,
 		identityindex.DatasetDomains,

@@ -346,7 +346,6 @@ relationship_interactions AS (
 	           0, date_diff('day', p.occurred_at, CAST(? AS TIMESTAMP)))) AS decay
 	FROM (` + identityindex.DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind NOT IN ('event','meeting'))", e.parquetPath("meeting_keys"), "entry_num") + `) p
 	WHERE NOT p.is_owner
-	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
 ), aggregated AS (
 	SELECT canonical_id,
 	       sum(sent_units * decay)::DOUBLE AS sent_decayed,

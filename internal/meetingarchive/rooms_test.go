@@ -48,3 +48,23 @@ func TestArchiverExcludesRoomsKeepsOtherIdentities(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) { assert.Equal(t, tc.want, tc.person.Normalized()) })
 	}
 }
+
+func TestArchiverRoomAddressesRemainSearchable(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := testutil.NewTestStore(t)
+	source, err := st.GetOrCreateSource("meeting_import", "rooms@example.org")
+	requirements.NoError(err)
+	snapshot := testSnapshot(source.ID)
+	snapshot.Organizer = &Person{Email: "organizerroomxyz@c.resource.calendar.google.com"}
+	snapshot.Attendees = []Person{{Email: "attendeeroomxyz@c.resource.calendar.google.com"}, {Email: "human@example.org", OtherEmails: []string{"secondaryroomxyz@c.resource.calendar.google.com"}}}
+	result, err := New(st).Upsert(t.Context(), snapshot, UpsertOptions{})
+	requirements.NoError(err)
+	for _, term := range []string{"organizerroomxyz", "attendeeroomxyz", "secondaryroomxyz"} {
+		_, total, err := st.SearchMessages(term, 0, 10)
+		requirements.NoError(err)
+		assertions.Equal(int64(1), total, term)
+	}
+	var count int
+	requirements.NoError(st.DB().QueryRow(st.Rebind(`SELECT count(*) FROM message_recipients WHERE message_id = ?`), result.MessageID).Scan(&count))
+	assertions.Equal(1, count, "only the human is a recipient")
+}

@@ -62,18 +62,18 @@ type eventMetadata struct {
 func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (int64, error) {
 	smid := deriveSourceMessageID(ev)
 	ev.Organizer.Email = gcalmodel.NormalizeParticipantEmail(ev.Organizer.Email)
+	rooms := make([]bool, len(ev.Attendees))
+	organizerRoom := calevent.IsRoomAttendee(ev.Organizer.Email, false)
 	for i := range ev.Attendees {
 		ev.Attendees[i].Email = gcalmodel.NormalizeParticipantEmail(ev.Attendees[i].Email)
+		rooms[i] = calevent.IsRoomAttendee(ev.Attendees[i].Email, ev.Attendees[i].Resource)
+		if ev.Attendees[i].Email == ev.Organizer.Email && rooms[i] {
+			organizerRoom = true
+		}
 	}
 
 	// Organizer → sender, resolved through the email-keyed participant path so
 	// calendar people dedupe with email contacts.
-	organizerRoom := calevent.IsRoomAttendee(ev.Organizer.Email, false)
-	for _, a := range ev.Attendees {
-		if a.Email == ev.Organizer.Email && calevent.IsRoomAttendee(a.Email, a.Resource) {
-			organizerRoom = true
-		}
-	}
 	var senderID int64
 	if ev.Organizer.Email != "" && !organizerRoom {
 		id, err := s.store.EnsureParticipant(ev.Organizer.Email, ev.Organizer.DisplayName, emailDomain(ev.Organizer.Email))
@@ -87,12 +87,12 @@ func (s *Syncer) ingestEvent(sourceID int64, cal gcal.Calendar, ev gcal.Event) (
 	var attendeeIDs []int64
 	var attendeeNames []string
 	var attendeeEmails []string
-	for _, a := range ev.Attendees {
+	for i, a := range ev.Attendees {
 		if a.Email == "" {
 			continue
 		}
 		attendeeEmails = append(attendeeEmails, a.Email)
-		if calevent.IsRoomAttendee(a.Email, a.Resource) {
+		if rooms[i] {
 			continue
 		}
 		pid, err := s.store.EnsureParticipant(a.Email, a.DisplayName, emailDomain(a.Email))

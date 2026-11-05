@@ -571,6 +571,7 @@ func buildCacheDerivedOnly(
 	defer func() { _ = buildLock.Unlock() }()
 	staleness := cacheNeedsBuildLocked(context.Background(), dbPath, analyticsDir)
 	repairRelated := false
+	deferRelated := false
 	if staleness.HasRelatedRowDrift {
 		state, err := query.ReadCacheSyncState(analyticsDir)
 		if err != nil {
@@ -580,16 +581,15 @@ func buildCacheDerivedOnly(
 		if err != nil {
 			return nil, err
 		}
-		if meetings && (other || staleness.HasNew) {
-			return nil, ErrDerivedRefreshNeedsAppend
-		}
-		repairRelated = meetings
+		deferRelated = meetings && (other || staleness.HasNew)
+		repairRelated = meetings && !deferRelated
 	}
 	return refreshDerivedDatasetsOnly(
 		context.Background(),
 		dbPath,
 		analyticsDir,
 		repairRelated,
+		deferRelated,
 		builderOverrides...,
 	)
 }
@@ -860,7 +860,7 @@ func buildCacheScheduled(
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				true, builderOverrides...)
+				true, false, builderOverrides...)
 		}
 		return buildCacheLockedAttempt(dbPath, analyticsDir, staleness.FullRebuild, false,
 			builderOverrides...)
@@ -1010,6 +1010,7 @@ func refreshIdentityDatasetsOnly(
 		dbPath,
 		analyticsDir,
 		false,
+		false,
 		builderOverrides...,
 	)
 }
@@ -1071,7 +1072,7 @@ func buildCacheLockedAttempt(
 		}
 		if relatedDriftOnly(staleness) {
 			return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-				true, builderOverrides...)
+				true, false, builderOverrides...)
 		}
 		fullRebuild = staleness.FullRebuild
 	}
@@ -1310,7 +1311,7 @@ func buildCacheLockedAttempt(
 			return nil, fmt.Errorf("close SQLite snapshot before related repair: %w", err)
 		}
 		return refreshDerivedDatasetsOnly(context.Background(), dbPath, analyticsDir,
-			true, builderOverrides...)
+			true, false, builderOverrides...)
 	}
 	if hasPreviousState && maxID <= lastMessageID && !fullRebuild {
 		if err := sourceSnapshot.Close(); err != nil {

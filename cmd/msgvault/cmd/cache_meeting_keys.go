@@ -3,7 +3,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"go.kenn.io/msgvault/internal/store"
 )
@@ -27,16 +26,13 @@ func stageMeetingKeys(ctx context.Context, db sqlRunner, keys map[int64]string, 
 	if _, err := db.ExecContext(ctx, `CREATE TEMP TABLE tmp_meeting_keys (message_id BIGINT, meeting_key VARCHAR)`); err != nil {
 		return fmt.Errorf("create meeting keys: %w", err)
 	}
-	values := make([]string, 0, len(keys))
-	for id, key := range keys {
-		if id <= maxMessageID {
-			values = append(values, fmt.Sprintf("(%d,'%s')", id, quoteCacheSQL(key)))
+	if err := stageCacheMapping(ctx, db, `INSERT INTO tmp_meeting_keys VALUES `, keys, func(id int64, key string) string {
+		if id > maxMessageID {
+			return ""
 		}
-	}
-	if len(values) > 0 {
-		if _, err := db.ExecContext(ctx, `INSERT INTO tmp_meeting_keys VALUES `+strings.Join(values, ",")); err != nil {
-			return fmt.Errorf("stage meeting keys: %w", err)
-		}
+		return fmt.Sprintf("(%d,'%s')", id, quoteCacheSQL(key))
+	}); err != nil {
+		return fmt.Errorf("stage meeting keys: %w", err)
 	}
 	return nil
 }

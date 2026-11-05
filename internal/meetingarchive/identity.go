@@ -28,6 +28,17 @@ func normalizedPeople(snapshot Snapshot) (Person, []Person) {
 	return organizer, attendees
 }
 
+func roomSearchAddresses(person Person) []string {
+	var rooms []string
+	for _, email := range append([]string{person.Email}, person.OtherEmails...) {
+		email = normalizePersonEmail(email)
+		if calevent.IsRoomAttendee(email, false) {
+			rooms = append(rooms, email)
+		}
+	}
+	return rooms
+}
+
 // archiveParticipantKey keeps resolved people distinct even when they share an address.
 func archiveParticipantKey(person Person) string {
 	if person.ParticipantID > 0 {

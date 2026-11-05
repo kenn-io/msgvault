@@ -164,7 +164,6 @@ WITH logical_people AS (
 	       END AS modality_mask
 	FROM (`+DeduplicateMeetingSQL("(SELECT * FROM logical_people WHERE with_owner OR entry_kind NOT IN ('event','meeting'))", meetingKeys, "anchor_message_id")+`) p
 	WHERE NOT p.is_owner
-	  AND NOT (p.entry_kind IN ('event','meeting') AND NOT p.with_owner)
 )
 SELECT canonical_id,
        occurred_at::DATE AS event_date,

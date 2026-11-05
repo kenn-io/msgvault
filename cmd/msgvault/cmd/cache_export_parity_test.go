@@ -173,13 +173,29 @@ type participantClusterInsertRecorder struct {
 }
 
 func (r *participantClusterInsertRecorder) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	if strings.HasPrefix(query, `INSERT INTO tmp_participant_clusters VALUES `) {
+	if strings.HasPrefix(query, `INSERT INTO tmp_participant_clusters VALUES `) || strings.HasPrefix(query, `INSERT INTO tmp_meeting_keys VALUES `) {
 		r.batchRows = append(r.batchRows, strings.Count(query, "("))
 		if len(r.batchRows) == r.failAt {
 			return nil, r.insertErr
 		}
 	}
 	return r.DB.ExecContext(ctx, query, args...)
+}
+
+func TestStageMeetingKeysBatchesAndHonorsBoundary(t *testing.T) {
+	assert, require := assert.New(t), require.New(t)
+	recorder := newParticipantClusterInsertRecorder(t)
+	keys := make(map[int64]string)
+	for id := int64(1); id <= 1026; id++ {
+		keys[id] = "uid:example'o@example.test/"
+	}
+	require.NoError(stageMeetingKeys(t.Context(), recorder, keys, 1025))
+	assert.Equal([]int{1024, 1}, recorder.batchRows)
+	var count int
+	var key string
+	require.NoError(recorder.DB.QueryRow(`SELECT count(*), min(meeting_key) FROM tmp_meeting_keys`).Scan(&count, &key))
+	assert.Equal(1025, count)
+	assert.Equal("uid:example'o@example.test/", key)
 }
 
 func participantClusterTestMappings(count int) map[int64]int64 {

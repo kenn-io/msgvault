@@ -111,6 +111,13 @@ func (s *Server) handleMeetingLinkDecision(w http.ResponseWriter, r *http.Reques
 				cacheState = identityCacheStateStale
 			}
 		}
+		if pending, ok := s.store.(interface {
+			MeetingCachePending(ctx context.Context) (bool, error)
+		}); ok && cacheState == identityCacheStateReady {
+			if dirty, err := pending.MeetingCachePending(r.Context()); err != nil || dirty {
+				cacheState = identityCacheStateStale
+			}
+		}
 	}
 	writeJSON(w, 200, MeetingLinkDecisionResponse{
 		MessageID: request.MessageID, Event: request.Event, Decision: request.Decision,

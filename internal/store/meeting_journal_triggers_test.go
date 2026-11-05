@@ -162,6 +162,23 @@ func TestMeetingJournalTriggersAliasRSVP(t *testing.T) {
 	}
 }
 
+func TestMeetingJournalIgnoresExceptionCopiesInOtherCalendars(t *testing.T) {
+	requirements := require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	if st.IsPostgreSQL() {
+		t.Skip("SQLite cache journal")
+	}
+	raw := `{"id":"instance","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-14T10:00:00Z"},"start":{"dateTime":"2027-03-14T12:00:00Z"},"end":{"dateTime":"2027-03-14T13:00:00Z"}}`
+	_, first := calendarFixture(t, st, "instance", raw, "first@example.test")
+	_, _ = calendarFixture(t, st, "instance", raw, "second@example.test")
+	_, err := st.db.Exec(`DELETE FROM cache_related_change_journal`)
+	requirements.NoError(err)
+	requirements.NoError(st.UpsertMessageRawWithFormat(first, []byte(raw), "gcal_json"))
+	var count int
+	requirements.NoError(st.db.QueryRow(`SELECT count(*) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&count))
+	assert.Zero(t, count, "a copy in another calendar cannot change which exception wins")
+}
+
 func TestMeetingJournalTriggersLegacyCalendarUpgrade(t *testing.T) {
 	requirements := require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)

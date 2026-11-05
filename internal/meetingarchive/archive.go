@@ -120,6 +120,9 @@ func (a *Archiver) Upsert(
 	if organizerAddress == "" {
 		organizerAddress = organizer.Phone
 	}
+	if snapshot.Organizer != nil {
+		organizerAddress = strings.TrimSpace(strings.Join(append([]string{organizerAddress}, roomSearchAddresses(*snapshot.Organizer)...), " "))
+	}
 	expectedIsFromMe, err := a.expectedIsFromMe(snapshot, organizer)
 	if err != nil {
 		return Result{}, err
@@ -142,6 +145,9 @@ func (a *Archiver) Upsert(
 		} else {
 			attendeeAddresses = append(attendeeAddresses, attendee.Phone)
 		}
+	}
+	for _, attendee := range snapshot.Attendees {
+		attendeeAddresses = append(attendeeAddresses, roomSearchAddresses(attendee)...)
 	}
 
 	if existed && !opts.Force {

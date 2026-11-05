@@ -17,7 +17,7 @@ func (i meetingIdentity) countKey() string {
 }
 
 // MeetingCountKeysContext maps linked transcripts and calendar copies to exact
-// meeting targets in one read snapshot. Series masters have no count key.
+// meeting targets in one read snapshot.
 func (s *Store) MeetingCountKeysContext(ctx context.Context) (map[int64]string, error) {
 	ctx, release, err := s.BeginReadSnapshotContext(ctx)
 	if err != nil {
@@ -113,6 +113,13 @@ func (s *Store) meetingCountCopies(ctx context.Context, r reboundReader, identit
 		if occurrence.Identity == identity {
 			copyID := row.MessageID
 			if row.Event.Kind == meetingSeriesKind || row.Event.Kind == singleKind && identity.OccurrenceKey != "" {
+				if row.Event.Kind == meetingSeriesKind && row.Event.Start != nil {
+					first := calrecur.Identity{Instant: *row.Event.Start, Date: row.Event.StartDate, AllDay: row.Event.AllDay}
+					if first.Key() == identity.OccurrenceKey && !seen[row.MessageID] {
+						copies = append(copies, row.MessageID)
+						seen[row.MessageID] = true
+					}
+				}
 				if occurrence.Row.Event.Kind == meetingSeriesKind {
 					continue
 				}

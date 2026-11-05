@@ -10,6 +10,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMeetingCountKeysSeriesFirstOccurrence(t *testing.T) {
+	for _, uid := range []string{"weekly@example.org", ""} {
+		t.Run("uid="+uid, func(t *testing.T) {
+			assertions, requirements := assert.New(t), require.New(t)
+			st := newRFC822IDBackfillBackendStore(t)
+			_, master := calendarFixture(t, st, "series", strings.ReplaceAll(linkSeriesRaw, "weekly@example.org", uid))
+			_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+			key := "20270307T100000Z"
+			requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: key}))
+			keys, err := st.MeetingCountKeysContext(t.Context())
+			requirements.NoError(err)
+			want := "uid:weekly@example.org/" + key
+			if uid == "" {
+				want = fmt.Sprintf("evt:%d/%s", master, key)
+			}
+			assertions.Equal(want, keys[note])
+			assertions.Equal(want, keys[master], "the series row represents its first occurrence")
+		})
+	}
+	t.Run("all-day first occurrence", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		raw := `{"id":"series","iCalUID":"allday@example.test","start":{"date":"2027-03-07"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`
+		_, master := calendarFixture(t, st, "all-day", raw)
+		_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+		requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270307"}))
+		keys, err := st.MeetingCountKeysContext(t.Context())
+		requirements.NoError(err)
+		assertions.Equal("uid:allday@example.test/20270307", keys[master])
+		assertions.Equal("uid:allday@example.test/20270307", keys[note])
+	})
+	t.Run("moved first occurrence", func(t *testing.T) {
+		assertions, requirements := assert.New(t), require.New(t)
+		st := newRFC822IDBackfillBackendStore(t)
+		_, master := calendarFixture(t, st, "series", linkSeriesRaw)
+		_, exception := calendarFixture(t, st, "moved", `{"id":"moved","iCalUID":"weekly@example.org","recurringEventId":"series","originalStartTime":{"dateTime":"2027-03-07T10:00:00Z"},"start":{"dateTime":"2027-03-07T12:00:00Z"},"end":{"dateTime":"2027-03-07T13:00:00Z"}}`)
+		_, note := projectionFixture(t, st, "note", "plaud_json", `{}`)
+		requirements.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: master, Key: "20270307T100000Z"}))
+		keys, err := st.MeetingCountKeysContext(t.Context())
+		requirements.NoError(err)
+		assertions.Equal("uid:weekly@example.org/20270307T100000Z", keys[master])
+		assertions.Equal("uid:weekly@example.org/20270307T100000Z", keys[exception])
+		assertions.Equal("uid:weekly@example.org/20270307T100000Z", keys[note])
+	})
+}
+
 func TestMeetingCountKeys(t *testing.T) {
 	t.Run("copies and exact targets", func(t *testing.T) {
 		assertions, requirements := assert.New(t), require.New(t)

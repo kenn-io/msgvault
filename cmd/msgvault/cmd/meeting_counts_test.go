@@ -25,11 +25,13 @@ import (
 
 func TestPersonMergeRelatedDriftKeepsDerivedRefresh(t *testing.T) {
 	for _, tc := range []struct {
-		name             string
-		newMail, updated bool
+		name                                       string
+		newMail, updated, meeting, relatedRevision bool
 	}{
 		{name: "labels only"},
 		{name: "new mail", newMail: true},
+		{name: "meeting and new mail", newMail: true, meeting: true},
+		{name: "meeting and related revision", newMail: true, meeting: true, relatedRevision: true},
 		{name: "updated mail", updated: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,10 +63,25 @@ func TestPersonMergeRelatedDriftKeepsDerivedRefresh(t *testing.T) {
 			require.NoError(err)
 			second, _, err := st.CreatePersonFromParticipant(secondID)
 			require.NoError(err)
+			var event, note int64
+			if tc.meeting {
+				event, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "event", MessageType: "calendar_event", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "event", ConversationType: "calendar"}, RawFormat: "gcal_json", RawMIME: []byte(`{"id":"event","start":{"dateTime":"2026-08-01T10:00:00Z"},"end":{"dateTime":"2026-08-01T11:00:00Z"}}`)})
+				require.NoError(err)
+				note, err = st.PersistMessage(&store.MessagePersistData{Message: &store.Message{SourceID: source.ID, SourceMessageID: "note", MessageType: "meeting_transcript", SentAt: sql.NullTime{Time: time.Date(2026, 8, 1, 10, 0, 0, 0, time.UTC), Valid: true}}, Conversation: &store.ConversationPersistData{SourceConversationID: "note", ConversationType: "meeting"}, RawFormat: "plaud_json", RawMIME: []byte(`{}`)})
+				require.NoError(err)
+			}
 			_, err = buildCache(path, cache, true)
 			require.NoError(err)
+			if tc.meeting {
+				require.NoError(st.LinkMeetingContext(t.Context(), note, store.OccurrenceRef{MessageID: event}))
+			}
 			_, err = st.DB().Exec(`DELETE FROM message_labels WHERE message_id = (SELECT min(message_id) FROM message_labels)`)
 			require.NoError(err)
+			if tc.relatedRevision {
+				var labelID int64
+				require.NoError(st.DB().QueryRow(`SELECT id FROM labels WHERE source_id=?`, source.ID).Scan(&labelID))
+				require.NoError(st.AddMessageLabels(messageID, []int64{labelID}))
+			}
 			if tc.newMail {
 				_, err = st.DB().Exec(`INSERT INTO messages (source_id, source_message_id, conversation_id, message_type, sent_at) SELECT source_id, 'new-mail', conversation_id, 'email', sent_at FROM messages LIMIT 1`)
 				require.NoError(err)
@@ -103,6 +120,25 @@ func TestPersonMergeRelatedDriftKeepsDerivedRefresh(t *testing.T) {
 			require.NoError(json.Unmarshal(response.Body.Bytes(), &body))
 			assert.Equal("ready", body.CacheState)
 			assert.Equal([]buildCacheMode{buildCacheModeDerived}, modes)
+			if tc.meeting {
+				var pending int
+				require.NoError(st.DB().QueryRow(`SELECT count(*) FROM cache_related_change_journal WHERE dataset='meeting_links'`).Scan(&pending))
+				assert.Positive(pending, "meeting repair remains pending for the append build")
+				db, err := sql.Open("duckdb", "")
+				require.NoError(err)
+				var count int
+				require.NoError(db.QueryRow(`SELECT count(*) FROM read_parquet(?) WHERE message_id=?`, filepath.Join(cache, "meeting_keys", "*.parquet"), note).Scan(&count))
+				assert.Zero(count, "the identity refresh must retain the previously published meeting keys")
+				require.NoError(db.Close())
+				_, err = buildCache(path, cache, false)
+				require.NoError(err)
+				db, err = sql.Open("duckdb", "")
+				require.NoError(err)
+				var key string
+				require.NoError(db.QueryRow(`SELECT meeting_key FROM read_parquet(?) WHERE message_id=?`, filepath.Join(cache, "meeting_keys", "*.parquet"), note).Scan(&key))
+				assert.Equal(fmt.Sprintf("evt:%d/", event), key)
+				require.NoError(db.Close())
+			}
 		})
 	}
 }
@@ -507,7 +543,7 @@ func TestMeetingLinkDecisionRefreshesCounts(t *testing.T) {
 			}
 			assert.Equal(wantModes, modes)
 			if tc.newEmail || tc.labelChange {
-				require.ErrorIs(derivedErr, ErrDerivedRefreshNeedsAppend)
+				require.NoError(derivedErr)
 			}
 			links, err := st.MeetingLinksContext(t.Context(), second)
 			require.NoError(err)
