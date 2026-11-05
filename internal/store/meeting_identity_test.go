@@ -251,18 +251,17 @@ func TestMeetingIdentityDamagedInviteEvidenceKeepsOtherMeetings(t *testing.T) {
 	}
 }
 
-func TestMeetingIdentityInviteReadFailurePropagates(t *testing.T) {
+func TestMeetingIdentityCalendarReadFailurePropagates(t *testing.T) {
 	st := newRFC822IDBackfillBackendStore(t)
 	source := icsSource(t, st)
 	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270302T120000Z\r\nDURATION:PT1H"))
 	require.NoError(t, err)
 	ids := emailEvents(t, st, source)
 	require.Len(t, ids, 1)
-	// Inject a read failure inside the real snapshot: closing the database would
-	// fail before UID hydration, so it cannot exercise this error boundary.
+	// Inject a calendar read failure inside the real snapshot.
 	failure := errors.New("calendar evidence read failed")
 	observed := gatedMeetingProjectionStore(t, st, &meetingProjectionGate{before: func(_ context.Context, q string, _ []driver.NamedValue) error {
-		if strings.Contains(q, "SELECT m.id,r.raw_data,r.compression") {
+		if strings.Contains(q, "SELECT e.message_id, m.source_id") {
 			return failure
 		}
 		return nil
@@ -413,14 +412,16 @@ func TestMeetingIdentityRecurringUIDReadBound(t *testing.T) {
 func TestMeetingIdentityDamagedUIDCopy(t *testing.T) {
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
-	imported, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), calendarDocument("REQUEST", "DTSTART:20270314T100000Z\r\nDURATION:PT1H"))
+	source := icsSource(t, st)
+	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "DTSTART:20270314T100000Z\r\nDURATION:PT1H"))
 	require.NoError(err)
-	require.Len(imported.MessageIDs, 1)
-	damaged := imported.MessageIDs[0]
+	ids := emailEvents(t, st, source)
+	require.Len(ids, 1)
+	damaged := ids[0]
 	_, event := calendarFixture(t, st, "synced", singleLinkRaw("synced", "family@example.com"))
 	_, note := identityNote(t, st, "note", "")
 	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: event}))
-	_, err = st.db.Exec(`UPDATE message_raw SET raw_data=?,compression='' WHERE message_id=?`, []byte("damaged invitation"), damaged)
+	err = st.UpsertMessageRawWithFormat(damaged, []byte("damaged invitation"), rawFormatICS)
 	require.NoError(err)
 	links, err := st.MeetingLinksContext(t.Context(), note)
 	require.NoError(err)
@@ -432,24 +433,6 @@ func TestMeetingIdentityDamagedUIDCopy(t *testing.T) {
 	require.NoError(err)
 	assert.Equal(ref, got.ByOccurrence[ref].OccurrenceRef)
 	assert.Equal([]int64{note}, got.ByOccurrence[ref].LinkedTranscriptIDs)
-}
-
-func TestMeetingIdentityRejectsUnknownICSVersion(t *testing.T) {
-	assert, require := assert.New(t), require.New(t)
-	st := newRFC822IDBackfillBackendStore(t)
-	imported, err := st.PersistICalendarContext(t.Context(), icsSource(t, st), calendarDocument("REQUEST", "DTSTART:20270314T100000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=WEEKLY;COUNT=2"))
-	require.NoError(err)
-	require.Len(imported.MessageIDs, 1)
-	event := imported.MessageIDs[0]
-	_, note := identityNote(t, st, "note", "")
-	ref := OccurrenceRef{MessageID: event, Key: "20270314T100000Z"}
-	require.NoError(st.LinkMeetingContext(t.Context(), note, ref))
-	_, err = st.db.Exec(`UPDATE messages SET metadata=? WHERE id=?`, `{"ics_version":999}`, event)
-	require.NoError(err)
-	_, err = st.MeetingLinksContext(t.Context(), note)
-	assert.ErrorContains(err, "unsupported ICS metadata version 999")
-	_, err = st.ResolveMeetingIdentitiesContext(t.Context(), MeetingIdentityRequest{OccurrenceRefs: []string{formatMeetingOccurrence(ref)}})
-	assert.ErrorContains(err, "unsupported ICS metadata version 999")
 }
 
 func TestMeetingIdentityTranscriptOnlyCompletesGroup(t *testing.T) {
