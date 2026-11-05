@@ -148,6 +148,47 @@ func TestGmailFullResumeHistoryContinuity(t *testing.T) {
 	}
 }
 
+func TestGmailFullResumePreservesNewerSourceCursor(t *testing.T) {
+	// serial: gmailTransportClient replaces http.DefaultClient.
+	for _, incremental := range []bool{false, true} {
+		t.Run(fmt.Sprintf("incremental=%t", incremental), func(t *testing.T) {
+			require := require.New(t)
+			assert := assert.New(t)
+
+			e := acquisitionDurabilityEnv(t)
+			source := e.CreateSourceWithHistory(t, "900")
+			f := &fullResumeTransport{history: 1000, stopAt: "p2"}
+			api := gmailTransportClient(t, f)
+			e.Syncer = New(api, e.Store, nil)
+			_, err := e.Syncer.Full(t.Context(), testEmail)
+			require.ErrorContains(err, "synthetic interrupted listing")
+			run, err := e.Store.GetLatestSync(source.ID)
+			require.NoError(err)
+			require.Equal("p2", run.CursorBefore.String)
+			require.Equal("1000", run.CursorAfter.String)
+			require.Equal("900", gmailCoverageSource(t, e).SyncCursor.String)
+
+			f.history = 1100
+			wantCursor := "1000"
+			if incremental {
+				_, err = e.Syncer.Incremental(t.Context(), gmailCoverageSource(t, e))
+				require.NoError(err)
+				require.Equal("1100", gmailCoverageSource(t, e).SyncCursor.String)
+				wantCursor = "1100"
+			}
+			reopenAcquisitionStore(t, e)
+			e.Syncer = New(api, e.Store, nil)
+			f.stopAt = ""
+			summary, err := e.Syncer.Full(t.Context(), testEmail)
+			require.NoError(err)
+			require.True(summary.WasResumed)
+			require.Equal("p2", summary.ResumedFromToken)
+			reopenAcquisitionStore(t, e)
+			assert.Equal(wantCursor, gmailCoverageSource(t, e).SyncCursor.String)
+		})
+	}
+}
+
 func TestGmailFullResumeHistoryExpiration(t *testing.T) {
 	// serial: gmailTransportClient replaces http.DefaultClient.
 	t.Run("interrupted", func(t *testing.T) {

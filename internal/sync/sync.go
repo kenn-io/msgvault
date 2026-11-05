@@ -1562,8 +1562,19 @@ func (s *Syncer) full(
 	}
 
 	// Ordinary full sync publishes its starting History cursor even with item
-	// errors. Recovery retains H until catch-up succeeds; it cannot publish here.
+	// errors, preserving a newer cursor from an intervening incremental on resume.
+	// Recovery retains H until catch-up succeeds; it cannot publish here.
 	historyIDStr := strconv.FormatUint(handoffHistoryID, 10)
+	if state.wasResumed && !reconcilePresence && source.SourceType == sourceTypeGmail && s.opts.Query == "" && s.opts.Limit == 0 {
+		current, err := s.store.GetSourceByIDContext(ctx, source.ID)
+		if err != nil {
+			s.failStoppedSync(state.syncID, err)
+			return nil, fmt.Errorf("read source cursor before full-sync completion: %w", err)
+		}
+		if currentHistoryID, err := strconv.ParseUint(current.SyncCursor.String, 10, 64); err == nil && currentHistoryID > handoffHistoryID {
+			historyIDStr = current.SyncCursor.String
+		}
+	}
 	if state.checkpoint.ErrorsCount > 0 {
 		s.logger.Warn("full sync completed with errors",
 			"errors", state.checkpoint.ErrorsCount,
