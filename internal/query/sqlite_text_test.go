@@ -9,6 +9,95 @@ import (
 	"go.kenn.io/msgvault/internal/testutil/dbtest"
 )
 
+func TestSQLiteTextReadsExcludeHiddenDuplicates(t *testing.T) {
+	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	for _, tc := range []struct {
+		name          string
+		sourceDeleted any
+	}{
+		{name: "active"},
+		{name: "source deleted", sourceDeleted: "2026-01-03 00:00:00"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			require := require.New(t)
+			tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+			_, err := tdb.DB.Exec(`
+				INSERT INTO sources (id, source_type, identifier) VALUES (1, 'imessage', 'archive@example.com');
+				INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+				VALUES (1, 1, 'chat-1', 'direct_chat');
+				INSERT INTO messages (id, source_id, conversation_id, source_message_id, message_type, sent_at, snippet, deleted_at)
+				VALUES (1, 1, 1, 'visible', 'imessage', '2026-01-01 00:00:00', 'visible preview', NULL),
+				       (2, 1, 1, 'hidden', 'imessage', '2026-01-02 00:00:00', 'hidden preview', '2026-01-03 00:00:00');
+			`)
+			require.NoError(err)
+			_, err = tdb.DB.Exec(`UPDATE messages SET deleted_from_source_at = ? WHERE id = 1`, tc.sourceDeleted)
+			require.NoError(err)
+			engine := NewSQLiteEngine(tdb.DB)
+			groups, err := engine.TextAggregate(t.Context(), TextViewSources, TextAggregateOptions{})
+			require.NoError(err)
+			require.Len(groups, 1)
+			assert.Equal(int64(1), groups[0].Count)
+			conversations, err := engine.ListConversations(t.Context(), TextFilter{})
+			require.NoError(err)
+			require.Len(conversations, 1)
+			assert.Equal(int64(1), conversations[0].MessageCount)
+			assert.Equal("visible preview", conversations[0].LastPreview)
+			snapshot, _, err := engine.ListConversationsSnapshot(t.Context(), TextFilter{})
+			require.NoError(err)
+			require.Len(snapshot, 1)
+			assert.Equal(int64(1), snapshot[0].MessageCount)
+			assert.Equal("visible preview", snapshot[0].LastPreview)
+			messages, err := engine.ListConversationMessages(t.Context(), 1, TextFilter{})
+			require.NoError(err)
+			require.Len(messages, 1)
+			assert.Equal(int64(1), messages[0].ID)
+		})
+	}
+}
+
+func TestSQLiteTextSearchLiteralLikeCharacters(t *testing.T) {
+	t.Parallel()
+	dbtest.SkipIfPostgres(t, "SQLite fixtures require SQLite")
+	for _, tc := range []struct {
+		name string
+		term string
+	}{
+		{name: "percent", term: "50%"},
+		{name: "underscore", term: "a_b"},
+		{name: "backslash", term: `a\b`},
+	} {
+		for _, field := range []string{"subject", "snippet"} {
+			t.Run(tc.name+"/"+field, func(t *testing.T) {
+				assert := assert.New(t)
+				require := require.New(t)
+				tdb := dbtest.NewTestDB(t, "../store/schema.sql")
+				_, err := tdb.DB.Exec(`
+					INSERT INTO sources (id, source_type, identifier) VALUES (1, 'imessage', 'archive@example.com');
+					INSERT INTO conversations (id, source_id, source_conversation_id, conversation_type)
+					VALUES (1, 1, 'chat-1', 'direct_chat');
+					INSERT INTO messages (id, source_id, conversation_id, source_message_id, message_type, subject, snippet)
+					VALUES (1, 1, 1, 'matching', 'imessage', '', ''),
+					       (2, 1, 1, 'other', 'imessage', '500 axb ab', '500 axb ab');
+				`)
+				require.NoError(err)
+				_, err = tdb.DB.Exec(`UPDATE messages SET `+field+` = ? WHERE id = 1`, tc.term)
+				require.NoError(err)
+				engine := NewSQLiteEngine(tdb.DB)
+				groups, err := engine.TextAggregate(t.Context(), TextViewSources, TextAggregateOptions{SearchQuery: tc.term})
+				require.NoError(err)
+				if assert.Len(groups, 1) {
+					assert.Equal(int64(1), groups[0].Count)
+				}
+				stats, err := engine.GetTextStats(t.Context(), TextStatsOptions{SearchQuery: tc.term})
+				require.NoError(err)
+				assert.Equal(int64(1), stats.MessageCount)
+			})
+		}
+	}
+}
+
 func TestSQLiteTextSnapshotRevisionConversationsTracksScopedMetadata(t *testing.T) {
 	t.Parallel()
 	assert := assert.New(t)

@@ -404,7 +404,7 @@ func (e *SQLiteEngine) sqliteTextSnapshotQuery(scope TextSnapshotScope) (string,
 		WHERE %s
 		GROUP BY c.id, c.title, s.source_type
 		ORDER BY %s
-	`, textMsgTypeFilterAlias("m2"), where, orderBy), args
+	`, textMsgTypeFilterAlias("m2")+" AND "+store.LiveMessagesWhere("m2", false), where, orderBy), args
 }
 
 // sqliteTimestampLayouts lists the datetime string formats emitted by SQLite
@@ -487,7 +487,7 @@ func sqliteTextParticipantCondition(conversation string, participantIDs []int64)
 // buildSQLiteTextFilterConditions builds WHERE conditions from a TextFilter.
 // All conditions use the m. prefix for the messages table.
 func buildSQLiteTextFilterConditions(d Dialect, filter TextFilter) (string, []any) {
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
 	var args []any
 
 	if filter.SearchQuery != "" {
@@ -648,7 +648,7 @@ func (e *SQLiteEngine) ListConversations(
 		GROUP BY c.id, c.title, s.source_type
 		ORDER BY %s
 		LIMIT ? OFFSET ?
-	`, textMsgTypeFilterAlias("m2"), where, orderBy)
+	`, textMsgTypeFilterAlias("m2")+" AND "+store.LiveMessagesWhere("m2", false), where, orderBy)
 
 	args = append(args, limit, filter.Pagination.Offset)
 
@@ -760,7 +760,7 @@ func (e *SQLiteEngine) TextAggregate(
 		return nil, err
 	}
 
-	conditions := []string{textMsgTypeFilter()}
+	conditions := []string{textMsgTypeFilter(), store.LiveMessagesWhere("m", false)}
 	var args []any
 
 	if opts.SourceID != nil {
@@ -777,7 +777,7 @@ func (e *SQLiteEngine) TextAggregate(
 	}
 	if opts.SearchQuery != "" {
 		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
-		conditions = append(conditions, "(m.subject LIKE ? OR m.snippet LIKE ?)")
+		conditions = append(conditions, `(m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')`)
 		args = append(args, likeTerm, likeTerm)
 	}
 
@@ -953,7 +953,7 @@ func (e *SQLiteEngine) GetTextStats(
 	}
 	if opts.SearchQuery != "" {
 		likeTerm := "%" + escapeSQLiteLike(opts.SearchQuery) + "%"
-		conditions = append(conditions, "(m.subject LIKE ? OR m.snippet LIKE ?)")
+		conditions = append(conditions, `(m.subject LIKE ? ESCAPE '\' OR m.snippet LIKE ? ESCAPE '\')`)
 		args = append(args, likeTerm, likeTerm)
 	}
 
