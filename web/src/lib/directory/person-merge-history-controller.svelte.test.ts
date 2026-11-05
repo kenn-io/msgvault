@@ -90,6 +90,48 @@ function deferredResponse() {
 }
 
 describe('PersonMergeHistoryController', () => {
+  it('allows Cancel while stale-split labels are still loading', async () => {
+    const late = deferredResponse();
+    let nameReads = 0;
+    let labelSignal: AbortSignal | null = null;
+    const controller = new PersonMergeHistoryController(createAPIClient(async input => {
+      const request = requestOf(input);
+      const path = new URL(request.url).pathname;
+      if (request.method === 'POST') return Response.json({ error: 'person_merge_revision_conflict' }, { status: 409 });
+      if (path === '/api/v1/person-merges/41') return Response.json(detail());
+      if (path === '/api/v1/people/7' && ++nameReads > 1) {
+        labelSignal = request.signal;
+        return late.promise;
+      }
+      if (path === '/api/v1/people/7' || path === '/api/v1/people/12') {
+        const id = Number(path.split('/').at(-1));
+        return Response.json(person(id, 4, [701], 'Synthetic Source'), { headers: { ETag: `"person-${id}-r4"` } });
+      }
+      if (path === '/api/v1/participants/701' || path === '/api/v1/participants/702') return Response.json({ identifiers: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    }), 7);
+    try {
+      await controller.selectMerge(41);
+      await controller.openSplit();
+      controller.setParticipantSelected(701, true);
+      expect(controller.confirmSplit()).toBe(true);
+      const submission = controller.submitSplit();
+      try {
+        await vi.waitFor(() => expect(labelSignal).not.toBeNull());
+        await vi.waitFor(() => expect(controller.splitBusy).toBe(false));
+        controller.closeSplit();
+        expect(controller.splitOpen).toBe(false);
+        expect(labelSignal!.aborted).toBe(true);
+      } finally {
+        late.resolve(Response.json(person(7, 4, [], 'Late Name')));
+        await submission;
+      }
+      expect(controller.labels?.names.get(7)).not.toBe('Late Name');
+    } finally {
+      controller.destroy();
+    }
+  });
+
   it.each([false, true])('reloads split labels and discards a late initial lookup %s', async lateInitial => {
     let detailReads = 0;
     let nameReads = 0;
@@ -129,7 +171,7 @@ describe('PersonMergeHistoryController', () => {
     await initial;
 
     expect(controller.detail?.splits?.[0]?.new_person_id).toBe(19);
-    expect(controller.labels?.names.get(19)).toBe('Fresh Restored');
+    await vi.waitFor(() => expect(controller.labels?.names.get(19)).toBe('Fresh Restored'));
     expect(controller.labels?.addresses.get(701)?.map(address => address.title)).toEqual(['fresh@example.org']);
     controller.destroy();
   });

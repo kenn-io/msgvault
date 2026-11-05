@@ -24,7 +24,7 @@ export async function loadMergeLabels(client: APIClient, detail: PersonMergeDeta
       const identifiers = (response.data.identifiers ?? []).filter(identifier => identifier.participant_id === id);
       addresses.set(id, identifiers.length
         ? identifiers.map(identifier => identityChipText(identifier, member, []))
-        : member ? [identityChipText(undefined, member, [])] : []);
+        : member ? [identityChipText(undefined, member, [])] : response.data.display_name?.trim() ? [{ title: response.data.display_name.trim(), subtitle: '', detail: '' }] : []);
     }),
   ]);
   incomplete ||= results.some(result => result.status === 'rejected');

@@ -69,7 +69,7 @@
   function splitMeta(splitID: number | undefined) {
     if (splitID === undefined) return '';
     const split = controller.detail?.splits?.find(split => split.id === splitID);
-    return split ? `Split out to ${labels?.names.get(split.new_person_id) ?? 'a profile'}` : 'Split out';
+    return split ? labels?.names.has(split.new_person_id) ? `Split out to ${labels.names.get(split.new_person_id)}` : `Split out on ${historyTime(split.created_at)}` : 'Split out';
   }
   function reviewRows() {
     return (controller.detail?.review_candidates ?? []).filter(candidate => candidate.state === 'pending').map(candidate => ({
@@ -79,7 +79,7 @@
   function splitRows() {
     return (controller.detail?.splits ?? []).map(split => ({
       id: split.id,
-      value: labels?.names.get(split.new_person_id) ?? 'a profile',
+      value: labels?.names.get(split.new_person_id) ?? historyTime(split.created_at),
       detail: split.exact_reversal ? 'Exact restore' : 'Partial restore',
       meta: `${historySource(split.actor)} · ${historyTime(split.created_at)}`
     }));

@@ -134,6 +134,56 @@ function renderRegressionHistory(mergeDetail: MergeDetail, missingDestination = 
 }
 
 describe('PersonMergeHistory', () => {
+  it('uses singleton participant names in Inspect and split choices', async () => {
+    const mergeDetail = detail();
+    mergeDetail.participants = [{ merge_id: 41, participant_id: 701, origin_side: 'absorbed' }];
+    mergeDetail.splits = [];
+    render(PersonMergeHistory, { client: createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/people/7/merges') return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail);
+      if (path === '/api/v1/participants/701') return Response.json({ id: 701, display_name: 'Singleton Example', identifiers: [] });
+      if (path === '/api/v1/people/7' || path === '/api/v1/people/12') {
+        const id = Number(path.split('/').at(-1));
+        return Response.json(person(id, 4, [701], 'Alex Example'), { headers: { ETag: `"person-${id}-r4"` } });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }), personID: 7 });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    const heading = await screen.findByRole('heading', { name: 'Message addresses from the merged-in profile' });
+    expect(within(heading.parentElement!).getByText('Singleton Example')).toBeDefined();
+    await fireEvent.click(screen.getByRole('button', { name: 'Split merged profile' }));
+    expect(await screen.findByRole('checkbox', { name: 'Singleton Example' })).toBeDefined();
+  });
+
+  it('distinguishes unnamed split destinations by their dates', async () => {
+    const mergeDetail = detail();
+    mergeDetail.participants = [701, 702].map((participant_id, index) => ({ merge_id: 41, participant_id, origin_side: 'absorbed', split_id: 55 + index }));
+    mergeDetail.splits!.push({ ...mergeDetail.splits![0]!, id: 56, new_person_id: 20, created_at: '2026-09-05T12:00:00Z' });
+    render(PersonMergeHistory, { client: createAPIClient(async input => {
+      const path = new URL((input as Request).url).pathname;
+      if (path === '/api/v1/people/7/merges') return Response.json({ merges: [summary(mergeDetail)], limit: 100, offset: 0 });
+      if (path === '/api/v1/person-merges/41') return Response.json(mergeDetail);
+      if (path === '/api/v1/people/7') return Response.json(person(7, 4, [], 'Alex Example'));
+      if (path === '/api/v1/people/19' || path === '/api/v1/people/20') return Response.json(person(Number(path.split('/').at(-1)), 1, [], ''));
+      if (path === '/api/v1/participants/701' || path === '/api/v1/participants/702') {
+        const id = Number(path.split('/').at(-1));
+        return Response.json({ identifiers: [{ participant_id: id, type: 'email', value: `address${id}@example.org` }] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }), personID: 7 });
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
+    const heading = await screen.findByRole('heading', { name: 'Message addresses from the merged-in profile' });
+    const rows = within(heading.parentElement!).getAllByRole('listitem');
+    expect(within(rows[0]!).getByText(/^Split out on Aug [34], 2026,/)).toBeDefined();
+    expect(within(rows[1]!).getByText(/^Split out on Sep 5, 2026,/)).toBeDefined();
+    const splits = within(screen.getByRole('heading', { name: 'Splits' }).parentElement!);
+    expect(splits.getByText(/^Aug [34], 2026,/)).toBeDefined();
+    expect(splits.getByText(/^Sep 5, 2026,/)).toBeDefined();
+  });
+
   it.each([
     { email: 'first@example.org', otherEmail: 'second@example.org' },
     { phone: '+12025550101', otherPhone: '+12025550102' },
@@ -186,7 +236,7 @@ describe('PersonMergeHistory', () => {
     const heading = await screen.findByRole('heading', { name: 'Splits' });
     const splits = within(heading.parentElement!);
     expect(splits.getAllByRole('listitem')).toHaveLength(2);
-    expect(splits.getByText('a profile')).toBeDefined();
+    expect(splits.getByText(/^Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toBeDefined();
     expect(splits.getByText('Alex Example')).toBeDefined();
     expect(splits.getAllByText(exact ? 'Exact restore' : 'Partial restore')).toHaveLength(2);
     expect(splits.getByText(/^You · Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toBeDefined();
@@ -197,7 +247,7 @@ describe('PersonMergeHistory', () => {
     renderRegressionHistory(detail(), true);
     await fireEvent.click(await screen.findByRole('button', { name: 'Inspect merge 41' }));
     const heading = await screen.findByRole('heading', { name: 'Message addresses from Alex Example' });
-    expect(within(heading.parentElement!).getByText('Split out to a profile')).toBeDefined();
+    expect(within(heading.parentElement!).getByText(/^Split out on Aug [34], 2026, \d{1,2}:00 [AP]M$/)).toBeDefined();
   });
 
   it('groups addresses and pending reviews like profile history', async () => {
