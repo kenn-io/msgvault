@@ -235,6 +235,10 @@ func sanitizeForFilename(s string) string {
 
 // LoadManifest reads a manifest from a JSON file.
 func LoadManifest(path string) (*Manifest, error) {
+	journal, err := os.ReadFile(journalPath(path))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
 	// codeql[go/path-injection] -- manifest paths are explicit local CLI
 	// inputs from the privileged user, not a security boundary.
 	data, err := os.ReadFile(path)
@@ -250,6 +254,7 @@ func LoadManifest(path string) (*Manifest, error) {
 		return nil, err
 	}
 
+	applyJournal(&m, journal)
 	return &m, nil
 }
 
@@ -401,18 +406,32 @@ func writeManifestAtomic(manifest *Manifest, path string) error {
 	if err := fileutil.SecureReplaceFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("publish manifest: %w", err)
 	}
+	removeCheckpointJournal(path, manifest.ID, "published")
 	return nil
 }
 
-// WriteInProgressCheckpoint persists the manifest's current execution progress
-// to in_progress/<id>.json under the per-manifest lock. It serializes with
-// CancelManifest and FinalizeInProgress so a checkpoint can never race a cancel
-// rename: while the lock is held, cancel cannot move the file, so the atomic
-// temp+rename write below replaces the verified-present destination without
-// tearing it or resurrecting a moved record. If the manifest is no longer in
-// in_progress/ (a cancel already moved it), it returns ErrManifestCancelled and
-// writes nothing.
-func (m *Manager) WriteInProgressCheckpoint(manifest *Manifest, id string) error {
+func removeCheckpointJournal(path, id, action string) {
+	if err := os.Remove(journalPath(path)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		log.Printf("WARNING: %s manifest %s but could not remove checkpoint journal: %v",
+			action, id, err)
+	}
+}
+
+// WriteInProgressCheckpoint appends progress under the cancellation lock.
+func (m *Manager) WriteInProgressCheckpoint(manifest *Manifest, id string, failedFrom int) error {
+	return m.writeInProgress(id, func(path string) error {
+		return appendCheckpoint(manifest, path, failedFrom)
+	})
+}
+
+// WriteInProgressManifest publishes the full terminal state under the cancellation lock.
+func (m *Manager) WriteInProgressManifest(manifest *Manifest, id string) error {
+	return m.writeInProgress(id, func(path string) error {
+		return writeManifestAtomic(manifest, path)
+	})
+}
+
+func (m *Manager) writeInProgress(id string, write func(string) error) error {
 	lock, err := m.acquireManifestLock(id)
 	if err != nil {
 		return err
@@ -426,7 +445,7 @@ func (m *Manager) WriteInProgressCheckpoint(manifest *Manifest, id string) error
 		}
 		return fmt.Errorf("stat in-progress manifest %s: %w", id, err)
 	}
-	return writeManifestAtomic(manifest, path)
+	return write(path)
 }
 
 // FinalizeInProgress atomically claims in_progress/<id>.json into a terminal
@@ -599,6 +618,16 @@ func requireManifestDigest(manifest *Manifest, expected string) error {
 // freshly-initialized Execution changed, republished so the on-disk record
 // matches what is returned in memory.
 func (m *Manager) resumeClaimedManifest(manifest *Manifest, inProgressPath string, method Method) (*Manifest, error) {
+	if manifest.Status == StatusCompleted || manifest.Status == StatusFailed {
+		// Republishing as in_progress would make superseded records apply again.
+		path := journalPath(inProgressPath)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("cannot resume %s: %w", manifest.ID, err)
+		}
+		if err := atomicfile.SyncDir(filepath.Dir(path)); err != nil {
+			return nil, fmt.Errorf("cannot resume %s: %w", manifest.ID, err)
+		}
+	}
 	needsWrite := manifest.Status != StatusInProgress
 	if manifest.Execution == nil {
 		manifest.Execution = &Execution{StartedAt: time.Now(), Method: method}
@@ -945,7 +974,7 @@ func (m *Manager) cancelManifestLocked(id string) error {
 			return fmt.Errorf("reload manifest %s after move: %w", id, err)
 		}
 		manifest.Status = StatusCancelled
-		if err := manifest.Save(toPath); err != nil {
+		if err := writeManifestAtomic(manifest, toPath); err != nil {
 			return fmt.Errorf("update inline status for %s: %w", id, err)
 		}
 		return nil
