@@ -135,20 +135,6 @@
     counterpartID = id === personID ? null : id;
     message = counterpartID === null ? 'A person cannot have a relationship with itself.' : '';
   }
-  function containPeopleMenu(node: HTMLElement) {
-    const dialog = node.closest('[role="dialog"]')!;
-    const footer = dialog.querySelector('.kit-modal-footer')!;
-    const resize = () => {
-      const available = footer.getBoundingClientRect().top - node.getBoundingClientRect().bottom - 8;
-      node.style.setProperty('--people-menu-max-height', `${Math.max(0, available)}px`);
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(dialog);
-    observer.observe(node);
-    dialog.addEventListener('scroll', resize, true);
-    resize();
-    return { destroy() { observer.disconnect(); dialog.removeEventListener('scroll', resize, true); } };
-  }
   async function submit(): Promise<void> {
     if (
       submitting ||
@@ -251,7 +237,7 @@
                 loading={controller.relationshipTypesLoading} error={controller.errors.relationshipTypes} disabled={submitting}
                 onselect={(value) => { choice = value; }} />
             </span>
-            <span class="people-picker" use:containPeopleMenu>
+            <span class="people-picker">
               <Typeahead options={peopleOptions} value={counterpartID === null ? '' : String(counterpartID)}
                 fallbackLabel="Search people" placeholder="Search people" title="Search people"
                 emptyLabel={searchError ? '' : searchText ? `No one matches "${searchText}"` : 'No other saved people'}
@@ -357,9 +343,6 @@
     max-width: 100%;
     --typeahead-icon-width: 24px;
     --typeahead-panel-min-width: min(408px, calc(100vw - 64px));
-  }
-  .people-picker :global(.kit-typeahead__panel) {
-    max-height: min(50vh, var(--people-menu-max-height));
   }
   .dates {
     display: flex;

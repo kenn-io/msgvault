@@ -2,6 +2,26 @@ import { expect, test } from '@playwright/test';
 import { installDirectoryReviewArchive } from './e2e/fixtures/mixed-archive';
 import { directoryPerson, relationshipType, person } from '../src/lib/directory/entity-fixtures.test-support';
 
+test('saved person remains selectable at 280px', async ({ page }) => {
+  await installDirectoryReviewArchive(page);
+  const subjectName = 'a-very-long-synthetic-person-name-without-spaces@example.test';
+  await page.route('**/api/v1/people/7/profile', route => route.fulfill({ json: {
+    person: { ...person(7), display_name: subjectName }, names: [], contact_points: [], addresses: [], dates: [], categories: [], media: [],
+  } }));
+  await page.route('**/api/v1/people/directory*', route => route.fulfill({ json: { people: [directoryPerson(9)] } }));
+  await page.setViewportSize({ width: 375, height: 280 });
+  await page.goto('/?explore=' + encodeURIComponent(JSON.stringify({ workspace: 'relationships', directoryPersonID: 7 })));
+  await page.getByRole('radio', { name: 'Details', exact: true }).click();
+  await page.getByRole('button', { name: 'Add connection', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add relationship', exact: true });
+  await dialog.getByRole('button', { name: 'Search people', exact: true }).click();
+  const option = dialog.getByRole('option', { name: /Synthetic Two/ });
+  await expect(option).toBeVisible();
+  expect(await dialog.locator('.kit-typeahead__body').evaluate(element => element.clientHeight)).toBeGreaterThanOrEqual(32);
+  await option.click();
+  await expect(dialog.getByRole('button', { name: 'Search people: Synthetic Two', exact: true })).toBeVisible();
+});
+
 for (const width of [1440, 375]) {
   test(`Connections dialogs stay contained and support keyboard selection at ${width}px`, async ({ page }) => {
     await installDirectoryReviewArchive(page);
@@ -68,8 +88,6 @@ for (const width of [1440, 375]) {
     expect(peopleBounds!.x + peopleBounds!.width).toBeLessThanOrEqual(width);
     expect(peopleBounds!.y).toBeGreaterThanOrEqual(0);
     expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(900);
-    const footerBounds = await dialog.locator('.kit-modal-footer').boundingBox();
-    expect(peopleBounds!.y + peopleBounds!.height).toBeLessThanOrEqual(footerBounds!.y);
     expect(await panel.locator('.kit-typeahead__body').evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
     await people.fill('Synthetic Two');
     await expect(dialog.getByRole('option')).toHaveCount(1);

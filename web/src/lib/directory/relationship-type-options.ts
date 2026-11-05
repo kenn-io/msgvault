@@ -5,10 +5,10 @@ type Orientation = 'outgoing' | 'incoming';
 export type RelationshipChoice = TypeaheadOption & { slug: string; direction: Orientation; group: string };
 
 const groups: Record<string, string[]> = {
-  Family: ['parent', 'child', 'sibling', 'spouse', 'kin', 'relative'],
+  Family: ['parent', 'sibling', 'spouse', 'kin', 'relative'],
   Work: ['agent', 'colleague', 'co-worker'],
   Social: ['acquaintance', 'friend', 'met', 'neighbor', 'co-resident', 'date', 'sweetheart', 'crush', 'muse'],
-  Other: ['contact', 'emergency'],
+  Other: [],
 };
 const phrases: Record<string, string> = {
   parent: 'is a parent of', child: 'is a child of', sibling: 'is a sibling of', spouse: 'is a spouse of',
