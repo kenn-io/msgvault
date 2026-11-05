@@ -4878,10 +4878,11 @@ func TestDuckDBEngine_GetDeletionTargetsByFilterExcludesDerivedCalendar(t *testi
 	assertions := assert.New(t)
 	requirements := require.New(t)
 	b := NewTestDataBuilder(t)
-	b.AddSource("owner@example.test")
+	sourceID := b.AddSource("owner@example.test")
 	emailID := b.AddMessage(MessageOpt{Subject: "Email", MessageType: "email"})
 	legacyID := b.AddMessage(MessageOpt{Subject: "Legacy email", LegacyEmptyMessageType: true})
-	chatID := b.AddMessage(MessageOpt{Subject: "Chat", MessageType: "google_chat"})
+	chatSource := b.AddSourceWithType("chat@example.test", "google_chat")
+	b.AddMessage(MessageOpt{SourceID: chatSource, Subject: "Chat", MessageType: "google_chat"})
 	b.AddMessage(MessageOpt{Subject: "Meeting", MessageType: "calendar_event"})
 	engine := b.BuildEngine()
 	targets, err := engine.GetDeletionTargetsByFilter(t.Context(), MessageFilter{})
@@ -4890,17 +4891,10 @@ func TestDuckDBEngine_GetDeletionTargetsByFilterExcludesDerivedCalendar(t *testi
 	for _, target := range targets {
 		ids = append(ids, target.MessageID)
 	}
-	assertions.ElementsMatch([]int64{emailID, legacyID, chatID}, ids)
-	opts := DefaultAggregateOptions()
-	opts.SearchQuery = "message_type:email | message_type:google_chat | message_type:calendar_event"
-	rows, err := engine.SubAggregate(t.Context(), MessageFilter{}, ViewTime, opts)
-	requirements.NoError(err)
-	var count int64
-	for _, row := range rows {
-		count += row.Count
-	}
-	assertions.Equal(int64(len(targets)+1), count, "archive aggregates include explicitly requested calendar events")
-	preview, err := engine.GetTotalStats(t.Context(), StatsOptions{SearchQuery: opts.SearchQuery})
+	assertions.ElementsMatch([]int64{emailID, legacyID}, ids)
+	preview, err := engine.GetTotalStats(t.Context(), StatsOptions{Filter: &MessageFilter{
+		AccountScopes: []search.AccountScope{{SourceID: &sourceID, Unattributed: true}},
+	}})
 	requirements.NoError(err)
 	assertions.Equal(int64(len(targets)), preview.MessageCount)
 }

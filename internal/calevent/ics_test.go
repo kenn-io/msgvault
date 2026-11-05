@@ -147,15 +147,17 @@ func TestICSRecurrenceAndBounds(t *testing.T) {
 }
 
 func TestICSRejectMalformed(t *testing.T) {
-	for _, raw := range []string{
-		strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:X-UNKNOWN", 1),
-		strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"),
-		strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1),
-		strings.Replace(icsExample, "UID:invite@example.com\r\n", "", 1),
-		"BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n",
-		icsExample + icsExample,
+	for _, tc := range []struct{ name, raw, want string }{
+		{"unknown method", strings.Replace(icsExample, "METHOD:REQUEST", "METHOD:X-UNKNOWN", 1), `unsupported calendar method "X-UNKNOWN"`},
+		{"unknown zone", strings.ReplaceAll(icsExample, "America/New_York", "Unknown/Zone"), "unknown time zone Unknown/Zone"},
+		{"negative sequence", strings.Replace(icsExample, "SEQUENCE:2", "SEQUENCE:-1", 1), "invalid SEQUENCE"},
+		{"missing UID", strings.Replace(icsExample, "UID:invite@example.com\r\n", "", 1), "event has no UID"},
+		{"malformed property", "BEGIN:VCALENDAR\r\nSUMMARY;CN=x\r\nEND:VCALENDAR\r\n", "malformed iCalendar parameters"},
+		{"second calendar", icsExample + icsExample, "calendar has trailing content"},
 	} {
-		_, _, err := Decode("ics", []byte(raw), []byte(`{}`), "")
-		require.Error(t, err)
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := Decode("ics", []byte(tc.raw), []byte(`{}`), "")
+			require.ErrorContains(t, err, tc.want)
+		})
 	}
 }
