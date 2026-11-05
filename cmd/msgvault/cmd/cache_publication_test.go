@@ -199,7 +199,7 @@ func mustInspectCacheReadiness(t *testing.T, analyticsDir string) query.CacheRea
 
 // Builders allow readers while staging. Maintenance invalidates the marker and
 // releases readers while keeping other builders excluded until maintenance ends.
-func TestCacheMaintenanceInvalidatesMarkerAndReleasesReadersWhileExcludingBuilders(t *testing.T) {
+func TestCacheLocksAllowReadersDuringStagingAndMaintenanceWhileExcludingBuilders(t *testing.T) {
 	requirements := require.New(t)
 	analyticsDir := filepath.Join(t.TempDir(), "analytics")
 	requirements.NoError(os.MkdirAll(analyticsDir, 0o755))

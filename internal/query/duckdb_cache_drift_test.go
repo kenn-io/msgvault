@@ -157,6 +157,8 @@ func TestDuckDBEngine_LiveSQLWhenCacheUnavailable(t *testing.T) {
 						assert := assert.New(t)
 						rows, err := engine.Aggregate(ctx, ViewSenders, DefaultAggregateOptions())
 						if !enabled {
+							// Keep the opt-out check with SQLite available. The interrupted-cache
+							// test has no SQLite connection, so it cannot catch an ignored option.
 							require.ErrorIs(err, ErrCacheUnavailable)
 							return
 						}

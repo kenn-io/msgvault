@@ -1023,6 +1023,8 @@ func TestRemoveAccountCmd_LiveSQLWhileRemovalPausedAfterCascade(t *testing.T) {
 	defer cancel()
 	rows, err := engine.Aggregate(ctx, query.ViewSenders, query.DefaultAggregateOptions())
 	require.NoError(err, "analytics must answer while removal is paused")
+	// A successful read could still serve the pre-removal cache if this command
+	// stops invalidating it. The fallback test invalidates its own cache marker.
 	require.Len(rows, 1)
 	assert.Equal("kept@example.com", rows[0].Key)
 	close(resumeRemoval)
