@@ -63,7 +63,7 @@ func TestMeetingLinkCommands(t *testing.T) {
 		{"links", []string{"links", "42"}, "", "", "Planning", false, false},
 		{"event record", []string{"links", "evt:81@20270314T100000Z"}, "", "", "Notes: 42", false, false},
 		{"links json", []string{"links", "42", "--json"}, "", "", `"ref":"evt:81"`, false, false},
-		{"old daemon links", []string{"links", "42"}, "3.43.0", "upgrade the daemon", "", false, false},
+		{"old daemon links", []string{"links", "42"}, "3.45.0", "upgrade the daemon", "", false, false},
 		{"invalid links ID", []string{"links", "0"}, "", "positive message ID", "", false, false},
 		{"link", []string{"link", "42", "--event", "evt:81@20270314T100000Z"}, "", "", "", false, false},
 		{"unlink", []string{"unlink", "42", "--event", "evt:81@20270314T100000Z"}, "", "", "", false, false},
