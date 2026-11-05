@@ -569,7 +569,7 @@ func (c *Client) importMessage(
 			if err := s.IndexStoredMessageContext(ctx, existing.ID); err != nil {
 				c.logger.Warn("failed to index message for search", "message_id", existing.ID, "error", err)
 			}
-			return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true)
+			return c.finishMessageAttachments(ctx, s, existing.ID, msg, summary, true, true)
 		}
 	}
 	if !slices.Contains(labels, labelID) {
@@ -594,12 +594,16 @@ func (c *Client) importMessage(
 	} else {
 		summary.MessagesAdded++
 	}
-	return c.finishMessageAttachments(ctx, s, msgID, msg, summary, exists)
+	return c.finishMessageAttachments(ctx, s, msgID, msg, summary, exists, false)
 }
 
-func (c *Client) finishMessageAttachments(ctx context.Context, s *store.Store, msgID int64, msg *messageRow, summary *ImportSummary, existing bool) error {
+func (c *Client) finishMessageAttachments(ctx context.Context, s *store.Store, msgID int64, msg *messageRow, summary *ImportSummary, existing, countUpdate bool) error {
 	summary.MessagesImported++
-	if err := c.importAttachments(ctx, s, msgID, msg, summary, existing); err != nil {
+	changed, err := c.importAttachments(ctx, s, msgID, msg, summary, existing)
+	if countUpdate && changed {
+		summary.MessagesUpdated++
+	}
+	if err != nil {
 		if ctx.Err() != nil {
 			return err
 		}

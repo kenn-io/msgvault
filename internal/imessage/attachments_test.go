@@ -229,8 +229,10 @@ func TestImportUnavailableAttachmentRecovers(t *testing.T) {
 	assert.Equal(attachmentpolicy.SkipSourceUnavailable, ref.SkipReason)
 	assert.Empty(ref.ContentHash)
 	require.NoError(os.WriteFile(filepath.Join(root, "Attachments", "voice.caf"), []byte("restored"), 0600))
-	_, err = c.Import(t.Context(), st, source)
+	summary, err = c.Import(t.Context(), st, source)
 	require.NoError(err)
+	assert.Equal(2, summary.MessagesUpdated)
+	assert.Zero(summary.MessagesAdded)
 	_, ref = importedAttachment(t, st, source, "1")
 	assert.Equal(attachmentpolicy.StateStored, ref.State)
 }
