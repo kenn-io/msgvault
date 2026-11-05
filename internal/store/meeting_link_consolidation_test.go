@@ -196,6 +196,7 @@ func TestMeetingLinksSourceMerge(t *testing.T) {
 }
 
 func testMeetingLinksSubsetCopy(t *testing.T) {
+	t.Helper()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -232,6 +233,7 @@ func testMeetingLinksSubsetCopy(t *testing.T) {
 }
 
 func testMeetingLinksSubsetSplitSurvivesCalendarRemoval(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	path := filepath.Join(t.TempDir(), "source.db")
 	st, err := OpenForTest(path)

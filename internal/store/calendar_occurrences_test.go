@@ -52,6 +52,7 @@ func TestListCalendarOccurrences(t *testing.T) {
 }
 
 func testCalendarOccurrenceAliasUsesLatestProviderUpdate(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, _ = calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`)
@@ -73,6 +74,7 @@ func testCalendarOccurrenceAliasUsesLatestProviderUpdate(t *testing.T) {
 }
 
 func testCalendarOccurrenceWindowIgnoresStaleAliasWhenLatestMovedOut(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, _ = calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=1"]}`)
@@ -96,6 +98,7 @@ func testCalendarOccurrenceWindowIgnoresStaleAliasWhenLatestMovedOut(t *testing.
 }
 
 func testCalendarUnsupportedRecurrenceShowsOnlyLatestExceptionAlias(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, _ = calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-14T10:00:00Z"},"end":{"dateTime":"2027-03-14T11:00:00Z"},"recurrence":["RRULE:FREQ=HOURLY"]}`)

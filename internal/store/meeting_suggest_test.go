@@ -15,6 +15,7 @@ import (
 )
 
 func testMeetingLinksSuggestionsRankingAndReadOnly(t *testing.T) {
+	t.Helper()
 	assertions := assert.New(t)
 	requirements := require.New(t)
 
@@ -157,6 +158,7 @@ func TestMeetingLinksSuggestionsAllDayAcrossUTCDates(t *testing.T) {
 }
 
 func testMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
+	t.Helper()
 	assert, require := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	_, master := calendarFixture(t, st, "master", `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`)
@@ -193,6 +195,7 @@ func testMeetingLinksAllDayExceptionUsesCalendarZone(t *testing.T) {
 }
 
 func testMeetingLinksAllDayExceptionWithUnsupportedRecurrence(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	raw := `{"id":"weekly","iCalUID":"weekly@example.org","start":{"date":"2027-03-07","timeZone":"America/New_York"},"end":{"date":"2027-03-08"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=3"]}`

@@ -1,7 +1,6 @@
 package store
 
 import (
-	"cmp"
 	"context"
 	"database/sql"
 	"errors"
@@ -130,8 +129,11 @@ func resolveMeetingDecisionTarget(ctx context.Context, r reboundReader, memberID
 	// A series edit or source removal can drop a target while its saved link still
 	// suppresses automatic matches. Only supersede a saved (or sole absent) identity.
 	rows, err := meetingEventRows(ctx, r, `e.message_id = ?`, []any{ref.MessageID}, &budget)
-	if err != nil || len(rows) > 1 {
-		return linkOccurrence{}, cmp.Or(err, sql.ErrNoRows)
+	if err != nil {
+		return linkOccurrence{}, err
+	}
+	if len(rows) > 1 {
+		return linkOccurrence{}, sql.ErrNoRows
 	}
 	target = linkOccurrence{Identity: meetingIdentity{OccurrenceKey: ref.Key}}
 	if len(rows) == 1 {

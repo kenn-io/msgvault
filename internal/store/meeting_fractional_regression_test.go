@@ -86,6 +86,7 @@ func TestMeetingLinksFractionalExceptionsWithMasterRoundTrip(t *testing.T) {
 }
 
 func testMeetingLinksFractionalAliasResolvesFreshestSnapshotForUnlink(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "master", linkSeriesRaw)
@@ -114,6 +115,7 @@ func testMeetingLinksFractionalAliasResolvesFreshestSnapshotForUnlink(t *testing
 }
 
 func testMeetingLinksExceptionWithoutOriginalStartUsesMessageReference(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "master", linkSeriesRaw)
@@ -132,6 +134,7 @@ func testMeetingLinksExceptionWithoutOriginalStartUsesMessageReference(t *testin
 }
 
 func testMeetingSuggestionsExcludeFractionalExceptionOfCancelledSeries(t *testing.T) {
+	t.Helper()
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
 	calendarFixture(t, st, "cancelled-master", `{"id":"series","status":"cancelled","iCalUID":"weekly@example.org","start":{"dateTime":"2027-03-07T10:00:00Z"},"end":{"dateTime":"2027-03-07T11:00:00Z"},"recurrence":["RRULE:FREQ=WEEKLY;COUNT=6"]}`)
