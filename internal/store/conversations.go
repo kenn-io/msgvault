@@ -753,8 +753,14 @@ func (s *Store) PopulateMessageBodiesContext(ctx context.Context, messages []API
 		}
 		messages[i].Subject, messages[i].Snippet, messages[i].ConversationTitle = msg.Subject, msg.Snippet, msg.ConversationTitle
 	}
-	if err := s.batchPopulateAttachments(ctx, messages, ids); err != nil {
-		return err
+	for start := 0; start < len(ids); start += batchQueryIDChunk {
+		end := min(start+batchQueryIDChunk, len(ids))
+		if err := s.batchPopulateAttachments(ctx, messages[start:end], ids[start:end]); err != nil {
+			return err
+		}
+		if err := s.batchPopulateBodies(ctx, messages[start:end], ids[start:end]); err != nil {
+			return err
+		}
 	}
-	return s.batchPopulateBodies(ctx, messages, ids)
+	return nil
 }
