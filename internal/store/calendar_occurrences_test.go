@@ -24,11 +24,10 @@ func TestCalendarOccurrencesNewestExceptionWins(t *testing.T) {
 	from := time.Date(2027, 3, 2, 0, 0, 0, 0, time.UTC)
 	page, err := st.ListCalendarOccurrencesContext(t.Context(), CalendarOccurrenceQuery{From: from, To: from.AddDate(0, 0, 1)})
 	requirements.NoError(err)
-	assertions.Len(page.Occurrences, 1)
-	for _, occurrence := range page.Occurrences {
-		assertions.Equal(newest, occurrence.MessageID)
-		assertions.Equal("2027-03-02T13:00:00Z", occurrence.Start.Format(time.RFC3339))
-	}
+	requirements.Len(page.Occurrences, 1)
+	occurrence := page.Occurrences[0]
+	assertions.Equal(newest, occurrence.MessageID)
+	assertions.Equal("2027-03-02T13:00:00Z", occurrence.Start.Format(time.RFC3339))
 	detail, err := st.GetCalendarOccurrenceContext(t.Context(), fmt.Sprintf("evt:%d@20270302T090000Z", master))
 	requirements.NoError(err)
 	assertions.Equal(newest, detail.MessageID)
