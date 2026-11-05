@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 	"strings"
@@ -89,25 +90,12 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		values = append(values, target.Row.ICalUID)
 	}
 	targets := []any{target.Ref.MessageID, target.Row.MessageID}
-	starts := []any{target.Start}
-	if _, original, ok := calrecur.ParseInstanceID("event_" + target.Identity.OccurrenceKey); ok {
-		if original.AllDay {
-			zone, err := calendarEventZone(target.Row.Event)
-			if err != nil {
-				return membersOut, err
-			}
-			original.Instant, _, err = calrecur.CivilDateBoundary(original.Date, zone)
-			if err != nil {
-				return membersOut, err
-			}
-		}
-		starts = append(starts, original.Instant)
+	starts, err := meetingCopyStarts(ctx, r, target, copies, budget)
+	if err != nil {
+		return membersOut, err
 	}
 	for _, row := range copies {
 		targets = append(targets, row.MessageID)
-		if row.Event.Kind == meetingExceptionKind && row.Event.Start != nil {
-			starts = append(starts, *row.Event.Start)
-		}
 		value := row.Event.ProviderEventID
 		if row.Event.Kind == meetingSeriesKind && target.Identity.OccurrenceKey != "" {
 			value += "_" + target.Identity.OccurrenceKey
@@ -155,6 +143,41 @@ func (s *Store) meetingOccurrenceMembers(ctx context.Context, r reboundReader, t
 		}
 	}
 	return membersOut, nil
+}
+
+// meetingCopyStarts lists the occurrence's effective and original starts plus
+// each calendar copy's start, resolving series copies in their own zones.
+func meetingCopyStarts(ctx context.Context, r reboundReader, target linkOccurrence, copies []CalendarEventRow, budget *int) ([]any, error) {
+	starts := []any{target.Start}
+	if _, original, ok := calrecur.ParseInstanceID("event_" + target.Identity.OccurrenceKey); ok {
+		if original.AllDay {
+			zone, err := calendarEventZone(target.Row.Event)
+			if err != nil {
+				return nil, err
+			}
+			original.Instant, _, err = calrecur.CivilDateBoundary(original.Date, zone)
+			if err != nil {
+				return nil, err
+			}
+		}
+		starts = append(starts, original.Instant)
+	}
+	for _, row := range copies {
+		switch {
+		case row.Event.Kind == meetingExceptionKind && row.Event.Start != nil:
+			starts = append(starts, *row.Event.Start)
+		case row.Event.Kind == meetingSeriesKind && target.Identity.OccurrenceKey != "":
+			copied, err := resolveMeetingOccurrence(ctx, r, OccurrenceRef{MessageID: row.MessageID, Key: target.Identity.OccurrenceKey}, budget)
+			if errors.Is(err, sql.ErrNoRows) || errors.Is(err, calrecur.ErrUnsupportedRecurrence) {
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+			starts = append(starts, copied.Start)
+		}
+	}
+	return starts, nil
 }
 
 // Gather only notes scheduled at the occurrence's original or copied starts,
