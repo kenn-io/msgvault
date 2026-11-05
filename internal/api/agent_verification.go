@@ -156,6 +156,7 @@ func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, 
 	}
 	denied := newAPIHTTPError(403, "verification_masked", "Attachment text requires verification.read")
 	text := false
+	html := false
 	names := make([]string, len(candidates))
 	for i, att := range candidates {
 		names[i] = att.Filename
@@ -164,13 +165,15 @@ func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, 
 			return nil, denied
 		}
 		text = text || strings.HasPrefix(declared, "text/")
+		html = html || strings.HasPrefix(declared, "text/html")
 	}
 	reader := bufio.NewReaderSize(content, 512)
 	prefix, err := reader.Peek(512)
 	if err != nil && !errors.Is(err, io.EOF) {
 		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
-	if !text && !strings.HasPrefix(http.DetectContentType(prefix), "text/") {
+	sniffed := http.DetectContentType(prefix)
+	if !text && !strings.HasPrefix(sniffed, "text/") {
 		return reader, nil
 	}
 	if withheld {
@@ -181,7 +184,13 @@ func textAttachmentReader(content io.Reader, candidates []query.AttachmentInfo, 
 		return nil, newAPIHTTPError(500, "internal_error", "Failed to read attachment")
 	}
 	s := string(data)
-	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || strings.Contains(strings.ToLower(s), "content-transfer-encoding") || verification.Is(verification.Content{Text: s, HTML: s, Filenames: names}) {
+	c := verification.Content{Filenames: names}
+	if html || strings.HasPrefix(sniffed, "text/html") {
+		c.HTML = s
+	} else {
+		c.Text = s
+	}
+	if bytes.ContainsRune(data, 0) || !utf8.Valid(data) || strings.Contains(strings.ToLower(s), "content-transfer-encoding") || verification.Is(c) {
 		return nil, denied
 	}
 	return bytes.NewReader(data), nil
