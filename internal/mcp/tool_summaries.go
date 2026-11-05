@@ -3,6 +3,9 @@ package mcp
 import (
 	"cmp"
 	"slices"
+	"strings"
+
+	"go.kenn.io/msgvault/internal/agentgrant"
 )
 
 type securityPolicy struct {
@@ -59,8 +62,8 @@ type ToolSummary struct {
 
 func summarizeTool(definition toolDefinition) ToolSummary {
 	permission := "owner-only"
-	if required, ok := agentReadToolPermission(definition.name); ok {
-		permission = string(required)
+	if required := agentReadToolPermission(definition.name); len(required) > 0 {
+		permission = joinPermissions(required)
 	}
 	return ToolSummary{
 		Name: definition.name, Description: definition.description,
@@ -106,4 +109,13 @@ func ToolSummaries() []ToolSummary {
 		return cmp.Or(cmp.Compare(a.Security, b.Security), cmp.Compare(a.Name, b.Name))
 	})
 	return summaries
+}
+
+// joinPermissions names the grants that each open the tool on their own.
+func joinPermissions(permissions []agentgrant.Permission) string {
+	names := make([]string, len(permissions))
+	for i, permission := range permissions {
+		names[i] = string(permission)
+	}
+	return strings.Join(names, " or ")
 }
