@@ -117,7 +117,7 @@ func newMeetingSuggestCommand(open meetingLinkOpen) *cobra.Command {
 
 func newMeetingLinksCommand(open meetingLinkOpen) *cobra.Command {
 	var jsonOutput bool
-	command := &cobra.Command{Use: "links <note-id|ref>", Short: "Show linked calendar occurrences and notes for msg:<id> or evt:<id>[@occurrence key]", Args: cobra.ExactArgs(1)}
+	command := &cobra.Command{Use: "links <note-id|ref>", Short: "Show linked calendar events and notes", Long: "Show linked calendar events and notes. Takes a note ID, msg:<id>, or evt:<id>[@occurrence key].", Args: cobra.ExactArgs(1)}
 	command.Flags().BoolVar(&jsonOutput, "json", false, "print the meeting record as JSON")
 	command.RunE = func(cmd *cobra.Command, args []string) error {
 		ref, err := meetingLinksRef(args[0])

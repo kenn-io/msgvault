@@ -84,6 +84,7 @@ func TestMeetingDecisionReplacesUnexpandableCopy(t *testing.T) {
 	require.NoError(st.LinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: first, Key: "20270314T100000Z"}))
 	require.NoError(st.UpsertMessageRawWithFormat(first, []byte(strings.Replace(linkSeriesRaw, "FREQ=WEEKLY", "FREQ=HOURLY", 1)), "gcal_json"))
 	require.NoError(st.UnlinkMeetingContext(t.Context(), note, OccurrenceRef{MessageID: second, Key: "20270314T100000Z"}))
+	require.NoError(st.UpsertMessageRawWithFormat(first, []byte(linkSeriesRaw), "gcal_json"))
 	links, err := meetingLinksForTest(t, st, note)
 	require.NoError(err)
 	require.Len(links, 1)
