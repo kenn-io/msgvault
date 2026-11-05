@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go.kenn.io/msgvault/internal/calevent"
+	"go.kenn.io/msgvault/internal/textutil"
 )
 
 const calendarExceptionKind = "exception"
@@ -258,7 +259,7 @@ func (s *Store) persistICSDetailsWith(ctx context.Context, tx *loggedTx, sourceI
 			target.EmailAddresses = append(target.EmailAddresses, p.EmailAddress)
 		}
 		return &MessagePersistData{
-			Message:      &Message{SourceID: sourceID, SourceMessageID: sourceMessageID, MessageType: "calendar_event", Subject: sql.NullString{String: c.Summary, Valid: c.Summary != ""}, SentAt: sent, SenderID: sender, Snippet: sql.NullString{String: body, Valid: body != ""}, SizeEstimate: int64(len(c.Raw))},
+			Message:      &Message{SourceID: sourceID, SourceMessageID: sourceMessageID, MessageType: "calendar_event", Subject: sql.NullString{String: c.Summary, Valid: c.Summary != ""}, SentAt: sent, SenderID: sender, Snippet: sql.NullString{String: textutil.SnippetFromBody(body), Valid: body != ""}, SizeEstimate: int64(len(c.Raw))},
 			Conversation: &ConversationPersistData{SourceConversationID: familyKey, ConversationType: "calendar", Title: title},
 			BodyText:     sql.NullString{String: body, Valid: body != ""}, RawMIME: c.Raw, RawFormat: rawFormatICS, Metadata: &sql.NullString{String: string(encoded), Valid: true}, PreserveLabels: true,
 			Recipients: []RecipientSet{from, to}, FTS: &FTSDoc{Subject: c.Summary, Body: body, FromAddr: c.OrganizerEmail, ToAddrs: strings.Join(emails, " ")},
