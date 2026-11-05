@@ -254,6 +254,7 @@ func TestOperationGateMiddlewareStillGatesMutatingCLIRun(t *testing.T) {
 		name string
 		body string
 	}{
+		{"policy set", `{"args":["policy","set","1","room","cold"]}`},
 		{"import", `{"args":["import-mbox","archive.mbox"]}`},
 		{"flag value matches status", `{"args":["embeddings","--config","status","build"]}`},
 		{"unknown flag", `{"args":["embeddings","--account","status","build"]}`},
@@ -307,28 +308,6 @@ func TestOperationGateMiddlewareStillGatesMutatingDocumentCommands(t *testing.T)
 			assert.Equal(t, 1, done)
 		})
 	}
-}
-
-func TestOperationGateMiddlewareGatesMessageExport(t *testing.T) {
-	t.Parallel()
-	assert := assert.New(t)
-	gate := &recordingOperationGate{allow: true}
-	handler := operationGateMiddleware(gate, nil)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
-
-	req := httptest.NewRequest(
-		http.MethodPost,
-		"/api/v1/cli/run",
-		strings.NewReader(`{"args":["export-messages","--start","2026-07-20T00:00:00Z","--end","2026-07-21T00:00:00Z"]}`),
-	)
-	resp := httptest.NewRecorder()
-	handler.ServeHTTP(resp, req)
-
-	assert.Equal(http.StatusNoContent, resp.Code, "status")
-	begin, done := gate.counts()
-	assert.Equal(1, begin, "begin calls")
-	assert.Equal(1, done, "done calls")
 }
 
 func TestOperationGateMiddlewareRejectsUnavailableGate(t *testing.T) {
@@ -694,6 +673,12 @@ func TestOperationGateMiddlewareSkipsReadOnlyCLIRunCommands(t *testing.T) {
 		name string
 		body string
 	}{
+		{"export-messages", `{"args":["export-messages","--start","2026-07-20T00:00:00Z","--end","2026-07-21T00:00:00Z"]}`},
+		{"export-discord", `{"args":["export-discord"]}`},
+		{"create-subset", `{"args":["create-subset","subset.db"]}`},
+		{"list-folders", `{"args":["list-folders"]}`},
+		{"policy list", `{"args":["policy","list"]}`},
+		{"policy flag before list", `{"args":["policy","--config","example.toml","list"]}`},
 		{"embeddings list", `{"args":["embeddings","list"]}`},
 		{"embeddings value flag before status", `{"args":["embeddings","--source","42","--json=true","status"]}`},
 		{"documents search", `{"args":["documents","search","shipping damage"]}`},

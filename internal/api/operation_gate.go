@@ -608,6 +608,11 @@ func cliRepairMessageGateDecision(r *http.Request) (label string, skip bool, err
 // cliRunReadOnlyCommands are proxied CLI commands that only read. Keys are
 // the leading command-path words of CLIRunRequest args (flags follow them).
 var cliRunReadOnlyCommands = map[string]bool{
+	"export-messages":   true,
+	"export-discord":    true,
+	"create-subset":     true,
+	"list-folders":      true,
+	"policy list":       true,
 	"draft-get":         true,
 	"draft-send-as":     true,
 	"logs":              true,
@@ -681,6 +686,7 @@ func cliRunGateDecision(r *http.Request, auth requestAuthentication) (label stri
 // cliRunCommandGroups are proxied parent commands whose second arg is a
 // subcommand name rather than a positional value.
 var cliRunCommandGroups = map[string]bool{
+	"policy":     true,
 	"embeddings": true,
 	"backup":     true,
 	"documents":  true,

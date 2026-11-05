@@ -24,8 +24,9 @@ func TestPolicyCommandsStageOverrides(t *testing.T) {
 	cfg := config.NewDefaultConfig()
 	cfg.ConversationPolicy.Overrides = []conversationpolicy.Override{{SourceType: "beeper", SourceIdentifier: "policy-cli-account", ConversationID: "room", Tier: conversationpolicy.Full}}
 	deps := conversationPolicyDeps{
-		open:   func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil },
-		config: func(context.Context) *config.Config { return cfg },
+		openReadOnly: func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil },
+		open:         func(context.Context) (*store.Store, func(), error) { return st, func() {}, nil },
+		config:       func(context.Context) *config.Config { return cfg },
 	}
 	run := func(args ...string) (string, error) {
 		cmd := newPolicyLocalCmd(deps)

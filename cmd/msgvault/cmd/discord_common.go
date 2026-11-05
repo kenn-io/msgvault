@@ -22,6 +22,7 @@ const sourceTypeDiscord = "discord"
 type discordCommandDeps struct {
 	bind                 func(context.Context) discordCommandDeps
 	openStore            func() (*store.Store, func(), error)
+	openReadOnlyStore    func() (*store.Store, func(), error)
 	tokenManager         func() *discord.TokenManager
 	apiBaseURL           func() string
 	providerConfig       func() config.DiscordConfig
@@ -44,6 +45,9 @@ func defaultDiscordCommandDepsForContext(ctx context.Context) discordCommandDeps
 	}
 	return discordCommandDeps{
 		bind: defaultDiscordCommandDepsForContext,
+		openReadOnlyStore: func() (*store.Store, func(), error) {
+			return openReadOnlyStoreForInvocation(ctx, state)
+		},
 		openStore: func() (*store.Store, func(), error) {
 			if state == nil || currentCfg == nil {
 				return nil, nil, errors.New("configuration is unavailable")

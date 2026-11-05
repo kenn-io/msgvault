@@ -146,9 +146,10 @@ func (f *discordCLIServer) requestURIs() []string {
 func testDiscordCommandDeps(t *testing.T, st *store.Store, tokensDir, baseURL string) discordCommandDeps {
 	t.Helper()
 	return discordCommandDeps{
-		openStore:    func() (*store.Store, func(), error) { return st, func() {}, nil },
-		tokenManager: func() *discord.TokenManager { return discord.NewTokenManager(tokensDir) },
-		apiBaseURL:   func() string { return baseURL },
+		openReadOnlyStore: func() (*store.Store, func(), error) { return st, func() {}, nil },
+		openStore:         func() (*store.Store, func(), error) { return st, func() {}, nil },
+		tokenManager:      func() *discord.TokenManager { return discord.NewTokenManager(tokensDir) },
+		apiBaseURL:        func() string { return baseURL },
 		providerConfig: func() config.DiscordConfig {
 			provider := config.DiscordConfig{}
 			provider.ApplyDefaults()

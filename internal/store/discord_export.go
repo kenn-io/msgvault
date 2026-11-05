@@ -60,6 +60,12 @@ var discordExportURLPattern = regexp.MustCompile(`https?://[^\s"'<>()]+`)
 func (s *Store) DiscordExport(
 	ctx context.Context, sourceID int64, start, end time.Time,
 ) ([]DiscordExportContainer, error) {
+	ctx, release, err := s.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	rows, err := s.db.QueryContext(ctx, s.dialect.Rebind(`
 		SELECT source_conversation_id, COALESCE(title, ''), COALESCE(metadata, '{}')
 		FROM conversations

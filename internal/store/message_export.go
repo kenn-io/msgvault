@@ -142,6 +142,12 @@ func (s *Store) ExportMessages(
 			return MessageExportCounts{}, err
 		}
 	}
+	ctx, release, err := s.BeginReadSnapshotContext(ctx)
+	if err != nil {
+		return MessageExportCounts{}, err
+	}
+	defer release()
+
 	var counts MessageExportCounts
 	if err := s.exportMessageSources(ctx, filter, sink, &counts); err != nil {
 		return counts, err
@@ -215,7 +221,7 @@ func (s *Store) exportMessageSources(
 
 	for _, source := range selected {
 		var completedAt *time.Time
-		run, err := s.GetLastSuccessfulSync(source.id)
+		run, err := s.GetLastSuccessfulSyncContext(ctx, source.id)
 		if err != nil && !errors.Is(err, ErrSyncRunNotFound) {
 			return fmt.Errorf("load message export source sync: %w", err)
 		}

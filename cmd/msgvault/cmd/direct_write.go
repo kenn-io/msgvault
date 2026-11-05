@@ -155,6 +155,18 @@ func openInitializedStoreForInvocation(ctx context.Context, state *invocation) (
 	return st, func() { _ = st.Close() }, nil
 }
 
+func openReadOnlyStoreForInvocation(ctx context.Context, state *invocation) (*store.Store, func(), error) {
+	currentCfg, _ := invocationConfigLogger(state)
+	if currentCfg == nil {
+		return nil, nil, errors.New("configuration is unavailable")
+	}
+	st, err := store.OpenReadOnlyContext(ctx, currentCfg.DatabaseDSN())
+	if err != nil {
+		return nil, nil, fmt.Errorf("open database: %w", err)
+	}
+	return st, func() { _ = st.Close() }, nil
+}
+
 func openWritableStoreAndInitForInvocation(state *invocation) (*store.Store, func(), error) {
 	return openWritableStoreAndInitWithInvocation(state, func(s *store.Store) error {
 		return runStartupMigrationsContext(context.Background(), s, state)

@@ -156,7 +156,7 @@ func (s exportMessagesJSONLSink) Message(message store.MessageExportMessage) err
 
 func defaultExportMessagesDeps() exportMessagesDeps {
 	return exportMessagesDeps{openStore: func(ctx context.Context) (*store.Store, func(), error) {
-		return openWritableStoreAndInitForIngestInvocation(invocationFromContext(ctx))
+		return openReadOnlyStoreForInvocation(ctx, invocationFromContext(ctx))
 	}}
 }
 
