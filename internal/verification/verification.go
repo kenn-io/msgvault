@@ -14,15 +14,18 @@ import (
 const Masked = "[verification content masked]"
 const MaxFieldBytes = 1024 * 1024
 
+const localizedCodeCues = `bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드`
+
 type Content struct {
 	Subject, Snippet, Title, Text, HTML string
 	Filenames                           []string
 }
 
 var (
-	codeCue          = regexp.MustCompile(`(?i)bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드|\b(code|passcode|otp|(?:one[- ]time|temporary) password|verification number|pin)\b`)
-	linkCue          = regexp.MustCompile(`(?i)\b(sign[ -]in|log in|login link|magic link|reset (your )?password|password reset|verif(y|ication)( your email| link)|confirm (your )?(email|account|subscription)|activate your account)\b`)
-	qualifiedCodeCue = regexp.MustCompile(`(?i)bestätigungscode|sicherheitscode|code de vérification|code de sécurité|código de verificación|código de seguridad|codice di verifica|код подтверждения|код безопасности|验证码|驗證碼|認証コード|인증 코드|\b(?:(?:verification|security|login|sign[ -]in|confirmation|authentication|one[- ]time) (?:code|pin|password|number)|temporary password|passcode|otp|2fa)\b`)
+	codeCue            = regexp.MustCompile(`(?i)` + localizedCodeCues + `|\b(code|passcode|otp|(?:one[- ]time|temporary) password|verification number|pin)\b`)
+	linkCue            = regexp.MustCompile(`(?i)\b(sign[ -]in|log in|login link|magic link|reset (your )?password|password reset|verif(y|ication)( your email| link)|confirm (your )?(email|account|subscription)|activate your account)\b`)
+	qualifiedCodeCue   = regexp.MustCompile(`(?i)` + localizedCodeCues + `|\b(?:(?:verification|security|login|sign[ -]in|confirmation|authentication|one[- ]time) (?:code|pin|password|number)|temporary password|passcode|otp|2fa)\b`)
+	ordinaryCodePrefix = regexp.MustCompile(`(?i)\b(?:promo|coupon|discount|voucher|referral|gift|zip|postal|area|tracking|order|invoice|product|project)\s+$`)
 
 	compactCode    = strings.NewReplacer("-", "", " ", "", "\u00a0", "", "\n", "")
 	codeToken      = regexp.MustCompile(`[0-9]+(?:[ \x{00a0}][0-9]+)+|[0-9](?:\n+[0-9]){3,}|[A-Z0-9]+(?:-[A-Z0-9]+)*`)
@@ -103,7 +106,7 @@ func Is(c Content) bool {
 				right += n
 			}
 			if len(value) == 4 && value >= "1900" && value <= "2099" {
-				if directYearCode.MatchString(field[left:end]) {
+				if directYearCode.MatchString(field[left:end]) && nearCue(field[left:start], true) {
 					return true
 				}
 			} else if separateCue || nearCue(field[left:start], true) || nearCue(field[end:right], false) || useBefore.MatchString(field[left:start]) && signInAfter.MatchString(field[end:right]) {
@@ -126,6 +129,9 @@ func Is(c Content) bool {
 
 func nearCue(window string, before bool) bool {
 	for _, loc := range codeCue.FindAllStringIndex(window, -1) {
+		if strings.EqualFold(window[loc[0]:loc[1]], "code") && ordinaryCodePrefix.MatchString(window[:loc[0]]) {
+			continue
+		}
 		gap, breaks := window[:loc[0]], 0
 		if before {
 			gap = strings.ReplaceAll(window[loc[1]:], "\r\n", "\n")
