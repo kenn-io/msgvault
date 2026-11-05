@@ -633,7 +633,24 @@ func parseICSEvent(comp *ical.Component, method string, loc *time.Location) (ICS
 				}
 			}
 			line.WriteByte(':')
-			line.WriteString(prop.Value)
+			value := prop.Value
+			if (name == "RDATE" || name == "EXDATE") && prop.ValueType() == ical.ValueDateTime && prop.Params.Get("TZID") == "" {
+				// Resolve floating dates in the source zone before the recurrence
+				// parser applies DTSTART's zone. Raw evidence stays unchanged.
+				values := strings.Split(value, ",")
+				for i, v := range values {
+					if strings.HasSuffix(v, "Z") {
+						continue
+					}
+					floating := prop
+					floating.Value = v
+					if instant, _, err := icsTime(&floating, loc); err == nil {
+						values[i] = instant.UTC().Format("20060102T150405Z")
+					}
+				}
+				value = strings.Join(values, ",")
+			}
+			line.WriteString(value)
 			e.Recurrence = append(e.Recurrence, line.String())
 		}
 	}

@@ -38,6 +38,31 @@ func TestICalendarEqualSequenceCancellationRecoversBounds(t *testing.T) {
 	}
 }
 
+func TestICalendarOlderOccurrenceReplayKeepsNewerCancellation(t *testing.T) {
+	assertions, requirements := assert.New(t), require.New(t)
+	st := newRFC822IDBackfillBackendStore(t)
+	source := icsSource(t, st)
+	_, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:1\r\nDTSTART:20270302T120000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY;COUNT=2"))
+	requirements.NoError(err)
+	cancelled, err := st.PersistICalendarContext(t.Context(), source, calendarDocument("CANCEL", "SEQUENCE:2\r\nRECURRENCE-ID:20270303T120000Z"))
+	requirements.NoError(err)
+	requirements.Len(cancelled.MessageIDs, 1)
+	_, err = st.PersistICalendarContext(t.Context(), source, calendarDocument("REQUEST", "SEQUENCE:0\r\nRECURRENCE-ID:20270303T120000Z\r\nDTSTART:20270303T140000Z\r\nDURATION:PT1H"))
+	requirements.NoError(err)
+	from := time.Date(2027, 3, 3, 0, 0, 0, 0, time.UTC)
+	page, err := st.ListCalendarOccurrencesContext(t.Context(), from, from.AddDate(0, 0, 1))
+	requirements.NoError(err)
+	requirements.Len(page.Occurrences, 1)
+	assertions.Equal("cancelled", page.Occurrences[0].Status)
+	assertions.Equal("2027-03-03T14:00:00Z", page.Occurrences[0].Start.Format(time.RFC3339))
+	metadata, err := st.GetMessageMetadata(cancelled.MessageIDs[0])
+	requirements.NoError(err)
+	meta, err := calevent.ParseICSMetadata([]byte(metadata.String))
+	requirements.NoError(err)
+	assertions.Equal(int64(2), meta.Sequence)
+	assertions.False(meta.Superseded)
+}
+
 func TestICalendarActiveReplaySkipsUnreadableCancellationEvidence(t *testing.T) {
 	assertions, requirements := assert.New(t), require.New(t)
 	st := newRFC822IDBackfillBackendStore(t)
