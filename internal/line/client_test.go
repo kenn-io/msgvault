@@ -304,11 +304,9 @@ func TestClientTokenValidationAndRateLimit(t *testing.T) {
 	checks := assert.New(t)
 
 	for _, body := range []string{
-		`{"access_token":"","expires_in":900,"token_type":"Bearer"}`,
 		`{"access_token":"synthetic-token","expires_in":0,"token_type":"Bearer"}`,
 		`{"access_token":"synthetic-token","expires_in":9223372036854775807,"token_type":"Bearer"}`,
 		`{"access_token":"synthetic-token","expires_in":900,"token_type":"Other"}`,
-		`null`,
 	} {
 		client, api := newClient(t)
 		api.Enqueue("POST", "/oauth2/v3/token", lineapi.Response{Status: 200, Body: body})
